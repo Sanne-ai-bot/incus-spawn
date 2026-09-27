@@ -132,7 +132,7 @@ public final class InstanceLifecycle {
         if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
         update.config(settings.extraConfig());
         // Templates built before free page reporting existed don't carry it to their copies
-        if ("virtual-machine".equals(instance.path("type").asText(""))
+        if (IncusClient.isVm(instance)
                 && instance.path("config").path(RAW_QEMU_CONF).asText("").isBlank()) {
             update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
         }
@@ -148,7 +148,7 @@ public final class InstanceLifecycle {
      */
     private static void claimAndWrite(IncusClient incus, String name, JsonNode instance,
                                       InstanceUpdate update, String nicDevice, BridgeAddress bridge) {
-        var isVm = "virtual-machine".equals(instance.path("type").asText(""));
+        var isVm = IncusClient.isVm(instance);
         var filteringRefused = new AtomicBoolean();
         StaticIpAllocator.claim(incus, bridge, ip -> {
             // A static IP, so no DHCP lease is ever acquired: leases expire across host
