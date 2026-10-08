@@ -85,8 +85,9 @@ class McpBridgeTest {
         pids = home.resolve("pids");
 
         vertx = Vertx.vertx();
-        port = WebSocketProxyTest.findFreePort();
-        proxy = new MitmProxy(vertx, "127.0.0.1", port, WebSocketProxyTest.findFreePort(), "127.0.0.1",
+        var ports = ContainerTls.freePorts(2);
+        port = ports[0];
+        proxy = new MitmProxy(vertx, "127.0.0.1", port, ports[1], "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", List.of()));
         registry = new InstanceRegistry(new IncusClient() {
             @Override

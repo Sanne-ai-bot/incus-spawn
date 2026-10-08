@@ -93,8 +93,9 @@ class NpmCacheProxyTest {
                 .requestHandler(NpmCacheProxyTest::answer);
         impostorPort = listen(impostor);
 
-        mitmPort = WebSocketProxyTest.findFreePort();
-        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, WebSocketProxyTest.findFreePort(), "127.0.0.1",
+        var ports = ContainerTls.freePorts(2);
+        mitmPort = ports[0];
+        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, ports[1], "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", List.of()));
         // Upstream is verified as in production, trusting the mock's CA besides the system's
         proxy.trustUpstreamCertificate(SpawnConfig.configDir().resolve("ca.crt").toString());

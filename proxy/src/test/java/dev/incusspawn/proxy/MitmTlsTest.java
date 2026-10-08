@@ -22,7 +22,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static dev.incusspawn.proxy.ContainerTls.assertServerRefuses;
-import static dev.incusspawn.proxy.ContainerTls.freePort;
 import static dev.incusspawn.proxy.ContainerTls.handshake;
 import static dev.incusspawn.proxy.ContainerTls.startInBackground;
 import static org.junit.jupiter.api.Assertions.*;
@@ -135,8 +134,9 @@ class MitmTlsTest {
     }
 
     private int startProxy() throws Exception {
-        int port = freePort();
-        proxy = new MitmProxy(vertx, "127.0.0.1", port, freePort(), "127.0.0.1", ConfigFingerprint.load());
+        var ports = ContainerTls.freePorts(2);
+        int port = ports[0];
+        proxy = new MitmProxy(vertx, "127.0.0.1", port, ports[1], "127.0.0.1", ConfigFingerprint.load());
         startInBackground(proxy);
         return port;
     }
