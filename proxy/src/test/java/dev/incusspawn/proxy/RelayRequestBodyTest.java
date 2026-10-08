@@ -161,8 +161,39 @@ class RelayRequestBodyTest {
         assertEquals("/v2/app/blobs/uploads/", received.get(host).get(5, TimeUnit.SECONDS).path());
     }
 
+    /**
+     * A body that has all arrived starts the client's silence budget, so a connect upstream never
+     * completes is cut at the budget, not left to the TLS handshake's own timeout (#929).
+     */
+    @Test
+    void stalledConnectAfterTheBodyIsCutAtTheBudget() throws Exception {
+        var host = "quay.io";
+        // Accepts the connection and never answers the handshake
+        var blackHole = vertx.createNetServer().connectHandler(socket -> socket.handler(ignored -> {}));
+        var port = blackHole.listen(0, "127.0.0.1").toCompletionStage().toCompletableFuture()
+                .get(5, TimeUnit.SECONDS).actualPort();
+        proxy.overrideUpstream(host, "127.0.0.1", port);
+        var budget = proxy.clientSilenceBudgetSeconds;
+        proxy.clientSilenceBudgetSeconds = 2;
+        try {
+            var answer = exchange(host, Buffer.buffer("POST /v2/app/blobs/uploads/ HTTP/1.1\r\n"
+                    + "Host: " + host + "\r\n"
+                    + "Content-Length: 2\r\n"
+                    + "Connection: close\r\n\r\n{}"), 6);
+            assertTrue(answer.startsWith("HTTP/1.1 502"), answer);
+            assertTrue(answer.contains("Upstream timed out"), answer);
+        } finally {
+            proxy.clientSilenceBudgetSeconds = budget;
+            blackHole.close();
+        }
+    }
+
     /** Sends the request in one write and returns everything the proxy answers until it closes. */
     static String exchange(String host, Buffer request) throws Exception {
+        return exchange(host, request, 10);
+    }
+
+    static String exchange(String host, Buffer request, int seconds) throws Exception {
         received.clear();
         var answer = new CompletableFuture<String>();
         var bytes = new ByteArrayOutputStream();
@@ -172,9 +203,9 @@ class RelayRequestBodyTest {
             socket.write(request);
         }).onFailure(answer::completeExceptionally);
         try {
-            return answer.get(10, TimeUnit.SECONDS);
+            return answer.get(seconds, TimeUnit.SECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
-            return fail("No answer from the proxy within 10s; got so far: '" + bytes + "'");
+            return fail("No answer from the proxy within " + seconds + "s; got so far: '" + bytes + "'");
         }
     }
 
