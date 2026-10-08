@@ -1,11 +1,13 @@
 package dev.incusspawn.ai;
 
+import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -139,5 +141,24 @@ class HelpContextTest {
 
         var sanitized = HelpContext.sanitizeToolYaml(file);
         assertEquals(yaml, sanitized);
+    }
+
+    @Test
+    void definitionsListToolsOfATildeSearchPath(@TempDir Path home) throws IOException {
+        var realHome = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        try {
+            var tools = Files.createDirectories(home.resolve("my-templates/tools"));
+            Files.writeString(tools.resolve("tilde-marker.yaml"), "name: tilde-marker\n");
+            var config = new SpawnConfig();
+            config.setSearchPaths(List.of("~/my-templates"));
+            config.save();
+
+            assertTrue(HelpContext.definitions().contains("# tilde-marker.yaml (user-defined)"),
+                    "a search path written as ~/... must contribute its tools");
+        } finally {
+            if (realHome == null) System.clearProperty("user.home");
+            else System.setProperty("user.home", realHome);
+        }
     }
 }

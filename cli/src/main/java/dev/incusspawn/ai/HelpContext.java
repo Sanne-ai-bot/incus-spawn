@@ -99,10 +99,8 @@ public class HelpContext {
             appendResource(sb, "tools/" + file, file);
         }
         appendUserToolFiles(sb, SpawnConfig.configDir().resolve("tools"));
-        for (var searchPath : SpawnConfig.load().getSearchPaths()) {
-            var toolsDir = Path.of(searchPath).resolve("tools");
-            appendUserToolFiles(sb, toolsDir);
-        }
+        ToolDefLoader.searchPathToolDirs(SpawnConfig.load().getSearchPaths())
+                .forEach(toolsDir -> appendUserToolFiles(sb, toolsDir));
         sb.append("Java-based tools (always available, installed when a template references them):\n");
         for (var tool : RuntimeConstants.CDI_TOOLS) {
             sb.append("- ").append(tool.name());
