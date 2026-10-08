@@ -29,7 +29,7 @@ class ActionResolverDefaultCommandTest {
     private static final String SOURCE = "dev-1";
 
     /** A tool with one shell action, optionally behind a feature gate and expanded per repo. */
-    private record Tool(String name, String feature, String expand) implements ToolSetup {
+    record Tool(String name, String feature, String expand) implements ToolSetup {
         Tool(String name) {
             this(name, null, null);
         }

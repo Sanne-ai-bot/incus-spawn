@@ -4,6 +4,7 @@ import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
@@ -11,12 +12,16 @@ import dev.incusspawn.lifecycle.TempHome;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins how many Incus round trips building an {@link ActionContext} costs. {@code isx run} pays
@@ -125,15 +130,65 @@ class ActionResolverRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.TYPE, Metadata.TYPE_CLONE,
                 Metadata.BUILD_SOURCE, buildSource("some-tool")));
-        var tools = resolver(daemon).collectInstalledTools(NAME, TEMPLATE);
+        var resolver = resolver(daemon);
+        var tools = resolver.collectInstalledTools(resolver.readInstance(NAME), TEMPLATE);
         assertBudget(1, daemon, "collectInstalledTools");
         assertEquals(Set.of("some-tool"), tools);
+    }
+
+    @Test
+    void runResolvesADefaultActionWhoseYamlIsGoneFromOneRead() {
+        // isx run on a template whose definitions were deleted: tools from the build source,
+        // the reference from the stamp, and the context to run it in, all from one read (#1159),
+        // plus /state for the address of the running instance isx run always has.
+        var daemon = runningClone(Map.of(Metadata.DEFAULT_ACTION, "some-tool"));
+        var resolver = new ActionResolver(daemon.client(), new ToolDefLoader(),
+                List.of(new ActionResolverDefaultCommandTest.Tool("some-tool")), Map.of());
+        var instance = resolver.readInstance(NAME);
+        var tools = resolver.collectInstalledTools(instance, TEMPLATE);
+        var action = resolver.findDefaultAction(instance, TEMPLATE, tools, List.of());
+        resolver.buildActionContext(NAME, instance, TEMPLATE);
+        IncusClient.ShellPrep.fromInstance(daemon.client(), instance);
+        assertInstanceReadOnce(daemon, "isx run's default action (YAML gone)");
+        assertEquals("some-tool", action.orElseThrow().toolName(), "the stamped default action");
+    }
+
+    @Test
+    void runFallsBackToAShellWithItsMenuFromOneRead() throws IOException {
+        var config = Path.of(System.getProperty("user.home"), ".config/incus-spawn/config.yaml");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, "features:\n  - " + ShellMenu.FEATURE + "\n");
+        var daemon = runningClone(Map.of());
+        var resolver = resolver(daemon);
+        var instance = resolver.readInstance(NAME);
+        var tools = resolver.collectInstalledTools(instance, TEMPLATE);
+        assertTrue(resolver.findDefaultAction(instance, TEMPLATE, tools, List.of()).isEmpty());
+        var prep = IncusClient.ShellPrep.fromInstance(daemon.client(), instance);
+        resolver.shellMenu(NAME, instance, TEMPLATE, prep.workdir());
+        assertInstanceReadOnce(daemon, "isx run's shell with no default action");
+    }
+
+    private static FakeIncusDaemon runningClone(Map<String, String> extra) {
+        var config = new java.util.HashMap<>(extra);
+        config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
+        config.put(Metadata.BUILD_SOURCE, buildSource("some-tool"));
+        return new FakeIncusDaemon().instance(NAME, "container", "Running", config).ipFiltering(NAME, "true");
+    }
+
+    /** The instance read once and its /state once; the shell's subnet check may add its own reads. */
+    private static void assertInstanceReadOnce(FakeIncusDaemon daemon, String flow) {
+        var instanceRequests = daemon.requests().stream()
+                .filter(r -> r.startsWith("GET /1.0/instances/" + NAME))
+                .toList();
+        assertEquals(List.of("GET /1.0/instances/" + NAME, "GET /1.0/instances/" + NAME + "/state"),
+                instanceRequests, () -> flow + " should read the instance once and its /state once, made:\n  "
+                        + String.join("\n  ", daemon.requests()));
     }
 
     @Test
     void aMissingInstanceFailsRatherThanYieldingAnEmptyContext() {
         var resolver = resolver(new FakeIncusDaemon());
         assertThrows(IncusException.class, () -> resolver.buildActionContext(NAME, TEMPLATE));
-        assertThrows(IncusException.class, () -> resolver.collectInstalledTools(NAME, TEMPLATE));
+        assertThrows(IncusException.class, () -> resolver.readInstance(NAME));
     }
 }
