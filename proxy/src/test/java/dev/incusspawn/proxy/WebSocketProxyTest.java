@@ -36,7 +36,6 @@ import javax.net.ssl.X509TrustManager;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -132,8 +131,9 @@ class WebSocketProxyTest {
         });
         int mockPort = await(mockUpstream.listen(0, "127.0.0.1"), 5).actualPort();
 
-        mitmPort = findFreePort();
-        int healthPort = findFreePort();
+        var ports = ContainerTls.freePorts(2);
+        mitmPort = ports[0];
+        int healthPort = ports[1];
 
         var openaiAuth = new ToolDef.AuthDef();
         openaiAuth.setType("bearer");
@@ -545,11 +545,5 @@ class WebSocketProxyTest {
             head.append((char) b);
         }
         return head.toString();
-    }
-
-    static int findFreePort() throws Exception {
-        try (var ss = new ServerSocket(0)) {
-            return ss.getLocalPort();
-        }
     }
 }

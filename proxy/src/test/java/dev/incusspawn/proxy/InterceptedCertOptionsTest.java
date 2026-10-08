@@ -22,7 +22,6 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static dev.incusspawn.proxy.ContainerTls.assertServerRefuses;
-import static dev.incusspawn.proxy.ContainerTls.freePort;
 import static dev.incusspawn.proxy.ContainerTls.startInBackground;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -54,8 +53,9 @@ class InterceptedCertOptionsTest {
         var credentials = new ProxyCredentials("", "", false, "", "", List.of(
                 new ResolvedToolProxy("gh", "*.githubusercontent.com", auth, Map.of("token", "t"))));
         vertx = Vertx.vertx();
-        mitmPort = freePort();
-        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, freePort(), "127.0.0.1", credentials);
+        var ports = ContainerTls.freePorts(2);
+        mitmPort = ports[0];
+        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, ports[1], "127.0.0.1", credentials);
         startInBackground(proxy);
     }
 

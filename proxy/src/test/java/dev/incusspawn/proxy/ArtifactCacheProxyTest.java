@@ -169,8 +169,9 @@ class ArtifactCacheProxyTest {
         h1UpstreamPort = h1Upstream.listen(0, "127.0.0.1").toCompletionStage().toCompletableFuture()
                 .get(5, TimeUnit.SECONDS).actualPort();
 
-        mitmPort = WebSocketProxyTest.findFreePort();
-        var healthPort = WebSocketProxyTest.findFreePort();
+        var ports = ContainerTls.freePorts(2);
+        mitmPort = ports[0];
+        var healthPort = ports[1];
         proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, healthPort, "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", java.util.List.of()));
         proxy.upstreamTrustAll = true;
