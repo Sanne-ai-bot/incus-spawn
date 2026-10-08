@@ -164,7 +164,7 @@ perceive 216 µs, and 41 MB is a real download and disk cost for users.
 ## Measurement caveats worth remembering
 
 - **Native builds are not byte-reproducible here.** The same commit and toolchain produced
-  proxy binaries 65,536 bytes apart (the `git-commit-id` plugin bakes build metadata into
+  proxy binaries 65,536 bytes apart (build metadata is baked into
   the image heap). Treat size deltas below ~100 KB as noise.
 - **Startup drifts ~8% between sessions.** Cross-session startup comparisons are worthless;
   only interleaved A/B within one session is trustworthy.

@@ -105,6 +105,7 @@
                         <systemPropertyVariables>
                             <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
                             <maven.home>${maven.home}</maven.home>
+                            <isx.test.localRepository>${settings.localRepository}</isx.test.localRepository>
                         </systemPropertyVariables>
                     </configuration>
                 </plugin>

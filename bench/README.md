@@ -219,7 +219,7 @@ Result files are git-ignored.
 
 ## Interpreting Results
 
-**Binary size:** near-deterministic, but not byte-exact — the same commit and toolchain have produced binaries 65,536 bytes apart, because `git-commit-id` bakes build metadata into the image heap. Treat deltas under ~100 KB as noise and anything larger as real.
+**Binary size:** near-deterministic, but not byte-exact — the same commit and toolchain have produced binaries 65,536 bytes apart, because build metadata is baked into the image heap. Treat deltas under ~100 KB as noise and anything larger as real.
 
 **Throughput:** at constant rate (5000 req/s) this only confirms the proxy kept up — it is ~3% of capacity, so it cannot detect a throughput change in either direction. Use `--load=saturate` for that. Success below 100% in either mode means the proxy could not keep up.
 
