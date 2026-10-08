@@ -252,8 +252,50 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.exitsAtOnce = true;
 
-        assertEquals(LaunchdJob.Outcome.FAILED, job.restart(false, log::add));
+        var outcome = job.restart(false, log::add);
+
+        assertEquals(LaunchdJob.Outcome.EXITED, outcome);
+        assertFalse(outcome.up());
         assertTrue(job.isLoaded(), "it is loaded all the same, so launchd will try again");
+    }
+
+    /**
+     * A first run that exits within the settle window is not a refused load: the job is loaded and
+     * launchd starts it again after {@code ThrottleInterval}, so {@code isx proxy start} has to
+     * go on to wait for health instead of reporting "failed to start" at once (#1098).
+     */
+    @Test
+    void aStartWhoseFirstRunExitsIsLaunchedButNotUp() {
+        launchd.exitsAtOnce = true;
+
+        var outcome = job.start(log::add);
+
+        assertEquals(LaunchdJob.Outcome.EXITED, outcome, log.toString());
+        assertFalse(outcome.up());
+        assertTrue(outcome.launched(), "launchd has the job and will run it again");
+        assertTrue(job.isLoaded());
+        assertEquals(List.of(), log, "launchctl refused nothing, so there is nothing to report");
+    }
+
+    /** A load launchd refused leaves nothing for launchd to retry, and says what it refused. */
+    @Test
+    void aStartLaunchdRefusesIsNotLaunched() {
+        launchd.plistRejected = true;
+
+        var outcome = job.start(log::add);
+
+        assertEquals(LaunchdJob.Outcome.FAILED, outcome);
+        assertFalse(outcome.launched());
+        assertFalse(job.isLoaded());
+        assertEquals(List.of("launchctl bootstrap failed (exit 5): Bootstrap failed: 5: Input/output error"), log);
+    }
+
+    @Test
+    void onlyAJobLaunchdTookCountsAsLaunched() {
+        assertTrue(LaunchdJob.Outcome.RUNNING.launched());
+        assertTrue(LaunchdJob.Outcome.EXITED.launched());
+        assertFalse(LaunchdJob.Outcome.STILL_UNLOADING.launched(), "nothing was loaded again");
+        assertFalse(LaunchdJob.Outcome.FAILED.launched());
     }
 
     /** start() only ever reaches a job that is not loaded (review on #916: see LaunchdJob#start). */
