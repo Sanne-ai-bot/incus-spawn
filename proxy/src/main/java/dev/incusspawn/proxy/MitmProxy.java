@@ -3172,6 +3172,8 @@ public class MitmProxy {
                 .setPort(443)
                 .setURI(clientReq.uri());
         var watchdog = new RelayWatchdog(clientReq, domain, body != null);
+        // From here on, waiting is upstream's time: a lookup or connect that stalls is cut (#929)
+        if (body != null) body.onSuccess(read -> watchdog.requestRead());
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
             if (watchdog.cut) {
@@ -3181,7 +3183,7 @@ public class MitmProxy {
             watchdog.upReq = upReq;
             copyRequestHeaders(clientReq, upReq, domain);
 
-            sendWithBody(body, upReq, watchdog::requestRead).onSuccess(upResp -> {
+            sendWithBody(body, upReq).onSuccess(upResp -> {
                 if (watchdog.cut) return;
                 if (responseCallback != null) {
                     responseCallback.accept(upResp);
@@ -3790,17 +3792,9 @@ public class MitmProxy {
         clientResp.headers().remove("Transfer-Encoding");
     }
 
-    /** {@code whenRead} runs once the client's request body, if any, has all arrived. */
-    private static Future<HttpClientResponse> sendWithBody(
-            Future<Buffer> body, HttpClientRequest upReq, Runnable whenRead) {
-        if (body != null) {
-            return body.compose(read -> {
-                whenRead.run();
-                return upReq.send(read);
-            });
-        }
-        whenRead.run();
-        return upReq.send();
+    /** Sends the client's request body, if any, once it has all arrived. */
+    private static Future<HttpClientResponse> sendWithBody(Future<Buffer> body, HttpClientRequest upReq) {
+        return body != null ? body.compose(upReq::send) : upReq.send();
     }
 
     /**
