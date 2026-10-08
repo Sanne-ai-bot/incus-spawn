@@ -540,7 +540,15 @@ public class IncusClient {
 
         public static ShellPrep from(IncusClient incus, String container) {
             // One instance read for every key: configGet costs a round trip per key.
-            var config = incus.configByPrefix(container, "");
+            return fromConfig(incus, incus.configByPrefix(container, ""));
+        }
+
+        /** {@link #from(IncusClient, String)} from an instance already read with {@link #instanceMetadata}. */
+        public static ShellPrep fromInstance(IncusClient incus, JsonNode instance) {
+            return fromConfig(incus, configByPrefix(instance, ""));
+        }
+
+        private static ShellPrep fromConfig(IncusClient incus, Map<String, String> config) {
             return fromPrefetched(config.get(Metadata.WORKDIR), config.get(Metadata.SHELL_COMMAND),
                     config.get(Metadata.BUILD_SOURCE),
                     BridgeSubnetCheck.detectConflictDiagnostic(incus), false,

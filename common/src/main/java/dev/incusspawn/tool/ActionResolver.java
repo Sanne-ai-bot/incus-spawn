@@ -83,12 +83,18 @@ public class ActionResolver {
 
     /**
      * Find the default action for an instance based on its template's default-action field.
+     *
+     * @param instance the instance as {@link #readInstance} returned it, whose stamp stands in
+     *                 for a template YAML that is gone
      */
-    public Optional<ToolAction> findDefaultAction(String instanceName, String parentTemplate,
+    public Optional<ToolAction> findDefaultAction(JsonNode instance, String parentTemplate,
                                                    Set<String> installedTools,
                                                    List<ActionContext.RepoInfo> repos) {
-        return findDefaultAction(parentTemplate, () -> incus.configGet(instanceName, Metadata.DEFAULT_ACTION),
-                () -> installedTools, repos);
+        return findDefaultAction(parentTemplate, () -> stampedDefaultAction(instance), () -> installedTools, repos);
+    }
+
+    private static String stampedDefaultAction(JsonNode instance) {
+        return instance.path("config").path(Metadata.DEFAULT_ACTION).asText("");
     }
 
     /**
@@ -104,9 +110,8 @@ public class ActionResolver {
      * @param template the leaf template the source was built from ({@code Preflight.template()})
      */
     public String defaultCommandForBranch(String template, JsonNode sourceInstance) {
-        var config = sourceInstance.path("config");
-        return findDefaultAction(template, () -> config.path(Metadata.DEFAULT_ACTION).asText(""),
-                        () -> collectInstalledTools(config, template), collectRepos(template))
+        return findDefaultAction(template, () -> stampedDefaultAction(sourceInstance),
+                        () -> collectInstalledTools(sourceInstance, template), collectRepos(template))
                 .flatMap(a -> a.shellCommand(null)).orElse(null);
     }
 
@@ -144,12 +149,11 @@ public class ActionResolver {
      * resolution reflects what was actually installed — not what the current YAML says.
      * Falls back to the YAML chain for templates or when BUILD_SOURCE is unavailable; a
      * template whose YAML is gone still has its snapshot, so it uses that.
+     *
+     * @param instance the instance as {@link #readInstance} returned it
      */
-    public Set<String> collectInstalledTools(String instanceName, String parentTemplate) {
-        return collectInstalledTools(readInstance(instanceName).path("config"), parentTemplate);
-    }
-
-    private Set<String> collectInstalledTools(JsonNode config, String parentTemplate) {
+    public Set<String> collectInstalledTools(JsonNode instance, String parentTemplate) {
+        var config = instance.path("config");
         var buildSourceJson = config.path(Metadata.BUILD_SOURCE).asText("");
         if (!buildSourceJson.isBlank()) {
             var type = config.path(Metadata.TYPE).asText("");
@@ -251,7 +255,11 @@ public class ActionResolver {
     public ActionContext buildActionContext(String instanceName, String parentTemplate) {
         // One instance read for status, type and every config key (configGet is a full instance
         // GET per key), plus /state only where a guest can hold an address (#979).
-        var instance = readInstance(instanceName);
+        return buildActionContext(instanceName, readInstance(instanceName), parentTemplate);
+    }
+
+    /** {@link #buildActionContext(String, String)} from an instance its caller already read. */
+    public ActionContext buildActionContext(String instanceName, JsonNode instance, String parentTemplate) {
         var config = instance.path("config");
         var status = instance.path("status").asText("");
         var ipv4 = "";
@@ -266,7 +274,7 @@ public class ActionResolver {
             ipv4 = config.path(Metadata.STATIC_IP).asText("");
         }
         var networkMode = config.path(Metadata.NETWORK_MODE).asText("");
-        var installedTools = collectInstalledTools(config, parentTemplate);
+        var installedTools = collectInstalledTools(instance, parentTemplate);
         var repos = collectRepos(parentTemplate);
 
         return new ActionContext(
@@ -284,25 +292,38 @@ public class ActionResolver {
      * come from the context it builds, so tools and repos are collected once.
      */
     public ShellMenu shellMenu(String instanceName, String templateName, String workdir) {
+        return shellMenu(instanceName, () -> readInstance(instanceName), templateName, workdir);
+    }
+
+    /** {@link #shellMenu(String, String, String)} from an instance its caller already read. */
+    public ShellMenu shellMenu(String instanceName, JsonNode instance, String templateName, String workdir) {
+        return shellMenu(instanceName, () -> instance, templateName, workdir);
+    }
+
+    private ShellMenu shellMenu(String instanceName, Supplier<JsonNode> instance, String templateName,
+                                String workdir) {
         if (templateName == null || templateName.isBlank() || !ShellMenu.enabled()) {
             return ShellMenu.NONE;
         }
-        var context = buildActionContext(instanceName, templateName);
+        var context = buildActionContext(instanceName, instance.get(), templateName);
         var actions = resolveActionsForInstance(instanceName, templateName,
                 context.installedTools(), context.repos());
         return ShellMenu.of(actions, workdir, context);
     }
 
-    // --- Private helpers ---
-
-    /** The instance as one GET returns it, failing like {@code configGet} when Incus refuses it. */
-    private JsonNode readInstance(String instanceName) {
+    /**
+     * The instance as one GET returns it, failing like {@code configGet} when Incus refuses it:
+     * what a caller resolving several things about one instance reads once and passes on.
+     */
+    public JsonNode readInstance(String instanceName) {
         var instance = incus.instanceMetadata(instanceName);
         if (instance.isMissingNode() || instance.isNull()) {
             throw new IncusException("Failed to read instance " + instanceName);
         }
         return instance;
     }
+
+    // --- Private helpers ---
 
     /** The default-action reference, or null for none: the YAML chain's, else the snapshot's when the YAML is gone. */
     private String resolveDefaultActionRef(String parentTemplate, Supplier<String> snapshot) {

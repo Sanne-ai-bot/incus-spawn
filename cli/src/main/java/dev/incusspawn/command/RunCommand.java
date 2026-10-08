@@ -41,20 +41,23 @@ public class RunCommand extends BaseCommand {
         var imageDefs = ImageDef.loadAll(w -> {});
         var resolver = new ActionResolver(incus, toolDefLoader, cdiTools, imageDefs);
 
-        var installedTools = resolver.collectInstalledTools(name, parent);
+        // One read for the tools, the default action's stamp, the action's context and the shell
+        // (#1159); the context is built only where it is used, since it may ask for /state.
+        var instance = resolver.readInstance(name);
+        var installedTools = resolver.collectInstalledTools(instance, parent);
         var repos = resolver.collectRepos(parent);
 
         // Find the action to execute
         ToolAction toolAction;
         if (action == null || action.isBlank()) {
             // Execute default action
-            var defaultAction = resolver.findDefaultAction(name, parent, installedTools, repos);
+            var defaultAction = resolver.findDefaultAction(instance, parent, installedTools, repos);
             if (defaultAction.isEmpty()) {
                 // No default action configured, fall back to shell
                 System.out.println("No default action configured for " + name + ", opening shell...\n");
-                var prep = dev.incusspawn.incus.IncusClient.ShellPrep.from(incus, name);
+                var prep = dev.incusspawn.incus.IncusClient.ShellPrep.fromInstance(incus, instance);
                 incus.interactiveShell(name, "agentuser", prep,
-                        resolver.shellMenu(name, parent, prep.workdir()));
+                        resolver.shellMenu(name, instance, parent, prep.workdir()));
                 return CommandResult.SUCCESS;
             }
             toolAction = defaultAction.get();
@@ -91,15 +94,14 @@ public class RunCommand extends BaseCommand {
             System.out.println("Running action: " + toolAction.label());
         }
 
-        // Build action context
-        var context = resolver.buildActionContext(name, parent);
+        var context = resolver.buildActionContext(name, instance, parent);
 
         // Execute the action
         var cmd = toolAction.shellCommand(context);
         if (cmd.isPresent()) {
             // Action wants to run a shell command
             System.out.println("Connecting to " + name + "...\n");
-            var prep = dev.incusspawn.incus.IncusClient.ShellPrep.from(incus, name);
+            var prep = dev.incusspawn.incus.IncusClient.ShellPrep.fromInstance(incus, instance);
             var shellCmd = cmd.get();
             var updatedPrep = new dev.incusspawn.incus.IncusClient.ShellPrep(
                     prep.workdir(), shellCmd, prep.autoAttachTmux(), prep.autoAttachZmx(),
