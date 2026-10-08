@@ -159,10 +159,24 @@ does nothing.
 `installMacOs`'s failure message depends on *why* the reinstall's restart failed, which `isActive()`
 alone cannot say: a job still being unloaded when the install's own teardown timed out, and a job
 that loaded fine but is failing to come up (bad config, VM unreachable), both leave the job loaded.
-`LaunchdJob.start`/`restart` therefore return a three-value `Outcome`
-(`RUNNING`/`STILL_UNLOADING`/`FAILED`) instead of a boolean, so `installMacOs` can report "the
+`LaunchdJob.start`/`restart` therefore return an `Outcome`
+(`RUNNING`/`STILL_UNLOADING`/`FAILED`/`EXITED`) instead of a boolean, so `installMacOs` can report "the
 previous job had not finished unloading" only for the first case and fall through to the ordinary
 "not responding" message, which points at logs, for the second.
+
+`Outcome` also keeps "launchctl refused" (`FAILED`) apart from "launchctl did it and the job did
+not stay up" (`EXITED`). Only `RUNNING` is success, for `restart` as before (#916). But `isx proxy
+start` on a stopped service used to print "failed to start" for both, at once, although after
+`EXITED` the job is loaded and launchd runs it again after `ThrottleInterval`: with a cause that
+clears by itself the proxy was healthy ten seconds after being reported dead, #969's symptom on
+the one path that never reached a wait. `startService()` therefore answers with
+`Outcome.launched()`, as it does on Linux with "the unit is active", and the command goes on to
+`awaitStarted`, which outlasts the throttle and prints the `launchd:` line when the proxy still
+does not answer (#1098). Changing only the message ("launchd will retry in ten seconds") was
+rejected: it keeps a non-zero exit for a start that succeeds, and tells the user to wait where
+the command can. The price is the same as #969's: a proxy that exits at every start is reported
+after about fifteen seconds instead of two, as "started but is not responding" with launchd's
+count of runs and last exit code.
 
 In the foreground, `isx proxy start` runs `isx-proxy` as a child sharing the terminal, and a
 shutdown hook stops that child when the CLI is terminated: SIGTERM, then SIGKILL after 15 seconds,

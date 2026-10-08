@@ -35,11 +35,19 @@ final class LaunchdJob {
      * the job loaded, one because launchd is still tearing the old one down, the other because
      * {@code kickstart}/{@code bootstrap} succeeded and KeepAlive already relaunched a process
      * that is failing to come up (review on #916).
+     * <p>
+     * {@code FAILED} is {@code launchctl} refusing: nothing new is loaded or started. {@code
+     * EXITED} is {@code launchctl} doing what it was asked and the job not staying up: it is
+     * loaded, and launchd runs it again after {@code ThrottleInterval}. Neither is {@link #up},
+     * but only the first leaves nothing to wait for (#1098).
      */
     enum Outcome {
-        RUNNING, STILL_UNLOADING, FAILED;
+        RUNNING, STILL_UNLOADING, FAILED, EXITED;
 
         boolean up() { return this == RUNNING; }
+
+        /** launchd took the job: it is running, or launchd is about to run it again. */
+        boolean launched() { return this == RUNNING || this == EXITED; }
     }
 
     /**
@@ -89,6 +97,8 @@ final class LaunchdJob {
      * ProxyService.startService()} returns early whenever {@code isActive()} — which on macOS
      * means loaded, including a job that is being unloaded — is already true, and the "loaded but
      * not responding" case goes through {@link #restart} instead (review on #916).
+     * <p>
+     * {@code startService()} goes on to wait for health after {@link Outcome#EXITED} too.
      */
     Outcome start(Consumer<String> log) {
         return load(log);
@@ -116,7 +126,7 @@ final class LaunchdJob {
      */
     private Outcome kick(Consumer<String> log, String... kickstart) {
         var kicked = launchctl.run(kickstart);
-        if (kicked.ok()) return awaitUp() ? Outcome.RUNNING : Outcome.FAILED;
+        if (kicked.ok()) return awaitUp() ? Outcome.RUNNING : Outcome.EXITED;
         if (kicked.exitCode() != BEING_UNLOADED) {
             report(log, kickstart[0], kicked);
             return Outcome.FAILED;
@@ -126,8 +136,8 @@ final class LaunchdJob {
 
     /** Loads a job launchd does not have, and starts it. */
     private Outcome load(Consumer<String> log) {
-        var up = step(log, "bootstrap", domain, plist.toString()) && step(log, "kickstart", target) && awaitUp();
-        return up ? Outcome.RUNNING : Outcome.FAILED;
+        if (!step(log, "bootstrap", domain, plist.toString()) || !step(log, "kickstart", target)) return Outcome.FAILED;
+        return awaitUp() ? Outcome.RUNNING : Outcome.EXITED;
     }
 
     private boolean awaitUnloaded(Consumer<String> log) {

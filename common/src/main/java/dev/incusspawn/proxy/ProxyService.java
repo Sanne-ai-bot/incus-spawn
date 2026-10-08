@@ -397,7 +397,13 @@ public final class ProxyService {
 
     /**
      * Start the proxy through the service manager when it is installed but not
-     * currently active. Returns true if the service is running afterward.
+     * currently active. Returns true if the service is active afterward, which the caller follows
+     * with {@link #awaitStarted}.
+     * <p>
+     * On macOS that includes a job whose first run exited before {@code LaunchdJob} saw it settle:
+     * it is loaded and launchd starts it again after {@code ThrottleInterval}, which is what
+     * {@code awaitStarted} waits out. Answering false there reported "failed to start" about a
+     * proxy that came up ten seconds later (#1098). False is left for a load launchd refused.
      */
     public static boolean startService() {
         if (!isInstalled()) return false;
@@ -405,7 +411,7 @@ public final class ProxyService {
         if (!initComplete()) return false;
         try (var ignored = acquireProxyLock()) {
             if (isActive()) return true;
-            if (Platform.isMacOS()) return proxyJob().start(System.err::println).up();
+            if (Platform.isMacOS()) return proxyJob().start(System.err::println).launched();
             runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
             runQuiet("systemctl", "--user", "start", SERVICE_NAME);
             return isActive();
