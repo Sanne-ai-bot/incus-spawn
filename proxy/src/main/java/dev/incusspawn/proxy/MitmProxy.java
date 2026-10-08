@@ -48,6 +48,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
@@ -1006,6 +1007,19 @@ public class MitmProxy {
 
     // --- Request routing ---
 
+    /** The handler of a domain served from a cache, or null: it sees only requests without a body. */
+    private Consumer<HttpServerRequest> cacheHandler(String domain, long started) {
+        if (REGISTRY_DOMAINS.contains(domain)) return req -> handleRegistryRequest(req, started, domain);
+        if (MAVEN_DOMAINS.contains(domain)) {
+            return req -> handleArtifactRequest(req, started, domain, path -> mavenTarget(domain, path));
+        }
+        if (GRADLE_DOMAINS.contains(domain)) {
+            return req -> handleArtifactRequest(req, started, domain, MitmProxy::gradleTarget);
+        }
+        if (NPM_DOMAINS.contains(domain)) return req -> handleNpmRequest(req, started, domain);
+        return null;
+    }
+
     private void routeRequest(HttpServerRequest clientReq) {
         // When the client last heard from us, for waits that must end before its idle timeout
         var started = System.nanoTime();
@@ -1016,17 +1030,18 @@ public class MitmProxy {
                 return;
             }
 
+            Consumer<HttpServerRequest> cache;
             if (ProxyConfig.MCP_DOMAIN.equals(domain)) {
                 // Answered here, never relayed: it names no host outside this machine.
                 mcpBridge.handle(clientReq, sourceAddressOf(clientReq));
-            } else if (REGISTRY_DOMAINS.contains(domain)) {
-                handleRegistryRequest(clientReq, started, domain);
-            } else if (MAVEN_DOMAINS.contains(domain)) {
-                handleArtifactRequest(clientReq, started, domain, path -> mavenTarget(domain, path));
-            } else if (GRADLE_DOMAINS.contains(domain)) {
-                handleArtifactRequest(clientReq, started, domain, MitmProxy::gradleTarget);
-            } else if (NPM_DOMAINS.contains(domain)) {
-                handleNpmRequest(clientReq, started, domain);
+            } else if ((cache = cacheHandler(domain, started)) != null) {
+                if (hasBody(clientReq)) {
+                    // An upload or a query (npm audit, a registry push): never from a cache, keyed by
+                    // path alone, and relayed now, since a cache handler waits before it relays (#1164)
+                    relayRequest(clientReq, domain);
+                } else {
+                    cache.accept(clientReq);
+                }
             } else if (isInterceptedDomain(domain)) {
                 RequestContext ctx;
                 try {
@@ -1650,7 +1665,7 @@ public class MitmProxy {
             // and serve them directly via sendFile on cache hits.
             upReq.headers().remove("Accept-Encoding");
 
-            sendWithBody(clientReq, upReq, () -> {}).onSuccess(upResp -> {
+            upReq.send().onSuccess(upResp -> {
                 var statusCode = upResp.statusCode();
 
                 if (statusCode == 200) {
@@ -3145,15 +3160,18 @@ public class MitmProxy {
      * Relay a request to upstream with an optional response callback.
      * When {@code responseCallback} is non-null it fires after the upstream
      * response headers arrive but before the body is piped to the client.
+     * Its body is claimed here ({@link #claimBody}), so a request with one is relayed before anything
+     * waits; the caching handlers, which wait, only ever get requests without one.
      */
     private void relayRequest(HttpServerRequest clientReq, String domain,
                                java.util.function.Consumer<HttpClientResponse> responseCallback) {
+        var body = claimBody(clientReq);
         var options = new RequestOptions()
                 .setMethod(clientReq.method())
                 .setHost(domain)
                 .setPort(443)
                 .setURI(clientReq.uri());
-        var watchdog = new RelayWatchdog(clientReq, domain);
+        var watchdog = new RelayWatchdog(clientReq, domain, body != null);
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
             if (watchdog.cut) {
@@ -3163,7 +3181,7 @@ public class MitmProxy {
             watchdog.upReq = upReq;
             copyRequestHeaders(clientReq, upReq, domain);
 
-            sendWithBody(clientReq, upReq, watchdog::requestRead).onSuccess(upResp -> {
+            sendWithBody(body, upReq, watchdog::requestRead).onSuccess(upResp -> {
                 if (watchdog.cut) return;
                 if (responseCallback != null) {
                     responseCallback.accept(upResp);
@@ -3176,6 +3194,14 @@ public class MitmProxy {
                 pipeResponse(upResp, clientResp, watchdog);
             }).onFailure(err -> {
                 if (watchdog.cut) return;
+                if (body != null && body.failed()) {
+                    // Never sent: give its connection back to the pool rather than hold it for good
+                    upReq.exceptionHandler(ignored -> {}).reset();
+                    System.err.println("Relay (" + domain + "): request body not received from the client: "
+                            + err.getMessage());
+                    sendError(clientReq.response(), 502, "Request body not received");
+                    return;
+                }
                 System.err.println("Relay upstream error (" + domain + "): " + err.getMessage());
                 sendError(clientReq.response(), 502, "Upstream error");
             });
@@ -3207,11 +3233,11 @@ public class MitmProxy {
         // Vert.x numbers timers from 0: cancelling 0 before one is set would cancel another's
         private long timer = -1;
 
-        RelayWatchdog(HttpServerRequest clientReq, String domain) {
+        RelayWatchdog(HttpServerRequest clientReq, String domain, boolean hasBody) {
             this.clientReq = clientReq;
             this.domain = domain;
             // With no body to wait for, the DNS lookup and connect are already upstream's time
-            waitingOnClient = hasBody(clientReq);
+            waitingOnClient = hasBody;
             var clientResp = clientReq.response();
             clientResp.endHandler(v -> stop());
             clientResp.closeHandler(v -> stop());
@@ -3765,16 +3791,32 @@ public class MitmProxy {
     }
 
     /** {@code whenRead} runs once the client's request body, if any, has all arrived. */
-    private io.vertx.core.Future<HttpClientResponse> sendWithBody(
-            HttpServerRequest clientReq, HttpClientRequest upReq, Runnable whenRead) {
-        if (hasBody(clientReq)) {
-            return clientReq.body().compose(body -> {
+    private static Future<HttpClientResponse> sendWithBody(
+            Future<Buffer> body, HttpClientRequest upReq, Runnable whenRead) {
+        if (body != null) {
+            return body.compose(read -> {
                 whenRead.run();
-                return upReq.send(body);
+                return upReq.send(read);
             });
         }
         whenRead.run();
         return upReq.send();
+    }
+
+    /**
+     * Starts reading the request's body, if it has one, for a relay to send on. Called as the request
+     * is routed, before anything waits: Vert.x drops a body that arrives with nothing reading it, and
+     * then refuses to read the request at all, so a body claimed only once the upstream connection was
+     * ready was gone whenever it beat the connect, and the relay hung (#1164). One claimed too late
+     * anyway fails here, for the relay to answer, rather than throwing where nothing would.
+     */
+    private static Future<Buffer> claimBody(HttpServerRequest clientReq) {
+        if (!hasBody(clientReq)) return null;
+        try {
+            return clientReq.body();
+        } catch (IllegalStateException e) {
+            return Future.failedFuture(e);
+        }
     }
 
     private static boolean hasBody(HttpServerRequest clientReq) {
