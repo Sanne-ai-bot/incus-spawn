@@ -48,18 +48,23 @@ final class TemplatePolicy {
         return info;
     }
 
-    /**
-     * The template an instance descends from, if an agent may still fork that instance: as
-     * {@link #require}, except that the template need not be built -- a fork copies the
-     * instance, not the template's image -- the same rule adoption applies.
-     */
-    InstanceBackend.TemplateInfo requireLineage(String name) {
+    /** Refuses a template the user has not listed under {@code mcp.templates}, from the config alone. */
+    void requireListed(String name) {
         var listed = config.get().templates();
         if (!listed.contains(name)) {
             throw new ToolError(ToolError.Code.NOT_APPROVED, "template '" + name + "' is not approved for agents"
                     + (listed.isEmpty() ? " (none are)." : "; approved: " + String.join(", ", listed) + ".")
                     + " " + HOW_TO_APPROVE);
         }
+    }
+
+    /**
+     * The template an instance descends from, if an agent may still fork that instance: as
+     * {@link #require}, except that the template need not be built -- a fork copies the
+     * instance, not the template's image -- the same rule adoption applies.
+     */
+    InstanceBackend.TemplateInfo requireLineage(String name) {
+        requireListed(name);
         var info = backend.template(name)
                 .orElseThrow(() -> new ToolError(ToolError.Code.NOT_APPROVED, "template '" + name + "' is approved but has no "
                         + "definition. Ask the user to check mcp.templates in their config."));

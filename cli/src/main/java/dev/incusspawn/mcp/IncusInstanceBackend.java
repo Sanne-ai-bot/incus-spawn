@@ -13,9 +13,11 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.tui.InstanceLockManager;
+import dev.incusspawn.util.HostLock;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -91,6 +93,16 @@ final class IncusInstanceBackend implements InstanceBackend {
                 .flatMap(d -> d.getTools().stream())
                 .filter(ref -> "claude".equals(ref.getName()))
                 .findFirst().map(ref -> ref.getParams().get("model")).orElse(null);
+    }
+
+    @Override
+    public TemplateLock.Held holdTemplate(String template) {
+        try {
+            // stderr: stdout is the protocol
+            return TemplateLock.reading(template, System.err::println);
+        } catch (HostLock.HostLockException e) {
+            throw new ToolError(ToolError.Code.BUSY, "template '" + template + "' is being rebuilt; try again. " + e.getMessage());
+        }
     }
 
     @Override

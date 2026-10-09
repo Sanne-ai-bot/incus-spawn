@@ -1382,6 +1382,8 @@ Build or rebuild a template image.
 
     isx build [<template>...] [options]
 
+A template's name may be at most 52 characters, since it is built as `<name>-rebuilding` first and swapped in once built; a longer one is refused before anything is built, its parents included.
+
 Several templates build in one invocation: plainly, each in turn, a named parent before its child (each with any parent that is missing or out of sync, so a parent they share is built once); with `--with-parents` or `--with-descendants`, as one batch with one confirmation, parents before children and every template once. An unknown name anywhere in the list builds nothing. A target that fails does not stop the others: one that inherits from it is skipped, the rest are built, and the build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt (a parent a target's chain failed on included).
 
 | Option | Description |
@@ -1582,7 +1584,7 @@ Manage project templates defined by an `incus-spawn.yaml` file.
 |--------|-------------|
 | `--config <path>` | Path to `incus-spawn.yaml` (default: auto-detect from cwd) |
 
-If a repository fails to clone or the pre-build fails, the command exits non-zero and deletes the incomplete template.
+A project name may be at most 52 characters, since it is built as `<name>-rebuilding` first. Re-creating an existing template builds the new one alongside it and replaces it only once the build succeeds. If a repository fails to clone or the pre-build fails, the command exits non-zero, deletes the incomplete build and keeps the previous template.
 
 #### `isx project update`
 

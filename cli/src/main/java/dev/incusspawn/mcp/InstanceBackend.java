@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.lifecycle.TemplateLock;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -61,6 +62,14 @@ interface InstanceBackend {
 
     /** One template, as {@link #templates()} would describe it, without listing every instance. */
     java.util.Optional<TemplateInfo> template(String name);
+
+    /**
+     * Keep {@code template} in place until closed: a rebuild of it waits to swap it (#1212). Held
+     * from looking the template up until {@link #create} has copied it.
+     */
+    default TemplateLock.Held holdTemplate(String template) {
+        return () -> {};
+    }
 
     /**
      * Branch {@code template}, as {@link #template} described it, into {@code name} exactly as

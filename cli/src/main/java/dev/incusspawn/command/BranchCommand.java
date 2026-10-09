@@ -7,9 +7,11 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -142,7 +144,19 @@ public class BranchCommand extends BaseCommand {
 
     /** Create (and unless {@code --no-start}, start) the branch; {@code null} once the error is reported. */
     private Created create() {
-        var resolvedSource = resolveSource();
+        var named = source != null ? source : detectSource();
+        if (named == null) return null;
+        // From the lookup through the branch's start, so a rebuild cannot swap the template away meanwhile (#1212)
+        try (var held = TemplateLock.reading(named, System.err::println)) {
+            return create(named);
+        } catch (HostLock.HostLockException e) {
+            System.err.println("Error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private Created create(String named) {
+        var resolvedSource = resolveSource(named);
         if (resolvedSource == null) return null;
 
         if (airgap && proxyOnly) {
@@ -180,25 +194,22 @@ public class BranchCommand extends BaseCommand {
         return new Created(resolvedSource, preflight, prefetched);
     }
 
-    private String resolveSource() {
-        if (source != null) {
-            if (!incus.exists(source)) {
-                System.err.println("Error: source instance '" + source + "' does not exist.");
-                return null;
-            }
-            return source;
+    /** {@code named}, the source given or {@linkplain #detectSource detected}, if it exists. */
+    private String resolveSource(String named) {
+        if (!incus.exists(named)) {
+            System.err.println("Error: " + (source != null ? "source instance" : "auto-detected source")
+                    + " '" + named + "' does not exist.");
+            return null;
         }
+        if (source == null) System.out.println("Auto-detected source: " + named);
+        return named;
+    }
 
-        // Try to auto-detect from cwd
+    /** The source the incus-spawn.yaml in the working directory names, or null once that is reported. */
+    private String detectSource() {
         var projectConfig = ProjectConfig.findInDirectory(Path.of("."));
         if (projectConfig != null && projectConfig.getName() != null) {
-            var detected = projectConfig.getName();
-            if (incus.exists(detected)) {
-                System.out.println("Auto-detected source: " + detected);
-                return detected;
-            }
-            System.err.println("Error: auto-detected source '" + detected + "' does not exist.");
-            return null;
+            return projectConfig.getName();
         }
 
         System.err.println("Error: no --from specified and no incus-spawn.yaml found in current directory.");

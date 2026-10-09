@@ -3539,4 +3539,17 @@ class BuildCommandTest {
         Files.writeString(path, "#!/bin/sh\n" + body + "\n");
         path.toFile().setExecutable(true);
     }
+
+    @Test
+    void aNameTooLongToBuildUnderItsTemporaryNameIsRefusedBeforeAnythingIsMade() {
+        var incus = mock(IncusClient.class);
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+        var def = new ImageDef();
+        // Incus would refuse '<name>-rebuilding' only at the create, after the header and the checks
+        def.setName("t".repeat(BuildCommand.MAX_TEMPLATE_NAME_LENGTH + 1));
+
+        assertThrows(BuildCommand.BuildFailedException.class, () -> cmd.buildSingleImage(def, Map.of()));
+        verifyNoInteractions(incus);
+    }
 }
