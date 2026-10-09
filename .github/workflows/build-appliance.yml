@@ -45,19 +45,24 @@ jobs:
           path: appliance/build/
           key: ${{ steps.cache_key.outputs.key }}
 
-      - name: Extract kernel version
+      - name: Extract kernel version and checksum
         if: steps.cache.outputs.cache-hit != 'true'
         id: kernel
         run: |
           ver=$(grep '^KERNEL_VERSION=' appliance/kernel/build-kernel.sh | head -1 | cut -d'"' -f2)
+          sha=$(grep '^KERNEL_SHA256=' appliance/kernel/build-kernel.sh | head -1 | cut -d'"' -f2)
           echo "version=$ver" >> "$GITHUB_OUTPUT"
+          # Keyed on the pinned sum too: an entry saved before build-kernel.sh
+          # verified it, or for another pin, is never restored.
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          [ -n "$ver" ] && [ -n "$sha" ] || { echo "::error::KERNEL_VERSION or KERNEL_SHA256 not found in build-kernel.sh"; exit 1; }
 
       - name: Restore cached kernel source
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v5
         with:
           path: /tmp/kernel-cache/
-          key: kernel-source-${{ steps.kernel.outputs.version }}
+          key: kernel-source-${{ steps.kernel.outputs.version }}-${{ steps.kernel.outputs.sha256 }}
 
       - name: Install build dependencies
         if: steps.cache.outputs.cache-hit != 'true'
@@ -78,7 +83,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: /tmp/kernel-cache/
-          key: kernel-source-${{ steps.kernel.outputs.version }}
+          key: kernel-source-${{ steps.kernel.outputs.version }}-${{ steps.kernel.outputs.sha256 }}
 
       - name: Report image size
         run: ls -lh appliance/build/
@@ -131,19 +136,24 @@ jobs:
           path: appliance/build/
           key: ${{ steps.cache_key.outputs.key }}
 
-      - name: Extract kernel version
+      - name: Extract kernel version and checksum
         if: steps.cache.outputs.cache-hit != 'true'
         id: kernel
         run: |
           ver=$(grep '^KERNEL_VERSION=' appliance/kernel/build-kernel.sh | head -1 | cut -d'"' -f2)
+          sha=$(grep '^KERNEL_SHA256=' appliance/kernel/build-kernel.sh | head -1 | cut -d'"' -f2)
           echo "version=$ver" >> "$GITHUB_OUTPUT"
+          # Keyed on the pinned sum too: an entry saved before build-kernel.sh
+          # verified it, or for another pin, is never restored.
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          [ -n "$ver" ] && [ -n "$sha" ] || { echo "::error::KERNEL_VERSION or KERNEL_SHA256 not found in build-kernel.sh"; exit 1; }
 
       - name: Restore cached kernel source
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v5
         with:
           path: /tmp/kernel-cache/
-          key: kernel-source-${{ steps.kernel.outputs.version }}
+          key: kernel-source-${{ steps.kernel.outputs.version }}-${{ steps.kernel.outputs.sha256 }}
 
       - name: Install build dependencies
         if: steps.cache.outputs.cache-hit != 'true'
@@ -166,7 +176,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: /tmp/kernel-cache/
-          key: kernel-source-${{ steps.kernel.outputs.version }}
+          key: kernel-source-${{ steps.kernel.outputs.version }}-${{ steps.kernel.outputs.sha256 }}
 
       - name: Report image size
         run: ls -lh appliance/build/

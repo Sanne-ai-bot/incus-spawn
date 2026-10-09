@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Build a minimal custom kernel for the incus-spawn VM appliance.
 #
-# Downloads vanilla kernel source from kernel.org, applies isx.config plus the
-# matching isx-<arch>.config on top of allnoconfig, and builds a vmlinuz with
-# zero modules.
+# Downloads vanilla kernel source from kernel.org, verifies it against the
+# pinned KERNEL_SHA256, applies isx.config plus the matching isx-<arch>.config
+# on top of allnoconfig, and builds a vmlinuz with zero modules.
 #
 # Usage:  ./build-kernel.sh [output-dir] [arch]
 #
@@ -15,6 +15,10 @@ set -euo pipefail
 # Requirements: build-essential flex bison bc libelf-dev libssl-dev
 
 KERNEL_VERSION="7.2.9"
+# sha256 of linux-${KERNEL_VERSION}.tar.xz, taken from kernel.org's signed
+# sha256sums.asc (https://cdn.kernel.org/pub/linux/kernel/v<major>.x/), never
+# from a build log. A version bump updates both lines.
+KERNEL_SHA256="b4c5dfbe51a364a6c7f03869200f88c8e1f77403539005f14b7fc6bc91b8d8ba"
 KERNEL_MAJOR="${KERNEL_VERSION%%.*}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -52,33 +56,34 @@ echo "  Output: $OUTPUT_DIR"
 
 mkdir -p "$CACHE_DIR"
 
-TARBALL_XZ="$CACHE_DIR/linux-${KERNEL_VERSION}.tar.xz"
-TARBALL_GZ="$CACHE_DIR/linux-${KERNEL_VERSION}.tar.gz"
-if [ -f "$TARBALL_XZ" ]; then
-    TARBALL="$TARBALL_XZ"
+TARBALL="$CACHE_DIR/linux-${KERNEL_VERSION}.tar.xz"
+
+# Checked on a cache hit too: CI restores the cache dir from an earlier run.
+verify_tarball() {
+    local actual
+    actual=$(sha256sum "$1" | cut -d' ' -f1)
+    if [ "$actual" != "$KERNEL_SHA256" ]; then
+        rm -f "$1"
+        echo "ERROR: linux-${KERNEL_VERSION}.tar.xz checksum mismatch (expected $KERNEL_SHA256, got $actual); removed it" >&2
+        exit 1
+    fi
+}
+
+# A download is checked before it takes the cache name, so only a verified file ever has it.
+if [ -f "$TARBALL" ]; then
     echo "==> Using cached kernel source"
-elif [ -f "$TARBALL_GZ" ]; then
-    TARBALL="$TARBALL_GZ"
-    echo "==> Using cached kernel source"
+    verify_tarball "$TARBALL"
 else
     echo "==> Downloading kernel source..."
     CDN_URL="https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
-    GH_URL="https://github.com/gregkh/linux/archive/refs/tags/v${KERNEL_VERSION}.tar.gz"
-    if curl -fSL --connect-timeout 10 "$CDN_URL" -o "$TARBALL_XZ.tmp"; then
-        mv "$TARBALL_XZ.tmp" "$TARBALL_XZ"
-        TARBALL="$TARBALL_XZ"
-    else
-        rm -f "$TARBALL_XZ.tmp"
-        if curl -fSL --connect-timeout 10 "$GH_URL" -o "$TARBALL_GZ.tmp"; then
-            echo "    cdn.kernel.org download failed, using GitHub archive"
-            mv "$TARBALL_GZ.tmp" "$TARBALL_GZ"
-            TARBALL="$TARBALL_GZ"
-        else
-            rm -f "$TARBALL_GZ.tmp"
-            echo "ERROR: failed to download linux-${KERNEL_VERSION} from cdn.kernel.org or GitHub" >&2
-            exit 1
-        fi
+    # No mirror to fall back to (#1128), so ride out a transient CDN failure instead.
+    if ! curl -fSL --connect-timeout 10 --retry 3 --retry-all-errors "$CDN_URL" -o "$TARBALL.tmp"; then
+        rm -f "$TARBALL.tmp"
+        echo "ERROR: failed to download linux-${KERNEL_VERSION} from cdn.kernel.org" >&2
+        exit 1
     fi
+    verify_tarball "$TARBALL.tmp"
+    mv "$TARBALL.tmp" "$TARBALL"
 fi
 
 BUILD_DIR=$(mktemp -d)

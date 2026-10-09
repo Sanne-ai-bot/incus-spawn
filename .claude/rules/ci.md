@@ -51,6 +51,8 @@ The host half is covered in `unit-tests`: the Java compensations for vfkit's beh
 
 The appliance cache key hashes `appliance/**` except `appliance/test-*.sh` and `appliance/*.md`, which are host-side and never enter the image, so editing a test script does not force an appliance rebuild. Anything `build.sh` copies into the image (`root/`, `config.sh`, the kernel) must stay inside the hash.
 
+The kernel-source cache (`/tmp/kernel-cache/`) is keyed `kernel-source-<version>-<sha256>`, both read from `appliance/kernel/build-kernel.sh`. That script downloads only from kernel.org and checks `KERNEL_SHA256` on every run, a cache hit included (#1128). The save step runs only after a verified build, but `actions/cache` never overwrites a key: with a version-only key, an entry saved before the check existed (possibly the GitHub `.tar.gz`) or under a since-corrected pin would be restored, and fail or be re-downloaded, on every build at that version.
+
 **Release asset names are a contract with the CLI.** `release.yml` publishes the appliance kernel as `vmlinuz-<arch>.gz` (gzipped there, not by `build-kernel.sh`, which still emits a plain `vmlinuz` for local QEMU/vfkit runs) and `VmManager.downloadKernel` gunzips it on the way into `~/.isx`. Renaming an asset on one side breaks the other, with the twist that a dev build resolves its appliance version to the *latest* release rather than its own -- which is why the download falls back to the pre-`.gz` name instead of failing. Change both sides together, and keep the fallback until no reachable release predates the rename.
 
 `fresh-daemon-init` exists because `isx-integration-tests` runs `incus admin init --minimal` *before*
