@@ -178,6 +178,11 @@ public final class Metadata {
         return isMcpCallerGrant(config == null ? null : config.get(MCP_CALLER));
     }
 
+    /** Whether {@code instance}, as Incus returns it, holds the {@link #MCP_CALLER} grant. */
+    public static boolean isMcpCaller(com.fasterxml.jackson.databind.JsonNode instance) {
+        return isMcpCallerGrant(instance.path("config").path(MCP_CALLER).asText(null));
+    }
+
     /**
      * Whether {@code value} is a grant id {@link #newMcpCallerGrant} could have made. The one
      * definition the proxy and {@code isx mcp} both judge a stamp by: a value one accepts and the

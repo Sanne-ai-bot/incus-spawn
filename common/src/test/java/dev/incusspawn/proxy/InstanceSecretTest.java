@@ -39,8 +39,8 @@ class InstanceSecretTest {
 
     @Test
     void theGuestScriptOnlyEverCarriesASecret() {
-        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv("x'; rm -rf / #"));
-        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv(""));
+        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv("x'; rm -rf / #", false));
+        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv("", false));
     }
 
     /**
@@ -74,7 +74,7 @@ class InstanceSecretTest {
     }
 
     /** The script with its guest paths moved under {@code root}, as if {@code mounts} were the guest's. */
-    private static String guestScriptUnder(Path root, String mounts) throws Exception {
+    static String guestScriptUnder(Path root, String mounts) throws Exception {
         Files.createDirectories(root.resolve("etc/profile.d"));
         Files.writeString(root.resolve("mounts"), mounts);
         return InstanceSecret.GUEST_SCRIPT
@@ -106,7 +106,7 @@ class InstanceSecretTest {
     /** {@code script} run as the guest would, handed {@code secret} the way the exec hands it. */
     private static Process run(String script, String secret) throws Exception {
         var pb = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
-        pb.environment().putAll(InstanceSecret.guestEnv(secret));
+        pb.environment().putAll(InstanceSecret.guestEnv(secret, false));
         return pb.start();
     }
 }

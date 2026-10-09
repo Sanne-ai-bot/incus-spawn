@@ -1,0 +1,21 @@
+# Stands in for Claude Code's `claude mcp` commands, for the --mcp-client
+# registration test (#1182): records every call, and who made it, in
+# ~/claude-calls.log, and keeps the one user-scope entry the way the real CLI
+# does (add-json refuses a name already there, remove fails on a missing one),
+# its own file, mirrored into ~/.claude.json where isx looks for it.
+# On the system PATH, which the registration searches after the agent's own.
+name: test-claude-stub
+run:
+  - |
+    cat > /usr/local/bin/claude <<'STUB'
+    #!/bin/sh
+    printf '%s %s\n' "$(id -un)" "$*" >> "$HOME/claude-calls.log"
+    entry="$HOME/.claude-stub-isx.json"
+    # The template has no other Claude Code config, so the stub owns ~/.claude.json
+    case "$2" in
+      remove) [ -e "$entry" ] || exit 1; rm -f "$entry"; printf '{"mcpServers": {}}\n' > "$HOME/.claude.json" ;;
+      add-json) [ -e "$entry" ] && exit 1; printf '%s\n' "$6" > "$entry"
+                printf '{"mcpServers": {"%s": %s}}\n' "$5" "$6" > "$HOME/.claude.json" ;;
+    esac
+    STUB
+    chmod 755 /usr/local/bin/claude

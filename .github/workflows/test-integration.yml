@@ -502,6 +502,7 @@ jobs:
           mkdir -p ~/.config/incus-spawn/tools
           cp .github/test-fixtures/tools/test-proxy-tool.yaml ~/.config/incus-spawn/tools/
           cp .github/test-fixtures/tools/test-account-tool.yaml ~/.config/incus-spawn/tools/
+          cp .github/test-fixtures/tools/test-claude-stub.yaml ~/.config/incus-spawn/tools/
 
       - name: Start echo server for proxy credential test
         run: |
@@ -629,6 +630,12 @@ jobs:
                 effort: medium
           default-action: codex
           EOF
+          cat > ~/.config/incus-spawn/images/test-mcp.yaml << 'EOF'
+          name: tpl-test-mcp
+          parent: tpl-minimal
+          tools:
+            - test-claude-stub
+          EOF
 
       - name: Build templates
         run: |
@@ -638,6 +645,7 @@ jobs:
           sg incus-admin -c "isx build tpl-test-vm --yes"
           sg incus-admin -c "isx build tpl-test-accounts --yes"
           sg incus-admin -c "isx build tpl-test-codex --yes"
+          sg incus-admin -c "isx build tpl-test-mcp --yes"
 
       - name: Test CoW branching
         run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
@@ -760,6 +768,9 @@ jobs:
             done'"
           sg incus-admin -c "incus file push .github/scripts/test-codex.sh test-codex/tmp/"
           sg incus-admin -c "incus exec test-codex -- bash /tmp/test-codex.sh"
+
+      - name: Test --mcp-client registration
+        run: sg incus-admin -c "bash .github/scripts/test-mcp-client.sh"
 
       - name: Test VM
         run: |

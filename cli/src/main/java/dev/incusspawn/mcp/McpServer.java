@@ -22,7 +22,8 @@ import java.util.function.Consumer;
  * demand, that extension (and the Vert.x it needs) added ~1.7 ms to the startup of every isx
  * command, including ones that never serve MCP. What isx needs of the protocol is small --
  * {@code initialize}, {@code ping}, {@code tools/list}, {@code tools/call}, cancellation and
- * progress, plus isx's own notifications a client asks for under {@code capabilities.experimental}.
+ * progress, {@code prompts/list} and {@code prompts/get}, plus isx's own notifications a client
+ * asks for under {@code capabilities.experimental}.
  *
  * <p>The reader thread never runs a tool: each {@code tools/call} runs on its own virtual thread,
  * so {@code ping} and {@code notifications/cancelled} are answered while a long exec is running.
@@ -37,6 +38,7 @@ final class McpServer {
 
     private final McpTransport transport;
     private final Map<String, McpTool> tools = new LinkedHashMap<>();
+    private final Map<String, McpPrompt> prompts = new LinkedHashMap<>();
     private final String version;
     private final String instructions;
     private final Consumer<JsonNode> onInitialize;
@@ -56,7 +58,14 @@ final class McpServer {
      */
     McpServer(McpTransport transport, List<McpTool> tools, String version, String instructions,
               Consumer<JsonNode> onInitialize, Map<String, Runnable> experimental) {
+        this(transport, tools, List.of(), version, instructions, onInitialize, experimental);
+    }
+
+    /** {@code prompts}: offered under {@code capabilities.prompts}, when there are any. */
+    McpServer(McpTransport transport, List<McpTool> tools, List<McpPrompt> prompts, String version,
+              String instructions, Consumer<JsonNode> onInitialize, Map<String, Runnable> experimental) {
         this.transport = transport;
+        prompts.forEach(p -> this.prompts.put(p.name(), p));
         this.experimental = experimental;
         tools.forEach(t -> this.tools.put(t.name(), t));
         this.version = version;
@@ -119,6 +128,8 @@ final class McpServer {
             case "ping" -> send(JsonRpc.response(id, JsonRpc.JSON.createObjectNode()));
             case "tools/list" -> send(JsonRpc.response(id, listTools()));
             case "tools/call" -> callTool(id, params);
+            case "prompts/list" -> send(JsonRpc.response(id, listPrompts()));
+            case "prompts/get" -> getPrompt(id, params);
             default -> send(JsonRpc.error(id, JsonRpc.METHOD_NOT_FOUND, "Method not found: " + method));
         }
     }
@@ -143,6 +154,7 @@ final class McpServer {
                 PROTOCOL_VERSIONS.contains(requested) ? requested : PROTOCOL_VERSIONS.getFirst());
         var capabilities = result.putObject("capabilities");
         capabilities.putObject("tools").put("listChanged", false);
+        if (!prompts.isEmpty()) capabilities.putObject("prompts").put("listChanged", false);
         if (!experimental.isEmpty()) {
             var offered = capabilities.putObject("experimental");
             experimental.keySet().forEach(offered::putObject);
@@ -160,6 +172,20 @@ final class McpServer {
         var list = result.putArray("tools");
         tools.values().forEach(t -> list.add(t.descriptor()));
         return result;
+    }
+
+    private ObjectNode listPrompts() {
+        var result = JsonRpc.JSON.createObjectNode();
+        var list = result.putArray("prompts");
+        prompts.values().forEach(p -> list.add(p.descriptor()));
+        return result;
+    }
+
+    private void getPrompt(JsonNode id, JsonNode params) {
+        var prompt = prompts.get(params.path("name").asText(""));
+        send(prompt == null
+                ? JsonRpc.error(id, JsonRpc.INVALID_PARAMS, "Unknown prompt: " + params.path("name").asText(""))
+                : JsonRpc.response(id, prompt.get()));
     }
 
     private void callTool(JsonNode id, JsonNode params) {

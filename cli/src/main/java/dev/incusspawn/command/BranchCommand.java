@@ -8,6 +8,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.TemplateLock;
+import dev.incusspawn.proxy.McpClientCheck;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.util.BuildOutput;
@@ -190,6 +191,13 @@ public class BranchCommand extends BaseCommand {
             return null;
         }
 
+        if (mcpClient && !noStart) {
+            // Asked the way the instance's Claude Code will ask, while the user is here to see it
+            BuildOutput.stepStart("Checking isx mcp from " + name + "...");
+            var reached = McpClientCheck.run(incus, name);
+            if (reached.ok()) BuildOutput.stepDone("isx " + OutputFormat.oneLine(reached.version()) + ", " + reached.tools() + " tools");
+            else BuildOutput.stepFail(BuildOutput.STEP_INDENT + "Warning: " + reached.describe(name));
+        }
         BuildOutput.success(name + " is ready.");
         return new Created(resolvedSource, preflight, prefetched);
     }

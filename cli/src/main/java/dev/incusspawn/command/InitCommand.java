@@ -19,6 +19,7 @@ import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceRegistry;
+import dev.incusspawn.proxy.McpClientRegistration;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -3301,8 +3302,6 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    static final String MCP_SERVER_NAME = "isx";
-
     private void setupMcp() {
         startStep("Agent Access over MCP (experimental)",
                 "Lets Claude Code on this machine use isx itself: create",
@@ -3337,7 +3336,7 @@ public class InitCommand extends BaseCommand {
         }
         if (!askConfirmation(prompts, "  Enable the experimental isx MCP server?", enabled)) {
             if (registered) {
-                System.out.println("  Left as it is. To remove it: claude mcp remove --scope user " + MCP_SERVER_NAME);
+                System.out.println("  Left as it is. To remove it: claude mcp remove --scope user " + McpClientRegistration.SERVER_NAME);
             }
             return;
         }
@@ -3346,13 +3345,13 @@ public class InitCommand extends BaseCommand {
             var isx = isxPath();
             if (isx == null) {
                 System.out.println("  Could not find the installed isx binary; register it yourself:");
-                System.out.println("    claude mcp add --scope user " + MCP_SERVER_NAME + " -- <path to isx> mcp");
+                System.out.println("    claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- <path to isx> mcp");
             } else if (registerClaudeMcp(isx)) {
                 System.out.println("  " + styled(BOLD + GREEN, "✓") + " Registered with Claude Code as '"
-                        + MCP_SERVER_NAME + "' (all projects).");
+                        + McpClientRegistration.SERVER_NAME + "' (all projects).");
             } else {
                 System.out.println("  Registering failed; register it yourself:");
-                System.out.println("    claude mcp add --scope user " + MCP_SERVER_NAME + " -- " + isx + " mcp");
+                System.out.println("    claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- " + isx + " mcp");
             }
         }
 
@@ -3398,12 +3397,12 @@ public class InitCommand extends BaseCommand {
 
     /** Whether Claude Code already knows an MCP server by this name. */
     boolean claudeMcpRegistered() {
-        return runSilently("claude", "mcp", "get", MCP_SERVER_NAME) == 0;
+        return runSilently("claude", "mcp", "get", McpClientRegistration.SERVER_NAME) == 0;
     }
 
     /** Register {@code isx mcp} with Claude Code for every project; true on success. */
     boolean registerClaudeMcp(String isxPath) {
-        return runSilently("claude", "mcp", "add", "--scope", "user", MCP_SERVER_NAME, "--", isxPath, "mcp") == 0;
+        return runSilently("claude", "mcp", "add", "--scope", "user", McpClientRegistration.SERVER_NAME, "--", isxPath, "mcp") == 0;
     }
 
     /** Run a host command for its exit code alone, showing nothing and reading no input. */

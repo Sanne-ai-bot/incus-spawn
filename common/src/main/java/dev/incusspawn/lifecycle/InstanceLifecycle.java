@@ -634,7 +634,7 @@ public final class InstanceLifecycle {
                                    MachineType machineType, Consumer<String> say) {
         if ("Stopped".equalsIgnoreCase(instance.path("status").asText(""))) {
             say.accept("Starting " + name + "...");
-            startForUse(incus, name, machineType, say);
+            startForUse(incus, name, instance, machineType, say);
         } else if (machineType == MachineType.VM) {
             // QEMU may reboot a VM in place, which changes nothing the host can see: only the
             // guest can tell, so the agent probe asks it on the way, for no request of its own
@@ -642,14 +642,14 @@ public final class InstanceLifecycle {
             if (probe == null) {
                 VmAgentRecovery.restartForAgent(incus, name, say);
             } else if (InstanceSecret.missingIn(probe)) {
-                giveSecretToThisBoot(incus, name, null, say);
+                giveSecretToThisBoot(incus, name, null, Metadata.isMcpCaller(instance), say);
             }
         } else {
             // Every container reboot is a start: the instance already read says which boot it is
             var bootedAt = bootOf(instance);
             if (!bootedAt.isEmpty()
                     && !bootedAt.equals(instance.path("config").path(Metadata.INSTANCE_SECRET_BOOT).asText(""))) {
-                giveSecretToThisBoot(incus, name, bootedAt, say);
+                giveSecretToThisBoot(incus, name, bootedAt, Metadata.isMcpCaller(instance), say);
             }
         }
         // Only a VM is ever marked
@@ -664,32 +664,44 @@ public final class InstanceLifecycle {
      * that brings an existing instance up goes through -- {@code isx shell} and {@code isx run},
      * the TUI's shell, and their CA repairs. Prepares its host devices
      * ({@link #prepareHostDevicesForStart}), and gives it a new secret ({@link
-     * #rotateInstanceSecret}), which the readiness probe itself puts in place: it costs no
-     * request of its own.
+     * #rotateInstanceSecret}), which the readiness probe itself puts in place, with the Claude
+     * Code registration its {@code mcp-caller} grant calls for (#1182), read from the instance
+     * the device repairs read: neither costs a request of its own.
      *
      * @return the instance as read once it answered ({@link #recordSecretBoot}), for the caller
      *         to reuse rather than read again; null when there is none
      */
     public static JsonNode startForUse(IncusClient incus, String name, MachineType machineType,
                                        Consumer<String> warn) {
-        prepareHostDevicesForStart(incus, name, warn);
+        return startForUse(incus, name, incus.instanceMetadata(name), machineType, warn);
+    }
+
+    /** {@link #startForUse(IncusClient, String, MachineType, Consumer)}, with the stopped instance already read. */
+    static JsonNode startForUse(IncusClient incus, String name, JsonNode instance, MachineType machineType,
+                                Consumer<String> warn) {
+        prepareHostDevicesForStart(incus, name, instance, warn);
         var secret = rotateInstanceSecret(incus, name);
         startInstance(incus, name, warn);
-        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret));
+        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
+                InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance)));
         return recordSecretBoot(incus, name, machineType);
     }
 
     /**
      * Restart a running instance and wait until it answers, with a new secret (#934): the
      * reboot empties the guest's {@code /run}, so without one the box would be left with none.
+     *
+     * @param mcpCaller whether the instance holds the {@code mcp-caller} grant, as the caller's
+     *                  listing says ({@link InstanceSecret#guestEnv})
      */
-    public static void restartForUse(IncusClient incus, String name, MachineType machineType) {
+    public static void restartForUse(IncusClient incus, String name, MachineType machineType,
+                                     boolean mcpCaller) {
         // Before, not after: once the restart returns the guest is booting, when Incus API calls
         // contend with it. A restart that then fails leaves a guest whose secret no longer
         // matches, which is refused -- the safe way for it to go wrong.
         var secret = rotateInstanceSecret(incus, name);
         incus.restart(name);
-        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret));
+        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret, mcpCaller));
         recordSecretBoot(incus, name, machineType);
     }
 
@@ -755,14 +767,14 @@ public final class InstanceLifecycle {
      * delivery: a box left without its secret is refused, and the shell must still open.
      */
     private static void giveSecretToThisBoot(IncusClient incus, String name, String bootedAt,
-                                             Consumer<String> say) {
+                                             boolean mcpCaller, Consumer<String> say) {
         String failure;
         try {
             var secret = rotateInstanceSecret(incus, name,
                     bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, bootedAt));
             // GUEST_SCRIPT never fails, so the same exec asks whether the secret is now there:
             // a write it skipped would otherwise give a VM a new secret on every shell, silently
-            var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret), "sh", "-c",
+            var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret, mcpCaller), "sh", "-c",
                     InstanceSecret.GUEST_SCRIPT + "\n" + InstanceSecret.GUEST_CHECK);
             if (delivery.success() && !InstanceSecret.missingIn(delivery.stdout())) return;
             failure = delivery.success() ? "the guest did not keep it" : "exit code " + delivery.exitCode();
@@ -1400,9 +1412,12 @@ public final class InstanceLifecycle {
      * @param prefetched config read before start to avoid seccomp lock contention;
      *                   if null, config is read live (slower on macOS)
      * @param secret     the instance secret to put in place (#934), or null for none
+     * @param mcpCaller  whether the instance holds the {@code mcp-caller} grant, which the same
+     *                   exec reconciles its Claude Code registration with (#1182)
      */
     public static void setupRuntime(IncusClient incus, String name,
-                                   NetworkMode networkMode, RuntimeConfig prefetched, String secret) {
+                                   NetworkMode networkMode, RuntimeConfig prefetched, String secret,
+                                   boolean mcpCaller) {
         if (networkMode == NetworkMode.PROXY_ONLY) {
             applyProxyOnlyFirewall(incus, name);
         }
@@ -1416,7 +1431,7 @@ public final class InstanceLifecycle {
         var sshKeys = prefetched != null && prefetched.hasSshKeys() ? sshKeysToInject() : List.<String>of();
         var setupScript = buildSetupScript(prefetched, buildSourceJson, networkMode, sshKeys, secret != null);
         BuildOutput.stepStart("Waiting for container...");
-        var env = secret != null ? InstanceSecret.guestEnv(secret) : Map.<String, String>of();
+        var env = secret != null ? InstanceSecret.guestEnv(secret, mcpCaller) : Map.<String, String>of();
         if (!incus.pollUntilReady(name, 30, env, "sh", "-c", setupScript)) {
             BuildOutput.stepBreak();
             System.err.println(BuildOutput.STEP_INDENT + "Warning: container setup may not be complete.");
@@ -1438,7 +1453,7 @@ public final class InstanceLifecycle {
     }
 
     public static void setupRuntime(IncusClient incus, String name, NetworkMode networkMode) {
-        setupRuntime(incus, name, networkMode, null, null);
+        setupRuntime(incus, name, networkMode, null, null, false);
     }
 
     /**

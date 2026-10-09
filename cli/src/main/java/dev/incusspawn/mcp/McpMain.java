@@ -97,7 +97,7 @@ public final class McpMain {
 
         var watcher = tasks.watcher();
         var server = new McpServer(new StdioTransport(guard.protocolIn, guard.protocolOut),
-                requireInit(tools.all(), initialized), BuildInfo.instance().version(), INSTRUCTIONS,
+                requireInit(tools.all(), initialized), McpPrompt.ALL, BuildInfo.instance().version(), INSTRUCTIONS,
                 clientInfo -> {
                     session.clientName(clientInfo.path("name").asText(""));
                     if (initialized.getAsBoolean()) {

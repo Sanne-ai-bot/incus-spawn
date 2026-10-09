@@ -826,7 +826,7 @@ public class ListCommand extends BaseCommand {
                                     inst.architecture, inst.buildVersion, inst.definitionSha,
                                     inst.type, inst.buildSourceJson, "", inst.defaultAction,
                                     inst.diskUsage, inst.referencedBytes, inst.instanceMode,
-                                    inst.kvmEnabled, inst.mcp)
+                                    inst.kvmEnabled, inst.mcp, inst.mcpCaller)
                             : inst)
                     .toList();
         }
@@ -1643,7 +1643,8 @@ public class ListCommand extends BaseCommand {
                     selected.name,
                     "Restarted " + selected.name,
                     Metadata.OP_RESTARTING,
-                    () -> InstanceLifecycle.restartForUse(incus, selected.name, selected.machineType()));
+                    () -> InstanceLifecycle.restartForUse(incus, selected.name, selected.machineType(),
+                            selected.mcpCaller()));
             return true;
         }
         if (key.isKey(KeyCode.F6)) {
@@ -5698,7 +5699,8 @@ public class ListCommand extends BaseCommand {
                         diskUsage, referencedBytes,
                         configVal(config, Metadata.INSTANCE_MODE, ""),
                         config.has(Metadata.KVM_ENABLED),
-                        McpStanding.fromListing(node, callerGrants)));
+                        McpStanding.fromListing(node, callerGrants),
+                        Metadata.isMcpCaller(node)));
             }
             return entryList;
         } catch (JsonProcessingException e) {
@@ -5800,7 +5802,7 @@ public class ListCommand extends BaseCommand {
                                 String type, String buildSourceJson, String pendingOp,
                                 String defaultAction, long diskUsage, long referencedBytes,
                                 String instanceMode, boolean kvmEnabled,
-                                McpStanding mcp) {
+                                McpStanding mcp, boolean mcpCaller) {
         MachineType machineType() { return MachineType.fromIncus(runtime); }
     }
 }

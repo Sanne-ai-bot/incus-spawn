@@ -130,7 +130,7 @@ class InstanceSecretRotationTest {
         var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running",
                 Map.of(Metadata.INSTANCE_SECRET_SHA256, previous));
         assertThrows(IncusException.class, () -> InstanceLifecycle.restartForUse(
-                daemon.clientWithShortReadyWait(), NAME, MachineType.CONTAINER));
+                daemon.clientWithShortReadyWait(), NAME, MachineType.CONTAINER, false));
 
         var recorded = recordedHash(daemon, NAME);
         assertNotEquals(previous, recorded);
