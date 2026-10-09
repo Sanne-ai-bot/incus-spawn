@@ -11,6 +11,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.Platform;
 
 import java.io.IOException;
@@ -38,7 +39,7 @@ public final class HostResourceSetup {
         if (resolved.startsWith("~/")) return "/home/agentuser/" + resolved.substring(2);
         if (resolved.equals("~")) return "/home/agentuser";
         if (resolved.startsWith("http://") || resolved.startsWith("https://")) {
-            throw new IllegalArgumentException("'path' is required for URL sources: " + source);
+            throw new IllegalArgumentException("'path' is required for URL sources: " + shown(source));
         }
         if (!resolved.startsWith("/")) return "/home/agentuser/" + resolved;
         return resolved;
@@ -164,8 +165,8 @@ public final class HostResourceSetup {
         var forbidden = target.getNameCount() == 0
                 || FORBIDDEN_MOUNT_ROOTS.contains(target.getName(0).toString());
         if (!forbidden) return;
-        throw new ForbiddenMountTargetException("Host-resource '" + hr.getSource() + "' would be mounted ("
-                + hr.getMode() + ") at " + target + ", a system directory.\n"
+        throw new ForbiddenMountTargetException("Host-resource '" + shown(hr.getSource())
+                + "' would be mounted (" + shown(hr.getMode()) + ") at " + shown(target) + ", a system directory.\n"
                 + "  Host resources are attached before the instance boots, so a mount there hides files\n"
                 + "  the package manager, user setup and boot services need. Mount it elsewhere (e.g. under\n"
                 + "  /home/agentuser, /opt or /srv), or use 'mode: copy' to place files there instead.");
@@ -213,11 +214,11 @@ public final class HostResourceSetup {
     }
 
     public static HostPathOutsideProjectException outsideProject(ImageDef def, String what, String escape) {
-        return new HostPathOutsideProjectException("Template '" + def.getName() + "' is project-local ("
-                + def.getSource() + "),\n"
+        return new HostPathOutsideProjectException("Template '" + shown(def.getName()) + "' is project-local ("
+                + shown(def.getSource()) + "),\n"
                 + "  so the host paths it uses must stay inside the project directory "
-                + realPath(def.getProjectRoot()) + ",\n"
-                + "  but " + what + " " + escape + ".\n"
+                + shown(realPath(def.getProjectRoot())) + ",\n"
+                + "  but " + shown(what) + " " + shown(escape) + ".\n"
                 + "  A cloned repository must not be able to copy or mount your files into a container.\n"
                 + "  If you trust this template, move it to " + ImageDef.userImagesDir()
                 + " or a configured search path.");
@@ -232,9 +233,9 @@ public final class HostResourceSetup {
         if (hr.getConfinedTo() == null) return;
         var escape = findEscape(Path.of(hr.getSource()), Path.of(hr.getConfinedTo()), hr.getMode());
         if (escape != null) {
-            throw new HostPathOutsideProjectException("Host-resource '" + hr.getSource()
-                    + "' comes from a project-local template and must stay inside " + hr.getConfinedTo()
-                    + ", but it " + escape + ".");
+            throw new HostPathOutsideProjectException("Host-resource '" + shown(hr.getSource())
+                    + "' comes from a project-local template and must stay inside " + shown(hr.getConfinedTo())
+                    + ", but it " + shown(escape) + ".");
         }
     }
 
@@ -260,6 +261,15 @@ public final class HostResourceSetup {
             }
         }
         return null;
+    }
+
+    /**
+     * A value from a definition, quoted in an error: one line that cannot drive a terminal. The
+     * line breaks in these messages are isx's own advice, and a project-local template's source
+     * or path must not add one that reads as isx's (#1133).
+     */
+    private static String shown(Object value) {
+        return OutputFormat.oneLine(String.valueOf(value));
     }
 
     private static Path realPath(Path path) {
