@@ -189,20 +189,19 @@ class ProjectLocalHostResourceTest {
     @Test
     void refusalQuotesTheSourceOnOneLine() {
         // The message's own line breaks are isx's advice; the source must not add a line of its own (#1133).
-        var def = projectDef(new ImageDef.HostResource("../outside\nTemplate is valid.\u001b[2J", null, "readonly"));
-        var e = assertThrows(HostPathOutsideProjectException.class,
-                () -> HostResourceSetup.collectEffective(def, Map.of("tpl-project", def)));
+        var e = assertRejected("../outside\nTemplate is valid.\u001b[2J", "readonly");
         assertEquals(5, e.getMessage().lines().count(), e.getMessage());
         assertTrue(e.getMessage().contains("host-resource '../outside Template is valid. [2J'"), e.getMessage());
     }
 
-    private void assertRejected(String source, String mode) {
+    private HostPathOutsideProjectException assertRejected(String source, String mode) {
         var def = projectDef(new ImageDef.HostResource(source, null, mode));
         var e = assertThrows(HostPathOutsideProjectException.class,
                 () -> HostResourceSetup.collectEffective(def, Map.of("tpl-project", def)),
                 source + " must be rejected");
         assertTrue(e.getMessage().contains("tpl-project"), e.getMessage());
         assertTrue(e.getMessage().contains(ImageDef.userImagesDir().toString()), e.getMessage());
+        return e;
     }
 
     private ImageDef.HostResource collect(String source, String mode) {

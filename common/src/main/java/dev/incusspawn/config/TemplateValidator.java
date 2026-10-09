@@ -1,5 +1,7 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.util.OutputFormat;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -65,8 +67,11 @@ public class TemplateValidator {
             }
             try {
                 HostResourceSetup.requireAllowedMountTarget(hr);
-            } catch (HostResourceSetup.ForbiddenMountTargetException | IllegalArgumentException e) {
+            } catch (HostResourceSetup.ForbiddenMountTargetException e) {
                 errors.add(e.getMessage());
+            } catch (IllegalArgumentException e) {
+                // Path.of's own refusal quotes the raw path.
+                errors.add(OutputFormat.oneLine(e.getMessage()));
             }
         }
     }

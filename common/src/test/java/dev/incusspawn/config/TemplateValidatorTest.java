@@ -126,6 +126,30 @@ class TemplateValidatorTest {
     }
 
     @Test
+    void errorsQuotingTheFileStayOnOneLine(@TempDir Path dir) throws Exception {
+        // Definition text in an error must not start a line that reads as isx's own (#1133).
+        var duplicate = dir.resolve("dup.yaml");
+        Files.writeString(duplicate, """
+                name: tpl-test
+                "a\\nTemplate is valid.": 1
+                "a\\nTemplate is valid.": 2
+                """);
+        var badPath = dir.resolve("nul.yaml");
+        Files.writeString(badPath, """
+                name: tpl-test
+                parent: tpl-dev
+                host-resources:
+                  - source: /tmp
+                    path: "/opt/x\\nTemplate is valid.\\0"
+                """);
+        for (var file : List.of(duplicate, badPath)) {
+            var errors = TemplateValidator.validate(file, knownTemplates()).errors();
+            assertEquals(1, errors.size(), errors.toString());
+            assertEquals(1, errors.getFirst().lines().count(), errors.getFirst());
+        }
+    }
+
+    @Test
     void invalidHostResourceMode(@TempDir Path dir) throws Exception {
         var file = dir.resolve("test.yaml");
         Files.writeString(file, """
