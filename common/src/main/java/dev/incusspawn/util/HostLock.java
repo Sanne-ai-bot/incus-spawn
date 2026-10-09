@@ -11,7 +11,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 
 /**
@@ -25,6 +27,10 @@ import java.util.function.Consumer;
  *
  * <p>Not reentrant: acquiring a lock this thread already holds throws. Callers that nest share
  * the work through a variant that assumes the lock is held (see {@code VmManager}).
+ *
+ * <p>{@link #acquireShared} takes it shared instead: any number of shared holders, in this process
+ * and others, but none while it is held exclusively. A process holds one shared {@code fcntl} lock
+ * for all its shared holders, released with the last of them.
  */
 public final class HostLock implements AutoCloseable {
 
@@ -39,16 +45,30 @@ public final class HostLock implements AutoCloseable {
      */
     private static final long MAX_POLL_MILLIS = 50;
 
-    private static final Map<Path, ReentrantLock> IN_PROCESS = new ConcurrentHashMap<>();
+    private static final Map<Path, InProcess> IN_PROCESS = new ConcurrentHashMap<>();
 
-    private final ReentrantLock inProcess;
+    /** This process's side of one lock file: its threads, and the shared {@code fcntl} lock they hold. */
+    private static final class InProcess {
+        final ReentrantReadWriteLock threads = new ReentrantReadWriteLock();
+        /** Guards the rest, and is held while the first shared holder waits for the file. */
+        final ReentrantLock guard = new ReentrantLock();
+        int sharedHolders;
+        FileChannel sharedChannel;
+        FileLock sharedLock;
+    }
+
+    private final Lock inProcess;
     private final FileChannel channel;
     private final FileLock lock;
+    /** Non-null for a shared holder, which leaves the file to the last of them. */
+    private final InProcess shared;
+    private boolean closed;
 
-    private HostLock(ReentrantLock inProcess, FileChannel channel, FileLock lock) {
+    private HostLock(Lock inProcess, FileChannel channel, FileLock lock, InProcess shared) {
         this.inProcess = inProcess;
         this.channel = channel;
         this.lock = lock;
+        this.shared = shared;
     }
 
     /**
@@ -75,43 +95,101 @@ public final class HostLock implements AutoCloseable {
         return acquire(lockFile, activity, log, TIMEOUT, warn);
     }
 
-    /** @param degradeWarn non-null to degrade rather than fail on an unusable file */
-    static HostLock acquire(Path lockFile, String activity, Consumer<String> log, Duration timeout,
-                            Consumer<String> degradeWarn) {
-        var degrade = degradeWarn != null;
-        Path key;
-        IOException unusable = null;
+    /** As {@link #acquireOrDegrade}, waiting at most {@code timeout}. */
+    public static HostLock acquireOrDegrade(Path lockFile, String activity, Consumer<String> log,
+                                            Consumer<String> warn, Duration timeout) {
+        return acquire(lockFile, activity, log, timeout, warn);
+    }
+
+    /**
+     * As {@link #acquireOrDegrade}, but shared: held off only while the lock is held exclusively,
+     * and holding off only those who want it exclusively. Closing it twice is harmless.
+     *
+     * @throws IllegalStateException if this thread holds it exclusively, as {@link #acquire} does
+     *                               for any lock this thread already holds
+     */
+    public static HostLock acquireShared(Path lockFile, String activity, Consumer<String> log,
+                                         Consumer<String> warn) {
+        var key = key(lockFile);
+        var inProcess = IN_PROCESS.computeIfAbsent(key.path(), p -> new InProcess());
+        // A downgrade would open a second channel, whose close drops the exclusive fcntl lock
+        if (inProcess.threads.isWriteLockedByCurrentThread()) {
+            throw new IllegalStateException("Lock " + lockFile + " is already held by this thread");
+        }
+        long deadline = System.nanoTime() + TIMEOUT.toNanos();
+        var readLock = inProcess.threads.readLock();
+        lockInProcess(readLock, TIMEOUT, activity);
+        if (key.unusable() != null) return degraded(readLock, lockFile, activity, warn, key.unusable());
+        try {
+            // Bounded by the same deadline: another thread may be waiting for the file under it
+            lockInProcess(inProcess.guard, Duration.ofNanos(Math.max(0, deadline - System.nanoTime())), activity);
+        } catch (RuntimeException e) {
+            readLock.unlock();
+            throw e;
+        }
+        try {
+            if (inProcess.sharedHolders == 0) {
+                try {
+                    var locked = open(key.path(), true, activity, log, deadline);
+                    inProcess.sharedChannel = locked.channel();
+                    inProcess.sharedLock = locked.lock();
+                } catch (IOException e) {
+                    return degraded(readLock, lockFile, activity, warn, e);
+                } catch (RuntimeException e) {
+                    readLock.unlock();
+                    throw e;
+                }
+            }
+            inProcess.sharedHolders++;
+        } finally {
+            inProcess.guard.unlock();
+        }
+        return new HostLock(readLock, null, null, inProcess);
+    }
+
+    private record Key(Path path, IOException unusable) {}
+
+    private static Key key(Path lockFile) {
         try {
             // fcntl locks a file, not a path: two spellings of one directory must share a lock
             Files.createDirectories(lockFile.getParent());
-            key = lockFile.getParent().toRealPath().resolve(lockFile.getFileName());
+            return new Key(lockFile.getParent().toRealPath().resolve(lockFile.getFileName()), null);
         } catch (IOException e) {
-            if (!degrade) throw new HostLockException("Failed to lock " + lockFile + ": " + e.getMessage(), e);
-            key = lockFile.toAbsolutePath().normalize();
-            unusable = e;
+            return new Key(lockFile.toAbsolutePath().normalize(), e);
         }
-        var inProcess = IN_PROCESS.computeIfAbsent(key, p -> new ReentrantLock());
-        if (inProcess.isHeldByCurrentThread()) {
-            throw new IllegalStateException("Lock " + lockFile + " is already held by this thread");
-        }
-        long deadline = System.nanoTime() + timeout.toNanos();
+    }
+
+    private static void lockInProcess(Lock lock, Duration timeout, String activity) {
         try {
-            if (!inProcess.tryLock(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
+            if (!lock.tryLock(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
                 throw timedOut(activity);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new HostLockException("Interrupted waiting for another isx process " + activity, e);
         }
+    }
+
+    /** @param degradeWarn non-null to degrade rather than fail on an unusable file */
+    static HostLock acquire(Path lockFile, String activity, Consumer<String> log, Duration timeout,
+                            Consumer<String> degradeWarn) {
+        var degrade = degradeWarn != null;
+        var key = key(lockFile);
+        var unusable = key.unusable();
+        if (unusable != null && !degrade) {
+            throw new HostLockException("Failed to lock " + lockFile + ": " + unusable.getMessage(), unusable);
+        }
+        var threads = IN_PROCESS.computeIfAbsent(key.path(), p -> new InProcess()).threads;
+        if (threads.isWriteLockedByCurrentThread() || threads.getReadHoldCount() > 0) {
+            throw new IllegalStateException("Lock " + lockFile + " is already held by this thread");
+        }
+        long deadline = System.nanoTime() + timeout.toNanos();
+        var inProcess = threads.writeLock();
+        lockInProcess(inProcess, timeout, activity);
         if (unusable != null) return degraded(inProcess, lockFile, activity, degradeWarn, unusable);
         try {
-            var channel = FileChannel.open(key, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-            try {
-                return new HostLock(inProcess, channel, lockFile(channel, activity, log, deadline));
-            } catch (IOException | RuntimeException e) {
-                channel.close();
-                throw e;
-            }
+            var locked = open(key.path(), false, activity, log, deadline);
+            return new HostLock(inProcess, locked.channel(), locked.lock(), null);
         } catch (IOException e) {
             if (degrade) return degraded(inProcess, lockFile, activity, degradeWarn, e);
             inProcess.unlock();
@@ -124,7 +202,7 @@ public final class HostLock implements AutoCloseable {
 
     private static final Set<Path> WARNED_UNUSABLE = ConcurrentHashMap.newKeySet();
 
-    private static HostLock degraded(ReentrantLock inProcess, Path lockFile, String activity,
+    private static HostLock degraded(Lock inProcess, Path lockFile, String activity,
                                      Consumer<String> warn, IOException cause) {
         // Once per file and process: a TUI would otherwise repeat it on every action
         if (WARNED_UNUSABLE.add(lockFile.toAbsolutePath().normalize())) {
@@ -132,12 +210,29 @@ public final class HostLock implements AutoCloseable {
                     + "); going on without it, so isx processes " + activity
                     + " at the same time are not held off each other.");
         }
-        return new HostLock(inProcess, null, null);
+        // A degraded shared holder holds no file lock, so it has nothing to leave to the others
+        return new HostLock(inProcess, null, null, null);
     }
 
-    private static FileLock lockFile(FileChannel channel, String activity, Consumer<String> log,
-                                     long deadline) throws IOException {
-        var lock = channel.tryLock();
+    private record Locked(FileChannel channel, FileLock lock) {}
+
+    /** Opens the file and waits for its lock; a shared one needs the channel readable. */
+    private static Locked open(Path file, boolean shared, String activity, Consumer<String> log,
+                               long deadline) throws IOException {
+        var channel = shared
+                ? FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)
+                : FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+        try {
+            return new Locked(channel, lockFile(channel, shared, activity, log, deadline));
+        } catch (IOException | RuntimeException e) {
+            channel.close();
+            throw e;
+        }
+    }
+
+    private static FileLock lockFile(FileChannel channel, boolean shared, String activity,
+                                     Consumer<String> log, long deadline) throws IOException {
+        var lock = channel.tryLock(0, Long.MAX_VALUE, shared);
         if (lock != null) return lock;
         log.accept("Another isx process is " + activity + " — waiting...");
         // Starts short, as a lock held for a few requests frees within milliseconds
@@ -149,7 +244,7 @@ public final class HostLock implements AutoCloseable {
                 Thread.currentThread().interrupt();
                 throw new HostLockException("Interrupted waiting for another isx process " + activity, e);
             }
-            lock = channel.tryLock();
+            lock = channel.tryLock(0, Long.MAX_VALUE, shared);
             if (lock != null) return lock;
             poll = Math.min(poll * 2, MAX_POLL_MILLIS);
         }
@@ -161,14 +256,32 @@ public final class HostLock implements AutoCloseable {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
+        if (closed) return;
+        closed = true;
         try {
-            // Both null when degraded to the in-process lock alone
-            if (lock != null) try { lock.release(); } catch (IOException ignored) {}
-            if (channel != null) try { channel.close(); } catch (IOException ignored) {}
+            if (shared != null) {
+                shared.guard.lock();
+                try {
+                    if (--shared.sharedHolders == 0) {
+                        release(shared.sharedLock, shared.sharedChannel);
+                        shared.sharedLock = null;
+                        shared.sharedChannel = null;
+                    }
+                } finally {
+                    shared.guard.unlock();
+                }
+            }
+            // Both null when degraded to the in-process lock alone, or shared
+            release(lock, channel);
         } finally {
             inProcess.unlock();
         }
+    }
+
+    private static void release(FileLock lock, FileChannel channel) {
+        if (lock != null) try { lock.release(); } catch (IOException ignored) {}
+        if (channel != null) try { channel.close(); } catch (IOException ignored) {}
     }
 
     public static final class HostLockException extends RuntimeException {
