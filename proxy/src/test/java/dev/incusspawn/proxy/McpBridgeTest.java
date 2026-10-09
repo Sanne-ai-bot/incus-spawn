@@ -85,9 +85,7 @@ class McpBridgeTest {
         pids = home.resolve("pids");
 
         vertx = Vertx.vertx();
-        var ports = ContainerTls.freePorts(2);
-        port = ports[0];
-        proxy = new MitmProxy(vertx, "127.0.0.1", port, ports[1], "127.0.0.1",
+        proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", List.of()));
         registry = new InstanceRegistry(new IncusClient() {
             @Override
@@ -108,6 +106,7 @@ class McpBridgeTest {
         thread.setDaemon(true);
         thread.start();
         ready.get(15, TimeUnit.SECONDS);
+        port = proxy.mitmPort();
         clientVertx = Vertx.vertx();
         clientContext = clientVertx.getOrCreateContext();
         client = clientVertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true)

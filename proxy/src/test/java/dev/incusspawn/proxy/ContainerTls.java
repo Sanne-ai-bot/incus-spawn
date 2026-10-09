@@ -8,7 +8,6 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509ExtendedTrustManager;
-import java.net.ServerSocket;
 import java.net.Socket;
 import java.security.KeyStore;
 import java.security.cert.CertificateException;
@@ -158,25 +157,5 @@ final class ContainerTls {
         thread.start();
         assertTrue(ready.await(30, TimeUnit.SECONDS), "Proxy did not start in time");
         if (failure.get() != null) throw failure.get();
-    }
-
-    /**
-     * Picks {@code count} distinct free ports. Every socket stays bound until all are chosen:
-     * closing one before binding the next lets the kernel hand the same port out twice (#1166).
-     */
-    static int[] freePorts(int count) throws Exception {
-        var sockets = new ServerSocket[count];
-        try {
-            var ports = new int[count];
-            for (int i = 0; i < count; i++) {
-                sockets[i] = new ServerSocket(0);
-                ports[i] = sockets[i].getLocalPort();
-            }
-            return ports;
-        } finally {
-            for (var ss : sockets) {
-                if (ss != null) ss.close();
-            }
-        }
     }
 }

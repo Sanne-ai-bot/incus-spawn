@@ -169,10 +169,7 @@ class ArtifactCacheProxyTest {
         h1UpstreamPort = h1Upstream.listen(0, "127.0.0.1").toCompletionStage().toCompletableFuture()
                 .get(5, TimeUnit.SECONDS).actualPort();
 
-        var ports = ContainerTls.freePorts(2);
-        mitmPort = ports[0];
-        var healthPort = ports[1];
-        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, healthPort, "127.0.0.1",
+        proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", java.util.List.of()));
         proxy.upstreamTrustAll = true;
         proxy.probeReadIdleSeconds = 1;
@@ -189,6 +186,7 @@ class ArtifactCacheProxyTest {
         thread.setDaemon(true);
         thread.start();
         assertTrue(ready.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
+        mitmPort = proxy.mitmPort();
         // Only once every listener of the class is up, and never one of their ports: a listener
         // that took it after the pick would answer the offline tests instead of refusing them.
         do {
@@ -196,7 +194,7 @@ class ArtifactCacheProxyTest {
                 closed.bind(new InetSocketAddress("127.0.0.1", 0));
                 refused = (InetSocketAddress) closed.getLocalSocketAddress();
             }
-        } while (Set.of(upstreamPort, h1UpstreamPort, mitmPort, healthPort).contains(refused.getPort()));
+        } while (Set.of(upstreamPort, h1UpstreamPort, mitmPort, proxy.healthPort()).contains(refused.getPort()));
 
         clientContext = vertx.getOrCreateContext();
         client = vertx.createHttpClient(new HttpClientOptions()

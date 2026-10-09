@@ -60,9 +60,7 @@ class RelayRequestBodyTest {
 
         var ca = CertificateAuthority.loadOrCreate();
         vertx = Vertx.vertx();
-        var ports = ContainerTls.freePorts(2);
-        mitmPort = ports[0];
-        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, ports[1], "127.0.0.1",
+        proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", List.of()));
         proxy.trustUpstreamCertificate(SpawnConfig.configDir().resolve("ca.crt").toString());
         var spec = new StringBuilder();
@@ -75,6 +73,7 @@ class RelayRequestBodyTest {
         }
         assertTrue(ProxyMain.applyBenchUpstream(proxy, spec.toString(), ""));
         ContainerTls.startInBackground(proxy);
+        mitmPort = proxy.mitmPort();
 
         client = vertx.createNetClient(new NetClientOptions()
                 .setSsl(true).setTrustAll(true).setHostnameVerificationAlgorithm(""));

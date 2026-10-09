@@ -69,10 +69,7 @@ class ApiActivityProxyTest {
                 .requestHandler(ApiActivityProxyTest::answer);
         int upstreamPort = NpmCacheProxyTest.listen(upstream);
 
-        var ports = ContainerTls.freePorts(2);
-        mitmPort = ports[0];
-        healthPort = ports[1];
-        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, healthPort, "127.0.0.1",
+        proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
                 new ProxyCredentials("sk-ant-api03-real", "", false, "", "", List.of()));
         proxy.upstreamTrustAll = true;
         var ready = new CountDownLatch(1);
@@ -86,6 +83,8 @@ class ApiActivityProxyTest {
         thread.setDaemon(true);
         thread.start();
         assertTrue(ready.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
+        mitmPort = proxy.mitmPort();
+        healthPort = proxy.healthPort();
         proxy.overrideUpstream(ANTHROPIC, "127.0.0.1", upstreamPort);
 
         // The test client connects from 127.0.0.1, which the registry says is the worker
