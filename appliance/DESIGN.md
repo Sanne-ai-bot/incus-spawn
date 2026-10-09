@@ -207,12 +207,12 @@ vfkit --cpus 2 --memory 2048 \
   --device virtio-serial,logFilePath=vm.log \
   --device virtio-vsock,port=8443,socketURL=~/.local/state/incus-spawn/vm.incus.sock,connect \
   --device virtio-vsock,port=1025,socketURL=~/.local/state/incus-spawn/vm.agent.sock,connect \
-  --restful-uri tcp://localhost:$PORT
+  --restful-uri unix://~/.local/state/incus-spawn/vm.rest.sock
 ```
 
 - No initrd -- kernel has all drivers built-in
 - Console on `hvc0` (virtio-serial), not `ttyS0`
-- REST API for lifecycle management (stop via `POST /vm/state {"state":"Stop"}`)
+- REST API for lifecycle management (stop via `POST /vm/state {"state":"Stop"}`), on a Unix socket: a TCP port has to be picked before vfkit binds it, and vfkit exits when another process took it in between (#1189). The socket is also reachable only by the user who owns the state directory. `vm.sh` still passes a TCP port
 - NAT networking with DHCP (interface appears as `enp0s1`)
 - **vsock tunnel**: the `virtio-vsock` device exposes the VM's vsock port 8443 as a Unix domain socket on the host. Inside the VM, socat bridges this to the Incus daemon's Unix socket, giving the host direct plain-HTTP access to the Incus API without TCP or TLS. This bypasses corporate VPN socket filters (e.g. Cisco AnyConnect) that block non-Apple-signed binaries from TCP connections to the VM subnet
 - **control agent channel**: a second `virtio-vsock` device (port 1025 → `vm.agent.sock`) exposes the allowlisted in-VM control agent on an independent channel, so the host can introspect and recover the forwarder even when the Incus tunnel itself is wedged. See "Control agent and forwarder recovery" below.

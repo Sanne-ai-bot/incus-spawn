@@ -223,6 +223,11 @@ public final class Environment {
         return vmStateDir().resolve("vm.rest-uri");
     }
 
+    /** The Unix socket vfkit's REST API listens on; {@link #vmRestUriFile()} names it. */
+    public static Path vmRestSocket() {
+        return vmStateDir().resolve("vm.rest.sock");
+    }
+
     public static Path vmVsockSocket() {
         return vmStateDir().resolve("vm.incus.sock");
     }

@@ -39,8 +39,13 @@ class UnixSocketTransport implements IncusTransport {
     // the GraalVM native-image issue with SecureRandom static fields captured at
     // build time.
 
+    static final String INCUS_TIMEOUT_HINT =
+            "the Incus daemon may be unreachable. On macOS, try: isx vm restart";
+
     private final String socketPath;
     private final int timeoutSeconds;
+    // What a timeout most likely means, for its message: not every peer is the Incus daemon.
+    private final String timeoutHint;
 
     // Diagnostics: track how many transport connections are open at once. Every
     // request and every WebSocket opens a fresh connection (we intentionally do not
@@ -109,8 +114,13 @@ class UnixSocketTransport implements IncusTransport {
     }
 
     UnixSocketTransport(String socketPath, int timeoutSeconds) {
+        this(socketPath, timeoutSeconds, INCUS_TIMEOUT_HINT);
+    }
+
+    UnixSocketTransport(String socketPath, int timeoutSeconds, String timeoutHint) {
         this.socketPath = socketPath;
         this.timeoutSeconds = timeoutSeconds;
+        this.timeoutHint = timeoutHint;
     }
 
     @Override
@@ -474,10 +484,9 @@ class UnixSocketTransport implements IncusTransport {
         }
     }
 
-    private static IOException timeoutException(String path, int timeout) {
+    private IOException timeoutException(String path, int timeout) {
         return new IOException(
-                "Request timed out after " + timeout + "s (" + path + ") — "
-                + "the Incus daemon may be unreachable. On macOS, try: isx vm restart");
+                "Request timed out after " + timeout + "s (" + path + ") — " + timeoutHint);
     }
 
     /**

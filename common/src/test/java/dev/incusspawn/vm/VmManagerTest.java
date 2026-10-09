@@ -34,6 +34,19 @@ class VmManagerTest {
         System.setProperty("user.home", originalHome);
     }
 
+    /**
+     * A TCP port would have to be chosen before vfkit binds it, and vfkit exits when another
+     * process took it in between; a socket in the state directory is nobody else's (#1189).
+     */
+    @Test
+    void vfkitsRestApiListensOnAUnixSocketInTheStateDirectoryNotOnATcpPort() {
+        var cmd = VmManager.vfkitCommand("vfkit", 2, 2048);
+
+        assertEquals("unix://" + Environment.vmStateDir().resolve("vm.rest.sock"),
+                cmd.get(cmd.indexOf("--restful-uri") + 1));
+        assertTrue(cmd.stream().noneMatch(arg -> arg.contains("tcp://")), cmd.toString());
+    }
+
     @Test
     void detectCpusReturnsAtLeastOne() {
         assertTrue(VmManager.detectCpus() >= 1);
