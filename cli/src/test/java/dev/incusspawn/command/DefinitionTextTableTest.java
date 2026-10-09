@@ -3,11 +3,17 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.tool.YamlToolSetup;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -38,7 +44,7 @@ class DefinitionTextTableTest {
     }
 
     @Test
-    void toolsTableShowsDefinitionTextOnOneSafeLine() {
+    void toolsTableShowsDefinitionTextOnOneSafeLine() throws Exception {
         Map<String, ToolSetup> tools = Map.of("tool\u001b[31m", tool());
 
         assertSafe(print(out -> ToolsCommand.ListSub.printTable(out, tools, name -> "/tmp/p\u009b2J", true)), 2);
@@ -46,26 +52,82 @@ class DefinitionTextTableTest {
     }
 
     @Test
-    void toolsShowShowsDefinitionTextOnSafeLines() {
-        var output = print(out -> ToolsCommand.Show.print(out, tool(), "/tmp/p\u001b[2J"));
-        assertSafe(output, output.lines().count());
+    void toolsShowShowsDefinitionTextOnSafeLines() throws Exception {
+        var tool = tool();
+        var output = print(out -> ToolsCommand.Show.print(out, tool, "/tmp/p\u001b[2J"));
+        // One line per field, parameter line, action, download and domain, and one per heading.
+        assertSafe(output, 15);
         assertTrue(output.contains("  Description:  a [2J 2J b c d e f"), output);
+        assertTrue(output.contains("      first second [2J"), output);
+        assertTrue(output.contains("    Open now [2J (url )"), output);
     }
 
-    private static ToolSetup tool() {
-        var auth = new ToolDef.AuthDef();
-        auth.setType("bearer\u001b[2J");
-        auth.setDomains(List.of("api.example.com\u001b[2J"));
-        var proxy = new ToolDef.ProxyDef();
-        proxy.setAuth(List.of(auth));
-        return new ToolSetup() {
-            @Override public String name() { return "tool\u001b[31m"; }
-            @Override public String description() { return HOSTILE; }
-            @Override public String feature() { return "gate\u009b2J"; }
-            @Override public List<String> requires() { return List.of("dep\u001b[2J"); }
-            @Override public List<String> packages() { return List.of("pkg\u001b[2J"); }
-            @Override public ToolDef.ProxyDef proxy() { return proxy; }
-            @Override public void install(dev.incusspawn.incus.Container c, Map<String, String> params) { }
+    @Test
+    void templateValidationShowsDefinitionTextSafely(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("tpl-evil.yaml");
+        Files.writeString(file, """
+                name: "evil\\e[2J"
+                parent: "tpl-\\x9b2J\\nx"
+                host-resources:
+                  - source: /tmp
+                    path: /opt/evil
+                    mode: "copy\\e]0;t\\a"
+                  - source: "/tmp/s\\e[2J"
+                    path: /etc/evil
+                    mode: readonly
+                tools:
+                  - "dup\\e[2J"
+                  - "dup\\e[2J"
+                """);
+        var out = new ByteArrayOutputStream();
+        var err = new ByteArrayOutputStream();
+        TemplatesCommand.validateAndReport(file, Map.of(), new PrintStream(out, true, StandardCharsets.UTF_8),
+                new PrintStream(err, true, StandardCharsets.UTF_8));
+
+        // The name, the parent, the host-resource mode and the duplicate tool.
+        var warnings = out.toString(StandardCharsets.UTF_8);
+        assertSafe(warnings, 4);
+        assertTrue(warnings.contains("Template name 'evil [2J'"), warnings);
+        assertTrue(warnings.contains("Parent 'tpl- 2J x'"), warnings);
+        assertTrue(warnings.contains("mode 'copy ]0;t '"), warnings);
+        assertTrue(warnings.contains("tool 'dup [2J'"), warnings);
+        // The forbidden mount target: its message is isx's multi-line advice, each line made safe.
+        var errors = err.toString(StandardCharsets.UTF_8);
+        assertSafe(errors, 5);
+        assertTrue(errors.contains("  ERROR: Host-resource '/tmp/s [2J' would be mounted"), errors);
+    }
+
+    /**
+     * A YAML tool with actions, so {@code tools show} prints every section: parameters with a
+     * description and options, actions and downloads besides what every tool has.
+     */
+    private static ToolSetup tool() throws IOException {
+        var yaml = """
+                name: "tool\\e[31m"
+                description: "a\\e[2J\\x9b2J\\x7fb\\nc\\u202ed\\u2066e\\Lf"
+                requires: ["dep\\e[2J"]
+                packages: ["pkg\\e[2J"]
+                parameters:
+                  "mode\\e[2J":
+                    type: "enum\\x9b"
+                    default: "on\\e[2J"
+                    description: "first\\nsecond\\e[2J"
+                    options: ["on\\e[2J", "off"]
+                actions:
+                  - label: "Open\\nnow\\e[2J"
+                    type: "url\\x9b"
+                downloads:
+                  - url: "https://example.com/t\\e[2J.tar.gz"
+                    arch: "x86_64\\x9b"
+                proxy:
+                  auth:
+                    - type: "bearer\\e[2J"
+                      domains: ["api.example.com\\e[2J"]
+                """;
+        var def = ToolDef.loadFromStream(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
+        // YamlToolSetup does not yet return its ToolDef's actions from actions() (#1226).
+        return new YamlToolSetup(def) {
+            @Override public List<ToolDef.ActionEntry> actions() { return def.getActions(); }
         };
     }
 
