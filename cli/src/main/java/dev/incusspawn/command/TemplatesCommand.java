@@ -85,10 +85,14 @@ public class TemplatesCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
-        /** The {@code table} format: the names, or with {@code verbose} a name, source and description per row. */
+        /**
+         * The {@code table} format: the names, or with {@code verbose} a name, source and
+         * description per row. A project-local template ships with a cloned repository, so its
+         * text is shown as {@code --format=plain} shows it: nothing in it can drive the terminal (#1133).
+         */
         static void printTable(PrintStream out, Map<String, ImageDef> defs, boolean verbose) {
             if (!verbose) {
-                defs.keySet().forEach(out::println);
+                defs.keySet().forEach(name -> out.println(cell(name)));
                 return;
             }
             int maxName = defs.keySet().stream().mapToInt(String::length).max().orElse(10);
@@ -97,7 +101,7 @@ public class TemplatesCommand extends BaseCommand {
             out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
             for (var entry : defs.entrySet()) {
                 var def = entry.getValue();
-                out.printf(fmt, entry.getKey(), def.getSource(), def.getDescription());
+                out.printf(fmt, cell(entry.getKey()), cell(def.getSource()), cell(def.getDescription()));
             }
         }
 
@@ -418,4 +422,8 @@ public class TemplatesCommand extends BaseCommand {
             # agent_note: |
             #   The build needs a boot JDK of 26/27/28; this box ships 26 and omits 25.
             """;
+
+    private static String cell(Object value) {
+        return OutputFormat.oneLine(String.valueOf(value));
+    }
 }

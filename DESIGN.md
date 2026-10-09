@@ -550,7 +550,10 @@ is empty. So query commands take `--format` (#1036), through one shared helper,
   the rare one with a control character.
   The `isx list` table and the TUI show an instance stamp (parent, created, the MCP fields)
   through the same `oneLine`, so they cannot disagree; `\p{Cntrl}`, which the MCP column used
-  before, is ASCII-only and let U+009B (8-bit CSI) through.
+  before, is ASCII-only and let U+009B (8-bit CSI) through. The `isx templates` and
+  `isx tools` tables (`list -v`, `tools show`) do the same for definition text (#1133): a
+  project-local definition ships with whatever repository was cloned, so its name, source and
+  description are as untrusted as a stamp.
 
 A command parses its `--format` with `OutputFormat.parse` (`isx list`, which also has
 `--plain`, with `OutputFormat.resolve`), builds each record once, as an ordered map of field name
