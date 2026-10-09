@@ -25,7 +25,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Manages Incus container/VM lifecycle operations.
@@ -1669,9 +1668,8 @@ public class IncusClient {
      */
     static String unknownRemoteMsg(String remoteName, String image, boolean macOS) {
         return "Unknown Incus remote '" + remoteName + "' for image '" + image + "'. " + (macOS
-                ? "isx knows " + WELL_KNOWN_REMOTES.keySet().stream().sorted()
-                        .map(r -> "'" + r + "'").collect(Collectors.joining(", "))
-                        + " and reads others, each with an addr and protocol, from the 'remotes:' section of "
+                ? "isx knows '" + String.join("', '", WELL_KNOWN_REMOTES.keySet())
+                        + "' and reads others, each with an addr (the protocol defaults to simplestreams), from the 'remotes:' section of "
                         + Environment.incusConfigCandidates().getFirst() + "."
                 : "Add it with: incus remote add " + remoteName + " <url>");
     }
