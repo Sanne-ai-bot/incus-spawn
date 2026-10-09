@@ -72,8 +72,8 @@ class DefinitionTextTableTest {
                   - source: /tmp
                     path: /opt/evil
                     mode: "copy\\e]0;t\\a"
-                  - source: "/tmp/s\\e[2J"
-                    path: /etc/evil
+                  - source: "/tmp/s\\e[2J\\nTemplate is valid."
+                    path: "/etc/evil\\nok"
                     mode: readonly
                 tools:
                   - "dup\\e[2J"
@@ -91,10 +91,12 @@ class DefinitionTextTableTest {
         assertTrue(warnings.contains("Parent 'tpl- 2J x'"), warnings);
         assertTrue(warnings.contains("mode 'copy ]0;t '"), warnings);
         assertTrue(warnings.contains("tool 'dup [2J'"), warnings);
-        // The forbidden mount target: its message is isx's multi-line advice, each line made safe.
+        // The forbidden mount target: its message is isx's multi-line advice, each line made safe,
+        // and the quoted source and path add no line of their own.
         var errors = err.toString(StandardCharsets.UTF_8);
         assertSafe(errors, 5);
-        assertTrue(errors.contains("  ERROR: Host-resource '/tmp/s [2J' would be mounted"), errors);
+        assertTrue(errors.contains("  ERROR: Host-resource '/tmp/s [2J Template is valid.' would be mounted"
+                + " (readonly) at /etc/evil ok, a system directory."), errors);
     }
 
     /**
