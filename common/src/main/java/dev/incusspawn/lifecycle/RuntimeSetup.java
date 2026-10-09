@@ -1,6 +1,6 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.BridgeSubnetCheck;
@@ -93,7 +93,7 @@ public final class RuntimeSetup {
     public record RuntimeConfig(String buildSourceJson, boolean hasSshKeys,
                                 String workdir, String shellCommand,
                                 String subnetDiagnostic, String terminfo, String staticIp,
-                                String templateName, JsonNode instance) {
+                                String templateName, JqValue instance) {
 
         public IncusClient.ShellPrep toShellPrep() {
             return IncusClient.ShellPrep.fromPrefetched(

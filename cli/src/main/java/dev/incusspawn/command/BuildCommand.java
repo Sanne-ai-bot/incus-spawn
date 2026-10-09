@@ -1,8 +1,6 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.baseimage.BaseImageReleases;
@@ -2254,18 +2252,18 @@ public class BuildCommand extends BaseCommand {
      * ones this build skipped; a stamp is written only where it differs.
      */
     void syncDefaultActions(Map<String, ImageDef> defs) {
-        JsonNode instances;
+        JqValue instances;
         try {
-            instances = JSON.readTree(incus.listJsonConfig());
-        } catch (IncusException | JsonProcessingException e) {
+            instances = incus.listJsonConfig();
+        } catch (RuntimeException e) {
             System.err.println("Warning: could not sync default-action onto templates: " + e.getMessage());
             return;
         }
-        for (var instance : instances) {
-            var name = instance.path("name").asText("");
+        for (var instance : instances.asList()) {
+            var name = instance.pathText("name", "");
             var def = defs.get(name);
-            var config = instance.path("config");
-            if (def == null || !Metadata.TYPE_BASE.equals(config.path(Metadata.TYPE).asText(""))) continue;
+            var config = instance.getField("config");
+            if (def == null || !Metadata.TYPE_BASE.equals(config.pathText(Metadata.TYPE, ""))) continue;
             var chain = definitionChain(def, defs);
             if (chain == null) continue;
             var effective = resolveEffectiveDefaultAction(def, defs);
@@ -2310,14 +2308,14 @@ public class BuildCommand extends BaseCommand {
      * that matches what it has installed until it is rebuilt, and a template built from another
      * project's definitions is not theirs to change.
      */
-    private boolean builtFromCurrentChain(List<ImageDef> chain, JsonNode config) {
+    private boolean builtFromCurrentChain(List<ImageDef> chain, JqValue config) {
         var def = chain.getFirst();
-        if (!BuildInfo.instance().version().equals(config.path(Metadata.BUILD_VERSION).asText(""))
+        if (!BuildInfo.instance().version().equals(config.pathText(Metadata.BUILD_VERSION, ""))
                 || !def.contentFingerprint(computeToolFingerprints(def, toolDefLoader))
-                        .equals(config.path(Metadata.DEFINITION_SHA).asText(""))) {
+                        .equals(config.pathText(Metadata.DEFINITION_SHA, ""))) {
             return false;
         }
-        var buildSource = BuildSource.fromJson(config.path(Metadata.BUILD_SOURCE).asText(""));
+        var buildSource = BuildSource.fromJson(config.pathText(Metadata.BUILD_SOURCE, ""));
         if (buildSource == null) return false;
         for (var current : chain) {
             var built = buildSource.getDefinitions().get(current.getName());
@@ -2448,8 +2446,6 @@ public class BuildCommand extends BaseCommand {
         }
         new RepoCloner(incus).cloneRepos(container, imageDef, machineType);
     }
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     enum InstanceType {
         container,

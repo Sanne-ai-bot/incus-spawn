@@ -56,7 +56,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import dev.tamboui.widgets.table.TableState;
 import dev.incusspawn.RuntimeServices;
 
-import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -971,7 +970,7 @@ public class Tui {
     /** What the open branch dialog's source inherits, or null when it could not be read. */
     private BranchFlow.Inherited branchInherited;
 
-    private BranchAccountChoices branchAccountChoicesFor(String source, JsonNode sourceInstance) {
+    private BranchAccountChoices branchAccountChoicesFor(String source, io.hyperfoil.tools.jjq.value.JqValue sourceInstance) {
         List<BranchAccountChoices.Row> rows;
         branchInherited = null;
         try {

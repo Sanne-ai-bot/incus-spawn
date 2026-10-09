@@ -36,7 +36,9 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.DIM;
@@ -57,8 +59,6 @@ import static dev.incusspawn.command.InitCommand.runHostCapturingExit;
  * variables, Incus lookups) are package-private methods, overridden by the flow tests.
  */
 class CredentialSetup {
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private HttpClient httpClient;
 
@@ -98,7 +98,7 @@ class CredentialSetup {
     private static final List<String> KNOWN_TOOL_ORDER = List.of("claude", "gh", "bob", "codex");
 
     List<String> selectCredentials(Map<String, ToolSetup> allTools, SpawnConfig config, Prompts prompts) {
-        var configTree = JSON.valueToTree(config);
+        var configTree = config.tree();
 
         var toolsWithProxy = new ArrayList<Map.Entry<String, ToolSetup>>();
         for (var entry : allTools.entrySet()) {
@@ -156,7 +156,7 @@ class CredentialSetup {
     }
 
     private static boolean isToolConfigured(String toolName, ToolSetup tool,
-            SpawnConfig config, com.fasterxml.jackson.databind.JsonNode configTree,
+            SpawnConfig config, io.hyperfoil.tools.jjq.value.JqValue configTree,
             Map<String, ToolSetup> allTools) {
         if ("claude".equals(toolName)) return config.getClaude().hasAuth();
         var proxyDef = tool.proxy();
@@ -180,7 +180,7 @@ class CredentialSetup {
      * {@code accounts:}, the same answer the proxy would serve an instance that pins nothing.
      */
     private static String configuredValue(ToolDef.ProxyDef proxyDef, ToolDef.ConfigEntry configDef,
-            com.fasterxml.jackson.databind.JsonNode configTree, Map<String, ToolSetup> allTools) {
+            io.hyperfoil.tools.jjq.value.JqValue configTree, Map<String, ToolSetup> allTools) {
         var fullPath = proxyDef.fullConfigPath(configDef);
         var namespace = proxyDef.namespaceOf(configDef);
         if (namespace.isBlank() || !fullPath.startsWith(namespace + ".")) {
@@ -614,8 +614,8 @@ class CredentialSetup {
             return "";
         }
         try {
-            var message = JSON.readTree(body).path("error").path("message");
-            if (!message.isTextual()) {
+            var message = JqValues.parse(body).getField("error").getField("message");
+            if (!message.isString()) {
                 return "";
             }
             var text = WHITESPACE_RUN.matcher(message.asText()).replaceAll(" ").strip();
@@ -1570,9 +1570,9 @@ class CredentialSetup {
                 return null;
             }
 
-            var json = JSON.readTree(response.body());
-            var login = json.has("login") ? json.get("login").asText(null) : null;
-            var email = json.has("email") && !json.get("email").isNull() ? json.get("email").asText(null) : null;
+            var json = JqValues.parse(response.body());
+            var login = json.pathText("login", null);
+            var email = json.pathText("email", null);
             if (email == null) {
                 email = checkGitHubEmail(client, token, prompts);
             }
@@ -1650,20 +1650,20 @@ class CredentialSetup {
 
     static EmailParseResult parseGitHubEmails(String json) {
         try {
-            var emails = JSON.readTree(json);
+            var emails = JqValues.parse(json);
             var verifiedEmails = new ArrayList<String>();
             String primaryEmail = null;
             String noreplyEmail = null;
-            for (var entry : emails) {
-                if (!entry.path("verified").asBoolean(false)) continue;
-                var email = entry.path("email").asText(null);
+            for (var entry : emails.asList()) {
+                if (!entry.pathBoolean("verified", false)) continue;
+                var email = entry.pathText("email", null);
                 if (email == null) continue;
                 if (email.endsWith("@users.noreply.github.com")) {
                     noreplyEmail = email;
                     continue;
                 }
                 verifiedEmails.add(email);
-                if (entry.path("primary").asBoolean(false)) {
+                if (entry.pathBoolean("primary", false)) {
                     primaryEmail = email;
                 }
             }

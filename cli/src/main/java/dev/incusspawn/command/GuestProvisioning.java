@@ -1,8 +1,8 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.command.BuildTools.ResolvedTool;
 import dev.incusspawn.command.BuildTools.ToolResolution;
@@ -499,8 +499,7 @@ public class GuestProvisioning {
 
     private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
     private static final String AGENTUSER_HOME = "/home/agentuser";
-    private static final ObjectMapper JSON = new ObjectMapper();
-
+    
     /**
      * Update .claude.json to pre-trust cloned repo directories and register GitHub repo paths.
      */
@@ -518,52 +517,67 @@ public class GuestProvisioning {
         }
 
         try {
-            var root = (ObjectNode) JSON.readTree(catResult.stdout());
+            var root = JqValues.parse(catResult.stdout());
 
-            var projects = root.has("projects")
-                    ? (ObjectNode) root.get("projects")
-                    : root.putObject("projects");
+            var projects = root.getField("projects");
+            if (!projects.isObject()) projects = JqObject.builder(0).build();
+            var githubRepoPaths = root.getField("githubRepoPaths");
+            if (!githubRepoPaths.isObject()) githubRepoPaths = JqObject.builder(0).build();
 
-            var githubRepoPaths = root.has("githubRepoPaths")
-                    ? (ObjectNode) root.get("githubRepoPaths")
-                    : root.putObject("githubRepoPaths");
+            var projectsBuilder = JqObject.builder(8);
+            if (projects instanceof JqObject projectsObj) projectsObj.forEach(projectsBuilder::put);
+            var pathsBuilder = JqObject.builder(8);
+            if (githubRepoPaths instanceof JqObject pathsObj) pathsObj.forEach(pathsBuilder::put);
 
             // Inherited repos are usually trusted already: skip the write when nothing changes.
             boolean changed = false;
             for (var repo : repos) {
                 var expandedPath = expandHome(repo.getPath());
 
-                if (!projects.has(expandedPath)) {
-                    var projectEntry = projects.putObject(expandedPath);
-                    projectEntry.putArray("allowedTools");
-                    projectEntry.put("hasTrustDialogAccepted", true);
+                if (!projectsBuilder.build().keys().contains(expandedPath)) {
+                    projectsBuilder.put(expandedPath, JqObject.builder(2)
+                            .put("allowedTools", JqArray.arrayBuilder().build())
+                            .put("hasTrustDialogAccepted", true)
+                            .build());
                     changed = true;
                 }
 
                 var ownerRepo = parseGitHubOwnerRepo(repo.getUrl());
                 if (ownerRepo != null) {
-                    ArrayNode paths;
-                    if (githubRepoPaths.has(ownerRepo)) {
-                        paths = (ArrayNode) githubRepoPaths.get(ownerRepo);
-                    } else {
-                        paths = githubRepoPaths.putArray(ownerRepo);
+                    var existing = pathsBuilder.build().getField(ownerRepo);
+                    var entries = JqArray.arrayBuilder();
+                    if (existing.isArray()) {
+                        existing.asList().forEach(entries::add);
+                    } else if (!existing.isNull()) {
+                        // Like the old cast: a non-array here is corrupt; warn instead of writing.
+                        throw new IllegalStateException(ownerRepo + " is not an array in " + CLAUDE_JSON_PATH);
                     }
                     boolean found = false;
-                    for (var node : paths) {
-                        if (node.asText().equals(expandedPath)) {
+                    for (var node : entries.build().asList()) {
+                        if (expandedPath.equals(node.asDisplayText(""))) {
                             found = true;
                             break;
                         }
                     }
                     if (!found) {
-                        paths.add(expandedPath);
+                        entries.add(expandedPath);
+                        pathsBuilder.put(ownerRepo, entries.build());
                         changed = true;
                     }
                 }
             }
             if (!changed) return;
 
-            var updatedJson = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+            var updated = JqObject.builder(4);
+            if (root instanceof JqObject rootObj) {
+                rootObj.forEach((key, value) -> {
+                    if (!key.equals("projects") && !key.equals("githubRepoPaths")) updated.put(key, value);
+                });
+            }
+            updated.put("projects", projectsBuilder.build());
+            updated.put("githubRepoPaths", pathsBuilder.build());
+            // Pretty style differs from Jackson's; Claude Code parses the file, so only the shape matters.
+            var updatedJson = JqValues.toPrettyJsonString(updated.build());
             container.writeFile(CLAUDE_JSON_PATH, updatedJson);
             container.chown(CLAUDE_JSON_PATH, "agentuser:agentuser");
         } catch (Exception e) {

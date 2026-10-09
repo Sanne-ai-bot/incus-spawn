@@ -1,7 +1,5 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
@@ -118,25 +116,25 @@ class GuestProvisioningTest {
         var writtenJson = capturedWrite(incus, ".claude.json");
         assertNotNull(writtenJson, "Expected .claude.json to be written");
 
-        var mapper = new ObjectMapper();
-        var root = (ObjectNode) mapper.readTree(writtenJson);
+        var root = io.hyperfoil.tools.jjq.value.JqValues.parse(writtenJson);
 
         // Original fields preserved
-        assertTrue(root.get("hasCompletedOnboarding").asBoolean());
+        assertTrue(root.pathBoolean("hasCompletedOnboarding", false));
 
         // Original project trust preserved
-        var projects = (ObjectNode) root.get("projects");
-        assertTrue(projects.has("/home/agentuser"));
-        assertTrue(projects.get("/home/agentuser").get("hasTrustDialogAccepted").asBoolean());
+        var projects = root.getField("projects");
+        assertTrue(projects.getField("/home/agentuser").getField("hasTrustDialogAccepted").asBoolean(false));
+        assertTrue(projects instanceof io.hyperfoil.tools.jjq.value.JqObject projectsObj
+                && projectsObj.keys().contains("/home/agentuser"));
 
         // New repo project trust added
-        assertTrue(projects.has("/home/agentuser/quarkus"));
-        assertTrue(projects.get("/home/agentuser/quarkus").get("hasTrustDialogAccepted").asBoolean());
+        assertTrue(projects.getField("/home/agentuser/quarkus").getField("hasTrustDialogAccepted").asBoolean(false));
 
         // GitHub repo path added
-        var githubPaths = (ObjectNode) root.get("githubRepoPaths");
-        assertTrue(githubPaths.has("quarkusio/quarkus"));
-        assertEquals("/home/agentuser/quarkus", githubPaths.get("quarkusio/quarkus").get(0).asText());
+        var githubPaths = root.getField("githubRepoPaths");
+        assertTrue(githubPaths instanceof io.hyperfoil.tools.jjq.value.JqObject pathsObj
+                && pathsObj.keys().contains("quarkusio/quarkus"));
+        assertEquals("/home/agentuser/quarkus", githubPaths.getField("quarkusio/quarkus").getElement(0).asText());
     }
 
     @Test
@@ -165,10 +163,10 @@ class GuestProvisioningTest {
 
         GuestProvisioning.updateClaudeJsonTrust(container, child, Map.of(parent.getName(), parent));
 
-        var root = new ObjectMapper().readTree(capturedWrite(incus, ".claude.json"));
-        assertTrue(root.path("projects").path("/home/agentuser/parent-repo").path("hasTrustDialogAccepted").asBoolean());
-        assertEquals("/home/agentuser/parent-repo", root.path("githubRepoPaths").path("owner/parent-repo").path(0).asText());
-        assertTrue(root.path("projects").path("/home/agentuser").path("hasTrustDialogAccepted").asBoolean(),
+        var root = io.hyperfoil.tools.jjq.value.JqValues.parse(capturedWrite(incus, ".claude.json"));
+        assertTrue(root.path("projects").path("/home/agentuser/parent-repo").path("hasTrustDialogAccepted").asBoolean(false));
+        assertEquals("/home/agentuser/parent-repo", root.path("githubRepoPaths").path("owner/parent-repo").getElement(0).asText());
+        assertTrue(root.path("projects").path("/home/agentuser").path("hasTrustDialogAccepted").asBoolean(false),
                 "Preserve the reconfigured file's own entries");
     }
 

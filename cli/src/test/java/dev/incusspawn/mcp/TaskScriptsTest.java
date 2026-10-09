@@ -511,9 +511,9 @@ class TaskScriptsTest {
         assertTrue(read.contains("1\t0\t\"a\\tb\\n1\\t0\\tforged\"\n"), read);
         assertFalse(read.contains("\n1\t0\tforged"), read);
         assertTrue(read.contains("\n1\t0\tNEW_FILE\n") && read.contains("+more"), read);
-        var files = diff.structured().path("repos").get(0).path("files");
+        var files = diff.structured().path("repos").getElement(0).path("files");
         assertEquals(java.util.List.of("NEW_FILE", odd, "tracked.txt"),
-                files.findValuesAsText("path").stream().sorted().toList(), files.toString());
+                files.asList().stream().map(f -> f.path("path").asText()).sorted().toList(), files.toString());
     }
 
     @Test
@@ -1076,10 +1076,10 @@ class TaskScriptsTest {
         launchCodex("t1-codex", 2, "follow up with $HOME and `literal`");
         var resumed = awaitFinished("t1-codex");
         assertEquals(0, resumed.exit(), resumed.stderr());
-        var argv = JsonRpc.JSON.readTree(Files.readString(home.resolve("codex-args")));
-        assertEquals("resume", argv.get(1).asText());
-        assertEquals("codex-session-123", argv.get(argv.size() - 2).asText());
-        assertEquals("-", argv.get(argv.size() - 1).asText());
+        var argv = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(Files.readString(home.resolve("codex-args")));
+        assertEquals("resume", argv.getElement(1).asText());
+        assertEquals("codex-session-123", argv.getElement(argv.size() - 2).asText());
+        assertEquals("-", argv.getElement(argv.size() - 1).asText());
         assertEquals("follow up with $HOME and `literal`", Files.readString(home.resolve("codex-prompt")));
         assertTrue(CodexEvents.summarize(resumed.output(), 8).finished());
     }
@@ -1102,7 +1102,7 @@ class TaskScriptsTest {
         assertEquals(0, status.exit(), status.stderr());
         assertEquals(300000, Files.size(d.resolve("result-1.txt")));
         assertFalse(Files.exists(home.resolve("must-not-write")));
-        assertEquals(300000, CodexEvents.summarize(status.output(), 0).result().path("report_bytes").asInt());
+        assertEquals(300000, CodexEvents.summarize(status.output(), 0).result().path("report_bytes").asInt(0));
     }
 
     @Test
@@ -1129,8 +1129,8 @@ class TaskScriptsTest {
         var status = awaitFinished("t3-codex");
         assertEquals(0, status.exit(), status.stderr());
         var result = CodexEvents.summarize(status.output(), 0).result();
-        assertEquals(1200001, result.path("report_bytes").asInt());
-        assertTrue(result.path("report_truncated").asBoolean());
+        assertEquals(1200001, result.path("report_bytes").asInt(0));
+        assertTrue(result.path("report_truncated").asBoolean(false));
         assertEquals(1024 * 1024 - 1, Files.size(home.resolve(".isx-mcp/tasks/t3-codex/result-1.txt")), "cut before the split character");
     }
 

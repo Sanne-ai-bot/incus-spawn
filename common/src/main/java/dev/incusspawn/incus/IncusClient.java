@@ -1,8 +1,8 @@
 package dev.incusspawn.incus;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.MissingNode;
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
@@ -106,9 +106,9 @@ public class IncusClient {
      * Used for informational display (isx version, proxy status). Static so it can
      * be called at class-init time from Environment.java.
      */
-    private static volatile JsonNode cachedDaemonMetadata;
+    private static volatile JqValue cachedDaemonMetadata;
 
-    private static JsonNode daemonMetadata() {
+    private static JqValue daemonMetadata() {
         var cached = cachedDaemonMetadata;
         if (cached != null) return cached;
         var http = IncusApi.tryConnect();
@@ -374,9 +374,9 @@ public class IncusClient {
             if (!execGateOpen) {
                 var state = runtimeState(name);
                 if (state != null) {
-                    failIfDied(name, state.path("status").asText(""), MachineType.VM);
-                    var processes = state.get("processes");
-                    execGateOpen = processes == null || processes.asInt() >= 0;
+                    failIfDied(name, state.pathText("status", ""), MachineType.VM);
+                    var processes = state.getField("processes");
+                    execGateOpen = processes.isMissingNode() || processes.asInt(0) >= 0;
                     probe = execGateOpen;
                 }
                 // Incus also reports -1 when its own state query to a connected agent fails, so
@@ -432,9 +432,9 @@ public class IncusClient {
     }
 
     /** Throw if {@code instance} has stopped or errored: waiting any longer cannot help. */
-    private void failIfDied(String name, JsonNode instance) {
+    private void failIfDied(String name, JqValue instance) {
         if (instance == null) return;
-        failIfDied(name, instance.path("status").asText(""), machineType(instance));
+        failIfDied(name, instance.pathText("status", ""), machineType(instance));
     }
 
     private void failIfDied(String name, String status, MachineType type) {
@@ -461,7 +461,7 @@ public class IncusClient {
      * {@code processes} as -1 until its agent connects, the moment exec starts working, so one
      * GET answers what an exec probe would, without the exec's POST and WebSockets.
      */
-    private JsonNode runtimeState(String name) {
+    private JqValue runtimeState(String name) {
         try {
             var resp = http().get("/1.0/instances/" + name + "/state");
             return resp.isSuccess() ? resp.body().path("metadata") : null;
@@ -471,7 +471,7 @@ public class IncusClient {
     }
 
     /** The instance's metadata, or null when the daemon cannot say (retry rather than crash). */
-    private JsonNode startupState(String name) {
+    private JqValue startupState(String name) {
         try {
             return instanceMetadata(name);
         } catch (Exception daemonUnreachable) {
@@ -545,7 +545,7 @@ public class IncusClient {
         }
 
         /** {@link #from(IncusClient, String)} from an instance already read with {@link #instanceMetadata}. */
-        public static ShellPrep fromInstance(IncusClient incus, JsonNode instance) {
+        public static ShellPrep fromInstance(IncusClient incus, JqValue instance) {
             return fromConfig(incus, configByPrefix(instance, ""));
         }
 
@@ -625,7 +625,7 @@ public class IncusClient {
     public boolean hasStoragePool() {
         var resp = http().get("/1.0/storage-pools");
         if (!resp.isSuccess()) return false;
-        return resp.body().path("metadata").size() > 0;
+        return resp.body().getField("metadata").size() > 0;
     }
 
     /**
@@ -637,7 +637,7 @@ public class IncusClient {
     public boolean hasApiExtension(String extension) {
         var resp = http().get("/1.0");
         if (!resp.isSuccess()) return false;
-        for (var ext : resp.body().path("metadata").path("api_extensions")) {
+        for (var ext : resp.body().path("metadata").getField("api_extensions").asList()) {
             if (extension.equals(ext.asText())) return true;
         }
         return false;
@@ -646,7 +646,7 @@ public class IncusClient {
     public CowPoolProbe probeCowPool() {
         var resp = http().get("/1.0/storage-pools?recursion=1");
         if (!resp.isSuccess()) return new CowPoolProbe(false, null, null);
-        for (var pool : resp.body().path("metadata")) {
+        for (var pool : resp.body().getField("metadata").asList()) {
             var driver = pool.path("driver").asText("");
             if (COW_DRIVERS.contains(driver)) {
                 return new CowPoolProbe(true, pool.path("name").asText(), driver);
@@ -694,7 +694,7 @@ public class IncusClient {
         if (cow != null) return cow;
         var resp = http().get("/1.0/storage-pools?recursion=1");
         if (!resp.isSuccess()) return null;
-        for (var pool : resp.body().path("metadata")) {
+        for (var pool : resp.body().getField("metadata").asList()) {
             var name = pool.path("name").asText("");
             if (!name.isEmpty()) return name;
         }
@@ -705,7 +705,7 @@ public class IncusClient {
         var resp = http().get("/1.0/storage-pools?recursion=1");
         if (!resp.isSuccess()) return Map.of();
         var result = new LinkedHashMap<String, String>();
-        for (var pool : resp.body().path("metadata")) {
+        for (var pool : resp.body().getField("metadata").asList()) {
             var name = pool.path("name").asText("");
             if (!name.isEmpty()) {
                 result.put(name, pool.path("driver").asText(""));
@@ -714,20 +714,19 @@ public class IncusClient {
         return result;
     }
 
-    public static String rootDiskPoolFromDevices(JsonNode devices) {
+    public static String rootDiskPoolFromDevices(JqValue devices) {
         var name = rootDiskDeviceNameFromDevices(devices);
         if (name == null) return null;
         var pool = devices.path(name).path("pool").asText("");
         return pool.isEmpty() ? null : pool;
     }
 
-    static String rootDiskDeviceNameFromDevices(JsonNode devices) {
-        if (devices == null || devices.isMissingNode()) return null;
-        for (var it = devices.fields(); it.hasNext(); ) {
-            var entry = it.next();
-            var dev = entry.getValue();
-            if ("disk".equals(dev.path("type").asText()) && "/".equals(dev.path("path").asText())) {
-                return entry.getKey();
+    static String rootDiskDeviceNameFromDevices(JqValue devices) {
+        if (!(devices instanceof JqObject allDevices)) return null;
+        for (var name : allDevices.keys()) {
+            var dev = allDevices.getField(name);
+            if ("disk".equals(dev.pathText("type", "")) && "/".equals(dev.pathText("path", ""))) {
+                return name;
             }
         }
         return null;
@@ -738,13 +737,15 @@ public class IncusClient {
     }
 
     /** A device's config as a mutable map, e.g. to send it back changed: Incus replaces a device whole. */
-    public static Map<String, String> deviceConfig(JsonNode device) {
+    public static Map<String, String> deviceConfig(JqValue device) {
         var config = new LinkedHashMap<String, String>();
-        device.properties().forEach(e -> config.put(e.getKey(), e.getValue().asText("")));
+        if (device instanceof JqObject object) {
+            object.forEach((key, value) -> config.put(key, value.asDisplayText("")));
+        }
         return config;
     }
 
-    public boolean updateProfileRootDiskPool(String profile, JsonNode devices, String newPool) {
+    public boolean updateProfileRootDiskPool(String profile, JqValue devices, String newPool) {
         var deviceName = rootDiskDeviceNameFromDevices(devices);
         if (deviceName == null) return false;
         var merged = deviceConfig(devices.path(deviceName));
@@ -771,7 +772,7 @@ public class IncusClient {
         var resp = http().get("/1.0/instances?recursion=1");
         if (!resp.isSuccess()) return null;
         var result = new ArrayList<InstanceRoot>();
-        for (var inst : resp.body().path("metadata")) {
+        for (var inst : resp.body().getField("metadata").asList()) {
             var name = inst.path("name").asText("");
             var pool = rootDiskPoolFromDevices(inst.path("expanded_devices"));
             if (!name.isEmpty() && pool != null) {
@@ -801,7 +802,7 @@ public class IncusClient {
     }
 
     /** {@link #planCopy(String)} from a source already read with {@link #instanceMetadata}. */
-    public CopyPlan planCopy(JsonNode sourceInstance) {
+    public CopyPlan planCopy(JqValue sourceInstance) {
         var sourcePool = rootDiskPoolFromDevices(sourceInstance.path("expanded_devices"));
         var addressedNics = withoutStaticAddress(sourceInstance.path("devices"));
         var pools = listPools();
@@ -832,14 +833,14 @@ public class IncusClient {
      * whose NIC conflicts with another (it only logs it), and the proxy would map that address to
      * whichever of the two it lists last.
      */
-    public static Map<String, Map<String, String>> withoutStaticAddress(JsonNode devices) {
+    public static Map<String, Map<String, String>> withoutStaticAddress(JqValue devices) {
         var result = new LinkedHashMap<String, Map<String, String>>();
-        devices.properties().forEach(e -> {
-            var device = e.getValue();
-            if (!isNic(device) || device.path("ipv4.address").asText("").isEmpty()) return;
+        if (!(devices instanceof JqObject all)) return result;
+        all.forEach((name, device) -> {
+            if (!isNic(device) || device.pathText("ipv4.address", "").isEmpty()) return;
             var config = deviceConfig(device);
             config.remove("ipv4.address");
-            result.put(e.getKey(), config);
+            result.put(name, config);
         });
         return result;
     }
@@ -887,14 +888,15 @@ public class IncusClient {
     /**
      * Extract the first global IPv4 address from an Incus network state node.
      */
-    public static String extractIpv4(JsonNode networkNode) {
-        for (var ifaces = networkNode.fields(); ifaces.hasNext(); ) {
-            var iface = ifaces.next();
-            if (iface.getKey().equals("lo")) continue;
-            for (var addr : iface.getValue().path("addresses")) {
-                if ("inet".equals(addr.path("family").asText())
-                        && "global".equals(addr.path("scope").asText())) {
-                    return addr.path("address").asText();
+    public static String extractIpv4(JqValue networkNode) {
+        if (!(networkNode instanceof JqObject networks)) return null;
+        for (var entry : networks.entries()) {
+            if (entry.getKey().equals("lo")) continue;
+            var iface = entry.getValue();
+            for (var addr : iface.getField("addresses").asList()) {
+                if ("inet".equals(addr.pathText("family", ""))
+                        && "global".equals(addr.pathText("scope", ""))) {
+                    return addr.pathText("address", "");
                 }
             }
         }
@@ -916,8 +918,8 @@ public class IncusClient {
      */
     public long cpuUsage(String name) {
         var state = runtimeState(name);
-        var usage = state == null ? null : state.path("cpu").get("usage");
-        return usage == null || !usage.canConvertToLong() ? -1 : usage.asLong();
+        var usage = state == null ? null : state.path("cpu").getField("usage");
+        return usage == null || !usage.isIntegralNumber() ? -1 : usage.longValue();
     }
 
     /** Every global IPv4 address a running instance's interfaces hold, as its state reports them. */
@@ -925,15 +927,18 @@ public class IncusClient {
         var resp = http().get("/1.0/instances/" + name + "/state");
         var addresses = new ArrayList<String>();
         if (!resp.isSuccess()) return addresses;
-        resp.body().path("metadata").path("network").properties().forEach(iface -> {
-            if (iface.getKey().equals("lo")) return;
-            for (var addr : iface.getValue().path("addresses")) {
-                if ("inet".equals(addr.path("family").asText())
-                        && "global".equals(addr.path("scope").asText())) {
-                    addresses.add(addr.path("address").asText());
+        var network = resp.body().getField("metadata").getField("network");
+        if (network instanceof JqObject ifaces) {
+            ifaces.forEach((ifaceName, iface) -> {
+                if (ifaceName.equals("lo")) return;
+                for (var addr : iface.getField("addresses").asList()) {
+                    if ("inet".equals(addr.pathText("family", ""))
+                            && "global".equals(addr.pathText("scope", ""))) {
+                        addresses.add(addr.pathText("address", ""));
+                    }
                 }
-            }
-        });
+            });
+        }
         return addresses;
     }
 
@@ -1020,7 +1025,7 @@ public class IncusClient {
     }
 
     /** The devices map of a profile, as configured (not expanded). */
-    public JsonNode profileDevices(String name) {
+    public JqValue profileDevices(String name) {
         var resp = http().get("/1.0/profiles/" + name);
         if (!resp.isSuccess()) {
             throw new IncusException("Failed to read profile " + name
@@ -1050,10 +1055,10 @@ public class IncusClient {
      * Checks for a device of the given type, optionally requiring a specific {@code path}.
      * Device names are conventional, not guaranteed, so match on type rather than on "root"/"eth0".
      */
-    private static boolean hasDeviceOfType(JsonNode devices, String type, String path) {
-        for (var device : devices) {
-            if (!type.equals(device.path("type").asText())) continue;
-            if (path == null || path.equals(device.path("path").asText())) return true;
+    private static boolean hasDeviceOfType(JqValue devices, String type, String path) {
+        for (var device : devices.asList()) {
+            if (!type.equals(device.pathText("type", ""))) continue;
+            if (path == null || path.equals(device.pathText("path", ""))) return true;
         }
         return false;
     }
@@ -1090,7 +1095,7 @@ public class IncusClient {
             throw new IncusException("Failed to read the DHCP leases of " + networkName);
         }
         var addresses = new HashSet<String>();
-        for (var lease : resp.body().path("metadata")) {
+        for (var lease : resp.body().getField("metadata").asList()) {
             var address = lease.path("address").asText("");
             if (!address.isEmpty() && !address.contains(":")) addresses.add(address);
         }
@@ -1104,9 +1109,12 @@ public class IncusClient {
             throw new IncusException("Failed to get network config from " + networkName);
         }
         var config = new HashMap<String, String>();
-        resp.body().path("metadata").path("config").properties().forEach(e -> {
-            if (!e.getValue().isNull()) config.put(e.getKey(), e.getValue().asText());
-        });
+        var metadataConfig = resp.body().getField("metadata").getField("config");
+        if (metadataConfig instanceof JqObject configObj) {
+            configObj.forEach((key, value) -> {
+                if (!value.isNull()) config.put(key, value.asDisplayText(""));
+            });
+        }
         return config;
     }
 
@@ -1132,15 +1140,15 @@ public class IncusClient {
         return nicDeviceName(resp.body().path("metadata"), networkName);
     }
 
-    public static boolean isNic(JsonNode device) {
-        return "nic".equals(device.path("type").asText());
+    public static boolean isNic(JqValue device) {
+        return "nic".equals(device.pathText("type", ""));
     }
 
     /** As {@link #findNicDeviceName}, from an instance representation already read. */
-    public static String nicDeviceName(JsonNode instanceMetadata, String networkName) {
-        var expandedDevices = instanceMetadata.path("expanded_devices");
-        for (var it = expandedDevices.properties().iterator(); it.hasNext(); ) {
-            var entry = it.next();
+    public static String nicDeviceName(JqValue instanceMetadata, String networkName) {
+        var expandedDevices = instanceMetadata.getField("expanded_devices");
+        if (!(expandedDevices instanceof JqObject allDevices)) return null;
+        for (var entry : allDevices.entries()) {
             var dev = entry.getValue();
             if (isNic(dev) &&
                 (networkName.equals(dev.path("network").asText()) ||
@@ -1262,50 +1270,52 @@ public class IncusClient {
         boolean unusable = false;
         for (var path : candidates) {
             if (!Files.exists(path)) continue;
-            JsonNode root;
+            JqValue root;
             try {
-                root = new YAMLMapper().readTree(path.toFile());
+                root = io.hyperfoil.tools.jjq.yaml.JqYaml.parse(
+                        Files.readString(path, java.nio.charset.StandardCharsets.UTF_8));
             } catch (Exception e) {
                 problems.add(YamlErrors.friendly(path.toString(), e));
                 unusable = true;
                 continue;
             }
             if (root == null) continue;
-            var remotes = root.path("remotes");
-            if (!remotes.isMissingNode() && !remotes.isNull() && !remotes.isObject()) {
+            // jjq reads an absent key as null; only a present non-mapping is a broken file
+            var remotes = root.getField("remotes");
+            if (!remotes.isNull() && !remotes.isObject()) {
                 problems.add(path + " has a 'remotes:' that is not a mapping of remote names");
                 unusable = true;
                 continue;
             }
-            var remoteNode = remotes.path(name);
-            if (remoteNode.isMissingNode()) continue;
-            var addrNode = remoteNode.path("addr");
-            var addr = addrNode.isTextual() ? addrNode.asText().strip() : "";
+            // Present but null (an empty 'name:') is a remote with no addr, not an absent one
+            if (!(remotes instanceof JqObject remotesObj) || !remotesObj.keys().contains(name)) continue;
+            var remoteNode = remotes.getField(name);
+            var addrNode = remoteNode.getField("addr");
+            var addr = addrNode.isString() ? addrNode.asText().strip() : "";
             if (addr.isEmpty()) {
                 // It quotes the file's keys: one line, as YamlErrors.friendly makes the parse errors.
                 problems.add(OutputFormat.oneLine(path + " defines remote '" + name + "' " + whyNoAddr(remoteNode)));
                 unusable = true;
                 continue;
             }
-            var protocol = remoteNode.path("protocol").asText("");
+            var protocol = remoteNode.getField("protocol").asDisplayText("");
             return new RemoteConfig(addr, protocol.isEmpty() ? DEFAULT_REMOTE_PROTOCOL : protocol);
         }
         return unusable ? null : WELL_KNOWN_REMOTES.get(name);
     }
 
     /** What is wrong with a remote's entry that yields no addr, for the user who wrote it. */
-    private static String whyNoAddr(JsonNode remote) {
-        if (!remote.isObject()) {
+    private static String whyNoAddr(JqValue remote) {
+        if (!(remote instanceof JqObject remoteObj)) {
             var shape = remote.isArray() ? "a list" : remote.isNull() ? "an empty value" : "a single value";
             return "as " + shape + ", where isx needs a mapping with an 'addr'";
         }
-        var addr = remote.path("addr");
-        if (addr.isMissingNode()) {
-            var keys = new ArrayList<String>();
-            remote.fieldNames().forEachRemaining(keys::add);
+        if (!remoteObj.keys().contains("addr")) {
+            var keys = new ArrayList<String>(remoteObj.keys());
             return "with no 'addr'" + (keys.isEmpty() ? "" : " (it has: " + String.join(", ", keys) + ")");
         }
-        return addr.isTextual() || addr.isNull() ? "with an empty 'addr'" : "with an 'addr' that is not a URL";
+        var addr = remote.getField("addr");
+        return addr.isString() || addr.isNull() ? "with an empty 'addr'" : "with an 'addr' that is not a URL";
     }
 
     /**
@@ -1358,8 +1368,8 @@ public class IncusClient {
         // Prefer lxc.console (actual console output with kernel messages like "Exec format error").
         // Fall back to the last entry in the list if the console log isn't present.
         String consolePath = null, lastPath = null;
-        for (var log : logs) {
-            var path = log.asText();
+        for (var log : logs.asList()) {
+            var path = log.asDisplayText("");
             lastPath = path;
             if (path.endsWith("lxc.console")) consolePath = path;
         }
@@ -1463,7 +1473,7 @@ public class IncusClient {
         try {
             var pools = http().get("/1.0/storage-pools?recursion=1");
             if (!pools.isSuccess()) return;
-            for (var pool : pools.body().path("metadata")) {
+            for (var pool : pools.body().getField("metadata").asList()) {
                 var poolName = pool.path("name").asText();
                 var volPath = "/1.0/storage-pools/" + poolName
                         + "/volumes/container/" + instanceName;
@@ -1504,7 +1514,7 @@ public class IncusClient {
     }
 
     /** After a rename or move Incus reported done: the record moved, so its subvolume must have too (#717). */
-    private void requireStorageArrived(String what, String name, JsonNode meta) {
+    private void requireStorageArrived(String what, String name, JqValue meta) {
         var where = storageLocation(name, meta);
         if (where != null && !where.onDisk()) {
             throw new IncusException(what + " left its storage behind:"
@@ -1578,7 +1588,7 @@ public class IncusClient {
         return storageLocation(name, instanceMetadata(name));
     }
 
-    private StorageLocation storageLocation(String name, JsonNode meta) {
+    private StorageLocation storageLocation(String name, JqValue meta) {
         var kind = InstanceSubvolumes.Kind.fromApiType(meta.path("type").asText(""));
         var pool = rootDiskPoolFromDevices(meta.path("expanded_devices"));
         if (kind == null || pool == null || !"btrfs".equals(listPools().get(pool))) return null;
@@ -1626,7 +1636,7 @@ public class IncusClient {
         if (!resp.isSuccess()) resp = http().get(base);
         if (!resp.isSuccess()) return null;
         var refs = new HashSet<InstanceSubvolumes.Ref>();
-        for (var vol : resp.body().path("metadata")) {
+        for (var vol : resp.body().getField("metadata").asList()) {
             var kind = InstanceSubvolumes.Kind.fromApiType(vol.path("type").asText(""));
             var name = vol.path("name").asText("");
             if (kind == null || name.isEmpty() || name.contains("/")) continue;   // snapshots are "inst/snap"
@@ -1707,7 +1717,7 @@ public class IncusClient {
      * every field reads as absent; a transport failure still throws
      * {@link IncusException}.
      */
-    public JsonNode instanceMetadata(String name) {
+    public JqValue instanceMetadata(String name) {
         return readInstance(name).metadata();
     }
 
@@ -1715,7 +1725,7 @@ public class IncusClient {
      * An instance as one read returned it: its {@link #instanceMetadata}, and the ETag that makes
      * a write built from it conditional on it ({@link #update}).
      */
-    public record InstanceRead(JsonNode metadata, String etag) {}
+    public record InstanceRead(JqValue metadata, String etag) {}
 
     /**
      * {@link #instanceMetadata} with its ETag, from the same request. A rejected request yields a
@@ -1724,7 +1734,7 @@ public class IncusClient {
      */
     public InstanceRead readInstance(String name) {
         var resp = http().get("/1.0/instances/" + name);
-        if (!resp.isSuccess()) return new InstanceRead(MissingNode.getInstance(), null);
+        if (!resp.isSuccess()) return new InstanceRead(io.hyperfoil.tools.jjq.value.JqNull.NULL, null);
         return new InstanceRead(resp.body().path("metadata"), resp.etag());
     }
 
@@ -1733,7 +1743,7 @@ public class IncusClient {
      * yields null; any other failure (403, 500, a daemon that cannot answer) throws. For
      * decisions that must not mistake "cannot ask" for "gone".
      */
-    public JsonNode instanceMetadataOrThrow(String name) {
+    public JqValue instanceMetadataOrThrow(String name) {
         var resp = http().get("/1.0/instances/" + name);
         if (resp.statusCode() == 404) return null;
         if (!resp.isSuccess()) {
@@ -1747,7 +1757,7 @@ public class IncusClient {
      * when the instance declares no such device (profile-inherited devices
      * are not part of that representation).
      */
-    public static String deviceSource(JsonNode instanceMetadata, String deviceName) {
+    public static String deviceSource(JqValue instanceMetadata, String deviceName) {
         return instanceMetadata.path("devices").path(deviceName).path("source").asText("");
     }
 
@@ -1881,7 +1891,7 @@ public class IncusClient {
     }
 
     /** As {@link #findNic}, from an instance representation already read. */
-    public static NicDevice nic(JsonNode instanceMetadata, String networkName) {
+    public static NicDevice nic(JqValue instanceMetadata, String networkName) {
         var name = nicDeviceName(instanceMetadata, networkName);
         return name == null ? null
                 : new NicDevice(name, deviceConfig(instanceMetadata.path("expanded_devices").path(name)));
@@ -1922,7 +1932,7 @@ public class IncusClient {
         return MachineType.fromIncus(resp.body().path("metadata"));
     }
 
-    public static MachineType machineType(JsonNode instanceMetadata) {
+    public static MachineType machineType(JqValue instanceMetadata) {
         return MachineType.fromIncus(instanceMetadata);
     }
 
@@ -1941,13 +1951,14 @@ public class IncusClient {
     }
 
     /** {@link #configByPrefix(String, String)} from an instance already read with {@link #instanceMetadata}. */
-    public static Map<String, String> configByPrefix(JsonNode instanceMetadata, String prefix) {
+    public static Map<String, String> configByPrefix(JqValue instanceMetadata, String prefix) {
         var result = new java.util.LinkedHashMap<String, String>();
-        instanceMetadata.path("config").properties().forEach(entry -> {
-            if (!entry.getKey().startsWith(prefix)) return;
-            var value = entry.getValue();
-            if (value == null || value.isNull()) return;
-            result.put(entry.getKey().substring(prefix.length()), value.asText(""));
+        var instanceConfig = instanceMetadata.getField("config");
+        if (!(instanceConfig instanceof JqObject configObj)) return result;
+        configObj.forEach((key, value) -> {
+            if (!key.startsWith(prefix)) return;
+            if (value.isNull()) return;
+            result.put(key.substring(prefix.length()), value.asDisplayText(""));
         });
         return result;
     }
@@ -2024,7 +2035,7 @@ public class IncusClient {
             throw new IncusException("Failed to list instances: " + resp.body().path("error").asText());
         }
         var result = new ArrayList<Map<String, String>>();
-        for (var instance : resp.body().path("metadata")) {
+        for (var instance : resp.body().getField("metadata").asList()) {
             result.add(Map.of(
                     "name", instance.path("name").asText(""),
                     "status", instance.path("status").asText(""),
@@ -2039,7 +2050,7 @@ public class IncusClient {
      * Uses recursion=1 which is significantly faster than recursion=2
      * since it skips network state, memory usage, and disk usage.
      */
-    public String listJsonConfig() {
+    public JqValue listJsonConfig() {
         return instanceListing("/1.0/instances?recursion=1");
     }
 
@@ -2048,24 +2059,27 @@ public class IncusClient {
      * Uses recursion=2 to include network state for running instances,
      * matching the output format of 'incus list --format=json'.
      */
-    public String listJson() {
+    public JqValue listJson() {
         return instanceListing("/1.0/instances?recursion=2");
     }
 
     /**
      * The instance array of a listing. An answer without one is an error, never an empty
      * listing: a caller (a script reading {@code isx list}) would take that for "no instances".
+     *
+     * <p>Returns the parsed metadata array directly: the transport already produced bytes
+     * and every caller parses, so no text round trip.
      */
-    private String instanceListing(String path) {
+    private JqValue instanceListing(String path) {
         var resp = http().get(path);
         if (!resp.isSuccess()) {
-            throw new IncusException("Failed to list instances: " + resp.body().path("error").asText());
+            throw new IncusException("Failed to list instances: " + resp.body().pathText("error", ""));
         }
-        var metadata = resp.body().path("metadata");
+        var metadata = resp.body().getField("metadata");
         if (!metadata.isArray()) {
             throw new IncusException("Cannot read the instance listing from Incus: expected a JSON array");
         }
-        return metadata.toString();
+        return metadata;
     }
 
     /**
@@ -2180,9 +2194,11 @@ public class IncusClient {
     public void setImageProperty(String fingerprint, String key, String value) {
         var resp = http().get("/1.0/images/" + fingerprint);
         if (!resp.isSuccess()) return;
-        var props = resp.body().path("metadata").path("properties");
+        var props = resp.body().getField("metadata").getField("properties");
         var updated = new java.util.HashMap<String, String>();
-        props.fields().forEachRemaining(f -> updated.put(f.getKey(), f.getValue().asText()));
+        if (props instanceof JqObject propsObj) {
+            propsObj.forEach((name, prop) -> updated.put(name, prop.asDisplayText("")));
+        }
         updated.put(key, value);
         http().patch("/1.0/images/" + fingerprint, Map.of("properties", updated));
     }
@@ -2226,11 +2242,11 @@ public class IncusClient {
         var resp = http().get("/1.0/images?recursion=1");
         if (!resp.isSuccess()) return List.of();
         var result = new ArrayList<ImageInfo>();
-        for (var image : resp.body().path("metadata")) {
+        for (var image : resp.body().getField("metadata").asList()) {
             var fingerprint = image.path("fingerprint").asText("");
             long size = image.path("size").asLong(0);
             var aliases = new ArrayList<String>();
-            for (var alias : image.path("aliases")) {
+            for (var alias : image.getField("aliases").asList()) {
                 var name = alias.path("name").asText("");
                 if (!name.isBlank()) aliases.add(name);
             }

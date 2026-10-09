@@ -1,8 +1,10 @@
 package dev.incusspawn.incus;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import dev.incusspawn.Environment;
 
@@ -33,7 +35,6 @@ import java.util.Set;
  */
 class IncusApi {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
     private static final int WAIT_TIMEOUT_SECONDS = 120;
     /**
      * How long an async operation is waited for, over successive {@code /wait} polls: as long as
@@ -173,8 +174,8 @@ class IncusApi {
     }
 
     /** @param etag the response's {@code ETag} header, or null; see {@link IncusTransport.RawResponse} */
-    record ApiResponse(int statusCode, JsonNode body, String etag) {
-        ApiResponse(int statusCode, JsonNode body) {
+    record ApiResponse(int statusCode, JqValue body, String etag) {
+        ApiResponse(int statusCode, JqValue body) {
             this(statusCode, body, null);
         }
 
@@ -187,7 +188,7 @@ class IncusApi {
         }
 
         String operationPath() {
-            return body.path("operation").asText("");
+            return body.pathText("operation", "");
         }
     }
 
@@ -267,21 +268,20 @@ class IncusApi {
         var getResp = get("/1.0/instances/" + instanceName);
         if (!getResp.isSuccess()) throw new IncusException("Failed to get instance " + instanceName);
 
-        var metadata = getResp.body().path("metadata");
-        // Start from expanded_devices (includes profile defaults), fall back to instance devices
-        var expandedDevice = metadata.path("expanded_devices").path(deviceName);
-        var deviceNode = expandedDevice.isMissingNode()
-                ? metadata.path("devices").path(deviceName)
-                : expandedDevice;
-
-        var merged = JSON.createObjectNode();
-        if (!deviceNode.isMissingNode()) {
-            deviceNode.fields().forEachRemaining(e -> merged.set(e.getKey(), e.getValue()));
+        var metadata = getResp.body().getField("metadata");
+        // Start from expanded_devices (includes profile defaults), fall back to instance devices.
+        // getField is null-safe: a missing level reads as JqNull, which isMissing catches.
+        var deviceNode = metadata.getField("expanded_devices").getField(deviceName);
+        if (deviceNode.isMissingNode()) {
+            deviceNode = metadata.getField("devices").getField(deviceName);
         }
+
+        var merged = JqObject.builder(4);
+        if (deviceNode instanceof JqObject existing) existing.forEach(merged::put);
         entries.forEach(merged::put);
 
         return requestAndWait("PATCH", "/1.0/instances/" + instanceName,
-                Map.of("devices", Map.of(deviceName, merged)));
+                Map.of("devices", Map.of(deviceName, merged.build())));
     }
 
     /**
@@ -302,56 +302,84 @@ class IncusApi {
      * {@code If-Match} on the PUT, which Incus refuses with 412 if the instance changed since.
      * The PATCH needs none: it replaces only what it names.
      */
-    ApiResponse update(String instanceName, JsonNode metadata, InstanceUpdate update, String etag) {
-        var instanceDevices = metadata.path("devices");
-        var changedDevices = new LinkedHashMap<String, ObjectNode>();
+    ApiResponse update(String instanceName, JqValue metadata, InstanceUpdate update, String etag) {
+        var instanceDevices = metadata.getField("devices");
+        var changedDevices = new LinkedHashMap<String, JqValue>();
         update.deviceProperties().forEach((deviceName, props) -> {
-            var current = metadata.path("expanded_devices").path(deviceName);
-            if (current.isMissingNode()) current = instanceDevices.path(deviceName);
-            var merged = JSON.createObjectNode();
-            current.properties().forEach(e -> merged.set(e.getKey(), e.getValue()));
+            var current = metadata.getField("expanded_devices").getField(deviceName);
+            if (current.isMissingNode()) current = instanceDevices.getField(deviceName);
+            var merged = JqObject.builder(4);
+            if (current instanceof JqObject existing) existing.forEach(merged::put);
             props.forEach(merged::put);
-            changedDevices.put(deviceName, merged);
+            changedDevices.put(deviceName, merged.build());
         });
         update.replacedDevices().forEach((deviceName, deviceConfig) ->
-                changedDevices.put(deviceName, JSON.valueToTree(deviceConfig)));
-        var removing = update.removedDevices().stream().anyMatch(instanceDevices::has);
+                changedDevices.put(deviceName, JqValues.fromJavaObject(deviceConfig)));
+        var removing = update.removedDevices().stream().anyMatch(name ->
+                instanceDevices instanceof JqObject devices && devices.keys().contains(name));
 
         if (!removing) {
-            var body = JSON.createObjectNode();
-            if (!update.config().isEmpty()) {
-                var config = body.putObject("config");
-                update.config().forEach(config::put);
-            }
-            if (!changedDevices.isEmpty()) body.putObject("devices").setAll(changedDevices);
-            if (body.isEmpty()) return new ApiResponse(200, JSON.createObjectNode());
-            return requestAndWait("PATCH", "/1.0/instances/" + instanceName, body);
+            var patch = patchBody(update, changedDevices);
+            if (patch.isEmpty()) return new ApiResponse(200, JqObject.builder(0).build());
+            return requestAndWait("PATCH", "/1.0/instances/" + instanceName, patch);
         }
 
-        var config = JSON.createObjectNode();
-        metadata.path("config").properties().forEach(e -> config.set(e.getKey(), e.getValue()));
-        for (var e : update.config().entrySet()) {
-            if (e.getValue() == null) config.remove(e.getKey());
-            else config.put(e.getKey(), e.getValue());
+        // A null update value removes the key; Incus PATCH cannot remove devices.
+        var mergedConfig = new java.util.LinkedHashMap<String, String>();
+        var currentConfig = metadata.getField("config");
+        if (currentConfig instanceof JqObject current) {
+            current.forEach((key, value) -> mergedConfig.put(key, value.isNull() ? null : value.asDisplayText("")));
         }
-        var devicesNode = JSON.createObjectNode();
-        instanceDevices.properties().forEach(e -> {
-            if (!update.removedDevices().contains(e.getKey())) devicesNode.set(e.getKey(), e.getValue());
+        update.config().forEach((key, value) -> {
+            if (value == null) mergedConfig.remove(key);
+            else mergedConfig.put(key, value);
         });
-        devicesNode.setAll(changedDevices);
+        var config = JqObject.builder(Math.max(mergedConfig.size(), 1));
+        mergedConfig.forEach((key, value) -> {
+            if (value == null) config.putNull(key);
+            else config.put(key, value);
+        });
+        var devicesNode = JqObject.builder(8);
+        if (instanceDevices instanceof JqObject declared) {
+            declared.forEach((name, device) -> {
+                if (!update.removedDevices().contains(name)) devicesNode.put(name, device);
+            });
+        }
+        changedDevices.forEach(devicesNode::put);
 
-        var putBody = JSON.createObjectNode();
-        putBody.put("architecture", metadata.path("architecture").asText());
-        putBody.set("config", config);
-        putBody.put("description", metadata.path("description").asText(""));
-        putBody.set("devices", devicesNode);
-        putBody.put("ephemeral", metadata.path("ephemeral").asBoolean(false));
-        var profiles = putBody.putArray("profiles");
-        metadata.path("profiles").forEach(p -> profiles.add(p.asText()));
-        putBody.put("stateful", metadata.path("stateful").asBoolean(false));
+        var builtConfig = config.build();
+        var putBody = JqObject.builder(7)
+                .put("architecture", metadata.pathText("architecture", ""))
+                .put("config", builtConfig)
+                .put("description", metadata.pathText("description", ""))
+                .put("devices", devicesNode.build())
+                .put("ephemeral", metadata.getField("ephemeral").asBoolean(false))
+                .put("stateful", metadata.getField("stateful").asBoolean(false));
+        var profiles = JqArray.arrayBuilder();
+        metadata.getField("profiles").asList().forEach(p -> profiles.add(p.asDisplayText("")));
+        putBody.put("profiles", profiles.build());
 
-        return requestAndWait("PUT", "/1.0/instances/" + instanceName, putBody,
+        return requestAndWait("PUT", "/1.0/instances/" + instanceName, putBody.build(),
                 etag == null ? Map.of() : Map.of("If-Match", etag));
+    }
+
+    /** The PATCH body for {@link #update} when nothing is removed (builders are single-use). */
+    private static JqObject patchBody(InstanceUpdate update, Map<String, JqValue> changedDevices) {
+        var body = JqObject.builder(2);
+        if (!update.config().isEmpty()) {
+            var config = JqObject.builder(update.config().size());
+            update.config().forEach((key, value) -> {
+                if (value == null) config.putNull(key);
+                else config.put(key, value);
+            });
+            body.put("config", config.build());
+        }
+        if (!changedDevices.isEmpty()) {
+            var devices = JqObject.builder(changedDevices.size());
+            changedDevices.forEach(devices::put);
+            body.put("devices", devices.build());
+        }
+        return body.build();
     }
 
     ApiResponse patch(String path, Object body) {
@@ -412,12 +440,12 @@ class IncusApi {
             var result = requestWithTimeout("GET", waitPath, null,
                     WAIT_TIMEOUT_SECONDS + 30);
             if (!result.isSuccess()) {
-                throw new IncusException("Operation wait failed: " + result.body().path("error").asText());
+                throw new IncusException("Operation wait failed: " + result.body().pathText("error", ""));
             }
-            var metadata = result.body().path("metadata");
-            var status = metadata.path("status").asText();
+            var metadata = result.body().getField("metadata");
+            var status = metadata.pathText("status", "");
             if ("Failure".equals(status)) {
-                throw new IncusException("Operation failed: " + metadata.path("err").asText("unknown"));
+                throw new IncusException("Operation failed: " + metadata.pathText("err", "unknown"));
             }
             // Cancelled ends the operation without its effect; Cancelling is on its way there.
             if ("Cancelled".equals(status)) {
@@ -577,7 +605,7 @@ class IncusApi {
 
     private ApiResponse request(String method, String path, Object bodyObj, Map<String, String> headers) {
         try {
-            byte[] bodyBytes = bodyObj != null ? JSON.writeValueAsBytes(bodyObj) : new byte[0];
+            byte[] bodyBytes = bodyObj != null ? serializeBody(bodyObj) : new byte[0];
             var raw = transport.requestPooled(method, path, "application/json", headers, bodyBytes);
             return toApiResponse(raw);
         } catch (IOException e) {
@@ -588,7 +616,7 @@ class IncusApi {
     private ApiResponse requestWithTimeout(String method, String path, Object bodyObj,
                                            int timeoutSeconds) {
         try {
-            byte[] bodyBytes = bodyObj != null ? JSON.writeValueAsBytes(bodyObj) : new byte[0];
+            byte[] bodyBytes = bodyObj != null ? serializeBody(bodyObj) : new byte[0];
             var raw = transport.requestPooled(method, path, "application/json", Map.of(),
                     bodyBytes, timeoutSeconds);
             return toApiResponse(raw);
@@ -607,9 +635,8 @@ class IncusApi {
         }
     }
 
-    private static ApiResponse toApiResponse(IncusTransport.RawResponse raw) throws IOException {
-        var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
-        return new ApiResponse(raw.statusCode(), bodyJson, raw.etag());
+    private static ApiResponse toApiResponse(IncusTransport.RawResponse raw) {
+        return new ApiResponse(raw.statusCode(), parseBody(raw.body()), raw.etag());
     }
 
     private ApiResponse requestRawFromFile(String method, String path, String contentType,
@@ -620,6 +647,25 @@ class IncusApi {
         } catch (IOException e) {
             throw new IncusException("Incus REST request failed: " + method + " " + path, e);
         }
+    }
+
+    /** Parse a response body, preserving the old "empty reads as null, malformed fails" contract. */
+    private static JqValue parseBody(byte[] body) {
+        if (body.length == 0) return io.hyperfoil.tools.jjq.value.JqNull.NULL;
+        try {
+            return JqValues.parse(body);
+        } catch (RuntimeException e) {
+            throw new IncusException("Incus REST response was not JSON: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Serialize a request body: the builders pass {@link Map}s, collections, scalars and
+     * {@link JqValue}s. Like Jackson's {@code writeValueAsBytes}, a bare string is quoted.
+     */
+    private static byte[] serializeBody(Object body) {
+        if (body instanceof JqValue already) return already.toJsonString().getBytes(StandardCharsets.UTF_8);
+        return JqValues.serializeToBytes(JqValues.fromJavaObject(body));
     }
 
     // =========================================================================
@@ -798,7 +844,7 @@ class IncusApi {
 
         IncusTransport.WsConnection controlWs;
         try {
-            controlWs = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.path("control").asText());
+            controlWs = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.pathText("control", ""));
         } catch (IOException e) {
             throw new IncusException("Failed to open control WebSocket", e);
         }
@@ -822,7 +868,7 @@ class IncusApi {
             });
             assertAllFdsConnected(exec.fds, Set.of("0", "control"));
 
-            try (var ws = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.path("0").asText())) {
+            try (var ws = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.pathText("0", ""))) {
                 // Watcher: closes fd "0" when control closes.
                 Thread.ofVirtual().start(() -> {
                     joinQuietly(controlThread);
@@ -980,7 +1026,7 @@ class IncusApi {
         return body;
     }
 
-    private record ExecOp(String opPath, JsonNode fds) {}
+    private record ExecOp(String opPath, JqValue fds) {}
 
     private ExecOp postExec(String instance, List<String> command,
                             Integer uid, Integer gid, String cwd, Map<String, String> env,
@@ -989,11 +1035,11 @@ class IncusApi {
                 buildExecBody(command, uid, gid, cwd, env, interactive, width, height));
         if (!postResp.isAsync()) throw new IncusException(
                 "exec POST failed (" + postResp.statusCode() + "): " +
-                postResp.body().path("error").asText());
-        var opMeta = postResp.body().path("metadata");
+                postResp.body().pathText("error", ""));
+        var opMeta = postResp.body().getField("metadata");
         return new ExecOp(
-                "/1.0/operations/" + opMeta.path("id").asText(),
-                opMeta.path("metadata").path("fds"));
+                "/1.0/operations/" + opMeta.pathText("id", ""),
+                opMeta.getField("metadata").getField("fds"));
     }
 
     /**
@@ -1043,9 +1089,9 @@ class IncusApi {
             Thread stdinThread = null;
             if (stdin != null) {
                 stdinThread = Thread.ofVirtual().start(() ->
-                        wsForward(exec.opPath, exec.fds.path("0").asText(), stdin));
+                        wsForward(exec.opPath, exec.fds.pathText("0", ""), stdin));
             } else {
-                wsCloseOnly(exec.opPath, exec.fds.path("0").asText());
+                wsCloseOnly(exec.opPath, exec.fds.pathText("0", ""));
             }
             assertAllFdsConnected(exec.fds, Set.of("0", "1", "2", "control"));
 
@@ -1085,7 +1131,7 @@ class IncusApi {
     }
 
     private String wsUrl(ExecOp exec, String fd) {
-        return exec.opPath + "/websocket?secret=" + exec.fds.path(fd).asText();
+        return exec.opPath + "/websocket?secret=" + exec.fds.pathText(fd, "");
     }
 
     /** Start a virtual thread that pings the socket until interrupted (idle-timeout guard). */
@@ -1147,11 +1193,13 @@ class IncusApi {
         }
     }
 
-    private static void assertAllFdsConnected(JsonNode fds, Set<String> connected) {
+    private static void assertAllFdsConnected(JqValue fds, Set<String> connected) {
         var missed = new ArrayList<String>();
-        fds.fieldNames().forEachRemaining(name -> {
-            if (!connected.contains(name)) missed.add(name);
-        });
+        if (fds instanceof JqObject object) {
+            object.forEach((name, value) -> {
+                if (!connected.contains(name)) missed.add(name);
+            });
+        }
         if (!missed.isEmpty()) {
             throw new IncusException(
                     "WebSocket exec bug: fds not connected: " + missed
@@ -1273,8 +1321,8 @@ class IncusApi {
                             + " on " + opPath + "/wait) — exit code unknown");
                     return -1;
                 }
-                var meta = waitResp.body().path("metadata");
-                var status = meta.path("status").asText();
+                var meta = waitResp.body().getField("metadata");
+                var status = meta.pathText("status", "");
                 if (isUnfinished(status)) {
                     continue; // long-poll window elapsed; command still running
                 }
@@ -1282,7 +1330,7 @@ class IncusApi {
                 if (killed) throw new IncusException("exec " + opPath + " was killed: it ran past its time limit");
                 // Failure or Cancelled: the command may never have run, so there is no exit code to report.
                 if (!"Success".equals(status)) return -1;
-                return meta.path("metadata").path("return").asInt(0);
+                return meta.getField("metadata").getField("return").asInt(0);
             }
             System.err.println("Warning: exec operation timed out after "
                     + MAX_EXEC_WAIT_SECONDS + "s on " + opPath + " — exit code unknown");

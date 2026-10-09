@@ -1,7 +1,8 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import io.vertx.core.buffer.Buffer;
 
 import java.nio.charset.StandardCharsets;
@@ -30,7 +31,6 @@ import java.util.function.LongSupplier;
  */
 final class ApiActivity {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final LongSupplier clock;
     private final ConcurrentHashMap<String, Counters> byInstance = new ConcurrentHashMap<>();
@@ -364,7 +364,7 @@ final class ApiActivity {
         long cacheCreation;
 
         /** Streamed counts are cumulative, so each field keeps the largest value seen. */
-        void merge(JsonNode usage) {
+        void merge(JqValue usage) {
             if (usage == null || !usage.isObject()) return;
             input = Math.max(input, usage.path("input_tokens").asLong(0));
             output = Math.max(output, usage.path("output_tokens").asLong(0));
@@ -468,15 +468,14 @@ final class ApiActivity {
         }
 
         private void read(int offset, int length) {
-            JsonNode node;
+            JqValue node;
             try {
-                node = JSON.readTree(pending, offset, length);
-            } catch (java.io.IOException e) {
+                node = JqValues.parse(pending, offset, length);
+            } catch (RuntimeException e) {
                 return;
             }
-            if (node == null) return;
-            for (var candidate : new JsonNode[] {node.get("usage"), node.path("message").get("usage")}) {
-                if (candidate != null && candidate.isObject()) {
+            for (var candidate : new JqValue[] {node.getField("usage"), node.path("message").getField("usage")}) {
+                if (candidate.isObject()) {
                     usage.merge(candidate);
                     seen = true;
                 }

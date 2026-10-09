@@ -3,8 +3,11 @@ package dev.incusspawn.proxy;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Platform;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -59,8 +62,7 @@ public class MitmProxy {
     private final int requestedMitmPort;
     private final int requestedHealthPort;
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
+    
     // Top-level fields accepted by Vertex AI rawPredict. Anything else (beta features
     // like context_management, etc.) is stripped to avoid "Extra inputs" rejections.
     private static final Set<String> VERTEX_ALLOWED_FIELDS = Set.of(
@@ -191,7 +193,7 @@ public class MitmProxy {
      */
     private record ConfigState(
             dev.incusspawn.config.SpawnConfig config,
-            com.fasterxml.jackson.databind.JsonNode configTree,
+            io.hyperfoil.tools.jjq.value.JqValue configTree,
             Map<String, dev.incusspawn.tool.ToolSetup> toolSetups,
             ProxyCredentials credentials,
             ToolProxyRouting routing,
@@ -201,7 +203,7 @@ public class MitmProxy {
             Map<InstanceRegistry.InstanceAccounts, Map<String, String>> mismatchesByInstance) {
 
         ConfigState(dev.incusspawn.config.SpawnConfig config,
-                    com.fasterxml.jackson.databind.JsonNode configTree,
+                    io.hyperfoil.tools.jjq.value.JqValue configTree,
                     Map<String, dev.incusspawn.tool.ToolSetup> toolSetups,
                     ProxyCredentials credentials,
                     List<ResolvedToolProxy> proxiesAcrossAccounts) {
@@ -440,7 +442,7 @@ public class MitmProxy {
     }
 
     /** The last config read, serialized: read it rather than serializing the config again. */
-    com.fasterxml.jackson.databind.JsonNode configTree() {
+    io.hyperfoil.tools.jjq.value.JqValue configTree() {
         return configState.configTree();
     }
 
@@ -1564,67 +1566,73 @@ public class MitmProxy {
     private VertexTranslation translateToVertex(String originalPath, byte[] bodyBytes,
                                                  String upstreamHost, ProxyCredentials credentials) {
         try {
-            var tree = bodyBytes.length > 0 ? JSON.readTree(bodyBytes) : null;
+            var tree = bodyBytes.length > 0 ? JqValues.parse(bodyBytes) : null;
 
             // Non-JSON or non-object body (e.g. GET /v1/models): just forward as-is
-            if (tree == null || !tree.isObject()) {
+            if (!(tree instanceof JqObject root)) {
                 return new VertexTranslation(originalPath, bodyBytes);
             }
 
-            var root = (ObjectNode) tree;
-
             // Extract model (goes into URL, not body). The global Vertex endpoint
             // only accepts short aliases, so strip date suffixes like -20251001.
-            var model = root.has("model") ? root.get("model").asText() : "claude-sonnet-4-6";
+            var model = root.pathText("model", "claude-sonnet-4-6");
             model = model.replaceFirst("-\\d{8}$", "");
-            var streaming = root.has("stream") && root.get("stream").asBoolean();
+            var streaming = root.keys().contains("stream") && root.getField("stream").asBoolean(false);
 
-            // Strip all top-level fields Vertex doesn't support (beta features, etc.)
-            root.remove("model");
-            var fieldNames = new java.util.ArrayList<String>();
-            root.fieldNames().forEachRemaining(fieldNames::add);
+            // Strip all top-level fields Vertex doesn't support (beta features, etc.),
+            // then strip "scope" from cache_control objects deep in the tree (beta feature).
             var stripped = new java.util.ArrayList<String>();
-            for (var field : fieldNames) {
+            var rebuilt = JqObject.builder(root.size() + 1);
+            root.forEach((field, value) -> {
+                if (field.equals("model")) return;
                 if (!VERTEX_ALLOWED_FIELDS.contains(field)) {
-                    root.remove(field);
                     stripped.add(field);
+                    return;
                 }
-            }
+                rebuilt.put(field, stripCacheControlScope(value));
+            });
             if (!stripped.isEmpty() && loggedStrippedFields.addAll(stripped)) {
                 System.err.println("Vertex translation: stripped unsupported fields: " + stripped);
             }
 
-            root.put("anthropic_version", "vertex-2023-10-16");
-            // Strip "scope" from cache_control objects deep in the tree (beta feature)
-            stripCacheControlScope(root);
+            rebuilt.put("anthropic_version", "vertex-2023-10-16");
 
-            var rewrittenBytes = JSON.writeValueAsBytes(root);
+            var rewrittenBytes = rebuilt.build().toJsonString()
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
             var endpoint = streaming ? ":streamRawPredict" : ":rawPredict";
             var vertexPath = "/v1/projects/" + credentials.vertexProjectId() + "/locations/" + credentials.vertexRegion() +
                     "/publishers/anthropic/models/" + model + endpoint;
 
             return new VertexTranslation(vertexPath, rewrittenBytes);
-        } catch (IOException e) {
+        } catch (RuntimeException e) {
             throw new RuntimeException("Failed to translate request body to Vertex format", e);
         }
     }
 
     /** Recursively remove "scope" from any "cache_control" object in the JSON tree. */
-    private void stripCacheControlScope(com.fasterxml.jackson.databind.JsonNode node) {
-        if (node.isObject()) {
-            var obj = (ObjectNode) node;
-            if (obj.has("cache_control") && obj.get("cache_control").isObject()) {
-                ((ObjectNode) obj.get("cache_control")).remove("scope");
-            }
-            for (var it = obj.elements(); it.hasNext(); ) {
-                stripCacheControlScope(it.next());
-            }
-        } else if (node.isArray()) {
-            for (var element : node) {
-                stripCacheControlScope(element);
-            }
+    private static JqValue stripCacheControlScope(JqValue node) {
+        if (node instanceof JqObject obj) {
+            var builder = JqObject.builder(obj.size());
+            obj.forEach((key, value) -> {
+                if (key.equals("cache_control") && value instanceof JqObject cc) {
+                    var unscoped = JqObject.builder(cc.size());
+                    cc.forEach((k, v) -> {
+                        if (!k.equals("scope")) unscoped.put(k, v);
+                    });
+                    builder.put(key, unscoped.build());
+                } else {
+                    builder.put(key, stripCacheControlScope(value));
+                }
+            });
+            return builder.build();
         }
+        if (node instanceof JqArray array) {
+            var builder = JqArray.arrayBuilder();
+            array.asList().forEach(e -> builder.add(stripCacheControlScope(e)));
+            return builder.build();
+        }
+        return node;
     }
 
     // --- Header injection ---

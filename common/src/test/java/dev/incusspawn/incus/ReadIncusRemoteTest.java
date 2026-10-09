@@ -51,7 +51,8 @@ class ReadIncusRemoteTest {
         var problems = new ArrayList<String>();
         assertNull(IncusClient.readIncusRemote("mine", List.of(file), problems));
         assertEquals(1, problems.size(), problems.toString());
-        assertTrue(problems.getFirst().startsWith(file + ":2: "), problems.getFirst());
+        // The mis-indented line itself; SnakeYAML named line 2, where the mapping starts
+        assertTrue(problems.getFirst().startsWith(file + ":4: "), problems.getFirst());
         assertFalse(problems.getFirst().contains("\n"), problems.getFirst());
 
         var msg = IncusClient.unusableRemoteMsg("mine", "mine:fedora/44", problems, false);

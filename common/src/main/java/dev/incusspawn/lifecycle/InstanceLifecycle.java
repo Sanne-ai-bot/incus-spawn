@@ -1,6 +1,6 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
@@ -148,9 +148,12 @@ public final class InstanceLifecycle {
         // A copy carries its source's MCP ownership stamps. A branch of an agent's instance
         // (say, one it handed over with keep_instance) belongs to whoever made the branch, and
         // must not be mistaken for the dead session's orphan and reaped.
-        instance.path("config").fieldNames().forEachRemaining(key -> {
-            if (Metadata.isMcpKey(key) && !settings.extraConfig().containsKey(key)) update.unset(key);
-        });
+        var branchConfig = instance.path("config");
+        if (branchConfig instanceof io.hyperfoil.tools.jjq.value.JqObject branchObject) {
+            branchObject.forEach((key, value) -> {
+                if (Metadata.isMcpKey(key) && !settings.extraConfig().containsKey(key)) update.unset(key);
+            });
+        }
         update.config(settings.extraConfig());
         if (IncusClient.machineType(instance) == MachineType.VM) {
             // Templates built before free page reporting existed don't carry it to their copies
@@ -243,7 +246,7 @@ public final class InstanceLifecycle {
      * caller already read it -- the shell path's, which would otherwise read it again. Its
      * account pins, stamps and network mode are all this looks at.
      */
-    public static void reconcileAccountIdentities(IncusClient incus, String name, JsonNode instance) {
+    public static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance) {
         reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, BuildOutput::step,
                 msg -> System.err.println("Warning: " + msg));
     }
@@ -270,7 +273,7 @@ public final class InstanceLifecycle {
      *                    passes its own so the tool definitions are not re-read from disk;
      *                    {@code null} decides against the built-in ones that can re-derive
      */
-    static void reconcileAccountIdentities(IncusClient incus, String name, JsonNode instance, SpawnConfig config,
+    static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance, SpawnConfig config,
                                            Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
                                            Consumer<String> progress, Consumer<String> warnings) {
         try {
@@ -435,7 +438,7 @@ public final class InstanceLifecycle {
      *
      * @param instance the instance as read, for its status and the pending mark
      */
-    public static void ensureReady(IncusClient incus, String name, JsonNode instance,
+    public static void ensureReady(IncusClient incus, String name, JqValue instance,
                                    MachineType machineType, Consumer<String> say) {
         if ("Stopped".equalsIgnoreCase(instance.path("status").asText(""))) {
             say.accept("Starting " + name + "...");
@@ -476,13 +479,13 @@ public final class InstanceLifecycle {
      * @return the instance as read once it answered ({@link #recordSecretBoot}), for the caller
      *         to reuse rather than read again; null when there is none
      */
-    public static JsonNode startForUse(IncusClient incus, String name, MachineType machineType,
+    public static JqValue startForUse(IncusClient incus, String name, MachineType machineType,
                                        Consumer<String> warn) {
         return startForUse(incus, name, incus.instanceMetadata(name), machineType, warn);
     }
 
     /** {@link #startForUse(IncusClient, String, MachineType, Consumer)}, with the stopped instance already read. */
-    static JsonNode startForUse(IncusClient incus, String name, JsonNode instance, MachineType machineType,
+    static JqValue startForUse(IncusClient incus, String name, JqValue instance, MachineType machineType,
                                 Consumer<String> warn) {
         var placeholders = ProofToken.declaredInBackground();
         prepareHostDevicesForStart(incus, name, instance, warn);
@@ -551,8 +554,8 @@ public final class InstanceLifecycle {
     }
 
     /** When Incus last started {@code instance} -- on every start, a reboot included -- or "". */
-    private static String bootOf(JsonNode instance) {
-        return instance.path("last_used_at").asText("");
+    private static String bootOf(JqValue instance) {
+        return instance.pathText("last_used_at", "");
     }
 
     /**
@@ -567,7 +570,7 @@ public final class InstanceLifecycle {
      *
      * @return the instance as read once the guest answered, or null for a VM or a failed read
      */
-    static JsonNode recordSecretBoot(IncusClient incus, String name, MachineType machineType) {
+    static JqValue recordSecretBoot(IncusClient incus, String name, MachineType machineType) {
         if (machineType == MachineType.VM) return null;
         try {
             // A failed read must not reach the CA check as an empty instance, which it would
@@ -707,7 +710,7 @@ public final class InstanceLifecycle {
     }
 
     /** {@link #prepareHostDevicesForStart(IncusClient, String, Consumer)} with the instance already read. */
-    public static void prepareHostDevicesForStart(IncusClient incus, String name, JsonNode instance,
+    public static void prepareHostDevicesForStart(IncusClient incus, String name, JqValue instance,
                                                   Consumer<String> warn) {
         HostResourceSetup.removeStaleDevices(incus, name, instance, warn);
         removeStaleInbox(incus, name, instance, warn);
@@ -721,7 +724,7 @@ public final class InstanceLifecycle {
      * host resource, so {@link HostResourceSetup#removeStaleDevices} never sees it. The user asked
      * for this mount, so dropping it is announced, with the command to add it back.
      */
-    static void removeStaleInbox(IncusClient incus, String name, JsonNode instance, Consumer<String> warn) {
+    static void removeStaleInbox(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
         var source = IncusClient.deviceSource(instance, INBOX_DEVICE);
         if (source.isEmpty()) return;
         var hostPath = HostResourceSetup.hostPathOfDeviceSource(source);

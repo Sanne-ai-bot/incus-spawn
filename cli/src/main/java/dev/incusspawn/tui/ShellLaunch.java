@@ -17,7 +17,6 @@ import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tool.ShellMenu;
-import com.fasterxml.jackson.databind.JsonNode;
 import static dev.incusspawn.tui.UsageFormat.bar;
 
 /**
@@ -129,7 +128,7 @@ final class ShellLaunch {
     }
 
     void fixCaMismatchIfNeeded(String containerName, MachineType machineType) {
-        JsonNode started = null;
+        io.hyperfoil.tools.jjq.value.JqValue started = null;
         if ("Stopped".equalsIgnoreCase(tui.incus.getInstanceStatus(containerName))) {
             // Runs on the TUI's own screen, where stderr would be drawn over: a mount dropped
             // because its host directory is gone must not go unannounced (#852), so it goes to

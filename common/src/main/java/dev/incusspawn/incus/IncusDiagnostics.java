@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.config.Jjq;
 import java.util.ArrayList;
 import java.util.Map;
 
@@ -273,11 +274,11 @@ public final class IncusDiagnostics {
                 int totalCount = 0;
                 var runningInstances = new ArrayList<Map<String, Object>>();
 
-                for (var instance : instancesJson) {
+                for (var instance : instancesJson.asList()) {
                     totalCount++;
-                    if ("Running".equals(instance.path("status").asText())) {
-                        var name = instance.path("name").asText("");
-                        var memUsage = instance.path("state").path("memory").path("usage").asLong(0);
+                    if ("Running".equals(instance.pathText("status", ""))) {
+                        var name = instance.pathText("name", "");
+                        var memUsage = Jjq.longOr(instance.getField("state").getField("memory").getField("usage"), 0);
                         runningInstances.add(Map.of("name", name, "memory", memUsage));
                     }
                 }

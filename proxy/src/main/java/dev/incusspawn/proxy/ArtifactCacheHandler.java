@@ -3,7 +3,7 @@ package dev.incusspawn.proxy;
 import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -93,8 +93,6 @@ class ArtifactCacheHandler {
             "repo1.maven.org", "/maven2/",
             "plugins.gradle.org", "/m2/"
     );
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final Vertx vertx;
     private final Upstream upstream;
@@ -997,8 +995,8 @@ class ArtifactCacheHandler {
     static String npmShasum(byte[] body) {
         if (body == null) return null;
         try {
-            var dist = JSON.readTree(body).path("dist").path("shasum");
-            if (dist.isTextual()) {
+            var dist = JqValues.parse(body).getField("dist").getField("shasum");
+            if (dist.isString()) {
                 var hex = dist.asText().trim().toLowerCase();
                 if (hex.matches("[a-f0-9]{40}")) return hex;
             }

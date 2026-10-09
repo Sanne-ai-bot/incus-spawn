@@ -1,7 +1,5 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.baseimage.BaseImageReleases;
@@ -878,10 +876,10 @@ class BuildCommandTest {
     }
 
     /** An instance's metadata as Incus reports it: its type ({@code container} or {@code virtual-machine}) and config. */
-    private static ObjectNode instance(String type, Map<String, String> config) {
-        var node = new ObjectMapper().createObjectNode().put("type", type);
-        node.set("config", new ObjectMapper().valueToTree(config));
-        return node;
+    private static io.hyperfoil.tools.jjq.value.JqObject instance(String type, Map<String, String> config) {
+        var cfg = io.hyperfoil.tools.jjq.value.JqObject.builder(config.size());
+        config.forEach(cfg::put);
+        return io.hyperfoil.tools.jjq.value.JqObject.builder(2).put("type", type).put("config", cfg.build()).build();
     }
 
     /** An Incus whose container {@code name} has these stamps. */
@@ -1086,21 +1084,35 @@ class BuildCommandTest {
      * {@code name} as {@code GET /1.0/instances?recursion=1} lists a template this isx built
      * from {@code defs}, stamped with {@code defaultAction}.
      */
-    private static ObjectNode template(String name, Map<String, ImageDef> defs, String defaultAction) {
+    private static io.hyperfoil.tools.jjq.value.JqObject template(String name, Map<String, ImageDef> defs,
+            String defaultAction) {
+        return template(name, defs, defaultAction, Map.of());
+    }
+
+    private static io.hyperfoil.tools.jjq.value.JqObject template(String name, Map<String, ImageDef> defs,
+            String defaultAction, Map<String, String> configOverrides) {
         var built = new LinkedHashMap<String, ImageDef>();
         BuildCommand.definitionChain(defs.get(name), defs).forEach(d -> built.put(d.getName(), d));
-        var instance = new ObjectMapper().createObjectNode().put("name", name);
-        var config = instance.putObject("config")
+        var config = io.hyperfoil.tools.jjq.value.JqObject.builder(8)
                 .put(Metadata.TYPE, Metadata.TYPE_BASE)
                 .put(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version())
                 .put(Metadata.DEFINITION_SHA, defs.get(name).contentFingerprint(Map.of()))
                 .put(Metadata.BUILD_SOURCE, new BuildSource(built, null, null, null).toJson());
         if (defaultAction != null) config.put(Metadata.DEFAULT_ACTION, defaultAction);
-        return instance;
+        configOverrides.forEach(config::put);
+        return io.hyperfoil.tools.jjq.value.JqObject.builder(2)
+                .put("name", name)
+                .put("config", config.build())
+                .build();
     }
 
-    private static BuildCommand commandListing(IncusClient incus, ObjectNode... instances) {
-        when(incus.listJsonConfig()).thenReturn(List.of(instances).toString());
+    private static BuildCommand commandListing(IncusClient incus,
+            io.hyperfoil.tools.jjq.value.JqValue... instances) {
+        var list = io.hyperfoil.tools.jjq.value.JqArray.arrayBuilder();
+        for (var instance : instances) {
+            list.add(instance);
+        }
+        when(incus.listJsonConfig()).thenReturn(list.build());
         var cmd = new BuildCommand();
         cmd.incus = incus;
         cmd.toolDefLoader = mock(ToolDefLoader.class);
@@ -1144,8 +1156,7 @@ class BuildCommandTest {
     void currentStampsAndNonTemplatesAreLeftAlone() throws Exception {
         var defs = parentAndChild("claude");
         var incus = mock(IncusClient.class);
-        var clone = template("tpl-child", defs, null);
-        ((ObjectNode) clone.get("config")).put(Metadata.TYPE, Metadata.TYPE_CLONE);
+        var clone = template("tpl-child", defs, null, Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
         var cmd = commandListing(incus, template("tpl-parent", defs, "claude"), clone);
 
         cmd.syncDefaultActions(defs);
@@ -1159,8 +1170,7 @@ class BuildCommandTest {
     void outdatedTemplateKeepsItsStamp() throws Exception {
         var defs = parentAndChild("claude");
         var incus = mock(IncusClient.class);
-        var outdated = template("tpl-parent", defs, null);
-        ((ObjectNode) outdated.get("config")).put(Metadata.DEFINITION_SHA, "old-sha");
+        var outdated = template("tpl-parent", defs, null, Map.of(Metadata.DEFINITION_SHA, "old-sha"));
         var cmd = commandListing(incus, outdated);
 
         cmd.syncDefaultActions(defs);
@@ -1241,8 +1251,7 @@ class BuildCommandTest {
     void templateBuiltByAnotherIsxVersionKeepsItsStamp() throws Exception {
         var defs = parentAndChild("claude");
         var incus = mock(IncusClient.class);
-        var older = template("tpl-parent", defs, null);
-        ((ObjectNode) older.get("config")).put(Metadata.BUILD_VERSION, "0.0.1-older");
+        var older = template("tpl-parent", defs, null, Map.of(Metadata.BUILD_VERSION, "0.0.1-older"));
         var cmd = commandListing(incus, older);
 
         cmd.syncDefaultActions(defs);
