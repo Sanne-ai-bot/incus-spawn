@@ -86,6 +86,8 @@ final class LossyIncusServer implements AutoCloseable {
     /** Output sent on stdout <em>after</em> the operation completes, one chunk per gap. */
     volatile List<String> trailingStdout = List.of();
     volatile long trailingGapMillis = 0;
+    /** The trailing chunks go out together, in one write: each but the first waits in the host's socket. */
+    volatile boolean trailingInOneWrite = false;
     /** Keep writing stdout after completion until the client hangs up (never idle). */
     volatile boolean trickleForever = false;
     /** The command never ends by itself: a login profile that never returns. */
@@ -109,6 +111,8 @@ final class LossyIncusServer implements AutoCloseable {
     final AtomicInteger waits = new AtomicInteger();
     /** PING frames received per exec fd ("0", "1", "2", "control"). */
     final Map<String, AtomicInteger> pingsByFd = new ConcurrentHashMap<>();
+    /** Counted down when the client hangs up the stdout fd (closes it, with or without a close frame). */
+    final CountDownLatch stdoutHungUp = new CountDownLatch(1);
 
     private final Map<String, WsPeer> execFds = new ConcurrentHashMap<>();
     private volatile CountDownLatch operationDone = new CountDownLatch(1);
@@ -362,6 +366,10 @@ final class LossyIncusServer implements AutoCloseable {
                 for (var fd : List.of("1", "2", "control")) execFds.get(fd).closeWithFrame();
             }
             operationDone.countDown();
+            if (trailingInOneWrite) {
+                execFds.get("1").sendAll(trailingStdout);
+                return;
+            }
             for (var chunk : trailingStdout) {
                 Thread.sleep(trailingGapMillis);
                 execFds.get("1").send(0x2, chunk.getBytes(StandardCharsets.UTF_8));
@@ -411,6 +419,8 @@ final class LossyIncusServer implements AutoCloseable {
                 }
             }
         } catch (IOException ignored) {
+        } finally {
+            if (fd.equals("1")) stdoutHungUp.countDown();
         }
     }
 
@@ -425,6 +435,19 @@ final class LossyIncusServer implements AutoCloseable {
         }
 
         synchronized void send(int opcode, byte[] payload) throws IOException {
+            out.write(frame(opcode, payload));
+            out.flush();
+        }
+
+        /** One binary frame per chunk, all in a single write. */
+        synchronized void sendAll(List<String> chunks) throws IOException {
+            var frames = new ByteArrayOutputStream();
+            for (var chunk : chunks) frames.writeBytes(frame(0x2, chunk.getBytes(StandardCharsets.UTF_8)));
+            out.write(frames.toByteArray());
+            out.flush();
+        }
+
+        private static byte[] frame(int opcode, byte[] payload) {
             var frame = new ByteArrayOutputStream();
             frame.write(0x80 | opcode);
             if (payload.length < 126) {
@@ -435,8 +458,7 @@ final class LossyIncusServer implements AutoCloseable {
                 frame.write(payload.length & 0xFF);
             }
             frame.writeBytes(payload);
-            out.write(frame.toByteArray());
-            out.flush();
+            return frame.toByteArray();
         }
 
         synchronized void closeWithFrame() throws IOException {

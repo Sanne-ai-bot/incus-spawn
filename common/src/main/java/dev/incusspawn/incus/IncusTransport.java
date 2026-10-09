@@ -84,6 +84,11 @@ interface IncusTransport {
          * tell an idle peer from a vanished one.
          */
         long millisSinceLastReceived();
+        /**
+         * Whether bytes have reached this socket that no read has taken yet. Closing the socket
+         * discards them, so a reader that is merely late must be waited for (#1208).
+         */
+        boolean hasUnread();
         /** Send binary data to the server. */
         void sendData(byte[] data, int offset, int length) throws IOException;
         /** Send a text frame to the server. */

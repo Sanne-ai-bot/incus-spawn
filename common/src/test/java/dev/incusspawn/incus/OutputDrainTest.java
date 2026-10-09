@@ -19,7 +19,7 @@ class OutputDrainTest {
 
     private static long pollUntilDone(OutputDrain drain, long fromMs, long toMs, long lastDataMs, long everyMs) {
         for (long t = fromMs; t <= toMs; t += everyMs) {
-            if (drain.done(t * MS, lastDataMs * MS)) return t;
+            if (drain.done(t * MS, lastDataMs * MS, false)) return t;
         }
         return -1;
     }
@@ -34,7 +34,7 @@ class OutputDrainTest {
     void outputStillArrivingExtendsTheDrain() {
         var drain = new OutputDrain(0);
         assertEquals(-1, pollUntilDone(drain, 0, 180, 0));
-        assertFalse(drain.done(200 * MS, 200 * MS), "a byte just now: still flowing");
+        assertFalse(drain.done(200 * MS, 200 * MS, false), "a byte just now: still flowing");
         assertEquals(200 + OutputDrain.IDLE_MS, pollUntilDone(drain, 220, 1000, 200));
     }
 
@@ -45,9 +45,9 @@ class OutputDrainTest {
     void aPauseOfTheDrainItselfIsNotIdleOutput() {
         var drain = new OutputDrain(0);
         assertEquals(-1, pollUntilDone(drain, 0, 100, 90));
-        assertFalse(drain.done(450 * MS, 90 * MS),
+        assertFalse(drain.done(450 * MS, 90 * MS, false),
                 "the drain was not running for 350ms: that says nothing about the output");
-        assertFalse(drain.done(470 * MS, 470 * MS), "the readers caught up after the pause");
+        assertFalse(drain.done(470 * MS, 470 * MS, false), "the readers caught up after the pause");
         assertEquals(470 + OutputDrain.IDLE_MS, pollUntilDone(drain, 490, 2000, 470));
     }
 
@@ -55,17 +55,17 @@ class OutputDrainTest {
     void thePollAfterAPauseNeverEndsTheDrain() {
         var drain = new OutputDrain(0);
         assertEquals(-1, pollUntilDone(drain, 0, 100, 0));
-        assertFalse(drain.done(450 * MS, 0), "the readers have not run since the pause");
-        assertTrue(drain.done(470 * MS, 0), "they had the sleep since, and nothing came");
+        assertFalse(drain.done(450 * MS, 0, false), "the readers have not run since the pause");
+        assertTrue(drain.done(470 * MS, 0, false), "they had the sleep since, and nothing came");
     }
 
     @Test
     void theCeilingHoldsWhileOutputNeverStops() {
         var drain = new OutputDrain(0);
         for (long t = 0; t < OutputDrain.MAX_MS; t += OutputDrain.POLL_MS) {
-            assertFalse(drain.done(t * MS, t * MS), "at " + t + "ms");
+            assertFalse(drain.done(t * MS, t * MS, false), "at " + t + "ms");
         }
-        assertTrue(drain.done(OutputDrain.MAX_MS * MS, OutputDrain.MAX_MS * MS));
+        assertTrue(drain.done(OutputDrain.MAX_MS * MS, OutputDrain.MAX_MS * MS, false));
     }
 
     // #1122: on the macOS runners polls come late again and again. Restarting the window on each
@@ -82,9 +82,26 @@ class OutputDrainTest {
     void theCeilingHoldsThroughRepeatedPauses() {
         var drain = new OutputDrain(0);
         for (long t = 0; t < OutputDrain.MAX_MS; t += 300) {
-            assertFalse(drain.done(t * MS, t * MS - 10 * MS), "at " + t + "ms");
+            assertFalse(drain.done(t * MS, t * MS - 10 * MS, false), "at " + t + "ms");
         }
-        assertTrue(drain.done(OutputDrain.MAX_MS * MS, OutputDrain.MAX_MS * MS - 10 * MS),
+        assertTrue(drain.done(OutputDrain.MAX_MS * MS, OutputDrain.MAX_MS * MS - 10 * MS, false),
                 "pauses never extend it past its ceiling");
+    }
+
+    // #1208: closing the socket would discard bytes that reached the host but no reader took yet.
+    @Test
+    void bytesWaitingUnreadAreOutputStillArriving() {
+        var drain = new OutputDrain(0);
+        for (long t = 0; t <= 1000; t += OutputDrain.POLL_MS) {
+            assertFalse(drain.done(t * MS, 0, true), "a late reader is no sign the output stopped, at " + t + "ms");
+        }
+        assertEquals(1000 + OutputDrain.IDLE_MS, pollUntilDone(drain, 1020, 2000, 0),
+                "once they are read, the output is idle from then");
+    }
+
+    @Test
+    void theCeilingHoldsWhileBytesWaitUnread() {
+        var drain = new OutputDrain(0);
+        assertTrue(drain.done(OutputDrain.MAX_MS * MS, 0, true), "a sink that never takes them cannot hold the caller");
     }
 }

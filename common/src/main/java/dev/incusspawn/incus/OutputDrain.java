@@ -20,6 +20,11 @@ package dev.incusspawn.incus;
  * again and again (#1122): lateness may slow the drain, never hold it there.
  * The ceiling stays wall time, so pauses never hold the caller past it.
  *
+ * Bytes waiting unread in a data socket are output arriving now (#1208): they have reached the
+ * host, and the force-close that follows the drain would discard them. A reader can be late to
+ * take them -- a slow sink, a virtual thread woken late -- and that is no sign the output stopped.
+ * Only the ceiling ends a drain while they wait.
+ *
  * Times are {@link System#nanoTime} values, passed in so the decision can be tested without
  * waiting.
  */
@@ -37,7 +42,7 @@ final class OutputDrain {
 
     private final long start;
     private long lastPoll;
-    private long countingFrom; // the lastData idle is counted since
+    private long countingFrom; // the arrival idle is counted since
     private long idleNanos;
 
     OutputDrain(long now) {
@@ -45,15 +50,19 @@ final class OutputDrain {
         this.lastPoll = now;
     }
 
-    /** @param lastData when the latest byte arrived on any data fd */
-    boolean done(long now, long lastData) {
-        if (lastData != countingFrom) {
-            countingFrom = lastData;
+    /**
+     * @param lastData when the latest byte arrived on any data fd
+     * @param unread   whether bytes are waiting in a data socket that no reader has taken yet
+     */
+    boolean done(long now, long lastData, boolean unread) {
+        long seen = unread ? now : lastData; // the latest byte known to be on the host
+        if (seen != countingFrom) {
+            countingFrom = seen;
             idleNanos = 0;
         }
         boolean late = now - lastPoll > PAUSE_NS;
         long idleBefore = idleNanos; // a gap counts for less than a window: this was the last poll's verdict
-        idleNanos += Math.clamp(now - Math.max(lastPoll, lastData), 0, PAUSE_NS);
+        idleNanos += Math.clamp(now - Math.max(lastPoll, seen), 0, PAUSE_NS);
         lastPoll = now;
         return now - start >= MAX_NS || (late ? idleBefore : idleNanos) >= IDLE_NS;
     }
