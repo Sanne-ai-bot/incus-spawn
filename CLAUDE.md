@@ -16,7 +16,7 @@ incus-spawn (`isx`) is a CLI tool for managing isolated Incus-based development 
 gh release download <tag> -R Sanne/incus-spawn-images -p SHA256SUMS -O -
 ```
 
-Four lines, four fields, and every one has to match the asset it names. The same applies to a tool download added to `ToolDef` or a tool YAML: take the checksum from the publisher, never from a build log or another PR.
+Four lines, four fields, and every one has to match the asset it names. The same applies to a tool download added to `ToolDef` or a tool YAML, and to the appliance kernel's `KERNEL_SHA256` in `appliance/kernel/build-kernel.sh` (from kernel.org's signed `sha256sums.asc`): take the checksum from the publisher, never from a build log or another PR.
 
 **Latency on the branch/start/shell path is never noise.** A container starts in well under a second, so a few milliseconds or a handful of redundant Incus round trips are a real share of the wait, and each round trip costs far more over the macOS vsock tunnel. When a flow repeats a read, fix it rather than weighing whether it is worth it. Pin the result in a request-budget test (such as `InstanceLifecycleRequestBudgetTest`), and trace it against a real Incus with `bench/trace-branch.sh`, since `FakeIncusDaemon` does not see what the proxy health check and refresh ask for.
 

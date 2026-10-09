@@ -28,6 +28,10 @@ No disk images are created during build -- the tarball is unpacked into a btrfs 
 
 The appliance uses a custom kernel built from vanilla kernel.org source (`kernel/build-kernel.sh`). Every required driver and subsystem is compiled built-in -- there are no loadable modules and no initrd. The kernel boots directly to the root filesystem.
 
+### Kernel source is pinned by checksum
+
+`build-kernel.sh` downloads `linux-<version>.tar.xz` from cdn.kernel.org only and refuses it unless it matches `KERNEL_SHA256`, pinned next to `KERNEL_VERSION` (#1128). The check runs on a cache hit too, since CI restores the cache dir from earlier runs, and a tarball that fails it is deleted. There is no fallback mirror: the GitHub archive of a stable tag is a different tarball (a `.tar.gz` generated from git) that would need its own pinned sum. A version bump updates both lines, and the sum comes from kernel.org's signed `sha256sums.asc` (`https://cdn.kernel.org/pub/linux/kernel/v<major>.x/sha256sums.asc`, signed by the kernel.org checksum autosigner), never from a build log. CI keys its kernel-source cache on the sum as well (see `.claude/rules/ci.md`).
+
 ### Config Fragments (`kernel/isx.config` + `kernel/isx-<arch>.config`)
 
 Applied on top of `allnoconfig`. `build-kernel.sh` concatenates the shared `isx.config` with the matching `isx-x86_64.config` or `isx-aarch64.config` and passes the result as `KCONFIG_ALLCONFIG`; the arch fragment comes last so it can override a shared default.
