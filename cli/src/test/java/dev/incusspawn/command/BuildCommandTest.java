@@ -1589,8 +1589,8 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
@@ -1631,8 +1631,8 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
@@ -1660,8 +1660,8 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
@@ -1701,8 +1701,8 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
@@ -3267,7 +3267,7 @@ class BuildCommandTest {
         cmd.incus = incus;
         cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
-        verify(cmd, never()).tryMountReference(any(), any(), any(), any());
+        verify(cmd, never()).planReference(any(), any());
         verify(incus, never()).deviceAdd(any(), any(), any(), any(String[].class));
         verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
@@ -3310,11 +3310,11 @@ class BuildCommandTest {
         for (int i = 0; i < 12; i++) {
             if (i % 2 == 1) continue; // half via host reference, half from the network
             var url = repos.get(i).getUrl();
-            doAnswer(inv -> {
-                mounted.incrementAndGet();
-                return new BuildCommand.RepoReference("ref-" + url.hashCode(), "/mnt/ref/" + url.hashCode(), null);
-            }).when(cmd).tryMountReference(eq(container), eq(url), any(), eq(MachineType.CONTAINER));
+            doReturn(new BuildCommand.RepoReference("ref-" + url.hashCode(), "/mnt/ref/" + url.hashCode(), "/host/repo", null))
+                    .when(cmd).planReference(eq(url), any());
         }
+        doAnswer(inv -> { mounted.incrementAndGet(); return null; })
+                .when(incus).deviceAdd(eq("test"), anyString(), eq("disk"), any(String[].class));
 
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
                 () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
@@ -3338,11 +3338,43 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        doReturn(new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null))
-                .when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
+        doReturn(new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
+                .when(cmd).planReference(eq(repo.getUrl()), any());
 
         assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
         verify(incus, never()).execInContainer(eq("test"), eq("agentuser"), contains("echo primed"));
+    }
+
+    @Test
+    void failedDetachDoesNotStrandAnAttachWaitingForASlot() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+        var stillPlugged = new java.util.concurrent.atomic.AtomicBoolean();
+        doAnswer(inv -> {
+            if (stillPlugged.get()) throw new IncusClient.NoHotplugSlotException("No available PCI hotplug slots");
+            return null;
+        }).when(incus).deviceAdd(eq("test"), anyString(), eq("disk"), any(String[].class));
+        doAnswer(inv -> { stillPlugged.set(true); throw new IncusException("busy"); })
+                .when(incus).deviceRemove("test", "ref-0");
+        var repos = new java.util.ArrayList<ImageDef.RepoEntry>();
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        for (int i = 0; i < 2; i++) {
+            var repo = new ImageDef.RepoEntry();
+            repo.setUrl("https://github.com/owner/repo" + i + ".git");
+            repo.setPath("~/repo" + i);
+            repos.add(repo);
+            doReturn(new BuildCommand.RepoReference("ref-" + i, "/mnt/ref/" + i, "/host/repo" + i, null))
+                    .when(cmd).planReference(eq(repo.getUrl()), any());
+        }
+        var imageDef = trusted("tpl-test");
+        imageDef.setRepos(repos);
+        doReturn(1).when(cmd).repoConcurrency(anyInt()); // repo0 detaches (and fails) before repo1 attaches
+
+        // The device that would not detach still holds its slot: repo1 runs out, and must give up, not wait.
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
+                () -> assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, MachineType.VM)));
     }
 
     // --- Shared DNF cache volume: VM mount, teardown, and the cleanup guard ---
