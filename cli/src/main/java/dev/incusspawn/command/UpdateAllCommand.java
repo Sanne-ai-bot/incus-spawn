@@ -63,33 +63,48 @@ public class UpdateAllCommand extends BaseCommand {
 
         refreshHostRepos(resolved, defs);
 
-        BuildOutput.section("Updating " + templates.size() + " template(s).");
+        return CommandResult.valueOf(updateTemplates(incus, resolved));
+    }
+
+    /** Updates each template in {@code resolved} (in order) and returns the command's exit code. */
+    int updateTemplates(IncusClient incus, Map<String, ImageDef> resolved) {
+        BuildOutput.section("Updating " + resolved.size() + " template(s).");
 
         boolean primesSkipped = false;
         boolean primesFailed = false;
         boolean npmFailed = false;
-        for (var name : templates) {
-            BuildOutput.header("Updating " + name);
-            var result = updateImage(incus, name, resolved.get(name));
+        boolean dnfFailed = false;
+        boolean gitFailed = false;
+        for (var entry : resolved.entrySet()) {
+            BuildOutput.header("Updating " + entry.getKey());
+            var result = updateImage(incus, entry.getKey(), entry.getValue());
             primesSkipped |= result.primesSkipped();
             primesFailed |= result.primesFailed();
             npmFailed |= result.npmFailed();
+            dnfFailed |= result.dnfFailed();
+            gitFailed |= result.gitFailed();
         }
 
+        if (dnfFailed) {
+            BuildOutput.warn("Some system updates failed; re-run 'isx update-all' to retry them.");
+        }
         if (npmFailed) {
             BuildOutput.warn("Some npm updates failed; re-run 'isx update-all' to retry them.");
+        }
+        if (gitFailed) {
+            BuildOutput.warn("Some git fetches failed; re-run 'isx update-all' to retry them.");
         }
         if (primesFailed) {
             BuildOutput.warn("Some prime commands failed.");
         }
-        if (npmFailed || primesFailed) {
-            return CommandResult.valueOf(1);
+        if (dnfFailed || npmFailed || gitFailed || primesFailed) {
+            return 1;
         }
         BuildOutput.success("All templates updated.");
         if (primesSkipped) {
             BuildOutput.note("Use --prime to re-run prime commands.");
         }
-        return CommandResult.SUCCESS;
+        return 0;
     }
 
     private void refreshHostRepos(Map<String, ImageDef> resolved, Map<String, ImageDef> defs) {
@@ -111,7 +126,18 @@ public class UpdateAllCommand extends BaseCommand {
         static final PrimeResult NONE = new PrimeResult(false, false);
     }
 
-    private record UpdateResult(boolean primesSkipped, boolean primesFailed, boolean npmFailed) {}
+    private record UpdateResult(boolean primesSkipped, boolean primesFailed, boolean npmFailed,
+                                boolean dnfFailed, boolean gitFailed) {}
+
+    /**
+     * Fetches every git repository directly under agentuser's home. It is the script itself, not
+     * an argument to {@code sh -c}: {@link IncusClient#execInContainer} joins its arguments with
+     * spaces into {@code su - -c}, which would leave an unquoted loop that never parses (#1179).
+     * Exits non-zero, naming each repository, when any fetch failed.
+     */
+    static final String GIT_FETCH_SCRIPT = "failed=0; for d in ~/*/; do if [ -d \"$d/.git\" ]; then"
+            + " echo \"  Fetching $d\"; git -C \"$d\" fetch --all"
+            + " || { echo \"git fetch failed in $d\" >&2; failed=1; }; fi; done; exit $failed";
 
     private UpdateResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
         var machineType = incus.machineType(name);
@@ -120,22 +146,33 @@ public class UpdateAllCommand extends BaseCommand {
 
         // System updates
         BuildOutput.stepStart("Running system updates...");
-        incus.shellExec(name, "dnf", "update", "-y");
-        BuildOutput.stepDone();
+        var dnf = incus.shellExec(name, "dnf", "update", "-y");
+        boolean dnfFailed = !dnf.success();
+        if (dnfFailed) {
+            BuildOutput.stepFail("dnf update -y failed (exit code " + dnf.exitCode() + "): "
+                    + dnf.stderr().strip());
+        } else {
+            BuildOutput.stepDone();
+        }
 
         // Update globally installed npm packages (coding tools, etc.)
         boolean npmFailed = !NpmUpdate.run(incus, name);
 
         // Git fetch in all repos (for project images)
         BuildOutput.stepStart("Updating git repositories...");
-        incus.execInContainer(name, "agentuser",
-                "sh", "-c", "for d in ~/*/; do if [ -d \"$d/.git\" ]; then echo \"  Fetching $d\" && cd \"$d\" && git fetch --all && cd ~; fi; done");
-        BuildOutput.stepDone();
+        var git = incus.execInContainer(name, "agentuser", GIT_FETCH_SCRIPT);
+        boolean gitFailed = !git.success();
+        if (gitFailed) {
+            BuildOutput.stepFail("git fetch failed (exit code " + git.exitCode() + "): "
+                    + git.stderr().strip());
+        } else {
+            BuildOutput.stepDone();
+        }
 
         var primeResult = handlePrimeCommands(incus, name, imageDef);
 
         incus.stop(name);
-        return new UpdateResult(primeResult.skipped, primeResult.failed, npmFailed);
+        return new UpdateResult(primeResult.skipped, primeResult.failed, npmFailed, dnfFailed, gitFailed);
     }
 
     private PrimeResult handlePrimeCommands(IncusClient incus, String name, ImageDef imageDef) {
