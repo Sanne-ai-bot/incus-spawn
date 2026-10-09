@@ -278,7 +278,9 @@ down, say) aborts instead of being timed. Branch, cold start and destroy are tim
 and recorded under `lifecycle` as indicative single samples; Incus dominates them.
 
 Prerequisites: a working `isx init`, a running Incus daemon **and proxy**, a built template to
-branch from, and `native-image` unless `--skip-build` or `--runtime=jvm`.
+branch from, and `native-image` unless `--skip-build` or `--runtime=jvm`. On macOS that is the
+VM running (`isx vm start`) and the proxy service started from the same build; the script
+reads the proxy's `/health` on loopback there and needs no `incus` client.
 
 Results go to `bench/results/cli/`, separate from the proxy results, and each runtime's
 medians are compared with the most recent earlier result that measured it. A change is flagged
@@ -288,6 +290,23 @@ This is for comparing before and after on one machine, not for gating PRs. The d
 check is `InstanceLifecycleRequestBudgetTest` in `mvn test`, which pins how many Incus round
 trips a flow makes: an extra round trip is the usual cause of a CLI latency regression, and
 counting requests needs neither timing nor a daemon.
+
+## What One Incus Request Costs (`request-cost.sh`)
+
+The request budgets count round trips; `request-cost.sh` says what one costs on this host. It
+sends plain HTTP requests to the daemon's Unix socket (on macOS the appliance's, the one isx
+uses), with no isx process involved, so what it times is the transport and the daemon alone:
+
+```bash
+bench/request-cost.sh                        # reads: /1.0, one instance, the listing, the bridge
+bench/request-cost.sh --write=isx-scratch    # also a settings write on a throwaway instance
+```
+
+Reads are timed on one kept-alive connection and again with a new connection per request
+(medians of 300 after 20 warmups). `--write` adds a `PATCH` that sets one `user.*` key (50
+timed after 20 warmups), and removes the key afterwards. Multiply a count from `trace-branch.sh` or a budget
+test by these figures to see what those requests cost; the macOS figures in DESIGN.md "CLI
+latency on macOS" come from this script. Nothing is saved: it prints.
 
 ## Where a Branch Spends Its Time (`trace-branch.sh`)
 
@@ -311,8 +330,16 @@ bench/trace-branch.sh --runtime=jvm --from=tpl-java
 ```
 
 It adds nothing to isx: it observes the daemon from outside, so the same release build that
-users run is what gets traced. It needs the `incus` client with access to the same daemon
-(so a Linux host, not the macOS appliance), and uses the build already in `cli/target`. The
+users run is what gets traced. It needs the `incus` client with access to the same daemon,
+and uses the build already in `cli/target`. On macOS the daemon is the appliance's: the
+script adds the Unix socket isx itself uses (`~/.local/state/incus-spawn/vm.incus.sock`) as a
+named remote in a throwaway client config and monitors that, so the only thing to install is
+the client (the `bin.macos.incus.*` binary from an
+[Incus release](https://github.com/lxc/incus/releases) on `PATH` is enough). There the daemon
+stamps its events with the VM's clock, while the start, the prompt and the destroy are read
+from the host's. The script measures the offset between the two before the branch, with a few
+requests it times on the host and finds again in the event stream, prints it, and takes it
+out of every event. The
 timeline (`*.timeline.txt`) is saved under `bench/results/trace/` next to the raw events
 (`*.events.json`), which carry each event's full detail for when a gap needs a closer look.
 The daemon's events include everything else happening on it, so run it on a quiet host.
@@ -324,6 +351,7 @@ bench/
   run.sh                  # Proxy benchmark
   cli.sh                  # CLI latency benchmark, JVM vs native
   trace-branch.sh         # Daemon-side timeline of one isx branch
+  request-cost.sh         # What one Incus request costs, outside isx
   isxbench.py             # Shared helper: run a command to a usable shell prompt
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)

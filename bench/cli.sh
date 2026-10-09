@@ -6,10 +6,11 @@
 # startup and the runtime actually cost on this host. Too noisy to gate PRs; use it to
 # compare before and after a change, or JVM against native, on one machine.
 #
-# Requires: working isx setup (isx init), running Incus daemon and proxy, a built template
-#           to branch from (tpl-minimal by default), python3, curl; GraalVM native-image unless
-#           --skip-build or --runtime=jvm. The running proxy must be the build the CLI
-#           under test comes from (./install.sh --native from this commit), unless --allow-drift.
+# Requires: working isx setup (isx init), running Incus daemon (on macOS: the VM, isx vm start)
+#           and proxy, a built template to branch from (tpl-minimal by default), python3, curl;
+#           GraalVM native-image unless --skip-build or --runtime=jvm. The running proxy must
+#           be the build the CLI under test comes from (./install.sh --native from this
+#           commit), unless --allow-drift.
 #
 # Usage:
 #   bench/cli.sh                          # build JVM + native CLIs, benchmark both
@@ -125,13 +126,23 @@ fi
 # drifted command restarts the proxy (~2.5 s, inside a timed sample) and every later one warns
 # and reads the restart record. Neither is what a clean install does, so refuse up front, as
 # run.sh refuses a proxy it would not be measuring.
-GATEWAY_IP=$(incus network get incusbr0 ipv4.address 2>/dev/null | cut -d/ -f1) || true
-[ -n "$GATEWAY_IP" ] || die "Could not determine the Incus bridge gateway IP. Is Incus running?"
-PROXY_HEALTH=$(curl -sf --max-time 2 "http://$GATEWAY_IP:18080/health") || \
-    die "No proxy answering on $GATEWAY_IP:18080. Start it first: isx proxy start"
+if [ "$(uname -s)" = Darwin ]; then
+    # Incus runs in the VM and the host has no incus client; the proxy's health endpoint
+    # is on loopback there (ProxyHealthCheck.healthAddress).
+    HEALTH_ADDR=127.0.0.1
+    # The proxy answers /health with the VM down too, so look for the VM here, as the bridge
+    # lookup does for Incus on Linux (the socket is Environment.vmVsockSocket).
+    [ -S "$HOME/.local/state/incus-spawn/vm.incus.sock" ] || \
+        die "No appliance socket. Is the VM running? (isx vm start)"
+else
+    HEALTH_ADDR=$(incus network get incusbr0 ipv4.address 2>/dev/null | cut -d/ -f1) || true
+    [ -n "$HEALTH_ADDR" ] || die "Could not determine the Incus bridge gateway IP. Is Incus running?"
+fi
+PROXY_HEALTH=$(curl -sf --max-time 2 "http://$HEALTH_ADDR:18080/health") || \
+    die "No proxy answering on $HEALTH_ADDR:18080. Start it first: isx proxy start"
 # "<version> (<gitSha>)", the form `isx --version` prints, so the two compare as strings.
 PROXY_BUILD=$(python3 -c 'import json, sys; h = json.load(sys.stdin); print(h.get("version", ""), "(" + h.get("gitSha", "") + ")")' \
-    <<<"$PROXY_HEALTH") || die "Unreadable /health response from $GATEWAY_IP:18080: $PROXY_HEALTH"
+    <<<"$PROXY_HEALTH") || die "Unreadable /health response from $HEALTH_ADDR:18080: $PROXY_HEALTH"
 echo "  proxy:  $PROXY_BUILD"
 for spec in "${RUNTIMES[@]}"; do
     # shellcheck disable=SC2086  # "java -jar <path>" for the JVM
