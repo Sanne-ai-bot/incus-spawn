@@ -156,7 +156,7 @@ public class TemplatesCommand extends BaseCommand {
             var def = defs.get(name);
             if (def == null) {
                 System.err.println("Template '" + name + "' not found.");
-                System.err.println("Available templates: " + String.join(", ", defs.keySet()));
+                System.err.println(cell("Available templates: " + String.join(", ", defs.keySet())));
                 return CommandResult.valueOf(1);
             }
 
@@ -224,7 +224,7 @@ public class TemplatesCommand extends BaseCommand {
             var defs = ImageDef.loadAll();
             if (templateName != null && defs.containsKey(templateName)) {
                 System.err.println("Template '" + templateName + "' already exists (source: "
-                        + defs.get(templateName).getSource() + ").");
+                        + cell(defs.get(templateName).getSource()) + ").");
                 System.err.println("Use 'isx templates edit " + templateName + "' to modify it.");
                 return CommandResult.valueOf(1);
             }
