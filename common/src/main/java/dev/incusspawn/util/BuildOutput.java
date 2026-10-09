@@ -2,6 +2,7 @@ package dev.incusspawn.util;
 
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 
@@ -314,6 +315,12 @@ public final class BuildOutput {
      */
     public static void stepBreak() {
         finish(null, false);
+    }
+
+    /** The last {@code n} lines of a command's output, without surrounding blank space. */
+    public static String lastLines(String text, int n) {
+        var lines = text.strip().split("\n");
+        return String.join("\n", Arrays.asList(lines).subList(Math.max(0, lines.length - n), lines.length));
     }
 
     /**

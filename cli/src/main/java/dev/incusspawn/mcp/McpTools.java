@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.BuildOutput;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -11,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -1022,8 +1022,8 @@ final class McpTools {
                 node.put("agent_stderr", status.stderr().strip());
             }
         } else {
-            var stdoutTail = lastLines(status.output(), 20);
-            var stderrTail = lastLines(status.stderr(), 20);
+            var stdoutTail = BuildOutput.lastLines(status.output(), 20);
+            var stderrTail = BuildOutput.lastLines(status.stderr(), 20);
             sb.append("\nstdout_bytes: ").append(status.outputBytes())
                     .append("\nstderr_bytes: ").append(status.stderrBytes())
                     .append("\n--- stdout (tail) ---\n").append(stdoutTail)
@@ -1262,11 +1262,6 @@ final class McpTools {
         int limit = max == null ? DEFAULT_DIFF_BYTES : Math.clamp(max, 1024, MAX_DIFF_BYTES);
         var diff = Diff.parse(tasks.diff(task, args.string("path"), limit, stat), stat);
         return ToolResult.text(diff.text(), diff.structured());
-    }
-
-    private static String lastLines(String text, int n) {
-        var lines = text.strip().split("\n");
-        return String.join("\n", Arrays.asList(lines).subList(Math.max(0, lines.length - n), lines.length));
     }
 
     private ToolResult destroyInstance(McpTool.Args args) {

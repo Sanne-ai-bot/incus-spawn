@@ -59,20 +59,28 @@ public class ProjectCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            var incus = RuntimeServices.incus();
-            var projectConfig = loadConfig();
+            return CommandResult.valueOf(create(RuntimeServices.incus(), loadConfig()));
+        }
+
+        /**
+         * Builds the template from {@code projectConfig}, returning the exit code. A failed repo
+         * clone or pre-build, or anything thrown on the way, fails the command and deletes the
+         * half-built template, so a project template that exists is one whose create completed
+         * (as with {@code isx build}).
+         */
+        int create(IncusClient incus, ProjectConfig projectConfig) {
             var imageName = name != null ? name : projectConfig.getName();
 
             if (imageName == null || imageName.isBlank()) {
                 System.err.println("Error: project name is required (either as argument or in incus-spawn.yaml 'name' field).");
-                return CommandResult.valueOf(1);
+                return 1;
             }
 
             var parent = projectConfig.getParent();
 
             if (!incus.exists(parent)) {
                 System.err.println("Error: parent image '" + parent + "' does not exist. Run 'incus-spawn build " + parent + "' first.");
-                return CommandResult.valueOf(1);
+                return 1;
             }
 
             BuildOutput.header("Creating project template " + imageName);
@@ -83,6 +91,26 @@ public class ProjectCommand extends BaseCommand {
                 incus.delete(imageName, true);
             }
 
+            try {
+                if (build(incus, imageName, parent, projectConfig)) return 0;
+            } catch (RuntimeException e) {
+                try {
+                    incus.deleteIfExists(imageName);
+                } catch (RuntimeException deleteFailed) {
+                    e.addSuppressed(deleteFailed);
+                }
+                throw e;
+            }
+            BuildOutput.stepStart("Deleting the incomplete template...");
+            incus.delete(imageName, true);
+            BuildOutput.stepDone();
+            System.err.println("Error: project template " + imageName + " was not created."
+                    + " Fix the failure above and run 'isx project create' again.");
+            return 1;
+        }
+
+        /** Builds and stops the template; false, after the failed step reported why, when one failed. */
+        private static boolean build(IncusClient incus, String imageName, String parent, ProjectConfig projectConfig) {
             // Clone from parent
             var machineType = incus.machineType(parent);
             BuildOutput.stepStart("Cloning from " + parent + "...");
@@ -92,15 +120,15 @@ public class ProjectCommand extends BaseCommand {
             BuildOutput.stepDone();
 
             // Clone repos
-            if (projectConfig.getRepos() != null && !projectConfig.getRepos().isEmpty()) {
+            if (projectConfig.getRepos() != null) {
                 for (var repo : projectConfig.getRepos()) {
                     BuildOutput.stepStart("Cloning " + repo + "...");
-                    incus.execInContainer(imageName, "agentuser", "git clone " + shellQuote(repo));
-                    BuildOutput.stepDone();
+                    var cloned = incus.execInContainer(imageName, "agentuser", "git clone " + shellQuote(repo));
+                    if (!GuestUpdate.finish(cloned, "git clone " + repo)) return false;
                 }
             }
 
-            preBuild(incus, imageName, projectConfig.getPreBuild());
+            if (!preBuild(incus, imageName, projectConfig.getPreBuild())) return false;
 
             InstanceLifecycle.tagMetadata(incus, imageName, Metadata.TYPE_PROJECT, parent);
             incus.configSet(imageName, Metadata.PROJECT, imageName);
@@ -111,7 +139,7 @@ public class ProjectCommand extends BaseCommand {
             BuildOutput.stepDone();
 
             BuildOutput.success("Project template " + imageName + " created.");
-            return CommandResult.SUCCESS;
+            return true;
         }
 
         private ProjectConfig loadConfig() {
@@ -144,10 +172,24 @@ public class ProjectCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            var incus = RuntimeServices.incus();
+            var projectConfig = configPath != null ? ProjectConfig.load(configPath) : ProjectConfig.findInDirectory(Path.of("."));
+            return CommandResult.valueOf(update(RuntimeServices.incus(), projectConfig));
+        }
+
+        /**
+         * Updates the template, re-running {@code projectConfig}'s pre-build when there is one,
+         * and returns the exit code. A config found in the working directory rather than named
+         * with --config must name this template, or it may be another project's pre-build.
+         */
+        int update(IncusClient incus, ProjectConfig projectConfig) {
             if (!incus.exists(name)) {
                 System.err.println("Error: image '" + name + "' does not exist.");
-                return CommandResult.valueOf(1);
+                return 1;
+            }
+            if (configPath == null && projectConfig != null && projectConfig.getName() != null && !projectConfig.getName().equals(name)) {
+                System.err.println("Error: the incus-spawn.yaml found here is for project '" + projectConfig.getName()
+                        + "', not '" + name + "'. Use --config to name the one for '" + name + "'.");
+                return 1;
             }
 
             BuildOutput.header("Updating project template " + name);
@@ -165,12 +207,6 @@ public class ProjectCommand extends BaseCommand {
             if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetch");
 
             // Re-run pre-build if config available
-            ProjectConfig projectConfig = null;
-            if (configPath != null) {
-                projectConfig = ProjectConfig.load(configPath);
-            } else {
-                projectConfig = ProjectConfig.findInDirectory(Path.of("."));
-            }
             if (projectConfig != null && !preBuild(incus, name, projectConfig.getPreBuild())) {
                 failedSteps.add("pre-build");
             }
@@ -182,10 +218,10 @@ public class ProjectCommand extends BaseCommand {
 
             if (!failedSteps.isEmpty()) {
                 BuildOutput.warn("Failed: " + String.join(", ", failedSteps) + ". Re-run 'isx project update " + name + "' to retry.");
-                return CommandResult.valueOf(1);
+                return 1;
             }
             BuildOutput.success("Project template " + name + " updated.");
-            return CommandResult.SUCCESS;
+            return 0;
         }
 
     }

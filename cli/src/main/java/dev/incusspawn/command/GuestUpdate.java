@@ -32,11 +32,20 @@ final class GuestUpdate {
         return finish(incus.execInContainer(name, "agentuser", GIT_FETCH_SCRIPT), "git fetch");
     }
 
-    /** Ends the step started for {@code what}: done, or failed with its exit code and stderr. */
+    /** Lines of a failed step's stdout, and of its stderr, shown. */
+    private static final int TAIL_LINES = 30;
+
+    /**
+     * Ends the step started for {@code what}: done, or failed with its exit code and the tails of
+     * its stdout (build tools such as {@code mvn -q} and {@code npm ci} report errors there) and stderr.
+     */
     static boolean finish(IncusClient.ExecResult result, String what) {
         if (!result.success()) {
-            BuildOutput.stepFail(what + " failed (exit code " + result.exitCode() + "): "
-                    + result.stderr().strip());
+            var output = new StringBuilder(what + " failed (exit code " + result.exitCode() + ")");
+            for (var stream : new String[] {result.stdout(), result.stderr()}) {
+                if (!stream.isBlank()) output.append('\n').append(BuildOutput.lastLines(stream, TAIL_LINES));
+            }
+            BuildOutput.stepFail(output.toString());
             return false;
         }
         BuildOutput.stepDone();
