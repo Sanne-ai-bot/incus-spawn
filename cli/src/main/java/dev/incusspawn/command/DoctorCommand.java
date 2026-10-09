@@ -1395,7 +1395,8 @@ public class DoctorCommand extends BaseCommand {
                     : stale.get(0) + ", " + stale.get(1) + " + " + (stale.size() - 2) + " more";
             return Finding.fail("Instance network config",
                     "(" + stale.size() + " on stale subnet: " + names + ")",
-                    new Remediation("Migrate all instances to current bridge subnet",
+                    new Remediation("Migrate all instances to current bridge subnet"
+                            + " (running ones are stopped and started again)",
                             false,
                             () -> {
                                 var incusClient = RuntimeServices.incus();
@@ -1410,8 +1411,6 @@ public class DoctorCommand extends BaseCommand {
                                             + " instance(s) could not be migrated: "
                                             + String.join(", ", remaining));
                                 }
-                                System.out.println("Note: running instances may need"
-                                        + " a restart for network changes to take effect.");
                             }));
         } catch (Exception e) {
             return Finding.warn("Instance network config",

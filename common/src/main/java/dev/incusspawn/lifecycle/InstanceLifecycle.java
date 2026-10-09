@@ -1046,6 +1046,11 @@ public final class InstanceLifecycle {
      * @return count of instances that were migrated
      */
     public static int migrateAllInstancesToNewSubnet(IncusClient incus) {
+        return migrateAllInstancesToNewSubnet(incus, StaticIpAllocator.Output.TERMINAL);
+    }
+
+    /** @param output where each reassignment, and each warning, is reported */
+    static int migrateAllInstancesToNewSubnet(IncusClient incus, StaticIpAllocator.Output output) {
         int fixed = 0;
         try {
             // One bridge read and one listing for every instance, not requests per instance
@@ -1057,27 +1062,65 @@ public final class InstanceLifecycle {
                     var listed = stale.getValue();
                     var type = MachineType.fromIncus(listed);
                     var storedIp = listed.path("config").path(Metadata.STATIC_IP).asText("");
-                    if (fixStaticIp(incus, name, storedIp, bridge.get(),
-                            StaticIpAllocator.Output.TERMINAL, type)) {
-                        fixed++;
-                        // A running VM can take its file now; a stopped one gets it at its next
-                        // start. Read again after the fix, which wrote the address the file needs.
-                        if (type == MachineType.VM
-                                && "Running".equalsIgnoreCase(listed.path("status").asText(""))) {
-                            pushDeferredNetworkConfig(incus, name, incus.instanceMetadata(name),
-                                    bridge.get().prefixLen(), STDERR_WARN);
+                    // Incus checks a running instance's NIC update against the address it holds
+                    // now, which is off the new subnet: it refuses the update that would move it
+                    // (#1009). Only a stopped instance can be moved.
+                    var status = listed.path("status").asText("");
+                    if ("Frozen".equalsIgnoreCase(status)) {
+                        // Paused on purpose, and a stop would wait on a guest that cannot answer
+                        output.warn().accept(name + " is frozen and was not moved: resume it, then repair it again");
+                        continue;
+                    }
+                    var running = "Running".equalsIgnoreCase(status);
+                    if (running) {
+                        output.warn().accept("Stopping " + name + " to move it onto the bridge's new subnet;"
+                                + " it is started again once moved");
+                        try {
+                            incus.stop(name);
+                        } catch (RuntimeException e) {
+                            // Never forced: a guest that ignores the shutdown is left running, and one
+                            // that stops later is moved by its next shell
+                            output.warn().accept(name + " did not stop in time and was not moved (" + e.getMessage()
+                                    + "): once it is stopped, repair it again");
+                            continue;
                         }
                     }
+                    boolean moved = false;
+                    try {
+                        moved = fixStaticIp(incus, name, storedIp, bridge.get(), output, type);
+                        if (moved) fixed++;
+                    } finally {
+                        // Moved or not, it is left running, as it was found
+                        if (running) startAgain(incus, name, type, moved, bridge.get().prefixLen(), output.warn());
+                    }
                 } catch (Exception e) {
-                    System.err.println("  Warning: failed to migrate " + stale.getKey()
-                            + ": " + e.getMessage());
+                    output.warn().accept("failed to migrate " + stale.getKey() + ": " + e.getMessage());
                 }
             }
         } catch (Exception e) {
-            System.err.println("  Warning: could not list instances for migration: "
-                    + e.getMessage());
+            output.warn().accept("could not list instances for migration: " + e.getMessage());
         }
         return fixed;
+    }
+
+    /**
+     * Start an instance {@link #migrateAllInstancesToNewSubnet} stopped to move it. A container
+     * booted with its new file; a VM booted with its old one, and takes the new one now that it
+     * runs. A failure is a warning, since the next shell starts it and pushes what it owes. The stopped branch of
+     * {@link #ensureReady}, without its bridge read: the caller already has the prefix length.
+     */
+    private static void startAgain(IncusClient incus, String name, MachineType type, boolean moved,
+                                   int prefixLen, Consumer<String> warn) {
+        try {
+            startForUse(incus, name, type, warn);
+            // Read after the fix, which wrote the address the file needs
+            if (moved && type == MachineType.VM) {
+                pushDeferredNetworkConfig(incus, name, incus.instanceMetadata(name), prefixLen, warn);
+            }
+        } catch (Exception e) {
+            warn.accept("could not start " + name + " again: " + e.getMessage()
+                    + "; 'isx shell " + name + "' finishes the repair");
+        }
     }
 
     /**
