@@ -887,7 +887,7 @@ public class MitmProxy {
             } catch (Exception e) {
                 // A port the kernel picks cannot be held by an earlier proxy: nothing to wait for.
                 if (attempt >= maxRetries || requestedMitmPort == 0 || !isBindException(e)) throw e;
-                if (!ProxyHealthCheck.isHealthy(healthBindAddress)) throw e;
+                if (!ProxyHealthCheck.isHealthy(healthBindAddress, requestedHealthPort)) throw e;
                 ProxyLog.warn("Port " + requestedMitmPort + " in use, previous proxy still running (" + attempt + "/" + maxRetries + ")");
                 Thread.sleep(200);
             }

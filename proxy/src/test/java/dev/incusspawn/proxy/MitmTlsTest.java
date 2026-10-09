@@ -181,6 +181,45 @@ class MitmTlsTest {
         }
     }
 
+    /**
+     * A taken MITM port is waited on only while an older proxy answers on this proxy's own
+     * health port (#1188). The stand-in old proxy frees both ports as it answers its first
+     * probe, so the new one binds on its first retry; probing any other port finds nothing
+     * and the start fails at once.
+     */
+    @Test
+    void aTakenPortIsWaitedOnWhileTheHealthPortGivenAnswers() throws Exception {
+        var loopback = InetAddress.getByName("127.0.0.1");
+        var taken = new ServerSocket(0, 1, loopback);
+        var oldHealth = new ServerSocket(0, 1, loopback);
+        var probes = new AtomicInteger();
+        var oldProxy = new Thread(() -> {
+            try (oldHealth; var probe = oldHealth.accept()) {
+                probes.incrementAndGet();
+                oldHealth.close();
+                taken.close();
+                probe.getInputStream().read(new byte[1024]);
+                probe.getOutputStream().write(
+                        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes());
+            } catch (Exception ignored) {
+                // Closed unprobed by the finally below: the assertion reports it.
+            }
+        }, "old-proxy");
+        oldProxy.start();
+        try {
+            proxy = new MitmProxy(vertx, "127.0.0.1", taken.getLocalPort(), oldHealth.getLocalPort(),
+                    "127.0.0.1", ConfigFingerprint.load());
+            startInBackground(proxy);
+
+            assertEquals(1, probes.get());
+            assertEquals(taken.getLocalPort(), proxy.mitmPort());
+        } finally {
+            taken.close();
+            oldHealth.close();
+            oldProxy.join(5_000);
+        }
+    }
+
     private int startProxy() throws Exception {
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1", ConfigFingerprint.load());
         startInBackground(proxy);
