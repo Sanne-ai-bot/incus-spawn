@@ -196,4 +196,176 @@ class HostLockTest {
         assertEquals(1, warnings.size(), "warned once per file, not per acquisition: " + warnings);
         assertTrue(warnings.getFirst().startsWith("Cannot lock " + unusable), warnings.getFirst());
     }
+
+    private HostLock acquireShared(List<String> log) {
+        return HostLock.acquireShared(lockFile(), "testing", log::add, s -> {});
+    }
+
+    /**
+     * Another process on the lock file: {@code hold shared|exclusive} takes it and prints
+     * "locked", letting go on a line on stdin; {@code probe} prints whether it could have taken
+     * it exclusively, "free" or "busy".
+     */
+    private Process otherProcess(String... args) throws Exception {
+        var source = tmp.resolve("Other.java");
+        Files.writeString(source, """
+                import java.io.*;
+                import java.nio.channels.FileChannel;
+                import java.nio.file.*;
+                public class Other {
+                    public static void main(String[] a) throws Exception {
+                        var p = Path.of(a[0]);
+                        Files.createDirectories(p.getParent());
+                        try (var c = FileChannel.open(p, StandardOpenOption.CREATE, StandardOpenOption.READ,
+                                StandardOpenOption.WRITE)) {
+                            if (a[1].equals("probe")) {
+                                var l = c.tryLock();
+                                System.out.println(l == null ? "busy" : "free");
+                                return;
+                            }
+                            try (var l = c.lock(0, Long.MAX_VALUE, a[2].equals("shared"))) {
+                                System.out.println("locked");
+                                System.out.flush();
+                                new BufferedReader(new InputStreamReader(System.in)).readLine();
+                            }
+                        }
+                    }
+                }
+                """);
+        var command = new ArrayList<>(List.of(ProcessHandle.current().info().command().orElse("java"),
+                source.toString(), lockFile().toString()));
+        command.addAll(List.of(args));
+        // stderr apart: the JVM reports JAVA_TOOL_OPTIONS and the like there
+        return new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+    }
+
+    private String probe() throws Exception {
+        var probe = otherProcess("probe");
+        try (var out = new BufferedReader(new InputStreamReader(probe.getInputStream()))) {
+            return out.readLine();
+        } finally {
+            probe.waitFor(10, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void sharedHoldersLetEachOtherInAndHoldTheExclusiveOff() throws Exception {
+        var release = new CountDownLatch(1);
+        var held = new CountDownLatch(2);
+        try (var pool = Executors.newFixedThreadPool(3)) {
+            try {
+                var holders = new ArrayList<java.util.concurrent.Future<?>>();
+                for (int i = 0; i < 2; i++) {
+                    holders.add(pool.submit(() -> {
+                        try (var lock = acquireShared(new ArrayList<>())) {
+                            held.countDown();
+                            release.await();
+                        }
+                        return null;
+                    }));
+                }
+                assertTrue(held.await(10, TimeUnit.SECONDS), "a shared holder waited for another");
+                var exclusive = pool.submit(() -> {
+                    try (var lock = acquire(new ArrayList<>())) {
+                        return true;
+                    }
+                });
+                Thread.sleep(200);
+                assertFalse(exclusive.isDone(), "taken exclusively while shared");
+                release.countDown();
+                for (var holder : holders) holder.get(10, TimeUnit.SECONDS);
+                assertTrue(exclusive.get(10, TimeUnit.SECONDS));
+            } finally {
+                release.countDown();
+            }
+        }
+    }
+
+    @Test
+    void theFileStaysLockedUntilTheLastSharedHolderOfTheProcessLetsGo() throws Exception {
+        // Closing one holder's channel would drop the process's fcntl lock for both
+        var releaseFirst = new CountDownLatch(1);
+        var held = new CountDownLatch(1);
+        try (var pool = Executors.newSingleThreadExecutor()) {
+            try {
+                var first = pool.submit(() -> {
+                    try (var lock = acquireShared(new ArrayList<>())) {
+                        held.countDown();
+                        releaseFirst.await();
+                    }
+                    return null;
+                });
+                assertTrue(held.await(10, TimeUnit.SECONDS));
+                try (var second = acquireShared(new ArrayList<>())) {
+                    assertEquals("busy", probe());
+                    releaseFirst.countDown();
+                    first.get(10, TimeUnit.SECONDS);
+                    assertEquals("busy", probe(), "the first holder letting go released the second's lock");
+                }
+                assertEquals("free", probe());
+            } finally {
+                releaseFirst.countDown();
+            }
+        }
+    }
+
+    @Test
+    void anotherProcessesSharedLockLetsSharedInButNotExclusive() throws Exception {
+        var child = otherProcess("hold", "shared");
+        try (var out = new BufferedReader(new InputStreamReader(child.getInputStream()));
+             var in = new PrintWriter(child.getOutputStream(), true);
+             var pool = Executors.newSingleThreadExecutor()) {
+            assertEquals("locked", out.readLine());
+            var log = new CopyOnWriteArrayList<String>();
+            acquireShared(log).close();
+            assertEquals(List.of(), log, "a shared holder waited for another process's shared lock");
+
+            var exclusive = pool.submit(() -> {
+                try (var lock = acquire(log)) {
+                    return child.isAlive();
+                }
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (log.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertEquals(List.of("Another isx process is testing — waiting..."), log);
+            assertFalse(exclusive.isDone(), "taken exclusively while another process held it shared");
+            in.println("release");
+            exclusive.get(10, TimeUnit.SECONDS);
+        } finally {
+            child.destroyForcibly();
+        }
+    }
+
+    @Test
+    void anotherProcessesExclusiveLockHoldsSharedOff() throws Exception {
+        var child = otherProcess("hold", "exclusive");
+        try (var out = new BufferedReader(new InputStreamReader(child.getInputStream()));
+             var in = new PrintWriter(child.getOutputStream(), true);
+             var pool = Executors.newSingleThreadExecutor()) {
+            assertEquals("locked", out.readLine());
+            var log = new CopyOnWriteArrayList<String>();
+            var shared = pool.submit(() -> {
+                try (var lock = acquireShared(log)) {
+                    return child.isAlive();
+                }
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (log.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertEquals(List.of("Another isx process is testing — waiting..."), log);
+            assertFalse(shared.isDone(), "taken shared while another process held it exclusively");
+            in.println("release");
+            shared.get(10, TimeUnit.SECONDS);
+        } finally {
+            child.destroyForcibly();
+        }
+    }
+
+    @Test
+    void takingItSharedWhileHoldingItExclusivelyIsRefusedAndKeepsTheLock() throws Exception {
+        try (var lock = acquire(new ArrayList<>())) {
+            assertThrows(IllegalStateException.class, () -> acquireShared(new ArrayList<>()));
+            // A downgrade would open a second channel, whose close drops the exclusive fcntl lock
+            assertEquals("busy", probe(), "the refused attempt released the exclusive lock");
+        }
+    }
 }
