@@ -12,6 +12,7 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 
 @CommandDefinition(
         name = "project",
@@ -152,19 +153,12 @@ public class ProjectCommand extends BaseCommand {
             incus.start(name);
             incus.waitForReady(name, machineType);
 
-            // System updates
-            BuildOutput.stepStart("Running system updates...");
-            incus.shellExec(name, "dnf", "update", "-y");
-            BuildOutput.stepDone();
-
+            var failedSteps = new ArrayList<String>();
+            if (!GuestUpdate.system(incus, name)) failedSteps.add("system update");
             // Update globally installed npm packages (coding tools, etc.)
-            boolean npmFailed = !NpmUpdate.run(incus, name);
-
+            if (!NpmUpdate.run(incus, name)) failedSteps.add("npm update");
             // Git fetch in all repos
-            BuildOutput.stepStart("Updating git repositories...");
-            incus.execInContainer(name, "agentuser",
-                    "sh", "-c", "for d in ~/*/; do if [ -d \"$d/.git\" ]; then echo \"Fetching $d\" && cd \"$d\" && git fetch --all && cd ~; fi; done");
-            BuildOutput.stepDone();
+            if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetch");
 
             // Re-run pre-build if config available
             ProjectConfig projectConfig = null;
@@ -184,8 +178,8 @@ public class ProjectCommand extends BaseCommand {
             incus.stop(name);
             BuildOutput.stepDone();
 
-            if (npmFailed) {
-                BuildOutput.warn("npm update failed; re-run 'isx project update " + name + "' to retry it.");
+            if (!failedSteps.isEmpty()) {
+                BuildOutput.warn("Failed: " + String.join(", ", failedSteps) + ". Re-run 'isx project update " + name + "' to retry.");
                 return CommandResult.valueOf(1);
             }
             BuildOutput.success("Project template " + name + " updated.");
