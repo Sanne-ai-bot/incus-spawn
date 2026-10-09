@@ -149,6 +149,45 @@ class VmNetworkConfigTest {
         assertEquals(1, warnings.size(), warnings::toString);
     }
 
+    /**
+     * A VM's file can only be pushed while it runs, and {@code --no-start} skips the push at
+     * branch time: the branch owes it to its next start through {@link InstanceLifecycle#ensureReady},
+     * which delivers it. Marked in the write that claims the address, so it costs no request (#1004).
+     */
+    @Test
+    void aVmBranchedWithoutStartingOwesItsNetworkFile() {
+        var daemon = branchUnstarted("virtual-machine", NetworkMode.FULL);
+        var config = daemon.instance("vm-2").path("config");
+        assertFalse(config.path(Metadata.STATIC_IP).asText().isEmpty(), "precondition: an address was claimed");
+        assertEquals("true", config.path(Metadata.NETWORK_PUSH_PENDING).asText(), config::toString);
+        assertEquals(1, daemon.requests().stream().filter(r -> r.equals("PATCH /1.0/instances/vm-2")).count(),
+                () -> String.join("\n", daemon.requests()));
+    }
+
+    @Test
+    void onlyAVmWithAnAddressOwesANetworkFile() {
+        assertFalse(branchUnstarted("container", NetworkMode.FULL).instance("vm-2")
+                .path("config").has(Metadata.NETWORK_PUSH_PENDING), "a container's file is pushed while stopped");
+        assertFalse(branchUnstarted("virtual-machine", NetworkMode.AIRGAP).instance("vm-2")
+                .path("config").has(Metadata.NETWORK_PUSH_PENDING), "an airgapped VM has no address");
+    }
+
+    private static FakeIncusDaemon branchUnstarted(String type, NetworkMode mode) {
+        var daemon = new FakeIncusDaemon().instance("vm", type, "Stopped",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, "volatile.eth0.hwaddr", MAC));
+        var request = new BranchFlow.Request("vm", "vm-2", false, false, mode,
+                null, null, null, null, List.of(), false, Map.of());
+        // A non-airgapped branch checks the host's proxy first; this host may not run one.
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = i -> true;
+        try {
+            BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of()));
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
+        return daemon;
+    }
+
     @Test
     void aBranchDoesNotInheritItsSourcesPendingPush() {
         var daemon = new FakeIncusDaemon().instance("vm", "virtual-machine", "Stopped",

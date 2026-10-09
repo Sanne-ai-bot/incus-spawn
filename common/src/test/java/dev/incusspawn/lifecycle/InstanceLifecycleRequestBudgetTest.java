@@ -421,7 +421,7 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
         InstanceLifecycle.configureBranch(daemon.client(), NAME, new InstanceLifecycle.BranchSettings(
                 null, "8GiB", "20GiB", NetworkMode.FULL, "tpl-java", Map.of(), Map.of(), false,
-                Map.of(OWNER, "someone", Metadata.PREFIX + "note", "x")));
+                Map.of(OWNER, "someone", Metadata.PREFIX + "note", "x"), true));
         assertBudget(5, daemon, "configureBranch with extra config");
         assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
         var config = daemon.instance(NAME).path("config");
