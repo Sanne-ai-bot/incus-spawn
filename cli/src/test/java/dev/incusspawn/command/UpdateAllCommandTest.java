@@ -28,9 +28,8 @@ class UpdateAllCommandTest {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
         when(incus.shellExec(NAME, "which", "npm")).thenReturn(new IncusClient.ExecResult(1, "", ""));
-        when(incus.execInContainer(eq(NAME), eq("agentuser"), any(String[].class))).thenAnswer(inv -> {
-            // joined as IncusClient.execInContainer joins them for su -c
-            guestScripts.add(String.join(" ", (String[]) inv.getRawArguments()[2]));
+        when(incus.execInContainer(eq(NAME), eq("agentuser"), anyString())).thenAnswer(inv -> {
+            guestScripts.add(inv.getArgument(2));
             return OK;
         });
         return incus;
@@ -59,7 +58,7 @@ class UpdateAllCommandTest {
     @Test
     void aFailedGitFetchFailsTheCommand() {
         var incus = incus();
-        when(incus.execInContainer(eq(NAME), eq("agentuser"), any(String[].class)))
+        when(incus.execInContainer(eq(NAME), eq("agentuser"), anyString()))
                 .thenReturn(new IncusClient.ExecResult(1, "", "git fetch failed in /home/agentuser/repo/"));
 
         assertEquals(1, update(incus));

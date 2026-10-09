@@ -217,12 +217,11 @@ public class IncusClient {
     }
 
     /**
-     * Execute a command inside a container as a given user.
-     * Uses 'su - user -c "joined cmd"' to replicate the original CLI behaviour,
-     * giving the command access to the user's full login environment.
+     * Run {@code script} as {@code user} in a login shell ({@code su - user -c}), so it sees the
+     * user's full login environment, and capture its output. It is one shell command line, not
+     * an argv: quote what must stay one word ({@link Container#shellQuote}) (#1180).
      */
-    public ExecResult execInContainer(String container, String user, String... command) {
-        var script = command.length > 0 ? String.join(" ", command) : "bash";
+    public ExecResult execInContainer(String container, String user, String script) {
         return http().execCapture(container,
                 loginCommand(user, script),
                 0, 0, null, Map.of());

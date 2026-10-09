@@ -59,7 +59,7 @@ class CodexSetupTest {
     void installRunsNpmInstallGlobal() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
@@ -71,7 +71,7 @@ class CodexSetupTest {
     void installChecksThePlatformPackageAfterNpmInstall() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
@@ -103,7 +103,7 @@ class CodexSetupTest {
     void installWritesConfigToml() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
@@ -125,7 +125,7 @@ class CodexSetupTest {
         // a default baked in here would override that and age the way o4-mini did.
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
@@ -140,7 +140,7 @@ class CodexSetupTest {
     void installWritesModelToConfigWhenProvided() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER),
                 Map.of("model", "gpt-5.3-codex"));
@@ -156,7 +156,7 @@ class CodexSetupTest {
     void installWritesEffortToConfigWhenProvided() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER),
                 Map.of("effort", "low"));
@@ -238,7 +238,7 @@ class CodexSetupTest {
     void installWritesAuthJson() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 

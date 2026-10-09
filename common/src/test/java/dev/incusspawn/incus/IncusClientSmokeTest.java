@@ -221,7 +221,7 @@ class IncusClientSmokeTest {
         if (skip()) return;
         // execInContainer uses 'su - user -c "cmd"' — runs as the correct user
         // with a full login environment.
-        var result = client.execInContainer(CONTAINER, "agentuser", "id", "-u");
+        var result = client.execInContainer(CONTAINER, "agentuser", "id -u");
         assertEquals(0, result.exitCode(), "execInContainer should succeed");
         var uid = result.stdout().strip();
         var expected = client.shellExec(CONTAINER, "id", "-u", "agentuser").stdout().strip();
@@ -246,7 +246,7 @@ class IncusClientSmokeTest {
                 "printf 'export PATH=$HOME/.local/bin:$PATH\\n' >> /home/agentuser/.profile && " +
                 "chown agentuser:agentuser /home/agentuser/.profile");
 
-        var result = client.execInContainer(CONTAINER, "agentuser", "mvn", "--version");
+        var result = client.execInContainer(CONTAINER, "agentuser", "mvn --version");
         assertEquals(0, result.exitCode(),
                 "execInContainer should find tools added via login shell PATH, got: "
                 + result.stdout() + " / " + result.stderr());

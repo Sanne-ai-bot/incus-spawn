@@ -20,7 +20,7 @@ class CopilotSetupTest {
     void installChecksThePlatformPackageAfterNpmInstall() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         new CopilotSetup().install(new Container(incus, CONTAINER), Map.of());
 

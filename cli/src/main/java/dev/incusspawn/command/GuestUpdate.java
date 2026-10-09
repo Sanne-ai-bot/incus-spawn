@@ -10,11 +10,9 @@ import dev.incusspawn.util.BuildOutput;
 final class GuestUpdate {
 
     /**
-     * Fetches every git repository directly under agentuser's home. It is the script itself, not
-     * an argument to {@code sh -c}: {@link IncusClient#execInContainer} joins its arguments with
-     * spaces into {@code su - -c}, which would leave an unquoted loop that never parses (#1179).
-     * Exits non-zero, naming each repository, when any fetch failed. Nothing may prompt (there is
-     * nobody to answer), and fetches are quiet so stderr holds only what went wrong.
+     * Fetches every git repository directly under agentuser's home. Exits non-zero, naming each
+     * repository, when any fetch failed. Nothing may prompt (there is nobody to answer), and
+     * fetches are quiet so stderr holds only what went wrong.
      */
     static final String GIT_FETCH_SCRIPT = "export GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes';"
             + " failed=0; for d in ~/*/; do if [ -d \"$d/.git\" ]; then"
