@@ -1582,13 +1582,17 @@ Manage project templates defined by an `incus-spawn.yaml` file.
 |--------|-------------|
 | `--config <path>` | Path to `incus-spawn.yaml` (default: auto-detect from cwd) |
 
+If a repository fails to clone or the pre-build fails, the command exits non-zero and deletes the incomplete template.
+
 #### `isx project update`
 
     isx project update <name> [options]
 
 | Option | Description |
 |--------|-------------|
-| `--config <path>` | Path to `incus-spawn.yaml` |
+| `--config <path>` | Path to `incus-spawn.yaml` (default: auto-detect from cwd; a detected file must name this template) |
+
+If any step fails (system update, npm update, git fetch, pre-build), the command exits non-zero and the template is kept.
 
 ### `isx proxy`
 
