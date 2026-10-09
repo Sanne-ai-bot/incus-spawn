@@ -1,8 +1,8 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -21,7 +21,6 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
         this(instances, null, Traffic.NONE);
     }
 
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
      * One instance's counts, all counted from {@code countingSince}: when the proxy created them,
@@ -103,10 +102,9 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
 
     /** The JSON the proxy serves; {@link #parse} reads it back, so the names live only here. */
     public String toJson() {
-        var root = JSON.createObjectNode();
-        var all = root.putObject("instances");
+        var all = JqObject.builder(instances.size());
         instances.forEach((name, c) -> {
-            var n = all.putObject(name);
+            var n = JqObject.builder(10);
             n.put("counting_since", c.countingSince().toEpochMilli());
             n.put("requests", c.requests());
             n.put("in_flight", c.inFlight());
@@ -116,63 +114,67 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
             n.put("output_tokens", c.outputTokens());
             n.put("cache_read_input_tokens", c.cacheReadInputTokens());
             n.put("cache_creation_input_tokens", c.cacheCreationInputTokens());
-            putTraffic(n.putObject("traffic"), c.traffic());
+            n.put("traffic", trafficJson(JqObject.builder(6), c.traffic()));
+            all.put(name, n.build());
         });
-        var other = root.putObject("unattributed");
+        var other = JqObject.builder(7);
         if (unattributedSince != null) other.put("counting_since", unattributedSince.toEpochMilli());
-        putTraffic(other, unattributed);
-        return root.toString();
+        return JqObject.builder(2)
+                .put("instances", all.build())
+                .put("unattributed", trafficJson(other, unattributed))
+                .build().toJsonString();
     }
 
-    private static void putTraffic(ObjectNode n, Traffic traffic) {
+    private static JqObject trafficJson(JqObject.Builder n, Traffic traffic) {
         putCounts(n, traffic.total());
-        var domains = n.putObject("domains");
-        traffic.byDomain().forEach((domain, counts) -> putCounts(domains.putObject(domain), counts));
+        var domains = JqObject.builder(traffic.byDomain().size());
+        traffic.byDomain().forEach((domain, counts) -> domains.put(domain, putCounts(JqObject.builder(5), counts).build()));
+        return n.put("domains", domains.build()).build();
     }
 
-    private static void putCounts(ObjectNode n, Counts c) {
+    private static JqObject.Builder putCounts(JqObject.Builder n, Counts c) {
         n.put("requests", c.requests());
         n.put("in_flight", c.inFlight());
         if (c.lastActivityAt() != null) n.put("last_activity_at", c.lastActivityAt().toEpochMilli());
         n.put("request_bytes", c.requestBytes());
         n.put("response_bytes", c.responseBytes());
+        return n;
     }
 
     static ProxyActivity parse(String json) {
-        JsonNode root;
+        JqValue root;
         try {
-            root = JSON.readTree(json);
+            root = JqValues.parse(json);
         } catch (Exception e) {
             throw new Unavailable("the isx proxy's activity could not be read (" + e.getMessage() + ")");
         }
         var instances = new HashMap<String, Instance>();
-        root.path("instances").properties().forEach(e -> {
-            var n = e.getValue();
-            instances.put(e.getKey(), new Instance(instant(n.path("counting_since")),
-                    n.path("requests").asLong(), n.path("in_flight").asLong(),
+        if (root.getField("instances") instanceof JqObject objs) {
+            objs.forEach((key, n) -> instances.put(key, new Instance(instant(n.path("counting_since")),
+                    n.path("requests").asLong(0), n.path("in_flight").asLong(0),
                     instant(n.path("last_request_at")), instant(n.path("last_response_at")),
-                    n.path("input_tokens").asLong(), n.path("output_tokens").asLong(),
-                    n.path("cache_read_input_tokens").asLong(), n.path("cache_creation_input_tokens").asLong(),
-                    traffic(n.path("traffic"))));
-        });
+                    n.path("input_tokens").asLong(0), n.path("output_tokens").asLong(0),
+                    n.path("cache_read_input_tokens").asLong(0), n.path("cache_creation_input_tokens").asLong(0),
+                    traffic(n.path("traffic")))));
+        }
         var other = root.path("unattributed");
         return new ProxyActivity(Map.copyOf(instances), instant(other.path("counting_since")), traffic(other));
     }
 
     /** A proxy older than #935 reports no traffic: {@link Traffic#NONE}. */
-    private static Traffic traffic(JsonNode n) {
-        if (!n.isObject()) return Traffic.NONE;
+    private static Traffic traffic(JqValue n) {
+        if (!(n instanceof JqObject)) return Traffic.NONE;
         var domains = new HashMap<String, Counts>();
-        n.path("domains").properties().forEach(e -> domains.put(e.getKey(), counts(e.getValue())));
+        if (n.path("domains") instanceof JqObject byDomain) byDomain.forEach((domain, d) -> domains.put(domain, counts(d)));
         return new Traffic(counts(n), Map.copyOf(domains));
     }
 
-    private static Counts counts(JsonNode n) {
-        return new Counts(n.path("requests").asLong(), n.path("in_flight").asLong(),
-                instant(n.path("last_activity_at")), n.path("request_bytes").asLong(), n.path("response_bytes").asLong());
+    private static Counts counts(JqValue n) {
+        return new Counts(n.path("requests").asLong(0), n.path("in_flight").asLong(0),
+                instant(n.path("last_activity_at")), n.path("request_bytes").asLong(0), n.path("response_bytes").asLong(0));
     }
 
-    private static Instant instant(JsonNode millis) {
-        return millis.canConvertToLong() && millis.asLong() > 0 ? Instant.ofEpochMilli(millis.asLong()) : null;
+    private static Instant instant(JqValue millis) {
+        return millis.isIntegralNumber() && millis.longValue() > 0 ? Instant.ofEpochMilli(millis.longValue()) : null;
     }
 }

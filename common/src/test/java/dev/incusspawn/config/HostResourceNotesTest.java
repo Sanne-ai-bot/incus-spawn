@@ -1,6 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
@@ -97,8 +96,9 @@ class HostResourceNotesTest {
     @Test
     void staleDeviceWarningQuotesTheSourceOnOneLine() {
         var json = HostResourceSetup.serialize(List.of(collect("readonly")));
-        var metadata = new ObjectMapper().createObjectNode();
-        metadata.putObject("config").put(Metadata.HOST_RESOURCES, json);
+        var metadata = io.hyperfoil.tools.jjq.value.JqObject.builder(1)
+                .put("config", io.hyperfoil.tools.jjq.value.JqObject.builder(1).put(Metadata.HOST_RESOURCES, json).build())
+                .build();
         var warnings = new ArrayList<String>();
         HostResourceSetup.removeStaleDevices(incus, "i", metadata, warnings::add);
         assertQuoted(String.join("\n", warnings) + "\n", "Warning: host-resource source not found: ");

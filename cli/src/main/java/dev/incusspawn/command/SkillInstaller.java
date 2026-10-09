@@ -1,6 +1,6 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.Environment;
 import dev.incusspawn.command.BuildCommand.BuildFailedException;
 import dev.incusspawn.command.BuildTools.ResolvedTool;
@@ -154,11 +154,10 @@ final class SkillInstaller {
             var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) continue;
 
-            var mapper = new ObjectMapper();
-            var tree = mapper.readTree(response.body()).path("tree");
+            var tree = JqValues.parse(response.body()).getField("tree");
             var skills = new ArrayList<SkillFile>();
-            for (var node : tree) {
-                var path = node.path("path").asText();
+            for (var node : tree.asList()) {
+                var path = node.pathText("path", "");
                 // Match <skill-name>/SKILL.md at the top level only
                 if (path.matches("[^/]+/SKILL\\.md")) {
                     var skillName = path.substring(0, path.indexOf('/'));

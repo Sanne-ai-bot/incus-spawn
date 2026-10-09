@@ -1,7 +1,8 @@
 package dev.incusspawn.tui;
 
 import dev.incusspawn.command.InstanceListing;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqNull;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -9,27 +10,26 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Tests for the disk-attribution model behind the TUI's DISK columns, and the listing's disk usage. */
 class DiskUsageModelTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     // --- sumDiskUsage: parse state.disk.<dev>.usage from recursion=2 payload ---
 
     @Test
     void sumDiskUsageAddsAllDevices() throws Exception {
-        var node = JSON.readTree("{\"root\":{\"usage\":1000},\"extra\":{\"usage\":500}}");
+        var node = JqValues.parse("{\"root\":{\"usage\":1000},\"extra\":{\"usage\":500}}");
         assertEquals(1500, InstanceListing.sumDiskUsage(node));
     }
 
     @Test
     void sumDiskUsageMissingReturnsUnknown() throws Exception {
         // dir pools / stopped instances report no usage -> -1 (renders as "-")
-        var node = JSON.readTree("{\"root\":{}}");
+        var node = JqValues.parse("{\"root\":{}}");
         assertEquals(-1, InstanceListing.sumDiskUsage(node));
     }
 
     @Test
     void sumDiskUsageEmptyOrMissingNode() throws Exception {
-        assertEquals(-1, InstanceListing.sumDiskUsage(JSON.readTree("{}")));
-        assertEquals(-1, InstanceListing.sumDiskUsage(JSON.nullNode()));
+        assertEquals(-1, InstanceListing.sumDiskUsage(JqValues.parse("{}")));
+        assertEquals(-1, InstanceListing.sumDiskUsage(JqNull.NULL));
     }
 
     // --- sharedBaseBytes: the base image + CoW-shared blocks folded into the root template ---

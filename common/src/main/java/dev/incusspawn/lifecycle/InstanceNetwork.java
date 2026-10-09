@@ -1,8 +1,7 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.CidrUtils;
@@ -33,8 +32,6 @@ import java.util.regex.Pattern;
  * {@link InstanceLifecycle}, which calls it.
  */
 public final class InstanceNetwork {
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private InstanceNetwork() {}
 
@@ -148,12 +145,14 @@ public final class InstanceNetwork {
     }
 
     /** The devices the instance's profiles give it, by name, one read per profile. */
-    private static Map<String, JsonNode> profileDevices(IncusClient incus, JsonNode instance) {
+    private static Map<String, JqValue> profileDevices(IncusClient incus, JqValue instance) {
         // Later profiles override earlier ones, as Incus expands them
-        var devices = new LinkedHashMap<String, JsonNode>();
-        for (var profile : instance.path("profiles")) {
-            incus.profileDevices(profile.asText()).properties()
-                    .forEach(e -> devices.put(e.getKey(), e.getValue()));
+        var devices = new LinkedHashMap<String, JqValue>();
+        for (var profile : instance.getField("profiles").asList()) {
+            var profileDevices = incus.profileDevices(profile.asDisplayText(""));
+            if (profileDevices instanceof JqObject devicesObj) {
+                devicesObj.forEach(devices::put);
+            }
         }
         return devices;
     }
@@ -216,10 +215,13 @@ public final class InstanceNetwork {
      * default} profile provides, or one the instance overrides from it (a clone's static IP),
      * applies again. A {@code type: none} device of the same name masks it.
      */
-    static void maskNics(JsonNode instance, InstanceUpdate update) {
-        instance.path("expanded_devices").properties().forEach(e -> {
-            if (IncusClient.isNic(e.getValue())) update.replaceDevice(e.getKey(), MASKED_DEVICE);
-        });
+    static void maskNics(JqValue instance, InstanceUpdate update) {
+        var expanded = instance.getField("expanded_devices");
+        if (expanded instanceof JqObject devices) {
+            devices.forEach((name, device) -> {
+                if (IncusClient.isNic(device)) update.replaceDevice(name, MASKED_DEVICE);
+            });
+        }
     }
 
     /**
@@ -229,20 +231,25 @@ public final class InstanceNetwork {
      * masks of a profile NIC are touched: a {@code type: none} device the template set itself
      * stays.
      */
-    static JsonNode unmaskNics(IncusClient incus, JsonNode instance, InstanceUpdate update) {
+    static JqValue unmaskNics(IncusClient incus, JqValue instance, InstanceUpdate update) {
         var profileDevices = profileDevices(incus, instance);
-        var view = instance.deepCopy();
-        var expanded = (ObjectNode) view.path("expanded_devices");
-        instance.path("devices").properties().forEach(e -> {
-            var profileDevice = profileDevices.get(e.getKey());
-            if ("none".equals(e.getValue().path("type").asText())
-                    && profileDevice != null && IncusClient.isNic(profileDevice)) {
-                expanded.set(e.getKey(), profileDevice);
-                // A changed device is sent whole from the expanded view: the profile's NIC
-                update.device(e.getKey(), "type", "nic");
-            }
-        });
-        return view;
+        var expanded = JqObject.builder(8);
+        var current = instance.getField("expanded_devices");
+        if (current instanceof JqObject currentObj) currentObj.forEach(expanded::put);
+        var declared = instance.getField("devices");
+        if (declared instanceof JqObject declaredObj) {
+            declaredObj.forEach((name, device) -> {
+                var profileDevice = profileDevices.get(name);
+                if ("none".equals(device.pathText("type", ""))
+                        && profileDevice != null && IncusClient.isNic(profileDevice)) {
+                    expanded.put(name, profileDevice);
+                    // A changed device is sent whole from the expanded view: the profile's NIC
+                    update.device(name, "type", "nic");
+                }
+            });
+        }
+        if (!(instance instanceof JqObject root)) return instance;
+        return root.with("expanded_devices", expanded.build());
     }
 
     /**
@@ -397,7 +404,7 @@ public final class InstanceNetwork {
      *
      * @param instance the instance as read; none of what is used here changes across a start
      */
-    private static VmPush pushVmNetworkConfig(IncusClient incus, String name, JsonNode instance,
+    private static VmPush pushVmNetworkConfig(IncusClient incus, String name, JqValue instance,
                                               int prefixLen, Consumer<String> warn) {
         var config = instance.path("config");
         var ip = config.path(Metadata.STATIC_IP).asText("");
@@ -508,11 +515,11 @@ public final class InstanceNetwork {
                     var name = stale.getKey();
                     var listed = stale.getValue();
                     var type = MachineType.fromIncus(listed);
-                    var storedIp = listed.path("config").path(Metadata.STATIC_IP).asText("");
+                    var storedIp = listed.path("config").pathText(Metadata.STATIC_IP, "");
                     // Incus checks a running instance's NIC update against the address it holds
                     // now, which is off the new subnet: it refuses the update that would move it
                     // (#1009). Only a stopped instance can be moved.
-                    var status = listed.path("status").asText("");
+                    var status = listed.pathText("status", "");
                     if ("Frozen".equalsIgnoreCase(status)) {
                         // Paused on purpose, and a stop would wait on a guest that cannot answer
                         output.warn().accept(name + " is frozen and was not moved: resume it, then repair it again");
@@ -577,7 +584,7 @@ public final class InstanceNetwork {
      *
      * @param instance the instance as read after its address was reassigned
      */
-    static void pushDeferredNetworkConfig(IncusClient incus, String name, JsonNode instance,
+    static void pushDeferredNetworkConfig(IncusClient incus, String name, JqValue instance,
                                           int prefixLen, Consumer<String> warn) {
         var settled = switch (pushVmNetworkConfig(incus, name, instance, prefixLen, warn)) {
             case FAILED -> false;
@@ -612,19 +619,14 @@ public final class InstanceNetwork {
     }
 
     /** The listed instances whose static IP is off the bridge's subnet, by name. */
-    private static Map<String, JsonNode> staleStaticIps(IncusClient incus, BridgeAddress bridge) {
+    private static Map<String, JqValue> staleStaticIps(IncusClient incus, BridgeAddress bridge) {
         // The listing already carries each instance's config: one request, not one per instance.
-        JsonNode instances;
-        try {
-            instances = JSON.readTree(incus.listJsonConfig());
-        } catch (IOException e) {
-            throw new IncusException("Failed to parse instance list: " + e.getMessage());
-        }
-        var stale = new LinkedHashMap<String, JsonNode>();
-        for (var instance : instances) {
-            var name = instance.path("name").asText("");
+        JqValue instances = incus.listJsonConfig();
+        var stale = new LinkedHashMap<String, JqValue>();
+        for (var instance : instances.asList()) {
+            var name = instance.pathText("name", "");
             if (name.isEmpty()) continue;
-            var storedIp = instance.path("config").path(Metadata.STATIC_IP).asText("");
+            var storedIp = instance.getField("config").pathText(Metadata.STATIC_IP, "");
             if (storedIp.isEmpty()) continue;
             if (!CidrUtils.isInSubnet(storedIp, bridge.subnet())) {
                 stale.put(name, instance);
@@ -645,7 +647,7 @@ public final class InstanceNetwork {
      * instance are not reliably applied. Reads the instance the other repairs already read, so
      * an instance that has it (every one branched since) costs no request at all.
      */
-    static void rearmIpFiltering(IncusClient incus, String name, JsonNode instance, Consumer<String> warn) {
+    static void rearmIpFiltering(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
         var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
         // No bridge NIC: airgap, or a hand-made instance -- nothing to filter.
         if (nic == null || "true".equals(nic.config().get("security.ipv4_filtering"))) return;

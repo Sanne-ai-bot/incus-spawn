@@ -277,10 +277,10 @@ class WebSocketProxyTest {
         // test's socket comes from the instance: another's late close is unattributed
         var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
             @Override
-            public String listJsonConfig() {
-                return """
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                return io.hyperfoil.tools.jjq.value.JqValues.parse("""
                         [{"name":"ws-box","created_at":"2026-10-01T09:00:00Z","config":{"user.incus-spawn.static-ip":"127.0.0.1"}}]
-                        """;
+                        """);
             }
         });
         registry.refresh();
