@@ -383,7 +383,7 @@ class GhSetupTest {
     private static IncusClient stubIncus() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
         return incus;
     }
 

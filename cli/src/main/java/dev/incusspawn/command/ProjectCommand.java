@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ProjectConfig;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
@@ -13,6 +14,8 @@ import org.aesh.command.option.Option;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+
+import static dev.incusspawn.incus.Container.shellQuote;
 
 @CommandDefinition(
         name = "project",
@@ -29,6 +32,16 @@ public class ProjectCommand extends BaseCommand {
     protected CommandResult doExecute() throws Exception {
         System.out.println(commandInvocation.getHelpInfo());
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * Runs the project's pre-build, if it has one, as agentuser. Returns false, after reporting
+     * it, when it failed.
+     */
+    static boolean preBuild(IncusClient incus, String name, String preBuild) {
+        if (preBuild == null || preBuild.isBlank()) return true;
+        BuildOutput.stepStart("Running pre-build: " + preBuild + "...");
+        return GuestUpdate.finish(incus.execInContainer(name, "agentuser", preBuild), "pre-build");
     }
 
     @CommandDefinition(
@@ -82,21 +95,12 @@ public class ProjectCommand extends BaseCommand {
             if (projectConfig.getRepos() != null && !projectConfig.getRepos().isEmpty()) {
                 for (var repo : projectConfig.getRepos()) {
                     BuildOutput.stepStart("Cloning " + repo + "...");
-                    incus.execInContainer(imageName, "agentuser", "git", "clone", repo);
+                    incus.execInContainer(imageName, "agentuser", "git clone " + shellQuote(repo));
                     BuildOutput.stepDone();
                 }
             }
 
-            // Run pre-build
-            if (projectConfig.getPreBuild() != null && !projectConfig.getPreBuild().isBlank()) {
-                BuildOutput.stepStart("Running pre-build: " + projectConfig.getPreBuild() + "...");
-                var result = incus.execInContainer(imageName, "agentuser", "sh", "-c", projectConfig.getPreBuild());
-                if (!result.success()) {
-                    BuildOutput.stepFail("Warning: pre-build command failed: " + result.stderr().strip());
-                } else {
-                    BuildOutput.stepDone();
-                }
-            }
+            preBuild(incus, imageName, projectConfig.getPreBuild());
 
             InstanceLifecycle.tagMetadata(incus, imageName, Metadata.TYPE_PROJECT, parent);
             incus.configSet(imageName, Metadata.PROJECT, imageName);
@@ -167,10 +171,8 @@ public class ProjectCommand extends BaseCommand {
             } else {
                 projectConfig = ProjectConfig.findInDirectory(Path.of("."));
             }
-            if (projectConfig != null && projectConfig.getPreBuild() != null && !projectConfig.getPreBuild().isBlank()) {
-                BuildOutput.stepStart("Running pre-build: " + projectConfig.getPreBuild() + "...");
-                incus.execInContainer(name, "agentuser", "sh", "-c", projectConfig.getPreBuild());
-                BuildOutput.stepDone();
+            if (projectConfig != null && !preBuild(incus, name, projectConfig.getPreBuild())) {
+                failedSteps.add("pre-build");
             }
 
             // Stop
