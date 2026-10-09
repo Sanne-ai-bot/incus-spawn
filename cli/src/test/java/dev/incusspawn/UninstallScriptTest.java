@@ -145,7 +145,7 @@ class UninstallScriptTest {
 
     @Test
     void aVmIsxStoppedWithSignalsIsReportedAsUnclean() throws Exception {
-        // Real isx kills a guest that ignores its stop request itself (#881): the VM is gone by the
+        // Real isx kills a guest that does not shut down when asked itself (#881): the VM is gone by the
         // time the script looks, so only isx's exit status can tell this from a shutdown
         isx(THREE_INSTANCES, STOP_THE_VM + "; exit 4");
         var vm = startVm();

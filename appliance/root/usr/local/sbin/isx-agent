@@ -100,6 +100,18 @@ case "$verb" in
         done
         echo "error: forwarder process not found after restart"
         ;;
+    shutdown)
+        # A clean stop of the whole guest (#881). Nothing here listens for a power button, so
+        # the hypervisor's own stop request does nothing and the host used to kill the VM,
+        # losing whatever btrfs had not committed yet (commit=300: an instance deleted minutes
+        # before came back as an orphaned subvolume). poweroff has init run rcK, which stops
+        # Incus and its instances and syncs, and then powers the machine off.
+        #
+        # Reply first, and detach: init kills this agent and its socat on the way down, and the
+        # host must have the answer by then to know it should wait rather than signal.
+        echo "shutting down"
+        setsid sh -c 'sleep 1; exec poweroff' </dev/null >/dev/console 2>&1 &
+        ;;
     btrfs-usage)
         # Per-subvolume referenced/exclusive sizes for a btrfs pool. Runs here because the pool
         # lives in the VM and only root can read /var/lib/incus/storage-pools (0700). Both outputs

@@ -208,10 +208,11 @@ if $IS_MACOS && ! $BINARIES_ONLY; then
     UID_VAL="$(id -u)"
 
     # Stop the VM first. A data disk that is kept should be shut down cleanly, so
-    # 'isx vm stop' asks the guest first. It waits only a few seconds before it
-    # signals vfkit itself, and --require-clean makes it exit 4 when it did: on a
-    # Mac that is every stop until #881 is fixed. Signals here are only the
-    # fallback. Either way the kept disk was cut off, and the script says so.
+    # 'isx vm stop' asks the guest first, through its agent, and waits for it to
+    # power off. If it had to signal vfkit instead, --require-clean makes it exit
+    # 4: that is every stop of an appliance or an isx from before #881. Signals
+    # here are only the fallback. Either way the kept disk was cut off, and the
+    # script says so.
     unclean_stop() {
         VM_STOPPED_UNCLEANLY=true
         echo "Warning: ${1:-the VM did not shut down cleanly; it was stopped with signals.}"
@@ -224,7 +225,7 @@ if $IS_MACOS && ! $BINARIES_ONLY; then
             # An isx from before --require-clean: it can stop the VM but not say how
             bounded 60 "$ISX" vm stop </dev/null || true
             if ! vm_running; then
-                unclean_stop "this isx cannot say whether the VM shut down cleanly (on a Mac it does not, #881)."
+                unclean_stop "this isx cannot say whether the VM shut down cleanly (before #881 it never did)."
             fi
         elif [ "$STOP_STATUS" -eq 4 ]; then
             unclean_stop

@@ -1681,7 +1681,7 @@ Manage the incus-spawn VM appliance. macOS only.
 | Subcommand | Description |
 |------------|-------------|
 | `start` | Start the VM (creates disk image on first run) |
-| `stop` | Stop the VM (graceful shutdown). It warns when the guest did not shut down and had to be stopped with signals, which on macOS is currently every stop ([#881](https://github.com/Sanne/incus-spawn/issues/881)); `--require-clean` also exits 4 then |
+| `stop` | Stop the VM (graceful shutdown). It asks the guest to shut down (Incus and its instances stop, the disks are synced) and waits up to 30 s for it. It warns when the guest did not and had to be stopped with signals, which loses writes of the last few minutes; that is every stop of an appliance from before the fix for [#881](https://github.com/Sanne/incus-spawn/issues/881), until `isx vm restart` applies a newer one; `--require-clean` also exits 4 then |
 | `restart` | Stop and restart the VM (applies pending appliance updates) |
 | `status` | Show VM status and system diagnostics |
 | `resize` | Grow the VM data disk that backs the storage pool |

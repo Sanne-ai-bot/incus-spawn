@@ -104,9 +104,23 @@ boot_vfkit() {
     # before readiness; the probes poll on their own). Results go to VSOCK_RESULT,
     # NOT the serial LOGFILE: vfkit streams the boot log into LOGFILE concurrently,
     # and interleaved appends from this shell were being lost.
-    "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" > "$VSOCK_RESULT" 2>&1 \
+    # TUNNEL_SHUTDOWN: its last check asks the agent to shut the guest down (#881). vfkit must
+    # then exit by itself, after rcK ran; only a guest that did not is killed.
+    TUNNEL_SHUTDOWN=1 "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" > "$VSOCK_RESULT" 2>&1 \
         || TUNNEL_RC=$?
-    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    local waited=0
+    while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 300 ]; do sleep 0.1; waited=$((waited + 1)); done
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "  FAIL: vfkit still running 30s after the agent's shutdown" >> "$VSOCK_RESULT"
+        TUNNEL_RC=1
+        kill "$pid" 2>/dev/null || true
+    elif grep -q 'incus-spawn: shutting down' "$LOGFILE"; then
+        echo "  PASS: the guest ran rcK and powered off, and vfkit exited by itself" >> "$VSOCK_RESULT"
+    else
+        echo "  FAIL: vfkit exited without the guest running rcK" >> "$VSOCK_RESULT"
+        TUNNEL_RC=1
+    fi
+    wait "$pid" 2>/dev/null || true
     rm -f "$dummy_initrd"
 }
 

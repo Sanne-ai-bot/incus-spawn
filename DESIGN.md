@@ -1177,20 +1177,22 @@ script counts instances and built templates with the isx being uninstalled when 
 can tell, and it says so). Keeping only that file is enough: it is mounted at `/var/lib/incus`, so it carries the
 Incus database as well as the pool, and the appliance boots on it as it does after a root-disk upgrade. That makes
 how the VM stops matter: before, a disk about to be deleted could be killed mid-write, but one that is kept is stopped
-through the isx being uninstalled (`isx vm stop`) first. That asks the guest to stop, though `VmManager.stopLocked`
-waits only about 5 s before it signals vfkit itself, so a busy guest can still be cut off. On a Mac, as of this
-change, the guest does not act on that request at all: `isx vm stop` returns after its 5 s wait and its own signal,
-and the next boot replays the data disk's btrfs tree log, idle guest or busy (#881). A plain `isx vm stop; isx vm
-start` shows the same replay, so it is not this change's doing; instances, templates and files synced before the
-stop were intact in every run on a Mac. Because the VM is gone by the time the script looks, it cannot see that
+through the isx being uninstalled (`isx vm stop`) first. That asks the guest to shut down through its agent
+(`shutdown`: `poweroff`, so init runs `rcK`, which stops Incus and its instances and syncs) and waits up to 30 s for
+the hypervisor to exit by itself; only then does `VmManager.stopLocked` fall back to vfkit's stop request and its own
+signals. Before #881 there was no such verb, and vfkit's request is a power button nothing in the guest listens for,
+so every `isx vm stop` on a Mac ended in the signal: the next boot replayed the data disk's btrfs tree log, and with
+the disks mounted `commit=300` an instance deleted seconds before the stop came back as an orphaned subvolume (see
+appliance/DESIGN.md, "Stop sequence"). An appliance from before the verb is still stopped that way, until a restart
+applies a newer one. Because the VM is gone by the time the script looks, it cannot see a
 cut-off itself, so `stopLocked` reports how the VM stopped (`VmManager.StopResult`: `SHUT_DOWN` or `SIGNALLED`).
 `stopLocked` warns on `SIGNALLED` whenever the disks are kept (`isx vm stop`, `restart`, `resize`, doctor's restart);
 `isx reset` and `isx vm reset`, which delete them next, stop quietly (`VmManager.stopToDelete`). `isx vm stop
 --require-clean` exits 4 on `SIGNALLED` and 1 on a stop that failed. The script passes that flag and,
 on 4 or when the VM outlives isx (then it signals the VM itself), warns that the kept disk may need recovery, then
-and in its closing lines. Until #881 is fixed that warning appears on every Mac uninstall with a running VM: "kept"
-means "as intact as after `isx vm stop`", which on a Mac today is a tree-log replay. The exit status is opt-in so
-that `isx vm stop && ...` keeps working while every stop on a Mac is a signalled one. An isx from before the flag
+and in its closing lines. With an appliance from before #881 that warning appears on every Mac uninstall with a
+running VM: "kept" means "as intact as after `isx vm stop`", which there is a tree-log replay. The exit status is
+opt-in so that `isx vm stop && ...` keeps working where every stop is still a signalled one. An isx from before the flag
 rejects it with 2; the script then runs a plain `isx vm stop` and, since that isx cannot say how it went, warns that
 it cannot tell.
 `isx` is asked for the counts through a temporary file rather than a pipe, so `$(...)` does not wait for a child isx

@@ -293,6 +293,20 @@ else
     fail "forwarder-restart took the forwarder down before its caller hung up"
 fi
 
+# Last, and only when asked, since it ends the guest: the agent's shutdown verb (#881). The
+# hypervisor's own stop request does nothing in this guest, so this verb is the only clean
+# stop there is. The caller, which owns the hypervisor, checks that it exited and that rcK ran.
+if [ "${TUNNEL_SHUTDOWN:-0}" = 1 ]; then
+    echo "-- Shutdown --"
+    expect '[ "$(agent shutdown)" = "shutting down" ]' "agent accepts shutdown"
+    gone=no
+    for _ in $(seq 1 30); do
+        if [ "$(agent ping)" != "ok" ]; then gone=yes; break; fi
+        sleep 1
+    done
+    expect '[ "$gone" = yes ]' "the guest went down after shutdown"
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
     echo "All $PASS tunnel checks passed."
