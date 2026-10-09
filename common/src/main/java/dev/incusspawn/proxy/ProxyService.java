@@ -6,6 +6,7 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.HostLock;
+import dev.incusspawn.util.HostPath;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -759,21 +760,13 @@ public final class ProxyService {
 
         var found = jbang.contains("/")
                 ? Files.isExecutable(Path.of(jbang))
-                : isOnPath(jbang);
+                : HostPath.isOnPath(jbang);
         if (found) return null;
 
         return "'" + binaryPath + "' is a JBang launcher, but '" + jbang
                 + "' is not on PATH.\n"
                 + "The proxy service inherits the PATH it was installed with, so jbang must be "
                 + "resolvable from the shell you run 'isx init' in.";
-    }
-
-    private static boolean isOnPath(String name) {
-        for (var dir : effectivePath(System.getenv("PATH")).split(java.io.File.pathSeparator)) {
-            if (dir.isBlank()) continue;
-            if (Files.isExecutable(Path.of(dir).resolve(name))) return true;
-        }
-        return false;
     }
 
     private static void printServiceLogs() {
@@ -1005,13 +998,6 @@ public final class ProxyService {
         return Environment.configDir().resolve("proxy-start.sh");
     }
 
-    private static final String LINUX_PATH_FALLBACK =
-            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-
-    private static String effectivePath(String path) {
-        return (path != null && !path.isBlank()) ? path : LINUX_PATH_FALLBACK;
-    }
-
     /**
      * The exec command the start script should contain for this proxy binary. There is
      * deliberately no {@code isx proxy start} fallback — see {@link #isSupervisedInvocation()}.
@@ -1027,7 +1013,7 @@ public final class ProxyService {
 
     static String proxyStartScriptContent(String proxyBin, String path) {
         var sb = new StringBuilder("#!/bin/bash\n");
-        sb.append("export PATH=").append(Container.shellQuote(effectivePath(path))).append('\n');
+        sb.append("export PATH=").append(Container.shellQuote(HostPath.effective(path))).append('\n');
         var cmd = execCommand(proxyBin);
         if (Platform.isLinux()) {
             sb.append(sgFallbackBlock(cmd));

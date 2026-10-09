@@ -1,8 +1,12 @@
 package dev.incusspawn.incus;
 
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.HostPath;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,57 +24,47 @@ public final class UfwCheck {
     // ---- Subprocess methods ----
 
     public static boolean isInstalled() {
+        return HostPath.isOnPath("ufw");
+    }
+
+    public static boolean isActive() {
         try {
-            var pb = new ProcessBuilder("which", "ufw");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            process.getInputStream().readAllBytes();
-            return process.waitFor() == 0;
+            return probeActive();
         } catch (IOException e) {
-            return false;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
             return false;
         }
     }
 
-    public static boolean isActive() {
+    /**
+     * Like {@link #isActive()}, but a read that was cut short throws rather than reading as
+     * inactive. A config that is missing or that this user may not open is an answer: not active.
+     */
+    static boolean probeActive() throws IOException {
+        return probeActive(Path.of("/etc/ufw/ufw.conf"));
+    }
+
+    static boolean probeActive(Path ufwConf) throws IOException {
         // "ufw status" requires root, so non-root callers (branch, build, doctor)
         // would always get false. "systemctl is-active ufw" is wrong too — the
         // oneshot service is "active" on Ubuntu even when UFW is disabled.
         // /etc/ufw/ufw.conf is world-readable and reflects the real state.
+        String content;
         try {
-            var content = java.nio.file.Files.readString(Path.of("/etc/ufw/ufw.conf"));
-            return content.lines().anyMatch(l -> l.strip().equals("ENABLED=yes"));
-        } catch (IOException e) {
+            content = Files.readString(ufwConf);
+        } catch (NoSuchFileException | AccessDeniedException e) {
             return false;
         }
+        return content.lines().anyMatch(l -> l.strip().equals("ENABLED=yes"));
     }
 
-    public static String detectDiagnostic() {
-        try {
-            if (!isInstalled() || isActive()) return null;
-            return "Possible cause: UFW is installed but not active.\n"
-                    + "Firewall rules (masquerading, FORWARD, PREROUTING redirect) are not\n"
-                    + "loaded into the kernel, so containers cannot reach the internet.\n\n"
-                    + "Fix:\n"
-                    + "  sudo ufw enable\n"
-                    + "  isx init";
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    public static boolean warnIfNotRunning() {
-        try {
-            var diagnostic = detectDiagnostic();
-            if (diagnostic == null) return false;
-            BuildOutput.warnBanner("UFW is not active:", diagnostic);
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
-    }
+    static final FirewallDetector.Stopped STOPPED = new FirewallDetector.Stopped(
+            "UFW is not active:",
+            "Possible cause: UFW is installed but not active.\n"
+            + "Firewall rules (masquerading, FORWARD, PREROUTING redirect) are not\n"
+            + "loaded into the kernel, so containers cannot reach the internet.\n\n"
+            + "Fix:\n"
+            + "  sudo ufw enable\n"
+            + "  isx init");
 
     // ---- Pure parsing/checking methods ----
 

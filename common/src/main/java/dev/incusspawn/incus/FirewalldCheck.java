@@ -1,37 +1,21 @@
 package dev.incusspawn.incus;
 
-import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.HostPath;
 
 import java.io.IOException;
+import java.util.List;
 
 public final class FirewalldCheck {
 
     private FirewalldCheck() {}
 
     public static boolean isInstalled() {
-        try {
-            var pb = new ProcessBuilder("which", "firewall-cmd");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            process.getInputStream().readAllBytes();
-            return process.waitFor() == 0;
-        } catch (IOException e) {
-            return false;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
+        return HostPath.isOnPath("firewall-cmd");
     }
 
     public static boolean isActive() {
         try {
-            // systemctl is-active does not require root, unlike firewall-cmd --state
-            // which needs polkit authorization and fails with exit 253 as a normal user
-            var pb = new ProcessBuilder("systemctl", "is-active", "firewalld");
-            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            return process.waitFor() == 0 && "active".equals(output);
+            return probeActive();
         } catch (IOException e) {
             return false;
         } catch (InterruptedException e) {
@@ -40,19 +24,33 @@ public final class FirewalldCheck {
         }
     }
 
-    public static String detectDiagnostic() {
-        try {
-            if (!isInstalled() || isActive()) return null;
-            return "Possible cause: firewalld is installed but not running.\n"
-                    + "Firewall rules (masquerading, FORWARD, PREROUTING redirect) are not\n"
-                    + "loaded into the kernel, so containers cannot reach the internet.\n\n"
-                    + "Fix:\n"
-                    + "  sudo systemctl enable --now firewalld\n"
-                    + "  isx init";
-        } catch (Exception e) {
-            return null;
-        }
+    /**
+     * Like {@link #isActive()}, but a probe that was cut short throws rather than reading as
+     * stopped. A host without {@code systemctl} (macOS, Linux without systemd) is an answer: not active.
+     */
+    static boolean probeActive() throws IOException, InterruptedException {
+        // systemctl is-active does not require root, unlike firewall-cmd --state
+        // which needs polkit authorization and fails with exit 253 as a normal user
+        return probeActive(List.of("systemctl", "is-active", "firewalld"));
     }
+
+    static boolean probeActive(List<String> command) throws IOException, InterruptedException {
+        if (!HostPath.isOnPath(command.getFirst())) return false;
+        var pb = new ProcessBuilder(command);
+        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+        var process = pb.start();
+        var output = new String(process.getInputStream().readAllBytes()).strip();
+        return process.waitFor() == 0 && "active".equals(output);
+    }
+
+    static final FirewallDetector.Stopped STOPPED = new FirewallDetector.Stopped(
+            "firewalld is not running:",
+            "Possible cause: firewalld is installed but not running.\n"
+            + "Firewall rules (masquerading, FORWARD, PREROUTING redirect) are not\n"
+            + "loaded into the kernel, so containers cannot reach the internet.\n\n"
+            + "Fix:\n"
+            + "  sudo systemctl enable --now firewalld\n"
+            + "  isx init");
 
     /**
      * Whether a line matches the PREROUTING redirect rule pattern (incusbr0, port 443 → mitmPort).
@@ -112,14 +110,4 @@ public final class FirewalldCheck {
         return false;
     }
 
-    public static boolean warnIfNotRunning() {
-        try {
-            var diagnostic = detectDiagnostic();
-            if (diagnostic == null) return false;
-            BuildOutput.warnBanner("firewalld is not running:", diagnostic);
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
-    }
 }
