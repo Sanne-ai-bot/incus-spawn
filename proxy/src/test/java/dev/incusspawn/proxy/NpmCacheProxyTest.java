@@ -30,7 +30,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -97,17 +96,7 @@ class NpmCacheProxyTest {
                 new ProxyCredentials("", "", false, "", "", List.of()));
         // Upstream is verified as in production, trusting the mock's CA besides the system's
         proxy.trustUpstreamCertificate(SpawnConfig.configDir().resolve("ca.crt").toString());
-        var ready = new CountDownLatch(1);
-        var thread = new Thread(() -> {
-            try {
-                proxy.start(ready::countDown);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }, "test-proxy");
-        thread.setDaemon(true);
-        thread.start();
-        assertTrue(ready.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
+        ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
 
         clientContext = vertx.getOrCreateContext();

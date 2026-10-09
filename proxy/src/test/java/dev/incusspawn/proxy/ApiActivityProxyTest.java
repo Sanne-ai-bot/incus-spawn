@@ -26,7 +26,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -72,17 +71,7 @@ class ApiActivityProxyTest {
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
                 new ProxyCredentials("sk-ant-api03-real", "", false, "", "", List.of()));
         proxy.upstreamTrustAll = true;
-        var ready = new CountDownLatch(1);
-        var thread = new Thread(() -> {
-            try {
-                proxy.start(ready::countDown);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }, "test-proxy");
-        thread.setDaemon(true);
-        thread.start();
-        assertTrue(ready.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
+        ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
         healthPort = proxy.healthPort();
         proxy.overrideUpstream(ANTHROPIC, "127.0.0.1", upstreamPort);
