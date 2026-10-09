@@ -158,11 +158,9 @@ class MitmTlsTest {
     }
 
     private int startProxy() throws Exception {
-        var ports = ContainerTls.freePorts(2);
-        int port = ports[0];
-        proxy = new MitmProxy(vertx, "127.0.0.1", port, ports[1], "127.0.0.1", ConfigFingerprint.load());
+        proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1", ConfigFingerprint.load());
         startInBackground(proxy);
-        return port;
+        return proxy.mitmPort();
     }
 
     /** {@link MitmProxy#reload} reports a failure instead of throwing it; surface it here, not as a later handshake error. */

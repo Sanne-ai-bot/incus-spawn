@@ -131,10 +131,6 @@ class WebSocketProxyTest {
         });
         int mockPort = await(mockUpstream.listen(0, "127.0.0.1"), 5).actualPort();
 
-        var ports = ContainerTls.freePorts(2);
-        mitmPort = ports[0];
-        int healthPort = ports[1];
-
         var openaiAuth = new ToolDef.AuthDef();
         openaiAuth.setType("bearer");
         openaiAuth.setToken("${token}");
@@ -142,7 +138,7 @@ class WebSocketProxyTest {
                 "codex", "api.openai.com", openaiAuth, Map.of("token", "sk-real-openai-key")));
         var credentials = new ProxyCredentials(
                 "", "", false, "", "", toolProxies);
-        proxy = new MitmProxy(serverVertx, "127.0.0.1", mitmPort, healthPort,
+        proxy = new MitmProxy(serverVertx, "127.0.0.1", 0, 0,
                 "127.0.0.1", credentials) {
             @Override
             Future<WebSocket> connectUpstreamWebSocket(WebSocketConnectOptions options) {
@@ -165,6 +161,7 @@ class WebSocketProxyTest {
         proxyThread.setDaemon(true);
         proxyThread.start();
         assertTrue(readyLatch.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
+        mitmPort = proxy.mitmPort();
 
         clientVertx = Vertx.vertx(new VertxOptions().setAddressResolverOptions(resolver));
         clientContext = clientVertx.getOrCreateContext();
