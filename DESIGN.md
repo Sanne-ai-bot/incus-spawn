@@ -555,7 +555,10 @@ is empty. So query commands take `--format` (#1036), through one shared helper,
   do the same for definition text (#1133): a
   project-local definition ships with whatever repository was cloned, so its name, source and
   description are as untrusted as a stamp. A validation error keeps the line breaks of the
-  advice isx writes into it, and each of its lines goes through `oneLine`.
+  advice isx writes into it, so the definition text it quotes goes through `oneLine` where the
+  message is built (`HostResourceSetup`'s refusals, `YamlErrors.friendly`): once a message is
+  assembled, a forged line break cannot be told from isx's own. Each line is made safe again
+  when it is printed.
 
 A command parses its `--format` with `OutputFormat.parse` (`isx list`, which also has
 `--plain`, with `OutputFormat.resolve`), builds each record once, as an ordered map of field name

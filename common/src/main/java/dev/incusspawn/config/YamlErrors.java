@@ -2,6 +2,7 @@ package dev.incusspawn.config;
 
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
+import dev.incusspawn.util.OutputFormat;
 
 import java.util.Collection;
 import java.util.Map;
@@ -31,6 +32,11 @@ public final class YamlErrors {
      * @return a friendly error string, never null
      */
     public static String friendly(String filename, Exception ex) {
+        // It quotes the file's name, keys and parser text, which a project-local file controls (#1133).
+        return OutputFormat.oneLine(describe(filename, ex));
+    }
+
+    private static String describe(String filename, Exception ex) {
         var raw = ex.getMessage();
         if (raw == null) return filename + ": unknown YAML error";
 
