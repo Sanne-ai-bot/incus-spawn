@@ -19,8 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * command (#986, #1139):
  * isx runs the operation itself, through {@code IncusClient}, so a remediation works the same
  * over the Unix socket and over the macOS vsock tunnel, where the host has no {@code incus} CLI
- * at all (#939). The only exceptions are hints printed on Linux before isx manages anything,
- * listed here literal by literal: a new one should have to add a line to appear.
+ * at all (#939). The only exceptions are Linux-only hints, listed here literal by literal: a new
+ * one should have to add a line to appear.
  */
 class NoIncusCliHintTest {
 
