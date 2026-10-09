@@ -70,7 +70,7 @@ public class ToolsCommand extends BaseCommand {
         static void printTable(PrintStream out, Map<String, ToolSetup> tools,
                                UnaryOperator<String> sourceOf, boolean verbose) {
             if (!verbose) {
-                tools.keySet().forEach(out::println);
+                tools.keySet().forEach(name -> out.println(cell(name)));
                 return;
             }
             int maxName = tools.keySet().stream().mapToInt(String::length).max().orElse(10);
@@ -80,8 +80,8 @@ public class ToolsCommand extends BaseCommand {
             var fmt = "%-" + maxName + "s  %-" + maxSource + "s  %s%n";
             out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
             for (var entry : tools.entrySet()) {
-                out.printf(fmt, entry.getKey(),
-                        sourceOf.apply(entry.getKey()), entry.getValue().description());
+                out.printf(fmt, cell(entry.getKey()),
+                        cell(sourceOf.apply(entry.getKey())), cell(entry.getValue().description()));
             }
         }
 
@@ -164,11 +164,11 @@ public class ToolsCommand extends BaseCommand {
 
         /** The {@code table} format: the tool's details, one per line. */
         static void print(PrintStream out, ToolSetup tool, String source) {
-            out.println(tool.name());
-            out.println("  Description:  " + tool.description());
-            out.println("  Source:        " + source);
+            line(out, tool.name());
+            line(out, "  Description:  " + tool.description());
+            line(out, "  Source:        " + source);
             if (tool.feature() != null) {
-                out.println("  Feature gate:  " + tool.feature());
+                line(out, "  Feature gate:  " + tool.feature());
             }
 
             printRequires(out, tool);
@@ -182,32 +182,32 @@ public class ToolsCommand extends BaseCommand {
         private static void printRequires(PrintStream out, ToolSetup tool) {
             var requires = tool.requires();
             if (!requires.isEmpty()) {
-                out.println("  Requires:      " + String.join(", ", requires));
+                line(out, "  Requires:      " + String.join(", ", requires));
             }
         }
 
         private static void printPackages(PrintStream out, ToolSetup tool) {
             var packages = tool.packages();
             if (!packages.isEmpty()) {
-                out.println("  Packages:      " + String.join(", ", packages));
+                line(out, "  Packages:      " + String.join(", ", packages));
             }
         }
 
         private static void printParameters(PrintStream out, ToolSetup tool) {
             var params = tool.parameters();
             if (params.isEmpty()) return;
-            out.println("  Parameters:");
+            line(out, "  Parameters:");
             for (var entry : params.entrySet()) {
                 var p = entry.getValue();
                 var sb = new StringBuilder("    ").append(entry.getKey());
                 if (p.getType() != null) sb.append(" (").append(p.getType()).append(')');
                 if (p.getDefault() != null) sb.append(" default=").append(p.getDefault());
-                out.println(sb);
+                line(out, sb);
                 if (p.getDescription() != null && !p.getDescription().isBlank()) {
-                    out.println("      " + p.getDescription());
+                    line(out, "      " + p.getDescription());
                 }
                 if (p.getOptions() != null && !p.getOptions().isEmpty()) {
-                    out.println("      options: " + String.join(", ", p.getOptions()));
+                    line(out, "      options: " + String.join(", ", p.getOptions()));
                 }
             }
         }
@@ -215,11 +215,11 @@ public class ToolsCommand extends BaseCommand {
         private static void printActions(PrintStream out, ToolSetup tool) {
             var actions = tool.actions();
             if (actions.isEmpty()) return;
-            out.println("  Actions:");
+            line(out, "  Actions:");
             for (var a : actions) {
                 var sb = new StringBuilder("    ").append(a.getLabel());
                 if (a.getType() != null) sb.append(" (").append(a.getType()).append(')');
-                out.println(sb);
+                line(out, sb);
             }
         }
 
@@ -227,11 +227,11 @@ public class ToolsCommand extends BaseCommand {
             if (!(tool instanceof YamlToolSetup yaml)) return;
             var downloads = yaml.toolDef().getDownloads();
             if (downloads.isEmpty()) return;
-            out.println("  Downloads:");
+            line(out, "  Downloads:");
             for (var dl : downloads) {
                 var sb = new StringBuilder("    ").append(dl.getUrl());
                 if (dl.getArch() != null) sb.append(" [").append(dl.getArch()).append(']');
-                out.println(sb);
+                line(out, sb);
             }
         }
 
@@ -240,14 +240,24 @@ public class ToolsCommand extends BaseCommand {
             if (proxy == null) return;
             var auth = proxy.getAuth();
             if (auth == null || auth.isEmpty()) return;
-            out.println("  Proxy domains:");
+            line(out, "  Proxy domains:");
             for (var a : auth) {
                 if (a.getDomains() != null) {
                     for (var domain : a.getDomains()) {
-                        out.println("    " + domain + " (" + a.getType() + ")");
+                        line(out, "    " + domain + " (" + a.getType() + ")");
                     }
                 }
             }
         }
+    }
+
+    // Definition text is untrusted (a project-local tool ships with a cloned repository), so a
+    // table shows it as --format=plain does: nothing in it can drive the terminal (#1133).
+    private static String cell(Object value) {
+        return OutputFormat.oneLine(String.valueOf(value));
+    }
+
+    private static void line(PrintStream out, Object text) {
+        out.println(cell(text));
     }
 }
