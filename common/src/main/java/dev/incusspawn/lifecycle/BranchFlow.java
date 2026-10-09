@@ -320,7 +320,7 @@ public final class BranchFlow {
         var machineType = defaults.machineType();
         InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
                 cpu, memory, disk, networkMode, source, preflight.accounts(),
-                preflight.accountOrigins(), enableKvm, req.extraConfig()));
+                preflight.accountOrigins(), enableKvm, req.extraConfig(), req.start()));
         announceAccountSelection(preflight.accounts());
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE, machineType);
 

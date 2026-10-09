@@ -52,7 +52,8 @@ public final class Metadata {
     /**
      * Set on a VM whose address was reassigned while its {@code .network} file could not be
      * pushed (that needs the running agent); cleared once it is. Until then the guest would come
-     * up on the old address, which the NIC's IP filtering drops.
+     * up on the old address, which the NIC's IP filtering drops. Also set on a VM branched with
+     * {@code --no-start}, which has not had its file yet and would otherwise stay on DHCP.
      */
     public static final String NETWORK_PUSH_PENDING = PREFIX + "network-push-pending";
     /**

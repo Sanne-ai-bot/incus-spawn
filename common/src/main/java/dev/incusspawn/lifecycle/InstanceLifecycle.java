@@ -62,11 +62,13 @@ public final class InstanceLifecycle {
      *                 metadata inherited from the source are dropped
      * @param extraConfig further {@code config} keys the caller stamps on its branch, in the
      *                 same write; applied last
+     * @param startsNow whether the caller starts the branch and pushes a VM's {@code .network}
+     *                 file itself; if not, a VM is marked to get it from {@link #ensureReady}
      */
     public record BranchSettings(String cpu, String memory, String disk, NetworkMode networkMode,
                                  String parent, Map<String, String> accounts,
                                  Map<String, dev.incusspawn.config.AccountOrigin> accountOrigins,
-                                 boolean kvm, Map<String, String> extraConfig) {
+                                 boolean kvm, Map<String, String> extraConfig, boolean startsNow) {
         public BranchSettings {
             accountOrigins = accountOrigins == null ? Map.of() : Map.copyOf(accountOrigins);
             extraConfig = extraConfig == null ? Map.of() : Map.copyOf(extraConfig);
@@ -74,7 +76,7 @@ public final class InstanceLifecycle {
 
         public BranchSettings(String cpu, String memory, String disk, NetworkMode networkMode,
                               String parent, Map<String, String> accounts, boolean kvm) {
-            this(cpu, memory, disk, networkMode, parent, accounts, Map.of(), kvm, Map.of());
+            this(cpu, memory, disk, networkMode, parent, accounts, Map.of(), kvm, Map.of(), true);
         }
     }
 
@@ -128,6 +130,11 @@ public final class InstanceLifecycle {
             // The address itself is allocated in claimAndWrite, under the allocation lock
             update.device(nicDevice, "security.ipv4_filtering", "true");
             update.config(Metadata.STATIC_GATEWAY, bridge.gateway());
+            // A VM takes its .network file only while running: one not started now owes it to
+            // its next start through ensureReady, or it stays on DHCP for good (#1004)
+            if (!settings.startsNow() && IncusClient.machineType(instance) == MachineType.VM) {
+                update.config(Metadata.NETWORK_PUSH_PENDING, "true");
+            }
         }
         update.config(Metadata.PROXY_GATEWAY,
                 mode == NetworkMode.PROXY_ONLY ? bridge.gateway() : null);
