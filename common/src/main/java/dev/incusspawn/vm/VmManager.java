@@ -380,8 +380,9 @@ public final class VmManager {
 
     /**
      * How a stop ended. {@code SIGNALLED} means the guest did not shut down when asked and the
-     * hypervisor was killed: its disks were cut off mid-flight and may need recovery on the next
-     * boot. On macOS that is every stop until #881 is fixed.
+     * hypervisor was killed: its disks were cut off mid-flight, may need recovery on the next
+     * boot, and can have lost the last few minutes of writes (#881). That is every stop of an
+     * appliance whose agent has no {@code shutdown} verb.
      */
     public enum StopResult { NOT_RUNNING, SHUT_DOWN, SIGNALLED, FAILED }
 
@@ -407,7 +408,10 @@ public final class VmManager {
         return stopLocked(true);
     }
 
-    /** @param disksKept warn, on {@code SIGNALLED}, that the disks cut off may need recovery */
+    /**
+     * @param disksKept ask the guest to shut down first and warn, on {@code SIGNALLED}, that the
+     *                  disks cut off may need recovery; false for disks that are deleted next
+     */
     private static StopResult stopLocked(boolean disksKept) {
         if (!isRunning()) {
             BuildOutput.note("VM not running.");
@@ -424,9 +428,19 @@ public final class VmManager {
 
         BuildOutput.stepStart("Shutting down VM...");
 
-        // Attempt graceful shutdown via REST API (vfkit only)
+        // Ask the guest itself first (#881): the agent runs poweroff, so BusyBox init runs rcK,
+        // which stops Incus and its instances and syncs the disks before the guest powers off
+        // and the hypervisor exits. An appliance from before the verb answers "unknown verb".
+        // Disks about to be deleted need none of that.
+        boolean guestAgreed = disksKept && VmAgentClient.shutdown();
+        if (guestAgreed) {
+            awaitExit(handle.get(), guestShutdownWait);
+        }
+
+        // vfkit's own stop request (REST API). The appliance has nothing listening for the
+        // power button it presses, so this is only for a guest that could not be asked.
         var restUriFile = Environment.vmRestUriFile();
-        if (Files.exists(restUriFile)) {
+        if (!guestAgreed && handle.get().isAlive() && Files.exists(restUriFile)) {
             try {
                 var uri = Files.readString(restUriFile).strip();
                 var client = HttpClient.newBuilder()
@@ -439,10 +453,7 @@ public final class VmManager {
                         .header("Content-Type", "application/json")
                         .build();
                 client.send(request, HttpResponse.BodyHandlers.discarding());
-                for (int i = 0; i < 10; i++) {
-                    if (!handle.get().isAlive()) break;
-                    Thread.sleep(500);
-                }
+                awaitExit(handle.get(), Duration.ofSeconds(5));
             } catch (Exception ignored) {}
         }
 
@@ -450,7 +461,7 @@ public final class VmManager {
         boolean signalled = handle.get().isAlive();
         if (signalled) {
             handle.get().destroy();
-            try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+            awaitExit(handle.get(), Duration.ofSeconds(1));
         }
 
         // SIGKILL
@@ -464,14 +475,7 @@ public final class VmManager {
         // immediately with no diagnostic (see resetDataDisk(), which already had to work around
         // this). Throwing here -- rather than swallowing a timeout -- means every caller gets the
         // same protection restart() needs, instead of each having to re-check isAlive() itself.
-        try {
-            handle.get().onExit().get(10, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (Exception ignored) {
-            // ExecutionException/TimeoutException/CancellationException: fall through to the
-            // isAlive() check below, which is what actually decides success here.
-        }
+        awaitExit(handle.get(), Duration.ofSeconds(10));
         if (handle.get().isAlive()) {
             BuildOutput.stepBreak();
             throw new VmException("VM process " + pid + " did not exit after SIGKILL.");
@@ -482,10 +486,34 @@ public final class VmManager {
         BuildOutput.stepDone();
         if (!signalled) return StopResult.SHUT_DOWN;
         if (disksKept) {
-            BuildOutput.warn("The guest did not shut down within the ~5 s it was given, so the VM was stopped"
-                    + " with signals; its disks may need recovery on the next boot (#881).");
+            BuildOutput.warn((guestAgreed
+                    ? "The guest did not finish shutting down within " + guestShutdownWait.toSeconds() + " s"
+                    : "The guest could not be asked to shut down (its appliance predates the agent's"
+                            + " 'shutdown', or the agent did not answer)")
+                    + ", so the VM was stopped with signals; writes of its last few minutes may be lost,"
+                    + " and its disks may need recovery on the next boot (#881).");
         }
         return StopResult.SIGNALLED;
+    }
+
+    /**
+     * How long a guest that agreed to shut down gets before it is signalled. {@code rcK} gives
+     * the instances 10 s to stop ({@code incus admin shutdown --timeout 10}) and init then takes
+     * a few more to end what is left; measured on a Mac, a guest with two running containers is
+     * gone in 4-5 s. Kept under the 60 s {@code uninstall.sh} allows a whole stop. Not final:
+     * tests shorten it.
+     */
+    static Duration guestShutdownWait = Duration.ofSeconds(30);
+
+    private static void awaitExit(ProcessHandle process, Duration wait) {
+        try {
+            process.onExit().get(wait.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception stillRunning) {
+            // ExecutionException/TimeoutException/CancellationException: the caller looks at
+            // isAlive(), which is what decides
+        }
     }
 
     public static String status() {

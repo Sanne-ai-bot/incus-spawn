@@ -86,6 +86,16 @@ public final class VmAgentClient {
         return send("forwarder-restart").map("restarted"::equals).orElse(false);
     }
 
+    /**
+     * Ask the guest to shut itself down (#881): the agent replies {@code shutting down} and then
+     * runs {@code poweroff}, so init runs {@code rcK} (Incus and its instances stop, the disks are
+     * synced) and the hypervisor exits by itself. {@code false} when the agent is unreachable or
+     * predates the verb; the caller then has only the hypervisor to stop.
+     */
+    public static boolean shutdown() {
+        return send("shutdown").map("shutting down"::equals).orElse(false);
+    }
+
     /** Whether the agent is reachable at all. */
     public static boolean ping() {
         return send("ping").map("ok"::equals).orElse(false);
