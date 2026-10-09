@@ -694,7 +694,7 @@ class IncusApi {
                 var teardown = Thread.ofVirtual().start(() -> {
                     drainQuietly(controlWs);          // blocks until the daemon closes control (process exited)
                     dataAlive.interrupt();
-                    awaitDrain(lastData, dataThread);
+                    awaitDrain(lastData, new DataReader(dataThread, dataWs));
                     dataWs.close();                   // force-close fd "0" so the daemon can finalize the op
                     joinQuietly(dataThread);
                 });
@@ -1077,16 +1077,19 @@ class IncusApi {
     /**
      * Wait for reader threads to finish on their own, extending while output is still arriving.
      * Returns immediately on the healthy path (close frames arrived); otherwise {@link OutputDrain}
-     * decides when to give up on them.
+     * decides when to give up on them, told about bytes still waiting unread in the sockets.
      */
-    private static void awaitDrain(java.util.concurrent.atomic.AtomicLong lastData,
-                                   Thread... threads) {
+    private static void awaitDrain(java.util.concurrent.atomic.AtomicLong lastData, DataReader... readers) {
         var drain = new OutputDrain(System.nanoTime());
         while (true) {
-            boolean anyAlive = false;
-            for (var t : threads) if (t.isAlive()) { anyAlive = true; break; }
+            boolean anyAlive = false, unread = false;
+            for (var r : readers) {
+                if (!r.thread().isAlive()) continue; // what is left in its socket, no reader will take
+                anyAlive = true;
+                unread |= r.socket().hasUnread();
+            }
             if (!anyAlive) break;
-            if (drain.done(System.nanoTime(), lastData.get())) break;
+            if (drain.done(System.nanoTime(), lastData.get(), unread)) break;
             try {
                 Thread.sleep(OutputDrain.POLL_MS);
             } catch (InterruptedException e) {
@@ -1096,11 +1099,14 @@ class IncusApi {
         }
     }
 
+    /** A data fd's socket and the thread reading it. */
+    private record DataReader(Thread thread, IncusTransport.WsConnection socket) {}
+
     private static void drainThenClose(java.util.concurrent.atomic.AtomicLong lastData,
                                        Thread stdoutThread, Thread stderrThread,
                                        IncusTransport.WsConnection stdoutWs,
                                        IncusTransport.WsConnection stderrWs) {
-        awaitDrain(lastData, stdoutThread, stderrThread);
+        awaitDrain(lastData, new DataReader(stdoutThread, stdoutWs), new DataReader(stderrThread, stderrWs));
         if (stdoutThread.isAlive() || stderrThread.isAlive()) {
             stdoutWs.close();
             stderrWs.close();

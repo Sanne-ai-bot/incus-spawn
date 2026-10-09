@@ -5,10 +5,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.channels.ServerSocketChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -149,6 +152,57 @@ class IncusApiLossyTunnelTest {
         server.trailingGapMillis = 60;
         assertEquals("abcdef", exec(api()).stdout(),
                 "output still in flight when /wait returns must not be truncated");
+    }
+
+    // #1208: bytes that reached the host are output, even while no reader has taken them yet. The
+    // drain closed the socket once nothing had been read for its idle window, and closing a
+    // socket discards what is waiting in it: a reader held up -- here by a slow sink, on the
+    // macOS runner by a late wakeup -- lost the end of the output.
+    @Test
+    @Timeout(10)
+    void drainKeepsOutputWaitingUnreadInTheSocket() {
+        server.sendCloseFrames = false;
+        server.stdout = "a";
+        server.trailingStdout = List.of("b", "c");
+        server.trailingInOneWrite = true; // "c" is in the host's socket before "b" is read
+        var out = new ByteArrayOutputStream() {
+            @Override
+            public void write(byte[] b, int off, int len) {
+                super.write(b, off, len);
+                if (new String(b, off, len, StandardCharsets.UTF_8).equals("b")) {
+                    // Hold the reader until the drain has given up on the socket, or long past
+                    // the point where an idle drain would have.
+                    try {
+                        server.stdoutHungUp.await(3 * OutputDrain.IDLE_MS, TimeUnit.MILLISECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        };
+        assertEquals(0, api().execStream("c1", List.of("true"), null, null, null, null, out, null));
+        assertEquals("abc", out.toString(StandardCharsets.UTF_8),
+                "output waiting in the socket must be read before it is closed");
+    }
+
+    @Test
+    @Timeout(10)
+    void bytesNoReaderWillTakeDoNotHoldTheDrain() {
+        server.sendCloseFrames = false;
+        server.stdout = "a";
+        server.trailingStdout = List.of("b", "c");
+        server.trailingInOneWrite = true;
+        var out = new OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                if (b == 'b') throw new IOException("the sink went away"); // its reader ends, "c" stays in the socket
+            }
+        };
+        long start = System.nanoTime();
+        api().execStream("c1", List.of("true"), null, null, null, null, out, null);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        assertTrue(elapsedMs < OutputDrain.MAX_MS / 2,
+                "only a live reader's unread bytes extend the drain, not its ceiling: " + elapsedMs + "ms");
     }
 
     // Regression for #987: the fake decided "every fd is connected" per fd thread, so when all

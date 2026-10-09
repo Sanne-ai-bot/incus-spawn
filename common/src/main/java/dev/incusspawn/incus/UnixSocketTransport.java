@@ -532,6 +532,15 @@ class UnixSocketTransport implements IncusTransport {
         }
 
         @Override
+        public boolean hasUnread() {
+            try {
+                return in.available() > 0;
+            } catch (IOException e) {
+                return false; // closed: nothing left to wait for
+            }
+        }
+
+        @Override
         public long millisSinceLastReceived() {
             return (System.nanoTime() - lastReceivedNanos) / 1_000_000;
         }

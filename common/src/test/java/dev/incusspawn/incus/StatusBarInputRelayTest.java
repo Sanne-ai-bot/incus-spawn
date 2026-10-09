@@ -26,6 +26,7 @@ class StatusBarInputRelayTest {
         @Override public byte[] readPayload() { return null; }
         @Override public byte[] readMessage() { return null; }
         @Override public long millisSinceLastReceived() { return 0; }
+        @Override public boolean hasUnread() { return false; }
         @Override public void sendData(byte[] data, int offset, int length) {
             received.write(data, offset, length);
         }
