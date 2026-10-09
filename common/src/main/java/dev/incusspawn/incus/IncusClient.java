@@ -2072,7 +2072,17 @@ public class IncusClient {
         var resp = http().requestAndWait("PATCH", "/1.0/instances/" + container,
                 Map.of("devices", Map.of(deviceName, device)));
         if (!resp.isSuccess()) {
-            throw failedOp(resp, "Failed to add device " + deviceName + " to " + container);
+            var failure = failedOp(resp, "Failed to add device " + deviceName + " to " + container);
+            // Matched loosely: if Incus rewords it, the caller just sees a plain failure
+            if (failure.getMessage().contains("hotplug slot")) throw new NoHotplugSlotException(failure.getMessage());
+            throw failure;
+        }
+    }
+
+    /** A running VM had no PCI hotplug slot left for a device; Incus gives each VM 8 (#826). */
+    public static final class NoHotplugSlotException extends IncusException {
+        public NoHotplugSlotException(String message) {
+            super(message);
         }
     }
 

@@ -555,6 +555,8 @@ public final class FakeIncusDaemon implements IncusTransport {
             var replacement = JSON.readTree(body);
             var stale = staleRunningNic(instance, replacement);
             if (stale != null) return badRequest(stale);
+            var refused = hotplug(name, instance, replacement);
+            if (refused != null) return noHotplugSlot(refused);
             instance.set("config", replacement.path("config").deepCopy());
             instance.set("devices", replacement.path("devices").deepCopy());
             var plugged = hotplugged.get(name);
@@ -722,7 +724,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /**
-     * Take a hotplug slot for each disk device a PATCH adds to a running VM, or return the first
+     * Take a hotplug slot for each disk device a PATCH or PUT adds to a running VM, or return the first
      * device none is left for, taking nothing.
      */
     private String hotplug(String name, ObjectNode instance, JsonNode patch) {
@@ -731,14 +733,12 @@ public final class FakeIncusDaemon implements IncusTransport {
         var plugged = hotplugged.computeIfAbsent(name, n -> new java.util.LinkedHashSet<>());
         var adding = new ArrayList<String>();
         for (var e : patch.path("devices").properties()) {
-            if ("disk".equals(e.getValue().path("type").asText()) && !instance.get("devices").has(e.getKey())
-                    && !plugged.contains(e.getKey())) {
+            if ("disk".equals(e.getValue().path("type").asText()) && !instance.get("devices").has(e.getKey())) {
                 adding.add(e.getKey());
             }
         }
-        for (int i = 0; i < adding.size(); i++) {
-            if (plugged.size() + i + 1 > hotplugSlots) return adding.get(i);
-        }
+        int free = hotplugSlots - plugged.size();
+        if (adding.size() > free) return adding.get(Math.max(free, 0));
         plugged.addAll(adding);
         return null;
     }

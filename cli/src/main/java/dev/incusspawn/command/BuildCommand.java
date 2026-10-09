@@ -3477,9 +3477,120 @@ public class BuildCommand extends BaseCommand {
         return skillsRepo + "@" + skill;
     }
 
-    record RepoReference(String deviceName, String containerPath, String skipReason) {
-        static RepoReference skipped(String reason) { return new RepoReference(null, null, reason); }
-        boolean mounted() { return deviceName != null; }
+    /** A host checkout to clone a repo from: planned up front on the host, attached by the repo's worker. */
+    record RepoReference(String deviceName, String containerPath, String source, String skipReason) {
+        static RepoReference skipped(String reason) { return new RepoReference(null, null, null, reason); }
+        boolean hasDevice() { return deviceName != null; }
+    }
+
+    /** The hotplug slots Incus gives a running VM; each attached reference takes one until detached. */
+    static final int VM_HOTPLUG_SLOTS = 8;
+
+    /**
+     * The references a VM can hold attached at once. {@link #VM_HOTPLUG_SLOTS} is only where the
+     * budget starts: whatever else is hot-plugged takes slots too, so an attach Incus refuses for
+     * want of a slot retires one permit for good and waits for another, and only when the budget
+     * would reach zero does the repo fall back to the network.
+     */
+    static final class HotplugSlots {
+        private final java.util.concurrent.Semaphore permits;
+        private final java.util.concurrent.atomic.AtomicInteger budget;
+
+        HotplugSlots(int budget) {
+            this.permits = new java.util.concurrent.Semaphore(budget);
+            this.budget = new java.util.concurrent.atomic.AtomicInteger(budget);
+        }
+
+        void acquire() { permits.acquireUninterruptibly(); }
+
+        void release() { permits.release(); }
+
+        /** Retire the permit just taken, keeping it from ever being released; false if it is the last one. */
+        boolean retire() {
+            return budget.getAndUpdate(b -> b > 1 ? b - 1 : b) > 1;
+        }
+    }
+
+    /** Attaches and detaches the host references of one {@link #cloneRepos} run. */
+    interface ReferenceMounts {
+        /** Attach {@code ref}, returning it, or a skipped reference saying why the repo clones from the network. */
+        RepoReference attach(int idx, RepoReference ref);
+
+        /** Detach an attached reference; false if it is still mounted. */
+        boolean detach(int idx);
+
+        ReferenceMounts NONE = new ReferenceMounts() {
+            public RepoReference attach(int idx, RepoReference ref) { return ref; }
+            public boolean detach(int idx) { return true; }
+        };
+    }
+
+    /**
+     * Each reference is attached under a hotplug slot, which stays taken until it is detached.
+     * Attaches and detaches share one lock: a removal rewrites the whole device map, and would
+     * drop a device added meanwhile.
+     */
+    private final class DeviceMounts implements ReferenceMounts {
+        private final Container container;
+        private final RepoReference[] refs;
+        private final MachineType machineType;
+        private final HotplugSlots slots;
+        private final java.util.Set<Integer> attached = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+        DeviceMounts(Container container, RepoReference[] refs, MachineType machineType, int planned) {
+            this.container = container;
+            this.refs = refs;
+            this.machineType = machineType;
+            this.slots = new HotplugSlots(machineType == MachineType.VM
+                    ? Math.min(planned, VM_HOTPLUG_SLOTS) : Integer.MAX_VALUE);
+        }
+
+        public RepoReference attach(int idx, RepoReference ref) {
+            var refArgs = new java.util.ArrayList<>(java.util.List.of(
+                    "source=" + ref.source(), "path=" + ref.containerPath(), "readonly=true"));
+            HostResourceSetup.addShiftIfSupported(refArgs, machineType);
+            while (true) {
+                slots.acquire();
+                try {
+                    synchronized (this) {
+                        incus.deviceAdd(container.name(), ref.deviceName(), "disk", refArgs.toArray(String[]::new));
+                        attached.add(idx);
+                    }
+                    return ref;
+                } catch (Exception e) {
+                    var noSlot = e instanceof IncusClient.NoHotplugSlotException;
+                    if (noSlot && slots.retire()) continue;
+                    slots.release();
+                    return RepoReference.skipped(noSlot ? "no free PCI hotplug slot for the host reference"
+                            : "could not mount the host reference: " + e.getMessage());
+                }
+            }
+        }
+
+        public synchronized boolean detach(int idx) {
+            try {
+                incus.deviceRemove(container.name(), refs[idx].deviceName());
+                attached.remove(idx);
+                return true;
+            } catch (Exception e) {
+                return false;
+            } finally {
+                // Even when the device stays: a permit never released could leave a waiting attach
+                // stuck. The slot it still holds only makes a later attach fail and retire one.
+                slots.release();
+            }
+        }
+
+        /** Remove any reference a worker could not detach. */
+        synchronized void removeLeftovers() {
+            if (attached.isEmpty()) return;
+            try {
+                incus.devicesRemoveAll(container.name(),
+                        attached.stream().map(idx -> refs[idx].deviceName()).toList());
+            } catch (Exception e) {
+                System.err.println("Warning: failed to remove reference device: " + e.getMessage());
+            }
+        }
     }
 
     enum StepState { RUNNING, DONE, FAILED }
@@ -3510,10 +3621,13 @@ public class BuildCommand extends BaseCommand {
      * priming still pipelines with the remaining network clones. A reference is
      * the host checkout's whole working tree (untracked files, unpushed work),
      * and a prime command is arbitrary code with network access, so no prime may
-     * run while one is mounted (#765). References are mounted serially up front
-     * and each is detached as soon as its own clone is done; the detaches are
-     * serialized by a lock because concurrent instance-config edits can
-     * conflict. A failed detach fails the build rather than prime next to it.
+     * run while one is mounted (#765). Which repos have a reference is decided
+     * up front on the host; each worker attaches its own reference just before
+     * its clone and detaches it as soon as the clone is done, so a VM never
+     * holds more references than it has PCI hotplug slots ({@link HotplugSlots},
+     * #826). Attaches and detaches are serialized by a lock, because removing a
+     * device rewrites the whole device map and would drop one added meanwhile.
+     * A failed detach fails the build rather than prime next to it.
      *
      * <p>Project-local definitions get no host references at all: their repos
      * are cloned from the network, since the reference would hand the host
@@ -3548,29 +3662,32 @@ public class BuildCommand extends BaseCommand {
 
             var config = SpawnConfig.load();
 
-            // Phase 1 (serial): mount all host-reference disk devices up front.
+            // Phase 1 (serial, host only): find the host checkout each repo can clone from.
             var refs = new RepoReference[repos.size()];
             var projectLocal = imageDef.getProjectRoot() != null;
             for (int i = 0; i < repos.size(); i++) {
                 refs[i] = projectLocal
                         ? RepoReference.skipped("project-local template, host checkouts are not shared")
-                        : tryMountReference(container, repos.get(i).getUrl(), config, machineType);
+                        : planReference(repos.get(i).getUrl(), config);
             }
-            var mountedCount = (int) java.util.Arrays.stream(refs).filter(r -> r != null && r.mounted()).count();
-            var referencesDetached = new java.util.concurrent.CountDownLatch(mountedCount);
-            var detached = new java.util.concurrent.atomic.AtomicReferenceArray<Boolean>(repos.size());
-            var detachLock = new Object();
-            java.util.function.IntPredicate detach = idx -> {
-                synchronized (detachLock) {
-                    try {
-                        incus.deviceRemove(container.name(), refs[idx].deviceName());
-                        detached.set(idx, true);
-                        return true;
-                    } catch (Exception e) {
-                        return false;
+            var planned = java.util.Arrays.stream(refs).filter(r -> r != null && r.hasDevice())
+                    .map(RepoReference::containerPath).toArray(String[]::new);
+            if (planned.length > 0) {
+                try {
+                    container.exec(java.util.stream.Stream.concat(java.util.stream.Stream.of("mkdir", "-p"),
+                            java.util.Arrays.stream(planned)).toArray(String[]::new));
+                } catch (Exception e) {
+                    var skipped = RepoReference.skipped("could not mount the host reference: " + e.getMessage());
+                    for (int i = 0; i < refs.length; i++) {
+                        if (refs[i] != null && refs[i].hasDevice()) refs[i] = skipped;
                     }
+                    planned = new String[0];
                 }
-            };
+            }
+            // Counts planned references: each worker counts its own down once its attach
+            // is resolved and anything it attached is detached.
+            var referencesDetached = new java.util.concurrent.CountDownLatch(planned.length);
+            var mounts = new DeviceMounts(container, refs, machineType, planned.length);
 
             // Phase 2 (parallel, bounded): clone each repo from its reference (local)
             // or the remote (fallback), restore the fetch refspec, then prime it —
@@ -3588,22 +3705,14 @@ public class BuildCommand extends BaseCommand {
             try {
                 TerminalProgress.run(repos.size(), repos.size(),
                         idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
-                                limiter, referencesDetached, detach),
+                                limiter, referencesDetached, mounts),
                         (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
                                 repos.get(idx).getUrl(), states.get(idx), frame, "Ready"),
                         idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
                         System.out::println);
             } finally {
                 // Phase 3 (serial): remove any reference a worker could not detach.
-                for (int i = 0; i < repos.size(); i++) {
-                    if (refs[i] != null && refs[i].mounted() && detached.get(i) == null) {
-                        try {
-                            incus.deviceRemove(container.name(), refs[i].deviceName());
-                        } catch (Exception e) {
-                            System.err.println("Warning: failed to remove reference device: " + e.getMessage());
-                        }
-                    }
-                }
+                mounts.removeLeftovers();
             }
 
             assertNoStepFailures(repos, states, "prepare");
@@ -3619,29 +3728,33 @@ public class BuildCommand extends BaseCommand {
     void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
                     AtomicReferenceArray<StepProgress> states, int idx, AtomicBoolean failureSeen) {
         prepareOne(container, repo, ref, states, idx, failureSeen,
-                new java.util.concurrent.Semaphore(1), new java.util.concurrent.CountDownLatch(0), i -> true);
+                new java.util.concurrent.Semaphore(1), new java.util.concurrent.CountDownLatch(0), ReferenceMounts.NONE);
     }
 
     /** As above, with the coordination {@link #cloneRepos} needs: {@code limiter} bounds the
-     *  concurrent clones and primes, {@code detach} detaches this repo's host reference once its
-     *  clone is done, and no prime starts before {@code referencesDetached} reaches zero. */
-    void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
+     *  concurrent clones and primes, {@code mounts} attaches this repo's host reference just before
+     *  its clone and detaches it once the clone is done, and no prime starts before
+     *  {@code referencesDetached} reaches zero. */
+    void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference planned,
                     AtomicReferenceArray<StepProgress> states, int idx, AtomicBoolean failureSeen,
                     java.util.concurrent.Semaphore limiter, java.util.concurrent.CountDownLatch referencesDetached,
-                    java.util.function.IntPredicate detach) {
+                    ReferenceMounts mounts) {
         var clone = CloneResult.FAILED;
         var detachedOk = true;
+        var ref = planned;
+        var hasReference = planned != null && planned.hasDevice();
         try {
             limiter.acquireUninterruptibly();
             try {
+                if (hasReference) ref = mounts.attach(idx, planned);
                 clone = cloneOne(container, repo, ref, states, idx);
             } finally {
                 limiter.release();
             }
         } finally {
-            if (ref != null && ref.mounted()) {
+            if (hasReference) {
                 try {
-                    detachedOk = detach.test(idx);
+                    if (ref.hasDevice()) detachedOk = mounts.detach(idx);
                     // Before the count-down, so a prime woken by it already sees the failure.
                     if (!detachedOk) failureSeen.set(true);
                 } finally {
@@ -3727,7 +3840,7 @@ public class BuildCommand extends BaseCommand {
         try {
             boolean usedReference = false;
 
-            if (ref != null && ref.mounted()) {
+            if (ref != null && ref.hasDevice()) {
                 var expandedPath = expandHome(repo.getPath());
                 var clone = container.shAsUser("agentuser", buildCloneCommand(repo, ref.containerPath()));
                 if (clone.success()) {
@@ -3943,7 +4056,9 @@ public class BuildCommand extends BaseCommand {
         return cmd.toString();
     }
 
-    RepoReference tryMountReference(Container container, String cloneUrl, SpawnConfig config, MachineType machineType) {
+    /** The host checkout {@code cloneUrl} can clone from, decided on the host alone: a planned
+     *  reference, a skipped one saying why there is none, or null where none is configured. */
+    RepoReference planReference(String cloneUrl, SpawnConfig config) {
         try {
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;
@@ -3955,17 +4070,9 @@ public class BuildCommand extends BaseCommand {
                 return RepoReference.skipped("no local reference found to speedup cloning");
             }
 
-            var containerPath = GitRemoteUtils.referenceContainerPath(repoName, cloneUrl);
-            var deviceName = GitRemoteUtils.referenceDeviceName(repoName, cloneUrl);
-            container.exec("mkdir", "-p", containerPath);
-            var refArgs = new java.util.ArrayList<>(java.util.List.of(
-                    "source=" + HostResourceSetup.translateForVm(hostPath.toString()),
-                    "path=" + containerPath,
-                    "readonly=true"));
-            HostResourceSetup.addShiftIfSupported(refArgs, machineType);
-            incus.deviceAdd(container.name(), deviceName, "disk", refArgs.toArray(String[]::new));
-
-            return new RepoReference(deviceName, containerPath, null);
+            return new RepoReference(GitRemoteUtils.referenceDeviceName(repoName, cloneUrl),
+                    GitRemoteUtils.referenceContainerPath(repoName, cloneUrl),
+                    HostResourceSetup.translateForVm(hostPath.toString()), null);
         } catch (Exception e) {
             System.err.println("Warning: could not set up repo reference: " + e.getMessage());
             return null;
