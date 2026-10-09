@@ -23,7 +23,8 @@ import java.util.Map;
  * instance listing, rename and DELETE, the {@code default} pool's volume listing, console log GET,
  * network, network lease and profile GET, a running guest's address in its state, file push and async-operation waits. Anything else answers 404, so an unexpected request still shows up in
  * {@link #requests()}. Exec is among them: every instance behaves as one whose agent never
- * answers.
+ * answers. A running VM refuses a disk device beyond its PCI hotplug slots, as Incus does
+ * ({@link #hotplugSlots}).
  */
 public final class FakeIncusDaemon implements IncusTransport {
 
@@ -78,6 +79,13 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final ArrayDeque<String> operationStatuses = new ArrayDeque<>();
     private int nextOperation = 1;
     private long nextPid = 1000;
+    /**
+     * Disk devices added to each running VM, by name. Incus gives a running VM a fixed pool of
+     * PCI hotplug slots and each directory disk added after start takes one until removed;
+     * devices present at start are boot devices and take none (#826, #828).
+     */
+    private final Map<String, java.util.Set<String>> hotplugged = new LinkedHashMap<>();
+    private int hotplugSlots = 8;
 
     public FakeIncusDaemon() {
         network("incusbr0", Map.of("ipv4.address", "10.166.11.1/24"));
@@ -110,6 +118,12 @@ public final class FakeIncusDaemon implements IncusTransport {
     public FakeIncusDaemon ipFiltering(String instanceName, String value) {
         return device(instanceName, "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0",
                 "ipv4.address", "10.166.11.20", "security.ipv4_filtering", value));
+    }
+
+    /** How many disk devices a running VM can have hot-plugged at once; Incus allocates 8. */
+    public FakeIncusDaemon hotplugSlots(int slots) {
+        hotplugSlots = slots;
+        return this;
     }
 
     /** Add a stopped container with the given config. */
@@ -369,7 +383,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     @Override
-    public RawResponse request(String method, String path, String contentType,
+    public synchronized RawResponse request(String method, String path, String contentType,
                                Map<String, String> extraHeaders, byte[] body) throws IOException {
         requests.add(method + " " + path);
         if (method.equals("POST") && path.endsWith("/exec") && body != null) {
@@ -384,7 +398,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     @Override
-    public RawResponse request(String method, String path, String contentType,
+    public synchronized RawResponse request(String method, String path, String contentType,
                                Map<String, String> extraHeaders, Path bodyFile) {
         requests.add(method + " " + path);
         var name = instanceName(path);
@@ -543,6 +557,8 @@ public final class FakeIncusDaemon implements IncusTransport {
             if (stale != null) return badRequest(stale);
             instance.set("config", replacement.path("config").deepCopy());
             instance.set("devices", replacement.path("devices").deepCopy());
+            var plugged = hotplugged.get(name);
+            if (plugged != null) plugged.retainAll(names(instance.get("devices")));
             expand(name);
             return sync(JSON.createObjectNode());
         }
@@ -550,6 +566,8 @@ public final class FakeIncusDaemon implements IncusTransport {
             var patch = JSON.readTree(body);
             var stale = staleRunningNic(instance, patch);
             if (stale != null) return badRequest(stale);
+            var refused = hotplug(name, instance, patch);
+            if (refused != null) return noHotplugSlot(refused);
             applyPatch(instance, patch);
             expand(name);
             return sync(JSON.createObjectNode());
@@ -596,6 +614,7 @@ public final class FakeIncusDaemon implements IncusTransport {
                         + " - Exec format error - Failed to exec \"/sbin/init\"\n");
                 return badRequest();
             }
+            hotplugged.remove(name);
             if (action.equals("start") || action.equals("restart")) {
                 instance.put("status", "Running");
                 pids.put(name, nextPid++);
@@ -700,6 +719,44 @@ public final class FakeIncusDaemon implements IncusTransport {
     private static void patchDevices(ObjectNode target, JsonNode patch) {
         var devices = (ObjectNode) target.get("devices");
         patch.path("devices").properties().forEach(e -> devices.set(e.getKey(), e.getValue()));
+    }
+
+    /**
+     * Take a hotplug slot for each disk device a PATCH adds to a running VM, or return the first
+     * device none is left for, taking nothing.
+     */
+    private String hotplug(String name, ObjectNode instance, JsonNode patch) {
+        if (!"virtual-machine".equals(instance.path("type").asText())
+                || !holdsLiveState(instance.path("status").asText())) return null;
+        var plugged = hotplugged.computeIfAbsent(name, n -> new java.util.LinkedHashSet<>());
+        var adding = new ArrayList<String>();
+        for (var e : patch.path("devices").properties()) {
+            if ("disk".equals(e.getValue().path("type").asText()) && !instance.get("devices").has(e.getKey())
+                    && !plugged.contains(e.getKey())) {
+                adding.add(e.getKey());
+            }
+        }
+        for (int i = 0; i < adding.size(); i++) {
+            if (plugged.size() + i + 1 > hotplugSlots) return adding.get(i);
+        }
+        plugged.addAll(adding);
+        return null;
+    }
+
+    private static java.util.Set<String> names(JsonNode devices) {
+        var names = new java.util.HashSet<String>();
+        devices.fieldNames().forEachRemaining(names::add);
+        return names;
+    }
+
+    /** What Incus answers when a running VM has no PCI hotplug slot left for a device. */
+    private static RawResponse noHotplugSlot(String device) {
+        var body = JSON.createObjectNode();
+        body.put("type", "error");
+        body.put("error", "Failed to start device \"" + device + "\": Failed to call monitor hook for block device:"
+                + " No available PCI hotplug slots could be found");
+        body.put("error_code", 400);
+        return new RawResponse(400, bytes(body));
     }
 
     /** A frozen guest is paused, not stopped: it keeps its process and its addresses. */
