@@ -150,17 +150,7 @@ class WebSocketProxyTest {
         proxy.upstreamWsSsl = true;
         proxy.upstreamTrustAll = true;
 
-        var readyLatch = new CountDownLatch(1);
-        var proxyThread = new Thread(() -> {
-            try {
-                proxy.start(readyLatch::countDown);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }, "test-proxy");
-        proxyThread.setDaemon(true);
-        proxyThread.start();
-        assertTrue(readyLatch.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
+        ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
 
         clientVertx = Vertx.vertx(new VertxOptions().setAddressResolverOptions(resolver));

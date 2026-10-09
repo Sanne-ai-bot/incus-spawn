@@ -95,17 +95,7 @@ class McpBridgeTest {
         });
         proxy.useInstanceRegistry(registry);
         proxy.useMcpCommand(instance -> List.of("bash", script.toString(), instance, pids.toString()));
-        var ready = new CompletableFuture<Void>();
-        var thread = new Thread(() -> {
-            try {
-                proxy.start(() -> ready.complete(null));
-            } catch (Exception e) {
-                ready.completeExceptionally(e);
-            }
-        }, "test-proxy");
-        thread.setDaemon(true);
-        thread.start();
-        ready.get(15, TimeUnit.SECONDS);
+        ContainerTls.startInBackground(proxy);
         port = proxy.mitmPort();
         clientVertx = Vertx.vertx();
         clientContext = clientVertx.getOrCreateContext();

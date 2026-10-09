@@ -46,7 +46,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -175,17 +174,7 @@ class ArtifactCacheProxyTest {
         proxy.probeReadIdleSeconds = 1;
         // Tests read the hit counts themselves; a summary logged meanwhile would drain them
         proxy.cacheStatsIntervalMs = TimeUnit.HOURS.toMillis(1);
-        var ready = new CountDownLatch(1);
-        var thread = new Thread(() -> {
-            try {
-                proxy.start(ready::countDown);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }, "test-proxy");
-        thread.setDaemon(true);
-        thread.start();
-        assertTrue(ready.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
+        ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
         // Only once every listener of the class is up, and never one of their ports: a listener
         // that took it after the pick would answer the offline tests instead of refusing them.
