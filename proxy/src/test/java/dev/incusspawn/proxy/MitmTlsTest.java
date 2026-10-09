@@ -10,6 +10,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -154,6 +156,28 @@ class MitmTlsTest {
                     URI.create("http://127.0.0.1:" + proxy.healthPort() + "/health")).build(),
                     HttpResponse.BodyHandlers.discarding());
             assertEquals(200, health.statusCode());
+        }
+    }
+
+    @Test
+    void thePortsAreRefusedUntilTheServersListen() {
+        proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1", ConfigFingerprint.load());
+
+        var mitm = assertThrows(IllegalStateException.class, proxy::mitmPort);
+        assertTrue(mitm.getMessage().contains("MITM server is not listening yet"), mitm.getMessage());
+        var health = assertThrows(IllegalStateException.class, proxy::healthPort);
+        assertTrue(health.getMessage().contains("health server is not listening yet"), health.getMessage());
+    }
+
+    /** A fixed port still names a server that is not listening: Vert.x reports it before and after a failed bind. */
+    @Test
+    void aFixedPortThatFailedToBindIsNotReported() throws Exception {
+        try (var taken = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
+            proxy = new MitmProxy(vertx, "127.0.0.1", taken.getLocalPort(), 0, "127.0.0.1",
+                    ConfigFingerprint.load());
+            assertThrows(Exception.class, () -> startInBackground(proxy), "the MITM port was taken");
+
+            assertThrows(IllegalStateException.class, proxy::mitmPort);
         }
     }
 

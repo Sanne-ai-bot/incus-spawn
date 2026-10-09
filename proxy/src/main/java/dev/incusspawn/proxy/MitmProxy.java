@@ -156,6 +156,10 @@ public class MitmProxy {
     private final Vertx vertx;
     private HttpServer mitmServer;
     private HttpServer healthHttpServer;
+    // Set once each listen has succeeded: Vert.x's actualPort() reports a fixed port before the
+    // bind and after a failed one, so it cannot say whether a server is listening.
+    private volatile int boundMitmPort;
+    private volatile int boundHealthPort;
     private HttpClient upstreamClient;
     // Cache confirmations (HEADs, sidecars) get their own pool, so a cache hit never
     // queues behind large downloads on upstreamClient's
@@ -744,14 +748,24 @@ public class MitmProxy {
     /**
      * The port the MITM server listens on: the one it was given, or the one the kernel picked
      * when that was 0. Read it once {@code onReady} has run.
+     *
+     * @throws IllegalStateException if the server is not listening yet
      */
     public int mitmPort() {
-        return mitmServer.actualPort();
+        return boundPort(boundMitmPort, "MITM");
     }
 
     /** The health server's port, as {@link #mitmPort()} is the MITM server's. */
     public int healthPort() {
-        return healthHttpServer.actualPort();
+        return boundPort(boundHealthPort, "health");
+    }
+
+    private static int boundPort(int port, String name) {
+        if (port == 0) {
+            throw new IllegalStateException("The " + name + " server is not listening yet:"
+                    + " read its port once start() has called onReady");
+        }
+        return port;
     }
 
     /**
@@ -867,11 +881,12 @@ public class MitmProxy {
             mitmServer.requestHandler(this::routeRequest);
             mitmServer.webSocketHandler(this::routeWebSocket);
             try {
-                mitmServer.listen()
-                        .toCompletionStage().toCompletableFuture().get();
+                boundMitmPort = mitmServer.listen()
+                        .toCompletionStage().toCompletableFuture().get().actualPort();
                 break;
             } catch (Exception e) {
-                if (attempt >= maxRetries || !isBindException(e)) throw e;
+                // A port the kernel picks cannot be held by an earlier proxy: nothing to wait for.
+                if (attempt >= maxRetries || requestedMitmPort == 0 || !isBindException(e)) throw e;
                 if (!ProxyHealthCheck.isHealthy(healthBindAddress)) throw e;
                 ProxyLog.warn("Port " + requestedMitmPort + " in use, previous proxy still running (" + attempt + "/" + maxRetries + ")");
                 Thread.sleep(200);
@@ -887,8 +902,8 @@ public class MitmProxy {
                         default -> req.response().setStatusCode(404).end();
                     }
                 });
-        healthHttpServer.listen(requestedHealthPort, healthBindAddress)
-                .toCompletionStage().toCompletableFuture().get();
+        boundHealthPort = healthHttpServer.listen(requestedHealthPort, healthBindAddress)
+                .toCompletionStage().toCompletableFuture().get().actualPort();
 
         if (onReady != null) {
             onReady.run();

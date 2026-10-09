@@ -58,6 +58,8 @@ class ProxyNetworkIT {
         Assumptions.assumeTrue(proxyAddress != null, "Cannot determine proxy bind address");
 
         vertx = Vertx.vertx();
+        // The production ports, not 0: what this pins is a container reaching the proxy where
+        // an instance does, and the health checks it uses (ProxyHealthCheck) probe the default port.
         proxy = new MitmProxy(vertx, proxyAddress, 18443, 18080, proxyAddress,
                 new dev.incusspawn.proxy.ProxyCredentials(DUMMY_API_KEY, "", false, "", "",
                         java.util.List.of()));
