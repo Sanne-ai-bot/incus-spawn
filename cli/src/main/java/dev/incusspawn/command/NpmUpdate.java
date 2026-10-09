@@ -20,11 +20,7 @@ final class NpmUpdate {
         if (!incus.shellExec(name, "which", "npm").success()) return true;
         BuildOutput.stepStart("Updating npm packages...");
         var update = incus.shellExec(name, "npm", "update", "-g");
-        if (!update.success()) {
-            BuildOutput.stepFail("npm update -g failed (exit code " + update.exitCode() + "): "
-                    + update.stderr().strip());
-            return false;
-        }
+        if (!update.success()) return GuestUpdate.finish(update, "npm update -g");
         var problems = NpmGlobalInstall.repairAfterUpdate(new Container(incus, name));
         if (!problems.isEmpty()) {
             BuildOutput.stepBreak();
