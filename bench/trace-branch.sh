@@ -8,9 +8,10 @@
 # work (an exec, a start); a long gap with no event is isx itself working or waiting between
 # polls. Nothing is added to isx: this observes it from outside.
 #
-# Requires: the `incus` client with access to the daemon isx uses (Linux host), a working isx
-#           setup with the proxy running, a built template, python3, and an isx build in
-#           cli/target (run bench/cli.sh or mvn package first).
+# Requires: the `incus` client with access to the daemon isx uses (on macOS the client alone:
+#           the script points it at the appliance's socket), a working isx setup with the
+#           proxy running, a built template, python3, and an isx build in cli/target (run
+#           bench/cli.sh or mvn package first).
 #
 # Usage:
 #   bench/trace-branch.sh                       # native build, from tpl-minimal
@@ -52,7 +53,6 @@ die() { echo "Error: $*" >&2; exit 1; }
 
 command -v python3 &>/dev/null || die "python3 not found on PATH"
 command -v incus &>/dev/null || die "the incus client is not on PATH; it is needed to record the daemon's events"
-incus info >/dev/null 2>&1 || die "'incus info' failed: this user cannot reach the Incus daemon"
 
 case "$RUNTIME" in
     native)
@@ -69,7 +69,9 @@ case "$RUNTIME" in
 esac
 
 INSTANCE="isx-trace-$$"
+CLIENT_CONF=""  # the throwaway incus client config, on macOS
 cleanup() {
+    [ -z "$CLIENT_CONF" ] || rm -rf "$CLIENT_CONF"
     # shellcheck disable=SC2086  # $ISX is "java -jar <path>" for the JVM
     if $ISX list -q 2>/dev/null | grep -qx "$INSTANCE"; then
         echo "Destroying $INSTANCE..."
@@ -80,11 +82,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The remote to monitor: the client's default, or on macOS the appliance's daemon.
+INCUS_REMOTE=""
+VM_SOCKET=""
+if [ "$(uname -s)" = Darwin ]; then
+    # Incus runs in the VM, behind the Unix socket isx itself uses (Environment.vmVsockSocket).
+    # The macOS client refuses its default local remote, so the socket is added as a named
+    # remote, in a throwaway client config so the user's own is left alone.
+    VM_SOCKET="$HOME/.local/state/incus-spawn/vm.incus.sock"
+    [ -S "$VM_SOCKET" ] || die "No appliance socket at $VM_SOCKET. Is the VM running? (isx vm start)"
+    CLIENT_CONF="$(mktemp -d)"
+    export INCUS_CONF="$CLIENT_CONF"
+    incus remote add isx-appliance "unix://$VM_SOCKET" >/dev/null 2>&1 || \
+        die "could not add the appliance's socket ($VM_SOCKET) as an incus remote"
+    INCUS_REMOTE="isx-appliance:"
+fi
+# shellcheck disable=SC2086  # empty on Linux: no argument, the default remote
+incus info $INCUS_REMOTE >/dev/null 2>&1 || die "'incus info' failed: this user cannot reach the Incus daemon"
+
 GIT_SHA="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
-export SCRIPT_DIR RESULTS_DIR ISX INSTANCE FROM GIT_SHA RUNTIME
+export SCRIPT_DIR RESULTS_DIR ISX INSTANCE FROM GIT_SHA RUNTIME INCUS_REMOTE VM_SOCKET
 
 python3 - <<'PY'
-import json, os, re, shlex, subprocess, sys, time
+import json, os, re, shlex, socket, statistics, subprocess, sys, time
 from datetime import datetime
 
 sys.dont_write_bytecode = True  # keep bench/ free of __pycache__
@@ -101,13 +121,41 @@ raw_path, timeline_path = stem + ".events.json", stem + ".timeline.txt"
 
 # ── Record ──────────────────────────────────────────────────────────────────
 
+# On macOS the daemon stamps its events with the VM's clock, while the branch's start, the
+# prompt and the destroy are read from the host's. A few requests with a recognisable URL,
+# each timed on the host, show up in the event stream with the VM's time for the same moment:
+# the difference is the offset between the two clocks, which is then taken out of every event.
+PROBE_URL = f"/1.0?isx-trace-clock-probe={os.getpid()}"
+
+def probe_clock(vm_socket, count=5):
+    """Host times (midpoint of each round trip) of `count` probe requests to the daemon."""
+    sent = []
+    for _ in range(count):
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(5)
+            s.connect(vm_socket)
+            before = time.time()
+            s.sendall(f"GET {PROBE_URL} HTTP/1.1\r\nHost: incus\r\nConnection: close\r\n\r\n".encode())
+            s.recv(1)  # the first byte of the response: the daemon has handled it
+            sent.append((before + time.time()) / 2)
+            # Closed without reading the rest: this tunnel does not reliably pass on an EOF
+            # to wait for (DESIGN.md "Transport"), and the timing needs no more than that byte.
+        time.sleep(0.02)
+    return sent
+
 print(f"Recording Incus events while branching {instance} from {source} ({env['RUNTIME']})...")
 with open(raw_path, "wb") as raw:
-    monitor = subprocess.Popen(["incus", "monitor", "--format=json"], stdout=raw,
+    monitor = subprocess.Popen(["incus", "monitor", "--format=json"]
+                               + ([env["INCUS_REMOTE"]] if env["INCUS_REMOTE"] else []), stdout=raw,
                                stderr=subprocess.DEVNULL)
     time.sleep(1.0)  # let the monitor subscribe before anything happens
     if monitor.poll() is not None:
         sys.exit("Error: 'incus monitor' exited immediately; cannot record events")
+    try:
+        probes_sent = probe_clock(env["VM_SOCKET"]) if env["VM_SOCKET"] else []
+    except OSError as e:  # socket.timeout included
+        monitor.terminate()
+        sys.exit(f"Error: the daemon did not answer on {env['VM_SOCKET']}: {e}")
     t0 = time.time()
     try:
         prompt_ms = isxbench.run_to_prompt(isx + ["branch", instance, "--from", source, "--shell"], 300)
@@ -132,8 +180,9 @@ print(f"Prompt after {prompt_ms:.0f} ms, destroy took {(d_end - d0) * 1000:.0f} 
 # ── Parse ───────────────────────────────────────────────────────────────────
 
 def parse_ts(text):
-    # RFC 3339 with up to nanoseconds; fromisoformat takes at most microseconds.
-    text = re.sub(r"(\.\d{6})\d+", r"\1", text.replace("Z", "+00:00"))
+    # RFC 3339 with up to nanoseconds, trailing zeros trimmed by the daemon. fromisoformat
+    # takes at most microseconds, and before Python 3.11 exactly 3 or 6 digits: make it 6.
+    text = re.sub(r"\.(\d+)", lambda m: "." + m.group(1)[:6].ljust(6, "0"), text.replace("Z", "+00:00"))
     return datetime.fromisoformat(text).timestamp()
 
 def load_events(path):
@@ -176,10 +225,31 @@ def describe(event):
         return f"{meta.get('action', '')} {meta.get('source', '')}"
     return compact(meta)
 
+def is_probe(event):
+    # The daemon's log line for the request itself, not another event that quotes its URL.
+    meta = event.get("metadata") or {}
+    return meta.get("message") == "Handling API request" and (meta.get("context") or {}).get("url") == PROBE_URL
+
+recorded = load_events(raw_path)
+# How far the daemon's clock is ahead of this host's; 0 where they are the same clock.
+clock_offset_s = 0.0
+if probes_sent:
+    probes_seen = sorted(parse_ts(e["timestamp"]) for e in recorded if is_probe(e))
+    if len(probes_seen) != len(probes_sent):
+        sys.exit(f"Error: sent {len(probes_sent)} clock probes but the event stream has "
+                 f"{len(probes_seen)}; cannot align the VM's clock with the host's. Raw events: {raw_path}")
+    clock_offset_s = statistics.median(seen - sent for seen, sent in zip(probes_seen, probes_sent))
+    print(f"VM clock is {clock_offset_s * 1000:+.1f} ms from the host's; event times are adjusted by that.")
+
+def event_ts(text):
+    return parse_ts(text) - clock_offset_s
+
 events = []
-for event in load_events(raw_path):
+for event in recorded:
+    if is_probe(event):
+        continue
     try:
-        ts = parse_ts(event["timestamp"])
+        ts = event_ts(event["timestamp"])
     except (KeyError, ValueError):
         continue
     events.append((ts, event))
@@ -223,7 +293,7 @@ def timeline(title, t0, t_end, mark_ts, mark_label, window):
         meta = event.get("metadata") or {}
         op = operations.setdefault(meta.get("id", "?"), {"description": meta.get("description", "")})
         try:
-            created = parse_ts(meta["created_at"])
+            created = event_ts(meta["created_at"])
         except (KeyError, ValueError):
             created = ts
         op["start"] = min(op.get("start", ts), created, ts)

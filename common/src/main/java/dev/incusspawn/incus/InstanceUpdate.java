@@ -10,10 +10,11 @@ import java.util.Set;
  * Config and device changes to one instance, collected so {@link IncusClient#update} can send
  * them as a single write.
  *
- * <p>Every instance write costs Incus far more than the request itself: it rewrites the
- * instance's backup file each time (~11-13 ms on btrfs), and on macOS the request also crosses
- * the vsock tunnel. Steps that each did their own read-modify-write add that up; collecting
- * their changes here pays it once.
+ * <p>Every instance write costs Incus far more than the request itself: it takes the
+ * instance's lock, applies the change and rewrites the instance's backup file each time
+ * (~11-13 ms on btrfs on Linux; 6-10 ms in the macOS appliance, where the backup file is the
+ * last millisecond of that and the vsock tunnel adds about a tenth of one). Steps that each
+ * did their own read-modify-write add that up; collecting their changes here pays it once.
  */
 public final class InstanceUpdate {
 

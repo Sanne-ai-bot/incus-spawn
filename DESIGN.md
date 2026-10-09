@@ -1528,8 +1528,9 @@ What it shows:
   process never gets to warm up. Native does the same preparation in ~50 ms.
 - **Incus round trips are cheap locally**: `instances` costs ~3.6 ms above bare startup, and
   a single request well under a millisecond. The request budgets are still worth having --
-  round trips run in sequence and cost far more over the macOS vsock tunnel -- but on Linux
-  a few extra requests do not show up as user-visible latency.
+  round trips run in sequence before the user gets a prompt -- but a few extra reads do not
+  show up as user-visible latency. The same holds over the macOS vsock tunnel (see "CLI
+  latency on macOS" below).
 - **The host-side preparation is not where users wait.** It takes ~50 ms, below the ~100 ms
   at which a delay becomes noticeable.
 
@@ -1538,9 +1539,78 @@ practice. The `prepareRunning` figure ends before the terminal attaches: it leav
 terminfo push, the exec session, and the login shell (or tmux, zmx or the default action)
 starting inside the instance. The branch figure is `--no-start`, so it leaves out the start,
 runtime setup, CA and `resolv.conf` repair, the account-identity reconcile (which polls the
-instance until it answers) and the shell attach. Time to a usable prompt for `isx branch` and
-`isx shell` is not measured yet. Neither is the macOS appliance, where every request also
-crosses the vsock tunnel.
+instance until it answers) and the shell attach. `bench/cli.sh` has since gained
+`shellToPrompt` and `branchToPrompt`, which measure to a usable prompt; this Linux baseline
+predates them.
+
+### CLI latency on macOS: the vsock tunnel is not where the time goes
+
+On macOS every Incus request crosses the vfkit vsock tunnel into the appliance VM, and until
+#803 nobody had measured what that costs. The worry was that a branch's ~40 requests, cheap
+over a local socket, would dominate there. They do not.
+
+Measured with `bench/cli.sh --runtime=native` on 2026-10-10, with the build of the change that
+added this section, on an Apple M6 (12 cores, 16 GB), macOS 27.0.1, vfkit 0.6.4, appliance
+0.3.11 (Incus 6.21, kernel 7.2.9, 2 vCPUs, btrfs pool), with the native CLI built by Oracle
+GraalVM 25.4. Medians of 20 runs after 2 warmups (3 runs for the branch); the figure is the
+middle one of three passes, with the range the three covered. Passes the day before, on an
+older appliance, were within a tenth of these, except that `isx shell` reached its prompt
+later (82-96 ms):
+
+| Operation | macOS, native | Linux baseline, native |
+|---|---|---|
+| `isx --help` (process start only) | 5.3 ms (5.3-5.7) | 2.8 ms |
+| `isx list -q` (connect + one listing) | 7.9 ms (7.8-8.1) | 6.4 ms |
+| `isx account show` (instance reads only) | 10.2 ms (10.2-10.5) | 4.5 ms |
+| preparation before `isx shell` attaches | 30 ms (30-31) | 53 ms |
+| `isx shell` to a usable prompt | 79 ms (75-79) | not in the baseline |
+| `isx branch --shell` to a usable prompt | 372 ms (372-402) | not in the baseline |
+
+Single samples, indicative only: branch (`--no-start`) 58-75 ms, first start 122-170 ms,
+destroy of a running instance 653-668 ms. The two columns are different machines, different
+Incus versions and different numbers of instances in the listing, and the Linux listing was
+`isx instances`, which `isx list -q` has since replaced. They show the order of magnitude and
+nothing finer.
+
+What it shows:
+
+- **A request over the tunnel costs well under a millisecond, as on Linux.**
+  `bench/request-cost.sh` times plain HTTP requests on the appliance's socket, with no isx
+  involved. On one kept-alive connection: `GET /1.0` 0.13-0.14 ms, one instance 0.30-0.39 ms,
+  the instance listing 0.43-0.47 ms, the bridge 0.70-0.82 ms (medians of 300, three
+  sessions). Opening a new connection and reading one instance takes 0.46-0.52 ms. `GET /1.0` does
+  almost nothing in the daemon, so the tunnel's own share of a round trip is about a tenth of
+  a millisecond.
+- **Request count does not dominate `isx branch` on macOS.** `bench/trace-branch.sh` counted
+  41-42 requests before the prompt. Their cost is an estimate, the count times the 0.3-0.8 ms
+  above, not a figure the trace gives: 12-34 ms of a ~400 ms branch.
+  The rest is the same work as on Linux. Over six traces: 160-200 ms inside the first exec
+  (the setup script running in the new instance), 42-52 ms starting it, 21-51 ms creating
+  it, and about 30 ms each for process start and connect, for the gap before the shell's
+  exec, and for the shell reaching its prompt.
+- **The preparation before `isx shell` stays below the ~100 ms at which a delay becomes
+  noticeable**: 30 ms. The whole of `isx shell`, to a prompt that accepts a command, is
+  under it too.
+- **What costs on macOS is what costs on Linux: a write, not a read.** In the traces a
+  branch's settings write takes 6-10 ms, from the daemon logging the `PATCH` to its
+  `UpdateInstanceBackupFile finished` (the backup file itself is the last millisecond of
+  that). Repeated on an idle, stopped instance (`bench/request-cost.sh --write`), the same
+  kind of write takes 3.3-3.5 ms: an order of magnitude more than a read either way. So the argument for configuring a
+  branch in one write (below) is the same on both platforms, and trimming reads would gain no
+  more on a Mac than on Linux.
+- **`isx account show` is slower than its reads explain, and the tunnel is not why.** It
+  costs 5 ms above process start here, against 1.7 ms in the Linux baseline. With the daemon's
+  request log beside it: the connect, `GET /1.0` and the first instance read are over 2.3 ms
+  after start (`isx account show` on a name that does not exist, which stops there, takes
+  6.9 ms against 4.6 ms for `--help` in the same session). The other ~2.6 ms come after: isx
+  loading `config.yaml` and working out the accounts, with two more instance reads at
+  0.3-0.4 ms each. The command made two reads when the Linux baseline was taken and makes
+  three now, so the two columns do not measure the same code. Why the host-side part takes
+  about 2 ms on this Mac was not looked into further.
+
+The request budgets keep their purpose: a count is deterministic where a wall clock is not.
+What changes is one of the reasons given for them. "Far more expensive on macOS" was an
+assumption; measured, it is not so on this hardware and this vfkit.
 
 ### Why nothing is pushed into an instance just before it starts
 
@@ -1578,7 +1648,8 @@ IP spoofing protection, the static IP metadata, type/parent/created, the account
 removal of inherited KVM passthrough (a full PUT even when there was nothing to remove). Each
 step did its own read-modify-write, and each write costs Incus ~11-13 ms on btrfs, mostly
 rewriting the instance's backup file (`UpdateInstanceBackupFile`) -- ~110 ms of the ~250 ms
-before start, and more on macOS, where every request also crosses the vsock tunnel (#804).
+before start (#804). The same write costs 6-10 ms inside the macOS appliance; the vsock tunnel
+adds about a tenth of a millisecond to it (see "CLI latency on macOS").
 
 `InstanceLifecycle.configureBranch()`, shared by `isx branch` and the TUI, reads the instance
 once and collects every change into an `InstanceUpdate` (config sets and unsets, device
@@ -1695,7 +1766,7 @@ CI runs them on Linux (`unit-tests`) and on an arm64 macOS runner (`unit-tests-m
 
 **The test JVM keeps `AESCrypt.makeSessionKey` out of the JIT.** CI tests on GraalVM 25, whose JIT now and then gives one AES-256 cipher a wrong key schedule while it deoptimizes the compiled and OSR versions of `com.sun.crypto.provider.AESCrypt.makeSessionKey` during warm-up. TLS 1.3 prefers `TLS_AES_256_GCM_SHA384`, so that connection fails with `bad_record_mac` (or `Tag mismatch`, followed by a "record" of zeros, which is the JDK wiping the plaintext it refused). The proxy tests run every TLS hop in one JVM, so this showed up as a flake on whichever hop and test happened to be running: client to MITM, MITM to mock upstream, in either direction, sometimes twice within milliseconds as the method was recompiled (#940). A standalone loop of `Cipher.init` + `doFinal` with fresh AES-256 keys, run in fresh JVMs, gave a wrong ciphertext in 24 of 960 GraalVM JVMs. It gave none in 480 with `-XX:-UseOnStackReplacement`, none in 480 with the method excluded from compilation, none in 96 with C2 in the same JDK (`-XX:-UseJVMCICompiler`), and none on OpenJDK's C2. AES-128 never failed. The root pom's `argLine` property excludes the method, which runs once per cipher and costs nothing interpreted. It is a property, not surefire configuration, because the Quarkus plugin adds its own arguments to it. `JitWorkaroundTest` fails if the proxy tests' JVM loses the flag, or if a JDK running the Graal JIT stops having that method. On any other JDK the exclude is a no-op and that check is skipped: JDK 27 renamed the class to `AES_Crypt` and has no `makeSessionKey`, so requiring it there failed every build on a stock JDK 27 (#1050). A native image is unaffected, since it never deoptimizes into a recompiled method. A JVM install run on a GraalVM JDK is affected, though, so the launchers carry the same exclude (#1018). `install.sh` adds it to the generated wrapper only when the JDK it pins runs the Graal JIT (`UseJVMCICompiler` is `true`; a stock JDK has no such flag), and the JBang aliases set it as `java-options` unconditionally, since a catalog cannot ask which JDK it lands on and every HotSpot JDK accepts it. `LauncherJitWorkaroundTest` keeps both equal to the `-XX:CompileCommand` options in the pom's `argLine`. The upstream finding that `-Djdk.graal.OptimisticAliasingAnalysis=false` also avoids the bug is not used: it disables a whole optimization rather than one method. The bug is GraalVM-only (Temurin 25 and 27 do not reproduce it) and is reported upstream as [oracle/graal#14599](https://github.com/oracle/graal/issues/14599); once it is fixed there, the fix here is dropping the flag.
 
-**Request budgets**: CLI latency regressions almost always arrive as extra Incus round trips -- a `configGet` per key, a GET per listed instance -- and each one is paid in sequence before the user gets a prompt, at well under a millisecond over a local Unix socket but far more over the macOS vsock tunnel (see "CLI latency baseline"). Wall-clock benchmarks cannot gate PRs on shared CI runners, but a round-trip count is deterministic. `FakeIncusDaemon` (test scope, `common/src/test/.../incus/`) is an in-memory `IncusTransport` behind a real `IncusClient` (via its package-private `IncusClient(IncusApi)` constructor) that records every request; budget tests pin the exact count for a flow. `common` publishes its test classes as a test-jar that `cli` depends on in test scope, so a command's own wiring is pinned against the same fake (`BuildCommandAccountsWiringTest`, #932). Exact rather than at-most, so they ratchet: an improvement fails the test until the budget is lowered in the same change. The failure lists every request made, which is usually enough to spot the duplicate. A flow on the start/shell/branch path gets a budget; a known waste is pinned at its current count with a comment saying what the fixed count will be. Wall-clock measurement belongs in `bench/`, not in the shipped CLI: `bench/cli.sh` times real `isx` commands, JVM against native, on a throwaway instance.
+**Request budgets**: CLI latency regressions almost always arrive as extra Incus round trips -- a `configGet` per key, a GET per listed instance -- and each one is paid in sequence before the user gets a prompt, at well under a millisecond each, over a local Unix socket and over the macOS vsock tunnel alike (see "CLI latency baseline" and "CLI latency on macOS"); a settings write costs about 10 ms: 6-10 ms in a branch on macOS, 11-13 ms on Linux btrfs. Wall-clock benchmarks cannot gate PRs on shared CI runners, but a round-trip count is deterministic. `FakeIncusDaemon` (test scope, `common/src/test/.../incus/`) is an in-memory `IncusTransport` behind a real `IncusClient` (via its package-private `IncusClient(IncusApi)` constructor) that records every request; budget tests pin the exact count for a flow. `common` publishes its test classes as a test-jar that `cli` depends on in test scope, so a command's own wiring is pinned against the same fake (`BuildCommandAccountsWiringTest`, #932). Exact rather than at-most, so they ratchet: an improvement fails the test until the budget is lowered in the same change. The failure lists every request made, which is usually enough to spot the duplicate. A flow on the start/shell/branch path gets a budget; a known waste is pinned at its current count with a comment saying what the fixed count will be. Wall-clock measurement belongs in `bench/`, not in the shipped CLI: `bench/cli.sh` times real `isx` commands, JVM against native, on a throwaway instance.
 
 **TUI snapshot tests**: TUI screens are only reviewable if they can be rendered without a terminal or an Incus daemon. `TuiSnapshot` (test scope, `cli/src/test/.../tui/`) renders into an in-memory Tamboui `Buffer` via `Frame.forTesting` and compares the plain text against golden files in `cli/src/test/resources/tui-snapshots/`. Every run also writes the actual rendering to `cli/target/tui-snapshots/` as `.txt` and `.ansi` (colours; view with `less -R`), which is how a reviewer -- human or agent -- sees a UI change; a missing golden fails rather than being created silently. Accept a changed rendering with `-Dtui.snapshots.update=true` and review the golden diff. This requires the screen to be decoupled from `ListCommand`: a modal gets its own class holding its state, key handling and rendering, with side effects (the AI call, the executor) injected -- `HelpChatModal` is the first. Snapshot at several terminal sizes (80×24 is the floor), since truncation and wrapping bugs only show at some widths.
 
