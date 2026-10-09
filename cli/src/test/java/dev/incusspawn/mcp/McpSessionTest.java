@@ -11,6 +11,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -484,6 +485,36 @@ class McpSessionTest {
         bTasks.startCommand(bInstance, "/", Map.of(), "make test", null);
         var probed = backend.scripts.stream().filter(sc -> sc.equals(TaskScripts.busy())).count();
         assertEquals(3, probed, "only alice's running instances held elsewhere are asked: " + backend.scripts);
+    }
+
+    @Test
+    void aCountStartedOnceAnotherHasAnsweredAsksAfresh() throws Exception {
+        var a = session(8);
+        var tasks = tasksOf(a);
+        other("mcp-orphan", DEAD, "alice");
+        busyIn.put("mcp-orphan", 1);
+        var answer = new java.util.concurrent.CountDownLatch(1);
+        var respond = backend.instanceResponder;
+        backend.instanceResponder = (name, script) -> {
+            try {
+                answer.await(); // until the next count is chained on: then it runs as this one answers
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return respond.apply(name, script);
+        };
+        var first = tasks.probeElsewhere("mcp-orphan");
+        // A dependent stage runs on the probe's own thread as it completes the count: the moment the
+        // caller that was waiting for it may already start the next one.
+        var next = first.thenApply(count -> {
+            busyIn.put("mcp-orphan", 0);
+            return tasks.probeElsewhere("mcp-orphan");
+        });
+        answer.countDown();
+        assertEquals(1, first.get(5, java.util.concurrent.TimeUnit.SECONDS));
+        var second = next.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertNotSame(first, second, "a count already answered is never handed to a later one");
+        assertEquals(0, second.get(5, java.util.concurrent.TimeUnit.SECONDS), "the later count asks the instance again");
     }
 
     /** A session's tasks and its instance. */
