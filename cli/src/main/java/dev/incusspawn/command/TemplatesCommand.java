@@ -14,6 +14,7 @@ import org.aesh.command.option.Option;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
@@ -80,19 +81,24 @@ public class TemplatesCommand extends BaseCommand {
                         BuildInfo.instance().version(), ZoneId.systemDefault()));
                 return CommandResult.SUCCESS;
             }
+            printTable(System.out, defs, verbose);
+            return CommandResult.SUCCESS;
+        }
+
+        /** The {@code table} format: the names, or with {@code verbose} a name, source and description per row. */
+        static void printTable(PrintStream out, Map<String, ImageDef> defs, boolean verbose) {
             if (!verbose) {
-                defs.keySet().forEach(System.out::println);
-                return CommandResult.SUCCESS;
+                defs.keySet().forEach(out::println);
+                return;
             }
             int maxName = defs.keySet().stream().mapToInt(String::length).max().orElse(10);
             int maxSource = defs.values().stream().mapToInt(d -> d.getSource().length()).max().orElse(7);
             var fmt = "%-" + maxName + "s  %-" + maxSource + "s  %s%n";
-            System.out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
+            out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
             for (var entry : defs.entrySet()) {
                 var def = entry.getValue();
-                System.out.printf(fmt, entry.getKey(), def.getSource(), def.getDescription());
+                out.printf(fmt, entry.getKey(), def.getSource(), def.getDescription());
             }
-            return CommandResult.SUCCESS;
         }
 
         /**
