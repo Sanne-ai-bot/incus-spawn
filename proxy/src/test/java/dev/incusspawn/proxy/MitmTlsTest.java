@@ -10,6 +10,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.cert.X509Certificate;
@@ -131,6 +135,26 @@ class MitmTlsTest {
 
         assertTrue(mints.get() > 0, "the SNI lookup never minted a leaf for a.b.quay.io");
         assertEquals(Set.of(), mintedOnEventLoop, "SNI lookup minted on these event-loop threads");
+    }
+
+    /**
+     * Given port 0, both servers bind ports the kernel picks and report them once ready, so a
+     * test never picks a port first and loses it to another listener before the proxy binds it.
+     */
+    @Test
+    void portZeroBindsAndReportsTheActualPorts() throws Exception {
+        proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1", ConfigFingerprint.load());
+        startInBackground(proxy);
+
+        assertNotEquals(0, proxy.mitmPort(), "the MITM port was not reported");
+        assertNotEquals(0, proxy.healthPort(), "the health port was not reported");
+        handshake(proxy.mitmPort(), HOSTS.get(0), CertificateAuthority.loadOrCreate().caCert());
+        try (var client = HttpClient.newHttpClient()) {
+            var health = client.send(HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + proxy.healthPort() + "/health")).build(),
+                    HttpResponse.BodyHandlers.discarding());
+            assertEquals(200, health.statusCode());
+        }
     }
 
     private int startProxy() throws Exception {
