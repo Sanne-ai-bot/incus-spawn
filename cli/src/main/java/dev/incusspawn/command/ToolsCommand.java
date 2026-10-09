@@ -121,7 +121,7 @@ public class ToolsCommand extends BaseCommand {
             var tool = tools.get(name);
             if (tool == null) {
                 System.err.println("Tool '" + name + "' not found.");
-                System.err.println("Available tools: " + String.join(", ",
+                line(System.err, "Available tools: " + String.join(", ",
                         new TreeMap<>(tools).keySet()));
                 return CommandResult.valueOf(1);
             }
