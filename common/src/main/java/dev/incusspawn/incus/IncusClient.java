@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Manages Incus container/VM lifecycle operations.
@@ -1652,9 +1653,7 @@ public class IncusClient {
         var alias = image.substring(colon + 1);
         var remote = readIncusRemote(remoteName);
         if (remote == null) {
-            throw new IncusException(
-                    "Unknown Incus remote '" + remoteName + "' for image '" + image + "'. " +
-                    "Add it with: incus remote add " + remoteName + " <url>");
+            throw new IncusException(unknownRemoteMsg(remoteName, image, Platform.isMacOS()));
         }
         var source = new LinkedHashMap<String, Object>();
         source.put("type", "image");
@@ -1663,6 +1662,19 @@ public class IncusClient {
         source.put("protocol", remote.protocol());
         source.put("alias", alias);
         return source;
+    }
+
+    /**
+     * The macOS host has no {@code incus} CLI to add a remote with (#939), so there the message
+     * names what {@link #readIncusRemote} reads instead.
+     */
+    static String unknownRemoteMsg(String remoteName, String image, boolean macOS) {
+        return "Unknown Incus remote '" + remoteName + "' for image '" + image + "'. " + (macOS
+                ? "isx knows " + WELL_KNOWN_REMOTES.keySet().stream().sorted()
+                        .map(r -> "'" + r + "'").collect(Collectors.joining(", "))
+                        + " and reads others, each with an addr and protocol, from the 'remotes:' section of "
+                        + Environment.incusConfigCandidates().getFirst() + "."
+                : "Add it with: incus remote add " + remoteName + " <url>");
     }
 
     private record RemoteConfig(String addr, String protocol) {}

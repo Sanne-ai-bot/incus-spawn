@@ -15,7 +15,8 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * No message tells the user to run an {@code incus storage|profile|move|image} command (#986):
+ * No message tells the user to run an {@code incus storage|profile|move|image|network|remote}
+ * command (#986, #1139):
  * isx runs the operation itself, through {@code IncusClient}, so a remediation works the same
  * over the Unix socket and over the macOS vsock tunnel, where the host has no {@code incus} CLI
  * at all (#939). The only exceptions are hints printed on Linux before isx manages anything,
@@ -24,10 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class NoIncusCliHintTest {
 
     private static final List<Path> SOURCES = List.of(
-            Path.of("src/main/java"), Path.of("../common/src/main/java"));
+            Path.of("src/main/java"), Path.of("../common/src/main/java"), Path.of("../proxy/src/main/java"));
 
     private static final Pattern HINT =
-            Pattern.compile("\"[^\"\\n]*\\bincus (storage|profile|move|image)\\b[^\"\\n]*\"");
+            Pattern.compile("\"[^\"\\n]*\\bincus (storage|profile|move|image|network|remote)\\b[^\"\\n]*\"");
 
     /** Linux-only hints, by file. */
     private static final Map<String, Set<String>> ALLOWED = Map.of(
@@ -37,10 +38,17 @@ class NoIncusCliHintTest {
                     "\"    incus profile device add default root disk path=/ pool=\"",
                     "\"    incus profile device add default eth0 nic network=incusbr0\"",
                     "\"  Resize with: sudo incus storage set cow size=200GiB\"",
-                    "\"sudo incus storage create cow btrfs size=100GiB\""),
-            // noCowPoolMsg's Linux arm
+                    "\"sudo incus storage create cow btrfs size=100GiB\"",
+                    "\"    incus network set incusbr0 ipv4.address 172.20.0.1/24\""),
+            // the Linux arms of noCowPoolMsg and unknownRemoteMsg
             "IncusClient.java", Set.of(
-                    "\" Create one with: sudo incus storage create cow btrfs size=100GiB\""));
+                    "\" Create one with: sudo incus storage create cow btrfs size=100GiB\"",
+                    "\"Add it with: incus remote add \""),
+            // gatewayUnavailableHint's Linux arm
+            "ProxyConfig.java", Set.of("\"Is Incus running? Try 'incus network list'.\""),
+            // --gateway-ip on Linux, where the proxy shares the host with the incus CLI
+            "ProxyMain.java", Set.of(
+                    "\"'incus network get incusbr0 ipv4.address' shows (10.166.11.1, not 10.166.11.1/24).\""));
 
     @Test
     void noMessageNamesAnIncusCommandForTheUserToRun() throws IOException {

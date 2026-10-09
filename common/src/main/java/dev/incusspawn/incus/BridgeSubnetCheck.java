@@ -125,9 +125,7 @@ public final class BridgeSubnetCheck {
                     + ") overlaps with a host route:\n  " + conflict
                     + "\n\nDNS queries to the bridge gateway are likely being routed"
                     + " through the VPN instead of reaching the bridge."
-                    + "\n\nFix: run 'isx init' to auto-detect and reconfigure the bridge subnet,"
-                    + "\nor manually run:"
-                    + "\n  incus network set incusbr0 ipv4.address 172.20.0.1/24";
+                    + "\n\nFix: run 'isx init' to auto-detect and reconfigure the bridge subnet.";
         } catch (Exception e) {
             return null;
         }
