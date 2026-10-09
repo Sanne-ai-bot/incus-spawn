@@ -9,11 +9,13 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.UnaryOperator;
 
 @CommandDefinition(
         name = "tools",
@@ -60,26 +62,32 @@ public class ToolsCommand extends BaseCommand {
                 outputFormat.print(System.out, records(tools, loader::getSource));
                 return CommandResult.SUCCESS;
             }
+            printTable(System.out, tools, loader::getSource, verbose);
+            return CommandResult.SUCCESS;
+        }
+
+        /** The {@code table} format: the names, or with {@code verbose} a name, source and description per row. */
+        static void printTable(PrintStream out, Map<String, ToolSetup> tools,
+                               UnaryOperator<String> sourceOf, boolean verbose) {
             if (!verbose) {
-                tools.keySet().forEach(System.out::println);
-                return CommandResult.SUCCESS;
+                tools.keySet().forEach(out::println);
+                return;
             }
             int maxName = tools.keySet().stream().mapToInt(String::length).max().orElse(10);
-            int maxSource = tools.values().stream()
-                    .mapToInt(t -> loader.getSource(t.name()).length())
+            int maxSource = tools.keySet().stream()
+                    .mapToInt(name -> sourceOf.apply(name).length())
                     .max().orElse(7);
             var fmt = "%-" + maxName + "s  %-" + maxSource + "s  %s%n";
-            System.out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
+            out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
             for (var entry : tools.entrySet()) {
-                System.out.printf(fmt, entry.getKey(),
-                        loader.getSource(entry.getKey()), entry.getValue().description());
+                out.printf(fmt, entry.getKey(),
+                        sourceOf.apply(entry.getKey()), entry.getValue().description());
             }
-            return CommandResult.SUCCESS;
         }
 
         /** The fields of {@code isx tools list --format=plain|json}, in order: add to the end, never rename. */
         static List<Map<String, Object>> records(Map<String, ToolSetup> tools,
-                                                 java.util.function.UnaryOperator<String> sourceOf) {
+                                                 UnaryOperator<String> sourceOf) {
             var records = new ArrayList<Map<String, Object>>();
             tools.forEach((name, tool) -> {
                 var record = new LinkedHashMap<String, Object>();
@@ -122,20 +130,7 @@ public class ToolsCommand extends BaseCommand {
                 return CommandResult.SUCCESS;
             }
 
-            System.out.println(tool.name());
-            System.out.println("  Description:  " + tool.description());
-            System.out.println("  Source:        " + loader.getSource(name));
-            if (tool.feature() != null) {
-                System.out.println("  Feature gate:  " + tool.feature());
-            }
-
-            printRequires(tool);
-            printPackages(tool);
-            printParameters(tool);
-            printActions(tool);
-            printDownloads(tool);
-            printProxy(tool);
-
+            print(System.out, tool, loader.getSource(name));
             return CommandResult.SUCCESS;
         }
 
@@ -167,72 +162,89 @@ public class ToolsCommand extends BaseCommand {
             return record;
         }
 
-        private static void printRequires(ToolSetup tool) {
+        /** The {@code table} format: the tool's details, one per line. */
+        static void print(PrintStream out, ToolSetup tool, String source) {
+            out.println(tool.name());
+            out.println("  Description:  " + tool.description());
+            out.println("  Source:        " + source);
+            if (tool.feature() != null) {
+                out.println("  Feature gate:  " + tool.feature());
+            }
+
+            printRequires(out, tool);
+            printPackages(out, tool);
+            printParameters(out, tool);
+            printActions(out, tool);
+            printDownloads(out, tool);
+            printProxy(out, tool);
+        }
+
+        private static void printRequires(PrintStream out, ToolSetup tool) {
             var requires = tool.requires();
             if (!requires.isEmpty()) {
-                System.out.println("  Requires:      " + String.join(", ", requires));
+                out.println("  Requires:      " + String.join(", ", requires));
             }
         }
 
-        private static void printPackages(ToolSetup tool) {
+        private static void printPackages(PrintStream out, ToolSetup tool) {
             var packages = tool.packages();
             if (!packages.isEmpty()) {
-                System.out.println("  Packages:      " + String.join(", ", packages));
+                out.println("  Packages:      " + String.join(", ", packages));
             }
         }
 
-        private static void printParameters(ToolSetup tool) {
+        private static void printParameters(PrintStream out, ToolSetup tool) {
             var params = tool.parameters();
             if (params.isEmpty()) return;
-            System.out.println("  Parameters:");
+            out.println("  Parameters:");
             for (var entry : params.entrySet()) {
                 var p = entry.getValue();
                 var sb = new StringBuilder("    ").append(entry.getKey());
                 if (p.getType() != null) sb.append(" (").append(p.getType()).append(')');
                 if (p.getDefault() != null) sb.append(" default=").append(p.getDefault());
-                System.out.println(sb);
+                out.println(sb);
                 if (p.getDescription() != null && !p.getDescription().isBlank()) {
-                    System.out.println("      " + p.getDescription());
+                    out.println("      " + p.getDescription());
                 }
                 if (p.getOptions() != null && !p.getOptions().isEmpty()) {
-                    System.out.println("      options: " + String.join(", ", p.getOptions()));
+                    out.println("      options: " + String.join(", ", p.getOptions()));
                 }
             }
         }
 
-        private static void printActions(ToolSetup tool) {
+        private static void printActions(PrintStream out, ToolSetup tool) {
             var actions = tool.actions();
             if (actions.isEmpty()) return;
-            System.out.println("  Actions:");
+            out.println("  Actions:");
             for (var a : actions) {
                 var sb = new StringBuilder("    ").append(a.getLabel());
                 if (a.getType() != null) sb.append(" (").append(a.getType()).append(')');
-                System.out.println(sb);
+                out.println(sb);
             }
         }
 
-        private static void printDownloads(ToolSetup tool) {
+        private static void printDownloads(PrintStream out, ToolSetup tool) {
             if (!(tool instanceof YamlToolSetup yaml)) return;
             var downloads = yaml.toolDef().getDownloads();
             if (downloads.isEmpty()) return;
-            System.out.println("  Downloads:");
+            out.println("  Downloads:");
             for (var dl : downloads) {
                 var sb = new StringBuilder("    ").append(dl.getUrl());
                 if (dl.getArch() != null) sb.append(" [").append(dl.getArch()).append(']');
-                System.out.println(sb);
+                out.println(sb);
             }
         }
 
-        private static void printProxy(ToolSetup tool) {
+        private static void printProxy(PrintStream out, ToolSetup tool) {
             var proxy = tool.proxy();
             if (proxy == null) return;
             var auth = proxy.getAuth();
             if (auth == null || auth.isEmpty()) return;
-            System.out.println("  Proxy domains:");
+            out.println("  Proxy domains:");
             for (var a : auth) {
                 if (a.getDomains() != null) {
                     for (var domain : a.getDomains()) {
-                        System.out.println("    " + domain + " (" + a.getType() + ")");
+                        out.println("    " + domain + " (" + a.getType() + ")");
                     }
                 }
             }
