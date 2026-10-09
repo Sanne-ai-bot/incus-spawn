@@ -1,0 +1,27 @@
+package dev.incusspawn.incus;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** What isx says when an image names an Incus remote it cannot resolve. */
+class UnknownRemoteMsgTest {
+
+    @Test
+    void onMacOsTheMessageNamesWhereRemotesAreReadNotAnIncusCommand() {
+        // #1139: the macOS host has no 'incus' CLI to add a remote with (#939).
+        var msg = IncusClient.unknownRemoteMsg("mine", "mine:fedora/44", true);
+        assertTrue(msg.contains("Unknown Incus remote 'mine'"), msg);
+        assertTrue(msg.contains("config.yml"), msg);
+        assertTrue(msg.contains("addr"), msg);
+        assertTrue(msg.contains("'images'"), msg);
+        assertFalse(msg.contains("incus remote"), msg);
+    }
+
+    @Test
+    void onLinuxTheMessagePointsAtIncusRemoteAdd() {
+        var msg = IncusClient.unknownRemoteMsg("mine", "mine:fedora/44", false);
+        assertTrue(msg.contains("incus remote add mine <url>"), msg);
+    }
+}
