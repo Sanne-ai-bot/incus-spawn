@@ -123,8 +123,8 @@ public class MitmProxy {
     );
 
     private final String bindAddress;
-    private final int mitmPort;
-    private final int healthPort;
+    private final int requestedMitmPort;
+    private final int requestedHealthPort;
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -383,8 +383,8 @@ public class MitmProxy {
         this.vertx = vertx;
         this.bindAddress = bindAddress;
         this.healthBindAddress = healthBindAddress;
-        this.mitmPort = mitmPort;
-        this.healthPort = healthPort;
+        this.requestedMitmPort = mitmPort;
+        this.requestedHealthPort = healthPort;
         // Null would compare unequal to every capture: permanent drift, a restart per command.
         this.configFingerprint = java.util.Objects.requireNonNull(configFingerprint, "configFingerprint");
     }
@@ -742,6 +742,19 @@ public class MitmProxy {
     }
 
     /**
+     * The port the MITM server listens on: the one it was given, or the one the kernel picked
+     * when that was 0. Read it once {@code onReady} has run.
+     */
+    public int mitmPort() {
+        return mitmServer.actualPort();
+    }
+
+    /** The health server's port, as {@link #mitmPort()} is the MITM server's. */
+    public int healthPort() {
+        return healthHttpServer.actualPort();
+    }
+
+    /**
      * Start the MITM proxy and health server. Blocks until {@link #stop()} is called.
      *
      * @param onReady called after both servers are listening, before blocking on the stop latch.
@@ -762,7 +775,7 @@ public class MitmProxy {
         // MITM TLS server with SNI
         var serverOptions = new HttpServerOptions()
                 .setHost(bindAddress)
-                .setPort(mitmPort)
+                .setPort(requestedMitmPort)
                 .setSsl(true)
                 .setSni(true)
                 .setKeyCertOptions(keyCertOptions)
@@ -860,7 +873,7 @@ public class MitmProxy {
             } catch (Exception e) {
                 if (attempt >= maxRetries || !isBindException(e)) throw e;
                 if (!ProxyHealthCheck.isHealthy(healthBindAddress)) throw e;
-                ProxyLog.warn("Port " + mitmPort + " in use, previous proxy still running (" + attempt + "/" + maxRetries + ")");
+                ProxyLog.warn("Port " + requestedMitmPort + " in use, previous proxy still running (" + attempt + "/" + maxRetries + ")");
                 Thread.sleep(200);
             }
         }
@@ -874,17 +887,17 @@ public class MitmProxy {
                         default -> req.response().setStatusCode(404).end();
                     }
                 });
-        healthHttpServer.listen(healthPort, healthBindAddress)
+        healthHttpServer.listen(requestedHealthPort, healthBindAddress)
                 .toCompletionStage().toCompletableFuture().get();
 
         if (onReady != null) {
             onReady.run();
         }
 
-        ProxyLog.info("Listening on " + bindAddress + ":" + mitmPort);
-        ProxyLog.info("Health endpoint on " + healthBindAddress + ":" + healthPort);
-        System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort);
-        System.out.println("Health endpoint on " + healthBindAddress + ":" + healthPort + "/health");
+        ProxyLog.info("Listening on " + bindAddress + ":" + mitmPort());
+        ProxyLog.info("Health endpoint on " + healthBindAddress + ":" + healthPort());
+        System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort());
+        System.out.println("Health endpoint on " + healthBindAddress + ":" + healthPort() + "/health");
         System.out.println("Intercepted domains: " + configState.routing().allInterceptedDomains());
         System.out.println("Registry cache: " + registryCacheDir() +
                 " (domains: " + REGISTRY_DOMAINS + ")");
