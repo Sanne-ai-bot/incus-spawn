@@ -78,7 +78,8 @@ public final class VmAgentRecovery {
         long restarted = incus.pid(name);
         if (restarted > 0) stamps.put(Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
         incus.configSetAll(name, stamps);
-        incus.waitForReady(name, MachineType.VM, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret));
+        incus.waitForReady(name, MachineType.VM, InstanceSecret.GUEST_SCRIPT,
+                InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance)));
     }
 
     private static IncusException refusal(String name, String why) {

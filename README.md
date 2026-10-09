@@ -265,17 +265,9 @@ The agent that coordinates the others can itself run in an isx instance, so that
 isx branch coord --from tpl-dev --proxy-only --mcp-client
 ```
 
-Inside it, `isx mcp` is served at `https://mcp.isx.internal/mcp` (MCP's Streamable HTTP transport) by the host proxy, which runs one host `isx mcp` for the instance. Each request must come from the instance's own address and carry the secret isx gives it at every start, in `X-Isx-Instance-Secret`; the file holding it is named by `$ISX_INSTANCE_SECRET_FILE`. In the instance:
+Inside it, `isx mcp` is served at `https://mcp.isx.internal/mcp` (MCP's Streamable HTTP transport) by the host proxy, which runs one host `isx mcp` for the instance. Each request must come from the instance's own address and carry the secret isx gives it at every start, in `X-Isx-Instance-Secret`. If the template has the `claude` tool, there is nothing to set up: every isx start registers the server in the instance's Claude Code (`claude mcp list` shows it as `isx`), with a `headersHelper` that reads the current secret from `/run/isx/instance-secret`, so interactive sessions, `claude --continue` and `claude -p` under a systemd unit all have the tools. Claude Code runs a `headersHelper` only in a trusted workspace; the `claude` tool already trusts the home directory and every repository the template clones, so a coordinator started from anywhere else meets Claude Code's ordinary trust prompt once. A copy of the coordinator (`isx branch --from coord`) loses the registration on its first start, along with the grant. The server also offers the coordination workflow as a prompt, which Claude Code lists as `/mcp__isx__coordinate`. `isx branch --mcp-client` asks the server from inside the new instance once it has started, and says whether it was reached (with the server's version and tool count) or why not, and whether its Claude Code has the server.
 
-```shell
-claude mcp add-json --scope user isx "$(cat <<'EOF'
-{"type": "http", "url": "https://mcp.isx.internal/mcp",
- "headersHelper": "printf '{\"X-Isx-Instance-Secret\":\"%s\"}' \"$(cat \"$ISX_INSTANCE_SECRET_FILE\")\""}
-EOF
-)"
-```
-
-Claude Code runs a `headersHelper` only in a workspace you have trusted, so start it once interactively in the directory the coordinator works in. It gets exactly the tools, approved templates and limits a host agent gets, and the same `mcp:` configuration applies. What differs:
+It gets exactly the tools, approved templates and limits a host agent gets, and the same `mcp:` configuration applies. What differs:
 
 - **The session is the instance.** What it creates stays held by it across restarts of its Claude Code and of the instance itself, and is picked up again on the next connection: nothing to adopt. Its instances become orphans only once it is destroyed, or no longer allowed to call; a new coordinator under the same name is another session and gets none of them. One whose template you no longer approve is released when the coordinator next connects, as a host session's would be when it ends.
 - **One connection at a time.** A new connection from the instance ends its previous one.

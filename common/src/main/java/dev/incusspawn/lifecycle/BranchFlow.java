@@ -346,7 +346,9 @@ public final class BranchFlow {
             InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
         }
 
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched, secret);
+        // The grant is the request's own: a copy never carries its source's (configureBranch)
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched, secret,
+                Metadata.isMcpCaller(req.extraConfig()));
         // Or the first shell would take this boot for one isx did not start, and replace its secret
         var booted = InstanceLifecycle.recordSecretBoot(incus, name, machineType);
 

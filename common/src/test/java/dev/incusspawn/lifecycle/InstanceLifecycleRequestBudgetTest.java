@@ -73,6 +73,21 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void ensureReadyStartsAStoppedInstanceWithoutReadingItAgain() {
+        // The shell path already read the instance to see it is stopped: the start's device
+        // repairs and its mcp-caller grant (#1182) take that read
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
+        var instance = daemon.instance(NAME);
+        assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(daemon.clientWithShortReadyWait(),
+                NAME, instance, dev.incusspawn.incus.MachineType.CONTAINER, msg -> {}));
+        var requests = daemon.requests();
+        var beforeProbe = requests.subList(0, requests.indexOf("POST /1.0/instances/" + NAME + "/exec"));
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME, "PUT /1.0/instances/" + NAME + "/state"),
+                beforeProbe.subList(0, 2), String.join("\n", requests));
+        assertEquals(3, beforeProbe.size(), () -> "ensureReady before its first probe:\n" + String.join("\n", requests));
+    }
+
+    @Test
     void aContainerStartAndItsCaCheckAddOneWriteForTheBoot() {
         // isx shell's and the TUI's start, then their CA check. The start reads the instance once
         // the guest answers, for the boot Incus recorded, and stamps it (#1024); the CA check

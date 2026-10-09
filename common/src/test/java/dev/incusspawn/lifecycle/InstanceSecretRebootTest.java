@@ -177,7 +177,7 @@ class InstanceSecretRebootTest {
         var incus = spy(daemon.client());
         doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), any(), anyMap());
 
-        InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER);
+        InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false);
 
         var bootedAt = daemon.instance(NAME).path("last_used_at").asText("");
         assertNotEquals(STARTED, bootedAt);

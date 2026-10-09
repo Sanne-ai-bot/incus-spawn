@@ -106,6 +106,10 @@ public final class InstanceSecret {
      * <p>A container answers exec as soon as its init runs, possibly before systemd has mounted
      * the tmpfs on /run: a secret written then would land on the rootfs -- hidden by the mount,
      * and carried into copies. The script gives the mount a moment, and skips the write without it.
+     *
+     * <p>Then it brings the Claude Code registration of {@code isx mcp} in line with the
+     * instance's {@code mcp-caller} grant ({@link McpClientRegistration}), so every start that
+     * delivers a secret reconciles it too.
      */
     public static final String GUEST_SCRIPT = "isx_secret=$" + DELIVERY_ENV + "; unset " + DELIVERY_ENV + "; "
             + "[ -n \"$isx_secret\" ] && { i=0; until " + RUN_IS_TMPFS + "; do i=$((i+1)); [ $i -ge 60 ] && break; sleep 0.05; done; "
@@ -114,7 +118,8 @@ public final class InstanceSecret {
             + " && chgrp 1000 " + GUEST_PATH + ".new && chmod 440 " + GUEST_PATH + ".new"
             + " && mv -f " + GUEST_PATH + ".new " + GUEST_PATH
             + " && printf '%s\\n' " + Container.shellQuote("export " + FILE_ENV_VAR + "=" + GUEST_PATH) + " > " + PROFILE_PATH
-            + "; } >/dev/null 2>&1; unset isx_secret; true";
+            + "; } >/dev/null 2>&1; unset isx_secret; true\n"
+            + McpClientRegistration.GUEST_SCRIPT;
 
     /** What {@link #GUEST_CHECK} prints for a guest that holds no secret. */
     public static final String MISSING = "isx-instance-secret-missing";
@@ -132,9 +137,14 @@ public final class InstanceSecret {
         return stdout != null && stdout.lines().anyMatch(MISSING::equals);
     }
 
-    /** The exec environment that hands {@code secret} to {@link #GUEST_SCRIPT}. */
-    public static Map<String, String> guestEnv(String secret) {
-        return Map.of(DELIVERY_ENV, requireHex(secret));
+    /**
+     * The exec environment that hands {@code secret} to {@link #GUEST_SCRIPT}, and says whether
+     * the instance holds the {@code mcp-caller} grant ({@link Metadata#isMcpCallerGrant}): the
+     * caller reads it from the instance it already holds, never assumes it, since a wrong answer
+     * either way would remove a coordinator's registration or leave a copy with one.
+     */
+    public static Map<String, String> guestEnv(String secret, boolean mcpCaller) {
+        return Map.of(DELIVERY_ENV, requireHex(secret), McpClientRegistration.ENV, mcpCaller ? "1" : "0");
     }
 
     /** Only what {@link #generate} makes is ever handed to the guest as a secret. */
