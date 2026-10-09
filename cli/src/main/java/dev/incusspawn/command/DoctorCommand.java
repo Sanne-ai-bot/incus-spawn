@@ -49,7 +49,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
@@ -950,10 +952,19 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private Finding checkForwarderLeak() {
-        int host = VmManager.vsockForwarderConnectionCount();
+        return forwarderLeakFinding(VmManager.vsockForwarderConnectionCount(),
+                VmAgentClient.socatCount(), VmAgentClient::ping);
+    }
+
+    /**
+     * Turns the host's vfkit fd count and the guest's socat count into the forwarder finding, and
+     * picks its fix: the no-reboot forwarder restart when the leak is in the forwarder (or cannot be
+     * located) and the agent answers, a VM restart otherwise. {@code agentAnswers} is asked only
+     * when a leak is reported.
+     */
+    static Finding forwarderLeakFinding(int host, OptionalInt guest, BooleanSupplier agentAnswers) {
         var base = forwarderFinding(host);
 
-        var guest = VmAgentClient.socatCount();
         var detail = base.detail();
         if (guest.isPresent()) {
             detail = append(detail, "(in-guest socat: " + guest.getAsInt() + ")");
@@ -962,17 +973,14 @@ public class DoctorCommand extends BaseCommand {
         if (base.status() == Status.OK) {
             return new Finding(Status.OK, base.label(), detail, null);
         }
+        // A leak with no guest count to locate it gets the forwarder restart if the agent answers.
+        boolean forwarderFixes = true;
         if (guest.isPresent()) {
             var layer = VmManager.leakLayer(host, guest.getAsInt());
             detail = append(detail, "— " + layer.description);
-            if (layer == VmManager.LeakLayer.FORWARDER && VmAgentClient.ping()) {
-                return Finding.warn(base.label(), detail,
-                        new Remediation("Restart the forwarder in the VM (no reboot — running containers keep going)",
-                                false, DoctorCommand::restartForwarderViaAgent));
-            }
-            return new Finding(base.status(), base.label(), detail, base.remediation());
+            forwarderFixes = layer == VmManager.LeakLayer.FORWARDER;
         }
-        if (VmAgentClient.ping()) {
+        if (forwarderFixes && agentAnswers.getAsBoolean()) {
             return Finding.warn(base.label(), detail,
                     new Remediation("Restart the forwarder in the VM (no reboot — running containers keep going)",
                             false, DoctorCommand::restartForwarderViaAgent));

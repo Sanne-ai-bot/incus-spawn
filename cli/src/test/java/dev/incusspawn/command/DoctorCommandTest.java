@@ -18,7 +18,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -50,6 +52,87 @@ class DoctorCommandTest {
     }
 
     // leakLayer tests are canonical in VmManagerTest (the method now lives in VmManager).
+
+    // ---- Forwarder leak finding: which layer, and which fix it offers ----
+
+    private static final BooleanSupplier AGENT_ANSWERS = () -> true;
+    private static final BooleanSupplier AGENT_SILENT = () -> false;
+    private static final BooleanSupplier AGENT_NOT_ASKED = () -> fail("the agent must not be asked");
+
+    private static void assertOffersVmRestart(DoctorCommand.Finding f) {
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertTrue(f.remediation().destructive(), "a VM restart stops running containers");
+        assertTrue(f.remediation().description().startsWith("Restart the VM"), f.remediation().description());
+    }
+
+    private static void assertOffersForwarderRestart(DoctorCommand.Finding f) {
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertFalse(f.remediation().destructive(), "the forwarder restart needs no reboot");
+        assertTrue(f.remediation().description().startsWith("Restart the forwarder in the VM"),
+                f.remediation().description());
+    }
+
+    @Test
+    void hostLeakOffersVmRestartWithoutAskingTheAgent() {
+        var f = DoctorCommand.forwarderLeakFinding(300, OptionalInt.of(5), AGENT_NOT_ASKED);
+        assertOffersVmRestart(f);
+        assertEquals("vsock forwarder connections: 300", f.label());
+        assertTrue(f.detail().contains("(in-guest socat: 5)"), f.detail());
+        assertTrue(f.detail().endsWith("— " + VmManager.LeakLayer.VFKIT.description), f.detail());
+    }
+
+    @Test
+    void forwarderLeakWithTheAgentAnsweringOffersTheNoRebootRestart() {
+        var f = DoctorCommand.forwarderLeakFinding(300, OptionalInt.of(280), AGENT_ANSWERS);
+        assertOffersForwarderRestart(f);
+        assertTrue(f.detail().contains("(in-guest socat: 280)"), f.detail());
+        assertTrue(f.detail().endsWith("— " + VmManager.LeakLayer.FORWARDER.description), f.detail());
+    }
+
+    @Test
+    void forwarderLeakWithoutTheAgentFallsBackToVmRestart() {
+        var f = DoctorCommand.forwarderLeakFinding(300, OptionalInt.of(280), AGENT_SILENT);
+        assertOffersVmRestart(f);
+        assertTrue(f.detail().endsWith("— " + VmManager.LeakLayer.FORWARDER.description),
+                "the layer is still reported when its fix cannot be offered: " + f.detail());
+    }
+
+    @Test
+    void layerBoundaryPicksTheFix() {
+        assertOffersVmRestart(DoctorCommand.forwarderLeakFinding(100, OptionalInt.of(50), AGENT_NOT_ASKED));
+        assertOffersForwarderRestart(DoctorCommand.forwarderLeakFinding(100, OptionalInt.of(51), AGENT_ANSWERS));
+    }
+
+    @Test
+    void stoppedGuestForwarderGetsTheNoRebootRestart() {
+        assertOffersForwarderRestart(DoctorCommand.forwarderLeakFinding(300, OptionalInt.of(0), AGENT_ANSWERS));
+    }
+
+    @Test
+    void countAtThresholdIsOkWithoutAskingTheAgent() {
+        var f = DoctorCommand.forwarderLeakFinding(VmManager.VSOCK_CONN_WARN_THRESHOLD, OptionalInt.of(1), AGENT_NOT_ASKED);
+        assertEquals(DoctorCommand.Status.OK, f.status());
+        assertNull(f.remediation());
+        assertEquals("(in-guest socat: 1)", f.detail());
+    }
+
+    @Test
+    void unmeasurableHostCountIsOkWithoutAskingTheAgent() {
+        var f = DoctorCommand.forwarderLeakFinding(-1, OptionalInt.of(3), AGENT_NOT_ASKED);
+        assertEquals(DoctorCommand.Status.OK, f.status());
+        assertNull(f.remediation());
+        assertEquals("(not measurable) (in-guest socat: 3)", f.detail());
+    }
+
+    // No guest count: socat-count timed out or its reply did not parse (an agent without the verb),
+    // while ping, a separate request, may still answer.
+    @Test
+    void leakWithoutAGuestCountOffersTheFixTheAgentAllows() {
+        var answering = DoctorCommand.forwarderLeakFinding(300, OptionalInt.empty(), AGENT_ANSWERS);
+        assertOffersForwarderRestart(answering);
+        assertFalse(answering.detail().contains("in-guest socat"), answering.detail());
+        assertOffersVmRestart(DoctorCommand.forwarderLeakFinding(300, OptionalInt.empty(), AGENT_SILENT));
+    }
 
     // ---- Storage pool usage evaluation ----
 
