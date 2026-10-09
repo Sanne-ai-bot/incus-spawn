@@ -3,6 +3,8 @@ paths:
   - "cli/src/main/java/dev/incusspawn/command/BuildCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/CleanCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/BranchCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/ProjectCommand.java"
+  - "common/src/main/java/dev/incusspawn/lifecycle/TemplateLock.java"
   - "cli/src/main/java/dev/incusspawn/command/UpdateBaseCommand.java"
   - "cli/src/main/java/dev/incusspawn/baseimage/**"
   - "common/src/main/java/dev/incusspawn/config/HostResourceSetup.java"
@@ -26,7 +28,9 @@ For VMs, `buildFromScratch` applies the entire ancestor chain from YAML definiti
 
 **VM guest SELinux** (#842): VM builds pin `/etc/selinux/config` to `SELINUX=disabled` before any dnf run (`disableGuestSelinux`, both build paths) and fail at the end if it reads `enforcing` (`assertGuestSelinuxNotEnforcing`). The guest filesystem is unlabelled and the targeted policy denies the incus-agent's vsock `listen`, so an enforcing guest builds fine but is unreachable after its next boot. Seeding works because `selinux-policy`'s `%post` only writes the file when it is missing or empty. Do not replace this with a relabel: that does not fix the agent denial.
 
-**Swap safety** (#717): `buildSingleImage` builds under `<name>-rebuilding` and swaps it in at the end. Before anything is created, `requireNoStrandedStorage` refuses when either name is an orphaned subvolume or a dangling record (`IncusClient.scanSubvolumes()`), since the swap would otherwise fail only after the whole build. The swap's `IncusClient.rename` checks that the record and the subvolume both moved, and a failure there goes through the build's failure handling (report, promote to `-failed-build`).
+**Swap safety** (#717): `buildSingleImage` builds under `<name>-rebuilding` and swaps it in at the end. Before anything is created, `reportStrandedStorage` refuses (in `isx project create` too) when either name is an orphaned subvolume or a dangling record (`IncusClient.scanSubvolumes()`), since the swap would otherwise fail only after the whole build. The swap's `IncusClient.rename` checks that the record and the subvolume both moved, and a failure there goes through the build's failure handling (report, promote to `-failed-build`).
+
+**Swapping a template others copy from** (#1212): the swap is a delete and a rename (Incus cannot rename onto an existing name), so between the two the template does not exist. `TemplateLock.replace` does it holding the template's `HostLock` exclusively (`~/.cache/incus-spawn/locks/templates/<name>.lock`), and everything that copies from a template holds it shared (`TemplateLock.reading`) from looking the template up until the copy is made, through the start for a branch: `isx branch`, the TUI's branch, `isx mcp`'s `create_instance(template)` and `delegate(template)` (`InstanceBackend.holdTemplate`), `buildFromParent`, `isx build`'s missing-or-outdated check of a parent and of the parent's own parent (`parentNeedsBuild`), its rebuild confirmation's lookup of the chain and `isx project create` from its parent lookup to the copy. A new path that copies a template takes `TemplateLock.reading` the same way. `isx project create` builds under `<name>-rebuilding` too and swaps through the same call, so a failed re-create keeps the previous template (a failed swap keeps the build). Only names Incus accepts get a lock file (a project-local `name:` or an agent's argument is untrusted), and `isx mcp` takes the hold only after `TemplatePolicy.requireListed`.
 
 Package deduplication: `BuildCommand` collects all ancestor packages and subtracts them from the install list so derived images only install what's new.
 

@@ -30,6 +30,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.BuildAccounts;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -151,6 +152,18 @@ public class BuildCommand extends BaseCommand {
     // Half the 48-connection valve, leaving room for concurrent TUI/status activity
     private static final int MACOS_TUNNEL_BUDGET = 24;
     static final String REBUILDING_SUFFIX = "-rebuilding";
+
+    /** The longest template name that can be rebuilt: it is built as {@code <name>-rebuilding} first. */
+    static final int MAX_TEMPLATE_NAME_LENGTH = TemplateLock.MAX_INSTANCE_NAME_LENGTH - REBUILDING_SUFFIX.length();
+
+    /** True once it has said that {@code name} is too long to be built under its temporary name. */
+    static boolean reportNameTooLong(String name) {
+        if (name.length() <= MAX_TEMPLATE_NAME_LENGTH) return false;
+        System.err.println("Error: '" + name + "' is too long to build: it is built as '" + name + REBUILDING_SUFFIX
+                + "' first, and Incus allows " + TemplateLock.MAX_INSTANCE_NAME_LENGTH
+                + " characters, so a template name may have at most " + MAX_TEMPLATE_NAME_LENGTH + ".");
+        return true;
+    }
     private static final String INBOX_FAILURE_PATH = "/home/agentuser/inbox/BUILD_FAILURE.txt";
 
     private int buildIndex;
@@ -655,9 +668,12 @@ public class BuildCommand extends BaseCommand {
             return;
         }
         chain.add(imageDef.getName());
+        // Before any of it is built: a child that cannot be built is no reason to rebuild its parents
+        if (chain.stream().anyMatch(BuildCommand::reportNameTooLong)) throw new BuildFailedException(imageDef.getName());
         // One question for the chain, not one per existing image (#1069). Like a single build,
-        // a chain that replaces nothing does not ask.
-        if (chain.stream().anyMatch(incus::exists)
+        // a chain that replaces nothing does not ask. Each asked holding it, so one caught in
+        // another isx's swap is not taken for missing and replaced without asking (#1212).
+        if (chain.stream().anyMatch(this::existsHeld)
                 && !confirmBatch("This will rebuild: ", chain, defs, "Rebuild?")) return;
         rebuildAll(chain, defs);
     }
@@ -678,15 +694,36 @@ public class BuildCommand extends BaseCommand {
         // parent Incus instances are not needed.
         if (effectiveMachineType(imageDef) != effectiveMachineType(parentDef)) return;
 
-        if (!incus.exists(parentName)) {
-            BuildOutput.note("Parent '" + parentName + "' not found, building first.");
-        } else if (isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs)) {
-            BuildOutput.note("Parent '" + parentName + "' is outdated, rebuilding first.");
-        } else {
-            return;
-        }
+        if (!parentNeedsBuild(parentName, parentDef, defs)) return;
         collectParentsToBuild(parentDef, defs, chain);
         chain.add(parentName);
+    }
+
+    private boolean existsHeld(String name) {
+        try (var held = TemplateLock.reading(name, BuildOutput::note)) {
+            return incus.exists(name);
+        }
+    }
+
+    /**
+     * Whether the parent is missing or outdated, saying which. Asked holding the parent in place:
+     * caught between the delete and the rename of another isx's rebuild, it would read as missing
+     * and be rebuilt a second time, racing the first (#1212). Its own parent too: the outdated check
+     * reads it, and one caught missing would make the parent look current.
+     */
+    boolean parentNeedsBuild(String parentName, ImageDef parentDef, Map<String, ImageDef> defs) {
+        try (var parentHeld = TemplateLock.reading(parentName, BuildOutput::note);
+             var grandparentHeld = TemplateLock.reading(parentDef.getParent(), BuildOutput::note)) {
+            if (!incus.exists(parentName)) {
+                BuildOutput.note("Parent '" + parentName + "' not found, building first.");
+                return true;
+            }
+            if (isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs)) {
+                BuildOutput.note("Parent '" + parentName + "' is outdated, rebuilding first.");
+                return true;
+            }
+            return false;
+        }
     }
 
     /**
@@ -697,6 +734,7 @@ public class BuildCommand extends BaseCommand {
     void buildSingleImage(ImageDef imageDef, Map<String, ImageDef> defs) {
         var canonicalName = imageDef.getName();
         var tempName = canonicalName + REBUILDING_SUFFIX;
+        if (reportNameTooLong(canonicalName)) throw new BuildFailedException(canonicalName);
 
         BuildOutput.buildHeader(canonicalName, buildIndex, buildTotal);
 
@@ -711,7 +749,7 @@ public class BuildCommand extends BaseCommand {
             throw new BuildFailedException(canonicalName);
         }
 
-        requireNoStrandedStorage(canonicalName, tempName);
+        if (reportStrandedStorage(incus, canonicalName, tempName)) throw new BuildFailedException(canonicalName);
 
         if (!batchConfirmed && incus.exists(canonicalName)) {
             if (!yes) {
@@ -739,8 +777,7 @@ public class BuildCommand extends BaseCommand {
 
             // The swap is part of the build: when it fails the build has not produced a template, so it
             // must go through the same report-and-promote path as any other failure.
-            incus.deleteIfExists(canonicalName);
-            incus.rename(tempName, canonicalName);
+            TemplateLock.replace(incus, tempName, canonicalName, BuildOutput::note);
             activeBuild = null;
             buildDone(canonicalName);
         } catch (Exception e) {
@@ -767,11 +804,12 @@ public class BuildCommand extends BaseCommand {
      * Refuse to start a build whose final swap cannot succeed (#717). A subvolume Incus has no record
      * of under either name makes the create or the rename fail with "file exists", but only after
      * the whole build; a record whose subvolume is missing would be deleted along the way, stranding
-     * whatever data it had. Silent when the pool cannot be inspected.
+     * whatever data it had. Silent when the pool cannot be inspected. True once it has reported why
+     * the build must not start; {@code isx project create} swaps the same way, and asks too.
      */
-    void requireNoStrandedStorage(String canonicalName, String tempName) {
+    static boolean reportStrandedStorage(IncusClient incus, String canonicalName, String tempName) {
         var scan = incus.scanSubvolumes().orElse(null);
-        if (scan == null) return;
+        if (scan == null) return false;
         var problems = new ArrayList<String>();
         for (var name : List.of(canonicalName, tempName)) {
             if (scan.isOrphan(name)) {
@@ -783,11 +821,11 @@ public class BuildCommand extends BaseCommand {
                         + "' has no subvolume for it, and replacing it could strand its data");
             }
         }
-        if (problems.isEmpty()) return;
+        if (problems.isEmpty()) return false;
         System.err.println("Cannot build " + canonicalName + ":");
         problems.forEach(p -> System.err.println("  - " + p));
         System.err.println("Run 'isx doctor' to inspect the storage pool.");
-        throw new BuildFailedException(canonicalName);
+        return true;
     }
 
     /** Builds the template under {@code tempName}, from scratch or from its parent. */
@@ -1113,13 +1151,16 @@ public class BuildCommand extends BaseCommand {
         var parentCanonical = imageDef.getParent();
         var machineType = activeBuild.machineType();
 
-        var copyPlan = incus.planCopy(parentSource);
-        if (!copyPlan.cow()) {
-            BuildOutput.warn("Deriving will be a full copy, not a CoW clone: "
-                    + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
+        // Another isx may be rebuilding the parent: hold it in place from the read to the copy
+        try (var parentHeld = TemplateLock.reading(parentSource, BuildOutput::note)) {
+            var copyPlan = incus.planCopy(parentSource);
+            if (!copyPlan.cow()) {
+                BuildOutput.warn("Deriving will be a full copy, not a CoW clone: "
+                        + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
+            }
+            BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'...");
+            incus.copy(parentSource, buildName, copyPlan);
         }
-        BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'...");
-        incus.copy(parentSource, buildName, copyPlan);
         if (machineType == MachineType.CONTAINER) {
             incus.configSet(buildName, "security.idmap.size", "165536");
             incus.configSet(buildName, "security.nesting", "true");

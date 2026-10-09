@@ -365,8 +365,12 @@ final class McpTools {
             InstanceBackend.TemplateInfo info;
             InstanceBackend.CreatedInstance created;
             if (template != null) {
-                info = policy.require(template);
-                created = newInstance(info, hint, purpose, key, listing, ctx);
+                // Before the hold: an agent's arbitrary name gets no lock file
+                policy.requireListed(template);
+                try (var held = backend.holdTemplate(template)) {
+                    info = policy.require(template);
+                    created = newInstance(info, hint, purpose, key, listing, ctx);
+                }
             } else {
                 var metadata = session.requireOwned(source);
                 if (!InstanceBackend.stopped(metadata)) {
@@ -827,14 +831,18 @@ final class McpTools {
             return underKey(key, made -> delegateInReplayed(made, key, template, cwd, prompt, profile), listing -> {
                 // A task key used elsewhere would only be refused once the instance is made for nothing.
                 if (key != null) tasks.keyed(null, Tasks.AGENT, key);
-                var info = policy.require(template);
-                requireDelegate(info);
-                var mode = permissionMode(info.name());
-                // Refuse before branching an instance the task could not start in.
-                tasks.checkCapacityForNewAgent();
-                var created = newInstance(info, "task", args.string("purpose"), key, listing, ctx);
-                return new Made(created, () -> startDelegate(created.name(), info.name(),
-                        created.accounts().get(ModelCheck.NAMESPACE), cwd, created.workdir(), prompt, profile, mode, true, key));
+                // Before the hold: an agent's arbitrary name gets no lock file
+                policy.requireListed(template);
+                try (var held = backend.holdTemplate(template)) {
+                    var info = policy.require(template);
+                    requireDelegate(info);
+                    var mode = permissionMode(info.name());
+                    // Refuse before branching an instance the task could not start in.
+                    tasks.checkCapacityForNewAgent();
+                    var created = newInstance(info, "task", args.string("purpose"), key, listing, ctx);
+                    return new Made(created, () -> startDelegate(created.name(), info.name(),
+                            created.accounts().get(ModelCheck.NAMESPACE), cwd, created.workdir(), prompt, profile, mode, true, key));
+                }
             });
         }
         return delegateIn(instance, cwd, prompt, profile, key);

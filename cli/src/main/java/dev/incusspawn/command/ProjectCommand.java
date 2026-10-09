@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -63,10 +64,10 @@ public class ProjectCommand extends BaseCommand {
         }
 
         /**
-         * Builds the template from {@code projectConfig}, returning the exit code. A failed repo
-         * clone or pre-build, or anything thrown on the way, fails the command and deletes the
-         * half-built template, so a project template that exists is one whose create completed
-         * (as with {@code isx build}).
+         * Builds the template from {@code projectConfig} under a temporary name and, once that
+         * succeeds, puts it in place of the one there was, as {@code isx build} does: a failed repo
+         * clone or pre-build, or anything thrown on the way, fails the command, deletes the build and
+         * leaves the previous template as it was (#1212). Returns the exit code.
          */
         int create(IncusClient incus, ProjectConfig projectConfig) {
             var imageName = name != null ? name : projectConfig.getName();
@@ -75,70 +76,90 @@ public class ProjectCommand extends BaseCommand {
                 System.err.println("Error: project name is required (either as argument or in incus-spawn.yaml 'name' field).");
                 return 1;
             }
+            if (BuildCommand.reportNameTooLong(imageName)) return 1;
 
             var parent = projectConfig.getParent();
+            boolean exists;
+            boolean built;
+            var buildName = imageName + BuildCommand.REBUILDING_SUFFIX;
+            // Held from the lookup until the copy is made, so a rebuild of the parent cannot swap it
+            // away meanwhile (#1212)
+            try (var parentHeld = TemplateLock.reading(parent, BuildOutput::note)) {
+                if (!incus.exists(parent)) {
+                    System.err.println("Error: parent image '" + parent + "' does not exist. Run 'incus-spawn build " + parent + "' first.");
+                    return 1;
+                }
 
-            if (!incus.exists(parent)) {
-                System.err.println("Error: parent image '" + parent + "' does not exist. Run 'incus-spawn build " + parent + "' first.");
+                BuildOutput.header("Creating project template " + imageName);
+                BuildOutput.note("Parent: " + parent);
+
+                exists = incus.exists(imageName);
+                if (exists) {
+                    BuildOutput.note("'" + imageName + "' already exists. It will be replaced if the create succeeds.");
+                }
+
+                if (BuildCommand.reportStrandedStorage(incus, imageName, buildName)) return 1;
+                // What a create that died before its swap left behind
+                incus.deleteIfExists(buildName);
+                try {
+                    var machineType = incus.machineType(parent);
+                    BuildOutput.stepStart("Cloning from " + parent + "...");
+                    incus.copy(parent, buildName);
+                    // Copied: another isx's rebuild of the parent may go ahead
+                    parentHeld.close();
+                    built = build(incus, buildName, imageName, parent, machineType, projectConfig);
+                } catch (RuntimeException e) {
+                    try {
+                        incus.deleteIfExists(buildName);
+                    } catch (RuntimeException deleteFailed) {
+                        e.addSuppressed(deleteFailed);
+                    }
+                    throw e;
+                }
+            }
+            if (!built) {
+                BuildOutput.stepStart("Deleting the incomplete template...");
+                incus.delete(buildName, true);
+                BuildOutput.stepDone();
+                System.err.println("Error: project template " + imageName + " was not "
+                        + (exists ? "replaced; the previous one is kept." : "created.")
+                        + " Fix the failure above and run 'isx project create' again.");
                 return 1;
             }
-
-            BuildOutput.header("Creating project template " + imageName);
-            BuildOutput.note("Parent: " + parent);
-
-            if (incus.exists(imageName)) {
-                BuildOutput.note("'" + imageName + "' already exists — deleting and rebuilding.");
-                incus.delete(imageName, true);
-            }
-
-            try {
-                if (build(incus, imageName, parent, projectConfig)) return 0;
-            } catch (RuntimeException e) {
-                try {
-                    incus.deleteIfExists(imageName);
-                } catch (RuntimeException deleteFailed) {
-                    e.addSuppressed(deleteFailed);
-                }
-                throw e;
-            }
-            BuildOutput.stepStart("Deleting the incomplete template...");
-            incus.delete(imageName, true);
-            BuildOutput.stepDone();
-            System.err.println("Error: project template " + imageName + " was not created."
-                    + " Fix the failure above and run 'isx project create' again.");
-            return 1;
+            // Not deleted if this fails: by then it may be the only build there is
+            TemplateLock.replace(incus, buildName, imageName, BuildOutput::note);
+            BuildOutput.success("Project template " + imageName + " created.");
+            return 0;
         }
 
-        /** Builds and stops the template; false, after the failed step reported why, when one failed. */
-        private static boolean build(IncusClient incus, String imageName, String parent, ProjectConfig projectConfig) {
-            // Clone from parent
-            var machineType = incus.machineType(parent);
-            BuildOutput.stepStart("Cloning from " + parent + "...");
-            incus.copy(parent, imageName);
-            incus.start(imageName);
-            incus.waitForReady(imageName, machineType);
+        /**
+         * Starts and builds {@code buildName}, just copied from {@code parent}, into the template
+         * {@code imageName}, and stops it; false, after the failed step reported why, when one failed.
+         */
+        private static boolean build(IncusClient incus, String buildName, String imageName, String parent,
+                                     MachineType machineType, ProjectConfig projectConfig) {
+            incus.start(buildName);
+            incus.waitForReady(buildName, machineType);
             BuildOutput.stepDone();
 
             // Clone repos
             if (projectConfig.getRepos() != null) {
                 for (var repo : projectConfig.getRepos()) {
                     BuildOutput.stepStart("Cloning " + repo + "...");
-                    var cloned = incus.execInContainer(imageName, "agentuser", "git clone " + shellQuote(repo));
+                    var cloned = incus.execInContainer(buildName, "agentuser", "git clone " + shellQuote(repo));
                     if (!GuestUpdate.finish(cloned, "git clone " + repo)) return false;
                 }
             }
 
-            if (!preBuild(incus, imageName, projectConfig.getPreBuild())) return false;
+            if (!preBuild(incus, buildName, projectConfig.getPreBuild())) return false;
 
-            InstanceLifecycle.tagMetadata(incus, imageName, Metadata.TYPE_PROJECT, parent);
-            incus.configSet(imageName, Metadata.PROJECT, imageName);
+            InstanceLifecycle.tagMetadata(incus, buildName, Metadata.TYPE_PROJECT, parent);
+            incus.configSet(buildName, Metadata.PROJECT, imageName);
 
             // Stop the template
             BuildOutput.stepStart("Stopping template...");
-            incus.stop(imageName);
+            incus.stop(buildName);
             BuildOutput.stepDone();
-
-            BuildOutput.success("Project template " + imageName + " created.");
             return true;
         }
 

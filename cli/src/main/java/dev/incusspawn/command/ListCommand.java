@@ -21,6 +21,7 @@ import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -5408,8 +5409,14 @@ public class ListCommand extends BaseCommand {
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
                 cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of());
 
-        var preflight = BranchFlow.preflight(incus, request, imageDefs);
-        var prefetched = BranchFlow.create(incus, preflight);
+        BranchFlow.Preflight preflight;
+        InstanceLifecycle.RuntimeConfig prefetched;
+        // Held through the branch's start, so a rebuild cannot swap the template away meanwhile (#1212).
+        // Plain stdout: the TUI has released the terminal for the branch and the shell after it.
+        try (var held = TemplateLock.reading(source, System.out::println)) {
+            preflight = BranchFlow.preflight(incus, request, imageDefs);
+            prefetched = BranchFlow.create(incus, preflight);
+        }
 
         BuildOutput.success(name + " is ready.");
         var shellPrep = prefetched.toShellPrep();
