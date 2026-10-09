@@ -14,7 +14,6 @@ import dev.incusspawn.Warnings;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -442,17 +441,7 @@ public final class VmManager {
         var restUriFile = Environment.vmRestUriFile();
         if (!guestAgreed && handle.get().isAlive() && Files.exists(restUriFile)) {
             try {
-                var uri = Files.readString(restUriFile).strip();
-                var client = HttpClient.newBuilder()
-                        .connectTimeout(Duration.ofSeconds(2))
-                        .build();
-                var request = HttpRequest.newBuilder()
-                        .uri(URI.create(uri + "/vm/state"))
-                        .timeout(Duration.ofSeconds(5))
-                        .POST(HttpRequest.BodyPublishers.ofString("{\"state\":\"Stop\"}"))
-                        .header("Content-Type", "application/json")
-                        .build();
-                client.send(request, HttpResponse.BodyHandlers.discarding());
+                VfkitRest.post(Files.readString(restUriFile).strip(), "/vm/state", "{\"state\":\"Stop\"}");
                 awaitExit(handle.get(), Duration.ofSeconds(5));
             } catch (Exception ignored) {}
         }
@@ -898,12 +887,32 @@ public final class VmManager {
     }
 
     private static void startVfkit(int cpus, int memoryMiB) throws IOException {
-        int restPort = findFreePort();
         ensureDummyInitrd();
+        // vfkit does not start on a socket path that exists, and one it was killed on stays behind.
+        Files.deleteIfExists(Environment.vmRestSocket());
 
-        var vfkitBin = ensureVfkitAppBundle();
+        var cmd = vfkitCommand(ensureVfkitAppBundle(), cpus, memoryMiB);
 
-        var cmd = new ArrayList<>(List.of(
+        // vfkit's own stdout/stderr, perl's included (a broken POSIX module, a missing target), go
+        // to vfkitLogFile(), never vmLogFile(): vfkit opens that one itself, non-append, for the
+        // VM's own virtio-serial console, and a second, append-mode writer on the same file
+        // corrupts both (#971 review) — vfkit's own periodic lines ("machine awake" on host wake,
+        // timesync setup) land at EOF over console bytes `isx vm console` has already read past,
+        // and the console's next write lands over those. A separate file also keeps `vm.log`
+        // absent, and the first-launch TCC note it gates on, through a perl failure: vfkit's own
+        // output never touches it.
+        long pid = launchInOwnSession(cmd, "vfkit", Environment.vfkitLogFile(), Environment.vmPidFile()).pid();
+        Files.writeString(Environment.vmRestUriFile(), VfkitRest.uriOf(Environment.vmRestSocket()));
+        BuildOutput.stepDone("pid=" + pid + ", rest=" + Environment.vmRestSocket().getFileName() + noSessionNote());
+    }
+
+    /**
+     * vfkit's command line. Its REST API listens on a Unix socket, never on a TCP port: a port
+     * has to be chosen before vfkit binds it, and vfkit exits if another process took it in
+     * between (#1189).
+     */
+    static List<String> vfkitCommand(String vfkitBin, int cpus, int memoryMiB) {
+        return new ArrayList<>(List.of(
                 vfkitBin,
                 "--cpus", String.valueOf(cpus),
                 "--memory", String.valueOf(memoryMiB),
@@ -921,20 +930,8 @@ public final class VmManager {
                 "--device", "virtio-vsock,port=" + AGENT_VSOCK_PORT
                         + ",socketURL=" + Environment.vmAgentSocket() + ",connect",
                 "--timesync", "vsockPort=" + GA_VSOCK_PORT,
-                "--restful-uri", "tcp://localhost:" + restPort
+                "--restful-uri", VfkitRest.uriOf(Environment.vmRestSocket())
         ));
-
-        // vfkit's own stdout/stderr, perl's included (a broken POSIX module, a missing target), go
-        // to vfkitLogFile(), never vmLogFile(): vfkit opens that one itself, non-append, for the
-        // VM's own virtio-serial console, and a second, append-mode writer on the same file
-        // corrupts both (#971 review) — vfkit's own periodic lines ("machine awake" on host wake,
-        // timesync setup) land at EOF over console bytes `isx vm console` has already read past,
-        // and the console's next write lands over those. A separate file also keeps `vm.log`
-        // absent, and the first-launch TCC note it gates on, through a perl failure: vfkit's own
-        // output never touches it.
-        long pid = launchInOwnSession(cmd, "vfkit", Environment.vfkitLogFile(), Environment.vmPidFile()).pid();
-        Files.writeString(Environment.vmRestUriFile(), "http://localhost:" + restPort);
-        BuildOutput.stepDone("pid=" + pid + ", rest=localhost:" + restPort + noSessionNote());
     }
 
     private static final Path PERL = Path.of("/usr/bin/perl");
@@ -1491,14 +1488,6 @@ public final class VmManager {
         Files.write(path, baos.toByteArray());
     }
 
-    private static int findFreePort() {
-        try (var socket = new ServerSocket(0)) {
-            return socket.getLocalPort();
-        } catch (IOException e) {
-            throw new VmException("Could not find a free port for vfkit REST API");
-        }
-    }
-
     private static String normalizeArch() {
         var arch = System.getProperty("os.arch");
         if ("amd64".equals(arch)) return "x86_64";
@@ -1519,6 +1508,7 @@ public final class VmManager {
     private static void cleanupStaleFiles() {
         try { Files.deleteIfExists(Environment.vmPidFile()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(Environment.vmRestUriFile()); } catch (IOException ignored) {}
+        try { Files.deleteIfExists(Environment.vmRestSocket()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(Environment.vmVsockSocket()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(Environment.vmAgentSocket()); } catch (IOException ignored) {}
     }
