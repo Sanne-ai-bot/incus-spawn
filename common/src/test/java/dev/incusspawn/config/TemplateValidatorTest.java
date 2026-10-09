@@ -150,6 +150,77 @@ class TemplateValidatorTest {
     }
 
     @Test
+    void unresolvableHostResourcesAreErrors(@TempDir Path dir) throws Exception {
+        // A copy is never refused for where it goes, but isx build still refuses one it cannot
+        // place, and a resource with nothing to mount or copy.
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                parent: tpl-dev
+                host-resources:
+                  - source: https://example.com/x.tgz
+                    mode: copy
+                  - path: /opt/y
+                """);
+        var errors = TemplateValidator.validate(file, knownTemplates()).errors();
+        assertEquals(2, errors.size(), errors.toString());
+        assertTrue(errors.getFirst().contains("'path' is required for URL sources"), errors.getFirst());
+        assertEquals("a host-resource has no 'source'", errors.get(1));
+    }
+
+    @Test
+    void projectLocalTemplateReportsEachRefusalOnce(@TempDir Path dir) throws Exception {
+        // collectEffective re-checks the targets validateHostResources already reported: neither
+        // a forbidden mount nor a path Path.of refuses may escape as an exception, or twice. A
+        // source is resolved against the project only there, so its refusal must still be reported.
+        var images = Files.createDirectories(dir.resolve(".incus-spawn/images"));
+        Files.createDirectories(dir.resolve("data"));
+        var file = images.resolve("tpl-test.yaml");
+        for (var resource : List.of("source: data\n    path: /etc/containers",
+                "source: data\n    path: \"/opt/x\\0\"",
+                "source: https://example.com/x.tgz\n    mode: copy",
+                "source: \"data/x\\0\"\n    mode: copy",
+                "source: \"data/x\\0\"\n    path: /opt/x\n    mode: copy")) {
+            Files.writeString(file, """
+                    name: tpl-test
+                    parent: tpl-dev
+                    host-resources:
+                      - %s
+                    """.formatted(resource));
+            var errors = TemplateValidator.validate(file, knownTemplates(), images).errors();
+            assertEquals(1, errors.size(), errors.toString());
+        }
+    }
+
+    @Test
+    void projectLocalTemplateReportsEveryRefusedResource(@TempDir Path dir) throws Exception {
+        // One refused resource must not hide another's refusal, whichever rule refuses it.
+        var images = Files.createDirectories(dir.resolve(".incus-spawn/images"));
+        Files.createDirectories(dir.resolve("data"));
+        var file = images.resolve("tpl-test.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                parent: tpl-dev
+                host-resources:
+                  - source: "data/x\\0"
+                    path: /opt/x
+                    mode: copy
+                  - source: data
+                    path: /etc/x
+                  - source: ~/.ssh
+                    path: /opt/ssh
+                  - mode: copy
+                    path: /opt/y
+                """);
+        var errors = TemplateValidator.validate(file, knownTemplates(), images).errors();
+        assertEquals(4, errors.size(), errors.toString());
+        assertTrue(errors.get(0).startsWith("Nul character not allowed"), errors.get(0));
+        assertTrue(errors.get(1).contains("a system directory"), errors.get(1));
+        assertTrue(errors.get(2).contains("host-resource '~/.ssh'"), errors.get(2));
+        assertEquals("a host-resource has no 'source'", errors.get(3));
+    }
+
+    @Test
     void invalidHostResourceMode(@TempDir Path dir) throws Exception {
         var file = dir.resolve("test.yaml");
         Files.writeString(file, """
