@@ -557,29 +557,34 @@ final class Tasks {
     }
 
     /** The probe of {@code name} under way, or a new one: never two at once for one instance. */
-    private CompletableFuture<Long> probeElsewhere(String name) {
+    CompletableFuture<Long> probeElsewhere(String name) {
         var started = new CompletableFuture<Long>();
         var probe = probing.putIfAbsent(name, started);
         if (probe != null) return probe;
         Thread.ofVirtual().start(() -> {
+            Long count = null;
+            RuntimeException failure = null;
             try {
                 var out = new ByteArrayOutputStream();
                 var began = System.nanoTime();
                 var exit = backend.probe(name, TaskScripts.busy(), out, elsewhereTimeout);
                 if (exit != 0) throw new ToolError(ToolError.Code.UNAVAILABLE, "exit " + exit);
-                var count = (long) TaskScripts.taskIds(out.toString(StandardCharsets.UTF_8).lines()).size();
+                count = (long) TaskScripts.taskIds(out.toString(StandardCharsets.UTF_8).lines()).size();
                 // An instance that answers, but slowly -- after the caller gave up, or close to it --
                 // would cost every task start nearly the whole wait: it is treated as one that did
                 // not answer, and not asked while it cools down.
                 if (System.nanoTime() - began > elsewhereTimeout.toNanos() / 2) {
                     quietUntil.put(name, System.nanoTime() + elsewhereCooldown.toNanos());
                 }
-                started.complete(count);
             } catch (RuntimeException e) {
-                started.completeExceptionally(e);
+                failure = e;
             } finally {
+                // Gone before anyone hears the answer: a caller it wakes may start the next count
+                // at once, and must not be handed this one, already over (#1223).
                 probing.remove(name, started);
             }
+            if (failure != null) started.completeExceptionally(failure);
+            else started.complete(count);
         });
         return started;
     }
