@@ -114,6 +114,19 @@ public class BuildSource {
         return definitions.values().stream().anyMatch(def -> def.getProjectRoot() != null);
     }
 
+    /**
+     * The file {@code template} was built from, read from the stamped JSON without binding the
+     * whole build context; null if the stamp is missing, unreadable or does not name it.
+     */
+    public static String sourceOf(String json, String template) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return JSON.readTree(json).path("sources").path(template).textValue();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public static BuildSource fromJson(String json) {
         if (json == null || json.isBlank()) return null;
         try {

@@ -224,4 +224,14 @@ class BuildSourceTest {
         assertEquals(java.nio.file.Path.of("/work/repo"), restored.get("tpl-project").getProjectRoot());
         assertNull(restored.get("tpl-user").getProjectRoot());
     }
+
+    @Test
+    void sourceOfReadsTheStampedFileOfOneTemplate() {
+        var json = new BuildSource(Map.of(), null, null,
+                Map.of("tpl-test", "/home/me/images/tpl-test.yaml", "tpl-base", "built-in")).toJson();
+        assertEquals("/home/me/images/tpl-test.yaml", BuildSource.sourceOf(json, "tpl-test"));
+        assertNull(BuildSource.sourceOf(json, "tpl-other"));
+        assertNull(BuildSource.sourceOf("not json", "tpl-test"));
+        assertNull(BuildSource.sourceOf("", "tpl-test"));
+    }
 }

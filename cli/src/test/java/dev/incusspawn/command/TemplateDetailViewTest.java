@@ -73,7 +73,23 @@ class TemplateDetailViewTest {
     }
 
     private static TemplateDetailView view(Set<String> defChanged) throws Exception {
+        return view(defChanged, Map.of(), Map.of());
+    }
+
+    private static final String KVM_SOURCE = "/home/me/work/images/tpl-kvm.yaml";
+    private static final String USER_KVM_SOURCE = "/home/me/.config/incus-spawn/images/tpl-kvm.yaml";
+
+    private static TemplateDetailView view(Set<String> defChanged, Map<String, String> overridden,
+                                           Map<String, String> builtFrom) throws Exception {
+        return view(defChanged, overridden.isEmpty() && builtFrom.isEmpty() ? null : KVM_SOURCE,
+                overridden, builtFrom);
+    }
+
+    private static TemplateDetailView view(Set<String> defChanged, String kvmSource,
+                                           Map<String, String> overridden,
+                                           Map<String, String> builtFrom) throws Exception {
         var defs = defs();
+        if (kvmSource != null) defs.get("tpl-kvm").setSource(kvmSource);
         var source = new TemplateDetailView.Source() {
             @Override public Map<String, ImageDef> imageDefs() { return defs; }
             @Override public List<String> autoDeps(List<String> tools) {
@@ -82,6 +98,8 @@ class TemplateDetailViewTest {
             @Override public Path hostRepoMatch(String url) { return null; }
             @Override public boolean definitionChanged(String t) { return defChanged.contains(t); }
             @Override public boolean parentRebuilt(String t) { return false; }
+            @Override public String overriddenSource(String t) { return overridden.get(t); }
+            @Override public String builtFrom(String t) { return builtFrom.get(t); }
             @Override public String currentVersion() { return "1.4.0"; }
         };
         return new TemplateDetailView(new ModalRenderer(THEME), THEME, source, () -> NOW);
@@ -129,6 +147,46 @@ class TemplateDetailViewTest {
         assertTrue(screen.contains("! built with isx v1.3.0 (current: v1.4.0)"), screen);
         assertTrue(screen.contains("△ definition changed since last build"), screen);
         assertTrue(screen.contains("(7 days ago)") || screen.contains("(1 week ago)"), screen);
+    }
+
+    @Test
+    void overrideAndOtherBuildFileAreShownUnderSource() throws Exception {
+        var screen = text(view(Set.of("tpl-kvm"), Map.of("tpl-kvm", USER_KVM_SOURCE),
+                Map.of("tpl-kvm", USER_KVM_SOURCE)), BUILT_STALE, 120, 50);
+        assertTrue(screen.contains("Source:         " + KVM_SOURCE), screen);
+        assertTrue(screen.contains("Overrides:      " + USER_KVM_SOURCE), screen);
+        assertTrue(screen.contains("built from " + USER_KVM_SOURCE), screen);
+    }
+
+    @Test
+    void buildFromTheBuiltInDefinitionIsSaidInWords() throws Exception {
+        var screen = text(view(Set.of(), Map.of("tpl-kvm", "built-in"), Map.of("tpl-kvm", "built-in")),
+                BUILT_STALE, 120, 50);
+        assertTrue(screen.contains("built from the built-in definition"), screen);
+        assertTrue(screen.contains("Overrides:      the built-in definition"), screen);
+        assertFalse(screen.replace("the built-in definition", "").contains("built-in"), screen);
+    }
+
+    @Test
+    void aBuildFromStoredMetadataIsSaidInWords() throws Exception {
+        var screen = text(view(Set.of(), Map.of(), Map.of("tpl-kvm", "stored")), BUILT_STALE, 120, 50);
+        assertTrue(screen.contains("built from the definition stored with an earlier build"), screen);
+    }
+
+    @Test
+    void aBuiltInSourceIsSaidInWords() throws Exception {
+        var screen = text(view(Set.of(), "built-in", Map.of(), Map.of("tpl-kvm", KVM_SOURCE)),
+                BUILT_STALE, 120, 50);
+        assertTrue(screen.contains("Source:         the built-in definition"), screen);
+        assertTrue(screen.contains("built from " + KVM_SOURCE), screen);
+    }
+
+    @Test
+    void sameBuildFileAndNoOverrideAddNothing() throws Exception {
+        var screen = text(view(Set.of(), Map.of(),
+                Map.of("tpl-kvm", KVM_SOURCE)), BUILT_STALE, 120, 50);
+        assertFalse(screen.contains("Overrides:"), screen);
+        assertFalse(screen.contains("built from"), screen);
     }
 
     @Test
