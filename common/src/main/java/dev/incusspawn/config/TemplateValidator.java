@@ -18,6 +18,11 @@ public class TemplateValidator {
     }
 
     public static ValidationResult validate(Path file, Map<String, ImageDef> knownTemplates) {
+        return validate(file, knownTemplates, ImageDef.projectImagesDir());
+    }
+
+    /** {@code projectImagesDir} is where project-local templates live: the working directory's. */
+    static ValidationResult validate(Path file, Map<String, ImageDef> knownTemplates, Path projectImagesDir) {
         var errors = new ArrayList<String>();
         var warnings = new ArrayList<String>();
 
@@ -50,8 +55,7 @@ public class TemplateValidator {
             warnings.add("Root template (no parent) should specify an 'image' field");
         }
 
-        validateHostResources(def, warnings, errors);
-        validateProjectLocalHostResources(file, def, errors);
+        validateHostResources(file, def, projectImagesDir, warnings, errors);
         validateDuplicateTools(def, warnings);
 
         return new ValidationResult(errors, warnings);
@@ -59,33 +63,41 @@ public class TemplateValidator {
 
     private static final Set<String> VALID_HR_MODES = Set.of("readonly", "overlay", "copy");
 
-    private static void validateHostResources(ImageDef def, List<String> warnings, List<String> errors) {
+    /**
+     * Each host resource on its own, through what {@code isx build} runs on it, so every refused
+     * one is reported, once: its target, and for a project-local template its confinement to the
+     * project, while the file is still being edited.
+     */
+    private static void validateHostResources(Path file, ImageDef def, Path projectImagesDir,
+                                              List<String> warnings, List<String> errors) {
+        var imagesDir = projectImagesDir.toAbsolutePath().normalize();
+        var projectLocal = imagesDir.equals(file.toAbsolutePath().normalize().getParent());
         for (var hr : def.getHostResources()) {
             if (hr.getMode() != null && !VALID_HR_MODES.contains(hr.getMode())) {
                 warnings.add("host-resource mode '" + hr.getMode()
                         + "' is not valid — must be one of: readonly, overlay, copy");
             }
+            if (hr.getSource() == null || hr.getSource().isBlank()) {
+                errors.add("a host-resource has no 'source'");
+                continue;
+            }
+            var single = new ImageDef();
+            single.setName(def.getName());
+            single.setHostResources(List.of(hr));
+            if (projectLocal) {
+                single.setSource(file.toAbsolutePath().normalize().toString());
+                single.setProjectRoot(imagesDir.getParent().getParent());
+            }
             try {
-                HostResourceSetup.requireAllowedMountTarget(hr);
-            } catch (HostResourceSetup.ForbiddenMountTargetException e) {
+                HostResourceSetup.collectEffective(single, Map.of());
+            } catch (HostResourceSetup.ForbiddenMountTargetException
+                     | HostResourceSetup.HostPathOutsideProjectException e) {
+                // isx's multi-line advice, the values it quotes already made safe.
                 errors.add(e.getMessage());
             } catch (IllegalArgumentException e) {
-                // Path.of's own refusal quotes the raw path.
+                // Path.of's refusal quotes the raw path.
                 errors.add(OutputFormat.oneLine(e.getMessage()));
             }
-        }
-    }
-
-    /** The rule {@code isx build} enforces, reported while the file is still being edited. */
-    private static void validateProjectLocalHostResources(Path file, ImageDef def, List<String> errors) {
-        var dir = file.toAbsolutePath().normalize().getParent();
-        if (!ImageDef.projectImagesDir().toAbsolutePath().normalize().equals(dir)) return;
-        def.setSource(file.toAbsolutePath().normalize().toString());
-        def.setProjectRoot(ImageDef.projectRoot());
-        try {
-            HostResourceSetup.collectEffective(def, Map.of());
-        } catch (HostResourceSetup.HostPathOutsideProjectException e) {
-            errors.add(e.getMessage());
         }
     }
 
