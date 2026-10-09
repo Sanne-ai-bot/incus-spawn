@@ -119,6 +119,26 @@ class ToolDefLoaderTest {
     }
 
     @Test
+    void aProjectToolAlsoReachedThroughASymlinkedSearchPathStaysProjectLocal(@TempDir Path tempDir) throws Exception {
+        // The project's .incus-spawn is also a search path, spelled through a symlink: the tool is
+        // the project's whichever spelling is scanned first, so its proxy: stays refused
+        var project = Files.createDirectories(tempDir.resolve("proj/.incus-spawn/tools"));
+        Files.writeString(project.resolve("evil.yaml"), """
+                name: evil
+                run:
+                  - echo evil
+                """);
+        var link = Files.createSymbolicLink(tempDir.resolve("link"), project.getParent());
+
+        var loader = new ToolDefLoader();
+        loader.setSearchPaths(java.util.List.of(link.toString()));
+        loader.setProjectToolsDir(project);
+
+        assertEquals(java.util.Set.of("evil"), loader.projectLocalToolNames());
+        assertEquals(project.resolve("evil.yaml").toString(), loader.getSource("evil"));
+    }
+
+    @Test
     void userDefinedToolOverridesBuiltin(@TempDir Path tempDir) throws Exception {
         // Create a user-defined podman.yaml that overrides the built-in
         var userYaml = """

@@ -152,6 +152,8 @@ public class ListCommand extends BaseCommand {
                 }
                 @Override public boolean definitionChanged(String template) { return templatesDefChanged.contains(template); }
                 @Override public boolean parentRebuilt(String template) { return templatesParentRebuilt.contains(template); }
+                @Override public String overriddenSource(String template) { return imageLayers.overriddenSource(template); }
+                @Override public String builtFrom(String template) { return ListCommand.this.builtFrom(template); }
                 @Override public String currentVersion() { return BuildInfo.instance().version(); }
             }, java.time.LocalDateTime::now);
 
@@ -306,6 +308,13 @@ public class ListCommand extends BaseCommand {
     private boolean anyDefinitionChanged;
     private boolean anyParentRebuilt;
     private java.util.Set<String> templatesDefChanged = java.util.Set.of();
+    /** Where each image definition came from, for what it overrides. */
+    private dev.incusspawn.config.LayeredDefinitions<dev.incusspawn.config.ImageDef> imageLayers =
+            new dev.incusspawn.config.LayeredDefinitions<>("image");
+    /** Per built template, the file its build stamped, and the stamp it was read from. */
+    private Map<String, StampedFile> templatesBuiltFrom = Map.of();
+
+    private record StampedFile(String stamp, String file) {}
     private java.util.Set<String> templatesParentRebuilt = java.util.Set.of();
     private java.util.Set<String> templatesOutOfSync = java.util.Set.of();
     private java.util.Set<String> storedSourceTemplates = java.util.Set.of();
@@ -738,7 +747,8 @@ public class ListCommand extends BaseCommand {
         toolDefLoader.reload();
         // Through Warnings rather than straight into the log: each reload finds the same
         // problems again, and Warnings reports a message once until the user presses 'r'.
-        imageDefs = dev.incusspawn.config.ImageDef.loadAll(Warnings::warn);
+        imageLayers = dev.incusspawn.config.ImageDef.loadLayers(Warnings::warn);
+        imageDefs = imageLayers.defs();
         // Tool conflicts don't flow through image loadAll; surface them here too so
         // the TUI warns about duplicate tool names instead of only failing at build.
         for (var conflict : toolDefLoader.conflicts()) {
@@ -823,11 +833,19 @@ public class ListCommand extends BaseCommand {
         return allInstances;
     }
 
+    /** The file a built template's build stamped, or null. */
+    String builtFrom(String template) {
+        var stamped = templatesBuiltFrom.get(template);
+        return stamped == null ? null : stamped.file();
+    }
+
     /** Merge the Incus listing with the image definitions into the two panels' entry lists. */
-    private void mergeInstances(List<InstanceInfo> allInstances) {
+    // Package-private, with buildTemplateRowData and buildContextLine, for the wiring tests
+    void mergeInstances(List<InstanceInfo> allInstances) {
         // Build template panel data by merging ImageDef definitions with Incus state
         templateEntries = new ArrayList<>();
         var templateNames = new java.util.HashSet<String>();
+        var builtFrom = new java.util.HashMap<String, StampedFile>();
         for (var def : imageDefs.values()) {
             var name = def.getName();
             // Find matching Incus instance
@@ -844,6 +862,11 @@ public class ListCommand extends BaseCommand {
                         match.buildVersion, match.definitionSha, match.pendingOp,
                         match.parent, match.diskUsage, match.referencedBytes, match.instanceMode));
                 templateNames.add(name);
+                // A live refresh brings the same stamp again: parse it only when it changed
+                var json = match.buildSourceJson;
+                var previous = templatesBuiltFrom.get(name);
+                builtFrom.put(name, previous != null && java.util.Objects.equals(json, previous.stamp())
+                        ? previous : new StampedFile(json, BuildSource.sourceOf(json, name)));
             } else {
                 templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", "", "", -1, -1, ""));
             }
@@ -871,6 +894,7 @@ public class ListCommand extends BaseCommand {
             storedNames.add(inst.name);
         }
         storedSourceTemplates = storedNames;
+        templatesBuiltFrom = builtFrom;
 
         // Instance panel: exclude template instances (they're shown in the template panel)
         entries = new ArrayList<>();
@@ -2941,7 +2965,7 @@ public class ListCommand extends BaseCommand {
     }
 
 
-    private Line buildContextLine(TemplateInfo template, InstanceInfo instance, boolean onTemplates) {
+    Line buildContextLine(TemplateInfo template, InstanceInfo instance, boolean onTemplates) {
         var bg = theme.contextBg();
         if (onTemplates && template != null) {
             var spans = new ArrayList<Span>();
@@ -2959,7 +2983,14 @@ public class ListCommand extends BaseCommand {
                     hasWarning = true;
                 }
                 if (templatesDefChanged.contains(template.name)) {
-                    spans.add(Span.styled("  △ definition changed since last build", warnStyle));
+                    // The file name only: a full path could push the warnings after it off the bar
+                    var def = imageDefs.get(template.name);
+                    var builtFrom = TemplateDetailView.otherBuildFile(builtFrom(template.name), def);
+                    spans.add(Span.styled("  △ definition changed since last build"
+                            + (builtFrom != null ? " (built from "
+                                    + TemplateDetailView.shortSourceLabel(builtFrom, def.getSource())
+                                    + ")" : ""),
+                            warnStyle));
                     hasWarning = true;
                 }
                 if (templatesParentRebuilt.contains(template.name)) {
@@ -5222,7 +5253,7 @@ public class ListCommand extends BaseCommand {
 
     // --- Data ---
 
-    private void buildTemplateRowData() {
+    void buildTemplateRowData() {
         templateRows = new ArrayList<>();
         anyTemplateOutdated = false;
         anyDefinitionChanged = false;

@@ -57,6 +57,12 @@ final class TemplateDetailView {
 
         boolean parentRebuilt(String template);
 
+        /** Where the definition this one replaces from an earlier search layer lives, or null. */
+        String overriddenSource(String template);
+
+        /** The file the built image was built from, as its build stamped it, or null. */
+        String builtFrom(String template);
+
         String currentVersion();
     }
 
@@ -192,7 +198,15 @@ final class TemplateDetailView {
         addBuildStatus(lines, template);
 
         // Origin
-        lines.add(row("Source:", current.getSource(), dimStyle));
+        lines.add(row("Source:", sourceLabel(current.getSource()), dimStyle));
+        var builtFrom = template.isBuilt() ? otherBuildFile(source.builtFrom(template.name()), current) : null;
+        if (builtFrom != null) {
+            // Only a lead when the definition differs too; a moved, unchanged file needs no rebuild
+            lines.add(row("", "built from " + sourceLabel(builtFrom),
+                    source.definitionChanged(template.name()) ? warnStyle() : dimStyle));
+        }
+        var overridden = source.overriddenSource(template.name());
+        if (overridden != null) lines.add(row("Overrides:", sourceLabel(overridden), dimStyle));
         addBaseImage(lines, details.root());
         if (chain.size() > 1) {
             var names = chain.stream().map(ImageDef::getName).toList();
@@ -273,6 +287,36 @@ final class TemplateDetailView {
         var last = lines.get(lines.size() - 1);
         if (last.spans().stream().allMatch(s -> s.content().isEmpty())) lines.remove(lines.size() - 1);
         return lines;
+    }
+
+    /** A definition's origin for display: a path, or the words for a placeholder that is none. */
+    static String sourceLabel(String source) {
+        if (source == null) return "(unknown)";
+        return switch (source) {
+            case "built-in" -> "the built-in definition";
+            case "stored" -> "the definition stored with an earlier build";
+            default -> source;
+        };
+    }
+
+    /**
+     * The file name alone, for a one-line bar that has no room for a full path; "another" when
+     * {@code current} has the same name, so the two do not read as one file.
+     */
+    static String shortSourceLabel(String source, String current) {
+        if ("stored".equals(source)) return "stored definition";
+        if (!source.startsWith("/")) return sourceLabel(source);
+        var fileName = java.nio.file.Path.of(source).getFileName();
+        if (fileName == null) return source;
+        var name = fileName.toString();
+        var currentName = current != null && current.startsWith("/")
+                ? java.nio.file.Path.of(current).getFileName().toString() : null;
+        return name.equals(currentName) ? "another " + name : name;
+    }
+
+    /** The file a build was made from when it is not where {@code def} is now read from, else null. */
+    static String otherBuildFile(String builtFrom, ImageDef def) {
+        return builtFrom != null && def != null && !builtFrom.equals(def.getSource()) ? builtFrom : null;
     }
 
     private Line row(String label, String value, Style valueStyle) {

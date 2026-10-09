@@ -1,5 +1,7 @@
 package dev.incusspawn.config;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -85,7 +87,22 @@ public final class LayeredDefinitions<T> {
     public void put(String name, T def, Path source) {
         var seenInDir = currentDir.computeIfAbsent(name, k -> new ArrayList<>());
         if (seenInDir.isEmpty() && defs.containsKey(name)) {
-            overrides.add(new LayerOverride(kind, name, source.toString(), sources.get(name)));
+            var known = sources.get(name);
+            if (sameFile(source, known)) {
+                // The same file again (a directory listed twice, or reached through a symlink)
+                // overrides nothing. The later layer's path and definition are recorded as for any
+                // layer -- project-local confinement is read from them -- so the override the
+                // earlier spelling recorded (its latest) is carried over to the later one
+                for (int i = overrides.size() - 1; i >= 0; i--) {
+                    var o = overrides.get(i);
+                    if (o.name().equals(name) && o.overridingSource().equals(known)) {
+                        overrides.set(i, new LayerOverride(kind, name, source.toString(), o.overriddenSource()));
+                        break;
+                    }
+                }
+            } else {
+                overrides.add(new LayerOverride(kind, name, source.toString(), known));
+            }
         }
         seenInDir.add(source);
         defs.put(name, def);
@@ -132,6 +149,34 @@ public final class LayeredDefinitions<T> {
 
     /** Immutable snapshot of files that failed to parse and were skipped. */
     public List<Path> parseFailures() { return List.copyOf(parseFailures); }
+
+    /**
+     * Where the definition the kept {@code name} replaced from an earlier layer lives, or null if
+     * it replaced none. A name overridden on several layers answers the one just below it.
+     */
+    public String overriddenSource(String name) {
+        var kept = sources.get(name);
+        // Newest first: a file that also overrode on an earlier layer replaced the latest one
+        for (var override : overrides.reversed()) {
+            if (override.name().equals(name) && override.overridingSource().equals(kept)) {
+                return override.overriddenSource();
+            }
+        }
+        return null;
+    }
+
+    /** Whether {@code source} is the file {@code known} names, however the directory was reached. */
+    private static boolean sameFile(Path source, String known) {
+        if (known == null || "built-in".equals(known)) return false;
+        if (source.toString().equals(known)) return true;
+        // Ordinary overrides have another file name; only a repeat needs the file system asked
+        if (!source.getFileName().equals(Path.of(known).getFileName())) return false;
+        try {
+            return Files.isSameFile(source, Path.of(known));
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
+    }
 
     /** Immutable snapshot of cross-layer overrides (read-only diagnostics). */
     public List<LayerOverride> overrides() { return List.copyOf(overrides); }

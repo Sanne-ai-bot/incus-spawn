@@ -583,11 +583,23 @@ public class ImageDef {
     }
 
     static Map<String, ImageDef> loadAll(List<String> searchPaths, Consumer<String> warnings) {
+        return loadLayers(searchPaths, warnings).defs();
+    }
+
+    /**
+     * Like {@link #loadAll(Consumer)}, conflicts reported through {@code warnings}, but keeping
+     * where each definition came from and what it overrides.
+     */
+    public static LayeredDefinitions<ImageDef> loadLayers(Consumer<String> warnings) {
+        return loadLayers(SpawnConfig.load().getSearchPaths(), warnings);
+    }
+
+    private static LayeredDefinitions<ImageDef> loadLayers(List<String> searchPaths, Consumer<String> warnings) {
         var result = loadAllWithConflicts(searchPaths, warnings);
         for (var conflict : result.conflicts()) {
             warnings.accept(conflict.shortMessage());
         }
-        return result.defs();
+        return result;
     }
 
     /**

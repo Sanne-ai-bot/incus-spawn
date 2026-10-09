@@ -383,6 +383,41 @@ class ImageDefTest {
     }
 
     @Test
+    void overriddenSourceNamesTheLayerJustBelowTheKeptDefinition(@TempDir Path tempDir) throws Exception {
+        var lower = tempDir.resolve("lower/images");
+        var upper = tempDir.resolve("upper/images");
+        for (var dir : List.of(lower, upper)) {
+            Files.createDirectories(dir);
+            Files.writeString(dir.resolve("java.yaml"), """
+                    name: tpl-java
+                    parent: tpl-dev
+                    """);
+        }
+
+        var result = ImageDef.loadAllWithConflicts(
+                List.of(tempDir.resolve("lower").toString(), tempDir.resolve("upper").toString()), msg -> {});
+
+        assertEquals(upper.resolve("java.yaml").toString(), result.getSource("tpl-java"));
+        assertEquals(lower.resolve("java.yaml").toString(), result.overriddenSource("tpl-java"));
+        assertNull(result.overriddenSource("tpl-dev"));
+    }
+
+    @Test
+    void aDirectoryScannedTwiceOverridesNothing(@TempDir Path tempDir) throws Exception {
+        var images = tempDir.resolve("images");
+        Files.createDirectories(images);
+        Files.writeString(images.resolve("app.yaml"), """
+                name: tpl-app
+                parent: tpl-dev
+                """);
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString(), tempDir.toString()), msg -> {});
+
+        assertNull(result.overriddenSource("tpl-app"));
+        assertTrue(result.overrides().stream().noneMatch(o -> o.name().equals("tpl-app")));
+    }
+
+    @Test
     void sameDirectoryDuplicateOfBuiltinIsOnlyConflict(@TempDir Path tempDir) throws Exception {
         var imagesDir = tempDir.resolve("images");
         Files.createDirectories(imagesDir);
