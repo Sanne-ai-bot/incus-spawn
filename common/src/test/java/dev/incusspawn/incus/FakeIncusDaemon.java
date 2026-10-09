@@ -539,13 +539,18 @@ public final class FakeIncusDaemon implements IncusTransport {
         if (rest.isEmpty() && method.equals("PUT")) {
             // A full replacement: how Incus removes devices (PATCH cannot).
             var replacement = JSON.readTree(body);
+            var stale = staleRunningNic(instance, replacement);
+            if (stale != null) return badRequest(stale);
             instance.set("config", replacement.path("config").deepCopy());
             instance.set("devices", replacement.path("devices").deepCopy());
             expand(name);
             return sync(JSON.createObjectNode());
         }
         if (rest.isEmpty() && method.equals("PATCH")) {
-            applyPatch(instance, JSON.readTree(body));
+            var patch = JSON.readTree(body);
+            var stale = staleRunningNic(instance, patch);
+            if (stale != null) return badRequest(stale);
+            applyPatch(instance, patch);
             expand(name);
             return sync(JSON.createObjectNode());
         }
@@ -667,6 +672,30 @@ public final class FakeIncusDaemon implements IncusTransport {
         patchDevices(instance, patch);
     }
 
+    /**
+     * Why Incus refuses this write, or null: for a running instance it validates each NIC device
+     * the write touches with the address the NIC holds now, which a bridge subnet change has left
+     * off the network's subnet (#1009). A stopped instance is not checked.
+     */
+    private String staleRunningNic(ObjectNode instance, JsonNode patch) {
+        if (!holdsLiveState(instance.path("status").asText())) return null;
+        for (var e : patch.path("devices").properties()) {
+            var current = instance.path("expanded_devices").path(e.getKey());
+            // Incus validates what the write changes, so a PUT carrying the NIC as it is passes
+            if (!"nic".equals(current.path("type").asText()) || e.getValue().equals(current)) continue;
+            var network = networks.get(current.path("network").asText());
+            var address = current.path("ipv4.address").asText("");
+            var bridge = network == null ? "" : network.path("config").path("ipv4.address").asText("");
+            if (bridge.isEmpty() || address.isEmpty()) continue;
+            if (!CidrUtils.isInSubnet(address, CidrUtils.parseCidr(bridge))) {
+                return "Invalid devices: Device validation failed for \"" + e.getKey()
+                        + "\": Device IP address \"" + address + "\" not within network \""
+                        + network.path("name").asText() + "\" subnet";
+            }
+        }
+        return null;
+    }
+
     /** Each device in a PATCH replaces the instance's or profile's device of that name whole. */
     private static void patchDevices(ObjectNode target, JsonNode patch) {
         var devices = (ObjectNode) target.get("devices");
@@ -725,9 +754,13 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     private static RawResponse badRequest() {
+        return badRequest("Invalid devices: refused by FakeIncusDaemon");
+    }
+
+    private static RawResponse badRequest(String error) {
         var body = JSON.createObjectNode();
         body.put("type", "error");
-        body.put("error", "Invalid devices: refused by FakeIncusDaemon");
+        body.put("error", error);
         body.put("error_code", 400);
         return new RawResponse(400, bytes(body));
     }

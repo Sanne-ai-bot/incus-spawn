@@ -1436,8 +1436,6 @@ public class InitCommand extends BaseCommand {
                     if (migrated > 0) {
                         System.out.println("  Migrated network config for " + migrated
                                 + " instance" + (migrated == 1 ? "" : "s") + ".");
-                        System.out.println("  Note: running instances may need a restart"
-                                + " for network changes to take effect.");
                     }
                 } else {
                     System.err.println("  Warning: could not find a non-conflicting subnet.");
