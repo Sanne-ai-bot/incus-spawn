@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 @CommandDefinition(
         name = "templates",
@@ -298,18 +299,24 @@ public class TemplatesCommand extends BaseCommand {
         return pb.start().waitFor();
     }
 
-    private static boolean validateAndReport(Path file) {
-        var defs = ImageDef.loadAll();
+    /**
+     * The findings quote the file's name, parent, host-resource modes and sources, and tools, and
+     * a project-local file is checked even when the user leaves it unchanged, so nothing in them
+     * reaches the terminal raw (#1133). A warning is one line; an error keeps the line breaks of
+     * the advice isx writes into it, and each line is made safe.
+     */
+    static boolean validateAndReport(Path file, Map<String, ImageDef> defs, PrintStream out, PrintStream err) {
         var result = TemplateValidator.validate(file, defs);
         if (result.hasErrors()) {
-            System.err.println("Validation errors:");
-            result.errors().forEach(e -> System.err.println("  ERROR: " + e));
+            err.println("Validation errors:");
+            result.errors().forEach(e -> err.println("  ERROR: " + e.lines().map(OutputFormat::oneLine)
+                    .collect(Collectors.joining(System.lineSeparator()))));
         }
         if (result.hasWarnings()) {
-            result.warnings().forEach(w -> System.out.println("  WARNING: " + w));
+            result.warnings().forEach(w -> out.println("  WARNING: " + cell(w)));
         }
         if (!result.hasErrors() && !result.hasWarnings()) {
-            System.out.println("Template is valid.");
+            out.println("Template is valid.");
         }
         return !result.hasErrors();
     }
@@ -334,7 +341,7 @@ public class TemplatesCommand extends BaseCommand {
                 return;
             }
 
-            boolean valid = validateAndReport(file);
+            boolean valid = validateAndReport(file, ImageDef.loadAll(), System.out, System.err);
 
             if (valid && originalName != null) {
                 checkNameChange(file, originalName, isBuiltinCopy);
@@ -357,11 +364,11 @@ public class TemplatesCommand extends BaseCommand {
         try {
             var def = ImageDef.parseFile(file);
             if (def.getName() != null && !def.getName().equals(originalName)) {
-                System.out.println("WARNING: Template name changed from '" + originalName
-                        + "' to '" + def.getName() + "'.");
+                System.out.println("WARNING: Template name changed from '" + cell(originalName)
+                        + "' to '" + cell(def.getName()) + "'.");
                 if (isBuiltinCopy) {
                     System.out.println("  This file will no longer override the built-in '"
-                            + originalName + "' template.");
+                            + cell(originalName) + "' template.");
                 }
             }
         } catch (IOException ignored) {
