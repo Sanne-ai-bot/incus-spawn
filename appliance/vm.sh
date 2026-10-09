@@ -14,6 +14,7 @@ APPLIANCE_DIR="${APPLIANCE_DIR:-$SCRIPT_DIR/build}"
 PID_FILE="$STATE_DIR/vm.pid"
 LOG_FILE="$STATE_DIR/vm.log"
 REST_URI_FILE="$STATE_DIR/vm.rest-uri"
+REST_SOCK="$STATE_DIR/vm.rest.sock"
 
 DISK_IMG="$STATE_DIR/disk.img"
 DISK_SIZE="${ISX_VM_DISK:-60G}"
@@ -115,8 +116,10 @@ detect_backend() {
 }
 
 start_vfkit() {
-    local rest_port
-    rest_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+    # vfkit's REST API listens on a Unix socket, as under isx (#1189). A TCP port had to be
+    # picked before vfkit bound it, and vfkit exits when another process took it in between.
+    # vfkit does not start on a socket path that exists, and one it was killed on stays behind.
+    rm -f "$REST_SOCK"
 
     # vfkit requires --initrd even though our kernel ignores it (CONFIG_BLK_DEV_INITRD=n)
     local dummy_initrd="$STATE_DIR/empty-initrd"
@@ -130,12 +133,12 @@ start_vfkit() {
         --device virtio-blk,path="$DISK_IMG" \
         --device virtio-net,nat \
         --device virtio-serial,logFilePath="$LOG_FILE" \
-        --restful-uri "tcp://localhost:$rest_port" \
+        --restful-uri "unix://$REST_SOCK" \
         &
     local pid=$!
     echo "$pid" > "$PID_FILE"
-    echo "http://localhost:$rest_port" > "$REST_URI_FILE"
-    echo "VM started (pid=$pid, rest=localhost:$rest_port)"
+    echo "unix://$REST_SOCK" > "$REST_URI_FILE"
+    echo "VM started (pid=$pid, rest=$REST_SOCK)"
 }
 
 start_qemu() {
@@ -193,7 +196,7 @@ cmd_start() {
 cmd_stop() {
     if ! is_running; then
         echo "VM not running"
-        rm -f "$PID_FILE" "$REST_URI_FILE"
+        rm -f "$PID_FILE" "$REST_URI_FILE" "$REST_SOCK"
         return 0
     fi
     local pid
@@ -202,7 +205,13 @@ cmd_stop() {
     if [ -f "$REST_URI_FILE" ]; then
         local uri
         uri=$(cat "$REST_URI_FILE")
-        curl -s -X POST "$uri/vm/state" -d '{"state":"Stop"}' >/dev/null 2>&1 || true
+        case "$uri" in
+            unix://*)
+                curl -s --unix-socket "${uri#unix://}" -X POST "http://localhost/vm/state" \
+                    -d '{"state":"Stop"}' >/dev/null 2>&1 || true ;;
+            *)  # a VM started before the socket: its file holds http://localhost:<port>
+                curl -s -X POST "$uri/vm/state" -d '{"state":"Stop"}' >/dev/null 2>&1 || true ;;
+        esac
         for _ in $(seq 1 10); do
             kill -0 "$pid" 2>/dev/null || break
             sleep 0.5
@@ -214,7 +223,7 @@ cmd_stop() {
         sleep 1
         kill -9 "$pid" 2>/dev/null || true
     fi
-    rm -f "$PID_FILE" "$REST_URI_FILE"
+    rm -f "$PID_FILE" "$REST_URI_FILE" "$REST_SOCK"
     echo "VM stopped"
 }
 
@@ -225,7 +234,7 @@ cmd_status() {
         echo "  Log: $LOG_FILE"
     else
         echo "VM not running"
-        rm -f "$PID_FILE" "$REST_URI_FILE"
+        rm -f "$PID_FILE" "$REST_URI_FILE" "$REST_SOCK"
     fi
 }
 

@@ -233,7 +233,8 @@ Lifecycle script with subcommands: `start`, `stop`, `status`, `console`.
 - `disk.img` -- btrfs disk image (created on first start)
 - `vm.pid` -- vfkit/QEMU process ID
 - `vm.log` -- serial console output
-- `vm.rest-uri` -- vfkit REST API endpoint (macOS only)
+- `vm.rest-uri` -- vfkit REST API endpoint (macOS only): `unix://` and the path of `vm.rest.sock`
+- `vm.rest.sock` -- the Unix socket vfkit's REST API listens on (macOS only). Not a TCP port: that had to be picked before vfkit bound it, and vfkit exits when another process took it in between (#1189, #1198). Removed before a start, since vfkit refuses a path that exists, and on stop
 - `vm.incus.sock` -- vsock Unix socket for Incus API (macOS/vfkit only, created by vfkit, cleaned up on stop)
 - `vm.agent.sock` -- vsock Unix socket for the in-VM control agent (macOS/vfkit only, cleaned up on stop)
 
