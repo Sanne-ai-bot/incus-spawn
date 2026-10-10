@@ -25,7 +25,8 @@ package dev.incusspawn.incus;
  * take them -- a slow sink, a virtual thread woken late -- and that is no sign the output stopped.
  * Only the ceiling ends a drain while they wait.
  *
- * Times are {@link System#nanoTime} values, passed in so the decision can be tested without
+ * Times come from the {@link IncusApi.DrainClock} the {@link IncusApi} was built with
+ * ({@link System#nanoTime} in production), passed in so the decision can be tested without
  * waiting.
  */
 final class OutputDrain {
