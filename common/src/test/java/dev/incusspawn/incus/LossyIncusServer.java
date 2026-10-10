@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.channels.Channels;
@@ -83,9 +84,8 @@ final class LossyIncusServer implements AutoCloseable {
     volatile long runMillis = 0;
     /** How many /wait calls answer "Running" before the operation reports its result. */
     volatile int runningWaits = 0;
-    /** Output sent on stdout <em>after</em> the operation completes, one chunk per gap. */
+    /** Output sent on stdout <em>after</em> the operation completes, one chunk per write. */
     volatile List<String> trailingStdout = List.of();
-    volatile long trailingGapMillis = 0;
     /** The trailing chunks go out together, in one write: each but the first waits in the host's socket. */
     volatile boolean trailingInOneWrite = false;
     /** Keep writing stdout after completion until the client hangs up (never idle). */
@@ -370,10 +370,7 @@ final class LossyIncusServer implements AutoCloseable {
                 execFds.get("1").sendAll(trailingStdout);
                 return;
             }
-            for (var chunk : trailingStdout) {
-                Thread.sleep(trailingGapMillis);
-                execFds.get("1").send(0x2, chunk.getBytes(StandardCharsets.UTF_8));
-            }
+            for (var chunk : trailingStdout) sendStdoutChunk(chunk);
             while (trickleForever) {
                 Thread.sleep(50);
                 execFds.get("1").send(0x2, ".".getBytes(StandardCharsets.UTF_8));
@@ -383,6 +380,19 @@ final class LossyIncusServer implements AutoCloseable {
         } finally {
             operationDone.countDown();
         }
+    }
+
+    /** Send a chunk of stdout now, from the caller's thread: output the test times itself. */
+    void sendStdout(String chunk) {
+        try {
+            sendStdoutChunk(chunk);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private void sendStdoutChunk(String chunk) throws IOException {
+        execFds.get("1").send(0x2, chunk.getBytes(StandardCharsets.UTF_8));
     }
 
     /** Consume masked client frames, counting PINGs and answering them as Incus does. */

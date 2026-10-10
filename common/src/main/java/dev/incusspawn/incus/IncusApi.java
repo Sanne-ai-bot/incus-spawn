@@ -43,6 +43,7 @@ class IncusApi {
 
     private final IncusTransport transport;
     private final long pingIntervalMs;
+    private final DrainClock drainClock;
 
     IncusApi(IncusTransport transport) {
         this(transport, WS_PING_INTERVAL_MS);
@@ -50,8 +51,14 @@ class IncusApi {
 
     /** Test seam: a shorter keepalive interval, so exec ping coverage runs in milliseconds. */
     IncusApi(IncusTransport transport, long pingIntervalMs) {
+        this(transport, pingIntervalMs, DrainClock.SYSTEM);
+    }
+
+    /** Test seam: the exec drain's clock, so a test can time a fake's output by the drain's polls. */
+    IncusApi(IncusTransport transport, long pingIntervalMs, DrainClock drainClock) {
         this.transport = transport;
         this.pingIntervalMs = pingIntervalMs;
+        this.drainClock = drainClock;
     }
 
     // Short enough that a stalled vsock fails fast (a healthy connect is sub-millisecond),
@@ -436,6 +443,29 @@ class IncusApi {
     }
 
     /**
+     * The time the exec drain reads, and its pause between polls: when output arrived, when the
+     * drain gave up. A test replaces it to time a fake's trailing output by the drain's own
+     * polls, which no late wakeup of the fake's threads can put out of step (#1208).
+     */
+    interface DrainClock {
+        DrainClock SYSTEM = new DrainClock() {
+            @Override
+            public long nanoTime() {
+                return System.nanoTime();
+            }
+
+            @Override
+            public void sleep(long millis) throws InterruptedException {
+                Thread.sleep(millis);
+            }
+        };
+
+        long nanoTime();
+
+        void sleep(long millis) throws InterruptedException;
+    }
+
+    /**
      * Push a single file into an instance at the given path.
      * The file is written as root (uid=0, gid=0) with mode derived from source.
      */
@@ -670,7 +700,7 @@ class IncusApi {
                 var keepalive = startKeepalive(controlWs);
                 var dataAlive = startKeepalive(dataWs);
 
-                var lastData = new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+                var lastData = new java.util.concurrent.atomic.AtomicLong(drainClock.nanoTime());
                 var dataThread = Thread.ofVirtual().start(() -> wsWriteTo(dataWs, outDst, lastData));
 
                 assertAllFdsConnected(exec.fds, Set.of("0", "control"));
@@ -708,7 +738,7 @@ class IncusApi {
         });
     }
 
-    private static final long WS_PING_INTERVAL_MS = 15_000;
+    static final long WS_PING_INTERVAL_MS = 15_000;
 
     /**
      * Interactive PTY exec — bridges System.in/out to the container PTY.
@@ -1003,7 +1033,7 @@ class IncusApi {
             var controlDrain = Thread.ofVirtual().start(() -> drainQuietly(controlWs));
 
             // Timestamp of the last byte received on either data fd, for the adaptive drain.
-            var lastData = new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+            var lastData = new java.util.concurrent.atomic.AtomicLong(drainClock.nanoTime());
             var stdoutThread = Thread.ofVirtual().start(() -> wsWriteTo(stdoutWs, outDst, lastData));
             var stderrThread = Thread.ofVirtual().start(() -> wsWriteTo(stderrWs, errDst, lastData));
 
@@ -1079,8 +1109,8 @@ class IncusApi {
      * Returns immediately on the healthy path (close frames arrived); otherwise {@link OutputDrain}
      * decides when to give up on them, told about bytes still waiting unread in the sockets.
      */
-    private static void awaitDrain(java.util.concurrent.atomic.AtomicLong lastData, DataReader... readers) {
-        var drain = new OutputDrain(System.nanoTime());
+    private void awaitDrain(java.util.concurrent.atomic.AtomicLong lastData, DataReader... readers) {
+        var drain = new OutputDrain(drainClock.nanoTime());
         while (true) {
             boolean anyAlive = false, unread = false;
             for (var r : readers) {
@@ -1089,9 +1119,9 @@ class IncusApi {
                 unread |= r.socket().hasUnread();
             }
             if (!anyAlive) break;
-            if (drain.done(System.nanoTime(), lastData.get(), unread)) break;
+            if (drain.done(drainClock.nanoTime(), lastData.get(), unread)) break;
             try {
-                Thread.sleep(OutputDrain.POLL_MS);
+                drainClock.sleep(OutputDrain.POLL_MS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -1102,10 +1132,10 @@ class IncusApi {
     /** A data fd's socket and the thread reading it. */
     private record DataReader(Thread thread, IncusTransport.WsConnection socket) {}
 
-    private static void drainThenClose(java.util.concurrent.atomic.AtomicLong lastData,
-                                       Thread stdoutThread, Thread stderrThread,
-                                       IncusTransport.WsConnection stdoutWs,
-                                       IncusTransport.WsConnection stderrWs) {
+    private void drainThenClose(java.util.concurrent.atomic.AtomicLong lastData,
+                                Thread stdoutThread, Thread stderrThread,
+                                IncusTransport.WsConnection stdoutWs,
+                                IncusTransport.WsConnection stderrWs) {
         awaitDrain(lastData, new DataReader(stdoutThread, stdoutWs), new DataReader(stderrThread, stderrWs));
         if (stdoutThread.isAlive() || stderrThread.isAlive()) {
             stdoutWs.close();
@@ -1166,12 +1196,12 @@ class IncusApi {
      * recording the arrival time of each payload so the adaptive drain knows when output has
      * stopped flowing.
      */
-    private static void wsWriteTo(IncusTransport.WsConnection ws, OutputStream dst,
-                                  java.util.concurrent.atomic.AtomicLong lastData) {
+    private void wsWriteTo(IncusTransport.WsConnection ws, OutputStream dst,
+                           java.util.concurrent.atomic.AtomicLong lastData) {
         try {
             byte[] payload;
             while ((payload = ws.readPayload()) != null) {
-                lastData.set(System.nanoTime());
+                lastData.set(drainClock.nanoTime());
                 dst.write(payload);
                 dst.flush();
             }
