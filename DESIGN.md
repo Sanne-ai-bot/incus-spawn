@@ -668,6 +668,8 @@ So query commands take `--format` (#1036), through one shared helper, `OutputFor
   Once a message is assembled, a forged line break cannot be told from isx's own.
   Each line is made safe again when it is printed.
   `isx init`'s credential step prints a tool's description and each configuration entry's description and help through `oneLine` too (`CredentialSetup`, #1222): `ToolDefLoader` reads the project's `.incus-spawn/tools/`, so running init in a cloned repository shows its text.
+  `isx build`'s base-image refusals do the same for the template's name and source, the image alias and the importing project (`downloadAndAliasImage`, `requireImageTrustedFor`, #1228).
+  The build header printed before a refusal (`BuildOutput.buildHeader`), the too-long refusal and the closing list of failed templates show the name through `oneLine` too.
 
 A command parses its `--format` with `OutputFormat.parse` (`isx list`, which also has `--plain`, with `OutputFormat.resolve`), builds each record once, as an ordered map of field name to value, and hands the list to `format.print` (or one record to `format.printOne`, an object in `json`).
 Both machine formats print the same map, so the field order of `plain` is the field order of `json` and the two cannot drift apart.

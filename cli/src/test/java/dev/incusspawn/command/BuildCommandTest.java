@@ -188,23 +188,11 @@ class BuildCommandTest {
             doNothing().when(cmd).buildInto(any(), any(), anyString());
 
             // Both streams into one, as a terminal shows them: the warnings are on stderr.
-            var originalOut = System.out;
-            var originalErr = System.err;
-            var out = new java.io.ByteArrayOutputStream();
-            var sink = new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8);
-            System.setOut(sink);
-            System.setErr(sink);
-            try {
-                cmd.buildWithParents(List.of(child), defs);
-            } finally {
-                System.setOut(originalOut);
-                System.setErr(originalErr);
-            }
+            var text = bothStreams(() -> cmd.buildWithParents(List.of(child), defs));
 
             prompts.assertFullyConsumed();
             verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
             verify(incus).rename("tpl-dev-rebuilding", "tpl-dev");
-            var text = out.toString(java.nio.charset.StandardCharsets.UTF_8);
             int question = text.indexOf("Continue?");
             assertTrue(question >= 0, text);
             assertTrue(text.indexOf("tpl-minimal, tpl-dev will be replaced") >= 0
@@ -1704,5 +1692,142 @@ class BuildCommandTest {
 
         assertThrows(BuildCommand.BuildFailedException.class, () -> cmd.buildSingleImage(def, Map.of()));
         verifyNoInteractions(incus);
+    }
+
+    // ── a project-local template's text in build's refusals (#1228) ─────────────
+
+    /**
+     * Text a cloned repository controls: an OSC title change, an 8-bit CSI (U+009B), a line
+     * break that would forge a line of isx's own, and a bidi override.
+     */
+    private static final String HOSTILE = "\u001b]0;pwned\u0007\u009b2J\nfake: all clear\u202Egnp";
+
+    /** {@link #HOSTILE} as a local image alias, which has no colon (a colon names a remote image). */
+    private static final String HOSTILE_ALIAS = "base\u001b]0;pwned\u0007\u009b2J\nfake\u202Egnp";
+
+    /** A project-local template named, sourced and resourced with {@link #HOSTILE} text. */
+    private static ImageDef hostileProjectTemplate(Path project, ImageDef.HostResource... resources) {
+        var def = new ImageDef();
+        def.setName("tpl-" + HOSTILE);
+        def.setSource(project.resolve(".incus-spawn/images/evil" + HOSTILE + ".yaml").toString());
+        def.setProjectRoot(project);
+        def.setHostResources(List.of(resources));
+        return def;
+    }
+
+    /** What {@code isx build} prints refusing {@code def}, before anything reaches Incus. */
+    private static String refusal(ImageDef def) {
+        var incus = mock(IncusClient.class);
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+        var out = bothStreams(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                () -> cmd.buildSingleImage(def, Map.of(def.getName(), def))));
+        verifyNoInteractions(incus);
+        return out;
+    }
+
+    /** What {@code body} prints to stdout and stderr, in one, as a terminal shows them. */
+    private static String bothStreams(Runnable body) {
+        var originalOut = System.out;
+        var originalErr = System.err;
+        var out = new java.io.ByteArrayOutputStream();
+        var sink = new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8);
+        System.setOut(sink);
+        System.setErr(sink);
+        try {
+            body.run();
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+        return out.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** Nothing a terminal acts on, and every line break isx's own. */
+    private static void assertSafe(String out) {
+        assertTrue(out.contains("pwned"), "the refusal should quote the template's text:\n" + out);
+        out.codePoints().filter(c -> c != '\n').forEach(c -> assertFalse(
+                Character.isISOControl(c) || c >= 0x2028 && c <= 0x202E || c >= 0x2066 && c <= 0x2069,
+                () -> "U+%04X printed raw:%n%s".formatted(c, out)));
+        assertTrue(out.lines().noneMatch(line -> line.startsWith("fake")), "a forged line:\n" + out);
+    }
+
+    @Test
+    void aHostResourceOutsideTheProjectIsRefusedInOneSafeLinePerLine(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var outside = Files.createDirectories(tmp.resolve("secret" + HOSTILE)).toRealPath();
+        var out = refusal(hostileProjectTemplate(project,
+                new ImageDef.HostResource(outside.toString(), "/home/agentuser/data", "copy")));
+        assertTrue(out.contains("is project-local"), out);
+        assertSafe(out);
+    }
+
+    @Test
+    void aForbiddenMountTargetIsRefusedInOneSafeLinePerLine(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        Files.createDirectories(project.resolve("data" + HOSTILE));
+        var out = refusal(hostileProjectTemplate(project,
+                new ImageDef.HostResource("data" + HOSTILE, "/etc/x" + HOSTILE, "readonly")));
+        assertTrue(out.contains("a system directory"), out);
+        assertSafe(out);
+    }
+
+    @Test
+    void aBaseImageOutsideTheProjectIsRefusedInOneSafeLinePerLine(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var outside = Files.writeString(tmp.resolve("backup" + HOSTILE + ".tar.xz"), "private");
+        var def = hostileProjectTemplate(project);
+        def.setImageUrl(outside.toUri().toString());
+        var out = refusal(def);
+        assertTrue(out.contains("base image"), out);
+        assertSafe(out);
+    }
+
+    @Test
+    void aNameTooLongIsRefusedInOneSafeLinePerLine(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var def = hostileProjectTemplate(project);
+        def.setName(def.getName() + "-" + "t".repeat(BuildCommand.MAX_TEMPLATE_NAME_LENGTH));
+        var out = refusal(def);
+        assertTrue(out.contains("too long to build"), out);
+        assertSafe(out);
+    }
+
+    @Test
+    void theClosingListOfFailedTemplatesIsOneSafeLine() {
+        var out = bothStreams(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                () -> BuildCommand.failIfAny(List.of("tpl-ok", "tpl-" + HOSTILE))));
+        assertTrue(out.contains("Some templates failed to build"), out);
+        assertSafe(out);
+    }
+
+    @Test
+    void anImageReplacementIsRefusedInOneSafeLinePerLine(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow(HOSTILE_ALIAS)).thenReturn("abc");
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+
+        var e = assertThrows(IllegalStateException.class, () -> cmd.downloadAndAliasImage(HOSTILE_ALIAS,
+                "https://example.com/evil.tar.xz", null, "v1", hostileProjectTemplate(project)));
+        assertTrue(e.getMessage().contains("may only replace images it imported itself"), e.getMessage());
+        assertSafe(e.getMessage());
+    }
+
+    @Test
+    void anImageAnotherProjectImportedIsRefusedInOneSafeLinePerLine(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow(HOSTILE_ALIAS)).thenReturn("abc");
+        when(incus.imagePropertyOrThrow("abc", BuildCommand.IMAGE_PROJECT_PROPERTY))
+                .thenReturn("/work/other" + HOSTILE);
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+
+        var e = assertThrows(IllegalStateException.class,
+                () -> cmd.requireImageTrustedFor(HOSTILE_ALIAS, hostileProjectTemplate(project), null));
+        assertTrue(e.getMessage().contains("was imported by a project-local template"), e.getMessage());
+        assertSafe(e.getMessage());
     }
 }
