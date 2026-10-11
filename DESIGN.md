@@ -242,7 +242,10 @@ So it may have been the target, a parent, or an override.
 Building anyway would silently use whatever it was meant to replace — a lower layer's definition, or the stale build-source snapshot of an existing template.
 Read-only commands keep warning and carry on.
 A definition whose `name:` or `parent:` is not a name Incus accepts for an instance (`InstanceNames`, Incus's own rule: letters, digits and `-`, not starting or ending with `-`, not only digits, at most 63 characters) is refused at load, with one warning that shows the name through `oneLine` (#1274).
-Such a template could never be built, and refusing it where definitions load keeps a cloned repository's name, which could carry escape sequences or line breaks, from every place isx prints a template's name, including ones added later: it drops out of `isx templates`, the TUI and `isx build` alike.
+Such a template could never be built.
+Refusing it where definitions load keeps a cloned repository's name from every place isx prints one, including places added later.
+That name could carry escape sequences or line breaks.
+The template drops out of `isx templates`, the TUI and `isx build` alike.
 It is recorded with the parse failures, because it too may have meant to replace a lower layer's definition, so `isx build` refuses in the same way.
 `isx templates edit` reports the same as a validation error.
 

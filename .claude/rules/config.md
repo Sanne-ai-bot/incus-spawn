@@ -58,5 +58,8 @@ Two files declaring the same `name:` *within a single directory* (usually a copy
 The TUI stays resilient (surfaces the conflict as a status warning but still lists templates).
 `isx doctor` reports both conflicts (warnings) and cross-layer overrides (informational -- this explains the "built image doesn't match the file I'm editing" confusion).
 Plain `ImageDef.loadAll()` still returns the resolved map (last-writer-wins) and emits a one-line conflict warning via its warnings consumer, so existing callers are unaffected.
-Files that fail to parse are recorded too (`LayeredDefinitions.parseFailures()`, `ToolDefLoader.parseFailures()`); `isx build` refuses while any exist, since the skipped file's name is unknown and building would silently fall back to a lower layer or the existing template's build-source snapshot.
+Files that fail to parse are recorded too (`LayeredDefinitions.parseFailures()`, `ToolDefLoader.parseFailures()`).
+So are image definitions refused at load because their `name:` or `parent:` is not a valid Incus instance name (`InstanceNames`).
+`isx build` refuses while any exist.
+The skipped file's name is unknown or unusable, so building would silently fall back to a lower layer or the existing template's build-source snapshot.
 `YamlErrors.friendly()` names the offending field for shape mismatches (list vs. single value vs. mapping).

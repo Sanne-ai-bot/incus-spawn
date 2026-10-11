@@ -134,7 +134,8 @@ public final class LayeredDefinitions<T> {
 
     /**
      * Record a file that could not be parsed, or was refused once parsed. Its {@code name:} is
-     * unknown or unusable, so it may have defined anything: a build target, one of its parents, or an override of a lower layer.
+     * unknown or unusable, so it may have defined anything: a build target, one of its parents,
+     * or an override of a lower layer.
      */
     public void parseFailed(Path source) {
         parseFailures.add(source);
