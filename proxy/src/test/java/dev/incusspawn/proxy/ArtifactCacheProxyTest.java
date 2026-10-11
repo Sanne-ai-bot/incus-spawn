@@ -116,6 +116,8 @@ class ArtifactCacheProxyTest {
     /** HEADs left to receive but never answer, like a connection that died silently. */
     static final AtomicInteger headsToStall = new AtomicInteger();
     static volatile long headDelayMs;
+    /** Redirects answer with a body that trickles in over about 2.4 s. */
+    static volatile boolean slowRedirectBody;
     static final AtomicInteger headsAnswered = new AtomicInteger();
     /** GETs left to cut off halfway through their body: stalled, or closed when {@link #cutByClosing}. */
     static final AtomicInteger getsToCut = new AtomicInteger();
@@ -233,6 +235,18 @@ class ArtifactCacheProxyTest {
         }
         resp.setStatusCode(reply.status());
         if (reply.location() != null) resp.putHeader("Location", reply.location());
+        if (slowRedirectBody && reply.location() != null) {
+            resp.setChunked(true).write("x");
+            var chunks = new AtomicInteger(5);
+            vertx.setPeriodic(400, t -> {
+                if (chunks.getAndDecrement() > 0) resp.write("x");
+                else {
+                    vertx.cancelTimer(t);
+                    resp.end();
+                }
+            });
+            return;
+        }
         if (reply.checksumHeader() != null) resp.putHeader("X-Checksum-SHA1", reply.checksumHeader());
         var body = reply.body() == null ? new byte[0] : reply.body();
         var currentEtag = etag;
@@ -305,6 +319,7 @@ class ArtifactCacheProxyTest {
         stalledConnection = null;
         headsToStall.set(0);
         headDelayMs = 0;
+        slowRedirectBody = false;
         headsAnswered.set(0);
         getsToCut.set(0);
         cutByClosing = false;
@@ -605,6 +620,21 @@ class ArtifactCacheProxyTest {
         assertNotEquals(ArtifactCacheHandler.SidecarAnswer.UNREACHABLE, confirm());
         assertEquals(heads + 1, headsAnswered.get(), "one HEAD, not retried");
         assertSame(pooled, lastHeadConnection, "on the pooled connection");
+    }
+
+    @Test
+    void aRedirectBodyThatTricklesInDoesNotCloseTheConnection() throws Exception {
+        var zip = "zip".getBytes(StandardCharsets.UTF_8);
+        routes.put(GRADLE + " " + DIST + ".sha256",
+                new Reply(301, null, "https://" + GRADLE_DOWNLOADS + DIST + ".sha256"));
+        routes.put(GRADLE_DOWNLOADS + " " + DIST + ".sha256", new Reply(200, hex("SHA-256", zip).getBytes(), null));
+        slowRedirectBody = true;
+
+        // The body takes 2.4 periods, each chunk well inside one: reads count, not the time since the request (#1007)
+        var answer = onClientContext(() -> proxy.artifactCache.fetchSidecar(GRADLE, DIST + ".sha256"))
+                .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        assertEquals(200, answer.status());
+        assertEquals(1, hitsOn(GRADLE, DIST + ".sha256"), "not retried");
     }
 
     // --- confirmation tiers (artifact-cache: fresh / max-stale) ---
