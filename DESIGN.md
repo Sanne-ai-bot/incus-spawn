@@ -46,6 +46,7 @@ Other sandboxes for coding agents make it differently, and the README's "Compare
 - **Java 25**, **Quarkus 3.x** with aesh for CLI commands
 - **Tamboui** (https://tamboui.dev/) for interactive TUI (list view, modal dialogs, inline actions)
 - **GraalVM native image** for optional zero-dependency distribution
+- **jjq** for YAML and JSON (see "jjq rather than Jackson" under Technical Tradeoffs)
 - **JBang** for easy installation (`jbang app install isx` plus `isx-proxy`)
 
 ### Module Structure
@@ -680,7 +681,7 @@ So query commands take `--format` (#1036), through one shared helper, `OutputFor
 - **Control characters** (#1118): both formats are read on terminals too, and a value can be a stamp someone set by hand, so neither writes a control character in a value raw.
   `plain` is lossy: every C0 control (tab and line breaks included), DEL, C1 control and U+2028/U+2029 becomes a space (`OutputFormat.oneLine`), which keeps a record one safe line, and so does every bidi embedding, override and isolate (U+202A-U+202E, U+2066-U+2069), which would make a terminal draw the rest of the line, the following fields included, out of order.
   The marks (U+200E, U+200F, U+061C) stay: they reorder nothing beyond their neighbours.
-  `json` is exact: Jackson escapes C0 as JSON requires (tab, line feed, carriage return, backspace and form feed as `\t` `\n` `\r` `\b` `\f`, the rest as `\uXXXX`).
+  `json` is exact: jjq escapes C0 as JSON requires (tab, line feed, carriage return, backspace and form feed as `\t` `\n` `\r` `\b` `\f`, the rest as `\uXXXX`).
   `OutputFormat` also escapes DEL, C1, U+2028/U+2029 and the bidi controls as `\uXXXX`, which JSON allows and every parser reverses.
   Both formats test one predicate, `OutputFormat.isControl`, so they cannot disagree on the set.
   A script that needs a value exactly reads `json`.
@@ -703,7 +704,7 @@ So query commands take `--format` (#1036), through one shared helper, `OutputFor
 
 A command parses its `--format` with `OutputFormat.parse` (`isx list`, which also has `--plain`, with `OutputFormat.resolve`), builds each record once, as an ordered map of field name to value, and hands the list to `format.print` (or one record to `format.printOne`, an object in `json`).
 Both machine formats print the same map, so the field order of `plain` is the field order of `json` and the two cannot drift apart.
-Maps rather than records are what Jackson serializes without reflection registration in the native image.
+Maps rather than records are what jjq serializes without a mapping or reflection registration in the native image.
 A list value (`tools show`'s `packages`, `account list`'s `pinned_by`) is a JSON array and, in `plain`, its elements joined by `,`, so a record stays one line.
 
 Every query command takes it (#1038): `templates`, `tools list`/`show`, `account list`/`show`, `proxy status`, `doctor`, `vm status`, `update-base --list`, and `branch`, whose record is the new name alone so that `$(isx branch ... --format=plain)` captures it.
@@ -1360,9 +1361,9 @@ Accounts are named in `ClaudeAccount`/`ClaudeAccountType` (nested in `SpawnConfi
 Selection is by capability, via `ClaudeConfig.accountFor(Predicate)`: the default account when it can do the job, otherwise the first account in file order that can.
 `account()` (the unfiltered form) is what instances get today.
 `ClaudeConfig`'s familiar accessors (`isOauthMode()`, `getApiKey()`, `isUseVertex()`, …) are **derived from the resolved account**, not from the flat fields, so `ClaudeSetup`, `PiSetup`, `ProxyCredentials` and `DoctorCommand` needed no changes.
-Both `ClaudeConfig` and `ClaudeAccount` bind Jackson **by field** (`@JsonAutoDetect` with getters `NONE`).
+Both `ClaudeConfig` and `ClaudeAccount` bind **by field** (`@JqVisibility` with getters and is-getters `NONE`).
 The derived getters share names with the legacy fields.
-An `@JsonIgnore` on one accessor of a split property silently disables the whole property — which is how a flat `config.yaml` stops deserializing.
+Binding through those accessors would make the split property derived, and ignoring one of them would drop the whole property — which is how a flat `config.yaml` stops deserializing.
 Claude stays typed because the type drives real behaviour — which variables a build bakes, whether an account can answer `isx ask` — but only as a *reader*: which accounts exist, which one is the default and whether a pin is valid are answered by `AccountResolver`, the same as for every other namespace (see "One accounts model" below).
 
 **Per-instance selection.**
@@ -2397,7 +2398,7 @@ Existing Claude-only calls retain their defaults; mixed templates default to Cla
 The Quarkus MCP extension was tried first, initialized only on demand (`quarkus.mcp.server.stdio.initialization-enabled=false`, started explicitly by the command).
 It still cost every isx command.
 Native `isx --help` went from 3.2 to 4.9 ms (+55%; Vert.x alone was +0.7 ms), the binary grew 11% and RSS 5 MB, because the extension's config mappings and metadata are built at runtime init whether or not MCP is served.
-What isx needs of the protocol is small -- `initialize`, `ping`, `tools/list`, `tools/call`, cancellation, progress -- so `cli/.../mcp/` implements it over Jackson trees (no reflection registration), and startup is unchanged.
+What isx needs of the protocol is small -- `initialize`, `ping`, `tools/list`, `tools/call`, cancellation, progress -- so `cli/.../mcp/` implements it over jjq `JqValue` trees (no reflection registration), and startup is unchanged.
 `McpTransport` is the seam for a later HTTP transport.
 
 **Stdout is the protocol.**
@@ -3299,6 +3300,16 @@ Java `ToolSetup` implementations remain available as an escape hatch for tools t
 Built-in YAML tools are loaded from a hardcoded list of filenames rather than scanning the classpath.
 This is a deliberate choice: Quarkus native image compilation makes classpath directory listing unreliable, and the list only changes when a developer adds a built-in tool (at which point they also update the loader).
 User-defined tools in `.incus-spawn/tools/` are discovered via filesystem scanning.
+
+### jjq rather than Jackson
+YAML definitions, `config.yaml` and every JSON isx reads or writes go through jjq (#1250, from #1249): `Jjq` holds one mapper with the generated `@JqMapped` mappings registered explicitly (no reflection, no `ServiceLoader`), YAML in `YamlOptions.STRICT` (duplicate keys fail), JSON through `JqValues.parseStrict`.
+Cold Jackson databind cost about 108 ms of a ~194 ms CLI start; with jjq `isx tools` takes 4.8 ms native instead of 9.6 (with 100 user tools), and the JVM distribution no longer carries Jackson or SnakeYAML.
+Jackson's semantics are the ones users' files were written against, so where jjq differs isx restores them rather than following it:
+- A plain scalar bound to a `String` keeps its source text (`0022`, `3.10`, `yes`); converters that read the tree themselves use `Jjq.text`, which reads `JqValue.sourceText()`, since `asText()` renders the resolved number or boolean.
+- `asList()` on a JSON object is empty, where Jackson iterated its values: an object (a devices map, `state.network`) is walked as a `JqObject`.
+- A tree is immutable: code that changes one (the support-bundle redaction) rebuilds it along key/index segments, never along a dotted path re-split, since keys may contain `.` or `[`.
+- A strict-parse failure quotes the whole document; messages show `Jjq.brief`.
+The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2) and #130-#132 (open).
 
 ### DNS: static resolv.conf + bridge dnsmasq
 systemd-resolved (127.0.0.53) doesn't work reliably inside Incus containers because it expects to manage the network configuration.

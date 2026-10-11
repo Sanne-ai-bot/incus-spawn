@@ -63,4 +63,10 @@ So are image definitions refused at load because their `name:` or `parent:` is n
 So are tool definitions refused at load because a credential namespace they name is not an identifier (`ToolDefValidator.invalidNamespace`).
 `isx build` refuses while any exist.
 The skipped file's name is unknown or unusable, so building would silently fall back to a lower layer or the existing template's build-source snapshot.
-`YamlErrors.friendly()` names the offending field for shape mismatches (list vs. single value vs. mapping).
+`YamlErrors.friendly()` names the offending field for shape mismatches (list vs. single value vs. mapping), with the line jjq reports on the binding failure.
+
+Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (DESIGN.md "jjq rather than Jackson"):
+- A new DTO is `@JqMapped`; `jjq-mapper-processor` generates its mapping and `Jjq` registers it, so nothing reflects at run time (and the native image needs no registration for it).
+- A converter that reads scalars from the tree uses `Jjq.text`, so `0022` stays `0022`; `asText()` gives the resolved `18`.
+- An object is never iterated with `asList()` (empty for an object); use `JqObject.values()`/`forEach`.
+- JSON is read with `JqValues.parseStrict`, and a parse failure is shown with `Jjq.brief`.
