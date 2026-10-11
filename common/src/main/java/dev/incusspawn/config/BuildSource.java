@@ -116,6 +116,18 @@ public class BuildSource {
     }
 
     /**
+     * {@link #usedProjectLocal()} of the stamped JSON, as {@link #fromJson} reads it. No stamp is
+     * false; one that cannot be read is true, since it cannot show otherwise.
+     */
+    public static boolean usedProjectLocal(String json) {
+        if (json == null || json.isBlank()) return false;
+        // The same reading as a rebuild's, so the two can never disagree about a definition
+        var source = fromJson(json);
+        // A project root with no definition beside it still says a project was there
+        return source == null || source.usedProjectLocal() || !source.getProjectRoots().isEmpty();
+    }
+
+    /**
      * The file {@code template} was built from, read from the stamped JSON without binding the
      * whole build context; null if the stamp is missing, unreadable or does not name it.
      */
