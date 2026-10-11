@@ -854,6 +854,7 @@ public final class FakeIncusDaemon implements IncusTransport {
         body.put("type", "error");
         body.put("error", error);
         body.put("error_code", status);
+        body.putNull("metadata"); // as Incus sends it, which reads as a NullNode, not a missing one
         return new RawResponse(status, bytes(body));
     }
 
