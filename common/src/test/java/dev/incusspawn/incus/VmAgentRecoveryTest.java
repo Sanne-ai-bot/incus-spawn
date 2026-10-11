@@ -72,9 +72,9 @@ class VmAgentRecoveryTest {
     }
 
     @Test
-    void restartsOnceThenReportsOnTheBootItRestartedInto() {
-        daemon.instance("vm1", "virtual-machine", "Running", Map.of())
-                .consoleLog("vm1", "[  OK  ] Reached target multi-user.target\n");
+    void restartsOnceThenReportsOnTheBootItRestartedInto() throws Exception {
+        var log = "[  OK  ] Reached target multi-user.target\n";
+        daemon.instance("vm1", "virtual-machine", "Running", Map.of()).consoleLog("vm1", log);
         var incus = client();
 
         var first = assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(incus, "vm1", said::add));
@@ -89,7 +89,7 @@ class VmAgentRecoveryTest {
         var second = assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(incus, "vm1", said::add));
         var msg = second.getMessage();
         assertTrue(msg.contains("already restarted vm1 once"), msg);
-        assertTrue(msg.contains("incus console vm1 --show-log"), msg);
+        WaitForReadyTest.assertPointsAtSavedBootLog(msg, log);
         assertEquals(List.of(), daemon.stateActions(), "the restarted boot must not be cycled again");
     }
 

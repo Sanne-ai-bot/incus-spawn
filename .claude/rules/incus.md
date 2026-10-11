@@ -149,7 +149,7 @@ Containers default to 30s, VMs to 120s; both are configurable via `ready-timeout
 Every caller passes the known `MachineType` (#953): builds pass `activeBuild.machineType()`, VM-only code passes `MachineType.VM`, and callers on existing instances pass `incus.machineType(name)`.
 The no-arg overload still learns the type dynamically, but callers should not rely on it -- Incus can return a non-exception failure for a VM whose agent is booting, bypassing the detection.
 For a VM it polls the console log for `VmAgentFailure` signatures and fails fast (after a 20s restart grace) with the matched lines (`VmAgentFailure`, reusable by a future `isx doctor` check).
-Every VM failure names the agent and `incus console <n> --show-log` (#844).
+Every VM failure names the agent (#844) and the console log it saved on the host (`VmAgentFailure.save`, `Environment.consoleLogFile`), never `incus console` (#1139).
 A VM is exec-probed only once `GET /state` reports `processes >= 0` (its agent connected; #954), and a probe counts only if it printed `ready`, not on exit 0 alone.
 While the gate is shut exec still gets one probe per `gatedProbeInterval` (5s), since Incus also reports -1 when its query to a connected agent fails.
 A state without `processes` falls back to plain probing, and containers never read `/state`.

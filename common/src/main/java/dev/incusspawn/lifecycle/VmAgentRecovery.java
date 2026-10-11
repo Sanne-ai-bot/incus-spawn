@@ -60,7 +60,7 @@ public final class VmAgentRecovery {
         if (Long.toString(incus.pid(name)).equals(instance.path("config").path(Metadata.AGENT_RESTART_BOOT).asText())) {
             throw refusal(name, "The incus-agent in VM " + name + " is not responding, and isx"
                     + " already restarted " + name + " once to recover it; not restarting it again."
-                    + "\nIts boot log may say why: incus console " + name + " --show-log");
+                    + VmAgentFailure.pointer("Its boot log may say why: ", VmAgentFailure.save(name, incus.consoleLog(name))));
         }
 
         say.accept("VM agent not responding, restarting " + name + "...");

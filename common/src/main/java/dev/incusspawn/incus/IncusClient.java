@@ -417,10 +417,12 @@ public class IncusClient {
             throw new IncusException("Container " + name + " failed to become ready after "
                     + waited + " seconds");
         }
-        var lines = agentFailureLines(name);
-        if (!lines.isEmpty()) throw new IncusException(VmAgentFailure.report(name, lines));
+        var log = consoleLog(name);
+        var lines = VmAgentFailure.unrecoveredLines(log);
+        var saved = VmAgentFailure.save(name, log);
+        if (!lines.isEmpty()) throw new IncusException(VmAgentFailure.report(name, lines, saved));
         throw new IncusException("VM " + name + " is running, but its incus-agent did not come up within "
-                + waited + " seconds.\nIts boot log may say why: incus console " + name + " --show-log");
+                + waited + " seconds." + VmAgentFailure.pointer("Its boot log may say why: ", saved));
     }
 
     /**
@@ -443,8 +445,11 @@ public class IncusClient {
             throw new IncusException("Container " + name + " died during startup (status: " + status + ")");
         }
         var msg = "VM " + name + " died during startup (status: " + status + ")";
-        var lines = agentFailureLines(name);
-        if (!lines.isEmpty()) msg += "\n" + VmAgentFailure.report(name, lines);
+        var log = consoleLog(name);
+        var lines = VmAgentFailure.unrecoveredLines(log);
+        var saved = VmAgentFailure.save(name, log);
+        msg += lines.isEmpty() ? VmAgentFailure.pointer("Its boot log may say why: ", saved)
+                : "\n" + VmAgentFailure.report(name, lines, saved);
         throw new IncusException(msg);
     }
 
@@ -491,7 +496,7 @@ public class IncusClient {
     }
 
     /**
-     * What {@code incus console --show-log} prints: a VM's serial console so far, where systemd
+     * A VM's serial console so far, as {@code incus console --show-log} prints it, where systemd
      * reports units that failed to start. Empty if it cannot be read.
      */
     public String consoleLog(String name) {
@@ -1806,10 +1811,15 @@ public class IncusClient {
         if (deviceNames.isEmpty()) return;
         var update = new InstanceUpdate();
         deviceNames.forEach(update::removeDevice);
+        updateFresh(container, update);
+    }
+
+    /** {@link #update} against a fresh read of the instance, read again while another writer changed it. */
+    public void updateFresh(String name, InstanceUpdate update) {
         retryWhileChanged(() -> {
-            var read = readInstance(container);
-            if (read.metadata().isMissingNode()) throw new IncusException("Failed to get instance " + container);
-            update(container, read, update);
+            var read = readInstance(name);
+            if (read.metadata().isMissingNode()) throw new IncusException("Failed to get instance " + name);
+            update(name, read, update);
         });
     }
 

@@ -1,7 +1,12 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.Environment;
 import dev.incusspawn.util.BuildOutput;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 
 /**
@@ -54,13 +59,42 @@ public final class VmAgentFailure {
         return lastFailure > lastStart ? matchingLines(consoleLog) : List.of();
     }
 
-    /** Say that {@code name}'s agent failed to start, quoting {@code lines} from its console log. */
-    public static String report(String name, List<String> lines) {
+    /**
+     * Say that {@code name}'s agent failed to start, quoting {@code lines} from its console log,
+     * and where the whole log was saved ({@link #save}; null for nowhere).
+     */
+    public static String report(String name, List<String> lines, Path savedLog) {
         var msg = new StringBuilder("The incus-agent in VM ").append(name)
-                .append(" failed to start. Its console log says:\n");
-        lines.forEach(l -> msg.append("  ").append(l).append('\n'));
-        msg.append("Full boot log: incus console ").append(name).append(" --show-log");
-        return msg.toString();
+                .append(" failed to start. Its console log says:");
+        lines.forEach(l -> msg.append("\n  ").append(l));
+        return msg.append(pointer("Full boot log: ", savedLog)).toString();
+    }
+
+    /**
+     * Save VM {@code name}'s console log {@code log} on the host ({@link Environment#consoleLogFile})
+     * for a message to point at, and return where; null when there is nothing to save or it cannot
+     * be written. The log comes over the API, so this works on macOS, whose host has no
+     * {@code incus console} (#1139).
+     */
+    public static Path save(String name, String log) {
+        if (log.isEmpty()) return null;
+        try {
+            var file = Environment.consoleLogFile(name);
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, log);
+            // What the guest printed is the user's alone, as it is through the Incus API
+            if (Files.getFileStore(file).supportsFileAttributeView("posix")) {
+                Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+            }
+            return file;
+        } catch (IOException | IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** A message line naming the saved console log after {@code lead}, or "" when none was saved. */
+    public static String pointer(String lead, Path savedLog) {
+        return savedLog == null ? "" : "\n" + lead + savedLog;
     }
 
     static boolean isFailure(String line) {
