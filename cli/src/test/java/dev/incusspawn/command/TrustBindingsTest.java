@@ -127,6 +127,24 @@ class TrustBindingsTest {
     }
 
     @Test
+    void bothBuildPathsBindAfterTheReposAreClonedAndTheirPrimesHaveRun() throws Exception {
+        // A prime may download a runtime into a watched directory (./gradlew build provisions a
+        // toolchain into ~/.gradle/jdks). Nothing else binds it in a build: a path unit does not
+        // fire at boot for content already there. The build has no fake guest to run (see
+        // BuildCommandAccountsWiringTest), so this pins the order in the source.
+        var src = Files.readString(Path.of("src/main/java/dev/incusspawn/command/BuildCommand.java"));
+        for (var method : List.of("void buildFromParent(", "void buildFromScratch(")) {
+            int start = src.indexOf(method);
+            assertTrue(start >= 0, method);
+            int next = src.indexOf("\n    private ", start);
+            var body = src.substring(start, next < 0 ? src.length() : next);
+            int clone = body.lastIndexOf("cloneRepos(container");
+            int bind = body.indexOf("bindTrustStores(container)");
+            assertTrue(clone >= 0 && bind > clone, method + ": bindTrustStores must follow cloneRepos");
+        }
+    }
+
+    @Test
     void theInotifyEstimateCountsOneInstancePerWatchedDirectory() {
         // systemd opens one inotify instance per PathChanged=; doctor's estimate has to follow.
         assertEquals(10 + GuestProvisioning.TRUST_SYSTEM_DIRS.size() + GuestProvisioning.TRUST_HOME_DIRS.size(),
