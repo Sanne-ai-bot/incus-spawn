@@ -326,7 +326,7 @@ class Upstream {
                 .setHost(domain)
                 .setPort(443)
                 .setURI(clientReq.uri());
-        var watchdog = new RelayWatchdog(clientReq, domain, streaming);
+        var watchdog = new RelayWatchdog(clientReq, domain, streaming, System.nanoTime(), null);
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
             // A client that left while its body was paused has no handler yet to say so
@@ -343,9 +343,7 @@ class Upstream {
                     responseCallback.accept(upResp);
                 }
                 var clientResp = clientReq.response();
-                clientResp.setStatusCode(upResp.statusCode());
-                clientResp.setStatusMessage(upResp.statusMessage());
-                copyResponseHeaders(upResp, clientResp);
+                copyResponseHead(upResp, clientResp);
                 // Upstream answered before the upload ended: the rest of it is never read (RelayWatchdog)
                 if (watchdog.uploadUnread()) clientResp.putHeader("Connection", "close");
                 watchdog.upResp = upResp;
@@ -437,14 +435,22 @@ class Upstream {
         // The client holds the response back
         private boolean holdingResponse;
         private boolean over;
-        private long clientActive = System.nanoTime();
+        private long clientActive;
         // Vert.x numbers timers from 0: cancelling 0 before one is set would cancel another's
         private long timer = -1;
 
-        RelayWatchdog(HttpServerRequest clientReq, String domain, boolean streaming) {
+        /**
+         * Counting the client's silence from {@code since}: its request, or the last byte it got.
+         * {@code upResp} is the response already in hand, if any, for the budget may be spent by now.
+         */
+        RelayWatchdog(HttpServerRequest clientReq, String domain, boolean streaming, long since,
+                      HttpClientResponse upResp) {
             this.clientReq = clientReq;
             this.domain = domain;
             this.streaming = streaming;
+            this.clientActive = since;
+            this.upResp = upResp;
+            if (upResp != null) upReq = upResp.request();
             var clientResp = clientReq.response();
             clientResp.endHandler(v -> {
                 stop();
@@ -503,7 +509,8 @@ class Upstream {
             cut = true;
             var clientResp = clientReq.response();
             ProxyLog.warn("Relay cut (" + domain + clientReq.path() + "): "
-                    + (clientResp.headWritten() ? "no data from upstream" : "no answer from upstream")
+                    // A head in hand is an answer, though Vert.x only writes it with the first chunk
+                    + (clientResp.headWritten() || upResp != null ? "no data from upstream" : "no answer from upstream")
                     + " for the client in " + clientSilenceBudgetSeconds + "s");
             if (upResp != null) upResp.handler(null).endHandler(null).exceptionHandler(ignored -> {});
             sendError(clientResp, 502, "Upstream timed out");
@@ -547,6 +554,13 @@ class Upstream {
         upReq.putHeader("Host", domain);
     }
 
+    /** Upstream's status and headers, for a response relayed as it is. */
+    void copyResponseHead(HttpClientResponse upResp, HttpServerResponse clientResp) {
+        clientResp.setStatusCode(upResp.statusCode());
+        clientResp.setStatusMessage(upResp.statusMessage());
+        copyResponseHeaders(upResp, clientResp);
+    }
+
     void copyResponseHeaders(HttpClientResponse upResp, HttpServerResponse clientResp) {
         clientResp.headers().setAll(upResp.headers());
         clientResp.headers().remove("Connection");
@@ -560,8 +574,27 @@ class Upstream {
                 || (te != null && te.toLowerCase().contains("chunked"));
     }
 
-    void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp) {
-        pipeResponse(upResp, clientResp, null, null);
+    /** Relays upstream's response, head and body, as {@link #relayBody} does the body. */
+    void relayResponse(HttpServerRequest clientReq, String domain, HttpClientResponse upResp, long since) {
+        copyResponseHead(upResp, clientReq.response());
+        relayBody(clientReq, domain, upResp, since);
+    }
+
+    /**
+     * Pipes a response's body under the head already set on {@code clientReq}'s response, with a
+     * {@link RelayWatchdog} counting from {@code since}, when the client last heard from us (#1192).
+     */
+    void relayBody(HttpServerRequest clientReq, String domain, HttpClientResponse upResp, long since) {
+        var watchdog = new RelayWatchdog(clientReq, domain, false, since, upResp);
+        // The budget was spent before the response came (check() has let it go and sent the 502), or
+        // the client left. Without a handler, the reset's error would be logged by Vert.x, unprefixed
+        if (watchdog.gone()) {
+            upResp.exceptionHandler(ignored -> {}).request().reset();
+            return;
+        }
+        pipeResponse(upResp, clientReq.response(), watchdog);
+        // A response held paused, as CachingDownload's is
+        upResp.resume();
     }
 
     void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp, RelayWatchdog watchdog) {

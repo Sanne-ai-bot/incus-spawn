@@ -1279,6 +1279,8 @@ Only an unreachable upstream serves an older one.
   So an upload is never cut while the client sends, and nothing is ended that the 120s timeout would have let live: while upstream holds the body back the client is paused too, and its connection idle.
   An early answer can stream while the upload still does, so the watchdog keeps the two waits apart: the end of one never ends the other.
   A head that never comes is a logged 502, a body that stops a logged reset, and the upstream request is let go rather than left for its 300s read-idle timeout.
+  The cache path's own relays get the same watchdog (`relayResponse` and `relayBody`, #1192): an error answered to a fetch or after a redirect, and a download relayed uncached after a cache write error.
+  Their clock starts at the client's request, or its last byte, not when the relay begins, since the head wait already spent part of the budget.
   A relay cannot resume, so a shasum lookup answered with a `5xx` is asked once more, while over half the client's budget is left, before the tarball falls back to a relay (`fetchNpmVersion`).
   A `429` is not, since asked again at once it would be refused again.
   The npm fallback logs that it relays, so a codex install that fails without a stall or resume line in the proxy log points at it directly.

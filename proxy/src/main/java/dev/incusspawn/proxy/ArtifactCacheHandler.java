@@ -225,18 +225,14 @@ class ArtifactCacheHandler {
                 var statusCode = upResp.statusCode();
 
                 if (statusCode == 200) {
-                    new CachingDownload(clientReq.response(), started, upResp, cacheFile, ref, verification).start();
+                    new CachingDownload(clientReq, domain, started, upResp, cacheFile, ref, verification).start();
                 } else if (statusCode >= 300 && statusCode < 400) {
                     // Follow redirect manually — Vert.x setFollowRedirects carries
                     // the original Host header, which breaks cross-domain redirects
                     // (e.g. plugins.gradle.org -> plugins-artifacts.gradle.org).
-                    followRedirect(clientReq, upResp, cacheFile, ref, verification, 0, started);
+                    followRedirect(clientReq, domain, upResp, cacheFile, ref, verification, 0, started);
                 } else {
-                    var clientResp = clientReq.response();
-                    clientResp.setStatusCode(statusCode);
-                    clientResp.setStatusMessage(upResp.statusMessage());
-                    upstream.copyResponseHeaders(upResp, clientResp);
-                    upstream.pipeResponse(upResp, clientResp);
+                    upstream.relayResponse(clientReq, domain, upResp, started);
                 }
             }).onFailure(err -> {
                 ProxyLog.warn("Upstream error fetching " + ref + ": " + err.getMessage());
@@ -256,7 +252,7 @@ class ArtifactCacheHandler {
      * Handles multi-hop cross-domain redirects manually because Vert.x's built-in
      * setFollowRedirects carries the original Host header across domains.
      */
-    private void followRedirect(HttpServerRequest clientReq, HttpClientResponse upResp,
+    private void followRedirect(HttpServerRequest clientReq, String domain, HttpClientResponse upResp,
                                 Path cacheFile, String ref,
                                 Verification verification, int depth, long started) {
         if (depth >= MAX_REDIRECTS) {
@@ -299,17 +295,13 @@ class ArtifactCacheHandler {
             redReq.send().onSuccess(redResp -> {
                 var statusCode = redResp.statusCode();
                 if (statusCode == 200) {
-                    new CachingDownload(clientReq.response(), started, redResp, cacheFile, ref, verification).start();
+                    new CachingDownload(clientReq, domain, started, redResp, cacheFile, ref, verification).start();
                 } else if (statusCode >= 300 && statusCode < 400) {
-                    followRedirect(clientReq, redResp, cacheFile, ref, verification, depth + 1, started);
+                    followRedirect(clientReq, domain, redResp, cacheFile, ref, verification, depth + 1, started);
                 } else {
                     ProxyLog.warn("Redirect target " + redirectHost + " returned " +
                             statusCode + " for " + ref + " (Location: " + location + ")");
-                    var clientResp = clientReq.response();
-                    clientResp.setStatusCode(statusCode);
-                    clientResp.setStatusMessage(redResp.statusMessage());
-                    upstream.copyResponseHeaders(redResp, clientResp);
-                    upstream.pipeResponse(redResp, clientResp);
+                    upstream.relayResponse(clientReq, domain, redResp, started);
                 }
             }).onFailure(err -> {
                 ProxyLog.warn("Redirect fetch error for " + ref + ": " + err.getMessage());
@@ -333,6 +325,8 @@ class ArtifactCacheHandler {
      * drops an optional dependency whose download breaks, and exits 0 without it (#925).
      */
     private final class CachingDownload {
+        private final HttpServerRequest clientReq;
+        private final String domain;
         private final HttpServerResponse clientResp;
         private final HttpClientResponse first;
         private final Path cacheFile;
@@ -365,9 +359,11 @@ class ArtifactCacheHandler {
         private long upstreamActive = System.nanoTime();
         private long stallTimer;
 
-        CachingDownload(HttpServerResponse clientResp, long started, HttpClientResponse first,
+        CachingDownload(HttpServerRequest clientReq, String domain, long started, HttpClientResponse first,
                         Path cacheFile, String ref, Verification verification) {
-            this.clientResp = clientResp;
+            this.clientReq = clientReq;
+            this.domain = domain;
+            this.clientResp = clientReq.response();
             this.clientActive = started;
             this.first = first;
             this.cacheFile = cacheFile;
@@ -437,8 +433,7 @@ class ArtifactCacheHandler {
                     finish();
                     // Relay what is left uncached; the handlers above only knew the cache
                     current.handler(null).endHandler(null).exceptionHandler(null);
-                    upstream.pipeResponse(current, clientResp);
-                    current.resume();
+                    upstream.relayBody(clientReq, domain, current, clientActive);
                 }
             });
         }
