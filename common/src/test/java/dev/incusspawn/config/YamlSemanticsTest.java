@@ -268,6 +268,14 @@ class YamlSemanticsTest {
     }
 
     @Test
+    void aKeyWithADotIsQuotedWhereItIsNamed() {
+        var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig(
+                "mcp:\n  delegate-permission-modes:\n    tpl.v2: [plan]\n"));
+        assertTrue(friendly(e).contains("'mcp.delegate-permission-modes[\"tpl.v2\"]' expects a single value"), friendly(e));
+        assertTrue(friendly(e).contains("e.g. 'tpl.v2: value'"), friendly(e));
+    }
+
+    @Test
     void aStringIsAnIntegerOnlyIfItIsOneLiterally() throws Exception {
         for (var text : java.util.List.of("1e2", "5.0", "0x10", "abc", "9999999999")) {
             assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: \"" + text + "\"\n"), text);

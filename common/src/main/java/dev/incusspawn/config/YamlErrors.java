@@ -167,7 +167,7 @@ public final class YamlErrors {
             return ex.expected() == JqValue.Type.OBJECT
                     ? "the file must be a mapping of settings, but is " + received : null;
         }
-        return mismatchMessage(path, expected, received, leafName(path));
+        return mismatchMessage(path, expected, received, leafName(ex));
     }
 
     private static String shapeName(JqValue.Type type) {
@@ -200,22 +200,16 @@ public final class YamlErrors {
 
     /** Where a binding failed, as the file writes it: {@code mcp.orphan-grace-hours}, {@code repos[1].url}. */
     static String written(JqMapperException ex) {
-        var path = new StringBuilder();
-        for (var segment : ex.pathSegments()) {
-            if (segment instanceof Integer index) path.append('[').append(index).append(']');
-            else path.append(path.isEmpty() ? "" : ".").append(segment);
-        }
-        return path.toString();
+        return SecretRedactor.label(ex.pathSegments());
     }
 
-    /** Last dotted segment of a {@code $.a[0].b}-style path, without indices. */
-    static String leafName(String path) {
-        var leaf = path;
-        var dot = leaf.lastIndexOf('.');
-        if (dot >= 0) leaf = leaf.substring(dot + 1);
-        var bracket = leaf.indexOf('[');
-        if (bracket >= 0) leaf = leaf.substring(0, bracket);
-        return leaf.isEmpty() ? "key" : leaf;
+    /** The last key of the failing path as written, without indices. */
+    static String leafName(JqMapperException ex) {
+        var segments = ex.pathSegments();
+        for (int i = segments.size() - 1; i >= 0; i--) {
+            if (segments.get(i) instanceof String key) return key;
+        }
+        return "key";
     }
 
     static int extractLine(String message) {
