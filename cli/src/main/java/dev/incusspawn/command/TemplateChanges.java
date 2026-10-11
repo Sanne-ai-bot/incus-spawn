@@ -28,16 +28,17 @@ public final class TemplateChanges {
      * {@code ~ tool jdk (version: 21)}). Empty when none of them differ, which leaves the settings
      * and tool definitions that {@link ImageDef#contentFingerprint} also covers.
      */
-    public static List<String> definitionChanges(ImageDef built, ImageDef now) {
+    public static List<String> definitionChanges(ImageDef built, ImageDef now, Map<String, ImageDef> defs) {
         var changes = new ArrayList<String>();
         addChanges(changes, "package", list(built.getPackages()), list(now.getPackages()),
-                p -> p, p -> p, (x, y) -> null);
+                p -> p, p -> p, (x, y) -> null, k -> "");
         addChanges(changes, "tool", list(built.getTools()), list(now.getTools()), ToolDef.ToolRef::getName,
                 TemplateChanges::toolLabel, (x, y) -> x.getParams().equals(y.getParams()) ? null
-                        : toolLabel(x) + " → " + toolLabel(y));
+                        : toolLabel(x) + " → " + toolLabel(y),
+                tool -> inheritedFrom(tool, now, defs));
         addChanges(changes, "repo", list(built.getRepos()), list(now.getRepos()),
                 r -> r.getUrl() + " → " + r.getPath(), r -> r.getUrl() + " → " + r.getPath(),
-                TemplateChanges::repoSettingsChange);
+                TemplateChanges::repoSettingsChange, k -> "");
         return changes;
     }
 
@@ -86,11 +87,12 @@ public final class TemplateChanges {
      */
     private static <T> void addChanges(List<String> changes, String kind, List<T> built, List<T> now,
                                        Function<T, String> key, Function<T, String> added,
-                                       BiFunction<T, T, String> changed) {
+                                       BiFunction<T, T, String> changed,
+                                       Function<String, String> removedNote) {
         var before = byKey(built, key);
         var after = byKey(now, key);
         for (var k : before.keySet()) {
-            if (!after.containsKey(k)) changes.add("− " + kind + " " + k);
+            if (!after.containsKey(k)) changes.add("− " + kind + " " + k + removedNote.apply(k));
         }
         after.forEach((k, item) -> {
             var old = before.get(k);
@@ -106,12 +108,22 @@ public final class TemplateChanges {
         if (!Objects.equals(built.getBranch(), now.getBranch())) {
             what.add("branch " + orDefault(built.getBranch()) + " → " + orDefault(now.getBranch()));
         }
-        if (!Objects.equals(built.getPrime(), now.getPrime())) what.add("prime");
+        if (!Objects.equals(built.getPrime(), now.getPrime())) what.add("prime " + built.getPrime() + " → " + now.getPrime());
         return what.isEmpty() ? null : now.getUrl() + " → " + now.getPath() + " (" + String.join(", ", what) + ")";
     }
 
     private static String orDefault(String branch) {
         return branch != null ? branch : "(default)";
+    }
+
+    /** {@code  (still inherited from tpl-dev)} when a parent of {@code now} names the tool, else empty. */
+    private static String inheritedFrom(String tool, ImageDef now, Map<String, ImageDef> defs) {
+        for (var parent : ImageDef.ancestors(now, defs)) {
+            if (list(parent.getTools()).stream().anyMatch(t -> t.getName().equals(tool))) {
+                return " (still inherited from " + parent.getName() + ")";
+            }
+        }
+        return "";
     }
 
     private static <T> Map<String, T> byKey(List<T> items, Function<T, String> key) {

@@ -396,7 +396,7 @@ final class TemplateDetailView {
         var stamp = source.buildSource(name);
         var built = stamp != null ? stamp.getDefinitions().get(name) : null;
         if (now != null && built != null) {
-            var changes = TemplateChanges.definitionChanges(built, now);
+            var changes = TemplateChanges.definitionChanges(built, now, source.imageDefs());
             if (changes.isEmpty()) changes = List.of("another setting, or a tool's definition");
             for (var change : changes) lines.add(row("", "  " + change, lineStyle()));
         }
