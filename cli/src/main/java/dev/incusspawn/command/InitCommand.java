@@ -515,12 +515,34 @@ public class InitCommand extends BaseCommand {
         }
         var registered = claudeMcpRegistered();
         var approved = config.mcp().templates();
+        var candidates = defs.values().stream()
+                .filter(def -> ImageDef.chain(def, defs).stream()
+                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> "claude".equals(t.getName()))))
+                .map(ImageDef::getName)
+                .sorted()
+                .toList();
         var enabled = registered || !approved.isEmpty();
         if (enabled) {
             System.out.println("  Currently " + (registered ? "registered with Claude Code" : "not registered")
                     + "; approved templates: " + (approved.isEmpty() ? "none" : String.join(", ", approved)) + ".");
         }
-        if (!askConfirmation(prompts, "  Enable the experimental isx MCP server?", enabled)) {
+        // Fully set up: a re-run of init for something else costs one Enter, as credentials do (#1292).
+        boolean proceed;
+        if (registered && !approved.isEmpty()) {
+            var unasked = candidates.stream().filter(n -> !approved.contains(n)).toList();
+            if (!unasked.isEmpty()) {
+                System.out.println("  Not approved: " + String.join(", ", unasked) + ".");
+            }
+            var choice = mcpSetupChoice(prompts);
+            if (choice.isEmpty()) {
+                System.out.println("  Left as it is.");
+                return;
+            }
+            proceed = choice.equals("t");
+        } else {
+            proceed = askConfirmation(prompts, "  Enable the experimental isx MCP server?", enabled);
+        }
+        if (!proceed) {
             if (registered) {
                 System.out.println("  Left as it is. To remove it: claude mcp remove --scope user " + McpClientRegistration.SERVER_NAME);
             }
@@ -541,12 +563,6 @@ public class InitCommand extends BaseCommand {
             }
         }
 
-        var candidates = defs.values().stream()
-                .filter(def -> ImageDef.chain(def, defs).stream()
-                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> "claude".equals(t.getName()))))
-                .map(ImageDef::getName)
-                .sorted()
-                .toList();
         if (candidates.isEmpty()) {
             System.out.println("  No template installs Claude Code yet (the 'claude' tool), so there is");
             System.out.println("  none to approve. Add one, then re-run 'isx init' or edit the mcp:");
@@ -574,6 +590,17 @@ public class InitCommand extends BaseCommand {
         }
         System.out.println("  " + styled(DIM, "Keep agents to the MCP tools with Claude Code permissions: see the"));
         System.out.println("  " + styled(DIM, "README section 'Delegating from an agent on your host (MCP)'."));
+    }
+
+    /** Enter (or end of input) to keep the MCP setup, {@code t} to change templates, {@code n} for how to turn it off. */
+    private static String mcpSetupChoice(Prompts prompts) {
+        while (true) {
+            System.out.println("    t. Change the approved templates");
+            System.out.println("    n. How to turn it off");
+            System.out.print("  Choice (Enter to keep as-is): ");
+            var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
+            if (choice.isEmpty() || choice.equals("t") || choice.equals("n")) return choice;
+        }
     }
 
     /** The installed isx, for Claude Code to start; null if none is found. */

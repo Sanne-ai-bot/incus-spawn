@@ -191,7 +191,9 @@ With this configuration, `isx branch` adds a git remote named after the instance
 
 An agent running on your machine -- Claude Code, say -- can use isx itself: create disposable instances from templates you approved, run builds and tests in them, and hand whole tasks to the Claude Code inside an instance. `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio:
 
-`isx init` offers to set this up (it is experimental, so off by default): it registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code, whether agents may use it. To do the same by hand:
+`isx init` offers to set this up (it is experimental, so off by default): it registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code, whether agents may use it. Once it is set up, a re-run of `isx init` asks one question instead: `t` to change the approved templates, `n` to see how to turn it off, Enter to keep everything.
+
+To register it with Claude Code by hand instead:
 
 ```shell
 claude mcp add --scope user isx -- ~/.local/bin/isx mcp

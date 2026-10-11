@@ -32,6 +32,8 @@ Other sandboxes for coding agents make it differently, and the README's "Compare
 - **Ephemeral and cheap**: copy-on-write clones mean spinning up a new environment costs seconds and minimal disk space
 - **Familiar**: CLI patterns inspired by git workflows (branch-name-style naming, auto-detection from cwd)
 - **Idempotent setup**: `isx init` can be re-run safely at any time — each step checks whether its work is already done and skips without making changes, never disrupting running containers or reloading services unnecessarily.
+  A re-run should not walk through every answer again.
+  So a configured credential or MCP setup (#1292) asks one question, and Enter keeps it.
   Init completion is tracked by a versioned sentinel (`~/.config/incus-spawn/.init-complete` containing `INIT_VERSION`).
   When `INIT_VERSION` is bumped (new infrastructure step added), existing installations automatically re-run init on the next command.
   On Linux, init writes sysctl overrides (`/etc/sysctl.d/99-incus-spawn.conf`) to raise per-UID inotify limits (`max_user_instances=8192`, `max_user_watches=524288`), preventing inotify exhaustion when running many containers.
