@@ -35,6 +35,26 @@ class VmAgentFailureTest {
     }
 
     @Test
+    void matchesTheUncolouredStatusLinesOfATermDumbConsole() {
+        // TERM=dumb on the kernel command line (#1255) drops systemd's colour. From the console of
+        // the base VM image's own kernel, its incus-agent-setup made to fail
+        var log = """
+                [  OK  ] Started dbus-broker.service - D-Bus System Message Bus.\r
+                         Starting incus-agent.service - Incus - agent...\r
+                [  OK  ] Started serial-getty@ttyS0.service - Serial Getty on ttyS0.\r
+                [FAILED] Failed to start incus-agent.service - Incus - agent.\r
+                See 'systemctl status incus-agent.service' for details.\r
+                [  OK  ] Reached target multi-user.target - Multi-User System.\r
+                """;
+
+        var failure = List.of("[FAILED] Failed to start incus-agent.service - Incus - agent.");
+        assertEquals(failure, VmAgentFailure.matchingLines(log));
+        assertEquals(failure, VmAgentFailure.unrecoveredLines(log));
+        assertEquals(List.of(), VmAgentFailure.unrecoveredLines(
+                log + "[  OK  ] Started incus-agent.service - Incus - agent.\r\n"));
+    }
+
+    @Test
     void ignoresOtherUnitsAndOtherDenials() {
         var log = """
                 Failed to start sshd.service - OpenSSH server daemon.
