@@ -1234,14 +1234,18 @@ public class IncusClient {
 
     private static String remotesFormatHint() {
         return "isx knows '" + String.join("', '", WELL_KNOWN_REMOTES.keySet())
-                + "' and reads others, each with an addr (the protocol defaults to simplestreams), from the 'remotes:' section of "
+                + "' and reads others, each with an addr (the protocol defaults to " + DEFAULT_REMOTE_PROTOCOL
+                + "), from the 'remotes:' section of "
                 + Environment.incusConfigCandidates().getFirst() + ".";
     }
 
     record RemoteConfig(String addr, String protocol) {}
 
+    /** The protocol of a remote whose entry names none, and of the well-known ones. */
+    static final String DEFAULT_REMOTE_PROTOCOL = "simplestreams";
+
     private static final Map<String, RemoteConfig> WELL_KNOWN_REMOTES = Map.of(
-            "images", new RemoteConfig("https://images.linuxcontainers.org", "simplestreams")
+            "images", new RemoteConfig("https://images.linuxcontainers.org", DEFAULT_REMOTE_PROTOCOL)
     );
 
     /**
@@ -1282,7 +1286,7 @@ public class IncusClient {
                 unusable = true;
                 continue;
             }
-            return new RemoteConfig(addr, remoteNode.path("protocol").asText("simplestreams"));
+            return new RemoteConfig(addr, remoteNode.path("protocol").asText(DEFAULT_REMOTE_PROTOCOL));
         }
         return unusable ? null : WELL_KNOWN_REMOTES.get(name);
     }
