@@ -669,7 +669,10 @@ So query commands take `--format` (#1036), through one shared helper, `OutputFor
   Each line is made safe again when it is printed.
   `isx init`'s credential step prints a tool's description and each configuration entry's description and help through `oneLine` too (`CredentialSetup`, #1222): `ToolDefLoader` reads the project's `.incus-spawn/tools/`, so running init in a cloned repository shows its text.
   `isx build`'s base-image refusals do the same for the template's name and source, the image alias and the importing project (`downloadAndAliasImage`, `requireImageTrustedFor`, #1228).
-  The build header printed before a refusal (`BuildOutput.buildHeader`), the too-long refusal and the closing list of failed templates show the name through `oneLine` too.
+  The build header printed before a refusal (`BuildOutput.buildHeader`), the too-long and stranded-storage refusals and the closing list of failed templates show the name through `oneLine` too.
+  So does a refusal raised once the build has started: its "Build failed for" line (or the shutdown hook's "Build interrupted for"), the failure-report and promote lines after it, and the VM-image and broken-image refusals.
+  That line also carries messages isx did not build, such as Incus quoting the instance name, so it is printed one `oneLine` at a time, keeping its line breaks.
+  The account refusal quotes the template's `accounts:` entries, and the unparsable-file and name-conflict refusals quote the files a cloned repository named; all of these go through `oneLine` as well.
 
 A command parses its `--format` with `OutputFormat.parse` (`isx list`, which also has `--plain`, with `OutputFormat.resolve`), builds each record once, as an ordered map of field name to value, and hands the list to `format.print` (or one record to `format.printOne`, an object in `json`).
 Both machine formats print the same map, so the field order of `plain` is the field order of `json` and the two cannot drift apart.

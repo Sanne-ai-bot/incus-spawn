@@ -1801,33 +1801,124 @@ class BuildCommandTest {
         assertSafe(out);
     }
 
+    /**
+     * What {@code isx build} prints when {@code refuse} -- a check {@code buildInto} makes once the
+     * build has started -- refuses {@code def}: the refusal arrives through "Build failed for".
+     */
+    private static String refusalDuringBuild(Path home, ImageDef def, IncusClient incus,
+                                             java.util.function.Consumer<BuildCommand> refuse) {
+        var out = new String[1];
+        InitCommandTest.withHome(home, () -> {
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doAnswer(inv -> {
+                refuse.accept(cmd);
+                return null;
+            }).when(cmd).buildInto(any(), any(), anyString());
+            out[0] = bothStreams(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(def, Map.of(def.getName(), def))));
+        });
+        return out[0];
+    }
+
     @Test
     void anImageReplacementIsRefusedInOneSafeLinePerLine(@TempDir Path tmp) throws Exception {
         var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var def = hostileProjectTemplate(project);
         var incus = mock(IncusClient.class);
         when(incus.imageAliasTargetOrThrow(HOSTILE_ALIAS)).thenReturn("abc");
-        var cmd = spy(new BuildCommand());
-        cmd.incus = incus;
 
-        var e = assertThrows(IllegalStateException.class, () -> cmd.downloadAndAliasImage(HOSTILE_ALIAS,
-                "https://example.com/evil.tar.xz", null, "v1", hostileProjectTemplate(project)));
-        assertTrue(e.getMessage().contains("may only replace images it imported itself"), e.getMessage());
-        assertSafe(e.getMessage());
+        var out = refusalDuringBuild(tmp.resolve("home"), def, incus, cmd -> cmd.downloadAndAliasImage(
+                HOSTILE_ALIAS, "https://example.com/evil.tar.xz", null, "v1", def));
+        assertTrue(out.contains("may only replace images it imported itself"), out);
+        assertSafe(out);
     }
 
     @Test
     void anImageAnotherProjectImportedIsRefusedInOneSafeLinePerLine(@TempDir Path tmp) throws Exception {
         var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var def = hostileProjectTemplate(project);
         var incus = mock(IncusClient.class);
         when(incus.imageAliasTargetOrThrow(HOSTILE_ALIAS)).thenReturn("abc");
         when(incus.imagePropertyOrThrow("abc", BuildCommand.IMAGE_PROJECT_PROPERTY))
                 .thenReturn("/work/other" + HOSTILE);
-        var cmd = new BuildCommand();
-        cmd.incus = incus;
 
-        var e = assertThrows(IllegalStateException.class,
-                () -> cmd.requireImageTrustedFor(HOSTILE_ALIAS, hostileProjectTemplate(project), null));
-        assertTrue(e.getMessage().contains("was imported by a project-local template"), e.getMessage());
-        assertSafe(e.getMessage());
+        var out = refusalDuringBuild(tmp.resolve("home"), def, incus,
+                cmd -> cmd.requireImageTrustedFor(HOSTILE_ALIAS, def, null));
+        assertTrue(out.contains("was imported by a project-local template"), out);
+        assertSafe(out);
+    }
+
+    /** What {@code requireValidAccounts} prints after "Cannot build: ". */
+    @Test
+    void anUnknownAccountIsRefusedInOneSafeLine(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var def = hostileProjectTemplate(project);
+        def.setAccounts(Map.of("claude", "acct" + HOSTILE));
+        var refusal = new String[1];
+        InitCommandTest.withHome(tmp.resolve("home"), () ->
+                refusal[0] = BuildCommand.validateTemplateAccounts(List.of(def.getName()), Map.of(def.getName(), def)));
+        assertNotNull(refusal[0]);
+        assertSafe(refusal[0]);
+        assertFalse(refusal[0].contains("\n"), refusal[0]);
+    }
+
+    @Test
+    void unparsableDefinitionFilesAreListedOneSafeLineEach(@TempDir Path tmp) {
+        var refusal = BuildCommand.unparsableDefinitionsError(
+                List.of(tmp.resolve(".incus-spawn/images/evil" + HOSTILE + ".yaml")));
+        assertTrue(refusal.contains("could not be parsed"), refusal);
+        assertSafe(refusal);
+    }
+
+    @Test
+    void conflictingDefinitionFilesAreListedOneSafeLineEach(@TempDir Path tmp) {
+        var conflict = new dev.incusspawn.config.LayeredDefinitions.NameConflict("image", "tpl-" + HOSTILE,
+                List.of(tmp.resolve("a" + HOSTILE + ".yaml"), tmp.resolve("b" + HOSTILE + ".yaml")));
+        assertSafe(conflict.message());
+        assertSafe(conflict.shortMessage());
+        assertFalse(conflict.shortMessage().contains("\n"), conflict.shortMessage());
+    }
+
+    /**
+     * An error isx did not build itself -- Incus quoting the instance name, say -- is printed one
+     * safe line at a time. Its line breaks stay, since a forged one cannot be told from the
+     * message's own once it is assembled; nothing else reaches the terminal.
+     */
+    @Test
+    void aMidBuildErrorQuotingTheNameIsPrintedSafely(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var def = hostileProjectTemplate(project);
+        var out = refusalDuringBuild(tmp.resolve("home"), def, mock(IncusClient.class), cmd -> {
+            throw new IncusException("Invalid instance name '" + def.getName() + "-rebuilding'");
+        });
+        assertTrue(out.contains("Invalid instance name"), out);
+        out.codePoints().filter(c -> c != '\n').forEach(c -> assertFalse(
+                Character.isISOControl(c) || c >= 0x2028 && c <= 0x202E || c >= 0x2066 && c <= 0x2069,
+                () -> "U+%04X printed raw:%n%s".formatted(c, out)));
+    }
+
+    /** Ctrl-C mid-build: the shutdown hook's report names the template in one safe line. */
+    @Test
+    void anInterruptedBuildIsReportedInOneSafeLinePerLine(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var def = hostileProjectTemplate(project);
+        var out = refusalDuringBuild(tmp.resolve("home"), def, mock(IncusClient.class), cmd -> {
+            cmd.reportInterruptedBuild();
+            throw new BuildCommand.BuildFailedException(def.getName());
+        });
+        assertTrue(out.contains("Build interrupted for tpl- ]0;pwned  2J fake: all clear gnp"), out);
+        assertSafe(out);
+    }
+
+    @Test
+    void strandedStorageIsRefusedInOneSafeLinePerLine() {
+        var name = "tpl-" + HOSTILE;
+        var incus = mock(IncusClient.class);
+        when(incus.scanSubvolumes()).thenReturn(Optional.of(scan(Set.of(name), Set.of(name + "-rebuilding"))));
+        var out = bothStreams(() -> assertTrue(BuildCommand.reportStrandedStorage(incus, name, name + "-rebuilding")));
+        assertTrue(out.contains("Cannot build tpl- ]0;pwned"), out);
+        assertSafe(out);
     }
 }

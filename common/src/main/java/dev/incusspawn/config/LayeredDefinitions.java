@@ -1,5 +1,7 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.util.OutputFormat;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,11 +34,12 @@ public final class LayeredDefinitions<T> {
      */
     public record NameConflict(String kind, String name, List<Path> files) {
         public String message() {
+            // The name and the file names are a cloned repository's choosing: one line each (#1228).
             var sb = new StringBuilder("Multiple ").append(kind)
-                    .append(" files declare name '").append(name)
+                    .append(" files declare name '").append(OutputFormat.oneLine(name))
                     .append("' in the same directory:\n");
             for (var f : files) {
-                sb.append("  • ").append(f).append('\n');
+                sb.append("  • ").append(OutputFormat.oneLine(f.toString())).append('\n');
             }
             sb.append("Rename all but one, or update their 'name:' fields so they don't collide.");
             return sb.toString();
@@ -44,8 +47,9 @@ public final class LayeredDefinitions<T> {
 
         /** Single-line form for status bars / logs. */
         public String shortMessage() {
-            return "Name conflict: '" + name + "' is declared by " + files.size()
-                    + " files in " + files.get(0).getParent() + " — rename all but one or fix their 'name:'.";
+            return "Name conflict: '" + OutputFormat.oneLine(name) + "' is declared by " + files.size()
+                    + " files in " + OutputFormat.oneLine(String.valueOf(files.get(0).getParent()))
+                    + " — rename all but one or fix their 'name:'.";
         }
     }
 
