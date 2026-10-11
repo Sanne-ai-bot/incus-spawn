@@ -37,6 +37,8 @@ public class IntegerConverter implements ValueConverter<Integer> {
     }
 
     private static String shown(JqValue value) {
+        if (value.isArray()) return "a list";
+        if (value.isObject()) return "a mapping";
         var text = value.isString() ? "'" + value.asText() + "'" : Jjq.text(value);
         return text.length() > 40 ? text.substring(0, 40) + "..." : text;
     }

@@ -260,6 +260,14 @@ class YamlSemanticsTest {
     }
 
     @Test
+    void aListOrMappingForAnIntegerSettingSaysWhatItWas() {
+        var list = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: [8]\n"));
+        assertTrue(friendly(list).endsWith("expects a whole number, but got a list"), friendly(list));
+        var mapping = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances:\n    n: 8\n"));
+        assertTrue(friendly(mapping).endsWith("expects a whole number, but got a mapping"), friendly(mapping));
+    }
+
+    @Test
     void aStringIsAnIntegerOnlyIfItIsOneLiterally() throws Exception {
         for (var text : java.util.List.of("1e2", "5.0", "0x10", "abc", "9999999999")) {
             assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: \"" + text + "\"\n"), text);
