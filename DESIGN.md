@@ -3448,6 +3448,45 @@ The rules for what comes next, agreed with the decision on #935:
 - Every grant expires: the proxy enforces the expiry on read, revoking is the fast path and expiry the safety net for a coordinator that dies, and a grant without one is refused.
 Until a resource to lease exists, only the read side ships; the health server stays read-only (`MitmProxy.healthRoute`).
 
+### Host routes
+An agent in a box needs to reach whatever coordinates it (ask for a review, file a report) without going through GitHub, and without leaving proxy-only mode (#936).
+`host-routes:` in `config.yaml` maps a name an instance reaches on 443 to a controller on this host, `hostname:port` on loopback:
+
+```yaml
+host-routes:
+  work.isx.internal:
+    target: 127.0.0.1:7070
+    templates: [tpl-isx-agent]   # optional
+```
+
+With no entries there are no routes.
+Each name joins the intercepted set, so it gets bridge DNS and a leaf certificate the way a credential domain does, through the one function both the proxy and the CLI writers of the DNS block use (`ToolProxyResolver.hostRoutes`, which `resolvedDomains` includes); otherwise an `isx` command rewriting the block would drop them.
+A request to the name passes only when the caller's address and its per-start secret belong to one instance (`InstanceRegistry.identifyWithLineage`, one throttled refresh on a refusal, then 403) and the route admits the instance's leaf template; a project-local instance never passes.
+The proxy then forwards it over plain HTTP to the target, with every client-sent `X-Isx-*` header removed, the secret included, and `X-Isx-Instance` and `X-Isx-Template` set, and streams the response back.
+So every identity header that reaches the controller through the route was written by the proxy after that check, and the controller never holds the secret.
+That is all the controller can rely on only while the route is its one way in: it must listen on loopback alone, since one bound to `0.0.0.0` is reached directly at the bridge gateway by any instance that is not proxy-only, forged headers and all; and the loopback hop itself is plain, unauthenticated HTTP, so any process on the host can send them too.
+A client header is stripped by the name a controller may read it as, `_` folded into `-` as CGI-style servers do (`X_Isx_Instance` is `HTTP_X_ISX_INSTANCE`), along with the hop-by-hop headers and those the client names in `Connection:`, and the target is sent in origin form, never a client's absolute URI.
+No credential is injected on a route.
+
+Each entry is checked on its own and dropped with a warning naming it, failing closed:
+- the name is a hostname under `.internal` that no other intercepted name equals, contains or lies under, nor another route;
+- the target is a loopback literal or `localhost`, taken as 127.0.0.1, never a name to look up, with a port from 1 to 65535;
+- `templates:`, when present, is a non-empty list, and an unknown key drops the entry, so a misspelt filter never admits every template; so does a name written twice (in two cases, say).
+
+Three details keep a route to its own name:
+- the request is routed only when its SNI and its `Host` are both the route's name, else 421, so a connection opened for a credential domain cannot carry a request for a route, nor the other way round, and this is checked before anything else, `mcp.isx.internal` included;
+- dnsmasq resolves names under a route too, and those get 404 instead of a relay;
+- a WebSocket is refused in this version: a controller can long-poll or send server-sent events, which stream through the request path.
+
+The entry is keyed by name with the target and the filter as fields, so #935's per-instance grants can later sit beside `templates:` on the same entry rather than in a second route table.
+
+Rejected:
+- Templates declaring their routes: a project-local template is untrusted (#765), and a route reaches host state outside the project; the host owner opts in from `config.yaml`, as with `mcp: templates`.
+- Any target address: it would make the proxy a pivot from proxy-only boxes onto the LAN.
+- A unix-socket target: Vert.x needs its native transport for one on Linux and has no portable path on macOS; loopback TCP covers the need, and a socket can be added later behind the same entry.
+- Forwarding the secret for the controller to check: the controller would then hold credentials, while the proxy already checks address and secret together.
+- The address alone: #934's secret exists so that a host-side service sees both, and this is that service.
+
 ### Vertex AI: container in Vertex mode vs standard mode
 We initially ran containers in standard (non-Vertex) mode with proxy-side API translation — the container sent `/v1/messages` and the proxy rewrote to Vertex `rawPredict`.
 This had a critical flaw: Claude Code's model list is provider-dependent.

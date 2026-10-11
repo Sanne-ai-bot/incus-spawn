@@ -120,21 +120,10 @@ final class McpBridge {
             refuse(req, 503, "the proxy cannot tell instances apart yet; try again shortly");
             return;
         }
-        var instance = current.identifyMcpCaller(address, secret);
-        if (instance != null) {
-            serve(req, instance);
-        } else if (current.wantsMissRefresh()) {
-            // A start rotates the secret without telling the proxy: one refresh, then decide.
-            vertx.executeBlocking(() -> {
-                current.refresh();
-                return current.identifyMcpCaller(address, secret);
-            }, false).onComplete(ar -> {
-                if (ar.succeeded() && ar.result() != null) serve(req, ar.result());
-                else refuse(req, 403, whyNot(current, address, secret));
-            });
-        } else {
-            refuse(req, 403, whyNot(current, address, secret));
-        }
+        CallerCheck.identify(vertx, req, current, r -> r.identifyMcpCaller(address, secret), instance -> {
+            if (instance != null) serve(req, instance);
+            else refuse(req, 403, whyNot(current, address, secret));
+        });
     }
 
     private static String whyNot(InstanceRegistry registry, String address, String secret) {
@@ -277,14 +266,7 @@ final class McpBridge {
     }
 
     private static void refuse(HttpServerRequest req, int status, String message) {
-        req.resume();
-        var resp = req.response();
-        if (resp.ended() || resp.closed()) return;
-        try {
-            resp.setStatusCode(status).putHeader("Content-Type", "text/plain; charset=utf-8").end(message + "\n");
-        } catch (IllegalStateException ignored) {
-            // the client went away meanwhile
-        }
+        CallerCheck.refuse(req, status, message);
     }
 
     /** Start {@code resp} as an event stream. */

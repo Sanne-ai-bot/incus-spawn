@@ -116,6 +116,12 @@ Key design:
   The keepalive tick (30 s, under the 120 s idle timeout) also ends sessions whose instance lost the stamp, and `stop()` ends them all.
   Never block the event loop on the child: starting it runs in `executeBlocking`, its pipes on virtual threads.
   See `mcp.md`.
+- **Host routes are forwarded, never relayed (#936).**
+  `HostRouteRelay` answers every request whose `Host` or SNI is a `host-routes:` name or under one, checked in `routeRequest` before `mcp.isx.internal` and everything else: both must equal the route's name (421), a name under it gets 404, and a WebSocket to either is refused.
+  The caller passes by `InstanceRegistry.identifyWithLineage` (address + secret, one throttled refresh on a refusal) and `HostRoutes.Route.admits` (its leaf template; never a project-local instance, by its type, `project` stamp or build source), and is refused before its body is read.
+  The relay drops every client `X-Isx-*` header and hop-by-hop header, sets `X-Isx-Instance`/`X-Isx-Template`, and forwards over plain HTTP to the loopback target with no credential.
+  The routes live in `ConfigState` (replaced whole on reload) and their names in the routing's intercepted domains, from `ToolProxyResolver.hostRoutes`, which `resolvedDomains` includes for the CLI's DNS writers.
+  See DESIGN.md "Host routes".
 - **`security.ipv4_filtering` is load-bearing**, not incidental hardening: without it a container can re-address itself as a neighbour and spend that neighbour's credentials, so the whole model would be decorative.
   Set by `InstanceLifecycle.configureBranch` (a refused setting is retried without it and warned about, never fails the branch), re-armed on every stopped start by `InstanceLifecycle.prepareHostDevicesForStart` (so both `isx shell` and the TUI shell, and whatever merges them, must keep going through it -- `IpFilteringRearmTest`), which also restores it on instances the fallback below turned off.
   **Setting it succeeds even where it cannot be enforced**.
