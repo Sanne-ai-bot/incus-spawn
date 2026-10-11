@@ -66,6 +66,7 @@ class RelayRequestBodyTest {
         var spec = new StringBuilder();
         for (var host : HOSTS) {
             var server = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
+                            .setHandle100ContinueAutomatically(true)
                             .setKeyCertOptions(NpmCacheProxyTest.keyCert(ca, host)))
                     .requestHandler(req -> answer(host, req));
             if (!spec.isEmpty()) spec.append(',');
@@ -380,6 +381,41 @@ class RelayRequestBodyTest {
         } finally {
             proxy.upstream.clientSilenceBudgetSeconds = budget;
         }
+    }
+
+    /**
+     * A client that asks {@code Expect: 100-continue} gets upstream's {@code 100} rather than wait out
+     * its own timeout before it sends the body (about a second per upload for curl).
+     */
+    @Test
+    void expectContinueIsAnsweredByUpstream() throws Exception {
+        var host = "ghcr.io";
+        received.clear();
+        var socket = connect(host);
+        var bytes = new StringBuffer();
+        var continued = new CompletableFuture<Void>();
+        var answer = new CompletableFuture<String>();
+        socket.handler(b -> {
+            bytes.append(b.toString(StandardCharsets.UTF_8));
+            if (bytes.indexOf("HTTP/1.1 100 Continue\r\n\r\n") == 0) continued.complete(null);
+        });
+        socket.closeHandler(v -> answer.complete(bytes.toString()));
+        socket.write(Buffer.buffer("PUT /v2/app/blobs/uploads/1?digest=x HTTP/1.1\r\n"
+                + "Host: " + host + "\r\n"
+                + "Expect: 100-continue\r\n"
+                + "Content-Length: 5\r\n"
+                + "Connection: close\r\n\r\n"));
+        try {
+            continued.get(5, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            socket.close();
+            fail("No 100 Continue for the client; got so far: '" + bytes + "'");
+        }
+
+        socket.write(Buffer.buffer("hello"));
+        var reply = answer.get(10, TimeUnit.SECONDS);
+        assertTrue(reply.contains("HTTP/1.1 200"), reply);
+        assertEquals("hello", new String(received.get(host).get(5, TimeUnit.SECONDS).body(), StandardCharsets.UTF_8));
     }
 
     static io.vertx.core.net.NetSocket connect(String host) throws Exception {
