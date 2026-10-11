@@ -952,28 +952,7 @@ public class BuildCommand extends BaseCommand {
     }
 
     static Set<String> findDroppedTools(String oldBuildSourceJson, ImageDef imageDef, Map<String, ImageDef> defs) {
-        var oldSource = BuildSource.fromJson(oldBuildSourceJson);
-        if (oldSource == null) return Set.of();
-
-        var oldTools = new LinkedHashSet<String>();
-        for (var def : oldSource.getDefinitions().values()) {
-            if (def.getTools() != null) {
-                for (var t : def.getTools()) oldTools.add(t.getName());
-            }
-        }
-
-        var newTools = new LinkedHashSet<String>();
-        var current = imageDef;
-        while (current != null) {
-            if (current.getTools() != null) {
-                for (var t : current.getTools()) newTools.add(t.getName());
-            }
-            if (current.isRoot()) break;
-            current = defs.get(current.getParent());
-        }
-
-        oldTools.removeAll(newTools);
-        return oldTools;
+        return TemplateChanges.droppedTools(BuildSource.fromJson(oldBuildSourceJson), imageDef, defs).keySet();
     }
 
     /**

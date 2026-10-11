@@ -2,6 +2,7 @@
 paths:
   - "cli/src/main/java/dev/incusspawn/tui/**"
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetails.java"
+  - "cli/src/main/java/dev/incusspawn/command/TemplateChanges.java"
   - "cli/src/test/java/dev/incusspawn/tui/**"
   - "common/src/main/java/dev/incusspawn/incus/BtrfsUsage.java"
   - "common/src/main/java/dev/incusspawn/incus/BtrfsSysfs.java"
@@ -96,6 +97,8 @@ The tree view shows each setting on the layer that declares it.
 The type a template was *built* as comes from its `instance-mode` stamp (`TemplateInfo.instanceMode`); when it differs from the definition the view says a rebuild is needed.
 Under `Source:` it names the definition this one overrides from an earlier search layer (`LayeredDefinitions.overriddenSource()`, from the load the TUI already does) and, when the build stamped another file (`BuildSource.sourceOf()` on the `build-source` stamp the listing already carries, re-parsed only when the stamp changes), "built from <path>" (`TemplateDetailView.sourceLabel` says the `built-in` placeholder in words).
 The list's △ context line names that file by its file name only, so the warnings after it stay on the bar (#1099, `TuiBuiltFromTest`).
+Behind its △ row the view lists the packages, tools (with parameters) and repos as built versus now, and `isx build <name>`; under Tools it names each tool a parent provided at build time that the chain no longer does (`TemplateChanges`, from the same stamp, parsed whole only when the view asks, #1201).
+The list's context line carries neither: there is no room on the bar for them.
 A directory scanned twice (a search path naming the user directory, or reaching one through a symlink) records no override of a file by itself.
 The later layer's path and definition are recorded as for any layer, since project-local confinement is read from them (`ToolDefLoader.projectLocalToolNames()` from the path, images from the definition's `projectRoot`), and the override the earlier spelling recorded is carried over to the later one so `Overrides:` survives (`LayeredDefinitionsTest`, `ToolDefLoaderTest#aProjectToolAlsoReachedThroughASymlinkedSearchPathStaysProjectLocal`).
 A new `ImageDef` field belongs in both views.

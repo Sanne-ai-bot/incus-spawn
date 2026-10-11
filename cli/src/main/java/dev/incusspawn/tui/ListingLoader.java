@@ -43,7 +43,30 @@ final class ListingLoader {
     /** Per built template, the file its build stamped, and the stamp it was read from. */
     private Map<String, StampedFile> templatesBuiltFrom = Map.of();
 
-    private record StampedFile(String stamp, String file) {}
+    /** A template's build stamp and the file it names; the whole stamp is parsed only when asked for. */
+    private static final class StampedFile {
+        private final String stamp;
+        private final String file;
+        private BuildSource parsed;
+        private boolean isParsed;
+
+        StampedFile(String stamp, String file) {
+            this.stamp = stamp;
+            this.file = file;
+        }
+
+        String stamp() { return stamp; }
+        String file() { return file; }
+
+        BuildSource buildSource() {
+            // Also remembers a stamp that does not parse, so the view does not retry it every frame
+            if (!isParsed) {
+                parsed = BuildSource.fromJson(stamp);
+                isParsed = true;
+            }
+            return parsed;
+        }
+    }
 
     // Resolved once and cached: the pool name is constant for a TUI session, so we
     // avoid re-probing the storage-pool list (an extra HTTP call) on every reload.
@@ -217,6 +240,12 @@ final class ListingLoader {
     String builtFrom(String template) {
         var stamped = templatesBuiltFrom.get(template);
         return stamped == null ? null : stamped.file();
+    }
+
+    /** The definitions and tools a built template's build stamped, or null. */
+    BuildSource buildSource(String template) {
+        var stamped = templatesBuiltFrom.get(template);
+        return stamped == null ? null : stamped.buildSource();
     }
 
     /** Merge the Incus listing with the image definitions into the two panels' entry lists. */

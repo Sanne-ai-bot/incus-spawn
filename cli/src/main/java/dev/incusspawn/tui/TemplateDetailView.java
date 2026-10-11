@@ -3,6 +3,8 @@ package dev.incusspawn.tui;
 import dev.incusspawn.command.InstanceListing;
 import dev.incusspawn.command.TemplateDetails;
 import dev.incusspawn.command.BuildCommand;
+import dev.incusspawn.command.TemplateChanges;
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
@@ -64,6 +66,9 @@ final class TemplateDetailView {
 
         /** The file the built image was built from, as its build stamped it, or null. */
         String builtFrom(String template);
+
+        /** The definitions and tools the built image was built from, as stamped, or null. */
+        BuildSource buildSource(String template);
 
         String currentVersion();
     }
@@ -231,11 +236,17 @@ final class TemplateDetailView {
         var allToolNames = new ArrayList<String>();
         for (var def : chain) {
             for (var toolRef : def.getTools()) {
-                allToolsFormatted.add(formatToolWithParams(toolRef));
+                allToolsFormatted.add(TemplateChanges.toolLabel(toolRef));
                 allToolNames.add(toolRef.getName());
             }
         }
-        addSection(lines, "Tools", allToolsFormatted);
+        var noLongerInherited = new ArrayList<Line>();
+        if (template.isBuilt()) {
+            TemplateChanges.droppedInheritedTools(source.buildSource(template.name()), current, source.imageDefs())
+                    .forEach((tool, provider) -> noLongerInherited.add(Line.styled("  " + tool
+                            + ": no longer inherited from " + provider + " (still in the built image)", warnStyle())));
+        }
+        addSection(lines, "Tools", allToolsFormatted, noLongerInherited);
         addOptionalSection(lines, "Dependencies (auto)", source.autoDeps(allToolNames));
 
         var allRepos = new ArrayList<ImageDef.RepoEntry>();
@@ -365,6 +376,7 @@ final class TemplateDetailView {
         }
         if (source.definitionChanged(template.name())) {
             lines.add(row("", "△ definition changed since last build", warnStyle()));
+            addDefinitionChanges(lines, template.name());
         }
         if (source.parentRebuilt(template.name())) {
             var def = source.imageDefs().get(template.name());
@@ -376,6 +388,19 @@ final class TemplateDetailView {
                     + "  (approx, excludes shared blocks)", lineStyle()));
         }
         lines.add(Line.styled("", lineStyle()));
+    }
+
+    /** Behind △: the packages, tools and repos as built versus now, and the command that applies them. */
+    private void addDefinitionChanges(List<Line> lines, String name) {
+        var now = source.imageDefs().get(name);
+        var stamp = source.buildSource(name);
+        var built = stamp != null ? stamp.getDefinitions().get(name) : null;
+        if (now != null && built != null) {
+            var changes = TemplateChanges.definitionChanges(built, now);
+            if (changes.isEmpty()) changes = List.of("another setting, or a tool's definition");
+            for (var change : changes) lines.add(row("", "  " + change, lineStyle()));
+        }
+        lines.add(row("", "  rebuild with: isx build " + name, dimStyle()));
     }
 
     /** The base image line, plus where a prebuilt image comes from and whether it is pinned. */
@@ -398,12 +423,19 @@ final class TemplateDetailView {
 
     /** A section that is always listed, saying "(none)" when empty. */
     private void addSection(List<Line> lines, String label, List<String> items) {
+        addSection(lines, label, items, List.of());
+    }
+
+    /** A section that is always listed, with {@code notes} after its items. */
+    private void addSection(List<Line> lines, String label, List<String> items, List<Line> notes) {
         if (items.isEmpty()) {
             lines.add(Line.from(List.of(Span.styled(label + ": ", labelStyle()), Span.styled("(none)", dimStyle()))));
-            lines.add(Line.styled("", lineStyle()));
         } else {
-            addOptionalSection(lines, label, items);
+            lines.add(Line.styled(label + ":", labelStyle()));
+            for (var item : items) lines.add(Line.styled("  " + item, lineStyle()));
         }
+        lines.addAll(notes);
+        lines.add(Line.styled("", lineStyle()));
     }
 
     /** A section listed only when it has items. */
@@ -500,7 +532,7 @@ final class TemplateDetailView {
                 var toolSpans = new ArrayList<Span>();
                 toolSpans.add(Span.styled(contentIndent + "Tools: ", labelStyle));
                 var toolNames = def.getTools().stream().map(ToolDef.ToolRef::getName).toList();
-                var toolDisplay = def.getTools().stream().map(TemplateDetailView::formatToolWithParams).toList();
+                var toolDisplay = def.getTools().stream().map(TemplateChanges::toolLabel).toList();
                 toolSpans.add(Span.styled(String.join(", ", toolDisplay), lineStyle));
                 var levelAutoDeps = source.autoDeps(toolNames);
                 if (!levelAutoDeps.isEmpty()) {
@@ -582,15 +614,6 @@ final class TemplateDetailView {
     }
 
     // --- Formatting ---
-
-    static String formatToolWithParams(ToolDef.ToolRef toolRef) {
-        if (toolRef.getParams().isEmpty()) return toolRef.getName();
-        var params = toolRef.getParams().entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(e -> e.getKey() + ": " + e.getValue())
-                .collect(Collectors.joining(", "));
-        return toolRef.getName() + " (" + params + ")";
-    }
 
     /** One env entry as the shell would apply it, with secret-looking values masked. */
     static String formatEnv(EnvEntry entry) {
