@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Maps a request's source address to the instance that made it, and to the credential
@@ -149,6 +150,10 @@ public final class InstanceRegistry {
 
     private final IncusClient incus;
     private final AtomicBoolean refreshing = new AtomicBoolean();
+    /** Listings started, numbering each one; and the highest-numbered one finished, guarded by {@link #listed}. */
+    private final AtomicLong listingsStarted = new AtomicLong();
+    private final Object listed = new Object();
+    private long listedThrough;
     private volatile Snapshot snapshot = EMPTY;
 
     public InstanceRegistry(IncusClient incus) {
@@ -288,6 +293,7 @@ public final class InstanceRegistry {
      */
     public boolean refresh() {
         if (!refreshing.compareAndSet(false, true)) return false;
+        var number = listingsStarted.incrementAndGet();
         try {
             snapshot = new Snapshot(parse(incus.listJsonConfig()), System.currentTimeMillis(), VIEWS.incrementAndGet());
             return true;
@@ -299,7 +305,43 @@ public final class InstanceRegistry {
             ProxyLog.warn("Instance registry refresh failed: " + e.getMessage());
             return false;
         } finally {
-            refreshing.set(false);
+            synchronized (listed) {
+                listedThrough = Math.max(listedThrough, number);
+                refreshing.set(false);
+                listed.notifyAll();
+            }
+        }
+    }
+
+    /**
+     * {@link #refresh} from a listing that starts after this call does. <strong>Blocks</strong>,
+     * up to {@code timeoutMillis}. A refresh already under way may have listed before what the
+     * caller wants to see (a start that rotated a secret), so it is waited out, never taken as
+     * the answer: that is what {@link #refresh}'s single flight would otherwise return.
+     */
+    public void refreshAfterNow(long timeoutMillis) {
+        // Any listing numbered this or later started after this call: whoever runs it, it answers
+        // every caller waiting for it, so a burst of refused callers costs one listing, not one each
+        var wanted = listingsStarted.get() + 1;
+        var deadline = System.nanoTime() + timeoutMillis * 1_000_000;
+        while (true) {
+            synchronized (listed) {
+                while (listedThrough < wanted && refreshing.get()) {
+                    var left = (deadline - System.nanoTime()) / 1_000_000;
+                    if (left <= 0) return;
+                    try {
+                        listed.wait(left);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+                // A listing that failed was tried, and that is the answer too
+                if (listedThrough >= wanted || System.nanoTime() >= deadline) return;
+            }
+            // Nothing under way: list now. Losing the race to another caller's listing is fine,
+            // since it started after this call and the loop waits for it
+            refresh();
         }
     }
 

@@ -251,6 +251,85 @@ class InstanceRegistryTest {
     }
 
     @Test
+    void aBurstOfRefreshesAfterNowSharesOneListing() throws Exception {
+        // Refused callers are what a guest with a wrong secret makes at will: each must not list on its own
+        var listings = new java.util.concurrent.atomic.AtomicInteger();
+        var listingStarted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
+            @Override
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                listings.incrementAndGet();
+                listingStarted.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    throw new IllegalStateException(e);
+                }
+                return io.hyperfoil.tools.jjq.value.JqValues.parse("[]");
+            }
+        });
+        var inFlight = new Thread(registry::refresh);
+        inFlight.start();
+        assertTrue(listingStarted.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        var waiters = new java.util.ArrayList<Thread>();
+        for (int i = 0; i < 16; i++) {
+            var waiter = new Thread(() -> registry.refreshAfterNow(5_000));
+            waiters.add(waiter);
+            waiter.start();
+        }
+        // Every waiter has asked, and is waiting for the listing under way, before it ends
+        for (var waiter : waiters) {
+            while (waiter.getState() != Thread.State.TIMED_WAITING) Thread.onSpinWait();
+        }
+        release.countDown();
+        for (var waiter : waiters) waiter.join(5_000);
+        inFlight.join(5_000);
+
+        assertEquals(2, listings.get(), "the one under way, then one listing for all sixteen");
+        waiters.forEach(w -> assertFalse(w.isAlive()));
+    }
+
+    @Test
+    void aRefreshAfterNowWaitsOutOneAlreadyListingAndListsAgain() throws Exception {
+        // A refused caller's retry must see a listing from after its request, not the one the
+        // request path started a moment earlier, from before the start that rotated the secret
+        var secret = InstanceSecret.generate();
+        var before = "[]";
+        var after = """
+                [{"name":"box","status":"Running","config":{"%s":"10.0.0.5","%s":"%s"}}]
+                """.formatted(ADDRESS_KEY, SECRET_KEY, InstanceSecret.sha256(secret));
+        var listing = new java.util.concurrent.atomic.AtomicReference<>(before);
+        var listingStarted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
+            @Override
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                var answer = listing.get();
+                listingStarted.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    throw new IllegalStateException(e);
+                }
+                return io.hyperfoil.tools.jjq.value.JqValues.parse(answer);
+            }
+        });
+        var inFlight = new Thread(registry::refresh);
+        inFlight.start();
+        assertTrue(listingStarted.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        listing.set(after);
+        var waiter = new Thread(() -> registry.refreshAfterNow(5_000));
+        waiter.start();
+        Thread.sleep(50);
+        release.countDown();
+        waiter.join(5_000);
+        inFlight.join(5_000);
+
+        assertEquals("box", registry.identify("10.0.0.5", secret).instanceName());
+    }
+
+    @Test
     void aRestartRetiresTheSecretOfThePreviousStart() {
         var daemon = new dev.incusspawn.incus.FakeIncusDaemon();
         var before = InstanceSecret.generate();

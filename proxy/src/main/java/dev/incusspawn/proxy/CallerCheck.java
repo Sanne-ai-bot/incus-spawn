@@ -12,6 +12,9 @@ import java.util.function.Function;
  */
 final class CallerCheck {
 
+    /** How long a refused caller waits for a listing, on a worker thread. */
+    static final long REFRESH_WAIT_MILLIS = 5_000;
+
     private CallerCheck() {}
 
     /**
@@ -29,7 +32,9 @@ final class CallerCheck {
             return;
         }
         vertx.executeBlocking(() -> {
-            registry.refresh();
+            // Not refresh(): the request path schedules one for the same miss, which may be listing
+            // already, and from before the start that rotated the secret
+            registry.refreshAfterNow(REFRESH_WAIT_MILLIS);
             return identify.apply(registry);
         }, false).onComplete(ar -> {
             try {
