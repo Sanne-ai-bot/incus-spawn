@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 
 import dev.incusspawn.config.AccountResolver;
+import dev.incusspawn.config.HostRoutes;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
@@ -12,12 +13,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -120,16 +123,34 @@ public final class ToolProxyResolver {
     }
 
     /**
-     * The tool domains the proxy intercepts: those any configured account makes resolvable,
-     * as {@link #resolveAcrossAccounts} decides for the proxy itself. Anything that rewrites
+     * The domains the proxy intercepts beyond its built-in ones: the tool domains any
+     * configured account makes resolvable, as {@link #resolveAcrossAccounts} decides for the
+     * proxy itself, and the names of the {@link #hostRoutes host routes}. Anything that rewrites
      * bridge DNS from this set (the TUI's auto-heal, {@code isx doctor}) must not use the
      * default account's narrower set, or it drops a domain only a named account can serve
-     * and its requests go upstream without credentials until the proxy reloads.
+     * and its requests go upstream without credentials until the proxy reloads; nor leave the
+     * routes out, which would stop instances resolving them.
      */
     public static Set<String> resolvedDomains(SpawnConfig config) {
-        return resolveAcrossAccounts(config, proxyToolSetups(config)).stream()
+        var acrossAccounts = resolveAcrossAccounts(config, proxyToolSetups(config));
+        var domains = acrossAccounts.stream()
                 .map(ResolvedToolProxy::domain)
-                .collect(Collectors.toUnmodifiableSet());
+                .collect(Collectors.toCollection(java.util.HashSet::new));
+        // The proxy reports what it drops; a CLI writer only needs the names
+        domains.addAll(hostRoutes(config, acrossAccounts, warning -> {}).keySet());
+        return Set.copyOf(domains);
+    }
+
+    /**
+     * The routes of {@code host-routes:} the proxy serves (#936): those that pass
+     * {@link HostRoutes#routes}' checks against every domain it intercepts otherwise, built-in
+     * ones and {@code acrossAccounts}' alike. The one place both the proxy and
+     * {@link #resolvedDomains} decide it, so the bridge DNS block and the proxy agree.
+     */
+    public static Map<String, HostRoutes.Route> hostRoutes(SpawnConfig config,
+            Collection<ResolvedToolProxy> acrossAccounts, Consumer<String> warn) {
+        var toolDomains = acrossAccounts.stream().map(ResolvedToolProxy::domain).collect(Collectors.toSet());
+        return config.hostRoutes().routes(ProxyConfig.interceptedDomains(toolDomains), warn);
     }
 
     /**

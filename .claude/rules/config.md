@@ -21,7 +21,12 @@ Project-local templates get no host repo references and are skipped by `HostRepo
 Their `image_url` may only replace an image their own project imported (`incus-spawn.project` image stamp; trusted builds refuse or re-import project-stamped images, `BuildCommand.requireImageTrustedFor`).
 Project-local tools cannot declare `proxy:` (`ToolProxyResolver.rejectProjectLocalProxy()`).
 Any new capability that reaches host state outside the project, such as host paths, host-only sources, or credentials, needs the same gate.
+Host routes (#936) are one: only `config.yaml`'s `host-routes:` declares them, and a project-local instance never passes one.
 See DESIGN.md "Project-local templates are confined to their project".
+
+**Host routes** (`host-routes:`, `HostRoutes`): a raw section like `artifact-cache:`, so any shape loads and is written back as it was; a name under `.internal` mapped to `target:` (`host:port` on loopback) and an optional `templates:` list.
+`HostRoutes.routes` checks each entry against the intercepted domains and drops a wrong one with a warning naming it; an unknown key drops the entry, so a misspelt `templates:` never admits every template.
+Keep the entry keyed by name with its filter as a field: #935's per-instance grants go beside `templates:`.
 
 **Secrets**: `SecretRegistry` is the single source of truth for *where secrets live* in `config.yaml`.
 It holds no list -- it collects every tool's `ToolDef.ConfigEntry` that declares `secret: true` with a `config-path`, resolved through `ProxyDef.fullConfigPath()`.

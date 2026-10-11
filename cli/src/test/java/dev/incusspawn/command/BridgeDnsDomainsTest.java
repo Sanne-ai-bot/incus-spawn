@@ -31,4 +31,22 @@ class BridgeDnsDomainsTest {
         assertTrue(domains.contains("github.com"), domains.toString());
         assertTrue(domains.contains("githubusercontent.com"), domains.toString());
     }
+
+    @Test
+    void hostRouteNamesAreKept() throws Exception {
+        var config = IsolatedHome.seed("""
+                host-routes:
+                  work.isx.internal:
+                    target: 127.0.0.1:7070
+                  mcp.isx.internal:
+                    target: 127.0.0.1:7071
+                """);
+        var domains = ProxyConfig.interceptedDomains(ToolProxyResolver.resolvedDomains(config));
+        // A rewrite without it would stop instances resolving the route (#936)
+        assertTrue(domains.contains("work.isx.internal"), domains.toString());
+        // One the proxy refuses (it is already isx mcp's) adds nothing
+        var others = new java.util.HashSet<>(domains);
+        others.remove("work.isx.internal");
+        assertEquals(ProxyConfig.interceptedDomains(ToolProxyResolver.resolvedDomains(IsolatedHome.seed("{}\n"))), others);
+    }
 }
