@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(TempHome.class)
 class BuildAccountsTest {
 
-        @Test
+    @Test
     void theTemplatesPinsAreStampedWithTheTemplateAsTheirOrigin() {
         var updates = BuildAccounts.startConfig(JqObject.builder(0).build(),
                 Map.of("github", "bot"), "tpl-q");

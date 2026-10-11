@@ -15,7 +15,7 @@ import java.util.function.Consumer;
 
 public final class StaticIpAllocator {
 
-        /**
+    /**
      * Dot-prefixed, as no instance name can be: the TUI's per-instance locks in the same
      * directory are {@code <instance>.lock}, so an instance named {@code static-ip} would
      * otherwise open, close and delete this very file.

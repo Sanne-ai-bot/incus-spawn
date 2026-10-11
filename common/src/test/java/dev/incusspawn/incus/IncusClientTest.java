@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class IncusClientTest {
 
-        @Test
+    @Test
     void rootDiskPoolFromProfileInheritedDevice() {
         var devices = JqValues.parse("{\"root\":{\"type\":\"disk\",\"path\":\"/\",\"pool\":\"cow\"}}");
 

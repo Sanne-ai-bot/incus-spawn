@@ -499,7 +499,7 @@ public class GuestProvisioning {
 
     private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
     private static final String AGENTUSER_HOME = "/home/agentuser";
-    
+
     /**
      * Update .claude.json to pre-trust cloned repo directories and register GitHub repo paths.
      */

@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class StaticIpAllocatorTest {
 
-        @Test
+    @Test
     void pickFreeIpReturnsFirstAvailable() {
         var cidr = CidrUtils.parseCidr("10.166.11.1/24");
         var claimed = new HashSet<Long>();
