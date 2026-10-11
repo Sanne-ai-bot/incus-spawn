@@ -180,6 +180,10 @@ tpl-minimal   (Base OS only — no tools)
         └── tpl-java  (JDK packages + Maven tool)
 ```
 
+A definition sets `deprecated: true` or `deprecated: <what to use instead>` (#1195): it still builds, so nobody's build breaks, but `BuildCommand` warns once per deprecated template in the chain of each template it builds, and the TUI keeps that warning in its warning log (the build prints it on the released terminal, which the TUI redraws over, so the TUI copies every `BuildOutput.warn` of a build it runs there with `BuildOutput.copyWarningsTo`) and shows it in the template's details before anyone builds.
+`deprecated` is left out of the content fingerprint, so marking a template deprecated, or switching to a copy that is not, rebuilds nothing.
+Removing a template outright was the alternative: every template derived from it would stop building on upgrade, with no warning beforehand.
+
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
 Available Java tools: `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
 
@@ -198,6 +202,7 @@ Each image definition specifies:
 - `packages` — dnf packages to install
 - `tools` — tool names to run (resolved from YAML or Java)
 - `agent_note` — always-true fact an agent must know before acting, rendered into the generated agent context file (see below)
+- `deprecated` — `true` or a note: still builds, but warns on every build of it or of what derives from it
 
 Building an image automatically builds missing parents recursively.
 `isx build --all` rebuilds every defined image from scratch.

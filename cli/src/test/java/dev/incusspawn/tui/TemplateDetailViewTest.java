@@ -90,6 +90,11 @@ class TemplateDetailViewTest {
                                            Map<String, String> builtFrom) throws Exception {
         var defs = defs();
         if (kvmSource != null) defs.get("tpl-kvm").setSource(kvmSource);
+        return view(defs, defChanged, overridden, builtFrom);
+    }
+
+    private static TemplateDetailView view(Map<String, ImageDef> defs, Set<String> defChanged,
+                                           Map<String, String> overridden, Map<String, String> builtFrom) {
         var source = new TemplateDetailView.Source() {
             @Override public Map<String, ImageDef> imageDefs() { return defs; }
             @Override public List<String> autoDeps(List<String> tools) {
@@ -200,6 +205,17 @@ class TemplateDetailViewTest {
         assertFalse(screen.contains("Accounts:"), screen);
         assertTrue(screen.contains("tag f44-20260915  (pinned)"), screen);
         assertTrue(screen.contains("from https://example.com/f44-20260915/fedora-44.tar.xz"), screen);
+    }
+
+    /** A template on its way out says so, and why, before anyone builds it or on it (#1195). */
+    @Test
+    void aDeprecatedParentIsShownWithItsNote() throws Exception {
+        assertFalse(text(view(Set.of()), NOT_BUILT, 120, 50).contains("deprecated"));
+
+        var defs = defs();
+        defs.get("tpl-root").setDeprecated("use tpl-base instead");
+        var screen = text(view(defs, Set.of(), Map.of(), Map.of()), NOT_BUILT, 120, 50);
+        assertTrue(screen.contains("⚠ tpl-kvm derives from tpl-root, which is deprecated: use tpl-base instead"), screen);
     }
 
     @Test

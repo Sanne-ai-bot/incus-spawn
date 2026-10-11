@@ -6,6 +6,7 @@ import dev.incusspawn.command.BuildCommand;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolDef;
@@ -177,6 +178,13 @@ final class TemplateDetailView {
             for (var text : wrap(current.getDescription(), width)) lines.add(Line.styled(text, lineStyle));
             lines.add(Line.styled("", lineStyle));
         }
+        // What a build of it would warn about (#1195), so the choice is made before building
+        var deprecations = ImageDef.deprecationWarnings(current, source.imageDefs());
+        var warnStyle = warnStyle();
+        for (var warning : deprecations) {
+            for (var text : wrap("⚠ " + OutputFormat.oneLine(warning), width)) lines.add(Line.styled(text, warnStyle));
+        }
+        if (!deprecations.isEmpty()) lines.add(Line.styled("", lineStyle));
 
         // Runtime: always shown, defaults spelled out
         lines.add(row("Type:", TemplateDetails.typeLabel(details.type()), lineStyle));

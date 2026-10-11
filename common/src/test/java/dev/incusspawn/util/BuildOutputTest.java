@@ -205,6 +205,21 @@ class BuildOutputTest {
         assertTrue(text().contains("● Building tpl-dev"));
     }
 
+    /**
+     * A build the TUI runs prints on the released terminal, which the TUI then redraws over: its
+     * warnings are also handed to the TUI's log, but only while the TUI listens (#1195).
+     */
+    @Test
+    void warningsAreCopiedToAListenerUntilItIsClosed() {
+        var copied = new java.util.ArrayList<String>();
+        try (var ignored = BuildOutput.copyWarningsTo(copied::add)) {
+            BuildOutput.warn("tpl-a derives from tpl-old, which is deprecated", "use tpl-new");
+        }
+        BuildOutput.warn("after the build");
+        assertEquals(List.of("tpl-a derives from tpl-old, which is deprecated\nuse tpl-new"), copied);
+        assertTrue(text().contains("⚠ after the build"), "still printed: " + text());
+    }
+
     @Test
     void warningsAndNotesGoToStderr() {
         var out = new ByteArrayOutputStream();

@@ -139,6 +139,14 @@ public class ImageDef {
      * re-points one namespace without restating the rest.
      */
     private Map<String, String> accounts = Map.of();
+    /**
+     * Set when the template is on its way out: {@code true}, or what to use instead. It still
+     * builds, but every build of it or of a template deriving from it warns
+     * ({@link #deprecationWarnings}). Left out of {@link #contentFingerprint}: marking a template
+     * deprecated, or moving to an identical copy that is not, must not rebuild anything.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String deprecated;
 
     @JsonIgnore
     private String source = "unknown";
@@ -212,6 +220,12 @@ public class ImageDef {
     public Map<String, String> getAccounts() { return accounts; }
     public void setAccounts(Map<String, String> accounts) {
         this.accounts = accounts == null ? Map.of() : Map.copyOf(accounts);
+    }
+    public String getDeprecated() { return deprecated; }
+    public void setDeprecated(String deprecated) { this.deprecated = deprecated; }
+    /** Whether the definition says {@code deprecated:} with anything but {@code false}. */
+    public boolean isDeprecated() {
+        return deprecated != null && !deprecated.isBlank() && !"false".equalsIgnoreCase(deprecated.strip());
     }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
@@ -553,6 +567,33 @@ public class ImageDef {
             });
         }
         return merged;
+    }
+
+    /**
+     * One warning for each deprecated template in {@code start}'s chain, root first: building
+     * {@code start} still works, but it is built on something that is going away.
+     */
+    public static List<String> deprecationWarnings(ImageDef start, Map<String, ImageDef> defs) {
+        return deprecationWarnings(start, defs, new java.util.HashSet<>());
+    }
+
+    /**
+     * Like {@link #deprecationWarnings(ImageDef, Map)}, leaving out the deprecated templates named
+     * in {@code warned} and adding the rest to it: a run that builds several templates on one
+     * deprecated template warns about it once.
+     */
+    public static List<String> deprecationWarnings(ImageDef start, Map<String, ImageDef> defs,
+                                                   java.util.Set<String> warned) {
+        var warnings = new ArrayList<String>();
+        for (var layer : chain(start, defs)) {
+            if (!layer.isDeprecated() || !warned.add(layer.getName())) continue;
+            var what = layer == start
+                    ? layer.getName() + " is deprecated"
+                    : start.getName() + " derives from " + layer.getName() + ", which is deprecated";
+            var note = layer.getDeprecated().strip();
+            warnings.add("true".equalsIgnoreCase(note) ? what + "." : what + ": " + note);
+        }
+        return warnings;
     }
 
     /** Whether this image is built from scratch (no parent). */
