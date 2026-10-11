@@ -1,6 +1,7 @@
 package dev.incusspawn.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.tool.ToolDef;
 import io.quarkus.runtime.annotations.RegisterForReflection;
@@ -27,6 +28,12 @@ public class BuildSource {
     private Map<String, String> sources = new LinkedHashMap<>();
     /** Project directory of each project-local definition; see {@link ImageDef#getProjectRoot()}. */
     private Map<String, String> projectRoots = new LinkedHashMap<>();
+    /**
+     * The newer base image release a build from scratch tracked in place of its root's
+     * {@code image_tag}, which {@code definitions} keeps as loaded (#1244); null if it used that tag.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String trackedImageTag;
 
     public BuildSource() {}
 
@@ -57,6 +64,9 @@ public class BuildSource {
     public void setProjectRoots(Map<String, String> projectRoots) {
         this.projectRoots = projectRoots != null ? projectRoots : new LinkedHashMap<>();
     }
+
+    public String getTrackedImageTag() { return trackedImageTag; }
+    public void setTrackedImageTag(String trackedImageTag) { this.trackedImageTag = trackedImageTag; }
 
     public Map<String, ToolInstance> getToolInstances() { return toolInstances; }
     public void setToolInstances(Map<String, ToolInstance> instances) {

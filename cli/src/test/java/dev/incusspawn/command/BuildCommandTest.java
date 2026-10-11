@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
+import dev.incusspawn.baseimage.BaseImageReleases;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
@@ -18,6 +19,7 @@ import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
@@ -939,6 +941,58 @@ class BuildCommandTest {
                 .thenReturn(instance("container", Map.of(Metadata.CREATED, "2026-10-07T10:00:00")));
 
         assertFalse(outdated(incus, child, defs));
+    }
+
+    /** An unpinned root as loaded from its YAML: the built-in base image tag is only a fallback. */
+    private static ImageDef trackedRoot() {
+        var root = def("tpl-minimal", null);
+        root.setImage("isx-base");
+        root.setImageUrl("https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}.tar.xz");
+        root.setImageTag("fedora-44-20261009");
+        root.setImageSha256(Map.of("x86_64", "builtin-sha"));
+        return root;
+    }
+
+    /**
+     * A build that tracks a base image newer than the built-in tag stamps the definition it was
+     * given, so the next look at that same definition finds it unchanged; before, the stamp
+     * folded in the tracked tag and no rebuild could clear the mark (#1244).
+     */
+    @Test
+    void aRootBuiltOnANewerTrackedBaseImageIsCurrentAfterwards(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var releases = mock(BaseImageReleases.class);
+            var latest = new BaseImageReleases.Release("fedora-44-20261010", "2026-10-10", "sums");
+            try {
+                when(releases.fetchReleases()).thenReturn(List.of(latest));
+                when(releases.fetchChecksums(latest)).thenReturn(new BaseImageReleases.Checksums(
+                        Map.of("x86_64", "tracked-sha"), Map.of()));
+            } catch (java.io.IOException e) {
+                throw new AssertionError(e);
+            }
+            var incus = mock(IncusClient.class);
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.toolDefLoader = mock(ToolDefLoader.class);
+            doReturn(releases).when(cmd).baseImageReleases(anyString());
+
+            var root = trackedRoot();
+            var defs = Map.of("tpl-minimal", root);
+            var base = cmd.resolveTrackedBaseImage(root);
+            assertEquals("fedora-44-20261010", base.tag(), "the build downloads the newest release");
+            assertEquals(Map.of("x86_64", "tracked-sha"), base.sha256());
+            cmd.stampBuildVersion("tpl-minimal", root, defs, Map.of());
+
+            var stamp = ArgumentCaptor.forClass(String.class);
+            verify(incus).configSet(eq("tpl-minimal"), eq(Metadata.DEFINITION_SHA), stamp.capture());
+            var reloaded = trackedRoot();
+            assertFalse(TemplateStaleness.definitionChanged(stamp.getValue(), reloaded, Map.of()),
+                    "the definition did not change, only a newer base image was published");
+            assertFalse(outdated(stamped("tpl-minimal", Map.of(
+                            Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
+                            Metadata.DEFINITION_SHA, stamp.getValue())),
+                    reloaded, Map.of("tpl-minimal", reloaded)), "--out-of-sync must not rebuild it again");
+        });
     }
 
     /** Asking Incus failing is not "the parent is not built": it is thrown, never read as current. */
