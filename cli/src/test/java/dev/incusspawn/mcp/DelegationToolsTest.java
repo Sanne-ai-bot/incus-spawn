@@ -256,7 +256,7 @@ class DelegationToolsTest {
         assertEquals(task, waited.path("finished").getElement(0).asText(), "it is over");
         var entry = waited.path("tasks").getElement(0);
         assertEquals("unknown", entry.path("state").asText(), "finished or lost is not known: " + entry);
-        assertTrue(entry.path("exit_code").isMissingNode());
+        assertFalse(((io.hyperfoil.tools.jjq.value.JqObject) entry).keys().contains("exit_code"), "absent, not null: " + entry);
     }
 
     @Test
