@@ -982,7 +982,7 @@ public class DoctorCommand extends BaseCommand {
             return agentAnswers.getAsBoolean() ? offerForwarderRestart(base, base.detail()) : base;
         }
         var layer = VmManager.leakLayer(host, guestCount.getAsInt());
-        var detail = append(base.detail(), "(in-guest socat: " + guestCount.getAsInt() + ") — " + layer.description);
+        var detail = base.detail() + " (in-guest socat: " + guestCount.getAsInt() + ") — " + layer.description;
         return layer == VmManager.LeakLayer.FORWARDER
                 ? offerForwarderRestart(base, detail)
                 : new Finding(base.status(), base.label(), detail, base.remediation());
@@ -1050,11 +1050,6 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    private static String append(String detail, String extra) {
-        if (detail == null || detail.isBlank()) return extra;
-        return detail + " " + extra;
-    }
-
     private static void restartForwarderViaAgent() {
         if (!VmAgentClient.restartForwarder()) {
             throw new RuntimeException("control agent did not confirm forwarder restart");
@@ -1066,7 +1061,8 @@ public class DoctorCommand extends BaseCommand {
         if (conns > VmManager.VSOCK_CONN_WARN_THRESHOLD) {
             return Finding.warn("vsock forwarder connections: " + conns,
                     "(high — leaked streams degrade new-connection latency)",
-                    new Remediation("Restart the VM to clear leaked forwarder streams "
+                    // Names no layer: it also stands for a VFKIT leak, which the forwarder did not cause.
+                    new Remediation("Restart the VM to release the leaked vsock connections "
                             + "(stops running containers)", true, DoctorCommand::restartVm));
         }
         return Finding.ok("vsock forwarder connections: " + conns, "");
