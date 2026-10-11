@@ -444,6 +444,8 @@ final class McpTools {
         return ToolResult.json(node.build(), "Review the changes with get_diff; continue this conversation with send_message.");
     }
 
+    private static final java.math.BigDecimal INT_MIN = java.math.BigDecimal.valueOf(Integer.MIN_VALUE);
+    private static final java.math.BigDecimal INT_MAX = java.math.BigDecimal.valueOf(Integer.MAX_VALUE);
     private static final java.math.BigDecimal LONG_MIN = java.math.BigDecimal.valueOf(Long.MIN_VALUE);
     private static final java.math.BigDecimal LONG_MAX = java.math.BigDecimal.valueOf(Long.MAX_VALUE);
 
@@ -1308,7 +1310,10 @@ final class McpTools {
                 .append("\ncost_usd: ").append(result.path("total_cost_usd").asDisplayText("?"));
         if (result.path("subtype").isString()) node.put("outcome", result.path("subtype").asText());
         node.put("is_error", summary.isError());
-        if (result.path("num_turns").isNumber()) node.put("turns", result.path("num_turns").asInt(0));
+        // Left out unless it fits an int, as Jackson's canConvertToInt did: asInt would wrap it
+        var turns = result.path("num_turns");
+        if (turns.isNumber() && turns.decimalValue().compareTo(INT_MIN) >= 0
+                && turns.decimalValue().compareTo(INT_MAX) <= 0) node.put("turns", turns.decimalValue().intValue());
         putNumber(node, "cost_usd", result.path("total_cost_usd"));
         appendDenials(sb, summary);
         node.put("permission_denials", denials(summary));
