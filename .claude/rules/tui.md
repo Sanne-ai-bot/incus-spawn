@@ -187,8 +187,10 @@ To see what a TUI change looks like, render it headlessly rather than launching 
 `TuiSnapshot` (test scope) renders into an in-memory buffer; `TuiSnapshot.assertMatches(name, buffer)` compares against `cli/src/test/resources/tui-snapshots/<name>.txt` and always writes the actual output to `cli/target/tui-snapshots/<name>.{txt,ansi}` -- read those files to review a layout.
 Accept intended changes with `mvn test -pl cli -am -Dtest=<Test> -Dsurefire.failIfNoSpecifiedTests=false -Dtui.snapshots.update=true`, then check the golden diff.
 
-`TuiCharacterisationTest` renders the whole TUI this way: it hands the TUI class its services and a `FakeIncusDaemon` listing (`startSession`), drives keys through a real `TuiRunner` on a `HeadlessBackend`, and pins the main screen and every dialog at 80×24 and 120×40 (#959).
-Those goldens pinned the TUI before it was taken apart, so a change that moves code must leave them byte-identical.
+`TuiCharacterisationTest` renders the whole TUI this way: it hands the TUI class its services and a `FakeIncusDaemon` listing (`startSession`) and drives keys through a real `TuiRunner` on a `HeadlessBackend`.
+It snapshots the main screen (both panels, search, no instances) at 80×24 and 120×40, and pins what each key leads to: the mode a dialog opens in, Esc closing it, and the action F2, Enter in the branch dialog, a build-menu choice and `q` leave pending.
+A dialog's rendering is snapshotted by its own test, never over the main screen (#1251).
+Three renderings have no snapshot: the two inline confirms (stop-for-rename, build-for-branch) and the branch dialog for a VM, whose CPU and RAM defaults depend on the host.
 `BackgroundTaskManager` runs task bodies on the `Executor` it is given, so a test can hold tasks and run them when it says (`TuiDeleteTargetTest`): an action's lambda must read the dialog state it needs into locals before it is submitted, since another dialog may have replaced that state by the time it runs (#1248).
 A dialog is easier to test on its own once it has its own class.
 `HelpChatModal` is the pattern: it owns its state, key handling (`handleKey` returns false to close) and `render(frame, screen)`, and takes its side effects (the `Asker`, an `Executor`, an on-answer callback) as constructor arguments so tests can answer synchronously.

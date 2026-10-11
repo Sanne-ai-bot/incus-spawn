@@ -27,9 +27,9 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * The TUI as it is, pinned before it is taken apart (#959): the main screen and every dialog that
- * still lives in the TUI class, rendered at two sizes, and the mode each key leads to. A move that
- * changes any of these is not a move.
+ * The TUI as a whole: the main screen rendered at two sizes, and what each key leads to, from the
+ * mode a dialog opens in to the action left pending when the runner quits. Each dialog's own
+ * rendering is snapshotted by its own test.
  */
 @ExtendWith(IsolatedHome.class)
 class TuiCharacterisationTest {
@@ -127,20 +127,9 @@ class TuiCharacterisationTest {
         for (char c : text.toCharArray()) press(tui, KeyEvent.ofChar(c));
     }
 
-    private static final java.util.regex.Pattern CREATED_STAMP =
-            java.util.regex.Pattern.compile("\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d");
-    private static final java.util.regex.Pattern VM_LIMITS =
-            java.util.regex.Pattern.compile("CPU \\d+ +RAM \\S+ +Disk (\\S+) *(?=║)");
-
-    /**
-     * What varies between hosts and builds: the version in the header, creation stamps in the
-     * details, and the CPU and RAM a VM branch defaults to on this host. The dialog lays those
-     * fields out at their values' width, so the whole run up to its border is replaced.
-     */
+    /** The header names the build's version, which a release changes. */
     private static String withoutVersion(String text) {
-        var stable = CREATED_STAMP.matcher(text.replace(BuildInfo.instance().version(), "<version>"))
-                .replaceAll("YYYY-MM-DDThh:mm:ss");
-        return VM_LIMITS.matcher(stable).replaceAll(m -> "CPU <n>  RAM <mem>  Disk " + m.group(1) + " ");
+        return text.replace(BuildInfo.instance().version(), "<version>");
     }
 
     private static void snapshot(String name, Tui tui) {
@@ -153,7 +142,6 @@ class TuiCharacterisationTest {
     private void opensAndCloses(String name, Tui tui, Tui.Mode expected, KeyEvent... keys) {
         press(tui, keys);
         assertEquals(expected, tui.mode(), name);
-        snapshot(name, tui);
         press(tui, ESC);
         assertEquals(Tui.Mode.BROWSE, tui.mode(), name + " closes on Esc");
     }
@@ -194,21 +182,12 @@ class TuiCharacterisationTest {
 
     @Test
     void shortcutsHelp() {
-        // Not rendered: it names the commit, the JVM and the Incus daemon this test JVM last saw.
-        var tui = tui();
-        press(tui, KeyEvent.ofKey(KeyCode.F1));
-        assertEquals(Tui.Mode.INFO, tui.mode());
-        press(tui, ESC);
-        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        opensAndCloses("info", tui(), Tui.Mode.INFO, KeyEvent.ofKey(KeyCode.F1));
     }
 
     @Test
     void buildMenu() {
-        var tui = tui();
-        press(tui, KeyEvent.ofKey(KeyCode.F5));
-        snapshot("build-menu", tui);
-        press(tui, ESC);
-        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        opensAndCloses("build-menu", tui(), Tui.Mode.BUILD_MENU, KeyEvent.ofKey(KeyCode.F5));
     }
 
     @Test
@@ -228,8 +207,12 @@ class TuiCharacterisationTest {
     @Test
     void branchFieldsAreWalkedWithTab() {
         var tui = tui();
+        // Name, then GUI, then KVM, which Space toggles.
         press(tui, ENTER, TAB, TAB, KeyEvent.ofChar(' '));
-        snapshot("branch-template-fields", tui);
+        assertEquals(Tui.Mode.BRANCH, tui.mode());
+        var request = tui.branch.request("x");
+        assertEquals(Boolean.TRUE, request.kvm());
+        assertNull(request.gui(), "GUI was passed over, so it keeps its default");
     }
 
     @Test
@@ -244,8 +227,9 @@ class TuiCharacterisationTest {
         var tui = tui();
         press(tui, KeyEvent.ofChar('n'));
         assertEquals(Tui.Mode.NEW_TEMPLATE, tui.mode());
+        // Typed text belongs to the dialog: 'c' must not open the pool cleanup behind it.
         typeText(tui, "tpl-child");
-        snapshot("new-template", tui);
+        assertEquals(Tui.Mode.NEW_TEMPLATE, tui.mode());
         press(tui, ESC);
         assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
@@ -302,18 +286,15 @@ class TuiCharacterisationTest {
 
     @Test
     void templateDetails() {
-        var tui = tui();
-        press(tui, KeyEvent.ofKey(KeyCode.F3));
-        assertEquals(Tui.Mode.TEMPLATE_DETAIL, tui.mode());
-        press(tui, ESC);
-        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        opensAndCloses("template-detail", tui(), Tui.Mode.TEMPLATE_DETAIL, KeyEvent.ofKey(KeyCode.F3));
     }
 
     @Test
-    void actionsMenu() {
+    void f9WithNoActionsSaysSo() {
         var tui = tui();
         press(tui, TAB, KeyEvent.ofKey(KeyCode.F9));
-        snapshot("actions", tui);
+        assertEquals(Tui.Mode.BROWSE, tui.mode(), "nothing to offer opens no dialog");
+        assertEquals("No actions available for work-1", tui.statusMessage);
     }
 
     @Test
