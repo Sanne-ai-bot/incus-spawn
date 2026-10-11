@@ -214,6 +214,32 @@ class BuildOutputTest {
         assertEquals("Host repo /p/ [2Jx 31m ✓ built Template is valid. \n", text().stripLeading());
     }
 
+    /** A step's text quotes template text too: its start, note and failure keep isx's line breaks only (#1235). */
+    @Test
+    void stepStartCannotDriveTheTerminal() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.stepStart("Skipping /p/\u001b[2Jx\u009b31m");
+        BuildOutput.stepDone();
+        assertFalse(text().contains("\u001b") || text().contains("\u009b"), text());
+        assertTrue(text().contains("Skipping /p/ [2Jx 31m"), text());
+    }
+
+    @Test
+    void stepNoteCannotDriveTheTerminal() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.stepNote("verify said \u001b[2Jx\nsecond line\rforged");
+        assertFalse(text().contains("\u001b") || text().contains("\r"), text());
+        assertTrue(text().contains("verify said  [2Jx\n") && text().contains("second line forged"), text());
+    }
+
+    @Test
+    void stepFailCannotDriveTheTerminal() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.stepFail("failed at /p/\u001b[2Jx\u009b31m\nadvice stays");
+        assertFalse(text().contains("\u001b") || text().contains("\u009b"), text());
+        assertTrue(text().contains("failed at /p/ [2Jx 31m\nadvice stays"), text());
+    }
+
     /** A warning keeps isx's own line breaks, but what it quotes cannot drive the terminal (#1235). */
     @Test
     void warningLinesCannotDriveTheTerminal() {
