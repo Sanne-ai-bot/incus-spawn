@@ -75,6 +75,11 @@ public final class Metadata {
      * a second time (#843).
      */
     public static final String AGENT_RESTART_BOOT = PREFIX + "agent-restart-boot";
+    /**
+     * The source of the {@code --inbox} device isx removed before a start because its host
+     * directory was gone; the first start that finds the directory back mounts it again (#1139).
+     */
+    public static final String INBOX_SOURCE = PREFIX + "inbox-source";
     /** Prefix of the per-namespace credential account selection; see {@link #accountKey}. */
     public static final String ACCOUNT_PREFIX = PREFIX + "account.";
     /** Prefix of who chose each namespace's pinned account; see {@link #accountOriginKey}. */

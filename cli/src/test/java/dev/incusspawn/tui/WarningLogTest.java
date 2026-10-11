@@ -43,10 +43,10 @@ class WarningLogTest {
     @Test
     void theCliFormIsNormalisedButKeepsItsLines() {
         log.add("    Warning: inbox directory not found: /home/me/inbox (device removed).\n"
-                + "      To add it back, recreate it, then: incus config device add b1 inbox disk");
+                + "      To mount it again, recreate it; the next start of b1 does.");
 
         assertEquals("inbox directory not found: /home/me/inbox (device removed).\n"
-                        + "  To add it back, recreate it, then: incus config device add b1 inbox disk",
+                        + "  To mount it again, recreate it; the next start of b1 does.",
                 log.entries().get(0).message());
     }
 

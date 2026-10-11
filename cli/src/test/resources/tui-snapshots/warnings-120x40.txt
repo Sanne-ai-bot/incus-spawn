@@ -15,8 +15,7 @@
           ║ 09:50:02 ⚠ tool 'gradle' is defined twice in ~/.config/incus-spawn/tools                         ║
           ║                                                                                                  ║
           ║ 09:44:30 ⚠ inbox directory not found: /home/me/inbox (device removed).                           ║
-          ║              To add it back, recreate it, then: incus config device add b1 inbox disk            ║
-          ║              source=/home/me/inbox path=/home/agentuser/inbox                                    ║
+          ║              To mount it again, recreate it; the next start of b1 does.                          ║
           ║                                                                                                  ║
           ║ 09:41:07 ⚠ podman.yaml: Env entry 'export DOCKER_HOST=unix:///var/run/docker.sock' is a shell    ║
           ║            string, which is not supported; use a structured entry:                               ║
@@ -25,6 +24,7 @@
           ║                                                                                                  ║
           ║  Esc Close   c Clear                                                                             ║
           ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+
 
 
 

@@ -714,6 +714,7 @@ public final class InstanceLifecycle {
                                                   Consumer<String> warn) {
         HostResourceSetup.removeStaleDevices(incus, name, instance, warn);
         removeStaleInbox(incus, name, instance, warn);
+        restoreInbox(incus, name, instance, warn);
         ZmxSocketForward.ensureHostDirForStart(incus, name, instance);
         InstanceNetwork.rearmIpFiltering(incus, name, instance, warn);
     }
@@ -722,20 +723,35 @@ public final class InstanceLifecycle {
      * Removes the {@code --inbox} device when its host directory is gone (#854), which would
      * otherwise fail Incus start validation with {@code Missing source path}. The inbox is not a
      * host resource, so {@link HostResourceSetup#removeStaleDevices} never sees it. The user asked
-     * for this mount, so dropping it is announced, with the command to add it back.
+     * for this mount, so its source is kept ({@link Metadata#INBOX_SOURCE}) and dropping it is
+     * announced; the first start that finds the directory back mounts it again. isx does that
+     * step itself: the macOS host has no {@code incus} CLI to re-add a device with (#1139).
      */
     static void removeStaleInbox(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
         var source = IncusClient.deviceSource(instance, INBOX_DEVICE);
         if (source.isEmpty()) return;
         var hostPath = HostResourceSetup.hostPathOfDeviceSource(source);
         if (hostPath == null || Files.isDirectory(hostPath)) return;
-        incus.deviceRemove(name, INBOX_DEVICE);
-        // The hint reuses the device's own source: on macOS that is the appliance VM's /host view
-        // of the path, which is what incus needs there, not the host path the user would type.
+        incus.updateFresh(name, new InstanceUpdate().removeDevice(INBOX_DEVICE).config(Metadata.INBOX_SOURCE, source));
         warn.accept(BuildOutput.STEP_INDENT + "Warning: inbox directory not found: " + hostPath
                 + " (device removed, starting without ~/inbox).\n" + BuildOutput.STEP_INDENT
-                + "  To add it back, recreate it, then: incus config device add " + name + " " + INBOX_DEVICE
-                + " disk source=" + source + " path=" + INBOX_PATH + " readonly=true");
+                + "  To mount it again, recreate it; the next start of " + name + " does.");
+    }
+
+    /**
+     * Mount the inbox {@link #removeStaleInbox} removed, once its directory is back. Given the
+     * same instance read, it skips one that still has the device, so also one removed by this start.
+     * It says so on the same sink: the remembered path may name a different directory by now, and
+     * a mount into the guest is never silent.
+     */
+    static void restoreInbox(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
+        var source = instance.path("config").path(Metadata.INBOX_SOURCE).asText("");
+        if (source.isEmpty() || !IncusClient.deviceSource(instance, INBOX_DEVICE).isEmpty()) return;
+        var hostPath = HostResourceSetup.hostPathOfDeviceSource(source);
+        if (hostPath == null || !Files.isDirectory(hostPath)) return;
+        incus.updateFresh(name, new InstanceUpdate().unset(Metadata.INBOX_SOURCE)
+                .replaceDevice(INBOX_DEVICE, Map.of("type", "disk", "source", source, "path", INBOX_PATH, "readonly", "true")));
+        warn.accept(BuildOutput.STEP_INDENT + "Inbox mounted again: " + hostPath + " (read-only, ~/inbox).");
     }
 
     /**

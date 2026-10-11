@@ -27,8 +27,7 @@ class WarningsModalTest {
                 + "    value: unix:///var/run/docker.sock");
         now = LocalTime.of(9, 44, 30);
         log.add("    Warning: inbox directory not found: /home/me/inbox (device removed).\n"
-                + "      To add it back, recreate it, then: incus config device add b1 inbox disk"
-                + " source=/home/me/inbox path=/home/agentuser/inbox");
+                + "      To mount it again, recreate it; the next start of b1 does.");
         now = LocalTime.of(9, 50, 2);
         log.add("tool 'gradle' is defined twice in ~/.config/incus-spawn/tools");
     }
