@@ -247,6 +247,26 @@ class YamlSemanticsTest {
         assertEquals(McpConfig.DEFAULT_MAX_INSTANCES, Jjq.spawnConfig("mcp:\n  max-instances: \"\"\n").mcp().maxInstances());
     }
 
+    /** jjq reads .inf, .nan and 1e400 as numbers whose value is 0: "never" would be an immediate reap. */
+    @Test
+    void aNumberJjqReadsAsZeroFailsRatherThanBeingZero() {
+        for (var text : java.util.List.of(".inf", "-.inf", ".nan", "1e400", "-1e400")) {
+            for (var key : java.util.List.of("orphan-grace-hours", "max-instances")) {
+                var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  " + key + ": " + text + "\n"),
+                        key + ": " + text);
+                assertTrue(friendly(e).startsWith("x.yaml:2: 'mcp." + key + "' expects a whole number"), friendly(e));
+            }
+        }
+    }
+
+    @Test
+    void aStringIsAnIntegerOnlyIfItIsOneLiterally() throws Exception {
+        for (var text : java.util.List.of("1e2", "5.0", "0x10", "abc", "9999999999")) {
+            assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: \"" + text + "\"\n"), text);
+        }
+        assertEquals(24, Jjq.spawnConfig("mcp:\n  max-instances: \" 24 \"\n").mcp().maxInstances());
+    }
+
     @Test
     void anIntegerSettingBeyondTheIntRangeFailsRatherThanWrapping() {
         var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: 99999999999\n"));
