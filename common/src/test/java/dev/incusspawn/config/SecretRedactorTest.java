@@ -326,6 +326,18 @@ class SecretRedactorTest {
         assertEquals("a.token", result.secretValues().get("nested-FAKE-same-path-0006"));
     }
 
+    /** A declared top-level key has no namespace for the deep pass to find it in: the exact path must hold. */
+    @Test
+    void aDeclaredSecretAtTheTopLevelIsRedacted() {
+        var config = new SpawnConfig();
+        config.setExtra("license", "lic-FAKE-top-level-0007");
+
+        var result = SecretRedactor.redactConfig(config,
+                List.of(new SecretRegistry.SecretLocation("license", "acme", "Acme licence")));
+        assertFalse(result.yaml().contains("lic-FAKE-top-level-0007"), result.yaml());
+        assertEquals(List.of("license"), result.redactedPaths());
+    }
+
     @Test
     void declaredSecretIsNotReportedTwiceByTheBackstop() {
         var result = SecretRedactor.redactConfig(configuredConfig(), builtInLocations());
