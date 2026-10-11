@@ -55,4 +55,12 @@ class TemplateChangesTest {
         assertEquals(List.of("~ repo https://github.com/a/b.git → ~/b (prime mvn a → mvn b)"),
                 TemplateChanges.definitionChanges(built, now, java.util.Map.of()));
     }
+
+    @Test
+    void anUnsetPrimeIsShownAsNone() throws Exception {
+        var built = def("repos:\n  - url: https://github.com/a/b.git");
+        var now = def("repos:\n  - url: https://github.com/a/b.git\n    prime: mvn b");
+        assertEquals(List.of("~ repo https://github.com/a/b.git → ~/b (prime (none) → mvn b)"),
+                TemplateChanges.definitionChanges(built, now, java.util.Map.of()));
+    }
 }

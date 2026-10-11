@@ -106,14 +106,16 @@ public final class TemplateChanges {
     private static String repoSettingsChange(ImageDef.RepoEntry built, ImageDef.RepoEntry now) {
         var what = new ArrayList<String>();
         if (!Objects.equals(built.getBranch(), now.getBranch())) {
-            what.add("branch " + orDefault(built.getBranch()) + " → " + orDefault(now.getBranch()));
+            what.add("branch " + orElse(built.getBranch(), "(default)") + " → " + orElse(now.getBranch(), "(default)"));
         }
-        if (!Objects.equals(built.getPrime(), now.getPrime())) what.add("prime " + built.getPrime() + " → " + now.getPrime());
+        if (!Objects.equals(built.getPrime(), now.getPrime())) {
+            what.add("prime " + orElse(built.getPrime(), "(none)") + " → " + orElse(now.getPrime(), "(none)"));
+        }
         return what.isEmpty() ? null : now.getUrl() + " → " + now.getPath() + " (" + String.join(", ", what) + ")";
     }
 
-    private static String orDefault(String branch) {
-        return branch != null ? branch : "(default)";
+    private static String orElse(String value, String fallback) {
+        return value != null ? value : fallback;
     }
 
     /** {@code  (still inherited from tpl-dev)} when a parent of {@code now} names the tool, else empty. */
