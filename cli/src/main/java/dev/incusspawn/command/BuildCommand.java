@@ -241,9 +241,10 @@ public class BuildCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
         // A definition that failed to parse, or whose name or parent no instance can have, was
-        // skipped with a warning above. Its name is unknown or unusable, so building anyway could silently use something else in its place: a
-        // lower layer's definition of the same name, or the stale build-source snapshot of
-        // an existing template. Refuse, even for targets that look unrelated.
+        // skipped with a warning above. Its name is unknown or unusable, so building anyway
+        // could silently use something else in its place: a lower layer's definition of the
+        // same name, or the stale build-source snapshot of an existing template. Refuse, even
+        // for targets that look unrelated.
         var unparsable = new ArrayList<>(loaded.parseFailures());
         unparsable.addAll(toolDefLoader.parseFailures());
         var parseError = unparsableDefinitionsError(unparsable);
