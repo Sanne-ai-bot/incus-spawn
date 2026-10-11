@@ -509,12 +509,19 @@ public class BuildCommand extends BaseCommand {
                                                    ToolDefLoader toolDefLoader,
                                                    boolean outdatedOnly) {
         if (outdatedOnly) {
+            // Judged from one listing by the rules isx templates and the TUI apply (#1142); a
+            // listing Incus cannot give is thrown, never taken for "nothing is built".
+            var built = InstanceListing.builtTemplates(incus.listJsonConfig());
+            var staleness = TemplateStaleness.assess(built, defs, Set.of(),
+                    () -> TemplateStaleness.toolFingerprints(defs.values(), toolDefLoader),
+                    BuildInfo.instance().version());
             // Every outdated template and everything copied from it, collected before any is ordered:
             // ordering while collecting built a child before a parent the walk reached later (#1150)
             var batch = new HashSet<String>();
             for (var template : defs.values()) {
                 if (batch.contains(template.getName())) continue;
-                if (isImageOutdated(template.getName(), template, incus, toolDefLoader)) {
+                var stale = staleness.get(template.getName());
+                if (stale == null || stale.outOfSync()) {
                     batch.add(template.getName());
                     collectDescendants(template.getName(), defs, new ArrayList<>(), batch);
                 }
@@ -523,6 +530,10 @@ public class BuildCommand extends BaseCommand {
             defs.forEach((name, def) -> { if (batch.contains(name)) inBatch.put(name, def); });
             for (var def : inBatch.values()) {
                 collectAllRecursive(def, inBatch, result, seen);
+            }
+            // Tool parameters that no longer validate are thrown before anything is built, not halfway through
+            for (var name : result) {
+                BuildTools.resolveTools(defs.get(name), toolDefLoader, true);
             }
         } else {
             for (var leaf : leaves) {

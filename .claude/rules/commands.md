@@ -41,7 +41,8 @@ Templates are excluded by the `base` type, never by the `tpl-` prefix (which is 
 Its request count is pinned.
 Its fields are `name`, `status`, `ipv4`, `parent`, `runtime`, `created`, `mcp_state`, `mcp_purpose` (#1053: `McpStanding`, `null` for an instance no `isx mcp` session made); README's "Scripting isx" lists them.
 Every query command has it, plus `isx branch` (the new name alone).
-`isx templates` adds build state and staleness from `TemplateStaleness`, the same judgement as the TUI's `! △ ↑` marks and `isx build --out-of-sync` (`BuildCommand.isImageOutdated` calls its `versionOutdated`/`definitionChanged`/`parentRebuilt`, and `Staleness.outOfSync()` says which count), so a change to what counts as stale goes there, never into one caller.
+`isx templates` adds build state and staleness from `TemplateStaleness`, the same judgement as the TUI's `! △ ↑` marks and `isx build --out-of-sync` (`Staleness.outOfSync()` says which count), so a change to what counts as stale goes there, never into one caller.
+`--out-of-sync` calls `assess` on the same one listing; a named build's parents go through `BuildCommand.isImageOutdated`, which calls its `versionOutdated`, `definitionChanged` and `parentRebuilt`.
 `QueryCommandFormatTest` pins each JSON shape and `ExitCodeTest` the shared rejection.
 Work that prints progress runs under `BaseCommand.withStdoutOnStderr`, the machine formats never prompt, and the exit code is the table's.
 See DESIGN.md "Output for scripts".
