@@ -1074,8 +1074,11 @@ public class Tui {
 
     private boolean handleConfirmDeleteEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (deleteConfirm.handleKey(key) == DeleteConfirm.Outcome.CONFIRM) {
+            // Read the target now: the destroy runs later, after another delete dialog may have
+            // replaced deleteConfirm (#1248).
+            var target = deleteConfirm.name();
             mode = Mode.BROWSE;
-            if ("--all".equals(deleteConfirm.name())) {
+            if ("--all".equals(target)) {
                 var allNames = new java.util.ArrayList<>(imageDefs.keySet());
                 java.util.Collections.reverse(allNames);
                 int count = allNames.size();
@@ -1126,7 +1129,7 @@ public class Tui {
                     if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
                     refreshDataAfterBackground();
                 });
-            } else if ("--all-instances".equals(deleteConfirm.name())) {
+            } else if ("--all-instances".equals(target)) {
                 var allEntries = new java.util.ArrayList<>(entries);
                 int count = allEntries.size();
                 backgroundTasks.submit("Deleting " + count + " instance(s)",
@@ -1174,15 +1177,12 @@ public class Tui {
                     if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
                     refreshDataAfterBackground();
                 });
-            } else if (!vanished(deleteConfirm.name())) {
-                execInBackground("Deleting " + deleteConfirm.name(),
-                        "Deleted " + deleteConfirm.name(),
-                        deleteConfirm.name(),
-                        "Destroyed " + deleteConfirm.name(),
+            } else if (!vanished(target)) {
+                execInBackground("Deleting " + target, "Deleted " + target, target, "Destroyed " + target,
                         Metadata.OP_DELETING,
                         () -> {
-                            incus.delete(deleteConfirm.name(), true);
-                            InstanceLifecycle.removeHostIntegration(deleteConfirm.name());
+                            incus.delete(target, true);
+                            InstanceLifecycle.removeHostIntegration(target);
                             InstanceDestroyer.refreshProxy();
                         });
             }

@@ -189,6 +189,7 @@ Accept intended changes with `mvn test -pl cli -am -Dtest=<Test> -Dsurefire.fail
 
 `TuiCharacterisationTest` renders the whole TUI this way: it hands the TUI class its services and a `FakeIncusDaemon` listing (`startSession`), drives keys through a real `TuiRunner` on a `HeadlessBackend`, and pins the main screen and every dialog at 80×24 and 120×40 (#959).
 Those goldens pinned the TUI before it was taken apart, so a change that moves code must leave them byte-identical.
+`BackgroundTaskManager` runs task bodies on the `Executor` it is given, so a test can hold tasks and run them when it says (`TuiDeleteTargetTest`): an action's lambda must read the dialog state it needs into locals before it is submitted, since another dialog may have replaced that state by the time it runs (#1248).
 A dialog is easier to test on its own once it has its own class.
 `HelpChatModal` is the pattern: it owns its state, key handling (`handleKey` returns false to close) and `render(frame, screen)`, and takes its side effects (the `Asker`, an `Executor`, an on-answer callback) as constructor arguments so tests can answer synchronously.
 When touching another modal, prefer extracting it the same way and adding snapshots at 80×24 plus one or two larger sizes.
