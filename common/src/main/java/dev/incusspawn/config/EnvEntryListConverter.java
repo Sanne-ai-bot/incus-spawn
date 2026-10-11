@@ -1,6 +1,5 @@
 package dev.incusspawn.config;
 
-import io.quarkus.runtime.annotations.RegisterForReflection;
 import io.hyperfoil.tools.jjq.mapper.JqMapperException;
 import io.hyperfoil.tools.jjq.mapper.ValueConverter;
 import io.hyperfoil.tools.jjq.value.JqArray;
@@ -18,7 +17,6 @@ import java.util.regex.Pattern;
  * (same accepted shape, same error strings). A plain shell string such as
  * {@code export FOO=bar} is rejected with the structured equivalent.
  */
-@RegisterForReflection
 public class EnvEntryListConverter implements ValueConverter<List<EnvEntry>> {
 
     private static final String NAME_REGEX = "[a-zA-Z_][a-zA-Z0-9_]*";

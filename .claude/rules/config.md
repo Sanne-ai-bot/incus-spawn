@@ -66,7 +66,9 @@ The skipped file's name is unknown or unusable, so building would silently fall 
 `YamlErrors.friendly()` names the offending field for shape mismatches (list vs. single value vs. mapping), with the line jjq reports on the binding failure.
 
 Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (DESIGN.md "jjq rather than Jackson"):
-- A new DTO is `@JqMapped`; `jjq-mapper-processor` generates its mapping and `Jjq` registers it, so nothing reflects at run time (and the native image needs no registration for it).
+- A new DTO is `@JqMapped`; `jjq-mapper-processor` generates its mapping and `Jjq` registers it, so the native image needs no registration for it.
+  An enum a DTO binds is the exception: jjq reads its `@JqEnum`/`@JqName` by reflection, so it carries `@RegisterForReflection` (`ClaudeAccountType`), or the native image binds every value to null.
+  `JjqGeneratedMappingTest` fails for a reachable DTO without a registered mapping, and for a reachable enum without the annotation (#1316).
 - A converter that reads scalars from the tree uses `Jjq.text`, so `0022` stays `0022`; `asText()` gives the resolved `18`.
 - An object is never iterated with `asList()` (empty for an object); use `JqObject.values()`/`forEach`.
 - An `Integer` field takes `@JqConverter(IntegerConverter.class)`: jjq binds a word or a boolean as 0 and wraps an out-of-range number (Hyperfoil/jjq#133), where a bad value must fail the file.

@@ -24,7 +24,6 @@ import java.nio.file.Path;
 /**
  * Global incus-spawn configuration stored in ~/.config/incus-spawn/config.yaml
  */
-@RegisterForReflection
 @JqMapped
 public class SpawnConfig {
 
@@ -81,8 +80,9 @@ public class SpawnConfig {
     private McpConfig mcp;
     private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
-    /** How a Claude account authenticates. Named for what the credential is, not what isx uses it for. */
     /**
+     * How a Claude account authenticates. Named for what the credential is, not what isx uses it for.
+     * <p>
      * Lenient by design (see {@code onUnknown = NULL}): load() answers a mapping
      * error with a blank SpawnConfig, so a single typo here would otherwise discard
      * host paths, tokens and all -- and the next save would persist those empty
@@ -90,7 +90,12 @@ public class SpawnConfig {
      * {@link ClaudeAccount#effectiveType()}, which infers from the fields that are
      * set; an account that still cannot be identified is dropped by the
      * isComplete() filter.
+     * <p>
+     * Registered for reflection: jjq reads an enum's {@code @JqEnum} and {@code @JqName} by
+     * reflection even under a generated mapping, and unregistered the native image binds every
+     * {@code type:} to null ({@code JjqGeneratedMappingTest}).
      */
+    @RegisterForReflection
     @JqEnum(normalize = {JqEnum.Normalize.TRIM, JqEnum.Normalize.LOWERCASE,
             JqEnum.Normalize.SEPARATOR_FOLD}, onUnknown = JqEnum.OnUnknown.NULL)
     public enum ClaudeAccountType {
@@ -109,7 +114,6 @@ public class SpawnConfig {
      * One Claude credential. Several may be configured at once so that different instances can
      * run as different accounts; {@link ClaudeConfig#account()} picks the one to use.
      */
-    @RegisterForReflection
     @JqInclude(JqInclude.Include.NON_EMPTY)
     @JqVisibility(getters = JqVisibility.Visibility.NONE, isGetters = JqVisibility.Visibility.NONE)
     @JqMapped

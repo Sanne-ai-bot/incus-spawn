@@ -5,8 +5,6 @@ import io.hyperfoil.tools.jjq.mapper.ValueConverter;
 import io.hyperfoil.tools.jjq.value.JqNull;
 import io.hyperfoil.tools.jjq.value.JqNumber;
 import io.hyperfoil.tools.jjq.value.JqValue;
-import io.quarkus.runtime.annotations.RegisterForReflection;
-
 
 /**
  * An {@code Integer} setting as Jackson bound it: a whole number in the int range, or a string
@@ -15,7 +13,6 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  * number (Hyperfoil/jjq#133), which fails open: an orphan grace of 0 reaps at once, and a wrapped
  * {@code max-instances} is no cap. A fraction is refused too, where Jackson truncated it.
  */
-@RegisterForReflection
 public class IntegerConverter implements ValueConverter<Integer> {
 
     @Override

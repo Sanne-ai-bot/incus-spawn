@@ -7,7 +7,6 @@ import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
-import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,7 +26,6 @@ import java.util.TreeMap;
  * packages to install, shell commands to run, files to write, and
  * environment variables to export.
  */
-@RegisterForReflection
 @JqMapped
 public class ToolDef {
 
@@ -184,7 +182,6 @@ public class ToolDef {
         public void setShortcut(String shortcut) { this.shortcut = shortcut; }
     }
 
-    @RegisterForReflection
     public static class ToolRef {
         private String name;
         @JqName("params")
@@ -212,7 +209,6 @@ public class ToolDef {
         // Union shapes (string-or-map) live in ToolRefListConverter.
     }
 
-    @RegisterForReflection
     @JqMapped
     public static class ParameterDef {
         private String type;  // "string", "integer", "boolean", "enum"
@@ -248,7 +244,6 @@ public class ToolDef {
         public void setReconfigurable(boolean reconfigurable) { this.reconfigurable = reconfigurable; }
     }
 
-    @RegisterForReflection
     @JqMapped
     public static class ProxyDef {
         @JqName("config-namespace")
@@ -320,7 +315,6 @@ public class ToolDef {
         }
     }
 
-    @RegisterForReflection
     @JqMapped
     public static class ConfigEntry {
         private String type = "string"; // "string" or "confirm"
@@ -353,7 +347,6 @@ public class ToolDef {
      * {@code prefix} plus {@code isx_} plus a digest of the instance's per-start secret. The prefix
      * is whatever the tool checks a credential's shape by, e.g. {@code gho_}.
      */
-    @RegisterForReflection
     @JqMapped
     public static class PlaceholderDef {
         private String env = "";
@@ -371,7 +364,6 @@ public class ToolDef {
         public void setPrefix(String prefix) { this.prefix = prefix != null ? prefix : ""; }
     }
 
-    @RegisterForReflection
     @JqMapped
     public static class AuthDef {
         private List<String> domains = List.of();

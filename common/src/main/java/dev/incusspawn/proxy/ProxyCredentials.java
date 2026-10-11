@@ -1,11 +1,9 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.config.SpawnConfig;
-import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.util.List;
 
-@RegisterForReflection
 public record ProxyCredentials(
         String anthropicApiKey,
         String oauthToken,

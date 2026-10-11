@@ -4,7 +4,6 @@ import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
-import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.util.List;
 import java.util.Map;
@@ -33,7 +32,6 @@ import java.util.regex.Pattern;
  *
  * Unset limits are never written back, so a saved config does not pin today's defaults.
  */
-@RegisterForReflection
 @JqInclude(JqInclude.Include.NON_NULL)
 @JqMapped
 public class McpConfig {
@@ -87,7 +85,6 @@ public class McpConfig {
     @JqName("codex")
     private Codex codex;
 
-    @RegisterForReflection
     @JqInclude(JqInclude.Include.NON_NULL)
     @JqMapped
     public static class Codex {
