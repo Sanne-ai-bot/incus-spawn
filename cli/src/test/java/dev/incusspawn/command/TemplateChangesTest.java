@@ -30,12 +30,29 @@ class TemplateChangesTest {
                 """);
         assertEquals(List.of("~ tool jdk (version: 17) → jdk (version: 21)",
                         "~ repo https://github.com/acme/app.git → ~/app (branch (default) → next)"),
-                TemplateChanges.definitionChanges(built, now));
+                TemplateChanges.definitionChanges(built, now, java.util.Map.of()));
     }
 
     @Test
     void settingsOutsidePackagesToolsAndReposListNothing() throws Exception {
         assertEquals(List.of(), TemplateChanges.definitionChanges(def("packages: [git]\ngui: false"),
-                def("packages: [git]\ngui: true")));
+                def("packages: [git]\ngui: true"), java.util.Map.of()));
+    }
+
+    @Test
+    void aToolTheLeafDroppedButAParentProvidesSaysItIsStillInherited() throws Exception {
+        var dev = ImageDef.parseYaml("name: tpl-dev\nimage: x\ntools: [gh]");
+        var built = def("tools: [gh, claude]");
+        var now = def("tools: [claude]");
+        assertEquals(List.of("− tool gh (still inherited from tpl-dev)"),
+                TemplateChanges.definitionChanges(built, now, java.util.Map.of("tpl-dev", dev, "tpl-app", now)));
+    }
+
+    @Test
+    void aPrimeChangeShowsBeforeAndAfter() throws Exception {
+        var built = def("repos:\n  - url: https://github.com/a/b.git\n    prime: mvn a");
+        var now = def("repos:\n  - url: https://github.com/a/b.git\n    prime: mvn b");
+        assertEquals(List.of("~ repo https://github.com/a/b.git → ~/b (prime mvn a → mvn b)"),
+                TemplateChanges.definitionChanges(built, now, java.util.Map.of()));
     }
 }
