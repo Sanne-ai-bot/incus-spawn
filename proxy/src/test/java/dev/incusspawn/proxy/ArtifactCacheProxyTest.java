@@ -474,6 +474,15 @@ class ArtifactCacheProxyTest {
         await(file + " to exist", () -> Files.isRegularFile(file));
     }
 
+    /**
+     * A jar cached with its stored .sha1, for a test whose premise is that stored copy:
+     * {@link #awaitFile} alone can return before the sidecar lands (see {@link #awaitSidecar}).
+     */
+    static void awaitStoredJar(String host, String path, String content) throws Exception {
+        awaitFile(cached(host, path), content);
+        awaitSidecar(Sidecar.SHA1.storedFile(cached(host, path)));
+    }
+
     static void assertStaysPresent(Path file, String content) throws Exception {
         Thread.sleep(300);
         assertEquals(content, Files.readString(file), file + " should have stayed cached");
@@ -1385,7 +1394,7 @@ class ArtifactCacheProxyTest {
     void backoffAnswersFromStoredCopiesWithoutRetrying() throws Exception {
         publishJar(CENTRAL, JAR, "v1");
         get(CENTRAL, JAR);
-        awaitFile(cached(CENTRAL, JAR), "v1");
+        awaitStoredJar(CENTRAL, JAR, "v1");
 
         offline();
         get(CENTRAL, JAR + ".sha1");
