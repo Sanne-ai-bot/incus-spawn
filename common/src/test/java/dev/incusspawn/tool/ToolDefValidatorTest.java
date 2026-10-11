@@ -340,6 +340,15 @@ class ToolDefValidatorTest {
         assertTrue(errors.stream().anyMatch(e -> e.contains("namespace")), errors.toString());
     }
 
+    /** The dotted-path warning shows the config-path, which a cloned repository wrote. */
+    @Test
+    void dottedConfigPathWarningIsOneLine() {
+        var warnings = new ArrayList<String>();
+        ToolDefValidator.validateDef(proxyTool("", "gh.\u001b[2Jx"), new ArrayList<>(), warnings);
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("contains a dot")), warnings.toString());
+        assertTrue(warnings.stream().allMatch(w -> w.chars().noneMatch(Character::isISOControl)), warnings.toString());
+    }
+
     private static ToolDef proxyTool(String namespace, String configPath) {
         var entry = new ToolDef.ConfigEntry();
         entry.setConfigPath(configPath);

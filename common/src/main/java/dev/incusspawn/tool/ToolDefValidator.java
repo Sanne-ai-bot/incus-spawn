@@ -103,9 +103,9 @@ public class ToolDefValidator {
                             + def.getName() + "' has both 'config-path' and 'value' — use one or the other");
                 }
                 if (!config.getConfigPath().isBlank() && config.getConfigPath().contains(".")) {
-                    warnings.add("configuration '" + ce.getKey() + "' in proxy for '"
+                    warnings.add(OutputFormat.oneLine("configuration '" + ce.getKey() + "' in proxy for '"
                             + def.getName() + "': config-path '" + config.getConfigPath()
-                            + "' contains a dot — paths are relative to config-namespace, not absolute");
+                            + "' contains a dot — paths are relative to config-namespace, not absolute"));
                 }
                 if (!config.isSelfResolving() && config.getDescription().isBlank()) {
                     warnings.add("configuration '" + ce.getKey() + "' in proxy for '"
