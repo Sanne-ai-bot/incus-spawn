@@ -1137,6 +1137,20 @@ class BuildCommandTest {
         verify(incus).configSet("tpl-child", Metadata.DEFAULT_ACTION, "claude");
     }
 
+    /** A listing Incus cannot give is a warning; a bug in the sync itself is not hidden as one. */
+    @Test
+    void onlyAnIncusFailureIsAWarningWhenTheListingCannotBeRead() throws Exception {
+        var defs = parentAndChild("claude");
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus);
+        doThrow(new dev.incusspawn.incus.IncusException("down")).when(incus).listJsonConfig();
+        cmd.syncDefaultActions(defs);
+        verify(incus, never()).configSet(anyString(), anyString(), anyString());
+
+        doThrow(new NullPointerException("a bug")).when(incus).listJsonConfig();
+        org.junit.jupiter.api.Assertions.assertThrows(NullPointerException.class, () -> cmd.syncDefaultActions(defs));
+    }
+
     @Test
     void removedDefaultActionIsUnstamped() throws Exception {
         var defs = parentAndChild(null);
