@@ -325,6 +325,42 @@ class MitmTlsTest {
         }
     }
 
+    /**
+     * A reload while start() waits on a taken MITM port reaches the server that finally binds:
+     * each attempt makes a new server, and one built from the certificates read before the wait
+     * would serve the old CA's leaves until the next reload.
+     */
+    @Test
+    void aReloadWhileTheMitmPortIsWaitedOnReachesTheServerThatBinds() throws Exception {
+        var loopback = InetAddress.getByName("127.0.0.1");
+        var taken = new ServerSocket(0, 1, loopback);
+        var oldHealth = new ServerSocket(0, 50, loopback);
+        var probed = new CountDownLatch(1);
+        var oldProxy = answeringEveryProbe(oldHealth, probed);
+        var ready = new CountDownLatch(1);
+        var failure = new AtomicReference<Exception>();
+        try {
+            proxy = new MitmProxy(vertx, "127.0.0.1", taken.getLocalPort(), oldHealth.getLocalPort(),
+                    "127.0.0.1", ConfigFingerprint.load());
+            startInThread(proxy, ready::countDown, failure);
+            assertTrue(probed.await(10, TimeUnit.SECONDS), "the MITM port was never waited on");
+
+            Files.delete(home.resolve(".config/incus-spawn/ca.key"));
+            Files.delete(home.resolve(".config/incus-spawn/ca.crt"));
+            reload();
+            var newCa = CertificateAuthority.loadOrCreate().caCert();
+            taken.close();
+            oldHealth.close();
+            assertTrue(ready.await(10, TimeUnit.SECONDS), "the proxy did not get ready: " + failure.get());
+
+            handshake(proxy.mitmPort(), HOSTS.get(0), newCa).leaf().verify(newCa.getPublicKey());
+        } finally {
+            taken.close();
+            oldHealth.close();
+            oldProxy.join(5_000);
+        }
+    }
+
     /** An older proxy that never finishes stopping: it answers every health probe until closed. */
     private static Thread answeringEveryProbe(ServerSocket health, CountDownLatch probed) {
         var oldProxy = new Thread(() -> {

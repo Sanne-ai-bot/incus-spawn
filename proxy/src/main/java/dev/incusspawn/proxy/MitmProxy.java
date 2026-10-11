@@ -90,6 +90,8 @@ public class MitmProxy {
     // Volatile: replaced on each bind attempt while stop() may read them from a shutdown hook.
     private volatile HttpServer mitmServer;
     private volatile HttpServer healthHttpServer;
+    /** The certificates the MITM server serves; guarded by {@code this}, as reload() is. */
+    private InterceptedCertOptions mitmCertOptions;
     // Set once each listen has succeeded: Vert.x's actualPort() reports a fixed port before the
     // bind and after a failed one, so it cannot say whether a server is listening.
     private volatile int boundMitmPort;
@@ -635,6 +637,7 @@ public class MitmProxy {
             // moment isx reliably signals -- so take the opportunity to re-read it too.
             refreshInstanceRegistry();
             var keyCertOptions = buildKeyCertOptions();
+            mitmCertOptions = keyCertOptions;
             if (mitmServer != null) {
                 var sslOptions = new io.vertx.core.net.SSLOptions()
                         .setKeyCertOptions(keyCertOptions);
@@ -705,7 +708,9 @@ public class MitmProxy {
         // stable (minted while clocks were in sync); only mint on miss/expiry/CA
         // rotation. See CertStore for why per-start re-minting broke validation
         // on hosts whose container clock lags (e.g. macOS VM after resume).
-        var keyCertOptions = buildKeyCertOptions();
+        synchronized (this) {
+            mitmCertOptions = buildKeyCertOptions();
+        }
 
         // MITM TLS server with SNI
         var serverOptions = new HttpServerOptions()
@@ -713,7 +718,6 @@ public class MitmProxy {
                 .setPort(requestedMitmPort)
                 .setSsl(true)
                 .setSni(true)
-                .setKeyCertOptions(keyCertOptions)
                 .setIdleTimeout(MITM_IDLE_TIMEOUT_SECONDS)
                 .setIdleTimeoutUnit(TimeUnit.SECONDS)
                 .setAlpnVersions(List.of(HttpVersion.HTTP_1_1))
@@ -827,9 +831,13 @@ public class MitmProxy {
         } catch (Exception ignored) {}
     }
 
-    /** A fresh server on each bind: one whose bind failed is not bound again. */
-    private int bindMitmServer(HttpServerOptions serverOptions) throws Exception {
-        mitmServer = vertx.createHttpServer(serverOptions);
+    /**
+     * A fresh server on each bind: one whose bind failed is not bound again. Synchronized with
+     * {@link #reload()}, so a reload during the wait reaches the server that binds: it updates
+     * this one, or this one is made with the certificates it installed.
+     */
+    private synchronized int bindMitmServer(HttpServerOptions serverOptions) throws Exception {
+        mitmServer = vertx.createHttpServer(new HttpServerOptions(serverOptions).setKeyCertOptions(mitmCertOptions));
         mitmServer.exceptionHandler(err -> {
             if (isBenignConnectionError(err)) {
                 // Clients (containers) drop connections abruptly all the time —
