@@ -408,6 +408,21 @@ public class GuestProvisioning {
         installTrustHelper(container);
         writeTrustEnvironmentD(container);
         installTrustPathUnits(container);
+        runTrustHelper(container);
+    }
+
+    /**
+     * Installs the helper and binds what is on disk now, nothing else. A child build runs it
+     * before its repos' prime commands, so a vendor JDK this layer's tools just installed
+     * already trusts the isx CA when a prime uses it; {@link #bindTrustStores} follows the
+     * primes, for what they download.
+     */
+    static void bindInstalledRuntimes(Container container) {
+        installTrustHelper(container);
+        runTrustHelper(container);
+    }
+
+    private static void runTrustHelper(Container container) {
         var system = new ArrayList<>(List.of(TRUST_HELPER_PATH));
         system.addAll(TRUST_SYSTEM_DIRS);
         container.exec(system.toArray(String[]::new));

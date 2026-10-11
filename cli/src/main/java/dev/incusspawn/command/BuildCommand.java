@@ -78,6 +78,7 @@ import static dev.incusspawn.command.GuestProvisioning.disableGuestSelinux;
 import static dev.incusspawn.command.GuestProvisioning.enablePackageRepos;
 import static dev.incusspawn.command.GuestProvisioning.expandHome;
 import static dev.incusspawn.command.GuestProvisioning.installAllPackages;
+import static dev.incusspawn.command.GuestProvisioning.bindInstalledRuntimes;
 import static dev.incusspawn.command.GuestProvisioning.bindTrustStores;
 import static dev.incusspawn.command.GuestProvisioning.maskServices;
 import static dev.incusspawn.command.GuestProvisioning.refreshInheritedTools;
@@ -1262,6 +1263,8 @@ public class BuildCommand extends BaseCommand {
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         verifyTools(container, toolResolution.effective());
+        // Before the repos' primes, which may use a JDK this layer just installed.
+        bindInstalledRuntimes(container);
         maskServices(container, imageDef);
         // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
         installSkills(container, imageDef, defs, toolResolution.effective());
