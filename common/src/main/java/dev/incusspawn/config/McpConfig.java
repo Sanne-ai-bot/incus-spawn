@@ -1,5 +1,6 @@
 package dev.incusspawn.config;
 
+import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
@@ -59,26 +60,26 @@ public class McpConfig {
     @JqName("templates")
     private List<String> templates;
     @JqName("max-instances")
-    @io.hyperfoil.tools.jjq.mapper.JqConverter(IntegerConverter.class)
+    @JqConverter(IntegerConverter.class)
     private Integer maxInstances;
     @JqName("max-concurrent-tasks")
-    @io.hyperfoil.tools.jjq.mapper.JqConverter(IntegerConverter.class)
+    @JqConverter(IntegerConverter.class)
     private Integer maxConcurrentTasks;
     @JqName("delegate-max-turns")
-    @io.hyperfoil.tools.jjq.mapper.JqConverter(IntegerConverter.class)
+    @JqConverter(IntegerConverter.class)
     private Integer delegateMaxTurns;
     @JqName("delegate-permission-mode")
     private String delegatePermissionMode;
     @JqName("delegate-permission-modes")
     private Map<String, String> delegatePermissionModes;
     @JqName("orphan-grace-hours")
-    @io.hyperfoil.tools.jjq.mapper.JqConverter(IntegerConverter.class)
+    @JqConverter(IntegerConverter.class)
     private Integer orphanGraceHours;
     @JqName("dormant-after-hours")
-    @io.hyperfoil.tools.jjq.mapper.JqConverter(IntegerConverter.class)
+    @JqConverter(IntegerConverter.class)
     private Integer dormantAfterHours;
     @JqName("dormant-grace-hours")
-    @io.hyperfoil.tools.jjq.mapper.JqConverter(IntegerConverter.class)
+    @JqConverter(IntegerConverter.class)
     private Integer dormantGraceHours;
     @JqName("summary-model")
     private String summaryModel;

@@ -436,18 +436,13 @@ final class McpTools {
         if (events) node.put("recent", strings(summary.recent()));
         var usage = result.getField("usage");
         for (var field : List.of("input_tokens", "output_tokens", "cached_input_tokens")) {
-            var count = usage.getField(field);
-            if (count.isIntegralNumber() && count.decimalValue().compareTo(LONG_MIN) >= 0
-                    && count.decimalValue().compareTo(LONG_MAX) <= 0) node.put(field, count.longValue());
+            var count = Jjq.exactLong(usage.getField(field));
+            if (count != null) node.put(field, count);
         }
         if (failed) node.put("agent_stderr", (JsonRpc.text(result, "result", "") + "\n" + status.stderr()).strip());
         return ToolResult.json(node.build(), "Review the changes with get_diff; continue this conversation with send_message.");
     }
 
-    private static final java.math.BigDecimal INT_MIN = java.math.BigDecimal.valueOf(Integer.MIN_VALUE);
-    private static final java.math.BigDecimal INT_MAX = java.math.BigDecimal.valueOf(Integer.MAX_VALUE);
-    private static final java.math.BigDecimal LONG_MIN = java.math.BigDecimal.valueOf(Long.MIN_VALUE);
-    private static final java.math.BigDecimal LONG_MAX = java.math.BigDecimal.valueOf(Long.MAX_VALUE);
 
     private ToolResult createInstance(McpTool.Args args, ToolContext ctx) {
         var template = blankToNull(args.string("template"));
@@ -1310,10 +1305,9 @@ final class McpTools {
                 .append("\ncost_usd: ").append(result.path("total_cost_usd").asDisplayText("?"));
         if (result.path("subtype").isString()) node.put("outcome", result.path("subtype").asText());
         node.put("is_error", summary.isError());
-        // Left out unless it fits an int, as Jackson's canConvertToInt did: asInt would wrap it
-        var turns = result.path("num_turns");
-        if (turns.isNumber() && turns.decimalValue().compareTo(INT_MIN) >= 0
-                && turns.decimalValue().compareTo(INT_MAX) <= 0) node.put("turns", turns.decimalValue().intValue());
+        // Left out unless it is a whole number that fits an int: asInt would wrap it
+        var turns = Jjq.exactInt(result.path("num_turns"));
+        if (turns != null) node.put("turns", turns);
         putNumber(node, "cost_usd", result.path("total_cost_usd"));
         appendDenials(sb, summary);
         node.put("permission_denials", denials(summary));

@@ -1,8 +1,10 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.IntegerConverter;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
 import io.quarkus.runtime.annotations.RegisterForReflection;
@@ -218,9 +220,9 @@ public class ToolDef {
         private String defaultValue;
         private String description;
         private String pattern;  // regex for string validation
-        @io.hyperfoil.tools.jjq.mapper.JqConverter(dev.incusspawn.config.IntegerConverter.class)
+        @JqConverter(IntegerConverter.class)
         private Integer min;     // for integer type
-        @io.hyperfoil.tools.jjq.mapper.JqConverter(dev.incusspawn.config.IntegerConverter.class)
+        @JqConverter(IntegerConverter.class)
         private Integer max;     // for integer type
         private List<String> options = List.of();  // for enum type
         private boolean optional = false;

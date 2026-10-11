@@ -1,10 +1,10 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqNull;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 
-import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,9 +50,6 @@ record McpTool(String name, String description, JqObject inputSchema, JqObject o
 
     /** Typed access to a call's arguments, turning a missing or mistyped one into a {@link ToolError}. */
     record Args(JqValue node) {
-        private static final BigDecimal INT_MIN = BigDecimal.valueOf(Integer.MIN_VALUE);
-        private static final BigDecimal INT_MAX = BigDecimal.valueOf(Integer.MAX_VALUE);
-
         String requireString(String name) {
             var value = string(name);
             if (value == null || value.isBlank()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "missing required argument '" + name + "'");
@@ -69,17 +66,9 @@ record McpTool(String name, String description, JqObject inputSchema, JqObject o
         Integer integer(String name) {
             var v = field(name);
             if (v.isNull()) return null;
-            // A whole number in the int range, checked on the exact value (longValue() wraps
-            // beyond the long range); a fraction is refused. Bounds first, so a huge literal is
-            // refused before intValueExact looks at its digits.
-            var decimal = v.isNumber() ? v.decimalValue() : null;
-            try {
-                if (decimal != null && decimal.compareTo(INT_MIN) >= 0 && decimal.compareTo(INT_MAX) <= 0) {
-                    return decimal.intValueExact();
-                }
-            } catch (ArithmeticException fractional) {
-                // falls through to the refusal
-            }
+            // A whole number in the int range; a fraction, or anything beyond, is refused (Jjq.exactInt)
+            var exact = Jjq.exactInt(v);
+            if (exact != null) return exact;
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an integer");
         }
 
