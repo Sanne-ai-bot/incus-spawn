@@ -124,6 +124,8 @@ Every isx of this user queues on this lock, so read everything that does not dep
 The listing fails closed; an unusable lock file does not: `HostLock.acquireOrDegrade` warns once and keeps only the in-process lock, since Incus's 409 still refuses the collision.
 Anything the claim or the stale-subnet repair reports goes through a `StaticIpAllocator.Output` (step, warn), never straight to stdout/stderr: the TUI runs that repair on its own screen.
 The static `.network` is pushed root `0644` explicitly (`systemd-networkd` cannot read `0600`).
+**Never assume a VM's root disk is `sda`**: VM builds put it on virtio-blk (`vda`, #1255), templates built before stay on virtio-scsi (`sda`), so a guest command derives the device from the root's mount (`BuildCommand.VM_ROOT_EXPANSION`).
+
 **Never assume the guest NIC is `eth0`**: Incus names a container's NIC after the device, but a VM keeps its kernel's predictable name (`enp5s0`), so a VM's `.network` matches `PermanentMACAddress=` (device `hwaddr`, else `volatile.<nic>.hwaddr`; `InstanceNetwork.pushVmNetworkConfig`), a deferred re-push uses `networkctl reload` (no interface name), a VM's subnet repair, and a VM branched `--no-start` (in `configureBranch`'s one write, #1004), set `Metadata.NETWORK_PUSH_PENDING` until its file is pushed (by `ensureReady`, running or stopped), `migrateAllInstancesToNewSubnet` stops a running instance, with a warning, and starts it again, since Incus refuses to change a running NIC whose current address is off the new subnet (#1009; `FakeIncusDaemon` refuses it too), and the setup script waits for the assigned address on any link (`addressUpCheck`), never on a named interface (#997).
 `eth0` stays only in container-only code (`BuildCommand.waitForIpv4`).
 Incus's own 409 on a duplicate address covers writers outside the lock.
@@ -176,6 +178,7 @@ See DESIGN.md "Orphaned subvolumes and dangling records".
 **Request budgets**: each Incus round trip on the start/shell/branch path adds latency the user waits through.
 `InstanceLifecycleRequestBudgetTest` (and `ActionResolverRequestBudgetTest` for action contexts) pins exact request counts using `FakeIncusDaemon` (test scope, an in-memory `IncusTransport`, reachable from `cli` tests through common's test-jar).
 A change that adds requests to a covered flow fails it, and one that removes requests must lower the budget.
+`FakeIncusDaemon` serves no exec unless asked: `servesExecs()` and `execOutput(needle, stdout)` make each exec exit 0, recording its POST, a `WS` per fd and its wait, so a flow that runs commands in the guest can be counted too.
 Give a new user-facing flow in `common` a budget, and prefer one `instanceMetadata`/`configByPrefix` read over several `configGet` calls.
 See DESIGN.md "Request budgets".
 
