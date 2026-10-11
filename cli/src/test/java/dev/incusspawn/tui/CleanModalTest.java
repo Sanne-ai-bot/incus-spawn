@@ -1,12 +1,14 @@
 package dev.incusspawn.tui;
 
 import dev.incusspawn.command.CleanCommand;
+import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -63,5 +65,18 @@ class CleanModalTest {
         var dialog = dialog();
         TuiSnapshot.assertMatches("clean-modal-confirm-80x24",
                 TuiSnapshot.render(80, 24, f -> dialog.renderCleanConfirmModal(f, f.area())));
+    }
+
+    @Test
+    void rendersTheResultOfAClean() {
+        // The scan found one failed build, which starts checked, and the pool holds it. The fake
+        // pool reports no usage, so the before/after line is not part of this rendering.
+        var daemon = new FakeIncusDaemon().pool("default", "btrfs")
+                .container("tpl-broken-failed-build", Map.of());
+        var dialog = dialog(new CleanCommand.CleanScan("default", null, List.of("tpl-broken-failed-build"),
+                List.of(), List.of(), false));
+        dialog.clean(daemon.client());
+        TuiSnapshot.assertMatches("clean-modal-result-80x24",
+                TuiSnapshot.render(80, 24, f -> dialog.renderCleanResultModal(f, f.area())));
     }
 }

@@ -46,4 +46,13 @@ class InstanceDetailViewTest {
         TuiSnapshot.assertMatches("instance-detail-view-80x24",
                 TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses)));
     }
+
+    @Test
+    void rendersAVmWithoutTheKvmRow() {
+        var vm = new InstanceInfo("vm-1", "Stopped", "default", "default", "",
+                "virtual-machine", "tpl-dev", "4", "8GiB", "50GiB", "", "", "x86_64",
+                "", "", "instance", "", "", "", -1, -1, "", false, null, false);
+        TuiSnapshot.assertMatches("instance-detail-view-vm-80x24",
+                TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of())));
+    }
 }

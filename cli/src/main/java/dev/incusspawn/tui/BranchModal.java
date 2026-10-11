@@ -67,8 +67,28 @@ final class BranchModal {
 
     private int branchFieldIndex;
 
+    /** A VM's CPU, memory and disk limits as the dialog first shows them; empty for a container. */
+    record VmLimits(String cpu, String memory, String disk) {
+        static final VmLimits NONE = new VmLimits("", "", "");
+
+        /** {@code BranchFlow}'s defaults on this host; only a VM's are worked out (a sysctl fork on macOS). */
+        static VmLimits of(BranchFlow.Defaults defaults) {
+            return defaults.machineType() == MachineType.VM
+                    ? new VmLimits(String.valueOf(defaults.cpu()), defaults.memory(), defaults.disk()) : NONE;
+        }
+    }
+
     BranchModal(ModalRenderer modal, TuiTheme theme, String sourceName, String suggestedName,
                 BranchFlow.Defaults defaults, BranchAccountChoices accounts) {
+        this(modal, theme, sourceName, suggestedName, defaults, accounts, VmLimits.of(defaults));
+    }
+
+    /**
+     * With a VM's limits given, so a test does not depend on this host's CPUs and memory. A
+     * container has no limit fields, so its limits are empty whatever is passed.
+     */
+    BranchModal(ModalRenderer modal, TuiTheme theme, String sourceName, String suggestedName,
+                BranchFlow.Defaults defaults, BranchAccountChoices accounts, VmLimits limits) {
         this.modal = modal;
         this.theme = theme;
         this.branchSourceName = sourceName;
@@ -82,10 +102,11 @@ final class BranchModal {
         branchInboxCheck = new CheckboxState(false);
         branchInboxInput = new TextInputState("");
         branchSourceIsVm = defaults.machineType() == MachineType.VM;
-        // Only a VM's limits are fields: a container's would be worked out (a sysctl fork on macOS) and ignored
-        vmCpuInput = new TextInputState(branchSourceIsVm ? String.valueOf(defaults.cpu()) : "");
-        vmMemoryInput = new TextInputState(branchSourceIsVm ? defaults.memory() : "");
-        vmDiskInput = new TextInputState(branchSourceIsVm ? defaults.disk() : "");
+        // Only a VM's limits are fields: a container's would be worked out and ignored (see VmLimits.of)
+        var shown = branchSourceIsVm ? limits : VmLimits.NONE;
+        vmCpuInput = new TextInputState(shown.cpu());
+        vmMemoryInput = new TextInputState(shown.memory());
+        vmDiskInput = new TextInputState(shown.disk());
         branchAccounts = accounts;
         branchFieldIndex = 0;
     }

@@ -188,12 +188,15 @@ To see what a TUI change looks like, render it headlessly rather than launching 
 Accept intended changes with `mvn test -pl cli -am -Dtest=<Test> -Dsurefire.failIfNoSpecifiedTests=false -Dtui.snapshots.update=true`, then check the golden diff.
 
 `TuiCharacterisationTest` renders the whole TUI this way: it hands the TUI class its services and a `FakeIncusDaemon` listing (`startSession`) and drives keys through a real `TuiRunner` on a `HeadlessBackend`.
-It snapshots the main screen (both panels, search, no instances) at 80×24 and 120×40, and pins what each key leads to: the mode a dialog opens in, Esc closing it, and the action F2, Enter in the branch dialog, a build-menu choice and `q` leave pending.
-A dialog's rendering is snapshotted by its own test, never over the main screen (#1251).
-Three renderings have no snapshot: the two inline confirms (stop-for-rename, build-for-branch) and the branch dialog for a VM, whose CPU and RAM defaults depend on the host.
+It snapshots the main screen (both panels, search, no instances) at 80×24 and 120×40, since its panels and columns reflow with the size, and its storage gauge, legend and status line once; it also pins what each key leads to: the mode a dialog opens in, Esc closing it, and the action F2, Enter in the branch dialog, a build-menu choice and `q` leave pending.
+Every rendering keeps at least one snapshot, and no duplicates beyond that (#1251).
+One per dialog or screen state, and one per variant that renders differently (a VM's branch dialog and details, the cleanup's result); a second size or context only where it shows something the first cannot, such as wrapping at 80 columns or the main screen's panels reflowing.
+A dialog is snapshotted standalone by its own test; only a rendering that exists only over the main screen (the two inline confirms, stop-for-rename and build-for-branch) is snapshotted in context, by `TuiCharacterisationTest`.
+Pin a snapshot's inputs rather than normalising its output: a VM's limits default from the host, so `BranchModal` takes them as `VmLimits` in its test.
+The one output still normalised is the build version in the main screen's header, which `withoutVersion` replaces, since a release changes it.
 `BackgroundTaskManager` runs task bodies on the `Executor` it is given, so a test can hold tasks and run them when it says (`TuiDeleteTargetTest`): an action's lambda must read the dialog state it needs into locals before it is submitted, since another dialog may have replaced that state by the time it runs (#1248).
 A dialog is easier to test on its own once it has its own class.
 `HelpChatModal` is the pattern: it owns its state, key handling (`handleKey` returns false to close) and `render(frame, screen)`, and takes its side effects (the `Asker`, an `Executor`, an on-answer callback) as constructor arguments so tests can answer synchronously.
-When touching another modal, prefer extracting it the same way and adding snapshots at 80×24 plus one or two larger sizes.
+When touching another modal, prefer extracting it the same way and adding a snapshot at 80×24, plus another size only where it shows something 80×24 cannot.
 `ModalRenderer.renderScrollableContent` is the shared scroll-with-scrollbar helper.
 
