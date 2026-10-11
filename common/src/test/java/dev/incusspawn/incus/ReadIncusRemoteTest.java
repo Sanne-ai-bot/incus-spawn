@@ -28,7 +28,14 @@ class ReadIncusRemoteTest {
         var remote = IncusClient.readIncusRemote("mine", List.of(file), problems);
         assertNotNull(remote);
         assertEquals("https://example.org", remote.addr());
+        assertEquals("simplestreams", remote.protocol());
         assertTrue(problems.isEmpty(), problems.toString());
+    }
+
+    @Test
+    void aRemoteNamingItsProtocolKeepsIt() throws Exception {
+        var file = write("config.yml", "remotes:\n  mine:\n    addr: https://example.org\n    protocol: incus\n");
+        assertEquals("incus", IncusClient.readIncusRemote("mine", List.of(file), new ArrayList<>()).protocol());
     }
 
     @Test
@@ -113,6 +120,7 @@ class ReadIncusRemoteTest {
         var remote = IncusClient.readIncusRemote("images", List.of(file, dir.resolve("absent.yml")), new ArrayList<>());
         assertNotNull(remote);
         assertEquals("https://images.linuxcontainers.org", remote.addr());
+        assertEquals("simplestreams", remote.protocol());
     }
 
     @Test
