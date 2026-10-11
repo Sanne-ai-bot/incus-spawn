@@ -154,9 +154,9 @@ public final class Jjq {
 
     /**
      * The value of a number, or null when it is not a number or cannot be trusted: the YAML
-     * parser reads {@code .inf}, {@code .nan} and {@code 1e400} as numbers whose value is 0
-     * (Hyperfoil/jjq#133), so a number whose source text is not a finite decimal equal to its
-     * value is refused. JSON numbers carry no source text and keep their exact value.
+     * parser reads {@code .inf} and {@code .nan} as numbers whose value is 0, so a number whose
+     * source text is not a finite decimal equal to its value is refused. JSON numbers carry no
+     * source text and keep their exact value.
      */
     private static java.math.BigDecimal literalNumber(JqValue value) {
         if (value == null || !value.isNumber()) return null;

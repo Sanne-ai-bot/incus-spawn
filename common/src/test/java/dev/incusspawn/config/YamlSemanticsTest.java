@@ -218,9 +218,9 @@ class YamlSemanticsTest {
         return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
-    // An integer setting that is not an integer fails the file, as with Jackson; jjq 0.2.2 binds
-    // 0 for a word or a boolean and wraps an out-of-range number. A grace of 0 reaps orphans at
-    // once, and a wrapped max-instances turns the cap off.
+    // An integer setting that is not an integer fails the file, as with Jackson, with the field as
+    // written. jjq 0.2.3 refuses most of these itself (Hyperfoil/jjq#133), but binds .inf and .nan
+    // as 0: a grace of 0 reaps orphans at once.
 
     @Test
     void aWordForAnIntegerSettingFailsWithTheFieldAndLine() {
@@ -247,15 +247,28 @@ class YamlSemanticsTest {
         assertEquals(McpConfig.DEFAULT_MAX_INSTANCES, Jjq.spawnConfig("mcp:\n  max-instances: \"\"\n").mcp().maxInstances());
     }
 
-    /** jjq reads .inf, .nan and 1e400 as numbers whose value is 0: "never" would be an immediate reap. */
+    /** .inf and .nan read as 0 in jjq, and 1e400 is out of range: "never" must not be an immediate reap. */
     @Test
-    void aNumberJjqReadsAsZeroFailsRatherThanBeingZero() {
+    void anInfiniteNanOrHugeNumberFailsRatherThanBeingZero() {
         for (var text : java.util.List.of(".inf", "-.inf", ".nan", "1e400", "-1e400")) {
             for (var key : java.util.List.of("orphan-grace-hours", "max-instances")) {
                 var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  " + key + ": " + text + "\n"),
                         key + ": " + text);
                 assertTrue(friendly(e).startsWith("x.yaml:2: 'mcp." + key + "' expects a whole number"), friendly(e));
             }
+        }
+    }
+
+    /**
+     * Pins why Jjq.literalNumber checks the source text, so the day jjq fixes it this fails and the comments can
+     * say so; the check stays regardless, since it also refuses 0x10 and 1_000.
+     */
+    @Test
+    void jjqStillReadsInfinityAndNanAsZero() {
+        for (var text : java.util.List.of(".inf", "-.inf", ".nan")) {
+            var value = io.hyperfoil.tools.jjq.yaml.JqYaml.parse("a: " + text + "\n").getField("a");
+            assertTrue(value.isNumber(), text);
+            assertEquals(0, value.decimalValue().signum(), text);
         }
     }
 
