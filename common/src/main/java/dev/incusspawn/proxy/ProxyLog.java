@@ -21,9 +21,13 @@ public final class ProxyLog {
     /**
      * Suppress stderr output while the TUI owns the terminal.  File logging continues
      * unconditionally so the lifecycle log stays complete.
+     *
+     * @return the previous setting, for a caller that puts it back
      */
-    public static void setSuppressStderr(boolean suppress) {
+    public static boolean setSuppressStderr(boolean suppress) {
+        var previous = stderrSuppressed;
         stderrSuppressed = suppress;
+        return previous;
     }
 
     public static boolean isDebugEnabled() {
