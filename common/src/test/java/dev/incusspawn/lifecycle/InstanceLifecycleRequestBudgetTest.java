@@ -153,6 +153,43 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void aVmBranchAfterItsAgentAnswers() {
+        // #1238 saw about 2.3 s from the agent answering to the branch being ready. Everything after
+        // the readiness wait: the .network file pushed for the MAC Incus gave the NIC at the start,
+        // the secret's guest script, and the resolv.conf check. Each exec is its POST, a WebSocket
+        // per fd and the wait for its exit code.
+        var daemon = new FakeIncusDaemon()
+                .instance("dev-0", "virtual-machine", "Stopped", Map.of(Metadata.PROFILE, "tpl-dev",
+                        "volatile.eth0.hwaddr", "00:16:3e:12:34:56"))
+                .execOutput("cat /etc/resolv.conf", "nameserver 10.166.11.1\n");
+        var incus = spy(daemon.client());
+        doNothing().when(incus).waitForReady(NAME, MachineType.VM);
+        var request = new BranchFlow.Request("dev-0", NAME, false, false, NetworkMode.FULL,
+                null, null, null, null, List.of(), true, Map.of());
+        // A non-airgapped branch checks the host's proxy first; this host may not run one.
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = i -> true;
+        try {
+            BranchFlow.create(incus, BranchFlow.preflight(incus, request, Map.of()));
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
+
+        var requests = daemon.requests();
+        var afterStart = requests.subList(requests.indexOf("PUT /1.0/instances/" + NAME + "/state") + 2, requests.size());
+        assertEquals(List.of(
+                        "GET /1.0/instances/" + NAME, "GET /1.0/networks/incusbr0",
+                        "POST /1.0/instances/" + NAME + "/files?path=%2Fetc%2Fsystemd%2Fnetwork%2F10-eth0.network",
+                        "POST /1.0/instances/" + NAME + "/exec", "GET /1.0/operations/exec-1/wait?timeout=120",
+                        "GET /1.0/instances/" + NAME, "GET /1.0/networks/incusbr0",
+                        "POST /1.0/instances/" + NAME + "/exec", "GET /1.0/operations/exec-2/wait?timeout=120"),
+                afterStart.stream().filter(r -> !r.startsWith("WS ")).toList(), () -> String.join("\n", afterStart));
+        assertEquals(17, afterStart.size(), () -> "after the VM's agent answers, made " + afterStart.size()
+                + ":\n  " + String.join("\n  ", afterStart)
+                + "\nMore is a latency regression; fewer is an improvement -- lower the budget.");
+    }
+
+    @Test
     void preparingHostDevicesReadsTheInstanceOnce() {
         // Filtering already on, as on every instance branched since #905's check: re-arming it
         // must cost nothing then.
