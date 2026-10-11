@@ -1554,7 +1554,13 @@ A VM's agent probe, which runs on every shell, asks for the proofs file as well 
 A container has no probe: `ensureReady` compares its boot with the boot stamp, which now records that the delivery carried proofs (`InstanceLifecycle.secretBootStamp`: `<last_used_at> proofs`).
 A stamp an older isx wrote is the bare boot, so it no longer matches.
 The next shell gives the container a new secret with its proofs -- once, from the instance it already read, at no request of its own on every later shell.
-A build keeps the static placeholder in `isx-env.sh`, and a long-lived shell keeps the proofs of the start it was opened in until it is replaced (#1109 reports that).
+A build keeps the static placeholder in `isx-env.sh`, and a long-lived shell keeps the proofs of the start it was opened in until it is replaced.
+*Checking from inside (#1109).*
+`isx doctor` run inside an instance (its secret file exists, or the profile named one) compares each declared placeholder this shell exports with the proof the secret file derives (`DoctorCommand.instanceCredentialFindings`).
+It compares only the variables the proofs file fills (`ProofToken.filledBy`, which reads back what `profile` wrote), so a tool the host does not serve, a guard that fails in this image (evaluated as the profile would), or a value somebody else set is never called a mismatch.
+The expected value comes from the guest's own declaration (`ProofToken.declared`), as the issue asked, so a filled variable this isx does not declare, as on a guest whose isx or tool definitions differ from the host's, is a note naming it rather than an all clear.
+An earlier start's proof or the build's placeholder in a filled variable is a warning whose fix is a new login shell, then `isx shell` from the host; a missing secret or a secret without proofs asks for `isx shell` or `isx start` from the host.
+Every run inside an instance also notes that credentials reach only what runs in this login environment, with a pointer to README "Credentials reach the login environment".
 
 *Keyed with the secret, not its hash.*
 The host records only the secret's SHA-256, which a guest can read from `/dev/incus`, so a proof keyed with the hash would be forgeable by any user in the guest.

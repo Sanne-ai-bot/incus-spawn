@@ -12,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -58,6 +59,23 @@ class ProofTokenTest {
         var profile = ProofToken.profile(secret, List.of(new ProofToken.Placeholder("GH_TOKEN", "gho_", "github")));
         assertEquals("case \"${GH_TOKEN-}\" in gho_placeholder*|gho_isx_*) export GH_TOKEN='gho_isx_"
                 + ProofToken.derive(secret, "github") + "' ;; esac\n", profile);
+    }
+
+    @Test
+    void doctorReadsBackWhichVariablesAProfileFills() {
+        var guarded = new ProofToken.Placeholder("ANTHROPIC_API_KEY", "sk-ant-", "claude").onlyWhen("[ -e /x ]");
+        var profile = ProofToken.profile(InstanceSecret.generate(),
+                List.of(new ProofToken.Placeholder("GH_TOKEN", "gho_", "github"), guarded));
+        assertEquals(List.of("GH_TOKEN", "ANTHROPIC_API_KEY"), List.copyOf(ProofToken.filledBy(profile)));
+        assertEquals(Set.of(), ProofToken.filledBy(""), "a start in which no tool declared a placeholder");
+    }
+
+    @Test
+    void doctorReplacesWhatTheProfileWould() {
+        var gh = new ProofToken.Placeholder("GH_TOKEN", "gho_", "github");
+        assertTrue(gh.replaces("gho_placeholder"));
+        assertTrue(gh.replaces(gh.tokenFor(InstanceSecret.generate())));
+        assertFalse(gh.replaces("ghp_mine"), "a value somebody else set stays theirs");
     }
 
     @Test
