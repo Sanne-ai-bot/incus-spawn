@@ -207,7 +207,7 @@ public final class SecretRedactor {
         }
         var leaf = segments[segments.length - 1];
         if (node instanceof JqObject parent) {
-            redactDeclared(parent, leaf, List.<Object>of(segments), replacements, values);
+            redactDeclared(parent, leaf, java.util.Arrays.<Object>asList(segments), replacements, values);
         }
         if (segments.length > 1 && root instanceof JqObject rootObj) {
             redactNested(rootObj.getField(segments[0]), List.of(segments[0]), leaf, replacements, values);
