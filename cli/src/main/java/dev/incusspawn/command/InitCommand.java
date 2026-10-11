@@ -573,7 +573,9 @@ public class InitCommand extends BaseCommand {
         var chosen = new java.util.ArrayList<String>();
         for (var name : candidates) {
             var note = templateBuilt(name) ? "" : styled(DIM, " (not built yet: isx build " + name + ")");
-            if (askConfirmation(prompts, "    " + name + note + "?", approved.contains(name))) chosen.add(name);
+            // End of input keeps the existing answer: a closed terminal must not drop an approval.
+            var current = approved.contains(name);
+            if (askConfirmation(prompts, "    " + name + note + "?", current, current)) chosen.add(name);
         }
         // Keep hand-approved templates this step does not ask about, in their order.
         var updated = new java.util.ArrayList<String>();

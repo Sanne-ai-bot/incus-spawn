@@ -154,6 +154,16 @@ class McpInitFlowTest {
     }
 
     @Test
+    void endOfInputAtATemplateQuestionKeepsItsApproval() throws Exception {
+        var host = new Host();
+        host.registered = true;
+        var seeded = "mcp:\n  templates: [tpl-agent, tpl-agent-java]\n";
+        // 't', then Ctrl-D at the first template question (and the script is exhausted for the rest).
+        host.setupMcp(seed(seeded), ScriptedPrompts.lines("t"), templates());
+        assertUnchanged(seeded);
+    }
+
+    @Test
     void turningItOffOnlyShowsHow() throws Exception {
         var host = new Host();
         host.registered = true;
