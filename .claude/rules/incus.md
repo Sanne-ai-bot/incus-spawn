@@ -84,10 +84,16 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   Every test asserts `UnixSocketTransport.openConnectionCount()` returns to its baseline, so a leaked permit on a failure path fails the build.
   The guest half (the in-VM forwarder, `isx-agent`, the `-T` backstop, recovery) runs in `integration-tests` against the real appliance over a vsock-bridged QEMU boot (`appliance/test-tunnel.sh`, see `ci.md`).
   Only vfkit itself is untested, and cannot be on hosted runners (#774).
-- **Never open a tunnel connection without sending a request.** incusd's local listener (`StarttlsListener`) peeks 8 bytes inside `Accept()` with no deadline, so one connection that has sent nothing stalls *every new* API connection until it speaks or closes.
+- **Never open a tunnel connection without sending a request.**
+  Without lxc/incus@2cb2549, incusd's local listener (`StarttlsListener`) peeks 8 bytes inside `Accept()` with no deadline, so one connection that has sent fewer than 8 bytes stalls *every new* API connection until it speaks or closes.
   On Linux the close arrives at once; through vfkit it may not, and then the forwarder holds that silent connection until `socat -T` reaps it -- the whole API wedged for up to 180s, cleared early only by `forwarder-restart`.
+  Appliances built since #1313 have the fix: each connection is classified in its own goroutine under a 3s read deadline, so a silent one stalls nothing and incusd closes it after 3s.
+  No Incus release had it yet, so `appliance/build.sh` rebuilds Alpine's incusd 6.21.0 with `appliance/incus/*.patch` and records what it built in `/etc/isx-incus`; the smoke test prints that file.
+  Drop the patch once Alpine ships a release with the commit; until then `build.sh` pins `INCUS_VERSION`, and a new Alpine Incus fails the build rather than mixing versions.
+  The rule stays, because an appliance built before #1313 is still affected.
   So no bare connect-and-close probes: `IncusApi.diagnoseVsock` sends a real `GET /1.0` (`IncusApiLossyTunnelTest` asserts the request arrives).
-  Upstream: LXD fixed the same code (canonical/lxd#18705); incus had not as of 7.5.1. incusd also closes idle keep-alive connections after 30s (`IdleTimeout`), which is why `ConnectionPool`'s 5s TTL must stay well under it.
+  Upstream: LXD fixed the same code (canonical/lxd#18705), incus after 7.5.1 (lxc/incus#4082).
+  incusd also closes idle keep-alive connections after 30s (`IdleTimeout`), which is why `ConnectionPool`'s 5s TTL must stay well under it.
 - **Forwarder leak + recovery.**
   The same close-propagation gap makes the in-VM `socat` forwarder leak connections.
   A `socat -T` inactivity backstop reaps them (the forwarder and agent listeners also set `backlog=128`: socat's default of 5 refused concurrent connects, and one exec opens about five).

@@ -3277,7 +3277,7 @@ Timing seams are package-private constructors (`IncusApi(transport, pingInterval
 Output a test needs inside the drain's window is timed by the drain itself: `IncusApi(transport, pingIntervalMs, DrainClock)` replaces the time the drain reads and its pause between polls, and the test sends each chunk from the pause that reaches it.
 A fake that slept between chunks on its own thread assumed the thread woke on time; on a loaded macOS runner it woke late, the gap outgrew the window, and the drain, correctly, read the output as finished (#1208).
 The guest half is covered too, in `integration-tests`.
-The appliance boots under QEMU with a `vhost-vsock-pci` device, host `socat` bridges its vsock ports to Unix sockets on the paths isx uses (the shape vfkit gives it), and `appliance/test-tunnel.sh` checks the forwarder, every `isx-agent` verb, concurrent-connection accounting, the `-T` backstop against a silent connection, and no-reboot recovery.
+The appliance boots under QEMU with a `vhost-vsock-pci` device, host `socat` bridges its vsock ports to Unix sockets on the paths isx uses (the shape vfkit gives it), and `appliance/test-tunnel.sh` checks the forwarder, every `isx-agent` verb, concurrent-connection accounting, that silent and partial clients stall no request, the `-T` backstop against a test-only silent endpoint, and no-reboot recovery.
 The native `isx` then connects through the same socket.
 Both arches run it: x86_64 under KVM, aarch64 (the arch Apple Silicon runs) under TCG, since GitHub's arm64 runners expose no `/dev/kvm`.
 What remains uncovered is vfkit itself.
@@ -3552,14 +3552,19 @@ That single fault surfaced in two directions and shaped several design choices:
   The WebSocket connect + handshake is bounded by the transport timeout like any request, since a wedged tunnel accepts and then says nothing.
   Only the handshake is bounded -- an open exec or shell socket legitimately stays quiet, and its liveness comes from the keepalive pings.
 
-- **One silent connection can wedge the whole API.** incusd wraps its local Unix listener in a `StarttlsListener` whose `Accept()` peeks 8 bytes to detect a STARTTLS upgrade, synchronously and with no deadline.
+- **One silent connection can wedge the whole API.**
+  Before lxc/incus@2cb2549, incusd wraps its local Unix listener in a `StarttlsListener` whose `Accept()` peeks 8 bytes to detect a STARTTLS upgrade, synchronously and with no deadline.
   So a connection that has sent nothing blocks every connection behind it until it speaks or closes (found by the vsock-bridged CI boot: a new request completed exactly when a silent one finally sent its first bytes).
   On Linux a client's close reaches incusd at once and unblocks the peek.
   Through vfkit it may never arrive, and then the forwarder keeps the silent connection open until `socat -T` reaps it -- up to 180s with no API at all, which reads exactly like the field "wedged tunnel" that `forwarder-restart` clears instantly by killing the child.
   isx therefore never opens a tunnel connection without writing a request straight away.
   The one place that used to (the vsock branch of `diagnoseConnectionFailure`, a connect-and-close reachability check that ran precisely when the tunnel was struggling) now sends a real `GET /1.0` under the probe timeout.
   The server-side fix belongs upstream.
-  LXD fixed the identical code (canonical/lxd#18705, peek moved off the accept loop with a read deadline); incus had not as of 7.5.1.
+  LXD fixed the identical code (canonical/lxd#18705, peek moved off the accept loop with a read deadline).
+  Incus followed after 7.5.1 (lxc/incus@2cb2549, for lxc/incus#4082): each connection is classified in its own goroutine, with a 3s deadline on the first read.
+  No release had it when #1313 needed it, so the appliance build carries it as a backport onto Alpine's 6.21.0 (`appliance/incus/`, see `appliance/DESIGN.md`).
+  On an appliance built since then, a silent or partial connection stalls nothing, and incusd closes it after 3s, well before the forwarder's backstop.
+  An older appliance is still affected, so the rule above stays.
   incusd also closes idle keep-alive connections after 30s (`IdleTimeout`), a close vfkit may not deliver either.
   So `ConnectionPool`'s TTL (5s) must stay well under it.
 

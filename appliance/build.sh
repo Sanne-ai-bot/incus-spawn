@@ -9,9 +9,10 @@ set -euo pipefail
 # Strategy:
 #   1. Download Alpine Linux minirootfs
 #   2. Copy overlay files, install packages via chroot
-#   3. Run config.sh to configure the appliance
-#   4. Pack rootfs into a compressed tarball
-#   5. Build custom minimal kernel from kernel.org source
+#   3. Replace incusd with one built from the same release plus incus/*.patch
+#   4. Run config.sh to configure the appliance
+#   5. Pack rootfs into a compressed tarball
+#   6. Build custom minimal kernel from kernel.org source
 #
 # The build re-executes inside a privileged Fedora container via podman.
 # The only host requirement is podman.
@@ -95,27 +96,49 @@ echo "  Target: $TARGET_DIR"
 echo
 
 ROOTFS_DIR=$(mktemp -d)
+INCUS_BUILD_DIR=$(mktemp -d)
+unmount_chroot() {
+    umount "$1/dev" 2>/dev/null || true
+    umount "$1/proc" 2>/dev/null || true
+    umount "$1/sys" 2>/dev/null || true
+}
 cleanup() {
     echo "Cleaning up..."
-    umount "$ROOTFS_DIR/dev" 2>/dev/null || true
-    umount "$ROOTFS_DIR/proc" 2>/dev/null || true
-    umount "$ROOTFS_DIR/sys" 2>/dev/null || true
-    rm -rf "$ROOTFS_DIR"
+    unmount_chroot "$ROOTFS_DIR"
+    unmount_chroot "$INCUS_BUILD_DIR"
+    rm -rf --one-file-system "$ROOTFS_DIR" "$INCUS_BUILD_DIR" "$INCUS_BUILD_DIR.minirootfs.tar.gz"
 }
 trap cleanup EXIT
 
 ALPINE_VERSION="3.23.0"
 ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION%.*}/releases/${ISX_ARCH}/alpine-minirootfs-${ALPINE_VERSION}-${ISX_ARCH}.tar.gz"
 
+# The Incus release Alpine's incus-feature is built from, and the sha512 its APKBUILD pins for
+# the source tarball. incusd is rebuilt from it with incus/*.patch applied (#1313), so the
+# package must be this release too: apk's ~ takes any revision of it and nothing else, and a
+# new Alpine release fails the build here instead of mixing versions.
+INCUS_VERSION="6.21.0"
+INCUS_SHA512="5bc687a6e0ede6928354a71177ee63c164dbc5b328c34e841c2ba1972dcb8118b37609c41d340bd0e6e0a2f9945b281f239edbe00504c9ba637271a01dc4d9dc"
+
+# Unpack the minirootfs into $1 (downloaded once, for both chroots), then make it a chroot:
+# /dev, /proc and /sys bound, and DNS.
+fetch_rootfs() {
+    [ -f "$INCUS_BUILD_DIR.minirootfs.tar.gz" ] || curl -fsSL -o "$INCUS_BUILD_DIR.minirootfs.tar.gz" "$ALPINE_URL"
+    tar xzf "$INCUS_BUILD_DIR.minirootfs.tar.gz" -C "$1"
+}
+mount_chroot() {
+    mount --bind /dev "$1/dev"
+    mount --bind /proc "$1/proc"
+    mount --bind /sys "$1/sys"
+    cp /etc/resolv.conf "$1/etc/resolv.conf"
+}
+
 echo "==> Downloading Alpine minirootfs (arch=$ISX_ARCH)..."
-curl -fsSL "$ALPINE_URL" | tar xz -C "$ROOTFS_DIR"
+fetch_rootfs "$ROOTFS_DIR"
 echo "    Base size: $(du -sh "$ROOTFS_DIR" | cut -f1)"
 
 echo "==> Setting up chroot..."
-mount --bind /dev "$ROOTFS_DIR/dev"
-mount --bind /proc "$ROOTFS_DIR/proc"
-mount --bind /sys "$ROOTFS_DIR/sys"
-cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+mount_chroot "$ROOTFS_DIR"
 
 if [ -d "$SCRIPT_DIR/root" ]; then
     echo "==> Copying overlay files..."
@@ -127,8 +150,8 @@ chroot "$ROOTFS_DIR" /bin/sh -c "
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 set -eu
 apk add --no-cache \
-    incus-feature \
-    incus-feature-client \
+    incus-feature~$INCUS_VERSION \
+    incus-feature-client~$INCUS_VERSION \
     lxcfs \
     dbus \
     btrfs-progs \
@@ -143,6 +166,23 @@ apk add --no-cache \
     socat
 "
 echo "    Size after packages: $(du -sh "$ROOTFS_DIR" | cut -f1)"
+
+# No Incus release Alpine ships yet has lxc/incus@2cb2549, without which one local client that
+# sends fewer than 8 bytes stalls every API request behind it (#1313). Build incusd with it in a
+# separate chroot, so the toolchain stays out of the image, and record what was built.
+echo "==> Building incusd $INCUS_VERSION with $(find "$SCRIPT_DIR/incus" -name '*.patch' | wc -l) backport(s)..."
+fetch_rootfs "$INCUS_BUILD_DIR"
+mount_chroot "$INCUS_BUILD_DIR"
+cp -r "$SCRIPT_DIR/incus" "$INCUS_BUILD_DIR/incus"
+mkdir "$INCUS_BUILD_DIR/out"
+chroot "$INCUS_BUILD_DIR" /incus/build-incusd.sh "$INCUS_VERSION" "$INCUS_SHA512" /out
+install -m 755 "$INCUS_BUILD_DIR/out/incusd" "$ROOTFS_DIR/usr/sbin/incusd"
+{
+    echo "package=$(chroot "$ROOTFS_DIR" /sbin/apk info -e -v incus-feature) (Alpine $ALPINE_VERSION)"
+    cat "$INCUS_BUILD_DIR/out/isx-incus"
+} > "$ROOTFS_DIR/etc/isx-incus"
+sed 's/^/    /' "$ROOTFS_DIR/etc/isx-incus"
+unmount_chroot "$INCUS_BUILD_DIR"
 
 # shadow-subids creates empty subuid/subgid; write entries after install.
 # Two ranges: UID 1000 for raw.idmap identity mapping (podman user),
