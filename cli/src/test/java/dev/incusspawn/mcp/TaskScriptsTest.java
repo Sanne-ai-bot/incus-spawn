@@ -357,8 +357,7 @@ class TaskScriptsTest {
         sh(TaskScripts.launch("t24-abc", 1, Tasks.AGENT,
                 TaskScripts.agentRun("t24-abc", 1, work.toString(), Tasks.Profile.NONE, null, "plan")), "go");
         awaitFinished("t24-abc");
-        var resumed = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'sleep 30; :' --resume " + sessionId())
-                .directory(home.toFile()).start();
+        var resumed = claude(home, "bash -c 'sleep 30; :' --resume " + sessionId()).start();
         try {
             var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
             String watched;
@@ -534,8 +533,7 @@ class TaskScriptsTest {
         assertEquals("finished", awaitFinished("t1-abc").state());
 
         // A person resumes the session from elsewhere: argv[0] is what Claude Code's is.
-        var resumed = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'sleep 30; :' --resume " + sessionId())
-                .directory(home.toFile()).start();
+        var resumed = claude(home, "bash -c 'sleep 30; :' --resume " + sessionId()).start();
         try {
             var status = awaitAttached("t1-abc");
             assertEquals(resumed.pid(), status.attachedPid());
@@ -544,7 +542,7 @@ class TaskScriptsTest {
             resumed.waitFor(5, TimeUnit.SECONDS);
         }
         // ... or works in the task's directory, where --continue would pick the session up.
-        var inPlace = new ProcessBuilder("bash", "-c", "exec -a claude sleep 30").directory(work.toFile()).start();
+        var inPlace = claude(work, "sleep 30").start();
         try {
             assertEquals(inPlace.pid(), awaitAttached("t1-abc").attachedPid());
         } finally {
@@ -554,7 +552,7 @@ class TaskScriptsTest {
         assertEquals("finished", Tasks.parse(sh(TaskScripts.status("t1-abc", 0), "")).state());
 
         // A task's own Claude Code is not a person, even in the same directory.
-        var pb = new ProcessBuilder("bash", "-c", "exec -a claude sleep 30").directory(work.toFile());
+        var pb = claude(work, "sleep 30");
         pb.environment().put(TaskScripts.TASK_ENV, "t2-abc");
         var own = pb.start();
         try {
@@ -564,6 +562,16 @@ class TaskScriptsTest {
             own.destroy();
             own.waitFor(5, TimeUnit.SECONDS);
         }
+    }
+
+    /**
+     * A stand-in for a Claude Code: argv[0] is what Claude Code's is. It does not inherit
+     * {@link TaskScripts#TASK_ENV} from the JVM, which has it when the suite runs in a task (#1246).
+     */
+    private static ProcessBuilder claude(Path dir, String command) {
+        var pb = new ProcessBuilder("bash", "-c", "exec -a claude " + command).directory(dir.toFile());
+        pb.environment().remove(TaskScripts.TASK_ENV);
+        return pb;
     }
 
     private Tasks.Status awaitAttached(String id) throws Exception {
