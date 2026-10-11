@@ -1,6 +1,7 @@
 package dev.incusspawn.incus;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
@@ -1707,7 +1708,24 @@ public class IncusClient {
      * {@link IncusException}.
      */
     public JsonNode instanceMetadata(String name) {
-        return http().get("/1.0/instances/" + name).body().path("metadata");
+        return readInstance(name).metadata();
+    }
+
+    /**
+     * An instance as one read returned it: its {@link #instanceMetadata}, and the ETag that makes
+     * a write built from it conditional on it ({@link #update}).
+     */
+    public record InstanceRead(JsonNode metadata, String etag) {}
+
+    /**
+     * {@link #instanceMetadata} with its ETag, from the same request. A rejected request yields a
+     * missing node: Incus sends {@code "metadata": null} with an error, which would otherwise read
+     * as a present (null) instance.
+     */
+    public InstanceRead readInstance(String name) {
+        var resp = http().get("/1.0/instances/" + name);
+        if (!resp.isSuccess()) return new InstanceRead(MissingNode.getInstance(), null);
+        return new InstanceRead(resp.body().path("metadata"), resp.etag());
     }
 
     /**
@@ -1739,8 +1757,7 @@ public class IncusClient {
      * (null values are rejected with 400, empty objects with 500).
      */
     public void deviceRemove(String container, String deviceName) {
-        var resp = http().removeDevice(container, deviceName);
-        if (!resp.isSuccess()) throw new IncusException("Failed to remove device " + deviceName + " from " + container);
+        devicesRemoveAll(container, List.of(deviceName));
     }
 
     /**
@@ -1768,11 +1785,20 @@ public class IncusClient {
         throw new IncusException("Failed to delete storage volume " + volumeName + " from pool " + pool);
     }
 
+    /**
+     * Remove devices in one read-modify-write, conditional on its read (see {@link #update}): a
+     * device another process added between the two is never dropped (#1234). Uncontended, it is
+     * one GET and one PUT.
+     */
     public void devicesRemoveAll(String container, Collection<String> deviceNames) {
         if (deviceNames.isEmpty()) return;
-        var resp = http().removeDevices(container, deviceNames);
-        if (!resp.isSuccess()) throw new IncusException(
-                "Failed to remove devices " + deviceNames + " from " + container);
+        var update = new InstanceUpdate();
+        deviceNames.forEach(update::removeDevice);
+        retryWhileChanged(() -> {
+            var read = readInstance(container);
+            if (read.metadata().isMissingNode()) throw new IncusException("Failed to get instance " + container);
+            update(container, read, update);
+        });
     }
 
     /**
@@ -1790,12 +1816,55 @@ public class IncusClient {
 
     /**
      * Apply collected config and device changes as one write, against the instance state the
-     * caller already read with {@link #instanceMetadata} -- see {@link InstanceUpdate}.
+     * caller already read with {@link #readInstance} -- see {@link InstanceUpdate}.
+     *
+     * <p>A write that removes a device puts back the whole device map, so it is conditional on
+     * that read: if the instance changed since, a device another process added would be lost, and
+     * Incus refuses it instead ({@link InstanceChangedException}, #1276). The caller then reads
+     * again and builds its update from what it finds, through {@link #retryWhileChanged}.
      */
-    public void update(String name, JsonNode instanceMetadata, InstanceUpdate update) {
+    public void update(String name, InstanceRead read, InstanceUpdate update) {
         if (update.isEmpty()) return;
-        var resp = http().update(name, instanceMetadata, update);
+        var resp = http().update(name, read.metadata(), update, read.etag());
+        if (resp.statusCode() == 412) throw new InstanceChangedException(name);
         if (!resp.isSuccess()) throw failedOp(resp, "Failed to update " + name);
+    }
+
+    /** {@link #update} refused: the instance changed since the read the update was built from. */
+    public static final class InstanceChangedException extends IncusException {
+        InstanceChangedException(String name) {
+            super("Failed to update " + name + ": another process changed it since it was read");
+        }
+    }
+
+    /**
+     * How many times {@link #retryWhileChanged} reads and writes while another writer keeps
+     * changing the instance, and the pause before the n-th retry, n times this.
+     */
+    static final int CONFLICT_ATTEMPTS = 5;
+    private static final long CONFLICT_BACKOFF_MS = 20;
+
+    /**
+     * Run {@code readAndWrite} -- a read and an {@link #update} built from it -- again while the
+     * write finds the instance changed since the read, up to {@link #CONFLICT_ATTEMPTS} times.
+     * One that keeps losing the race throws its {@link InstanceChangedException}.
+     */
+    public static void retryWhileChanged(Runnable readAndWrite) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                readAndWrite.run();
+                return;
+            } catch (InstanceChangedException e) {
+                if (attempt == CONFLICT_ATTEMPTS) throw e;
+                // A start writes several volatile keys in a burst, each a new ETag: let it pass.
+                try {
+                    Thread.sleep(CONFLICT_BACKOFF_MS * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
     }
 
     /** The NIC device attached to a network, with its expanded config. */

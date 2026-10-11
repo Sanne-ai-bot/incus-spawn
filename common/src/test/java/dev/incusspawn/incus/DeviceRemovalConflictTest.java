@@ -50,7 +50,7 @@ class DeviceRemovalConflictTest {
     @Test
     void aRemovalThatKeepsLosingTheRaceFailsRatherThanRetryingForever() {
         var daemon = withStaleDevice();
-        var adds = new Runnable[IncusApi.CONFLICT_ATTEMPTS];
+        var adds = new Runnable[IncusClient.CONFLICT_ATTEMPTS];
         for (int i = 0; i < adds.length; i++) {
             var device = "added-" + i;
             adds[i] = () -> daemon.device(NAME, device, DISK);
@@ -62,6 +62,14 @@ class DeviceRemovalConflictTest {
         var devices = daemon.instance(NAME).path("devices");
         assertTrue(devices.has("stale"), "a refused write changes nothing");
         for (int i = 0; i < adds.length; i++) assertTrue(devices.has("added-" + i), devices.toString());
-        assertEquals(2 * IncusApi.CONFLICT_ATTEMPTS, daemon.requests().size(), String.join("\n", daemon.requests()));
+        assertEquals(2 * IncusClient.CONFLICT_ATTEMPTS, daemon.requests().size(), String.join("\n", daemon.requests()));
+    }
+
+    @Test
+    void removingFromAnInstanceThatCannotBeReadFails() {
+        var daemon = new FakeIncusDaemon();
+
+        assertThrows(IncusException.class, () -> daemon.client().deviceRemove("gone", "stale"));
+        assertEquals(List.of("GET /1.0/instances/gone"), daemon.requests(), "nothing is written");
     }
 }

@@ -79,14 +79,31 @@ public final class InstanceLifecycle {
      * <p>Airgap masks every NIC with {@code type: none} in that same write, which is the only way
      * to take a profile's NIC away from one instance (#813). Branching with network from an
      * airgapped instance overwrites those masks with the profile's NICs, in the same write too.
+     *
+     * <p>When another process changes the instance between the read and a write that removes a
+     * device, the instance is read and the update built again ({@link IncusClient#retryWhileChanged}).
      */
     public static void configureBranch(IncusClient incus, String name, BranchSettings settings) {
         var mode = settings.networkMode();
-        var instance = incus.instanceMetadata(name);
+        if (mode == NetworkMode.AIRGAP) BuildOutput.step("Enabling network airgap.");
+        if (mode == NetworkMode.PROXY_ONLY) BuildOutput.step("Configuring proxy-only network.");
+        // One read gives the gateway, the subnet to allocate from and the prefix to push; none of
+        // it depends on the instance, so a retry does not read it again
+        var bridge = mode == NetworkMode.AIRGAP ? null : BridgeAddress.require(incus);
+        IncusClient.retryWhileChanged(() -> configureBranchOnce(incus, name, settings, bridge));
+    }
+
+    private static void configureBranchOnce(IncusClient incus, String name, BranchSettings settings,
+                                            BridgeAddress bridge) {
+        var mode = settings.networkMode();
+        var read = incus.readInstance(name);
+        var instance = read.metadata();
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
         var update = new InstanceUpdate();
         if (mode != NetworkMode.AIRGAP && NetworkMode.isAirgapped(instance)) {
             instance = InstanceNetwork.unmaskNics(incus, instance, update);
+            // Written as it will then expand, still conditional on the read
+            read = new IncusClient.InstanceRead(instance, read.etag());
         }
 
         var cpu = settings.cpu();
@@ -94,21 +111,16 @@ public final class InstanceLifecycle {
         update.config("limits.memory", settings.memory());
         update.device("root", "size", settings.disk());
 
-        BridgeAddress bridge = null;
         String nicDevice = null;
         // Full internet is the absence of a mode, not whatever the source was copied with
         update.config(Metadata.NETWORK_MODE, mode == NetworkMode.FULL ? null : mode.name());
         if (mode == NetworkMode.AIRGAP) {
-            BuildOutput.step("Enabling network airgap.");
             InstanceNetwork.maskNics(instance, update);
             // No address: the copy request already removed its source's (IncusClient.copy), and an
             // airgapped instance must not keep one the proxy could take for another's.
             update.unset(Metadata.STATIC_IP);
             update.unset(Metadata.STATIC_GATEWAY);
         } else {
-            // One read gives the gateway, the subnet to allocate from and the prefix to push
-            bridge = BridgeAddress.require(incus);
-            if (mode == NetworkMode.PROXY_ONLY) BuildOutput.step("Configuring proxy-only network.");
             nicDevice = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
             if (nicDevice == null) {
                 throw new IncusException("No NIC device for " + BridgeAddress.BRIDGE + " found on " + name);
@@ -149,8 +161,8 @@ public final class InstanceLifecycle {
             update.config(SECURE_BOOT, "false");
         }
 
-        if (nicDevice == null) incus.update(name, instance, update);
-        else InstanceNetwork.claimAndWrite(incus, name, instance, update, nicDevice, bridge, Set.of(), true);
+        if (nicDevice == null) incus.update(name, read, update);
+        else InstanceNetwork.claimAndWrite(incus, name, read, update, nicDevice, bridge, Set.of(), true);
     }
 
     /**
@@ -174,7 +186,8 @@ public final class InstanceLifecycle {
      * parent built by an older isx carries none of it.
      */
     public static void prepareVmBuild(IncusClient incus, String name) {
-        var instance = incus.instanceMetadata(name);
+        var read = incus.readInstance(name);
+        var instance = read.metadata();
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
         var update = new InstanceUpdate();
         update.config("limits.memory", ResourceLimits.defaultVmMemoryLimit());
@@ -182,7 +195,7 @@ public final class InstanceLifecycle {
             update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
         }
         update.config(SECURE_BOOT, "false");
-        incus.update(name, instance, update);
+        incus.update(name, read, update);
     }
 
     static final String RAW_QEMU_CONF = "raw.qemu.conf";

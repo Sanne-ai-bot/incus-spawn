@@ -27,7 +27,7 @@ class BuildAddressTest {
     private static final String PIN = Metadata.accountKey("github");
 
     private static String assign(IncusClient incus, String name, Map<String, String> config) {
-        return InstanceNetwork.assignBuildAddress(incus, name, incus.instanceMetadata(name), config);
+        return InstanceNetwork.assignBuildAddress(incus, name, incus.readInstance(name), config);
     }
 
     @Test

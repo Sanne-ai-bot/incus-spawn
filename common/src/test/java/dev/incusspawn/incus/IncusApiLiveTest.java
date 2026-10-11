@@ -210,7 +210,8 @@ class IncusApiLiveTest {
                     "Device 'tmptest' should be present after add");
 
             // Device remove via read-modify-write PUT
-            var devRemoveResp = http.removeDevice(name, "tmptest");
+            var devRemoveResp = http.update(name, withDevResp.body().path("metadata"),
+                    new InstanceUpdate().removeDevice("tmptest"), withDevResp.etag());
             assertTrue(devRemoveResp.isSuccess(), "Device remove should succeed");
             var noDevResp = http.get("/1.0/instances/" + name);
             assertTrue(noDevResp.body().path("metadata").path("devices").path("tmptest").isMissingNode(),

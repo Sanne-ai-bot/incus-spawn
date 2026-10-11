@@ -36,12 +36,6 @@ class IncusApi {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int WAIT_TIMEOUT_SECONDS = 120;
     /**
-     * How many times a conditional instance write is read and tried while another writer keeps
-     * changing the instance (412), and the pause before the n-th retry, n times this.
-     */
-    static final int CONFLICT_ATTEMPTS = 5;
-    private static final long CONFLICT_BACKOFF_MS = 20;
-    /**
      * How long an async operation is waited for, over successive {@code /wait} polls: as long as
      * the exec ceiling, well past any real copy or image download, so only a stuck operation hits it.
      */
@@ -291,39 +285,6 @@ class IncusApi {
     }
 
     /**
-     * Remove a named device from an instance.
-     * Incus PATCH cannot remove devices (null/empty are rejected), so this does a
-     * read-modify-write: GET the current config, drop the device, PUT the full config back,
-     * conditional on the GET (see {@link #removeDevices}).
-     */
-    ApiResponse removeDevice(String instanceName, String deviceName) {
-        return removeDevices(instanceName, List.of(deviceName));
-    }
-
-    /**
-     * The PUT carries the read's ETag as {@code If-Match}, so a device another process added
-     * between the read and the write is never dropped: Incus refuses the stale write with 412,
-     * and the removal is read and written again. Uncontended, it is still one GET and one PUT.
-     */
-    ApiResponse removeDevices(String instanceName, java.util.Collection<String> deviceNames) {
-        var update = new InstanceUpdate();
-        deviceNames.forEach(update::removeDevice);
-        for (int attempt = 1; ; attempt++) {
-            var getResp = get("/1.0/instances/" + instanceName);
-            if (!getResp.isSuccess()) throw new IncusException("Failed to get instance " + instanceName);
-            var resp = update(instanceName, getResp.body().path("metadata"), update, getResp.etag());
-            if (resp.statusCode() != 412 || attempt == CONFLICT_ATTEMPTS) return resp;
-            // A start writes several volatile keys in a burst, each a new ETag: let it pass.
-            try {
-                Thread.sleep(CONFLICT_BACKOFF_MS * attempt);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return resp;
-            }
-        }
-    }
-
-    /**
      * Apply an {@link InstanceUpdate} to an instance as one write, given its current state
      * ({@code metadata} of {@code GET /1.0/instances/<name>}).
      *
@@ -336,13 +297,8 @@ class IncusApi {
      * is overridden rather than replaced by a fragment Incus rejects as "Missing device type")
      * with the new properties merged in. A replaced device is sent as given: PATCH replaces a
      * device whole, so it needs no PUT either.
-     */
-    ApiResponse update(String instanceName, JsonNode metadata, InstanceUpdate update) {
-        return update(instanceName, metadata, update, null);
-    }
-
-    /**
-     * As above; a non-null {@code etag} (of the read {@code metadata} came from) is sent as
+     *
+     * <p>A non-null {@code etag} (of the read {@code metadata} came from) is sent as
      * {@code If-Match} on the PUT, which Incus refuses with 412 if the instance changed since.
      * The PATCH needs none: it replaces only what it names.
      */

@@ -54,11 +54,12 @@ public final class InstanceNetwork {
      * template's build has just given back. {@link #requireBuildAddress} checks the outcome once
      * the guest is up. Undone by {@link #releaseBuildAddress} once the build has stopped.
      *
-     * @param instance the build container, as read by the caller
+     * @param read the build container, as read by the caller
      * @return the address assigned
      */
-    public static String assignBuildAddress(IncusClient incus, String name, JsonNode instance,
+    public static String assignBuildAddress(IncusClient incus, String name, IncusClient.InstanceRead read,
                                             Map<String, String> config) {
+        var instance = read.metadata();
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
         var bridge = BridgeAddress.require(incus);
         var nicDevice = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
@@ -69,7 +70,7 @@ public final class InstanceNetwork {
         var update = new InstanceUpdate();
         update.device(nicDevice, "security.ipv4_filtering", "true");
         update.config(config);
-        return claimAndWrite(incus, name, instance, update, nicDevice, bridge, leased, false);
+        return claimAndWrite(incus, name, read, update, nicDevice, bridge, leased, false);
     }
 
     /** How long {@link #requireBuildAddress} waits for the guest to hold an address at all. */
@@ -122,7 +123,12 @@ public final class InstanceNetwork {
      * changed was the address and its filtering.
      */
     public static void releaseBuildAddress(IncusClient incus, String name) {
-        var instance = incus.instanceMetadata(name);
+        IncusClient.retryWhileChanged(() -> releaseBuildAddressOnce(incus, name));
+    }
+
+    private static void releaseBuildAddressOnce(IncusClient incus, String name) {
+        var read = incus.readInstance(name);
+        var instance = read.metadata();
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
         var update = new InstanceUpdate();
         update.unset(Metadata.STATIC_IP);
@@ -138,7 +144,7 @@ public final class InstanceNetwork {
                 update.replaceDevice(nicDevice, remaining);
             }
         }
-        incus.update(name, instance, update);
+        incus.update(name, read, update);
     }
 
     /** The devices the instance's profiles give it, by name, one read per profile. */
@@ -163,10 +169,10 @@ public final class InstanceNetwork {
      * @param pushNetworkConfig whether to push a static {@code .network} file into a container,
      *                          so it boots without asking DHCP; a branch does, a build does not
      */
-    static String claimAndWrite(IncusClient incus, String name, JsonNode instance,
+    static String claimAndWrite(IncusClient incus, String name, IncusClient.InstanceRead read,
                                         InstanceUpdate update, String nicDevice, BridgeAddress bridge,
                                         Set<String> alsoTaken, boolean pushNetworkConfig) {
-        var vm = IncusClient.machineType(instance) == MachineType.VM;
+        var vm = IncusClient.machineType(read.metadata()) == MachineType.VM;
         var filteringRefused = new AtomicBoolean();
         var output = StaticIpAllocator.Output.TERMINAL;
         var assigned = StaticIpAllocator.claim(incus, bridge, alsoTaken, output, ip -> {
@@ -182,7 +188,9 @@ public final class InstanceNetwork {
                 pushStaticNetworkConfig(incus, name, ip, bridge.gateway(), bridge.prefixLen());
             }
             try {
-                incus.update(name, instance, update);
+                incus.update(name, read, update);
+            } catch (IncusClient.InstanceChangedException e) {
+                throw e; // read again by the caller, which builds its update anew
             } catch (IncusException e) {
                 // Failing to pin the address is fatal, failing to enable filtering only warns,
                 // and one write cannot say which of them Incus refused. Incus rolls a refused
@@ -190,7 +198,7 @@ public final class InstanceNetwork {
                 // the real one. If it goes through, enable filtering on its own, so a first
                 // failure that had nothing to do with filtering does not leave the instance
                 // without it.
-                incus.update(name, instance,
+                incus.update(name, read,
                         update.withoutDeviceProperty(nicDevice, "security.ipv4_filtering"));
                 filteringRefused.set(true);
             }

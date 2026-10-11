@@ -2251,7 +2251,8 @@ Progress is rendered by the shared `TerminalProgress` helper as one animated bra
 Any clone failure is surfaced after the batch and aborts the build.
 Which repos have a host reference is decided on the host before the parallel section; each worker attaches its own reference just before its clone and detaches it as soon as the clone is done (#826).
 Attaches and detaches share a lock, because a device removal is a read-modify-write of the whole device map, and an attach that lands in between makes Incus refuse it: the retries below are bounded, and a burst of parallel attaches could exhaust them.
-The removal itself is safe without the lock: its PUT carries the read's `ETag` as `If-Match`, so Incus refuses it with 412 when anything changed since, and `IncusApi.removeDevices` reads and writes again, up to `CONFLICT_ATTEMPTS` (#1234).
+The removal itself is safe without the lock: its PUT carries the read's `ETag` as `If-Match`, so Incus refuses it with 412 when anything changed since, and `IncusClient.devicesRemoveAll` reads and writes again, up to `CONFLICT_ATTEMPTS` (#1234).
+Every other write that removes a device is conditional the same way, since `IncusClient.update` takes the read it was built from (`readInstance`, metadata and `ETag`): a branch dropping inherited KVM devices and a template giving back its build address re-read and rebuild their whole update on a 412 (`retryWhileChanged`, #1276).
 That covers what no in-process lock can: another isx process, such as the TUI, editing the same instance's devices.
 Attaching lazily is what keeps a VM within its 8 PCI hotplug slots (see "Devices are attached before start"): mounting every reference up front lost the 9th one to the network, silently.
 The slots are a budget (`HotplugSlots`) that starts at `min(references, 8)` on a VM and is unbounded for a container.

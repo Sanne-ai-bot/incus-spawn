@@ -49,11 +49,11 @@ public final class BuildAccounts {
      */
     public static Started start(IncusClient incus, String buildName, Map<String, String> selection,
                                 String template, Runnable proxyRefresh) {
-        var instance = incus.instanceMetadata(buildName);
-        var config = instance.path("config");
+        var read = incus.readInstance(buildName);
+        var config = read.metadata().path("config");
         String address = null;
         if (!selection.isEmpty() || !AccountSelection.fromConfig(config).isEmpty()) {
-            address = InstanceNetwork.assignBuildAddress(incus, buildName, instance,
+            address = InstanceNetwork.assignBuildAddress(incus, buildName, read,
                     startConfig(config, selection, template));
             // Before the start, so the first request from inside already sees the pins
             proxyRefresh.run();
