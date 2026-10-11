@@ -136,11 +136,46 @@ class TrustBindingsTest {
         for (var method : List.of("void buildFromParent(", "void buildFromScratch(")) {
             int start = src.indexOf(method);
             assertTrue(start >= 0, method);
-            int next = src.indexOf("\n    private ", start);
+            int next = src.indexOf("\n    }\n", start);
             var body = src.substring(start, next < 0 ? src.length() : next);
             int clone = body.lastIndexOf("cloneRepos(container");
             int bind = body.indexOf("bindTrustStores(container)");
             assertTrue(clone >= 0 && bind > clone, method + ": bindTrustStores must follow cloneRepos");
+        }
+    }
+
+    @Test
+    void aChildBuildBindsBeforeTheReposPrimesToo() throws Exception {
+        // A layer that adds a vendor JDK (labsjdk, JAVA_HOME=/opt/jdks/...) and primes with it
+        // needs the isx CA before the prime runs; the bind after cloneRepos covers what a prime
+        // downloads. Both are in the source order because the build has no fake guest to run.
+        var src = Files.readString(Path.of("src/main/java/dev/incusspawn/command/BuildCommand.java"));
+        int start = src.indexOf("void buildFromParent(");
+        var body = src.substring(start, src.indexOf("\n    }\n", start));
+        int early = body.indexOf("bindInstalledRuntimes(container)");
+        assertTrue(early >= 0 && early < body.indexOf("cloneRepos(container"), "bind before cloneRepos");
+    }
+
+    @Test
+    void helperWithoutArgumentsBindsAgentusersDirectoriesWhateverHomeIs(@TempDir Path tmp) throws Exception {
+        // `sudo isx-trust` has HOME=/root; the table is agentuser's.
+        var script = Files.readString(helper(tmp));
+        assertFalse(script.contains("$HOME"), script);
+        assertTrue(script.contains("home=/home/agentuser\n"), script);
+        assertTrue(script.contains("\"$home/.gradle/jdks\""), script);
+    }
+
+    @Test
+    void helperDoesNotLinkInsideADirectoryThatSitsWhereTheFileShouldBe(@TempDir Path tmp) throws Exception {
+        var store = Files.writeString(tmp.resolve("system-cacerts"), "system");
+        var elsewhere = Files.createDirectories(tmp.resolve("elsewhere"));
+        var security = Files.createDirectories(tmp.resolve("opt/jdk/lib/security"));
+        Files.createSymbolicLink(security.resolve("cacerts"), elsewhere);
+
+        run(helper(tmp), store, tmp.resolve("opt"));
+
+        try (var inside = Files.list(elsewhere)) {
+            assertEquals(0, inside.count(), "ln -sf would have created elsewhere/system-cacerts");
         }
     }
 
@@ -298,18 +333,6 @@ class TrustBindingsTest {
                 "ISX_TRUST_PEM_BUNDLE", pem.toString()), "v");
 
         assertTrue(Files.isSymbolicLink(vendored));
-    }
-
-    @Test
-    void helperWithoutArgumentsCoversTheHomeDirectoriesTheBuildBinds(@TempDir Path tmp) throws Exception {
-        var store = Files.writeString(tmp.resolve("system-cacerts"), "system");
-        var cacerts = Files.writeString(Files.createDirectories(
-                tmp.resolve("home/.gradle/jdks/x/lib/security")).resolve("cacerts"), "vendor");
-
-        run(helper(tmp), Map.of("ISX_TRUST_JAVA_STORE", store.toString(),
-                "HOME", tmp.resolve("home").toString()));
-
-        assertTrue(Files.isSymbolicLink(cacerts));
     }
 
     @Test
