@@ -2,6 +2,7 @@ package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -15,7 +16,9 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /**
  * An {@code --inbox} directory deleted while its instance is stopped must not fail the next start
- * with Incus's {@code Missing source path} (#854).
+ * with Incus's {@code Missing source path} (#854), and comes back once the directory does: isx
+ * mounts it again itself rather than naming an {@code incus config device add} the macOS host could
+ * not run (#1139).
  */
 class StaleInboxTest {
 
@@ -50,9 +53,46 @@ class StaleInboxTest {
 
         assertTrue(daemon.instance(NAME).path("devices").path(InstanceLifecycle.INBOX_DEVICE).isMissingNode(),
                 daemon.instance(NAME).path("devices").toString());
-        // The re-add hint must carry the device's own source form, not a placeholder the user
-        // would fill with a host path (wrong on macOS, where incus sees the home under /host).
-        assertTrue(err.toString().contains("disk source=" + deleted + " path="), err.toString());
+        assertEquals(deleted.toString(),
+                daemon.instance(NAME).path("config").path(Metadata.INBOX_SOURCE).asText());
+        assertTrue(err.toString().contains("recreate it; the next start of " + NAME + " does"), err.toString());
+        assertFalse(err.toString().contains("incus "), err.toString());
+    }
+
+    @Test
+    void inboxIsMountedAgainOnceItsDirectoryIsBack(@TempDir Path tmp) throws Exception {
+        var inbox = tmp.resolve("inbox");
+        var daemon = withInbox(inbox);
+        var said = new java.util.ArrayList<String>();
+        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, said::add);
+
+        Files.createDirectories(inbox);
+        said.clear();
+        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, said::add);
+
+        var device = daemon.instance(NAME).path("devices").path(InstanceLifecycle.INBOX_DEVICE);
+        assertEquals("disk", device.path("type").asText(), device.toString());
+        assertEquals(inbox.toString(), device.path("source").asText());
+        assertEquals(InstanceLifecycle.INBOX_PATH, device.path("path").asText());
+        assertEquals("true", device.path("readonly").asText());
+        assertTrue(daemon.instance(NAME).path("config").path(Metadata.INBOX_SOURCE).isMissingNode(),
+                daemon.instance(NAME).path("config").toString());
+        assertEquals(1, said.size(), said.toString());
+        assertTrue(said.get(0).contains("Inbox mounted again: " + inbox), said.get(0));
+    }
+
+    @Test
+    void inboxStillMissingStaysRememberedAndQuiet(@TempDir Path tmp) {
+        var daemon = withInbox(tmp.resolve("deleted"));
+        var said = new java.util.ArrayList<String>();
+        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, said::add);
+        said.clear();
+
+        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, said::add);
+
+        assertEquals(java.util.List.of(), said, "the warning was given once, at the removal");
+        assertTrue(daemon.instance(NAME).path("devices").path(InstanceLifecycle.INBOX_DEVICE).isMissingNode());
+        assertFalse(daemon.instance(NAME).path("config").path(Metadata.INBOX_SOURCE).isMissingNode());
     }
 
     @Test

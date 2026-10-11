@@ -1864,7 +1864,9 @@ The reasons:
   That is the same warn-and-skip as "Missing sources" below, and the reason `prepareHostDevicesForStart` exists for later starts.
   That pre-start repair reads the instance once and fixes every device isx added: host resources whose source is gone (`removeStaleDevices`), the zmx socket directory, and the `--inbox` device (`removeStaleInbox`, #854).
   The inbox has no entry in `user.incus-spawn.host-resources`, so it needs its own check.
-  A deleted inbox directory is removed from the instance with a warning that says how to add it back, since the user asked for that mount.
+  A deleted inbox directory is removed from the instance with a warning, since the user asked for that mount.
+  Its source is kept in `user.incus-spawn.inbox-source`, written in the same update that removes the device, and the first start that finds the directory back mounts it again, says so, and clears the key (#1139).
+  The warning used to name an `incus config device add`, which the macOS host has no CLI to run; now it says to recreate the directory, which the next start mounts.
   The check maps the device source back to a host path (`hostPathOfDeviceSource`, the inverse of the macOS `/host` translation), and skips a macOS source outside the shared home, which the host cannot check.
   The TUI starts an instance while it still owns the terminal, where a stderr warning would be drawn over and lost, so it passes `prepareHostDevicesForStart` its warning log as the sink, the way the static-IP repair already does.
   The log announces them on the status line when the shell returns to the TUI, and keeps them for the `w` dialog.
