@@ -148,9 +148,10 @@ class IncusApi {
     /**
      * Probe the vsock socket with a real request, never a bare connect.
      *
-     * <p>incusd's local listener peeks 8 bytes inside {@code Accept()} with no deadline
-     * ({@code StarttlsListener}), so a connection that sends nothing stalls every <em>new</em>
-     * API connection until it speaks or closes. Through vfkit a close is not reliably
+     * <p>Without lxc/incus@2cb2549 (appliances built before #1313), incusd's local listener
+     * peeks 8 bytes inside {@code Accept()} with no deadline ({@code StarttlsListener}), so a
+     * connection that sends nothing stalls every <em>new</em> API connection until it speaks or
+     * closes. Through vfkit a close is not reliably
      * propagated, so a connect-and-close probe can leave the forwarder holding exactly such a
      * connection, wedging the whole API until the forwarder's {@code socat -T} reaps it (#774).
      */

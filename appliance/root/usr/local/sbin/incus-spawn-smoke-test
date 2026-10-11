@@ -121,6 +121,7 @@ fi
 # are served while a silent or partial one is held open, well before that deadline, and incusd
 # then closes the held one itself. Every held connection gives up on its own after 8s, so a
 # failure here leaves nothing behind.
+[ -r /etc/isx-incus ] && sed 's/^/  INFO: /' /etc/isx-incus
 SOCK=/var/lib/incus/unix.socket
 now_ms() { awk '{ printf "%d\n", $1 * 1000 }' /proc/uptime; }
 
