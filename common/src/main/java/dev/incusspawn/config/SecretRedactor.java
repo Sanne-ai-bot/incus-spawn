@@ -308,10 +308,6 @@ public final class SecretRedactor {
     }
 
     /**
-     * Replace one field with its marker when it holds a non-blank value. Blank stays blank:
-     * "configured but removed" and "never configured" must stay distinguishable.
-     */
-    /**
      * Record one value's replacement when it holds a non-blank value. Blank stays blank:
      * "configured but removed" and "never configured" must stay distinguishable.
      * An already-recorded path is left alone: the declared pass runs before the name
