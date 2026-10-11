@@ -926,6 +926,9 @@ iptables -A OUTPUT -d <gateway> -p udp --dport 53 -j ACCEPT      # DNS
 iptables -P OUTPUT DROP
 ```
 
+The rules fail closed (#1136): when they cannot be applied, because the image has no working `iptables` (`tpl-minimal`'s base image has none; legacy iptables cannot load its table in a container), no gateway is recorded or Incus cannot run the exec, `RuntimeSetup.applyProxyOnlyFirewall` removes the new instance, or stops it if removing fails (only a 404 counts as gone: an Incus that cannot answer may still be running it), and the branch fails with the command's output.
+Before, the step showed as done and the instance ran with full outbound access while labelled proxy-only.
+
 **Airgapped** (`--airgap`): Every NIC is masked with a `type: none` device of the same name, and the instance is stamped `network-mode=AIRGAP`.
 Complete network isolation — no egress at all.
 Masking is the only way: Incus cannot remove a profile device from one instance, and removing an instance device that overrides one only drops the override, so the profile's NIC applies again.

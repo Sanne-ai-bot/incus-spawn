@@ -157,32 +157,119 @@ public final class RuntimeSetup {
     /**
      * Apply iptables rules inside the container to restrict outbound traffic to only
      * the host MITM proxy and DNS. Called after the container is started.
+     *
+     * <p>Fails closed (#1136): rules that could not be applied (no gateway recorded, an image
+     * without a working {@code iptables}) would leave an instance labelled proxy-only with full
+     * outbound access, so the instance is removed -- stopped, if removing it fails -- and the
+     * branch fails with why.
      */
     public static void applyProxyOnlyFirewall(IncusClient incus, String name) {
-        var gatewayIp = incus.configGet(name, Metadata.PROXY_GATEWAY);
-        if (gatewayIp.isEmpty()) {
-            System.err.println("Warning: no proxy gateway configured, skipping firewall rules.");
-            return;
+        var failure = applyFirewallRules(incus, name);
+        if (failure != null) throw firewallFailed(incus, name, failure);
+    }
+
+    /** Apply the rules; null once they are in place, else why they are not. */
+    private static String applyFirewallRules(IncusClient incus, String name) {
+        String gatewayIp;
+        try {
+            gatewayIp = incus.configGet(name, Metadata.PROXY_GATEWAY);
+        } catch (RuntimeException e) {
+            return "Incus could not read " + Metadata.PROXY_GATEWAY + ": " + e.getMessage();
         }
+        if (gatewayIp.isEmpty()) return "no " + Metadata.PROXY_GATEWAY + " is recorded on '" + name + "'";
 
         var mitmPort = ProxyConfig.CONTAINER_FACING_PORT;
         var healthPort = ProxyConfig.DEFAULT_HEALTH_PORT;
 
         BuildOutput.stepStart("Applying proxy-only firewall rules...");
-
-        incus.shellExec(name, "sh", "-c", String.join(" && ",
-                "iptables -A OUTPUT -o lo -j ACCEPT",
-                "iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
-                "iptables -A OUTPUT -d " + gatewayIp + " -p tcp --dport " + mitmPort + " -j ACCEPT",
-                "iptables -A OUTPUT -d " + gatewayIp + " -p tcp --dport " + healthPort + " -j ACCEPT",
-                "iptables -A OUTPUT -d " + gatewayIp + " -p udp --dport 53 -j ACCEPT",
-                // Allow ICMP echo to the gateway so the connectivity watchdog's
-                // `ping $GATEWAY` reachability check works here too — otherwise it
-                // would see the gateway as unreachable and restart networkd every 30s.
-                "iptables -A OUTPUT -d " + gatewayIp + " -p icmp --icmp-type echo-request -j ACCEPT",
-                "iptables -P OUTPUT DROP"));
-
+        IncusClient.ExecResult result;
+        try {
+            result = incus.shellExec(name, "sh", "-c", String.join(" && ",
+                    "iptables -A OUTPUT -o lo -j ACCEPT",
+                    "iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
+                    "iptables -A OUTPUT -d " + gatewayIp + " -p tcp --dport " + mitmPort + " -j ACCEPT",
+                    "iptables -A OUTPUT -d " + gatewayIp + " -p tcp --dport " + healthPort + " -j ACCEPT",
+                    "iptables -A OUTPUT -d " + gatewayIp + " -p udp --dport 53 -j ACCEPT",
+                    // Allow ICMP echo to the gateway so the connectivity watchdog's
+                    // `ping $GATEWAY` reachability check works here too — otherwise it
+                    // would see the gateway as unreachable and restart networkd every 30s.
+                    "iptables -A OUTPUT -d " + gatewayIp + " -p icmp --icmp-type echo-request -j ACCEPT",
+                    "iptables -P OUTPUT DROP"));
+        } catch (RuntimeException e) {
+            BuildOutput.stepBreak();
+            return "Incus could not run iptables: " + e.getMessage();
+        }
+        if (!result.success()) {
+            BuildOutput.stepBreak();
+            // stderr last, so the error that ended the chain is in the excerpt
+            var output = BuildOutput.lastLines(result.stdout() + "\n" + result.stderr(), 3);
+            return "iptables failed:\n" + output.indent(4)
+                    + "The template needs a working iptables (on Fedora, the iptables-nft package)";
+        }
         BuildOutput.stepDone();
+        return null;
+    }
+
+    /** Take away an instance whose proxy-only firewall is not in place, and say so. */
+    private static BranchFlow.BranchException firewallFailed(IncusClient incus, String name, String why) {
+        var failed = "the proxy-only firewall could not be applied: " + why + ".\n'" + name + "' ";
+        RuntimeException deleteFailed = null;
+        try {
+            InstanceDestroyer.deleteHeld(incus, name);
+        } catch (RuntimeException e) {
+            deleteFailed = e;
+        }
+        var leftOnHost = "";
+        if (deleteFailed != null && !stillExists(incus, name)) {
+            // Incus deleted it, but the delete still failed (a dropped answer, the host integration):
+            // what isx set up for it on the host goes too.
+            try {
+                InstanceLifecycle.removeHostIntegration(name);
+            } catch (RuntimeException e) {
+                leftOnHost = " Its SSH and host entries could not be removed: " + e.getMessage();
+            }
+            deleteFailed = null;
+        }
+        if (deleteFailed == null) {
+            InstanceDestroyer.refreshProxy();
+            return new BranchFlow.BranchException(failed + "was removed rather than left running with unrestricted network access."
+                    + leftOnHost);
+        }
+        if (stop(incus, name)) {
+            return new BranchFlow.BranchException(failed + "could not be removed (" + deleteFailed.getMessage()
+                    + ") and was stopped instead; delete it with 'isx destroy " + name + "'.");
+        }
+        return new BranchFlow.BranchException(failed + "could not be removed or stopped and HAS UNRESTRICTED NETWORK ACCESS;"
+                + " delete it now with 'isx destroy " + name + "'.");
+    }
+
+    /**
+     * Whether the instance is still there. Only a 404 says it is gone: an Incus that cannot answer
+     * may still be running it, so that counts as there.
+     */
+    private static boolean stillExists(IncusClient incus, String name) {
+        try {
+            return incus.instanceMetadataOrThrow(name) != null;
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    /**
+     * Stop the instance; whether it is stopped. A forced delete stops it before deleting, so a
+     * refused stop after a failed delete may only mean it is stopped already.
+     */
+    private static boolean stop(IncusClient incus, String name) {
+        try {
+            incus.forceStop(name);
+            return true;
+        } catch (RuntimeException stopFailed) {
+            try {
+                return "Stopped".equalsIgnoreCase(incus.getInstanceStatus(name));
+            } catch (RuntimeException e) {
+                return false;
+            }
+        }
     }
 
     public static void awaitToolReadiness(IncusClient incus, String name, String buildSourceJson) {
