@@ -373,6 +373,9 @@ class Upstream {
      */
     private static void pipeRequest(HttpServerRequest clientReq, HttpClientRequest upReq, RelayWatchdog watchdog) {
         if (clientReq.getHeader("Content-Length") == null) upReq.setChunked(true);
+        // An upstream that drops mid-upload fails the response, which logs it and answers: without a
+        // handler of its own, Vert.x would log the same failure again, unprefixed
+        upReq.exceptionHandler(ignored -> {});
         io.vertx.core.Handler<Buffer> pump = chunk -> {
             upReq.write(chunk);
             watchdog.touch();
