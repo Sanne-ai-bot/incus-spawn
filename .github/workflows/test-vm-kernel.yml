@@ -1,0 +1,112 @@
+name: VM Kernel Boot Test
+
+# Builds the VM base image's kernel (build-kernel.sh vm) and boots it, as the
+# ESP's only loader, on the VM image minimal.yaml pins (#1255). x86_64 boots
+# under KVM; GitHub's arm64 runners expose no /dev/kvm, so aarch64 boots under
+# TCG. Nothing here is released: the boot test gates the fragments.
+
+on:
+  push:
+    paths:
+      - 'appliance/kernel/**'
+      - 'appliance/test-vm-kernel.sh'
+      - 'common/src/main/resources/images/minimal.yaml'
+      - '.github/workflows/test-vm-kernel.yml'
+    branches: [main]
+  pull_request:
+    paths:
+      - 'appliance/kernel/**'
+      - 'appliance/test-vm-kernel.sh'
+      - 'common/src/main/resources/images/minimal.yaml'
+      - '.github/workflows/test-vm-kernel.yml'
+  workflow_dispatch:
+
+jobs:
+  boot:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            packages: qemu-system-x86 ovmf
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            packages: qemu-system-arm qemu-efi-aarch64
+    name: boot (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Extract kernel version and checksum
+        id: kernel
+        run: |
+          ver=$(grep '^KERNEL_VERSION=' appliance/kernel/build-kernel.sh | head -1 | cut -d'"' -f2)
+          sha=$(grep '^KERNEL_SHA256=' appliance/kernel/build-kernel.sh | head -1 | cut -d'"' -f2)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          [ -n "$ver" ] && [ -n "$sha" ] || { echo "::error::KERNEL_VERSION or KERNEL_SHA256 not found in build-kernel.sh"; exit 1; }
+
+      # The same key as build-appliance.yml, so the two share one entry.
+      - name: Restore cached kernel source
+        id: kernel_cache
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/kernel-cache/
+          key: kernel-source-${{ steps.kernel.outputs.version }}-${{ steps.kernel.outputs.sha256 }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential flex bison bc libelf-dev libssl-dev \
+            gdisk mtools e2fsprogs qemu-utils ${{ matrix.packages }}
+
+      - name: Build the vm kernel
+        run: KERNEL_CACHE_DIR=/tmp/kernel-cache appliance/kernel/build-kernel.sh vm build/vm-kernel ${{ matrix.arch }}
+
+      - name: Cache kernel source
+        if: steps.kernel_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/kernel-cache/
+          key: ${{ steps.kernel_cache.outputs.cache-primary-key }}
+
+      # The image minimal.yaml pins, checked against the sum pinned beside it.
+      - name: Download the pinned VM image
+        run: |
+          yaml=common/src/main/resources/images/minimal.yaml
+          tag=$(sed -n 's/^image_tag: *//p' "$yaml")
+          url=$(sed -n 's/^vm_image_url: *//p' "$yaml" | sed "s/{tag}/$tag/; s/{arch}/${{ matrix.arch }}/")
+          sha=$(awk -v arch="${{ matrix.arch }}:" '/^vm_image_sha256:/ { f = 1; next } /^[^ ]/ { f = 0 } f && $1 == arch { print $2 }' "$yaml")
+          [ -n "$tag" ] && [ -n "$url" ] && [ -n "$sha" ] || { echo "::error::image_tag, vm_image_url or vm_image_sha256 not found in $yaml"; exit 1; }
+          echo "Image: $url"
+          curl -fsSL --retry 3 -o vm.tar.xz "$url"
+          echo "$sha  vm.tar.xz" | sha256sum -c -
+          mkdir -p build/vm-image
+          tar xJf vm.tar.xz -C build/vm-image rootfs.img
+          rm vm.tar.xz
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then echo "KVM is available"; else echo "No KVM: booting under TCG emulation"; fi
+
+      - name: Boot test
+        run: |
+          RUNS=${{ matrix.arch == 'x86_64' && '3' || '1' }} \
+          CONSOLE_DIR=build/vm-boot PLOT_DIR=build/vm-boot \
+            appliance/test-vm-kernel.sh build/vm-kernel/vmlinuz build/vm-image/rootfs.img ${{ matrix.arch }}
+
+      - name: Upload console logs and plots
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: vm-boot-${{ matrix.arch }}
+          path: build/vm-boot/
+          retention-days: 14
+          if-no-files-found: ignore
