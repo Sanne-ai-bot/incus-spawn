@@ -30,6 +30,15 @@ class BuildSourceTest {
         assertEquals(toolDef.contentFingerprint(), restored.getTools().get("maven-3").contentFingerprint());
     }
 
+    /** The tracked base image tag is recorded beside the definitions, which keep their own (#1244). */
+    @Test
+    void trackedImageTagIsRecordedOnlyWhenTracked() {
+        var source = new BuildSource(Map.of(), Map.of(), null, null);
+        assertFalse(source.toJson().contains("trackedImageTag"));
+        source.setTrackedImageTag("fedora-44-20261010");
+        assertEquals("fedora-44-20261010", BuildSource.fromJson(source.toJson()).getTrackedImageTag());
+    }
+
     @Test
     void roundTripSerialization() {
         var imageDef = new ImageDef();

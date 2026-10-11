@@ -53,6 +53,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -188,8 +189,8 @@ public class BuildCommand extends BaseCommand {
     /** The user accepted a batch rebuild up front, which covers replacing each existing image. */
     private boolean batchConfirmed;
 
-    /** Root defs whose latest base image was already resolved this invocation (avoids re-fetching). */
-    private final Set<String> resolvedRoots = new HashSet<>();
+    /** The base image each tracked root resolved to this invocation (avoids re-fetching). */
+    private final Map<String, BaseImage> trackedBaseImages = new HashMap<>();
 
     private void buildDone(String name) {
         BuildOutput.success(name + " built successfully.");
@@ -1255,7 +1256,7 @@ public class BuildCommand extends BaseCommand {
         new GuestProvisioning(incus).cleanCaches(buildName);
 
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
-                identityStamps);
+                identityStamps, null);
 
         stopBuild(buildName, started);
     }
@@ -1280,6 +1281,7 @@ public class BuildCommand extends BaseCommand {
         var ancestors = ImageDef.ancestors(imageDef, defs);
         var rootDef = ancestors.isEmpty() ? imageDef : ancestors.get(ancestors.size() - 1);
         var base = resolveTrackedBaseImage(rootDef);
+        var ownBase = imageDef == rootDef ? base : BaseImage.of(imageDef);
         var image = rootDef.getImage();
         var machineType = activeBuild.machineType();
         var prebaked = false;
@@ -1287,13 +1289,13 @@ public class BuildCommand extends BaseCommand {
         if (machineType == MachineType.VM && rootDef.getVmImageUrl() != null) {
             // Prebaked VM disk image available — use it directly
             var vmAlias = vmImageAlias(rootDef.getImage());
-            ensureBaseImage(imageDef, imageDef == rootDef ? base : null);
+            ensureBaseImage(imageDef, ownBase);
             downloadAndAliasImage(vmAlias, rootDef.getVmImageUrl(),
                     base.vmSha256(), base.tag(), rootDef);
             image = vmAlias;
             prebaked = true;
         } else {
-            ensureBaseImage(imageDef, imageDef == rootDef ? base : null);
+            ensureBaseImage(imageDef, ownBase);
             prebaked = imageDef.getImageUrl() != null;
 
             // Prebaked images are container format (.tar.xz) — VMs need a disk image.
@@ -1501,50 +1503,52 @@ public class BuildCommand extends BaseCommand {
         new GuestProvisioning(incus).cleanCaches(buildName);
 
         var parentCanonical = imageDef.isRoot() ? null : imageDef.getParent();
+        var trackedImageTag = Objects.equals(base.tag(), rootDef.getImageTag()) ? null : base.tag();
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
-                identityStamps);
+                identityStamps, trackedImageTag);
 
         stopBuild(buildName, started);
     }
 
     /**
-     * When the root base image is unpinned, resolve the newest published
-     * release and swap its tag + checksums into the definition, so a plain
-     * build always tracks the latest base image. The built-in {@code image_tag}
-     * (baked into the binary) is only an offline fallback: any failure to reach
-     * or read the release list leaves the definition untouched and the build
-     * proceeds on the built-in version. A pin ({@code pinned: true}) opts out.
+     * The base image a build from scratch of {@code rootDef} downloads. When it is unpinned,
+     * that is the newest published release, so a plain build always tracks the latest base
+     * image. The built-in {@code image_tag} (baked into the binary) is only an offline fallback:
+     * any failure to reach or read the release list leaves the build on the built-in version.
+     * A pin ({@code pinned: true}) opts out.
+     * The definition itself is left as loaded: its fingerprint is what the staleness checks
+     * compare, and a newer release being published does not change it (#1244).
      */
     BaseImage resolveTrackedBaseImage(ImageDef rootDef) {
         if (rootDef.isPinned()) return BaseImage.of(rootDef);
         var releases = baseImageReleases(rootDef.getImageUrl());
         if (releases == null) return BaseImage.of(rootDef); // not a releases-tracked base image
-        if (!resolvedRoots.add(rootDef.getName())) return BaseImage.of(rootDef); // already resolved this build
+        // Resolved once per invocation, however many templates are built from scratch on it
+        return trackedBaseImages.computeIfAbsent(rootDef.getName(), name -> latestBaseImage(rootDef, releases));
+    }
 
-        var builtinTag = rootDef.getImageTag();
-        var fallback = "; using built-in base image (" + builtinTag + ").";
+    private static BaseImage latestBaseImage(ImageDef rootDef, BaseImageReleases releases) {
+        var builtin = BaseImage.of(rootDef);
+        var fallback = "; using built-in base image (" + builtin.tag() + ").";
         try {
             var available = releases.fetchReleases();
-            if (available.isEmpty()) return BaseImage.of(rootDef);
+            if (available.isEmpty()) return builtin;
             var latest = available.get(0);
-            if (latest.tag().equals(builtinTag)) return BaseImage.of(rootDef); // already newest
+            if (latest.tag().equals(builtin.tag())) return builtin; // already newest
 
             var checksums = releases.fetchChecksums(latest);
             if (checksums == null || checksums.container().isEmpty()) {
                 BuildOutput.note("Could not fetch checksums for " + latest.tag() + fallback);
-                return BaseImage.of(rootDef);
-            }
-            rootDef.setImageTag(latest.tag());
-            rootDef.setImageSha256(checksums.container());
-            if (rootDef.getVmImageUrl() != null && !checksums.vm().isEmpty()) {
-                rootDef.setVmImageSha256(checksums.vm());
+                return builtin;
             }
             BuildOutput.step("Tracking latest base image: "
-                    + (builtinTag != null ? builtinTag + " -> " : "") + latest.tag() + ".");
+                    + (builtin.tag() != null ? builtin.tag() + " -> " : "") + latest.tag() + ".");
+            return new BaseImage(latest.tag(), checksums.container(),
+                    checksums.vm().isEmpty() ? builtin.vmSha256() : checksums.vm());
         } catch (IOException e) {
             BuildOutput.note("Could not reach base-image release list (" + e.getMessage() + ")" + fallback);
+            return builtin;
         }
-        return BaseImage.of(rootDef);
     }
 
     /** The release list a base image is tracked against, or null if it is not tracked; a test seam. */
@@ -1601,10 +1605,8 @@ public class BuildCommand extends BaseCommand {
         return tag != null ? resolved.replace("{tag}", tag) : resolved;
     }
 
-    /** {@code base} is the release to download, null for the one {@code imageDef} names. */
     private void ensureBaseImage(ImageDef imageDef, BaseImage base) {
         checkPinnedWarning(imageDef);
-        if (base == null) base = BaseImage.of(imageDef);
         downloadAndAliasImage(imageDef.getImage(), imageDef.getImageUrl(),
                 base.sha256(), base.tag(), imageDef);
     }
@@ -2156,7 +2158,7 @@ public class BuildCommand extends BaseCommand {
                                     String parentCanonicalName,
                                     List<ImageDef.HostResource> hostResources,
                                     Map<String, ImageDef> defs,
-                                    Map<String, String> identityStamps) {
+                                    Map<String, String> identityStamps, String trackedImageTag) {
         incus.configSet(buildName, Metadata.TYPE, Metadata.TYPE_BASE);
         incus.configSet(buildName, Metadata.PROFILE, canonicalName);
         incus.configSet(buildName, Metadata.INSTANCE_MODE, effectiveType(imageDef));
@@ -2169,8 +2171,9 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));
         }
-        incus.configSet(buildName, Metadata.BUILD_SOURCE,
-                collectBuildSource(imageDef, defs).toJson());
+        var buildSource = collectBuildSource(imageDef, defs);
+        buildSource.setTrackedImageTag(trackedImageTag);
+        incus.configSet(buildName, Metadata.BUILD_SOURCE, buildSource.toJson());
 
         var effectiveWorkdir = resolveEffectiveWorkdir(imageDef, defs);
         if (effectiveWorkdir != null) {
