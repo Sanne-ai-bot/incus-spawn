@@ -4,6 +4,7 @@ import io.hyperfoil.tools.jjq.value.JqNull;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +50,8 @@ record McpTool(String name, String description, JqObject inputSchema, JqObject o
 
     /** Typed access to a call's arguments, turning a missing or mistyped one into a {@link ToolError}. */
     record Args(JqValue node) {
+        private static final BigDecimal INT_MIN = BigDecimal.valueOf(Integer.MIN_VALUE);
+        private static final BigDecimal INT_MAX = BigDecimal.valueOf(Integer.MAX_VALUE);
 
         String requireString(String name) {
             var value = string(name);
@@ -66,14 +69,18 @@ record McpTool(String name, String description, JqObject inputSchema, JqObject o
         Integer integer(String name) {
             var v = field(name);
             if (v.isNull()) return null;
-            if (!v.isIntegralNumber()) {
-                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an integer");
+            // A whole number that fits an int: longValue() wraps beyond the long range, so the
+            // check is on the exact value (Jackson's canConvertToInt).
+            // Bounds first, so a huge literal is refused before intValueExact looks at its digits
+            var decimal = v.isNumber() ? v.decimalValue() : null;
+            try {
+                if (decimal != null && decimal.compareTo(INT_MIN) >= 0 && decimal.compareTo(INT_MAX) <= 0) {
+                    return decimal.intValueExact();
+                }
+            } catch (ArithmeticException fractional) {
+                // falls through to the refusal
             }
-            var l = v.longValue();
-            if (l < Integer.MIN_VALUE || l > Integer.MAX_VALUE) {
-                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an integer");
-            }
-            return (int) l;
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an integer");
         }
 
         boolean bool(String name) {
