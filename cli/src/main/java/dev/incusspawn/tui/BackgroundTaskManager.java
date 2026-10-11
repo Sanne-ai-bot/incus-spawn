@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 /**
  * Manages background tasks for TUI operations (delete, stop, etc.).
@@ -18,6 +19,16 @@ public class BackgroundTaskManager {
 
     private final Map<String, BackgroundTask> tasks = new ConcurrentHashMap<>();
     private final Set<String> instancesWithPendingOps = ConcurrentHashMap.newKeySet();
+    private final Executor executor;
+
+    public BackgroundTaskManager() {
+        this(Thread::startVirtualThread);
+    }
+
+    /** Runs each task's body on {@code executor}; a test passes one that runs them when it says. */
+    BackgroundTaskManager(Executor executor) {
+        this.executor = executor;
+    }
 
     /**
      * Submit a background task for execution.
@@ -44,7 +55,7 @@ public class BackgroundTaskManager {
         String id = UUID.randomUUID().toString();
         tasks.put(id, new BackgroundTask.Pending(id, displayName, targetName));
 
-        Thread.startVirtualThread(() -> {
+        executor.execute(() -> {
             try {
                 task.run();
                 tasks.put(id, new BackgroundTask.Completed(id, displayName, completedDisplayName,
