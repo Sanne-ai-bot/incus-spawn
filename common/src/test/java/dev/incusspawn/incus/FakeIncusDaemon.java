@@ -104,6 +104,22 @@ public final class FakeIncusDaemon implements IncusTransport {
         profiles.put("default", profile);
     }
 
+    /** Define (or replace) a profile with exactly these devices. */
+    public FakeIncusDaemon profile(String name, Map<String, Map<String, String>> devices) {
+        var profile = JSON.createObjectNode();
+        profile.put("name", name);
+        var node = profile.putObject("devices");
+        devices.forEach((device, config) -> node.set(device, JSON.valueToTree(config)));
+        profiles.put(name, profile);
+        return this;
+    }
+
+    /** A profile's devices as they are now, device name to config. */
+    public Map<String, Map<String, String>> profileDevices(String name) {
+        return JSON.convertValue(profiles.get(name).get("devices"),
+                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Map<String, String>>>() {});
+    }
+
     /** Add a device to an existing instance, as if it had been configured or copied over. */
     public FakeIncusDaemon device(String instanceName, String deviceName, Map<String, String> config) {
         ((ObjectNode) instances.get(instanceName).get("devices")).set(deviceName, JSON.valueToTree(config));

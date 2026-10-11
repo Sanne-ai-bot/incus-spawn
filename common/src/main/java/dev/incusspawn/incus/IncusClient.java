@@ -1056,7 +1056,9 @@ public class IncusClient {
      * Device names are conventional, not guaranteed, so match on type rather than on "root"/"eth0".
      */
     private static boolean hasDeviceOfType(JqValue devices, String type, String path) {
-        for (var device : devices.asList()) {
+        // A devices map is an object (device name to config): asList() would be empty
+        if (!(devices instanceof JqObject byName)) return false;
+        for (var device : byName.values()) {
             if (!type.equals(device.pathText("type", ""))) continue;
             if (path == null || path.equals(device.pathText("path", ""))) return true;
         }
