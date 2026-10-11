@@ -776,7 +776,7 @@ public class ImageDef {
         var invalidName = notAnInstanceName("template name", def.getName());
         if (invalidName == null && !def.isRoot()) invalidName = notAnInstanceName("parent", def.getParent());
         if (invalidName != null) {
-            warnings.accept(file + ": " + invalidName + "; it is skipped, and isx build refuses until it is fixed");
+            warnings.accept(file + ": " + invalidName + LayeredDefinitions.REFUSED);
             return false;
         }
         if (def.getDefaultAction() != null && def.getDefaultAction().isBlank()) {

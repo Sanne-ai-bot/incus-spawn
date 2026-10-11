@@ -256,6 +256,11 @@ The template drops out of `isx templates`, the TUI and `isx build` alike.
 It is recorded with the parse failures, because it too may have meant to replace a lower layer's definition, so `isx build` refuses in the same way.
 A definition with no `name:` at all is refused the same way, with a warning naming the file, rather than skipped silently.
 `isx templates edit` reports the same as a validation error.
+A tool definition whose credential namespace is not an identifier is refused at load the same way (#1266).
+That is its `config-namespace`, or the namespace a `config-path` borrows.
+An identifier is letters, digits, `.`, `-` and `_`, starting with a letter or digit, the rule proof tokens already used; camelCase and `.` stay allowed, because a previous release's `config.yaml` may hold such a namespace.
+The namespace names a place in `config.yaml`, and `isx init` and `isx account` print it as is.
+`ToolDefValidator.invalidNamespace` holds the rule, and `ToolDefValidator.validateDef` reports it as an error.
 
 ### Tool System
 

@@ -61,6 +61,7 @@ Key design:
   `ToolProxyResolver.resolveConfigValue` prefers it and falls back to the flat path when the namespace has no accounts *or the account omits that key* (a namespace may hold the token per account and other settings globally).
   That gives named accounts to every namespace at once, YAML-only tools included, with no per-tool code.
   The namespace is derived **per config entry** (`ProxyDef.namespaceOf`), not per tool: a tool may *borrow* another namespace's credential by naming it fully in `config-path` and declaring no `config-namespace` (`CopilotSetup` points at `github.token` to share the `gh` PAT).
+  Either way the namespace must be an identifier (`ToolDefValidator.invalidNamespace`), or the loader refuses the tool: it is printed by `isx init` and `isx account`.
   Keying off the tool's own namespace would leave `gh` authenticating as the pinned account while copilot used the flat token -- two GitHub identities in one container.
   `AccountResolver` does the tree-based resolution; `AccountSelection` does parsing/validation/stamping.
   `GitHubConfig`/`BobConfig`/`OpenaiConfig` extend `SpawnConfig.NamespaceConfig` so an `accounts:` block survives a save -- without it the block deserialized to nothing and the next save **deleted** it.

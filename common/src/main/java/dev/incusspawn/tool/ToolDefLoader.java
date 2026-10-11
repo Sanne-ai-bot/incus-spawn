@@ -6,6 +6,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.config.YamlErrors;
+import dev.incusspawn.util.OutputFormat;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -185,15 +186,19 @@ public class ToolDefLoader {
 
     /**
      * Register stored tool definitions as fallbacks. Tools already
-     * in scope (from the normal resolution chain) are not overridden.
+     * in scope (from the normal resolution chain) are not overridden. A stored definition
+     * the loader would refuse is skipped too: a template built before #1266 may hold one.
      */
     public void addFallbacks(Map<String, ToolDef> fallbacks) {
         if (fallbacks == null || fallbacks.isEmpty()) return;
         var map = load().defs();
         for (var entry : fallbacks.entrySet()) {
-            if (entry.getKey() == null || entry.getValue() == null) continue;
-            if (!map.containsKey(entry.getKey())) {
+            if (entry.getKey() == null || entry.getValue() == null || map.containsKey(entry.getKey())) continue;
+            var invalidNamespace = ToolDefValidator.invalidNamespace(entry.getValue());
+            if (invalidNamespace == null) {
                 map.put(entry.getKey(), new YamlToolSetup(entry.getValue()));
+            } else {
+                Warnings.warn("a stored definition: " + invalidNamespace + "; it is skipped");
             }
         }
     }
@@ -240,8 +245,16 @@ public class ToolDefLoader {
                 try (var is = Files.newInputStream(path)) {
                     var def = ToolDef.loadFromStream(is);
                     if (def.getName() != null) {
-                        warnings.addAll(ToolDefValidator.embeddedTokens(def));
                         var source = path.toAbsolutePath().normalize();
+                        var invalidNamespace = ToolDefValidator.invalidNamespace(def);
+                        if (invalidNamespace != null) {
+                            warnings.add(OutputFormat.oneLine(path.getFileName().toString()) + ": " + invalidNamespace
+                                    + LayeredDefinitions.REFUSED);
+                            // Like an unparsable file, it may have meant to replace a lower layer's.
+                            defs.parseFailed(source);
+                            continue;
+                        }
+                        warnings.addAll(ToolDefValidator.embeddedTokens(def));
                         defs.put(def.getName(), new YamlToolSetup(def), source);
                     }
                 } catch (IOException e) {

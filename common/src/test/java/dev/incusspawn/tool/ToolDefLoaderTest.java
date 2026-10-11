@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -271,12 +272,31 @@ class ToolDefLoaderTest {
         fallbackDef.setName("podman");
         fallbackDef.setDescription("should not replace built-in");
 
-        loader.addFallbacks(java.util.Map.of("podman", fallbackDef));
+        loader.addFallbacks(Map.of("podman", fallbackDef));
 
         var tool = loader.find("podman");
         assertNotNull(tool);
         assertNotEquals("should not replace built-in",
                 ((YamlToolSetup) tool).toolDef().getDescription());
+    }
+
+    /** A template built before #1266 may have stored a tool the loader now refuses. */
+    @Test
+    void addFallbacksSkipsAnInvalidNamespace() {
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace("evil\u001b]0;x\u0007");
+        var fallbackDef = new ToolDef();
+        fallbackDef.setName("evil-fallback");
+        fallbackDef.setProxy(proxy);
+        var reported = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.find("podman");
+            loader.addFallbacks(Map.of("evil-fallback", fallbackDef));
+
+            assertNull(loader.find("evil-fallback"));
+            assertTrue(reported.stream().anyMatch(w -> w.contains("config-namespace")), reported.toString());
+        }
     }
 
     @Test
@@ -288,7 +308,7 @@ class ToolDefLoaderTest {
         fallbackDef.setName("my-fallback");
         fallbackDef.setDescription("A fallback tool");
 
-        loader.addFallbacks(java.util.Map.of("my-fallback", fallbackDef));
+        loader.addFallbacks(Map.of("my-fallback", fallbackDef));
 
         var tool = loader.find("my-fallback");
         assertNotNull(tool);
@@ -341,6 +361,53 @@ class ToolDefLoaderTest {
 
         assertEquals(List.of(broken.toAbsolutePath().normalize()), loader.parseFailures());
         assertEquals("built-in", loader.getSource("podman"));
+    }
+
+    /** A configuration key left empty in YAML arrives as null; main loads such a tool, so must the check. */
+    @Test
+    void aToolWithAnEmptyConfigurationKeyStillLoads(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("empty-key.yaml"), """
+                name: empty-key
+                proxy:
+                  configuration:
+                    token:
+                """);
+        var loader = new ToolDefLoader();
+        loader.setProjectToolsDir(tempDir);
+
+        assertNotNull(loader.find("empty-key"));
+        assertEquals(List.of(), loader.parseFailures());
+    }
+
+    /**
+     * A tool whose config-namespace is not an identifier is refused where definitions load
+     * (#1266), so its namespace never reaches isx init's prompts, isx account or config.yaml.
+     * Like an unparsable file it may have meant to replace a lower layer's, so isx build refuses.
+     */
+    @Test
+    void aToolWithAnInvalidNamespaceIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
+        var evil = tempDir.resolve("evil.yaml");
+        Files.writeString(evil, """
+                name: evil
+                proxy:
+                  config-namespace: "\\e]0;x\\a"
+                  configuration:
+                    token:
+                      config-path: token
+                      secret: true
+                      description: Token
+                """);
+        var reported = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+
+            assertNull(loader.find("evil"));
+            assertEquals(List.of(evil.toAbsolutePath().normalize()), loader.parseFailures());
+            assertEquals(1, reported.size(), reported.toString());
+            assertTrue(reported.get(0).contains("config-namespace"), reported.get(0));
+            assertTrue(reported.get(0).chars().noneMatch(Character::isISOControl), "printed raw: " + reported.get(0));
+        }
     }
 
     /**

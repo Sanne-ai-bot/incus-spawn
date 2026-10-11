@@ -800,7 +800,7 @@ env:
 
 Tools can register domains with the [MITM proxy](#credential-isolation) for transparent credential injection. This lets you add authentication to any HTTPS API without exposing secrets inside containers. The built-in `claude`, `gh`, `bob`, `codex`, and `copilot` tools use this mechanism -- but you can declare the same for your own tools.
 
-A `proxy:` block has three parts: a `config-namespace` that scopes config paths, a `configuration` map that declares what credentials are needed, and `auth` entries that map domains to authentication rules.
+A `proxy:` block has three parts: a `config-namespace` that scopes config paths (letters, digits, `.`, `-` and `_`, starting with a letter or digit), a `configuration` map that declares what credentials are needed, and `auth` entries that map domains to authentication rules.
 
 ```yaml
 # ~/.config/incus-spawn/tools/artifactory.yaml
