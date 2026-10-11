@@ -499,7 +499,7 @@ public final class HostResourceSetup {
         try {
             var mapper = Jjq.mapper();
             var result = new java.util.ArrayList<ImageDef.HostResource>();
-            for (var e : JqValues.parse(json).asList()) {
+            for (var e : JqValues.parseStrict(json).asList()) {
                 result.add(mapper.fromJqValue(e, ImageDef.HostResource.class));
             }
             return result;

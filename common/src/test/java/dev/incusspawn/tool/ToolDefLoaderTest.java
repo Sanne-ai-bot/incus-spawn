@@ -653,7 +653,7 @@ class ToolDefLoaderTest {
 
             assertEquals(1, loader.warnings().size());
             var warning = loader.warnings().get(0);
-            assertTrue(warning.startsWith("podman.yaml: "), warning);
+            assertTrue(warning.startsWith("podman.yaml:2: "), warning);
             assertTrue(warning.contains("is a shell string"), warning);
 
             // A second loader finds the same problem; it is still reported only once.

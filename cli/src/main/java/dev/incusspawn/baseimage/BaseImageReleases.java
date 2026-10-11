@@ -75,7 +75,7 @@ public final class BaseImageReleases {
             throw new IOException("GitHub API returned " + response.statusCode());
         }
         var releases = new ArrayList<Release>();
-        for (var node : JqValues.parse(response.body()).asList()) {
+        for (var node : JqValues.parseStrict(response.body()).asList()) {
             var tag = node.pathText("tag_name", "");
             if (!tag.startsWith("fedora-")) continue;
             var date = node.pathText("published_at", "").split("T")[0];

@@ -154,7 +154,7 @@ final class SkillInstaller {
             var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) continue;
 
-            var tree = JqValues.parse(response.body()).getField("tree");
+            var tree = JqValues.parseStrict(response.body()).getField("tree");
             var skills = new ArrayList<SkillFile>();
             for (var node : tree.asList()) {
                 var path = node.pathText("path", "");

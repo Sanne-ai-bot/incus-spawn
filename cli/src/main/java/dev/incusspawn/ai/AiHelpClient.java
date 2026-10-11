@@ -306,7 +306,7 @@ public class AiHelpClient {
                 if (!line.startsWith("data: ")) continue;
                 var data = line.substring(6).strip();
                 if ("[DONE]".equals(data)) break;
-                var node = JqValues.parse(data);
+                var node = JqValues.parseStrict(data);
                 var text = node.getField("choices").getElement(0).getField("delta").pathText("content", null);
                 if (text != null) onChunk.accept(text);
                 var reported = node.getField("usage");
@@ -330,7 +330,7 @@ public class AiHelpClient {
                 var data = line.substring(6).strip();
                 if ("[DONE]".equals(data)) break;
 
-                var node = JqValues.parse(data);
+                var node = JqValues.parseStrict(data);
                 var type = node.pathText("type", "");
 
                 switch (type) {
@@ -409,7 +409,7 @@ public class AiHelpClient {
         var detail = new StringBuilder("API error (").append(status);
         String message = null;
         try {
-            var tree = JqValues.parse(body);
+            var tree = JqValues.parseStrict(body);
             message = tree.getField("error").pathText("message", null);
             var type = tree.getField("error").pathText("type", null);
             if (type != null) detail.append(", ").append(type);

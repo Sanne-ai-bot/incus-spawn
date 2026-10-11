@@ -107,7 +107,7 @@ public class ApiTrafficLog {
 
     private String formatBody(byte[] body) {
         try {
-            return JqValues.toPrettyJsonString(JqValues.parse(body));
+            return JqValues.toPrettyJsonString(JqValues.parseStrict(body));
         } catch (Exception e) {
             return new String(body, 0, Math.min(body.length, 4096));
         }

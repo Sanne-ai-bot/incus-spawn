@@ -96,6 +96,29 @@ public final class Jjq {
         YAML.writeValue(file, config);
     }
 
+    /**
+     * A scalar as written in the file: {@code 0022}, {@code 3.10} and {@code yes} stay as typed
+     * (jjq's {@code asText()} renders the resolved number or boolean, Hyperfoil/jjq#126). For the
+     * converters that read the tree themselves; binding to a {@code String} field already does this.
+     */
+    public static String text(JqValue value) {
+        var written = value.sourceText();
+        return written != null ? written : value.asText();
+    }
+
+    /**
+     * Why a parse failed, for one line of output: jjq's strict parse quotes the whole document
+     * after the reason ({@code ... (while parsing '...')}), which can be megabytes.
+     */
+    public static String brief(Throwable e) {
+        var message = e.getMessage();
+        if (message == null) return "";
+        var first = message.lines().findFirst().orElse("");
+        var quoted = first.indexOf(" (while parsing '");
+        if (quoted >= 0) first = first.substring(0, quoted);
+        return first.length() > 200 ? first.substring(0, 200) + "..." : first;
+    }
+
     // ---- JSON reads (Incus API responses) ----
     //
     // Jackson parity notes: daemon responses are machine-generated and never carry

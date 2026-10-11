@@ -614,7 +614,7 @@ class CredentialSetup {
             return "";
         }
         try {
-            var message = JqValues.parse(body).getField("error").getField("message");
+            var message = JqValues.parseStrict(body).getField("error").getField("message");
             if (!message.isString()) {
                 return "";
             }
@@ -1570,7 +1570,7 @@ class CredentialSetup {
                 return null;
             }
 
-            var json = JqValues.parse(response.body());
+            var json = JqValues.parseStrict(response.body());
             var login = json.pathText("login", null);
             var email = json.pathText("email", null);
             if (email == null) {
@@ -1650,7 +1650,7 @@ class CredentialSetup {
 
     static EmailParseResult parseGitHubEmails(String json) {
         try {
-            var emails = JqValues.parse(json);
+            var emails = JqValues.parseStrict(json);
             var verifiedEmails = new ArrayList<String>();
             String primaryEmail = null;
             String noreplyEmail = null;

@@ -25,7 +25,7 @@ public class SkillsDefConverter implements ValueConverter<SkillsDef> {
         if (value.isArray()) {
             var items = new ArrayList<String>();
             for (var entry : value.asList()) {
-                items.add(entry.asText());
+                items.add(Jjq.text(entry));
             }
             return new SkillsDef(null, items);
         }
@@ -39,7 +39,7 @@ public class SkillsDefConverter implements ValueConverter<SkillsDef> {
                         if (!field.getValue().isArray()) continue;
                         var items = new ArrayList<String>();
                         for (var entry : field.getValue().asList()) {
-                            items.add(entry.asText());
+                            items.add(Jjq.text(entry));
                         }
                         list = items;
                     }

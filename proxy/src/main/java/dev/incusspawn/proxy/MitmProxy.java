@@ -1566,7 +1566,7 @@ public class MitmProxy {
     private VertexTranslation translateToVertex(String originalPath, byte[] bodyBytes,
                                                  String upstreamHost, ProxyCredentials credentials) {
         try {
-            var tree = bodyBytes.length > 0 ? JqValues.parse(bodyBytes) : null;
+            var tree = bodyBytes.length > 0 ? JqValues.parseStrict(bodyBytes) : null;
 
             // Non-JSON or non-object body (e.g. GET /v1/models): just forward as-is
             if (!(tree instanceof JqObject root)) {

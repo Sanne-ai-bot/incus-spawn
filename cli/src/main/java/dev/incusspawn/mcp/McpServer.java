@@ -1,5 +1,6 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.incus.IncusException;
@@ -100,7 +101,7 @@ final class McpServer {
         try {
             msg = JsonRpc.parse(line);
         } catch (RuntimeException e) {
-            var detail = e.getMessage() == null ? "" : e.getMessage().lines().findFirst().orElse("");
+            var detail = Jjq.brief(e);
             send(JsonRpc.error(null, JsonRpc.PARSE_ERROR, "Parse error: " + detail));
             return;
         }

@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
@@ -205,9 +206,9 @@ final class McpBridge {
     private void post(HttpServerRequest req, String instance, Buffer body) {
         JqValue message;
         try {
-            message = JqValues.parse(body.toString(StandardCharsets.UTF_8));
+            message = JqValues.parseStrict(body.toString(StandardCharsets.UTF_8));
         } catch (RuntimeException e) {
-            refuse(req, 400, "not JSON: " + e.getMessage());
+            refuse(req, 400, "not JSON: " + Jjq.brief(e));
             return;
         }
         if (!message.isObject()) {
@@ -394,7 +395,7 @@ final class McpBridge {
             // Parsed outside the lock, which the event loop takes too: a line may be megabytes.
             JqValue message;
             try {
-                message = JqValues.parse(line);
+                message = JqValues.parseStrict(line);
             } catch (RuntimeException e) {
                 ProxyLog.warn("isx mcp for " + instance + " wrote a line that is not JSON; dropped");
                 return;
