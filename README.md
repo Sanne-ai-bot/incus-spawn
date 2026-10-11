@@ -307,6 +307,19 @@ It gets exactly the tools, approved templates and limits a host agent gets, and 
 - **No coordinator makes another.** Only `isx branch --mcp-client` grants it, never to a copy: not to `isx branch --from coord`, and not to anything created through MCP.
 - **Only the host proxy is reached.** `mcp.isx.internal` resolves to the bridge gateway, so this works with `--proxy-only`; an `--airgap` instance cannot use it.
 
+### Routes to a controller on the host
+
+A program of your own on the host, such as a coordinator that agents report to, can be reached from instances by a name you choose, through the proxy and in `--proxy-only` mode too. List it in `~/.config/incus-spawn/config.yaml`:
+
+```yaml
+host-routes:
+  work.isx.internal:
+    target: 127.0.0.1:7070       # on this host's loopback: localhost, 127.0.0.1 or [::1]
+    templates: [tpl-isx-agent]   # optional: only instances of these templates
+```
+
+An instance then calls `https://work.isx.internal/...`, sending the secret isx gave it at its last start as `X-Isx-Instance-Secret` (it is in the file `$ISX_INSTANCE_SECRET_FILE` names). The proxy checks the secret and the instance's address together, and forwards the request over plain HTTP to the target with `X-Isx-Instance` and `X-Isx-Template` set to who called; any `X-Isx-*` header the instance sent is removed, so the controller never sees the secret, and those two headers are the proxy's only if the proxy is the only way to reach the controller: listen on loopback only (`127.0.0.1`, never `0.0.0.0`, which instances that are not `--proxy-only` reach at the bridge gateway with any headers they like), and remember that any process on this host can still connect to it and send them. Anything else gets an error and never reaches the controller: a wrong or missing secret, a template the route does not list, an instance built from a project-local definition, a WebSocket. Names must end in `.internal`, and an entry that is wrong in any way is skipped with a warning in the proxy's log.
+
 ## What differs from a stock Fedora install
 
 An isx instance is a Fedora system with a few deliberate deviations. This is where they are listed; a change to what a box does that a Fedora user would not expect belongs here.

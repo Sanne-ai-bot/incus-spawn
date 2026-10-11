@@ -153,6 +153,8 @@ public class MitmProxy {
 
     /** {@code isx mcp} for coordinator instances, at {@link ProxyConfig#MCP_DOMAIN} (#915). */
     private volatile McpBridge mcpBridge;
+    /** The names of {@code host-routes:}, forwarded to controllers on this host (#936). */
+    private final HostRouteRelay hostRouteRelay;
     /** What serves one instance's MCP session; tests replace the {@code isx} it runs. */
     private java.util.function.Function<String, List<String>> mcpCommand = McpBridge::isxMcp;
 
@@ -192,6 +194,9 @@ public class MitmProxy {
      *                               auth mode) -- see {@code AccountSelection.servingMismatches}.
      *                               Keyed by the registry record, so a re-pinned or rebuilt
      *                               instance is looked up afresh
+     * @param hostRoutes             {@code host-routes:} as served (#936), by name; their names
+     *                               are in the routing's intercepted domains, for certificates
+     *                               and bridge DNS, and nowhere in its credential lookups
      */
     private record ConfigState(
             dev.incusspawn.config.SpawnConfig config,
@@ -202,19 +207,31 @@ public class MitmProxy {
             Map<String, dev.incusspawn.tool.ToolSetup> setupsByNamespace,
             Map<String, java.util.Set<String>> namespacesByDomain,
             Map<Map<String, String>, AccountBundle> credentialsBySelection,
-            Map<InstanceRegistry.InstanceAccounts, Map<String, String>> mismatchesByInstance) {
+            Map<InstanceRegistry.InstanceAccounts, Map<String, String>> mismatchesByInstance,
+            Map<String, dev.incusspawn.config.HostRoutes.Route> hostRoutes) {
 
         ConfigState(dev.incusspawn.config.SpawnConfig config,
                     io.hyperfoil.tools.jjq.value.JqValue configTree,
                     Map<String, dev.incusspawn.tool.ToolSetup> toolSetups,
                     ProxyCredentials credentials,
-                    List<ResolvedToolProxy> proxiesAcrossAccounts) {
+                    List<ResolvedToolProxy> proxiesAcrossAccounts,
+                    Map<String, dev.incusspawn.config.HostRoutes.Route> hostRoutes) {
             this(config, configTree, toolSetups, credentials,
-                    buildRouting(credentials.toolProxies(), proxiesAcrossAccounts, true),
+                    withHostRoutes(buildRouting(credentials.toolProxies(), proxiesAcrossAccounts, true),
+                            hostRoutes.keySet()),
                     dev.incusspawn.config.AccountSelection.byNamespace(toolSetups),
                     dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups),
-                    new ConcurrentHashMap<>(), new ConcurrentHashMap<>());
+                    new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), hostRoutes);
         }
+    }
+
+    /** {@code routing}, intercepting the host routes' names as well. */
+    private static ToolProxyRouting withHostRoutes(ToolProxyRouting routing, Set<String> names) {
+        if (names.isEmpty()) return routing;
+        var all = new HashSet<>(routing.allInterceptedDomains());
+        all.addAll(names);
+        return new ToolProxyRouting(routing.exactDomain(), routing.wildcardSuffixes(), Set.copyOf(all),
+                routing.suffixes());
     }
 
     private volatile ConfigState configState;
@@ -285,7 +302,7 @@ public class MitmProxy {
                      String healthBindAddress, ProxyCredentials credentials) {
         this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress, ConfigFingerprint.capture());
         this.configState = new ConfigState(NO_CONFIG, NO_CONFIG.tree(), Map.of(), credentials,
-                credentials.toolProxies());
+                credentials.toolProxies(), Map.of());
     }
 
     /** The config of a proxy built from credentials alone: empty, and never compared on reload. */
@@ -302,6 +319,7 @@ public class MitmProxy {
         this.configFingerprint = java.util.Objects.requireNonNull(configFingerprint, "configFingerprint");
         this.upstream = new Upstream(vertx, this::lookupHost);
         this.artifactCache = new ArtifactCacheHandler(vertx, upstream);
+        this.hostRouteRelay = new HostRouteRelay(vertx, () -> instanceRegistry, upstream);
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -427,8 +445,9 @@ public class MitmProxy {
         var previous = configState;
         // The default selection is resolved once, and seeds the across-accounts set.
         var credentials = ProxyCredentials.forAccounts(config, tree, Map.of(), setups);
-        configState = new ConfigState(config, tree, setups, credentials,
-                ToolProxyResolver.resolveAcrossAccounts(tree, setups, credentials.toolProxies()));
+        var acrossAccounts = ToolProxyResolver.resolveAcrossAccounts(tree, setups, credentials.toolProxies());
+        configState = new ConfigState(config, tree, setups, credentials, acrossAccounts,
+                ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn));
         artifactCache.artifactCacheTiers = ArtifactCacheTiers.from(config);
         return previous;
     }
@@ -893,6 +912,7 @@ public class MitmProxy {
             closeQuietly(mitmServer, 2);
             upstream.closeClients();
             if (mcpBridge != null) mcpBridge.stop();
+            hostRouteRelay.stop();
             closeQuietly(healthHttpServer, 1);
         } finally {
             // Guarantee stopLatch is always counted down, even if an unexpected exception occurs
@@ -987,7 +1007,11 @@ public class MitmProxy {
             }
 
             Consumer<HttpServerRequest> cache;
-            if (ProxyConfig.MCP_DOMAIN.equals(domain)) {
+            var routes = configState.hostRoutes();
+            if (HostRouteRelay.claims(routes, clientReq)) {
+                // First, by Host or SNI: neither half of a route's connection reaches credentials
+                hostRouteRelay.handle(clientReq, sourceAddressOf(clientReq), routes);
+            } else if (ProxyConfig.MCP_DOMAIN.equals(domain)) {
                 // Answered here, never relayed: it names no host outside this machine.
                 mcpBridge.handle(clientReq, sourceAddressOf(clientReq));
             } else if ((cache = cacheHandler(domain, started)) != null) {
@@ -1118,8 +1142,9 @@ public class MitmProxy {
             clientWs.reject(400);
             return false;
         }
-        if (ProxyConfig.MCP_DOMAIN.equals(domain)) {
-            // MCP is plain HTTP here, and the name has no upstream to relay a socket to.
+        if (ProxyConfig.MCP_DOMAIN.equals(domain) || HostRouteRelay.claims(configState.hostRoutes(), clientWs)) {
+            // MCP is plain HTTP here, and the name has no upstream to relay a socket to; a host
+            // route carries no WebSocket in this version, and its SNI never carries another name's.
             clientWs.reject(404);
             return false;
         }
