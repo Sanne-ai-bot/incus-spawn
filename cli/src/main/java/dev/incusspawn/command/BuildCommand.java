@@ -1430,9 +1430,7 @@ public class BuildCommand extends BaseCommand {
                     dnfCommand("install", "-y", "-q", "cloud-utils-growpart", "e2fsprogs", "xfsprogs"));
             runWithSpinner("Expanding", "VM root filesystem", "Failed to expand VM root filesystem",
                     state -> state.set(0, stepFrom(container.sh(
-                            "{ " + installDeps + "; } && " +
-                            "growpart /dev/sda 2 && " +
-                            "if findmnt -n -o FSTYPE / | grep -q xfs; then xfs_growfs /; else resize2fs /dev/sda2; fi"))));
+                            "{ " + installDeps + "; } && " + VM_ROOT_EXPANSION))));
         }
 
         if (!prebaked) {
@@ -2379,6 +2377,21 @@ public class BuildCommand extends BaseCommand {
             this.containerName = containerName;
         }
     }
+
+    /**
+     * Grow a VM's root partition and filesystem into the disk {@code root.size} gave it, wherever
+     * the root is: {@code sda2} on virtio-scsi, {@code vda2} on virtio-blk, which VM builds use
+     * (#1255), {@code nvme0n1p2} on NVMe. The partition is the root's mount source, without a
+     * btrfs subvolume ({@code -v}); its disk comes from {@code lsblk}, and its number is what
+     * follows the disk's name (and NVMe's {@code p}), since lsblk's {@code PARTN} needs
+     * util-linux 2.39. With no initrd the kernel mounts the root as {@code /dev/root}, which
+     * findmnt resolves to the partition by its device number.
+     */
+    static final String VM_ROOT_EXPANSION =
+            "root=$(findmnt -n -v -o SOURCE /) && disk=$(lsblk -ndo PKNAME \"$root\") && [ -n \"$disk\" ] && "
+            + "part=${root##*/} && part=${part#\"$disk\"} && part=${part#p} && "
+            + "growpart \"/dev/$disk\" \"$part\" && "
+            + "if findmnt -n -o FSTYPE / | grep -q xfs; then xfs_growfs /; else resize2fs \"$root\"; fi";
 
     /**
      * Give agentuser its home when {@code useradd -m} created it, and when it did not: host
