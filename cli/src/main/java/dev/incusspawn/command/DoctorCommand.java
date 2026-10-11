@@ -54,6 +54,7 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -954,39 +955,43 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkForwarderLeak() {
         return forwarderLeakFinding(VmManager.vsockForwarderConnectionCount(),
-                VmAgentClient.socatCount(), VmAgentClient::ping);
+                VmAgentClient::socatCount, VmAgentClient::ping);
     }
 
     /**
      * Turns the host's vfkit fd count and the guest's socat count into the forwarder finding, and
      * picks its fix: the no-reboot forwarder restart when the leak is in the forwarder (or cannot be
-     * located) and the agent answers, a VM restart otherwise. {@code agentAnswers} is asked only
-     * when a leak is reported.
+     * located) and the agent answers, a VM restart otherwise. Each agent round trip is spent only
+     * when it can change the finding: {@code guest} is asked only when the host count reports a
+     * leak or cannot be measured, and {@code agentAnswers} only when {@code guest} did not answer,
+     * since a guest count already came back over the agent lane (#1214).
      */
-    static Finding forwarderLeakFinding(int host, OptionalInt guest, BooleanSupplier agentAnswers) {
+    static Finding forwarderLeakFinding(int host, Supplier<OptionalInt> guest, BooleanSupplier agentAnswers) {
         var base = forwarderFinding(host);
+        if (host < 0) {
+            // No host count: the guest's is the only leak signal left, so it is shown.
+            var guestCount = guest.get();
+            return guestCount.isEmpty() ? base
+                    : Finding.ok(base.label(), base.detail() + " (in-guest socat: " + guestCount.getAsInt() + ")");
+        }
+        if (base.status() == Status.OK) return base;
 
-        var detail = base.detail();
-        if (guest.isPresent()) {
-            detail = append(detail, "(in-guest socat: " + guest.getAsInt() + ")");
+        var guestCount = guest.get();
+        if (guestCount.isEmpty()) {
+            // The leak cannot be located: the forwarder restart is worth trying if the agent answers.
+            return agentAnswers.getAsBoolean() ? offerForwarderRestart(base, base.detail()) : base;
         }
+        var layer = VmManager.leakLayer(host, guestCount.getAsInt());
+        var detail = append(base.detail(), "(in-guest socat: " + guestCount.getAsInt() + ") — " + layer.description);
+        return layer == VmManager.LeakLayer.FORWARDER
+                ? offerForwarderRestart(base, detail)
+                : new Finding(base.status(), base.label(), detail, base.remediation());
+    }
 
-        if (base.status() == Status.OK) {
-            return new Finding(Status.OK, base.label(), detail, null);
-        }
-        // A leak with no guest count to locate it gets the forwarder restart if the agent answers.
-        boolean forwarderFixes = true;
-        if (guest.isPresent()) {
-            var layer = VmManager.leakLayer(host, guest.getAsInt());
-            detail = append(detail, "— " + layer.description);
-            forwarderFixes = layer == VmManager.LeakLayer.FORWARDER;
-        }
-        if (forwarderFixes && agentAnswers.getAsBoolean()) {
-            return Finding.warn(base.label(), detail,
-                    new Remediation("Restart the forwarder in the VM (no reboot — running containers keep going)",
-                            false, DoctorCommand::restartForwarderViaAgent));
-        }
-        return new Finding(base.status(), base.label(), detail, base.remediation());
+    private static Finding offerForwarderRestart(Finding base, String detail) {
+        return Finding.warn(base.label(), detail,
+                new Remediation("Restart the forwarder in the VM (no reboot — running containers keep going)",
+                        false, DoctorCommand::restartForwarderViaAgent));
     }
 
     private Finding checkApplianceVersion() {
