@@ -282,6 +282,50 @@ class SecretRedactorTest {
         assertTrue(result.redactedPaths().isEmpty());
     }
 
+    /** A key may itself contain dots or brackets: the value under it is still the one replaced. */
+    @Test
+    void aSecretUnderAKeyWithDotsIsRedactedWhereItIs() {
+        var config = new SpawnConfig();
+        config.setExtra("gh2", new java.util.LinkedHashMap<>(Map.of(
+                "hosts.github.com.oauth_token", "gho-FAKE-dotted-key-0001")));
+        config.setExtra("mirror.example.com", new java.util.LinkedHashMap<>(Map.of(
+                "token", "mirror-FAKE-dotted-parent-0002")));
+
+        var result = SecretRedactor.redactConfig(config, List.of());
+        assertFalse(result.yaml().contains("gho-FAKE-dotted-key-0001"), result.yaml());
+        assertFalse(result.yaml().contains("mirror-FAKE-dotted-parent-0002"), result.yaml());
+        assertEquals(java.util.Set.of("gh2[\"hosts.github.com.oauth_token\"]", "[\"mirror.example.com\"].token"),
+                java.util.Set.copyOf(result.redactedPaths()), "labels say which key, dots and all");
+    }
+
+    @Test
+    void aKeyWithBracketsNeitherFailsTheBundleNorKeepsItsSecret() {
+        var config = new SpawnConfig();
+        config.setExtra("odd", new java.util.LinkedHashMap<>(Map.of(
+                "token[x]", "odd-FAKE-bracket-key-0003", "token[0]", "odd-FAKE-bracket-key-0004")));
+
+        var result = SecretRedactor.redactConfig(config, List.of());
+        assertFalse(result.yaml().contains("odd-FAKE-bracket-key-0003"), result.yaml());
+        assertFalse(result.yaml().contains("odd-FAKE-bracket-key-0004"), result.yaml());
+    }
+
+    /** "a.token" as one key and "token" under "a" read the same as dotted text; both are secrets. */
+    @Test
+    void twoSecretsWhosePathsReadTheSameAreBothRedacted() {
+        var config = new SpawnConfig();
+        config.setExtra("a.token", "flat-FAKE-same-path-0005");
+        config.setExtra("a", new java.util.LinkedHashMap<>(Map.of("token", "nested-FAKE-same-path-0006")));
+
+        var result = SecretRedactor.redactConfig(config, List.of());
+        assertFalse(result.yaml().contains("flat-FAKE-same-path-0005"), result.yaml());
+        assertFalse(result.yaml().contains("nested-FAKE-same-path-0006"), result.yaml());
+        assertEquals(2, result.secretValues().size());
+        assertEquals(java.util.Set.of("[\"a.token\"]", "a.token"), java.util.Set.copyOf(result.redactedPaths()),
+                "the manifest tells the two apart");
+        assertEquals("[\"a.token\"]", result.secretValues().get("flat-FAKE-same-path-0005"));
+        assertEquals("a.token", result.secretValues().get("nested-FAKE-same-path-0006"));
+    }
+
     @Test
     void declaredSecretIsNotReportedTwiceByTheBackstop() {
         var result = SecretRedactor.redactConfig(configuredConfig(), builtInLocations());
