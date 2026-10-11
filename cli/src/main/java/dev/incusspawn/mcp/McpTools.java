@@ -275,7 +275,10 @@ final class McpTools {
                         + "the instance (yet), and then there is nothing to subtract from. For one task's "
                         + "spend, read before and after it and subtract, only if both reads carry the same "
                         + "counting_since: a different one means the proxy started counting afresh in "
-                        + "between (a restart) and the difference is not the task's.",
+                        + "between (a restart) and the difference is not the task's. The traffic_ fields "
+                        + "count all its requests through the proxy, model calls included (package "
+                        + "downloads, git), from the same counting_since. An open stream (a WebSocket, your "
+                        + "own MCP stream when the instance has one) is in flight for as long as it is open.",
                 Schema.object().string("instance", "Instance name, from list_instances", true).build(),
                 OutputSchemas.instanceActivity(),
                 McpTool.annotations(true, false, true),
@@ -1390,6 +1393,13 @@ final class McpTools {
         node.put("output_tokens", counted.outputTokens());
         node.put("cache_read_input_tokens", counted.cacheReadInputTokens());
         node.put("cache_creation_input_tokens", counted.cacheCreationInputTokens());
+        // All its traffic, model calls included (#935): a build or a clone is work too
+        var traffic = counted.traffic().total();
+        node.put("traffic_requests", traffic.requests());
+        node.put("traffic_in_flight", traffic.inFlight());
+        if (traffic.lastActivityAt() != null) node.put("last_traffic_at", traffic.lastActivityAt().toString());
+        node.put("traffic_request_bytes", traffic.requestBytes());
+        node.put("traffic_response_bytes", traffic.responseBytes());
         return ToolResult.json(node);
     }
 

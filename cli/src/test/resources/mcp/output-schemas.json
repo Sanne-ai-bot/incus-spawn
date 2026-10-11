@@ -698,9 +698,29 @@
       },
       "cache_creation_input_tokens" : {
         "type" : "integer"
+      },
+      "traffic_requests" : {
+        "description" : "All requests through the proxy, model calls included",
+        "type" : "integer"
+      },
+      "traffic_in_flight" : {
+        "description" : "Requests and open WebSockets not yet ended",
+        "type" : "integer"
+      },
+      "last_traffic_at" : {
+        "description" : "ISO-8601: when a request last started or ended",
+        "type" : "string"
+      },
+      "traffic_request_bytes" : {
+        "description" : "Body bytes sent, counted as each request ends",
+        "type" : "integer"
+      },
+      "traffic_response_bytes" : {
+        "description" : "Body bytes received, counted as each request ends",
+        "type" : "integer"
       }
     },
-    "required" : [ "instance", "requests", "requests_in_flight", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens" ],
+    "required" : [ "instance", "requests", "requests_in_flight", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "traffic_requests", "traffic_in_flight", "traffic_request_bytes", "traffic_response_bytes" ],
     "additionalProperties" : false
   },
   "destroy_instance" : {
