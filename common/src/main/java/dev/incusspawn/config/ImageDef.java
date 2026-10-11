@@ -736,7 +736,7 @@ public class ImageDef {
             return false;
         }
         if (def.getDefaultAction() != null && def.getDefaultAction().isBlank()) {
-            warnings.accept(source + ": 'default-action' is blank; remove it or set a valid tool reference");
+            warnings.accept(file + ": 'default-action' is blank; remove it or set a valid tool reference");
             def.setDefaultAction(null);
         }
         return true;
