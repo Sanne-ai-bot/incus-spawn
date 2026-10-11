@@ -501,8 +501,7 @@ class ArtifactCacheProxyTest {
         var miss = get(CENTRAL, JAR);
         assertEquals("v1", miss.text());
         assertEquals(hex("SHA-1", "v1".getBytes()), miss.checksumHeader(), "upstream's header is passed on");
-        awaitFile(cached(CENTRAL, JAR), "v1");
-        awaitSidecar(Sidecar.SHA1.storedFile(cached(CENTRAL, JAR)));
+        awaitStoredJar(CENTRAL, JAR, "v1");
         assertEquals(1, hitsOn(CENTRAL, JAR));
         assertEquals(0, headsOn(CENTRAL, JAR), "no HEAD when nothing is cached");
         assertEquals(0, hitsOn(CENTRAL, JAR + ".sha1"));
@@ -602,10 +601,8 @@ class ArtifactCacheProxyTest {
         proxy.artifactCache.artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
         publishJar(host, path, content);
         get(host, path);
-        awaitFile(cached(host, path), content);
-        var stored = Sidecar.SHA1.storedFile(cached(host, path));
-        awaitSidecar(stored);
-        return stored;
+        awaitStoredJar(host, path, content);
+        return Sidecar.SHA1.storedFile(cached(host, path));
     }
 
     /** Make an artifact look last confirmed {@code age} ago. */
@@ -1376,7 +1373,7 @@ class ArtifactCacheProxyTest {
         routes.put(CENTRAL + " " + JAR + ".md5", new Reply(200, hex("MD5", "v1".getBytes()).getBytes(), null));
         routes.put(CENTRAL + " " + JAR + ".asc", new Reply(200, "signature".getBytes(), null));
         get(CENTRAL, JAR);
-        awaitFile(cached(CENTRAL, JAR), "v1");
+        awaitStoredJar(CENTRAL, JAR, "v1");
         get(CENTRAL, JAR + ".md5");
         get(CENTRAL, JAR + ".asc");
 
@@ -1413,7 +1410,7 @@ class ArtifactCacheProxyTest {
     void backoffNeverTurnsAnAnswerableRequestIntoAnError() throws Exception {
         publishJar(CENTRAL, JAR, "v1");
         get(CENTRAL, JAR);
-        awaitFile(cached(CENTRAL, JAR), "v1");
+        awaitStoredJar(CENTRAL, JAR, "v1");
         offline();
         get(CENTRAL, JAR + ".sha1");
         online(CENTRAL);
@@ -1478,7 +1475,7 @@ class ArtifactCacheProxyTest {
     void backoffStillDownloadsWhatIsOnlyInM2() throws Exception {
         publishJar(CENTRAL, JAR, "v1");
         get(CENTRAL, JAR);
-        awaitFile(cached(CENTRAL, JAR), "v1");
+        awaitStoredJar(CENTRAL, JAR, "v1");
         offline();
         get(CENTRAL, JAR + ".sha1");
         online(CENTRAL);
