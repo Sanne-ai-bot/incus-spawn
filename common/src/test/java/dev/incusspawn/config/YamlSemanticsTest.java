@@ -217,4 +217,42 @@ class YamlSemanticsTest {
     private static String escape(String s) {
         return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
+
+    // An integer setting that is not an integer fails the file, as with Jackson; jjq 0.2.2 binds
+    // 0 for a word or a boolean and wraps an out-of-range number. A grace of 0 reaps orphans at
+    // once, and a wrapped max-instances turns the cap off.
+
+    @Test
+    void aWordForAnIntegerSettingFailsWithTheFieldAndLine() {
+        var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  orphan-grace-hours: abc\n"));
+        var message = YamlErrors.friendly("config.yaml", e);
+        assertEquals("config.yaml:2: 'mcp.orphan-grace-hours' expects a whole number, but got 'abc'", message);
+    }
+
+    @Test
+    void aBooleanForAnIntegerSettingFails() {
+        var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  orphan-grace-hours: true\n"));
+        var message = YamlErrors.friendly("config.yaml", e);
+        assertTrue(message.startsWith("config.yaml:2: ") && message.contains("orphan-grace-hours"), message);
+    }
+
+    @Test
+    void aQuotedNumberForAnIntegerSettingIsThatNumber() throws Exception {
+        assertEquals(24, Jjq.spawnConfig("mcp:\n  orphan-grace-hours: \"24\"\n").mcp().orphanGraceHours());
+        assertEquals(7, Jjq.spawnConfig("mcp:\n  max-instances: 7\n").mcp().maxInstances());
+    }
+
+    @Test
+    void anIntegerSettingBeyondTheIntRangeFailsRatherThanWrapping() {
+        var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: 99999999999\n"));
+        var message = YamlErrors.friendly("config.yaml", e);
+        assertTrue(message.startsWith("config.yaml:2: ") && message.contains("max-instances"), message);
+    }
+
+    @Test
+    void aToolParametersBoundsAreIntegersToo() throws Exception {
+        assertThrows(java.io.IOException.class, () -> tool("parameters:\n  n:\n    type: integer\n    min: abc\n"));
+        assertThrows(java.io.IOException.class, () -> tool("parameters:\n  n:\n    type: integer\n    max: 99999999999\n"));
+        assertEquals(3, tool("parameters:\n  n:\n    type: integer\n    min: 3\n").getParameters().get("n").getMin());
+    }
 }

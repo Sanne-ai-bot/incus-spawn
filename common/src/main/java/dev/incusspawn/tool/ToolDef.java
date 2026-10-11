@@ -218,7 +218,9 @@ public class ToolDef {
         private String defaultValue;
         private String description;
         private String pattern;  // regex for string validation
+        @io.hyperfoil.tools.jjq.mapper.JqConverter(dev.incusspawn.config.IntegerConverter.class)
         private Integer min;     // for integer type
+        @io.hyperfoil.tools.jjq.mapper.JqConverter(dev.incusspawn.config.IntegerConverter.class)
         private Integer max;     // for integer type
         private List<String> options = List.of();  // for enum type
         private boolean optional = false;
