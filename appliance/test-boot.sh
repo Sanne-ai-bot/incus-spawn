@@ -77,16 +77,19 @@ boot_vfkit() {
     VSOCK_DIR=$(mktemp -d)
     local vsock_sock="$VSOCK_DIR/incus.sock"
     local agent_sock="$VSOCK_DIR/agent.sock"
+    # The test-only silent endpoint (isx.test_silent_vsock) that TUNNEL_BACKSTOP=1 times.
+    local silent_sock="$VSOCK_DIR/silent.sock"
     vfkit \
         --cpus 2 --memory 2048 \
         --kernel "$BUILD_DIR/vmlinuz" \
         --initrd "$dummy_initrd" \
-        --kernel-cmdline "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0 isx.vsock_incus=8443 isx.agent_vsock=1025" \
+        --kernel-cmdline "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0 isx.vsock_incus=8443 isx.agent_vsock=1025 isx.test_silent_vsock=8444" \
         --device virtio-blk,path="$BUILD_DIR/disk.img" \
         --device virtio-net,nat \
         --device virtio-serial,logFilePath="$LOGFILE" \
         --device "virtio-vsock,port=8443,socketURL=$vsock_sock,connect" \
         --device "virtio-vsock,port=1025,socketURL=$agent_sock,connect" \
+        --device "virtio-vsock,port=8444,socketURL=$silent_sock,connect" \
         --restful-uri "tcp://localhost:0" \
         > /dev/null 2>&1 &
     local pid=$!
@@ -106,7 +109,7 @@ boot_vfkit() {
     # and interleaved appends from this shell were being lost.
     # TUNNEL_SHUTDOWN: its last check asks the agent to shut the guest down (#881). vfkit must
     # then exit by itself, after rcK ran; only a guest that did not is killed.
-    TUNNEL_SHUTDOWN=1 "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" > "$VSOCK_RESULT" 2>&1 \
+    TUNNEL_SHUTDOWN=1 "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" "$silent_sock" > "$VSOCK_RESULT" 2>&1 \
         || TUNNEL_RC=$?
     local waited=0
     while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 300 ]; do sleep 0.1; waited=$((waited + 1)); done

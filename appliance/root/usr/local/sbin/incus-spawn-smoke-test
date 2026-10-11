@@ -113,4 +113,99 @@ else
     echo "  PASS: container creation works"
 fi
 
+# incusd's local listener peeks 8 bytes of every new connection to detect a STARTTLS upgrade.
+# Before lxc/incus@2cb2549 it did so inside Accept() with no deadline, so one client that sent
+# fewer than 8 bytes stalled every new API connection behind it (#791 B.1: about 179s through
+# vfkit, until the forwarder's socat -T reaped it). The fix, backported by build.sh (#1313),
+# classifies each connection in its own goroutine under a 3s read deadline. So: other clients
+# are served while a silent or partial one is held open, well before that deadline, and incusd
+# then closes the held one itself. Every held connection gives up on its own after 8s, so a
+# failure here leaves nothing behind.
+SOCK=/var/lib/incus/unix.socket
+now_ms() { awk '{ printf "%d\n", $1 * 1000 }' /proc/uptime; }
+
+# One GET /1.0 on a new connection, bounded. shut-none keeps socat from half-closing once the
+# request is written; incusd closes the connection after the response, and socat exits then.
+probe() {
+    printf 'GET /1.0 HTTP/1.1\r\nHost: incus\r\nConnection: close\r\n\r\n' \
+        | timeout 5 socat -t 5 - UNIX-CONNECT:"$SOCK",shut-none 2>/dev/null \
+        | grep -q '"status_code":200'
+}
+
+# Open a connection that sends $1 (possibly nothing) and then nothing more for 8s, and wait
+# until it is connected. $HELD is the socat holding it, which exits once incusd closes it.
+hold() {
+    ( printf '%s' "$1"; exec sleep 8 ) | socat -t 0.1 - UNIX-CONNECT:"$SOCK" > /dev/null 2>&1 &
+    HELD=$!
+    i=0
+    while [ $i -lt 20 ] && ! ls -l /proc/"$HELD"/fd 2>/dev/null | grep -q 'socket:'; do
+        sleep 0.05
+        i=$((i + 1))
+    done
+}
+
+# Whether process $1 is still running. Not kill -0: a non-interactive ash reaps its background
+# children only on wait, so one that exited stays a zombie and kill -0 still succeeds on it.
+running() { [ -r /proc/"$1"/stat ] && [ "$(cut -d' ' -f3 /proc/"$1"/stat)" != Z ]; }
+
+# Wait for every pid in $@ to exit, up to 8s; prints the ms elapsed since $T0.
+wait_closed() {
+    i=0
+    while [ $i -lt 80 ]; do
+        alive=0
+        for p in "$@"; do running "$p" && alive=1; done
+        [ $alive = 0 ] && break
+        sleep 0.1
+        i=$((i + 1))
+    done
+    echo $(( $(now_ms) - T0 ))
+}
+
+# A connection that has sent $1 must not hold up a request on another one, and incusd must
+# close it near the 3s deadline: not at once (it would refuse slow clients), and not only
+# when the client gives up after 8s.
+check_held() {
+    T0=$(now_ms)
+    hold "$1"
+    probe || fail "a request waited behind a connection that sent $2 (StarttlsListener peek)"
+    served=$(( $(now_ms) - T0 ))
+    running "$HELD" || fail "the connection that sent $2 closed before the request was served"
+    [ "$served" -lt 2500 ] || fail "a request next to a connection that sent $2 took ${served}ms"
+    echo "  PASS: request served in ${served}ms past a connection that sent $2"
+    closed=$(wait_closed "$HELD")
+    [ "$closed" -ge 2500 ] && [ "$closed" -le 7000 ] \
+        || fail "incusd closed the connection that sent $2 after ${closed}ms, not near its 3s deadline"
+    echo "  PASS: incusd closed the connection that sent $2 after ${closed}ms"
+}
+
+T0=$(now_ms)
+probe || fail "GET /1.0 on the local socket"
+echo "  INFO: GET /1.0 on the local socket takes $(( $(now_ms) - T0 ))ms"
+check_held "" "nothing"
+check_held "GET /1." "7 bytes"
+
+# A slow client is not a silent one: a request completed within the deadline is still served.
+( printf 'GET /1.'; sleep 1; printf '0 HTTP/1.1\r\nHost: incus\r\nConnection: close\r\n\r\n'; exec sleep 2 ) \
+    | timeout 8 socat -t 0.1 - UNIX-CONNECT:"$SOCK" 2> /dev/null | grep -q '"status_code":200' \
+    || fail "a request completed 1s after its first bytes was not served"
+echo "  PASS: a request completed 1s after its first bytes is served"
+
+# Several at once: each is classified on its own, so none of them holds up the others. Timed
+# from once all 8 are connected, so slow process starts (aarch64 under TCG) do not count.
+pids=""
+for b in "" "" "" "" "GET /1." "GET /1." "GET /1." "GET /1."; do
+    hold "$b"
+    pids="$pids $HELD"
+done
+T0=$(now_ms)
+probe && probe && probe || fail "requests waited behind 8 silent and partial connections"
+served=$(( $(now_ms) - T0 ))
+for p in $pids; do running "$p" || fail "a held connection closed before the 3 requests were served"; done
+[ "$served" -lt 2500 ] || fail "3 requests next to 8 silent and partial connections took ${served}ms"
+echo "  PASS: 3 requests served in ${served}ms past 8 silent and partial connections"
+# shellcheck disable=SC2086
+closed=$(wait_closed $pids)
+[ "$closed" -le 7000 ] || fail "8 silent and partial connections still open after ${closed}ms"
+echo "  PASS: incusd closed all 8 after ${closed}ms"
+
 echo "=== SMOKE TEST PASSED ==="

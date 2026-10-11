@@ -1,7 +1,9 @@
 #!/bin/sh
 # Launch the Incus API vsock forwarder. Shared by incus-spawn-vm-init at boot and by
 # isx-agent when recovering a leaked/wedged forwarder, so the socat invocation lives in
-# exactly one place.
+# exactly one place. The optional second argument points it at another socket: only the
+# test-only silent endpoint uses it (isx.test_silent_vsock in incus-spawn-vm-init), so the
+# -T backstop is timed with exactly this invocation.
 #
 # -T 180: total inactivity timeout. Each accepted connection forks a child; a close that
 # never propagates across the vsock boundary would otherwise leave that child (and the
@@ -15,7 +17,8 @@
 # overlap. Measured in CI: 3 of 16 and 12 of 32 concurrent connects refused (#774).
 set -eu
 
-PORT="${1:?usage: isx-start-vsock-forwarder <vsock-port>}"
+PORT="${1:?usage: isx-start-vsock-forwarder <vsock-port> [unix-socket]}"
+TARGET="${2:-/var/lib/incus/unix.socket}"
 
 exec socat -b 65536 -T 180 VSOCK-LISTEN:"$PORT",reuseaddr,fork,backlog=128 \
-    UNIX-CONNECT:/var/lib/incus/unix.socket
+    UNIX-CONNECT:"$TARGET"

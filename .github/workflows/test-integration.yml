@@ -359,7 +359,7 @@ jobs:
             -drive file=appliance/build/disk.img,format=raw,if=virtio \
             -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
             -device vhost-vsock-pci,guest-cid=3 \
-            -append "root=/dev/vda rw console=${{ matrix.console }} mitigations=off isx.smoke_test=1 isx.vsock_incus=8443 isx.agent_vsock=1025" \
+            -append "root=/dev/vda rw console=${{ matrix.console }} mitigations=off isx.smoke_test=1 isx.vsock_incus=8443 isx.agent_vsock=1025 isx.test_silent_vsock=8444" \
             < /dev/null > vm-console.log 2>&1 &
           echo "QEMU_PID=$!" >> "$GITHUB_ENV"
 
@@ -402,18 +402,20 @@ jobs:
           mkdir -p "$STATE"
           nohup socat UNIX-LISTEN:"$STATE/vm.incus.sock",fork,backlog=128 VSOCK-CONNECT:3:8443 >/dev/null 2>&1 &
           nohup socat UNIX-LISTEN:"$STATE/vm.agent.sock",fork,backlog=128 VSOCK-CONNECT:3:1025 >/dev/null 2>&1 &
+          # The test-only silent endpoint the backstop check times (isx.test_silent_vsock).
+          nohup socat UNIX-LISTEN:"$RUNNER_TEMP/silent.sock",fork,backlog=128 VSOCK-CONNECT:3:8444 >/dev/null 2>&1 &
           for _ in $(seq 1 10); do
-            [ -S "$STATE/vm.incus.sock" ] && [ -S "$STATE/vm.agent.sock" ] && exit 0
+            [ -S "$STATE/vm.incus.sock" ] && [ -S "$STATE/vm.agent.sock" ] && [ -S "$RUNNER_TEMP/silent.sock" ] && exit 0
             sleep 0.5
           done
           echo "::error::socat bridge sockets did not appear"
           exit 1
 
-      - name: Test the tunnel (forwarder, agent verbs, backstop, recovery)
+      - name: Test the tunnel (forwarder, agent verbs, silent clients, backstop, recovery)
         run: |
           STATE="$HOME/.local/state/incus-spawn"
           TUNNEL_BACKSTOP=${{ matrix.full && '1' || '0' }} \
-            appliance/test-tunnel.sh "$STATE/vm.incus.sock" "$STATE/vm.agent.sock"
+            appliance/test-tunnel.sh "$STATE/vm.incus.sock" "$STATE/vm.agent.sock" "$RUNNER_TEMP/silent.sock"
 
       - name: Download CLI native binary
         if: matrix.full
