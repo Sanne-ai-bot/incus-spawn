@@ -199,12 +199,13 @@ public class ProxyMain implements QuarkusApplication {
             proxy.stop();
         }));
 
-        var allDomains = proxy.allInterceptedDomains();
+        // The domains are read when the callback runs: a reload while start() waits on a port
+        // may change them.
         Runnable dnsCallback;
         if (Platform.isMacOS()) {
             dnsCallback = () -> {
                 try {
-                    addresses.configureBridgeDns(incus, allDomains);
+                    addresses.configureBridgeDns(incus, proxy.allInterceptedDomains());
                     ProxyLog.info("DNS overrides configured");
                 } catch (Exception e) {
                     ProxyLog.info("Using install-time DNS configuration (VM API not reachable from launchd)");
@@ -213,13 +214,13 @@ public class ProxyMain implements QuarkusApplication {
             };
         } else {
             dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(
-                    () -> addresses.configureBridgeDns(incus, allDomains), () -> proxy.setDnsConfigured(true));
+                    () -> addresses.configureBridgeDns(incus, proxy.allInterceptedDomains()), () -> proxy.setDnsConfigured(true));
         }
         try {
             proxy.start(dnsCallback);
         } catch (Exception e) {
             ProxyLog.error("Failed to start: " + e.getMessage());
-            System.err.println("Is another proxy already running? Check port " + port + ".");
+            System.err.println("Is another proxy already running? Check ports " + port + " and " + healthPort + ".");
             System.err.println("If the iptables redirect rule is missing, re-run 'isx init'.");
             return 1;
         }

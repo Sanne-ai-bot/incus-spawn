@@ -24,8 +24,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static dev.incusspawn.proxy.ContainerTls.assertServerRefuses;
 import static dev.incusspawn.proxy.ContainerTls.handshake;
@@ -193,19 +196,7 @@ class MitmTlsTest {
         var taken = new ServerSocket(0, 1, loopback);
         var oldHealth = new ServerSocket(0, 1, loopback);
         var probes = new AtomicInteger();
-        var oldProxy = new Thread(() -> {
-            try (oldHealth; var probe = oldHealth.accept()) {
-                probes.incrementAndGet();
-                oldHealth.close();
-                taken.close();
-                probe.getInputStream().read(new byte[1024]);
-                probe.getOutputStream().write(
-                        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes());
-            } catch (Exception ignored) {
-                // Closed unprobed by the finally below: the assertion reports it.
-            }
-        }, "old-proxy");
-        oldProxy.start();
+        var oldProxy = stoppingOnFirstProbe(oldHealth, probes, taken);
         try {
             proxy = new MitmProxy(vertx, "127.0.0.1", taken.getLocalPort(), oldHealth.getLocalPort(),
                     "127.0.0.1", ConfigFingerprint.load());
@@ -218,6 +209,199 @@ class MitmTlsTest {
             oldHealth.close();
             oldProxy.join(5_000);
         }
+    }
+
+    /**
+     * An older proxy frees its health port after its MITM port (#1219), so a new one that has
+     * bound the MITM port waits on the health port too while the old proxy still answers on it.
+     * The stand-in frees the health port as it answers its first probe.
+     */
+    @Test
+    void aTakenHealthPortIsWaitedOnWhileTheOldProxyAnswersOnIt() throws Exception {
+        var oldHealth = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+        var probes = new AtomicInteger();
+        var oldProxy = stoppingOnFirstProbe(oldHealth, probes);
+        try {
+            proxy = new MitmProxy(vertx, "127.0.0.1", 0, oldHealth.getLocalPort(),
+                    "127.0.0.1", ConfigFingerprint.load());
+            startInBackground(proxy);
+
+            assertEquals(1, probes.get());
+            assertEquals(oldHealth.getLocalPort(), proxy.healthPort());
+        } finally {
+            oldHealth.close();
+            oldProxy.join(5_000);
+        }
+    }
+
+    /** A stop while the health port is waited on ends the start before it gets ready. */
+    @Test
+    void aStopWhileTheHealthPortIsWaitedOnEndsTheStartUnready() throws Exception {
+        var oldHealth = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
+        var probed = new CountDownLatch(1);
+        var oldProxy = answeringEveryProbe(oldHealth, probed);
+        var ready = new AtomicBoolean();
+        var failure = new AtomicReference<Exception>();
+        try {
+            proxy = new MitmProxy(vertx, "127.0.0.1", 0, oldHealth.getLocalPort(), "127.0.0.1",
+                    ConfigFingerprint.load());
+            var starting = startInThread(proxy, () -> ready.set(true), failure);
+            assertTrue(probed.await(10, TimeUnit.SECONDS), "the health port was never waited on");
+
+            proxy.stop();
+            starting.join(5_000);
+
+            assertFalse(starting.isAlive(), "start() kept waiting after stop()");
+            assertNull(failure.get(), "a stopped start is not a failure");
+            assertFalse(ready.get(), "a stopped start got ready");
+            assertThrows(IllegalStateException.class, proxy::mitmPort, "the MITM server is still listening");
+        } finally {
+            oldHealth.close();
+            oldProxy.join(5_000);
+        }
+    }
+
+    /**
+     * A stop that is still running when the health port comes free ends the start unready too,
+     * and closes the health server it then bound: the stop latch drops only once stop() has
+     * closed everything, so start() cannot wait for it to tell. The old proxy frees the port
+     * from inside stop(), at its first log line, and stop() goes on only once start() has
+     * parked on the stop latch, as it does both stopped and ready.
+     */
+    @Test
+    void aStopThatOverlapsTheHealthBindEndsTheStartUnready() throws Exception {
+        var loopback = InetAddress.getByName("127.0.0.1");
+        var oldHealth = new ServerSocket(0, 50, loopback);
+        int healthPort = oldHealth.getLocalPort();
+        var probed = new CountDownLatch(1);
+        var oldProxy = answeringEveryProbe(oldHealth, probed);
+        var ready = new AtomicBoolean();
+        var failure = new AtomicReference<Exception>();
+        var starting = new AtomicReference<Thread>();
+        var freedInsideStop = new AtomicBoolean();
+        var originalErr = System.err;
+        System.setErr(new PrintStream(originalErr, true) {
+            @Override
+            public void println(String line) {
+                super.println(line);
+                if (line == null || !line.contains("Stopping proxy")) return;
+                freedInsideStop.set(true);
+                try {
+                    oldHealth.close();
+                    // start() ends parked on the stop latch, ready or not: stop() goes on then.
+                    var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                    while (starting.get().getState() != Thread.State.WAITING && starting.get().isAlive()
+                            && System.nanoTime() < deadline) {
+                        Thread.sleep(10);
+                    }
+                } catch (Exception e) {
+                    throw new AssertionError(e);
+                }
+            }
+        });
+        var wasSuppressed = ProxyLog.setSuppressStderr(false);
+        try {
+            proxy = new MitmProxy(vertx, "127.0.0.1", 0, healthPort, "127.0.0.1", ConfigFingerprint.load());
+            starting.set(startInThread(proxy, () -> ready.set(true), failure));
+            assertTrue(probed.await(10, TimeUnit.SECONDS), "the health port was never waited on");
+
+            proxy.stop();
+            starting.get().join(5_000);
+        } finally {
+            System.setErr(originalErr);
+            ProxyLog.setSuppressStderr(wasSuppressed);
+            oldHealth.close();
+            oldProxy.join(5_000);
+        }
+
+        assertTrue(freedInsideStop.get(), "stop() never logged, so the port was not freed inside it");
+        assertFalse(starting.get().isAlive(), "start() kept running after stop()");
+        assertNull(failure.get(), "a stopped start is not a failure");
+        assertFalse(ready.get(), "a start that a stop overlapped got ready");
+        try (var rebound = new ServerSocket()) {
+            rebound.setReuseAddress(true);
+            assertDoesNotThrow(() -> rebound.bind(new java.net.InetSocketAddress(loopback, healthPort)),
+                    "the stopped start left the health port bound");
+        }
+    }
+
+    /** An older proxy that never finishes stopping: it answers every health probe until closed. */
+    private static Thread answeringEveryProbe(ServerSocket health, CountDownLatch probed) {
+        var oldProxy = new Thread(() -> {
+            try (health) {
+                while (true) {
+                    try (var probe = health.accept()) {
+                        probe.getInputStream().read(new byte[1024]);
+                        probe.getOutputStream().write(
+                                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes());
+                    }
+                    probed.countDown();
+                }
+            } catch (Exception closed) {
+                // The test is over.
+            }
+        }, "old-proxy");
+        oldProxy.start();
+        return oldProxy;
+    }
+
+    private static Thread startInThread(MitmProxy proxy, Runnable onReady, AtomicReference<Exception> failure) {
+        var starting = new Thread(() -> {
+            try {
+                proxy.start(onReady);
+            } catch (Exception e) {
+                failure.set(e);
+            }
+        }, "test-proxy");
+        starting.setDaemon(true);
+        starting.start();
+        return starting;
+    }
+
+    /**
+     * A health port held by something that is not a proxy is not waited on, and the failed
+     * start does not leave the MITM server it already bound listening.
+     */
+    @Test
+    void aHealthPortHeldByAnotherProcessFailsTheStartAndFreesTheMitmPort() throws Exception {
+        var loopback = InetAddress.getByName("127.0.0.1");
+        int mitmPort;
+        try (var free = new ServerSocket(0, 1, loopback)) {
+            mitmPort = free.getLocalPort();
+        }
+        try (var taken = new ServerSocket(0, 1, loopback)) {
+            proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, taken.getLocalPort(), "127.0.0.1",
+                    ConfigFingerprint.load());
+            assertThrows(Exception.class, () -> startInBackground(proxy), "the health port was taken");
+        }
+
+        try (var rebound = new ServerSocket()) {
+            rebound.setReuseAddress(true);
+            assertDoesNotThrow(() -> rebound.bind(new java.net.InetSocketAddress(loopback, mitmPort)),
+                    "the failed start left the MITM port bound");
+        }
+    }
+
+    /**
+     * A stand-in for an older proxy that is stopping: it frees {@code health} and {@code alsoFree}
+     * as it answers its first health probe with 200, counted in {@code probes}.
+     */
+    private static Thread stoppingOnFirstProbe(ServerSocket health, AtomicInteger probes,
+                                               ServerSocket... alsoFree) {
+        var oldProxy = new Thread(() -> {
+            try (health; var probe = health.accept()) {
+                probes.incrementAndGet();
+                health.close();
+                for (var socket : alsoFree) socket.close();
+                probe.getInputStream().read(new byte[1024]);
+                probe.getOutputStream().write(
+                        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes());
+            } catch (Exception ignored) {
+                // Closed unprobed by the test: its assertion reports it.
+            }
+        }, "old-proxy");
+        oldProxy.start();
+        return oldProxy;
     }
 
     private int startProxy() throws Exception {

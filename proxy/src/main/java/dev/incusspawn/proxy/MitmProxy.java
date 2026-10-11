@@ -87,8 +87,9 @@ public class MitmProxy {
     final AtomicReference<VertexTokenEntry> vertexToken = new AtomicReference<>();
 
     private final Vertx vertx;
-    private HttpServer mitmServer;
-    private HttpServer healthHttpServer;
+    // Volatile: replaced on each bind attempt while stop() may read them from a shutdown hook.
+    private volatile HttpServer mitmServer;
+    private volatile HttpServer healthHttpServer;
     // Set once each listen has succeeded: Vert.x's actualPort() reports a fixed port before the
     // bind and after a failed one, so it cannot say whether a server is listening.
     private volatile int boundMitmPort;
@@ -99,6 +100,11 @@ public class MitmProxy {
     final ArtifactCacheHandler artifactCache;
     /** Created once, so a {@link #stop()} that comes before {@link #start} is not lost (#966). */
     private final CountDownLatch stopLatch = new CountDownLatch(1);
+    // stopLatch drops only once stop() has closed everything, too late for a start() still
+    // binding to see it. So stop() sets stopping first, and start() gets ready only while it is
+    // unset, both under lifecycleLock: a start that a stop overlaps never runs onReady (#1219).
+    private final Object lifecycleLock = new Object();
+    private volatile boolean stopping;
 
     private ApiTrafficLog debugLog;
     // CA fingerprint computed at startup for the health endpoint
@@ -140,7 +146,7 @@ public class MitmProxy {
     ApiActivity apiActivity = new ApiActivity();
 
     /** {@code isx mcp} for coordinator instances, at {@link ProxyConfig#MCP_DOMAIN} (#915). */
-    private McpBridge mcpBridge;
+    private volatile McpBridge mcpBridge;
     /** What serves one instance's MCP session; tests replace the {@code isx} it runs. */
     private java.util.function.Function<String, List<String>> mcpCommand = McpBridge::isxMcp;
 
@@ -635,6 +641,7 @@ public class MitmProxy {
                 mitmServer.updateSSLOptions(sslOptions)
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
             }
+            // Before start() is ready too: the writer is also what notices the bridge moved (#966).
             if (bridgeDnsWriter != null) {
                 try {
                     bridgeDnsWriter.accept(configState.routing().allInterceptedDomains());
@@ -687,7 +694,10 @@ public class MitmProxy {
      */
     public void start(Runnable onReady) throws Exception {
         // A reload may already have stopped it, e.g. on finding the bridge moved.
-        if (stopLatch.getCount() == 0) return;
+        if (stopping) {
+            stopLatch.await();
+            return;
+        }
 
         // Per-domain certs chosen by SNI, with wildcards (*.domain) pre-minted so
         // subdomains resolved via dnsmasq address= overrides get a valid cert (e.g.
@@ -710,58 +720,42 @@ public class MitmProxy {
                 .setMaxWebSocketFrameSize(1024 * 1024)
                 .setMaxWebSocketMessageSize(16 * 1024 * 1024);
 
-        upstream.createClients();
-
-        int maxRetries = 30;
-        for (int attempt = 1; ; attempt++) {
-            mitmServer = vertx.createHttpServer(serverOptions);
-            mitmServer.exceptionHandler(err -> {
-                if (isBenignConnectionError(err)) {
-                    // Clients (containers) drop connections abruptly all the time —
-                    // process exit, timeouts, TLS aborts. A full stack trace per RST
-                    // is pure noise, so log concisely without one.
-                    ProxyLog.info("MITM connection closed: " + err.getMessage());
-                    return;
+        synchronized (lifecycleLock) {
+            // Under the lock, so a stop() that reads none of these has made start() return here.
+            if (!stopping) {
+                upstream.createClients();
+                if (mcpBridge == null) {
+                    mcpBridge = new McpBridge(vertx, () -> instanceRegistry, mcpCommand);
+                    mcpBridge.start();
                 }
-                var rejection = certificateRejection(err);
-                if (rejection != null) {
-                    // The client's own verdict on our leaf, not a proxy fault. Vert.x does
-                    // not say which connection failed, so the instance and domain are unknown.
-                    ProxyLog.warn("A client rejected the proxy's certificate (" + rejection
-                            + "): something in an instance does not trust the isx CA");
-                    return;
-                }
-                System.err.println("MITM server error: " + err.getMessage());
-                err.printStackTrace(System.err);
-            });
-            if (mcpBridge == null) {
-                mcpBridge = new McpBridge(vertx, () -> instanceRegistry, mcpCommand);
-                mcpBridge.start();
-            }
-            mitmServer.requestHandler(this::routeRequest);
-            mitmServer.webSocketHandler(this::routeWebSocket);
-            try {
-                boundMitmPort = mitmServer.listen()
-                        .toCompletionStage().toCompletableFuture().get().actualPort();
-                break;
-            } catch (Exception e) {
-                // A port the kernel picks cannot be held by an earlier proxy: nothing to wait for.
-                if (attempt >= maxRetries || requestedMitmPort == 0 || !isBindException(e)) throw e;
-                if (!ProxyHealthCheck.isHealthy(healthBindAddress, requestedHealthPort)) throw e;
-                ProxyLog.warn("Port " + requestedMitmPort + " in use, previous proxy still running (" + attempt + "/" + maxRetries + ")");
-                Thread.sleep(200);
             }
         }
 
-        // Health check HTTP server (plain, no TLS)
-        healthHttpServer = vertx.createHttpServer()
-                .requestHandler(this::routeHealth);
-        boundHealthPort = healthHttpServer.listen(requestedHealthPort, healthBindAddress)
-                .toCompletionStage().toCompletableFuture().get().actualPort();
-
-        if (onReady != null) {
-            onReady.run();
+        try {
+            if (!stopping) boundMitmPort = bindWaitingForOldProxy(() -> bindMitmServer(serverOptions), requestedMitmPort, "Port");
+            if (!stopping) {
+                boundHealthPort = bindWaitingForOldProxy(this::bindHealthServer, requestedHealthPort, "Health port");
+            }
+        } catch (Exception e) {
+            // Nothing serves without a health endpoint: free the MITM port for whoever comes next.
+            closeListening();
+            throw e;
         }
+
+        boolean ready;
+        synchronized (lifecycleLock) {
+            ready = !stopping;
+        }
+        if (!ready) {
+            // A stop() that began while a bind waited may have read a server before it was set.
+            // Return as a stopped proxy does, once stop() is done.
+            closeListening();
+            stopLatch.await();
+            return;
+        }
+        // Outside the lock, so a stop() is never held up by its DNS write; one from here on
+        // stops a ready proxy.
+        if (onReady != null) onReady.run();
 
         ProxyLog.info("Listening on " + bindAddress + ":" + mitmPort());
         ProxyLog.info("Health endpoint on " + healthBindAddress + ":" + healthPort());
@@ -783,18 +777,111 @@ public class MitmProxy {
         stopLatch.await();
     }
 
+    private static final int BIND_RETRIES = 30;
+
+    /**
+     * Bind a server to {@code port}, waiting while an older proxy that holds it still answers
+     * on this proxy's health port. A stopping proxy frees its MITM port first and its health
+     * port last (#1219): that order is what makes the probe meaningful for the MITM port, and
+     * what leaves the health port to be waited on once the MITM port is free. Returns 0 when
+     * {@link #stop()} ends the wait.
+     */
+    private int bindWaitingForOldProxy(java.util.concurrent.Callable<Integer> bind, int port, String what)
+            throws Exception {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return bind.call();
+            } catch (Exception e) {
+                // A stop() may have closed the server mid-listen: no failure, the start just ends.
+                if (stopping) return 0;
+                // A port the kernel picks cannot be held by an earlier proxy: nothing to wait for.
+                if (attempt >= BIND_RETRIES || port == 0 || !isBindException(e)) throw e;
+                // Freed between the bind and the probe, or held by something that is not a
+                // proxy: one more bind tells them apart.
+                if (!ProxyHealthCheck.isHealthy(healthBindAddress, requestedHealthPort)) {
+                    try {
+                        return bind.call();
+                    } catch (Exception again) {
+                        ProxyLog.warn(what + " " + port + " is held by something that does not answer"
+                                + " as an isx proxy on port " + requestedHealthPort + ": not waiting for it");
+                        throw again;
+                    }
+                }
+                ProxyLog.warn(what + " " + port + " in use, previous proxy still running (" + attempt + "/" + BIND_RETRIES + ")");
+                Thread.sleep(200);
+            }
+        }
+    }
+
+    private void closeListening() {
+        closeQuietly(mitmServer, 2);
+        closeQuietly(healthHttpServer, 2);
+        boundMitmPort = 0;
+        boundHealthPort = 0;
+    }
+
+    private static void closeQuietly(HttpServer server, int timeoutSeconds) {
+        if (server == null) return;
+        try {
+            server.close().toCompletionStage().toCompletableFuture().get(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (Exception ignored) {}
+    }
+
+    /** A fresh server on each bind: one whose bind failed is not bound again. */
+    private int bindMitmServer(HttpServerOptions serverOptions) throws Exception {
+        mitmServer = vertx.createHttpServer(serverOptions);
+        mitmServer.exceptionHandler(err -> {
+            if (isBenignConnectionError(err)) {
+                // Clients (containers) drop connections abruptly all the time —
+                // process exit, timeouts, TLS aborts. A full stack trace per RST
+                // is pure noise, so log concisely without one.
+                ProxyLog.info("MITM connection closed: " + err.getMessage());
+                return;
+            }
+            var rejection = certificateRejection(err);
+            if (rejection != null) {
+                // The client's own verdict on our leaf, not a proxy fault. Vert.x does
+                // not say which connection failed, so the instance and domain are unknown.
+                ProxyLog.warn("A client rejected the proxy's certificate (" + rejection
+                        + "): something in an instance does not trust the isx CA");
+                return;
+            }
+            System.err.println("MITM server error: " + err.getMessage());
+            err.printStackTrace(System.err);
+        });
+        mitmServer.requestHandler(this::routeRequest);
+        mitmServer.webSocketHandler(this::routeWebSocket);
+        return listenOrClose(mitmServer, mitmServer.listen());
+    }
+
+    /** The plain-HTTP health server, fresh on each bind as {@link #bindMitmServer} is. */
+    private int bindHealthServer() throws Exception {
+        healthHttpServer = vertx.createHttpServer().requestHandler(this::routeHealth);
+        return listenOrClose(healthHttpServer, healthHttpServer.listen(requestedHealthPort, healthBindAddress));
+    }
+
+    /** The bound port; a server whose listen failed is closed, since each attempt makes a new one. */
+    private static int listenOrClose(HttpServer server, io.vertx.core.Future<HttpServer> listening) throws Exception {
+        try {
+            return listening.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS).actualPort();
+        } catch (Exception e) {
+            closeQuietly(server, 2);
+            throw e;
+        }
+    }
+
     public void stop() {
+        // First, so a start() still binding never gets ready (see lifecycleLock).
+        synchronized (lifecycleLock) {
+            stopping = true;
+        }
         ProxyLog.info("Stopping proxy");
         try {
             artifactCache.logCacheStats();
-            try {
-                if (mitmServer != null) mitmServer.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
-            } catch (Exception ignored) {}
+            closeQuietly(mitmServer, 2);
             upstream.closeClients();
             if (mcpBridge != null) mcpBridge.stop();
-            try {
-                if (healthHttpServer != null) healthHttpServer.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
-            } catch (Exception ignored) {}
+            closeQuietly(healthHttpServer, 1);
         } finally {
             // Guarantee stopLatch is always counted down, even if an unexpected exception occurs
             stopLatch.countDown();
