@@ -19,6 +19,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
@@ -160,14 +161,14 @@ public class BuildCommand extends BaseCommand {
     public static final String REBUILDING_SUFFIX = "-rebuilding";
 
     /** The longest template name that can be rebuilt: it is built as {@code <name>-rebuilding} first. */
-    static final int MAX_TEMPLATE_NAME_LENGTH = TemplateLock.MAX_INSTANCE_NAME_LENGTH - REBUILDING_SUFFIX.length();
+    static final int MAX_TEMPLATE_NAME_LENGTH = InstanceNames.MAX_LENGTH - REBUILDING_SUFFIX.length();
 
     /** True once it has said that {@code name} is too long to be built under its temporary name. */
     static boolean reportNameTooLong(String name) {
         if (name.length() <= MAX_TEMPLATE_NAME_LENGTH) return false;
         var shown = shown(name);
         System.err.println("Error: '" + shown + "' is too long to build: it is built as '" + shown + REBUILDING_SUFFIX
-                + "' first, and Incus allows " + TemplateLock.MAX_INSTANCE_NAME_LENGTH
+                + "' first, and Incus allows " + InstanceNames.MAX_LENGTH
                 + " characters, so a template name may have at most " + MAX_TEMPLATE_NAME_LENGTH + ".");
         return true;
     }
@@ -239,8 +240,8 @@ public class BuildCommand extends BaseCommand {
             }
             return CommandResult.valueOf(1);
         }
-        // A definition that failed to parse was skipped with a warning above. Its name is
-        // unknown, so building anyway could silently use something else in its place: a
+        // A definition that failed to parse, or whose name or parent no instance can have, was
+        // skipped with a warning above. Its name is unknown or unusable, so building anyway could silently use something else in its place: a
         // lower layer's definition of the same name, or the stale build-source snapshot of
         // an existing template. Refuse, even for targets that look unrelated.
         var unparsable = new ArrayList<>(loaded.parseFailures());
@@ -360,13 +361,13 @@ public class BuildCommand extends BaseCommand {
         return null;
     }
 
-    /** The refusal for definition files that failed to parse, or null when there are none. */
+    /** The refusal for definition files that failed to load, or null when there are none. */
     static String unparsableDefinitionsError(List<Path> files) {
         if (files.isEmpty()) return null;
         var sb = new StringBuilder("Cannot build: ")
                 .append(files.size() == 1
-                        ? "a definition file could not be parsed"
-                        : files.size() + " definition files could not be parsed")
+                        ? "a definition file could not be loaded"
+                        : files.size() + " definition files could not be loaded")
                 .append(" (see the error above):\n");
         for (var file : files) {
             // A cloned repository names the files in its .incus-spawn/ (#1228).

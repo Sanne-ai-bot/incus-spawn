@@ -3,12 +3,12 @@ package dev.incusspawn.lifecycle;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.util.HostLock;
 
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.function.Consumer;
-import java.util.regex.Pattern;
 
 /**
  * Replacing a template while other isx processes copy from it (#1212). A rebuild is made under a
@@ -29,13 +29,6 @@ public final class TemplateLock {
      */
     static final Duration SWAP_TIMEOUT = Duration.ofMinutes(10);
 
-    /** The longest instance name Incus accepts. */
-    public static final int MAX_INSTANCE_NAME_LENGTH = 63;
-
-    /** What Incus accepts as an instance name; nothing else can be a template, or a file name here. */
-    private static final Pattern INSTANCE_NAME =
-            Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9-]{0," + (MAX_INSTANCE_NAME_LENGTH - 1) + "}");
-
     private TemplateLock() {}
 
     /** A {@link #reading} hold, released by closing it. */
@@ -46,7 +39,7 @@ public final class TemplateLock {
 
     /** One file per template name, kept: deleting it would let two processes lock different files. */
     static Path lockFile(String template) {
-        if (!INSTANCE_NAME.matcher(template).matches()) {
+        if (!InstanceNames.isValid(template)) {
             throw new IllegalArgumentException("'" + template + "' is not an instance name");
         }
         return Environment.lockDir().resolve("templates").resolve(template + ".lock");
@@ -61,7 +54,7 @@ public final class TemplateLock {
      * @throws HostLock.HostLockException if a swap holds it past {@link HostLock#TIMEOUT}
      */
     public static Held reading(String template, Consumer<String> log) {
-        if (template == null || !INSTANCE_NAME.matcher(template).matches()) return () -> {};
+        if (!InstanceNames.isValid(template)) return () -> {};
         return HostLock.acquireShared(lockFile(template), "replacing template '" + template + "'", log, Warnings::warn)::close;
     }
 

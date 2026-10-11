@@ -235,12 +235,16 @@ But two files declaring the same `name:` *within the same directory* is always a
 `ImageDef.loadAllWithConflicts()` distinguishes the two: same-directory collisions become `NameConflict`s (listing every colliding file), cross-layer replacements become `LayerOverride`s.
 `isx build` refuses to build while any conflict exists and names the offending files; the TUI degrades to a status warning but still renders; `isx doctor` surfaces both (conflicts as warnings, overrides as informational notes).
 Both `ImageDef` and `ToolDefLoader` feed the same `LayeredDefinitions<T>` collector (`config/LayeredDefinitions.java`), which owns the per-directory collision/override bookkeeping and the `NameConflict`/`LayerOverride` record types — so the policy is defined once and applies identically to images and tools.
-The collector also records files that failed to parse (`parseFailures()`).
+The collector also records files that failed to parse (`parseFailures()`), and image definitions refused at load for their name (below).
 Loading skips them with a warning, but `isx build` refuses while any exist.
 An unparsable file's `name:` is unknown.
 So it may have been the target, a parent, or an override.
 Building anyway would silently use whatever it was meant to replace — a lower layer's definition, or the stale build-source snapshot of an existing template.
 Read-only commands keep warning and carry on.
+A definition whose `name:` or `parent:` is not a name Incus accepts for an instance (`InstanceNames`, Incus's own rule: letters, digits and `-`, not starting or ending with `-`, not only digits, at most 63 characters) is refused at load, with one warning that shows the name through `oneLine` (#1274).
+Such a template could never be built, and refusing it where definitions load keeps a cloned repository's name, which could carry escape sequences or line breaks, from every place isx prints a template's name, including ones added later: it drops out of `isx templates`, the TUI and `isx build` alike.
+It is recorded with the parse failures, because it too may have meant to replace a lower layer's definition, so `isx build` refuses in the same way.
+`isx templates edit` reports the same as a validation error.
 
 ### Tool System
 

@@ -39,13 +39,19 @@ public class TemplateValidator {
             return new ValidationResult(errors, warnings);
         }
 
-        if (!def.getName().startsWith("tpl-")) {
+        var invalidName = ImageDef.notAnInstanceName("template name", def.getName());
+        if (invalidName != null) {
+            errors.add(invalidName);
+        } else if (!def.getName().startsWith("tpl-")) {
             warnings.add("Template name '" + def.getName()
                     + "' does not follow the 'tpl-' prefix convention");
         }
 
-        if (def.getParent() != null && !def.getParent().isBlank()) {
-            if (!knownTemplates.containsKey(def.getParent())) {
+        if (!def.isRoot()) {
+            var invalidParent = ImageDef.notAnInstanceName("parent", def.getParent());
+            if (invalidParent != null) {
+                errors.add(invalidParent);
+            } else if (!knownTemplates.containsKey(def.getParent())) {
                 warnings.add("Parent '" + def.getParent()
                         + "' not found among known templates");
             }

@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.incus.Metadata;
 
 import java.time.Duration;
@@ -211,8 +212,9 @@ final class McpSession {
             do {
                 name = "mcp-" + base + (hint != null ? "-" + hint : "") + "-" + randomSuffix(5);
             } while (owned.containsKey(name));
-            if (name.length() > 63) {
-                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "instance name '" + name + "' would exceed 63 characters; use a shorter name_hint");
+            if (name.length() > InstanceNames.MAX_LENGTH) {
+                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "instance name '" + name + "' would exceed "
+                        + InstanceNames.MAX_LENGTH + " characters; use a shorter name_hint");
             }
             owned.put(name, new Owned(name, template.name(), template.supportsDelegate(), purpose,
                     Instant.now(), false, false, key));

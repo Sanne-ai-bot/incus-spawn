@@ -48,7 +48,7 @@ class BuildCommandTest {
 
         var msg = BuildCommand.unparsableDefinitionsError(
                 List.of(Path.of("/defs/images/isx.yaml"), Path.of("/defs/tools/foo.yaml")));
-        assertTrue(msg.startsWith("Cannot build: 2 definition files could not be parsed"), msg);
+        assertTrue(msg.startsWith("Cannot build: 2 definition files could not be loaded"), msg);
         assertTrue(msg.contains("/defs/images/isx.yaml"), msg);
         assertTrue(msg.contains("/defs/tools/foo.yaml"), msg);
     }
@@ -1913,7 +1913,7 @@ class BuildCommandTest {
     void unparsableDefinitionFilesAreListedOneSafeLineEach(@TempDir Path tmp) {
         var refusal = BuildCommand.unparsableDefinitionsError(
                 List.of(tmp.resolve(".incus-spawn/images/evil" + HOSTILE + ".yaml")));
-        assertTrue(refusal.contains("could not be parsed"), refusal);
+        assertTrue(refusal.contains("could not be loaded"), refusal);
         assertSafe(refusal);
     }
 

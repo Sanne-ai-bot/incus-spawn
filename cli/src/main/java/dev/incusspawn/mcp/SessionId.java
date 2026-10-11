@@ -31,8 +31,6 @@ record SessionId(long pid, long start, String instance, String grant) {
 
     /** How an instance session's stamp starts; never a digit, so never read as a process. */
     static final String INSTANCE_PREFIX = "instance:";
-    private static final java.util.regex.Pattern INSTANCE_NAME =
-            java.util.regex.Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9-]{0,62}");
 
     SessionId(long pid, long start) {
         this(pid, start, null, null);
@@ -51,7 +49,7 @@ record SessionId(long pid, long start, String instance, String grant) {
      * later has another grant, so another session.
      */
     static SessionId ofInstance(String name, String grant) {
-        if (name == null || !INSTANCE_NAME.matcher(name).matches()) {
+        if (!dev.incusspawn.incus.InstanceNames.isValid(name)) {
             throw new IllegalArgumentException("not an instance name: " + name);
         }
         if (!dev.incusspawn.incus.Metadata.isMcpCallerGrant(grant)) {
