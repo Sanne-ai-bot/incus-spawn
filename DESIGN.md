@@ -3332,9 +3332,9 @@ Jackson's semantics are the ones users' files were written against, so where jjq
 - `asList()` on a JSON object is empty, where Jackson iterated its values: an object (a devices map, `state.network`) is walked as a `JqObject`.
 - A tree is immutable: code that changes one (the support-bundle redaction) rebuilds it along key/index segments, never along a dotted path re-split, since keys may contain `.` or `[`.
 - A strict-parse failure quotes the whole document; messages show `Jjq.brief`.
-- Inside a list item, an empty value takes the keys after it as its value (Hyperfoil/jjq#134); typed fields then fail on the shape, and the env converter refuses a `value` that is not a single value.
+- A JSON document with a repeated key is refused, where Jackson kept the last value: a request body, an MCP message or `~/.claude.json` with one fails like malformed JSON rather than being read one way or the other.
 - An `Integer` field binds through `IntegerConverter`: jjq gives 0 for `abc` or `true` and wraps `99999999999`, and for `mcp.orphan-grace-hours` or `max-instances` that would fail open.
-The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2) and #130-#134 (open).
+The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2), #131-#134 (fixed in 0.2.3) and #130 (open).
 
 ### DNS: static resolv.conf + bridge dnsmasq
 systemd-resolved (127.0.0.53) doesn't work reliably inside Incus containers because it expects to manage the network configuration.

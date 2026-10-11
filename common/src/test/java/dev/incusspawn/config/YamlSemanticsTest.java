@@ -310,23 +310,28 @@ class YamlSemanticsTest {
         assertEquals(3, tool("parameters:\n  n:\n    type: integer\n    min: 3\n").getParameters().get("n").getMin());
     }
 
-    // Hyperfoil/jjq#134, guarded in EnvEntryListConverter.
+    // Fixed in jjq 0.2.3 (Hyperfoil/jjq#134): with 0.2.2 an empty value took the keys after it as its value.
 
     @Test
-    void anEnvValueThatParsedAsAMappingIsRefused() {
-        var e = assertThrows(java.io.IOException.class, () -> image(
-                "env:\n  - name: FOO\n    value:\n    strategy: append\n    separator: \":\"\n"));
-        assertTrue(friendly(e).contains("'value' must be a single value"), friendly(e));
+    void anEmptyEnvValueBeforeOtherKeysIsEmptyAndKeepsThem() throws Exception {
+        var env = image("env:\n  - name: FOO\n    value:\n    strategy: append\n    separator: \":\"\n").getEnv().getFirst();
+        assertEquals("", env.getValue());
+        assertEquals(EnvEntry.Strategy.APPEND, env.getStrategy());
+        assertEquals(":", env.getSeparator());
     }
 
-    /** An empty separator before the strategy would otherwise drop the strategy: PATH set, not prepended. */
+    /** An empty separator before the strategy must not drop the strategy: PATH prepended, not set. */
     @Test
-    void anyEnvFieldThatParsedAsAMappingIsRefused() {
-        var separator = assertThrows(java.io.IOException.class, () -> image(
-                "env:\n  - name: PATH\n    value: /x\n    separator:\n    strategy: prepend\n"));
-        assertTrue(friendly(separator).contains("'separator' must be a single value"), friendly(separator));
-        var name = assertThrows(java.io.IOException.class, () -> image("env:\n  - name:\n    value: x\n"));
-        assertTrue(friendly(name).contains("'name' must be a single value"), friendly(name));
+    void anEmptyEnvSeparatorBeforeTheStrategyKeepsTheStrategy() throws Exception {
+        var env = image("env:\n  - name: PATH\n    value: /x\n    separator:\n    strategy: prepend\n").getEnv().getFirst();
+        assertEquals(EnvEntry.Strategy.PREPEND, env.getStrategy());
+        assertEquals(" ", env.getSeparator());
+    }
+
+    @Test
+    void anEmptyEnvNameIsRefused() {
+        var e = assertThrows(java.io.IOException.class, () -> image("env:\n  - name:\n    value: x\n"));
+        assertTrue(friendly(e).contains("requires a 'name' field"), friendly(e));
     }
 
     @Test
@@ -339,12 +344,5 @@ class YamlSemanticsTest {
     @Test
     void anEnvNameIsTakenAsWritten() throws Exception {
         assertEquals("on", image("env:\n  - name: on\n    value: x\n").getEnv().getFirst().getName());
-    }
-
-    /** Pins the parser bug itself, so the day jjq fixes it this fails and the note can go. */
-    @Test
-    void jjqStillNestsTheKeyAfterAnEmptyValueInAListItem() {
-        assertEquals("[{\"n\":1,\"a\":{\"b\":1}}]",
-                io.hyperfoil.tools.jjq.yaml.JqYaml.parse("- n: 1\n  a:\n  b: 1\n").toJsonString());
     }
 }
