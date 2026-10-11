@@ -1,6 +1,5 @@
 package dev.incusspawn.tui;
 
-import dev.incusspawn.BuildInfo;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.OutputFormat;
@@ -65,7 +64,7 @@ final class MainScreen {
         var left = new ArrayList<Span>();
         left.add(Span.styled(" isx ", Style.EMPTY.bold().fg(bg).bg(tui.theme.contextAccentFg())));
         int leftW = 5;
-        var version = BuildInfo.instance().version();
+        var version = tui.currentVersion();
         if (version != null && !version.isBlank()) {
             var vtext = "  " + version;
             left.add(Span.styled(vtext, Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
@@ -454,7 +453,7 @@ final class MainScreen {
             boolean hasWarning = false;
             if (!"not built".equals(template.buildStatus())) {
                 var warnStyle = Style.EMPTY.fg(tui.theme.statusWarning()).bg(bg);
-                var currentVersion = BuildInfo.instance().version();
+                var currentVersion = tui.currentVersion();
                 if (!template.buildVersion().isEmpty() && !template.buildVersion().equals(currentVersion)) {
                     spans.add(Span.styled("  ! built with isx v" + template.buildVersion()
                             + " (current: v" + currentVersion + ")", warnStyle));

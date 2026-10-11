@@ -1,4 +1,4 @@
- isx   <version>  ● 1 container running
+ isx   1.2.3  ● 1 container running
 ╭ Templates ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │  NAME                                        BUILT                DISK     DESCRIPTION                               │
 │▸ tpl-minimal                                 3 days ago           -        Minimal Fedora                            │

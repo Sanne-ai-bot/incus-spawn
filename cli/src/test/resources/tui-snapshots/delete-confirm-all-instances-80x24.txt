@@ -1,0 +1,24 @@
+
+
+
+
+
+
+
+
+             ╔ Destroy all instances ═════════════════════════════╗
+             ║                                                    ║
+             ║ This will destroy all instances.                   ║
+             ║                                                    ║
+             ║  y Confirm   any key Cancel                        ║
+             ║                                                    ║
+             ╚════════════════════════════════════════════════════╝
+
+
+
+
+
+
+
+
+

@@ -2,7 +2,6 @@ package dev.incusspawn.tui;
 
 import dev.incusspawn.command.IsolatedHome;
 import dev.incusspawn.command.InstanceListing;
-import dev.incusspawn.BuildInfo;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
@@ -53,6 +52,8 @@ class TuiCharacterisationTest {
         runner.close();
     }
 
+    private static final String VERSION = "1.2.3";
+
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
     /** Minutes before now, as a creation stamp; half an hour from a unit boundary, so its age is stable. */
@@ -74,7 +75,7 @@ class TuiCharacterisationTest {
         config.put(Metadata.TYPE, Metadata.TYPE_BASE);
         config.put(Metadata.PROFILE, name);
         config.put(Metadata.CREATED, ago(3 * 24 * 60 + 30));
-        config.put(Metadata.BUILD_VERSION, BuildInfo.instance().version());
+        config.put(Metadata.BUILD_VERSION, VERSION);
         if (parent != null) config.put(Metadata.PARENT, parent);
         return config;
     }
@@ -109,6 +110,12 @@ class TuiCharacterisationTest {
             boolean showProxyError() {
                 return false;
             }
+
+            // A version no build has, so the header and the outdated marks never move with a release.
+            @Override
+            String currentVersion() {
+                return VERSION;
+            }
         };
         tui.useDefinitions(defs, new ToolDefLoader(List.of()), List.of());
         tui.startSession(daemon.client(), new BackgroundTaskManager(), new FlockInstanceLockManager(),
@@ -128,15 +135,9 @@ class TuiCharacterisationTest {
         for (char c : text.toCharArray()) press(tui, KeyEvent.ofChar(c));
     }
 
-    /** The header names the build's version, which a release changes. */
-    private static String withoutVersion(String text) {
-        return text.replace(BuildInfo.instance().version(), "<version>");
-    }
-
     private static void snapshot(String name, Tui tui) {
         snapshotInContext(name, tui);
-        TuiSnapshot.assertMatches("tui-" + name + "-120x40", TuiSnapshot.render(120, 40, tui::render),
-                TuiCharacterisationTest::withoutVersion);
+        TuiSnapshot.assertMatches("tui-" + name + "-120x40", TuiSnapshot.render(120, 40, tui::render));
     }
 
     /**
@@ -144,13 +145,19 @@ class TuiCharacterisationTest {
      * one snapshot, and the main screen itself is pinned at both sizes above (#1251).
      */
     private static void snapshotInContext(String name, Tui tui) {
-        TuiSnapshot.assertMatches("tui-" + name + "-80x24", TuiSnapshot.render(80, 24, tui::render),
-                TuiCharacterisationTest::withoutVersion);
+        TuiSnapshot.assertMatches("tui-" + name + "-80x24", TuiSnapshot.render(80, 24, tui::render));
     }
 
     private void opensAndCloses(String name, Tui tui, Tui.Mode expected, KeyEvent... keys) {
+        opensAndCloses(name, tui, expected, open -> {}, keys);
+    }
+
+    /** As above, with {@code whileOpen} checking what the dialog was opened on. */
+    private void opensAndCloses(String name, Tui tui, Tui.Mode expected, java.util.function.Consumer<Tui> whileOpen,
+                                KeyEvent... keys) {
         press(tui, keys);
         assertEquals(expected, tui.mode(), name);
+        whileOpen.accept(tui);
         press(tui, ESC);
         assertEquals(Tui.Mode.BROWSE, tui.mode(), name + " closes on Esc");
     }
@@ -183,7 +190,7 @@ class TuiCharacterisationTest {
     void mainScreenWithGaugeLegendAndStatus() {
         // Another isx built tpl-dev, so it is outdated and the legend shows; the pool is 63% full.
         var old = template("tpl-dev", "tpl-minimal");
-        old.put(Metadata.BUILD_VERSION, BuildInfo.instance().version() + "-older");
+        old.put(Metadata.BUILD_VERSION, VERSION + "-older");
         var tui = tui(true, new FakeIncusDaemon().container("tpl-dev", old));
         tui.poolUsage = new IncusClient.PoolUsage(63L << 30, 100L << 30);
         tui.statusMessage = "Created branch work-2";
@@ -197,7 +204,13 @@ class TuiCharacterisationTest {
         typeText(tui, "work");
         snapshot("search", tui);
         press(tui, ESC);
-        snapshot("search-closed", tui);
+        // Closing the search restores the screen it started from, so it needs no golden of its own.
+        var fresh = tui();
+        for (int[] size : new int[][] {{80, 24}, {120, 40}}) {
+            assertEquals(TuiSnapshot.toText(TuiSnapshot.render(size[0], size[1], fresh::render)),
+                    TuiSnapshot.toText(TuiSnapshot.render(size[0], size[1], tui::render)),
+                    "closing the search restores the screen at " + size[0] + "x" + size[1]);
+        }
     }
 
     @Test
@@ -212,7 +225,11 @@ class TuiCharacterisationTest {
 
     @Test
     void branchFromATemplate() {
-        opensAndCloses("branch-template", tui(), Tui.Mode.BRANCH, ENTER);
+        opensAndCloses("branch-template", tui(), Tui.Mode.BRANCH, open -> {
+            var request = open.branch.request("x");
+            assertEquals("tpl-minimal", request.source());
+            assertFalse(open.branch.sourceIsVm(), "a container's branch has no limit fields");
+        }, ENTER);
     }
 
     @Test
@@ -221,7 +238,11 @@ class TuiCharacterisationTest {
         press(tui, TAB);
         // The VM is the second instance row.
         press(tui, DOWN);
-        opensAndCloses("branch-vm", tui, Tui.Mode.BRANCH, KeyEvent.ofKey(KeyCode.F4));
+        opensAndCloses("branch-vm", tui, Tui.Mode.BRANCH, open -> {
+            var request = open.branch.request("x");
+            assertEquals("vm-1", request.source());
+            assertTrue(open.branch.sourceIsVm(), "a VM's branch offers its limits");
+        }, KeyEvent.ofKey(KeyCode.F4));
     }
 
     @Test
@@ -260,12 +281,14 @@ class TuiCharacterisationTest {
     @Test
     void deleteATemplate() {
         opensAndCloses("confirm-delete-template", tui(), Tui.Mode.CONFIRM_DELETE,
+                open -> assertEquals("tpl-minimal", open.deleteConfirm().name()),
                 KeyEvent.ofKey(KeyCode.F8));
     }
 
     @Test
     void deleteEveryTemplate() {
         opensAndCloses("confirm-delete-all-templates", tui(), Tui.Mode.CONFIRM_DELETE,
+                open -> assertEquals("--all", open.deleteConfirm().name()),
                 KeyEvent.ofKey(KeyCode.F8, KeyModifiers.SHIFT));
     }
 
@@ -274,6 +297,7 @@ class TuiCharacterisationTest {
         var tui = tui();
         press(tui, TAB);
         opensAndCloses("confirm-delete-instance", tui, Tui.Mode.CONFIRM_DELETE,
+                open -> assertEquals("work-1", open.deleteConfirm().name()),
                 KeyEvent.ofKey(KeyCode.F8));
     }
 
@@ -282,6 +306,7 @@ class TuiCharacterisationTest {
         var tui = tui();
         press(tui, TAB);
         opensAndCloses("confirm-delete-all-instances", tui, Tui.Mode.CONFIRM_DELETE,
+                open -> assertEquals("--all-instances", open.deleteConfirm().name()),
                 KeyEvent.ofKey(KeyCode.F8, KeyModifiers.SHIFT));
     }
 

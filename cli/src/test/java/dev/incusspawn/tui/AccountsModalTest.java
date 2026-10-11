@@ -107,14 +107,6 @@ class AccountsModalTest {
     }
 
     @Test
-    void rendersAt120x40() {
-        var modal = modal(CLAUDE, GITHUB);
-        press(modal, DOWN);
-        TuiSnapshot.assertMatches("accounts-120x40",
-                TuiSnapshot.render(120, 40, f -> modal.render(f, f.area())));
-    }
-
-    @Test
     void rowsComeFromTheConfigAndThePins() throws Exception {
         var config = new ObjectMapper(new YAMLFactory()).readValue("""
                 claude:

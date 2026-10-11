@@ -114,7 +114,7 @@ public class Tui {
                 @Override public boolean parentRebuilt(String template) { return templatesParentRebuilt.contains(template); }
                 @Override public String overriddenSource(String template) { return imageLayers.overriddenSource(template); }
                 @Override public String builtFrom(String template) { return Tui.this.loader.builtFrom(template); }
-                @Override public String currentVersion() { return BuildInfo.instance().version(); }
+                @Override public String currentVersion() { return Tui.this.currentVersion(); }
             }, java.time.LocalDateTime::now);
 
     private final InstanceDetailView instanceDetail = new InstanceDetailView(modal, theme);
@@ -122,7 +122,7 @@ public class Tui {
     private final ActionsMenu actionsMenu = new ActionsMenu(modal, theme);
 
     private final AboutModal about = new AboutModal(modal, theme, new AboutModal.Source() {
-        @Override public String version() { return BuildInfo.instance().version(); }
+        @Override public String version() { return Tui.this.currentVersion(); }
         @Override public String gitSha() { return BuildInfo.instance().gitSha(); }
         @Override public String incusClient() { return BuildInfo.instance().incusClient(); }
         @Override public String incusServer() { return BuildInfo.instance().incusServer(); }
@@ -1876,6 +1876,19 @@ public class Tui {
         return mode;
     }
 
+    /** The delete confirmation last opened, for a test to read what it is for. */
+    DeleteConfirm deleteConfirm() {
+        return deleteConfirm;
+    }
+
+    /**
+     * The version of isx running, which the header names and templates are judged outdated
+     * against; overridable so a test can give one that no build changes.
+     */
+    String currentVersion() {
+        return BuildInfo.instance().version();
+    }
+
     PendingAction pendingAction() {
         return pendingAction;
     }
@@ -2362,7 +2375,7 @@ public class Tui {
                 .toList();
         var staleness = TemplateStaleness.assess(built, imageDefs, storedSourceTemplates,
                 () -> TemplateStaleness.toolFingerprints(imageDefs.values(), toolDefLoader),
-                BuildInfo.instance().version());
+                currentVersion());
 
         for (var t : templateEntries) {
             var statusDisplay = "not built".equals(t.buildStatus()) ? "not built" : Metadata.ageDescription(t.buildStatus());
