@@ -87,6 +87,13 @@ public final class FakeIncusDaemon implements IncusTransport {
      */
     private final Map<String, java.util.Set<String>> hotplugged = new LinkedHashMap<>();
     private int hotplugSlots = 8;
+    /** Whether execs are served (each exits 0); otherwise none is, and a readiness wait times out. */
+    private boolean servesExecs;
+    /** What a served exec prints, by a string its command line contains; the first match wins. */
+    private final Map<String, String> execOutputs = new LinkedHashMap<>();
+    /** What each served exec's stdout socket delivers, by its secret. */
+    private final Map<String, byte[]> execStdout = new LinkedHashMap<>();
+    private int nextExec = 1;
 
     public FakeIncusDaemon() {
         network("incusbr0", Map.of("ipv4.address", "10.166.11.1/24"));
@@ -341,6 +348,23 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /**
+     * Serve execs: each exits 0 having printed nothing, or what {@link #execOutput} gives its
+     * command. Their round trips are recorded like any other: the POST, a WebSocket per fd
+     * ({@code WS ...}) and the operation wait.
+     */
+    public FakeIncusDaemon servesExecs() {
+        servesExecs = true;
+        return this;
+    }
+
+    /** A served exec whose command line contains {@code needle} prints {@code stdout}. */
+    public FakeIncusDaemon execOutput(String needle, String stdout) {
+        servesExecs = true;
+        execOutputs.put(needle, stdout);
+        return this;
+    }
+
     /** A client wired to this daemon. */
     /**
      * A client whose readiness wait gives up after a few milliseconds, for tests outside this
@@ -419,6 +443,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             var environment = new LinkedHashMap<String, String>();
             exec.path("environment").properties().forEach(e -> environment.put(e.getKey(), e.getValue().asText()));
             execs.add(new Exec(command, environment));
+            if (servesExecs) return startExec(String.join(" ", command));
         }
         return handle(method, path, extraHeaders, body);
     }
@@ -443,7 +468,46 @@ public final class FakeIncusDaemon implements IncusTransport {
     @Override
     public WsConnection openWebSocket(String wsPath) throws IOException {
         requests.add("WS " + wsPath);
-        throw new IOException("FakeIncusDaemon does not serve WebSockets");
+        var marker = "/websocket?secret=";
+        var secret = wsPath.contains(marker) ? wsPath.substring(wsPath.indexOf(marker) + marker.length()) : null;
+        if (!servesExecs || secret == null) throw new IOException("FakeIncusDaemon does not serve WebSockets");
+        return new ExecSocket(execStdout.getOrDefault(secret, new byte[0]));
+    }
+
+    /** An exec, started: an operation whose fds' sockets carry {@code stdout} and then close. */
+    private RawResponse startExec(String commandLine) {
+        var id = "exec-" + nextExec++;
+        var stdout = execOutputs.entrySet().stream().filter(e -> commandLine.contains(e.getKey()))
+                .map(Map.Entry::getValue).findFirst().orElse("");
+        var metadata = JSON.createObjectNode().put("id", id);
+        var fds = metadata.putObject("metadata").putObject("fds");
+        for (var fd : List.of("0", "1", "2", "control")) fds.put(fd, id + "-" + fd);
+        execStdout.put(id + "-1", stdout.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return async(id, metadata);
+    }
+
+    /** One fd of a served exec: its bytes, if any, then end of stream. */
+    private static final class ExecSocket implements WsConnection {
+        private byte[] pending;
+
+        ExecSocket(byte[] data) {
+            pending = data.length > 0 ? data : null;
+        }
+
+        @Override
+        public synchronized byte[] readPayload() {
+            var data = pending;
+            pending = null;
+            return data;
+        }
+
+        @Override public byte[] readMessage() { return readPayload(); }
+        @Override public long millisSinceLastReceived() { return 0; }
+        @Override public synchronized boolean hasUnread() { return pending != null; }
+        @Override public void sendData(byte[] data, int offset, int length) {}
+        @Override public void sendPing() {}
+        @Override public void sendClose() {}
+        @Override public void close() {}
     }
 
     /**
@@ -846,10 +910,15 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     private RawResponse async() {
+        return async("op-" + nextOperation++, null);
+    }
+
+    private static RawResponse async(String id, JsonNode metadata) {
         var body = JSON.createObjectNode();
         body.put("type", "async");
         body.put("status_code", 100);
-        body.put("operation", "/1.0/operations/op-" + nextOperation++);
+        body.put("operation", "/1.0/operations/" + id);
+        if (metadata != null) body.set("metadata", metadata);
         return new RawResponse(202, bytes(body));
     }
 
