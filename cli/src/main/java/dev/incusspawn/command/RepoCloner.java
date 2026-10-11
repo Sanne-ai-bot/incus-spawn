@@ -53,6 +53,11 @@ class RepoCloner {
         boolean hasDevice() { return deviceName != null; }
     }
 
+    /** How long a clone waits for its reference to be mounted in the guest (#1233). */
+    static final int MOUNT_WAIT_SECONDS = 30;
+    /** The exit status of {@code timeout} when a reference was not mounted in time. */
+    private static final int MOUNT_TIMEOUT_EXIT = 124;
+
     /** The hotplug slots Incus gives a running VM; each attached reference takes one until detached. */
     static final int VM_HOTPLUG_SLOTS = 8;
 
@@ -314,12 +319,12 @@ class RepoCloner {
             return; // failure already recorded in states[idx]
         }
 
-        String note = clone.usedReference() ? "via host reference" : null;
-        boolean highlight = false;
-        if (!clone.usedReference() && ref != null && ref.skipReason() != null) {
-            note = ref.skipReason();
-            highlight = true;
-        }
+        // Why the repo was cloned from the network rather than a reference, if one was meant to be used.
+        var reason = clone.usedReference() ? null
+                : clone.fallbackReason() != null ? clone.fallbackReason()
+                : ref != null ? ref.skipReason() : null;
+        String note = clone.usedReference() ? "via host reference" : reason;
+        boolean highlight = reason != null;
         if (repo.hasPrime()) {
             if (referencesDetached.getCount() > 0) {
                 states.set(idx, StepProgress.running("Waiting to prime"));
@@ -370,8 +375,9 @@ class RepoCloner {
         if (interrupted) Thread.currentThread().interrupt();
     }
 
-    private record CloneResult(boolean success, boolean usedReference) {
-        static final CloneResult FAILED = new CloneResult(false, false);
+    /** {@code fallbackReason} says why an attached reference was not cloned from, or is null. */
+    private record CloneResult(boolean success, boolean usedReference, String fallbackReason) {
+        static final CloneResult FAILED = new CloneResult(false, false, null);
     }
 
     /** Clone a single repo. On failure records it in {@code states[idx]} and returns
@@ -381,10 +387,13 @@ class RepoCloner {
                                  AtomicReferenceArray<StepProgress> states, int idx) {
         try {
             boolean usedReference = false;
+            String fallbackReason = null;
 
             if (ref != null && ref.hasDevice()) {
                 var expandedPath = expandHome(repo.getPath());
-                var clone = container.shAsUser("agentuser", buildCloneCommand(repo, ref.containerPath()));
+                var clone = container.shAsUser("agentuser",
+                        awaitMount(ref.containerPath()) + " && " + buildCloneCommand(repo, ref.containerPath()));
+                var last = clone;
                 if (clone.success()) {
                     // Point origin at the real remote, fetch current refs, and
                     // detect the remote's default branch.  Objects are already
@@ -397,6 +406,7 @@ class RepoCloner {
                             "git -C " + clonePath + " remote set-url origin " + shellQuote(repo.getUrl())
                                     + " && git -C " + clonePath + " fetch --quiet origin"
                                     + " && git -C " + clonePath + " remote set-head origin --auto");
+                    last = fixup;
                     if (fixup.success()) {
                         String resolveExpr;
                         if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
@@ -409,9 +419,13 @@ class RepoCloner {
                                 resolveExpr + " && git -C " + clonePath
                                         + " checkout -B \"$b\" --track \"origin/$b\"");
                         usedReference = checkout.success();
+                        last = checkout;
                     }
                 }
                 if (!usedReference) {
+                    var error = last.exitCode() == MOUNT_TIMEOUT_EXIT && last == clone
+                            ? "not mounted in the guest within " + MOUNT_WAIT_SECONDS + "s" : gitError(last);
+                    fallbackReason = "could not use the host reference" + (error.isEmpty() ? "" : ": " + error);
                     container.shAsUser("agentuser", "rm -rf " + shellQuote(expandedPath));
                 }
             }
@@ -435,7 +449,7 @@ class RepoCloner {
                 }
             }
 
-            return new CloneResult(true, usedReference);
+            return new CloneResult(true, usedReference, fallbackReason);
         } catch (Exception e) {
             states.set(idx, StepProgress.failed(e.getMessage(), null));
             return CloneResult.FAILED;
@@ -513,6 +527,24 @@ class RepoCloner {
             lastNonEmpty = trimmed;
         }
         return lastNonEmpty;
+    }
+
+    /**
+     * Shell that waits until {@code path} is a mount point, exiting {@link #MOUNT_TIMEOUT_EXIT} after
+     * {@link #MOUNT_WAIT_SECONDS}. A VM's incus-agent mounts a hot-plugged share some time after
+     * Incus has added the device, so a clone started at once found an empty directory (#1233); a
+     * container's disk is mounted by the add, so there the loop ends at its first check. Run in the
+     * clone's own exec, it costs no request.
+     */
+    static String awaitMount(String path) {
+        return awaitMount(path, MOUNT_WAIT_SECONDS);
+    }
+
+    /** As above; {@code timeout} (monotonic, and exiting 124) bounds the loop, and a guest without
+     *  {@code mountpoint} cannot be waited on, so it is not: the clone runs at once, as it always did. */
+    static String awaitMount(String path, int seconds) {
+        return "{ ! command -v mountpoint >/dev/null 2>&1 || timeout " + seconds
+                + " sh -c 'until mountpoint -q \"$1\"; do sleep 0.1; done' sh " + shellQuote(path) + "; }";
     }
 
     private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {

@@ -32,16 +32,29 @@ import static org.mockito.Mockito.*;
 class RepoClonerReferenceTest {
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
+    private static final IncusClient.ExecResult NOT_A_REPOSITORY =
+            new IncusClient.ExecResult(128, "", "fatal: repository '/mnt/ref' does not exist\n");
+    private static final IncusClient.ExecResult MOUNT_TIMEOUT = new IncusClient.ExecResult(124, "", "");
     private static final String VM = "tpl-vm-rebuilding";
 
     @TempDir
     Path checkouts;
 
-    /** Builds {@code count} referenced repos, each with a prime, into a running VM. */
+    /** {@code clones} holds the clones that succeeded. */
     private record Build(FakeIncusDaemon daemon, List<String> clones, AtomicInteger primes,
                          AtomicInteger primesWhileAttached, String output) {}
 
+    /** Builds {@code count} referenced repos, each with a prime, into a running VM. */
     private Build build(int count, int hotplugSlots) throws IOException {
+        return build(count, hotplugSlots, true);
+    }
+
+    /**
+     * As above, with incus-agent mounting each hot-plugged share some time after Incus has added the
+     * device (#1233): a clone from the mount point fails unless it first waits for the mount, and
+     * with {@code mountAppears} false that wait times out.
+     */
+    private Build build(int count, int hotplugSlots, boolean mountAppears) throws IOException {
         IsolatedHome.seed("host-paths:\n  - " + checkouts + "\n");
         var repos = new ArrayList<ImageDef.RepoEntry>();
         for (int i = 0; i < count; i++) {
@@ -68,9 +81,14 @@ class RepoClonerReferenceTest {
         doReturn(OK).when(incus).shellExec(eq(VM), any(String[].class));
         doAnswer(inv -> {
             String script = inv.getArgument(2);
-            if (script.startsWith("git clone")) {
-                clones.add(script);
+            if (script.contains("git clone")) {
                 Thread.sleep(20); // let the clones overlap
+                if (script.contains("--no-hardlinks")) {
+                    // Straight after the attach the mount point is still an empty directory.
+                    if (!script.contains("mountpoint -q")) return NOT_A_REPOSITORY;
+                    if (!mountAppears) return MOUNT_TIMEOUT;
+                }
+                clones.add(script);
             }
             if (script.contains("echo primed")) {
                 primes.incrementAndGet();
@@ -100,7 +118,7 @@ class RepoClonerReferenceTest {
     }
 
     private static long viaReference(Build build) {
-        return build.clones().stream().filter(c -> c.startsWith("git clone --no-hardlinks")).count();
+        return build.clones().stream().filter(c -> c.contains("git clone --no-hardlinks")).count();
     }
 
     private static List<String> referenceDevices(Build build) {
@@ -140,6 +158,27 @@ class RepoClonerReferenceTest {
         assertEquals(3, build.primes().get());
         assertFalse(build.output().contains("Warning: could not set up repo reference"), build.output());
         assertTrue(build.output().contains("no free PCI hotplug slot"), build.output());
+        assertEquals(List.of(), referenceDevices(build));
+    }
+
+    @Test
+    void aReferenceIsClonedOnlyOnceTheGuestHasMountedIt() throws IOException {
+        // incus-agent mounts a hot-plugged share after the device add returns (#1233).
+        var build = build(3, 8);
+
+        assertEquals(3, viaReference(build), build.output());
+        assertTrue(build.output().contains("via host reference"), build.output());
+        assertEquals(List.of(), referenceDevices(build));
+    }
+
+    @Test
+    void aMountThatNeverAppearsClonesFromTheNetworkAndSaysWhy() throws IOException {
+        var build = build(2, 8, false);
+
+        assertEquals(0, viaReference(build), build.output());
+        assertEquals(2, build.clones().size(), build.output());
+        assertEquals(2, build.primes().get());
+        assertTrue(build.output().contains("could not use the host reference: not mounted in the guest within 30s"), build.output());
         assertEquals(List.of(), referenceDevices(build));
     }
 }
