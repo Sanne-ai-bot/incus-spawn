@@ -51,7 +51,6 @@ In a list item, each sentence after the first goes on its own line, indented to 
 Headings, tables (a row stays on one line), code, HTML and front matter are exempt.
 `DocsOneSentencePerLineTest` enforces this in `mvn test`.
 Split a sentence of more than about 40 words where it splits cleanly; `.claude/rules/writing.md` "Splitting a sentence" lists the only word changes a split may make.
-`scripts/prose-diff.sh <base>..<head> <file>...` shows a change's words and rendered HTML with line breaks ignored, so a reflow prints nothing.
 
 ## Build and Test Commands
 
