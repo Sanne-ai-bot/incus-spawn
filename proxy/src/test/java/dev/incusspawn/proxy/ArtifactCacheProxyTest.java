@@ -51,6 +51,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -143,6 +144,8 @@ class ArtifactCacheProxyTest {
     static volatile long cutPauseMs;
     /** Range requests left to answer 503, like an overloaded CDN. */
     static final AtomicInteger rangesToRefuse = new AtomicInteger();
+    /** Error answers (4xx, 5xx) left to stall halfway through their body. */
+    static final AtomicInteger errorsToStall = new AtomicInteger();
 
     @BeforeAll
     static void start() throws Exception {
@@ -281,6 +284,12 @@ class ArtifactCacheProxyTest {
             resp.end(Buffer.buffer(rest));
             return;
         }
+        if (req.method() == HttpMethod.GET && reply.status() >= 400
+                && errorsToStall.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            resp.putHeader("Content-Length", String.valueOf(body.length))
+                    .write(Buffer.buffer(java.util.Arrays.copyOf(body, body.length / 2)));
+            return;
+        }
         if (req.method() == HttpMethod.GET && reply.status() == 200
                 && getsToCut.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
             resp.putHeader("Content-Length", String.valueOf(body.length));
@@ -336,6 +345,7 @@ class ArtifactCacheProxyTest {
         cutBeforeBody = false;
         cutPauseMs = 0;
         rangesToRefuse.set(0);
+        errorsToStall.set(0);
         proxy.artifactCache.downloadIdleSeconds = 20;
         proxy.upstream.clientSilenceBudgetSeconds = 110;
         proxy.artifactCache.maxBackgroundConfirmations = 16;
@@ -1199,20 +1209,65 @@ class ArtifactCacheProxyTest {
     // A query string keeps a request out of the cache: relayed as it is
     static final String RELAYED_JAR = JAR + "?relayed";
 
-    @Test
-    void relayThatStallsMidBodyIsCutAtTheClientsBudget() throws Exception {
-        // Not left to the MITM server's idle timeout, which drops the client silently at 120s (#929)
-        publishCutJar(false);
-        proxy.upstream.clientSilenceBudgetSeconds = 2;
-
+    /** Cut by the client's budget of {@code seconds}: reset mid-body, well before the MITM server's 120s. */
+    static void assertCutAtTheBudget(String path, int seconds) throws Exception {
+        proxy.upstream.clientSilenceBudgetSeconds = seconds;
+        var start = System.nanoTime();
         try {
-            var response = getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
-                    .get(8, TimeUnit.SECONDS);
+            var response = getAsync(CENTRAL, path).toCompletionStage().toCompletableFuture()
+                    .get(seconds + 6, TimeUnit.SECONDS);
             fail("got " + response.status() + " with " + response.body().length + " bytes");
         } catch (java.util.concurrent.ExecutionException e) {
             // reset mid-body
         }
+        // Not some failure of its own, which would come at once
+        assertTrue(System.nanoTime() - start >= TimeUnit.SECONDS.toNanos(seconds) / 2, "cut before the budget");
+    }
+
+    @Test
+    void relayThatStallsMidBodyIsCutAtTheClientsBudget() throws Exception {
+        // Not left to the MITM server's idle timeout, which drops the client silently at 120s (#929)
+        publishCutJar(false);
+
+        assertCutAtTheBudget(RELAYED_JAR, 2);
         assertEquals(0, rangesAsked.size(), "a relay is not resumed");
+    }
+
+    @Test
+    void cacheMissAnsweredWithAStallingErrorIsCutAtTheClientsBudget() throws Exception {
+        // An error is relayed, not cached; its body stalls like any other (#1192)
+        routes.put(CENTRAL + " " + JAR, new Reply(403, randomText(64 * 1024).getBytes(StandardCharsets.UTF_8), null));
+        errorsToStall.set(1);
+
+        assertCutAtTheBudget(JAR, 2);
+    }
+
+    @Test
+    void redirectAnsweredWithAStallingErrorIsCutAtTheClientsBudget() throws Exception {
+        var cdnPath = "/cdn/lib-1.0.jar";
+        routes.put(CENTRAL + " " + JAR, new Reply(302, null, "https://" + CENTRAL + cdnPath));
+        routes.put(CENTRAL + " " + cdnPath, new Reply(403, randomText(64 * 1024).getBytes(StandardCharsets.UTF_8), null));
+        errorsToStall.set(1);
+
+        assertCutAtTheBudget(JAR, 2);
+        assertEquals(1, hitsOn(CENTRAL, cdnPath));
+    }
+
+    @Test
+    void downloadRelayedUncachedAfterACacheWriteErrorIsCutAtTheClientsBudget() throws Exception {
+        publishCutJar(false);
+        // No temp file can be made beside the artifact: the download is relayed uncached
+        var dir = cached(CENTRAL, JAR).getParent();
+        Files.createDirectories(dir);
+        var perms = Files.getPosixFilePermissions(dir);
+        Files.setPosixFilePermissions(dir, java.nio.file.attribute.PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            assumeFalse(Files.isWritable(dir), "needs a directory this user cannot write to (not root)");
+            assertCutAtTheBudget(JAR, 2);
+            assertEquals(List.of(), rangesAsked, "an uncached relay is not resumed");
+        } finally {
+            Files.setPosixFilePermissions(dir, perms);
+        }
     }
 
     @Test
