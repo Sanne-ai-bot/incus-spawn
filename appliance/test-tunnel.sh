@@ -8,16 +8,20 @@ set -uo pipefail
 # ports: vfkit on macOS (test-boot.sh), or socat VSOCK-CONNECT under QEMU on Linux (CI).
 # The guest half under test is the same either way; only the bridge differs.
 #
-# Usage:  ./test-tunnel.sh <incus-socket> <agent-socket>
+# Usage:  ./test-tunnel.sh <incus-socket> <agent-socket> [<silent-socket>]
 #
-#   TUNNEL_BACKSTOP=1  also verify the forwarder's socat -T inactivity backstop: a silent
-#                      connection must outlive the long-poll floor, then be reaped, and the
-#                      API must recover. Adds about three minutes: the backstop is 180s.
+#   <silent-socket>    the host side of the test-only silent endpoint (isx.test_silent_vsock):
+#                      the production forwarder in front of a guest socket that never answers.
+#   TUNNEL_BACKSTOP=1  also verify the forwarder's socat -T inactivity backstop against the
+#                      silent endpoint: a silent connection must outlive the long-poll floor and
+#                      then be reaped. Needs <silent-socket>. Adds about three minutes: the
+#                      backstop is 180s.
 #
 # Prints one PASS/FAIL line per check and exits non-zero if any check failed.
 
 INCUS_SOCK="${1:?usage: test-tunnel.sh <incus-socket> <agent-socket>}"
 AGENT_SOCK="${2:?usage: test-tunnel.sh <incus-socket> <agent-socket>}"
+SILENT_SOCK="${3:-}"
 
 # Mirrors isx-start-vsock-forwarder's -T. The reap is checked against both edges: not before
 # the floor (the /wait long-poll and the client watchdog rely on it), and not long after it.
@@ -43,7 +47,36 @@ if [[ "$(nc --version 2>&1)" == *Ncat* ]]; then
     AGENT_NC=(timeout 30 nc --no-shutdown)
 fi
 agent() { printf '%s\n' "$1" | "${AGENT_NC[@]}" -U "$AGENT_SOCK" 2>/dev/null | tr -d '\r'; }
-api() { curl -s --max-time 10 --unix-socket "$INCUS_SOCK" "http://localhost$1" 2>/dev/null; }
+
+# Hold a connection to socket $1 that sends $2 (possibly nothing) and then nothing for $3
+# seconds; $HELD is the process holding it, which exits as soon as the far end closes. socat
+# does that, and so does OpenBSD nc (Ubuntu, macOS); ncat waits for its stdin to end instead.
+# The sleep feeding it outlives it, so the EXIT trap ends any that are left.
+if command -v socat >/dev/null; then
+    hold() { ( printf '%s' "$2"; exec sleep "$3" ) 2>/dev/null | socat -t 0.1 - UNIX-CONNECT:"$1" >/dev/null 2>&1 & HELD=$!; }
+elif [[ "$(nc --version 2>&1)" != *Ncat* ]]; then
+    hold() { ( printf '%s' "$2"; exec sleep "$3" ) 2>/dev/null | nc -U "$1" >/dev/null 2>&1 & HELD=$!; }
+else
+    echo "nc is ncat, which does not exit when the far end closes; install socat" >&2
+    exit 2
+fi
+trap 'pkill -P $$ -x sleep 2>/dev/null' EXIT
+# Milliseconds since the epoch. macOS ships bash 3.2, which has no EPOCHREALTIME.
+if [ -n "${EPOCHREALTIME:-}" ]; then
+    now_ms() { local t=${EPOCHREALTIME/[.,]/}; echo $(( t / 1000 )); }
+else
+    now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
+fi
+# Wait up to $1 seconds for the process $2 to exit; prints the ms since $T0 it took, or nothing.
+wait_gone() {
+    local deadline=$(( $(date +%s) + $1 ))
+    while kill -0 "$2" 2>/dev/null; do
+        [ "$(date +%s)" -ge "$deadline" ] && return
+        sleep 0.1
+    done
+    echo $(( $(now_ms) - T0 ))
+}
+api() { curl -s --max-time "${2:-10}" --unix-socket "$INCUS_SOCK" "http://localhost$1" 2>/dev/null; }
 socat_count() { agent socat-count | tr -d '\n'; }
 
 # Poll until the Incus API answers through the forwarder: incusd comes up during boot and
@@ -181,61 +214,109 @@ settled=$(settle_count "$baseline")
 expect '[ "$settled" = "$baseline" ]' \
     "forwarder children exit with their connections (count $settled, baseline $baseline)"
 
+echo
+echo "-- Silent and partial clients (incusd STARTTLS peek) --"
+# incusd peeks the first 8 bytes of every new local connection for a STARTTLS upgrade. Before
+# lxc/incus@2cb2549 (backported by build.sh, #1313) it did so in its accept loop with no
+# deadline, so one connection that sent fewer than 8 bytes stalled every new API connection,
+# for up to the forwarder's 180s when vfkit lost the client's close (#791 B.1). Now each
+# connection is classified on its own under a 3s read deadline: a request is served next to a
+# held connection well inside that deadline (a request that waited for it would take at least
+# 3s), and incusd then closes the held one itself, which frees its forwarder child. The held
+# connections end on their own after 10s, so a failure here leaves nothing behind.
+T0=$(now_ms)
+r=$(api /1.0)
+expect '[[ "$r" == *"\"metadata\""* ]]' "GET /1.0 answered in $(( $(now_ms) - T0 ))ms, the baseline"
+held_check() {
+    T0=$(now_ms)
+    hold "$INCUS_SOCK" "$1" 10
+    local pid=$HELD served closed
+    sleep 0.3   # the held connection reaches incusd first
+    # Matched in a string, not by grep -q: under pipefail, grep exiting at the first match can
+    # fail curl with EPIPE while the rest of the body is still coming.
+    if [[ "$(api /1.0 2)" != *'"metadata"'* ]]; then
+        fail "request served past a connection that sent $2 (it waited behind it)"
+    elif ! kill -0 "$pid" 2>/dev/null; then
+        fail "the connection that sent $2 was still open when the request was served (it had closed)"
+    else
+        served=$(( $(now_ms) - T0 ))
+        expect '[ "$served" -lt 2500 ]' "request served past a connection that sent $2 (${served}ms)"
+    fi
+    closed=$(wait_gone 12 "$pid")
+    expect '[ -n "$closed" ] && [ "$closed" -ge 2500 ] && [ "$closed" -le 7000 ]' \
+        "incusd closed the connection that sent $2 near its 3s deadline (${closed:-not closed}ms)"
+}
+held_check "" "nothing"
+held_check "GET /1." "7 bytes"
+
+pids=()
+for b in "" "" "" "" "GET /1." "GET /1." "GET /1." "GET /1."; do
+    hold "$INCUS_SOCK" "$b" 10
+    pids+=("$HELD")
+done
+sleep 0.3
+T0=$(now_ms)   # from here, so slow process starts (aarch64 under TCG) do not count
+ok=$(burst 3)
+served=$(( $(now_ms) - T0 ))
+open=0
+for p in "${pids[@]}"; do kill -0 "$p" 2>/dev/null && open=$((open + 1)); done
+expect '[ "$ok" -eq 3 ] && [ "$open" -eq 8 ] && [ "$served" -lt 2500 ]' \
+    "3 requests served past 8 silent and partial connections ($ok/3, ${served}ms, $open/8 still open)"
+for p in "${pids[@]}"; do closed=$(wait_gone 12 "$p"); [ -n "$closed" ] || break; done
+expect '[ -n "$closed" ] && [ "$closed" -le 7000 ]' "incusd closed all 8 (${closed:-not closed}ms)"
+settled=$(settle_count "$baseline")
+expect '[ "$settled" = "$baseline" ]' \
+    "their forwarder children exited with them (count $settled, baseline $baseline)"
+
 if [ "${TUNNEL_BACKSTOP:-0}" = "1" ]; then
     echo
     echo "-- Inactivity backstop (socat -T $BACKSTOP_SECONDS) --"
-    # The connection the backstop exists for: one that never sends a byte, as when a client's
-    # close is lost crossing vfkit. It is also the one incusd cannot shed on its own. Its local
-    # listener peeks 8 bytes inside Accept() with no deadline, so every new API connection
-    # queues behind this one until it speaks or goes away, and a keep-alive connection is no
-    # substitute: incusd closes those itself after 30s idle. Nothing else may run meanwhile.
-    fifo=$(mktemp -u)
-    mkfifo "$fifo"
-    nc -U "$INCUS_SOCK" < "$fifo" >/dev/null 2>&1 &
-    idle_pid=$!
-    exec 3>"$fifo"   # held open: nc's stdin never reaches EOF, so it never sends anything
-    idle_opened=$(date +%s)
-    held=$(settle_count $((baseline + 1)))
-    expect '[ "$held" = $((baseline + 1)) ]' "silent connection holds a forwarder child (count $held)"
-
-    # Informational: this is incusd's behaviour, not ours, and an upstream fix would flip it.
-    if curl -s --max-time 3 --unix-socket "$INCUS_SOCK" http://localhost/1.0 | grep -q '"metadata"'; then
-        echo "  INFO: incusd served a new connection past the silent one (upstream accept fix?)"
+    # The connection the backstop exists for: one that never sends a byte and whose close is
+    # lost crossing vfkit. incusd now closes such a connection itself after 3s (above), so the
+    # backstop is timed against the test-only silent endpoint instead: the production forwarder
+    # invocation in front of a guest socket that accepts and never answers, with no timeout of
+    # its own. The forwarder child's exit closes the connection here, so the hold timing it is
+    # the reap. Its children are not counted by socat-count, which matches incusd's socket only.
+    if [ -z "$SILENT_SOCK" ]; then
+        fail "silent endpoint socket given (TUNNEL_BACKSTOP=1 needs the third argument)"
+    elif ! [ -S "$SILENT_SOCK" ]; then
+        fail "silent endpoint socket exists ($SILENT_SOCK)"
     else
-        echo "  INFO: incusd stalls new connections behind the silent one (StarttlsListener peek)"
-    fi
+        T0=$(now_ms)
+        hold "$SILENT_SOCK" "" $((BACKSTOP_SECONDS + 60))
+        idle_pid=$HELD
+        sleep 1
+        expect 'kill -0 "$idle_pid" 2>/dev/null' "silent endpoint holds the connection open"
+        expect 'api /1.0 | grep -q "\"metadata\""' "Incus API answers while the silent connection is held"
 
-    # The wait is silent by nature and lasts the whole backstop. Say so, and report progress, so a
-    # run cut short here is not mistaken for a hang: #1093 was two CI cancellations two minutes into
-    # this wait, read as a stuck teardown.
-    echo "  waiting for the backstop to reap it (up to $((BACKSTOP_SECONDS + 30))s)"
-    reaped_at=""
-    deadline=$((idle_opened + BACKSTOP_SECONDS + 30))
-    next_report=$((idle_opened + 30))
-    while [ "$(date +%s)" -lt "$deadline" ]; do
-        count=$(socat_count)
-        if [ "$count" = "$baseline" ]; then
-            reaped_at=$(( $(date +%s) - idle_opened ))
-            break
+        # The wait is silent by nature and lasts the whole backstop. Say so, and report progress, so a
+        # run cut short here is not mistaken for a hang: #1093 was two CI cancellations two minutes into
+        # this wait, read as a stuck teardown.
+        echo "  waiting for the backstop to reap it (up to $((BACKSTOP_SECONDS + 30))s)"
+        reaped_ms=""
+        next_report=30
+        while [ $(( ($(now_ms) - T0) / 1000 )) -lt $((BACKSTOP_SECONDS + 30)) ]; do
+            if ! kill -0 "$idle_pid" 2>/dev/null; then
+                reaped_ms=$(( $(now_ms) - T0 ))
+                break
+            fi
+            if [ $(( ($(now_ms) - T0) / 1000 )) -ge "$next_report" ]; then
+                echo "  ... ${next_report}s, still held"
+                next_report=$((next_report + 30))
+            fi
+            sleep 1
+        done
+        kill "$idle_pid" 2>/dev/null
+        wait "$idle_pid" 2>/dev/null
+        if [ -z "$reaped_ms" ]; then
+            fail "silent connection reaped by the backstop (still alive after $((BACKSTOP_SECONDS + 30))s)"
+        elif [ "$reaped_ms" -lt $(( (BACKSTOP_SECONDS - 10) * 1000 )) ]; then
+            fail "silent connection outlived the long-poll floor (reaped after only $((reaped_ms / 1000))s)"
+        else
+            pass "silent connection reaped by the backstop after ~$((reaped_ms / 1000))s"
         fi
-        if [ "$(date +%s)" -ge "$next_report" ]; then
-            echo "  ... $(( $(date +%s) - idle_opened ))s, forwarder count $count"
-            next_report=$((next_report + 30))
-        fi
-        sleep 5
-    done
-    exec 3>&-
-    kill "$idle_pid" 2>/dev/null
-    wait "$idle_pid" 2>/dev/null
-    rm -f "$fifo"
-    if [ -z "$reaped_at" ]; then
-        fail "silent connection reaped by the backstop (still alive after $((BACKSTOP_SECONDS + 30))s)"
-    elif [ "$reaped_at" -lt $((BACKSTOP_SECONDS - 10)) ]; then
-        fail "silent connection outlived the long-poll floor (reaped after only ${reaped_at}s)"
-    else
-        pass "silent connection reaped by the backstop after ~${reaped_at}s"
+        expect 'api /1.0 | grep -q "\"metadata\""' "Incus API still answers after the reap"
     fi
-    expect 'wait_for_api 10' "Incus API answers again once the backstop reaped it"
 fi
 
 echo

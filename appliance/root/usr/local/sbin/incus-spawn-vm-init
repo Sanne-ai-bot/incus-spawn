@@ -105,6 +105,17 @@ if [ -n "$VSOCK_INCUS_PORT" ]; then
     echo "incus-spawn-vm-init: vsock forwarder on port $VSOCK_INCUS_PORT"
 fi
 
+# Test only (#1313): a forwarder with the production invocation in front of an endpoint that
+# accepts and never answers, so test-tunnel.sh can time the -T backstop on its own. incusd no
+# longer serves for that: it closes a silent connection itself after 3s. The endpoint has no
+# timeout of its own. Only a test boot sets isx.test_silent_vsock; isx never does.
+TEST_SILENT_PORT=$(parse_cmdline "isx.test_silent_vsock")
+if [ -n "$TEST_SILENT_PORT" ]; then
+    socat -u UNIX-LISTEN:/run/isx-test-silent.sock,fork,backlog=128 OPEN:/dev/null &
+    /usr/local/sbin/isx-start-vsock-forwarder "$TEST_SILENT_PORT" /run/isx-test-silent.sock &
+    echo "incus-spawn-vm-init: test-only silent endpoint on vsock port $TEST_SILENT_PORT"
+fi
+
 # Allowlisted control agent on its own vsock port, so the host can introspect/recover the
 # forwarder independently of the (possibly wedged) Incus tunnel. Each connection runs the
 # fixed-verb isx-agent — not an arbitrary guest-exec channel.
