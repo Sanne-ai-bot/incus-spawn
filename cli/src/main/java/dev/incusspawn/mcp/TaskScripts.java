@@ -116,7 +116,7 @@ final class TaskScripts {
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
         sb.append("export ").append(TASK_ENV).append('=').append(taskId).append('\n');
-        sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" || { ").append(recordExit("1", "125")).append("; exit 0; }\n");
+        sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" 2> \"$D/stderr\" || { ").append(recordExit("1", "125")).append("; exit 0; }\n");
         sb.append(RECORD_CWD);
         ExecScript.appendExports(sb, env, "\n");
         sb.append("bash -c ").append(ExecScript.quote(command))
@@ -138,7 +138,7 @@ final class TaskScripts {
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
         sb.append("export ").append(TASK_ENV).append('=').append(taskId).append('\n');
-        sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" || { ")
+        sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" 2> \"$D/stderr-").append(run).append(".log\" || { ")
                 .append(recordExit(String.valueOf(run), "125")).append("; exit 0; }\n");
         if (run == 1) {
             sb.append(RECORD_CWD);

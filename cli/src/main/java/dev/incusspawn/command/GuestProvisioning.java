@@ -33,7 +33,7 @@ import static dev.incusspawn.command.BuildProgress.stepFrom;
  * The steps a build runs in its guest: packages and their repos, tool setup, the environment
  * and agent context files, SELinux on a VM, the agents' repo trust, and the shared DNF cache.
  */
-class GuestProvisioning {
+public class GuestProvisioning {
 
     private final IncusClient incus;
 
@@ -484,7 +484,7 @@ class GuestProvisioning {
         }
     }
 
-    static String expandHome(String path) {
+    public static String expandHome(String path) {
         if (path.startsWith("~/")) {
             return AGENTUSER_HOME + path.substring(1);
         }

@@ -3,6 +3,7 @@ package dev.incusspawn.mcp;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.incusspawn.command.GuestProvisioning;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
 
@@ -139,7 +140,7 @@ final class McpTools {
                         .string("instance", "Instance name, from create_instance", true)
                         .string("command", "Shell command, run with bash -c", true)
                         .string("cwd", "Working directory (default: the template's workdir, "
-                                + "else /home/agentuser); relative paths are from the home directory", false)
+                                + "else /home/agentuser); a leading ~ and relative paths are from the home directory", false)
                         .stringMap("env", "Extra environment variables")
                         .string("stdin", "Text to send to the command's standard input", false)
                         .integer("timeout_seconds", "Kill the command after this many seconds "
@@ -176,7 +177,7 @@ final class McpTools {
                         .string("instance", "One of your instances to work in", false)
                         .string("template", "Or: a template to create a fresh instance from", false)
                         .string("purpose", "For a fresh instance: what it is for (see create_instance)", false)
-                        .string("cwd", "Directory to work in (default: the template's workdir)", false)
+                        .string("cwd", "Directory to work in (default: the template's workdir; a leading ~ is the agent user's home)", false)
                         .string("model", MODEL, false)
                         .integer("max_turns", MAX_TURNS, false)
                         .string("idempotency_key", IDEMPOTENCY_KEY + " (the same instance, or the same "
@@ -656,12 +657,17 @@ final class McpTools {
         return ToolResult.json(node);
     }
 
+    /** The directory a task works in: the caller's, with a leading {@code ~} the agent user's home, else {@code fallback}. */
+    private static String resolveCwd(String cwd, String fallback) {
+        return cwd == null || cwd.isBlank() ? fallback : GuestProvisioning.expandHome(cwd.strip());
+    }
+
     private ToolResult exec(McpTool.Args args, ToolContext ctx) throws InterruptedException {
         var name = args.requireString("instance");
         var metadata = session.requireRunning(name);
         var command = args.requireString("command");
         var cwd = args.string("cwd");
-        if (cwd == null || cwd.isBlank()) cwd = IncusInstanceBackend.workdir(metadata);
+        cwd = resolveCwd(cwd, IncusInstanceBackend.workdir(metadata));
         var env = args.stringMap("env");
         var stdin = args.string("stdin");
         if (stdin != null && stdin.getBytes(StandardCharsets.UTF_8).length > MAX_STDIN_BYTES) {
@@ -936,7 +942,7 @@ final class McpTools {
         try {
             // A fresh instance's caller just ran checkCapacityForNewAgent: its own tasks need not
             // be asked again. Other sessions' are: they may have started some while it branched.
-            task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, prompt, profile, mode, !fresh,
+            task = tasks.delegate(instance, resolveCwd(cwd, workdir), prompt, profile, mode, !fresh,
                     () -> modelCheck.require(instance, template, account, profile.model()), key);
         } catch (RuntimeException e) {
             // An instance made for this task alone is no use to the agent, which never learns its name

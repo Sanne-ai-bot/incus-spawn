@@ -158,6 +158,21 @@ class DelegationToolsTest {
     }
 
     @Test
+    void aLeadingTildeInCwdIsTheAgentUsersHomeAndAFailedCdIsSaidInStderr() throws Exception {
+        var name = structured(call("create_instance", "{\"template\":\"tpl-agent\"}")).path("instance").asText();
+        structured(call("delegate", "{\"instruction\":\"go\",\"template\":\"tpl-agent\",\"cwd\":\"~/incus-spawn\"}"));
+        var agent = runScript(1);
+        assertTrue(agent.contains("cd -- '/home/agentuser/incus-spawn' 2> \"$D/stderr-1.log\" ||"), agent);
+
+        structured(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\",\"cwd\":\"~\"}"));
+        assertTrue(backend.scripts.getLast().contains("cd -- '/home/agentuser' ||"), backend.scripts.getLast());
+
+        structured(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\",\"cwd\":\"~/x\",\"background\":true}"));
+        var command = runScript(1);
+        assertTrue(command.contains("cd -- '/home/agentuser/x' 2> \"$D/stderr\" ||"), command);
+    }
+
+    @Test
     void everyToolReturnsStructuredContentMatchingItsSchema() throws Exception {
         structured(call("list_templates", "{}"));
         var created = structured(call("create_instance", "{\"template\":\"tpl-agent\",\"purpose\":\" #1010 \"}"));
