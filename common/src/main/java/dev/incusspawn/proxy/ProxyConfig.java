@@ -125,9 +125,17 @@ public final class ProxyConfig {
 
     /** The gateway {@code isx init} recorded, for when the bridge cannot tell; else {@code error}. */
     private static String cachedGatewayIp(RuntimeException error) {
-        var cached = SpawnConfig.load().getIncusBridgeGateway();
+        var cached = cachedGateway();
         if (!cached.isEmpty()) return cached;
         throw error;
+    }
+
+    /**
+     * Where {@link #resolveGatewayIp} looks when the bridge cannot tell: the gateway
+     * {@code isx init} recorded, or empty when there is none.
+     */
+    public static String cachedGateway() {
+        return SpawnConfig.load().getIncusBridgeGateway();
     }
 
     public static String resolvConfContent(IncusClient incus) {

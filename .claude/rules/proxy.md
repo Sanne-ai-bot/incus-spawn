@@ -259,17 +259,17 @@ Key design:
   The pre-block layout is detected by its `::` lines and migrated.
   Anything that rewrites the block takes its domains from `ToolProxyResolver.resolvedDomains()` (all accounts, as the proxy does), never the default account alone.
   On Linux the proxy points the block at the gateway it already resolved and listens on (`ProxyMain.Addresses`, whose writers startup uses and `MitmProxy` is handed for reloads; `--gateway-ip` sets it, and must be a unicast IPv4 address in canonical form or the proxy exits `EXIT_CONFIG`; DESIGN.md says why), never a second bridge lookup, which ignored the override and failed on a bridge with no address (#892).
-  As the credential listener's bind address, a Linux `--gateway-ip` must also be private (RFC 1918), loopback, or the bridge's current gateway (`BridgeAddress.read()`, never the cached one), else `EXIT_CONFIG`, or exit 1 when that comparison needs a bridge read that fails.
-  A private override is accepted without reading the bridge, so it still works around #892 (#1022).
+  The proxy serves only where the CLI looks for it (`ProxyConfig.resolveGatewayIp()`), so a Linux `--gateway-ip` must equal the bridge's current gateway (`BridgeAddress.read()`, never the cached one) when Incus reports it, else `EXIT_CONFIG` (#933).
+  With no bridge address to read it stands in for one (#892): it must equal the gateway `isx init` cached, if any (else `EXIT_CONFIG`), and be private (RFC 1918) or loopback, else exit 1 (#1022).
+  Never add a separate proxy address the CLI must learn; DESIGN.md names the rejected `proxy-gateway-ip` key and when it would be the path.
   On macOS it looks up the VM's own bridge, and `--gateway-ip`, the credential listener's bind address there, must equal the host's VM-bridge address (`VmNetwork.discoverHostBridgeIp()`) or the proxy exits `EXIT_CONFIG`.
   A wildcard or LAN address would serve the default accounts to other hosts (#937).
-  CLI writers still use the detected gateway (#933).
   A failed health probe with the block pointing at another address that the host no longer has but that still has a listener on the health port (`/proc/net/tcp{,6}`, since that address no longer answers) is `STALE_GATEWAY`, not `STALE_DNS`.
   The proxy is up and needs a restart (#919).
   The auto-restart (`requireProxy`, `checkOrWarn`, the TUI) restarts the service for it only when the service is active (`serviceRestartCanHelp`): with a foreground proxy it would start a second one beside it.
-  A proxy whose gateway came from the bridge (no `--gateway-ip`, Linux) also notices by itself (#966).
+  On Linux the proxy also notices by itself, `--gateway-ip` or not (#966).
   `Addresses.movedTo()` re-reads the bridge every `GATEWAY_CHECK_MILLIS` (60 s) and before a reload rewrites the block, and on a different address it skips the write (`GatewayMoved`), stops, and exits 1 so `Restart=on-failure` starts it on the new address.
-  An unreadable bridge or one with no address is not a move, and an explicit `--gateway-ip` is never compared (#933).
+  An unreadable bridge or one with no address is not a move.
   Exit-and-restart, not rebinding in place: the startup path already moves the listener, health endpoint and block together.
 - **Redirect rule cleanup**: `ProxyService.uninstall(IncusClient)` removes the service **and** unconditionally cleans up PREROUTING redirect rules (`ProxyConfig.clearRedirectRules()`) and bridge DNS overrides (`ProxyConfig.clearBridgeDns()`).
   `clearRedirectRules()` attempts both firewalld and UFW independently (not else-if) so a system with firewalld installed but inactive still reaches UFW cleanup.

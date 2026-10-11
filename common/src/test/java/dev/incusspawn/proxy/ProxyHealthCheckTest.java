@@ -84,7 +84,7 @@ class ProxyHealthCheckTest {
 
     @Test
     void aProxyOnAnAddressTheHostStillHasIsNotOnAnOldGateway() throws Exception {
-        // A proxy started with --gateway-ip on another host address (#933): restarting it
+        // A proxy started with --gateway-ip on another host address (#892): restarting it
         // would bind the same address again, so the restart advice would be wrong.
         assertEquals(ProxyHealthCheck.ProxyStatus.STALE_DNS, checkWithHealthListenerOn("127.0.0.1"));
     }

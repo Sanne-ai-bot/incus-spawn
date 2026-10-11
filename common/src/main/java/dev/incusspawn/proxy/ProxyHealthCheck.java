@@ -147,8 +147,8 @@ public final class ProxyHealthCheck {
      * Whether a proxy still holds the health port on the address the overrides point at, when
      * the host no longer has that address (#919). Probing it cannot tell: once the bridge drops
      * the address nothing answers there, though the socket bound to it lives on. An address the
-     * host still has is a proxy started on it on purpose ({@code --gateway-ip}, #933), which a
-     * restart would not move.
+     * host still has is a proxy started on it with {@code --gateway-ip} while the bridge had no
+     * address to read (#892), which a restart would not move.
      */
     private static boolean listensOnFormerGateway(String dnsOverrides, String gatewayIp) {
         var procNet = Path.of("/proc/net");

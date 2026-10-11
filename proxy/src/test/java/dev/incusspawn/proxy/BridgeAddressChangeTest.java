@@ -16,7 +16,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
@@ -24,7 +23,7 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
  * On Linux the proxy listens on the gateway it read from the bridge at startup. When the
  * bridge's address changes under it, nothing can reach that address any more, so it must not
  * point bridge DNS back at it on reload, and it stops to be restarted on the new one (#966).
- * An explicit {@code --gateway-ip} is the user's choice and is never "corrected" (#933).
+ * A {@code --gateway-ip} is the bridge's address too (#933), so it moves the same way.
  */
 class BridgeAddressChangeTest {
 
@@ -114,19 +113,23 @@ class BridgeAddressChangeTest {
         assertTrue(writes.getFirst().contains("address=/api.anthropic.com/" + OLD), writes.getFirst());
     }
 
+    /**
+     * An override names the bridge's address (or stands in for it, #892), so when the bridge
+     * has another one the CLI no longer looks for the proxy there.
+     */
     @Test
-    void anExplicitGatewayIsNeverCorrectedToTheBridges() {
-        var override = "10.99.0.1";
-        var reads = new AtomicInteger();
+    void anExplicitGatewayMovesWithTheBridge() {
+        var bridge = new AtomicReference<>(OLD + "/24");
         var writes = new ArrayList<String>();
-        var incus = bridge(new AtomicReference<>(NEW + "/24"), writes, reads);
-        var addresses = ProxyMain.resolveAddresses(override, incus);
+        var incus = bridge(bridge, writes);
+        var addresses = ProxyMain.resolveAddresses(OLD, incus);
 
-        assertFalse(addresses.followsBridge());
         assertTrue(addresses.movedTo(incus).isEmpty());
         addresses.writeBridgeDns(incus, Set.of("github.com"));
-        assertTrue(writes.getLast().contains("address=/github.com/" + override), writes.getLast());
-        assertEquals(0, reads.get(), "an override is never compared with the bridge");
+        assertTrue(writes.getLast().contains("address=/github.com/" + OLD), writes.getLast());
+
+        bridge.set(NEW + "/24");
+        assertTrue(addresses.movedTo(incus).isPresent());
     }
 
     @Test
@@ -152,20 +155,12 @@ class BridgeAddressChangeTest {
         return proxy;
     }
 
+    /** A bridge at {@code address} (null: unreadable), recording the raw.dnsmasq values written to it. */
     private static IncusClient bridge(AtomicReference<String> address, List<String> writes) {
-        return bridge(address, writes, new AtomicInteger());
-    }
-
-    /**
-     * A bridge at {@code address} (null: unreadable), recording the raw.dnsmasq values written
-     * to it and counting reads of its address.
-     */
-    private static IncusClient bridge(AtomicReference<String> address, List<String> writes, AtomicInteger reads) {
         return new IncusClient() {
             @Override
             public String networkConfigGet(String networkName, String key) {
                 if (!"ipv4.address".equals(key)) return "";
-                reads.incrementAndGet();
                 var current = address.get();
                 if (current == null) throw new IncusException("Incus is not reachable");
                 return current;
