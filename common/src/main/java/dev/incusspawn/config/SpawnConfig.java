@@ -73,6 +73,11 @@ public class SpawnConfig {
     @JqName("ready-timeouts")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object readyTimeouts;
+    // Names instances reach that the proxy forwards to a controller on this host (HostRoutes).
+    // Raw like artifact-cache, so a mistyped section loads and is written back as it was.
+    @JqName("host-routes")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object hostRoutes;
     // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
     // never written back.
     @JqName("mcp")
@@ -621,6 +626,8 @@ public class SpawnConfig {
     public ArtifactCacheConfig artifactCache() { return ArtifactCacheConfig.of(artifactCache); }
     /** The {@code ready-timeouts:} section, or null when there is none. */
     public ReadyTimeoutsConfig readyTimeouts() { return ReadyTimeoutsConfig.of(readyTimeouts); }
+    /** The {@code host-routes:} section; it has no routes when there is none. */
+    public HostRoutes hostRoutes() { return HostRoutes.of(hostRoutes); }
 
     /** The {@code mcp:} section, or its defaults (no templates approved) when absent. */
     public McpConfig mcp() { return mcp != null ? mcp : new McpConfig(); }
@@ -768,6 +775,7 @@ public class SpawnConfig {
         this.tuiLiveRefresh = other.tuiLiveRefresh;
         this.artifactCache = other.artifactCache;
         this.readyTimeouts = other.readyTimeouts;
+        this.hostRoutes = other.hostRoutes;
         this.mcp = other.mcp;
         this.extras = other.extras;
     }

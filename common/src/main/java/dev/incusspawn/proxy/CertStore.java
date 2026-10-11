@@ -103,7 +103,7 @@ public class CertStore {
      * Whether {@code name} is a lower-case DNS hostname of at least two labels: LDH labels
      * (plus {@code _}, which real hosts use) of at most 63 characters, 253 in all.
      */
-    static boolean isHostname(String name) {
+    public static boolean isHostname(String name) {
         if (name == null || name.isEmpty() || name.length() > 253) return false;
         var labels = name.split("\\.", -1);
         if (labels.length < 2) return false;
