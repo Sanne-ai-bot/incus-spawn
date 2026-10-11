@@ -283,6 +283,16 @@ Key design:
   Counters never go back to an earlier registry view (`InstanceRegistry.Incarnations.view`; a late call of the destroyed instance is counted nowhere), or a call and a read from different snapshots would reset each other.
   Order by view, never by `created_at`: a rename hands a name an older one.
   The prune obeys views too: a read never drops counters a later listing made.
+- **All traffic on `/activity` (#935)**: every request and WebSocket of the MITM listener is an `ApiActivity.Flow` (`countTraffic` in `routeRequest`, `trafficFlow` in `routeWebSocket`), on the same per-incarnation counters, per domain (`ApiActivity.trafficDomain`: an intercepted domain, a subdomain under its closest intercepted parent, else `(other)` -- never a key per Host header), and `unattributed` for callers that are no known instance.
+  A request ends on the response's `bodyEndHandler` or the connection's `closeHandler`: the response's end and close handlers are single slots the relay, the cache and `beginModelCall` already set, so never use them for this.
+  A WebSocket ends on its close (an early close handler until the relay installs its own, and `flow.end` on every refusal before the handshake).
+  Bytes and last activity move at start and end only.
+  A flow in flight keeps an unlisted instance's counters from the prune.
+  Fields are only added.
+- **The health server only reads** (`MitmProxy.healthRoute`): `GET` and `HEAD` only (405 otherwise), `/activity` a 404 for non-host callers whatever the method.
+  It is the listener every container reaches: never add a write endpoint to it.
+- **The proxy holds no configuration of its own** (DESIGN.md, #935): routing is derived from host config and `user.incus-spawn.*` stamps, so restart and reload rebuild it.
+  A new capability is data in one of those stores with a no-inherit copy rule, written by `isx`, then a signal; any future proxy-side write is a stamp `PATCH` from an authenticated host-only surface, and every grant expires.
   Host callers only; a container gets a 404.
   `ProxyActivity` (`common`) is the CLI's reader of the same JSON -- `ApiActivityTest` pins the round trip.
 - `/health` includes the proxy's `pid` only for host callers (`MitmProxy.isHostCaller`); keep any other host-only detail behind the same check, since containers reach this endpoint.

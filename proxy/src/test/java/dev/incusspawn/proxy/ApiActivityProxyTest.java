@@ -53,6 +53,9 @@ class ApiActivityProxyTest {
     static InstanceRegistry registry;
     /** What the registry lists: one instance, at the test client's address. */
     static volatile String listing;
+    /** The response upstream holds back for {@code /stall}, until a test ends it. */
+    static volatile java.util.concurrent.CompletableFuture<io.vertx.core.http.HttpServerResponse> stalled =
+            new java.util.concurrent.CompletableFuture<>();
     /** The Accept-Encoding each upstream path was asked with. */
     static final Map<String, String> acceptEncodings = new ConcurrentHashMap<>();
 
@@ -127,6 +130,7 @@ class ApiActivityProxyTest {
             }
             case "/v1/messages/count_tokens" -> resp.putHeader("Content-Type", "application/json")
                     .end("{\"input_tokens\":500}");
+            case "/stall" -> stalled.complete(resp);
             default -> resp.putHeader("Content-Type", "application/json").end("{}");
         }
     }
@@ -138,6 +142,10 @@ class ApiActivityProxyTest {
     }
 
     static int post(String uri) throws Exception {
+        return postAsync(uri).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+    }
+
+    static io.vertx.core.Future<Integer> postAsync(String uri) {
         var options = new RequestOptions()
                 .setMethod(HttpMethod.POST)
                 .setServer(SocketAddress.inetSocketAddress(mitmPort, "127.0.0.1"))
@@ -146,18 +154,86 @@ class ApiActivityProxyTest {
                 .setURI(uri);
         return client.request(options)
                 .compose(req -> req.putHeader("Accept-Encoding", "gzip, br").send(Buffer.buffer("{}")))
-                .compose(resp -> resp.body().map(b -> resp.statusCode()))
-                .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+                .compose(resp -> resp.body().map(b -> resp.statusCode()));
     }
 
     static JsonNode activity() throws Exception {
+        var resp = health("GET", "/activity");
+        assertEquals(200, resp.statusCode(), resp.body());
+        return JSON.readTree(resp.body());
+    }
+
+    static HttpResponse<String> health(String method, String path) throws Exception {
         try (var http = java.net.http.HttpClient.newHttpClient()) {
-            var resp = http.send(HttpRequest.newBuilder(
-                            URI.create("http://127.0.0.1:" + healthPort + "/activity")).build(),
+            return http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + healthPort + path))
+                            .method(method, HttpRequest.BodyPublishers.noBody()).build(),
                     HttpResponse.BodyHandlers.ofString());
-            assertEquals(200, resp.statusCode(), resp.body());
-            return JSON.readTree(resp.body());
         }
+    }
+
+    @Test
+    void everyRequestCountsAsTrafficButOnlyModelCallsAsModelCalls() throws Exception {
+        // #935: settings and telemetry to the same domain are traffic, never a model call
+        var before = activity().path("instances").path(WORKER);
+        assertEquals(200, post("/api/oauth/profile"));
+        assertEquals(200, post("/v1/messages"));
+        var after = activity().path("instances").path(WORKER);
+
+        assertEquals(1, after.path("requests").asLong() - before.path("requests").asLong(), after.toString());
+        var traffic = after.path("traffic");
+        var anthropic = traffic.path("domains").path(ANTHROPIC);
+        assertEquals(2, traffic.path("requests").asLong() - before.path("traffic").path("requests").asLong(), traffic.toString());
+        assertEquals(2, anthropic.path("requests").asLong()
+                - before.path("traffic").path("domains").path(ANTHROPIC).path("requests").asLong());
+        assertEquals(0, traffic.path("in_flight").asLong());
+        assertTrue(traffic.path("request_bytes").asLong() - before.path("traffic").path("request_bytes").asLong() >= 4,
+                "the two bodies of {}: " + traffic);
+        assertTrue(traffic.path("response_bytes").asLong() > before.path("traffic").path("response_bytes").asLong());
+        assertTrue(anthropic.path("last_activity_at").asLong() >= after.path("last_response_at").asLong());
+    }
+
+    @Test
+    void aRequestUpstreamHoldsIsInFlightUntilItIsAnswered() throws Exception {
+        stalled = new java.util.concurrent.CompletableFuture<>();
+        var answered = postAsync("/stall");
+        var held = stalled.get(10, TimeUnit.SECONDS);
+
+        assertEquals(1, activity().path("instances").path(WORKER).path("traffic").path("in_flight").asLong());
+        held.end("{}");
+        assertEquals(200, answered.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+        // The client has its answer once the proxy wrote it, and the flow ends as it is written
+        assertEquals(0, activity().path("instances").path(WORKER).path("traffic").path("in_flight").asLong());
+    }
+
+    @Test
+    void aCallerTheRegistryDoesNotKnowCountsAsUnattributed() throws Exception {
+        try {
+            listing = """
+                    [{"name":"elsewhere","created_at":"2026-10-01T09:00:00Z","config":{"user.incus-spawn.static-ip":"10.0.0.9"}}]
+                    """;
+            registry.refresh();
+            var before = activity().path("unattributed");
+            assertEquals(200, post("/v1/messages"));
+            var after = activity();
+
+            assertEquals(1, after.path("unattributed").path("requests").asLong() - before.path("requests").asLong(),
+                    after.toString());
+            assertEquals(0, after.path("instances").path("elsewhere").path("traffic").path("requests").asLong());
+            assertTrue(after.path("unattributed").path("counting_since").asLong() > 0);
+        } finally {
+            listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+        }
+    }
+
+    @Test
+    void theHealthServerOnlyReads() throws Exception {
+        for (var path : List.of("/health", "/activity")) {
+            for (var method : List.of("POST", "PUT", "PATCH", "DELETE")) {
+                assertEquals(405, health(method, path).statusCode(), method + " " + path);
+            }
+        }
+        assertEquals(404, health("POST", "/routes").statusCode());
     }
 
     @Test

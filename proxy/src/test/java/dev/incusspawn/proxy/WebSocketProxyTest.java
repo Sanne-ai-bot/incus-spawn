@@ -272,6 +272,52 @@ class WebSocketProxyTest {
     }
 
     @Test
+    void anOpenWebSocketIsInFlightAndCountsItsFramesOnceClosed() throws Exception {
+        // #935: an instance holding a socket open is working, whatever it last sent. Only this
+        // test's socket comes from the instance: another's late close is unattributed
+        var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
+            @Override
+            public String listJsonConfig() {
+                return """
+                        [{"name":"ws-box","created_at":"2026-10-01T09:00:00Z","config":{"user.incus-spawn.static-ip":"127.0.0.1"}}]
+                        """;
+            }
+        });
+        registry.refresh();
+        proxy.useInstanceRegistry(registry);
+        Supplier<dev.incusspawn.proxy.ProxyActivity.Traffic> traffic = () -> {
+            var known = registry.incarnations();
+            return proxy.apiActivity.snapshot(known.byName(), known.view()).of("ws-box").traffic();
+        };
+        try {
+            var client = createClient();
+            var echo = new CompletableFuture<String>();
+            var ws = connect(client, connectOptions("/v1/counted"), socket -> {
+                socket.textMessageHandler(echo::complete);
+                socket.writeTextMessage("hello-ws");
+            });
+            assertEquals("echo:hello-ws", echo.get(5, TimeUnit.SECONDS));
+
+            var open = traffic.get();
+            assertEquals(1, open.total().requests());
+            assertEquals(1, open.total().inFlight());
+            assertEquals(1, open.byDomain().get("api.openai.com").inFlight());
+
+            await(onClient(ws::close), 2);
+            for (int i = 0; i < 50 && traffic.get().total().inFlight() > 0; i++) {
+                Thread.sleep(100);
+            }
+            var closed = traffic.get().total();
+            assertEquals(0, closed.inFlight());
+            assertEquals("hello-ws".length(), closed.requestBytes());
+            assertEquals("echo:hello-ws".length(), closed.responseBytes());
+            close(client);
+        } finally {
+            proxy.useInstanceRegistry(null);
+        }
+    }
+
+    @Test
     void clientClosePropagatesUpstream() throws Exception {
         var path = "/v1/close-test";
         var closes = upstreamCloses.computeIfAbsent(path, p -> new AtomicInteger());

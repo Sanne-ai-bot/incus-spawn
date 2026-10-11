@@ -2498,6 +2498,18 @@ Views, not `created_at`, order them: a rename keeps the instance's own `created_
 Per-task baselines kept by the session were rejected: they would not survive the adoption that #898 exists for, and the subtraction is the client's to do.
 The contract can grow additively (a `task_id`, other domains) without changing what is there.
 
+**All traffic, by domain (#935).**
+Model calls say whether an agent is thinking; a build pulling dependencies, a clone or an open WebSocket is work too, and a coordinator telling working from stuck needs to see it.
+So `/activity` also counts every request and WebSocket through the MITM listener, model calls included, on the same per-incarnation counters (and so under the same `counting_since`, pruning and views): requests, in flight, request and response body bytes, and when one last started or ended, in all and per domain.
+What comes from no known instance -- the host itself, or an address the registry has not listed -- is counted as `unattributed`, from the proxy's start.
+The domain is the intercepted one a request is relayed for: a subdomain reached through dnsmasq's wildcard counts under its closest intercepted parent, and any other name under `(other)`, since the Host header is the guest's to write and a key per made-up name would grow without bound.
+A request ends on its response's `bodyEndHandler` or its connection's `closeHandler`, the two handlers nothing else on the path sets (the relay, the cache and the model-call count each set the response's single end and close handlers); an HTTP/1.1 connection answers one request at a time, so its close ends the one in progress.
+A WebSocket ends on its close and adds its frames' bytes as they pass.
+An open stream is in flight for as long as it is open, whatever passes on it -- a WebSocket, or the MCP stream an `--mcp-client` instance holds to `mcp.isx.internal` -- so a reader telling working from idle by `in_flight` looks at the domains, which is why they are kept apart.
+Bytes and the last activity move when a request starts and ends, not per chunk: an open stream shows as in flight, which is what stuck detection reads, and the event loop takes one short lock per request rather than one per chunk.
+The fields are added, never renamed: `isx mcp`'s `instance_activity` gains `traffic_*` fields beside the model-call ones, and `isx proxy activity` prints both, one record per instance and the unattributed one last (`--by-domain` for one per instance and domain).
+The health server answers only `GET` and `HEAD` (405 for anything else) and `/activity` only to the host, whatever the method: it is the one listener every container reaches, so it never gets a write endpoint (next section).
+
 **Structured results for programs (#1010).**
 A daemon driving `isx mcp` is a client that is not a model, and it should not have to parse a sentence to find a task id or a state: the wording of those sentences changes in nearly every follow-up.
 So every tool declares an `outputSchema` in `tools/list` and returns a matching `structuredContent` object (MCP 2025-06-18), while the text the model reads stays as it was.
@@ -3252,6 +3264,24 @@ A TLS-terminating MITM proxy intercepts HTTPS connections to specific domains (A
 Containers resolve these domains to the gateway IP via bridge-level dnsmasq overrides (configured when `isx proxy` starts) and trust the proxy's certificates via a custom CA installed in the template image.
 This approach was chosen over simpler alternatives (reverse proxy with `ANTHROPIC_BASE_URL`, credential helpers, shell wrappers) because those approaches still expose credentials to code running inside the container — either as environment variables, in process memory via `curl` calls, or through accessible endpoints.
 The MITM proxy provides complete isolation: there is no API, endpoint, environment variable, or file that container code can access to obtain credentials.
+
+### The proxy holds no configuration of its own
+Every input the proxy acts on must survive the proxy (#935).
+Its routing and credentials are always derived, never held: the truth is the two stores it already reads, host configuration (`config.yaml`, tool definitions, the CA) for what applies to every instance and for every secret value, and the `user.incus-spawn.*` stamps of each instance for what applies to that one (its address, account pins, the `mcp.caller` grant).
+Host configuration is re-read on the watcher or `SIGHUP` into one immutable `ConfigState`, and the stamps on `SIGUSR1`, on a TTL and on an address miss into the `InstanceRegistry` snapshot, which reads them from the one listing it already makes.
+So a restart -- which launchd's `KeepAlive` does often on macOS, and `isx` on drift -- or a reload rebuilds the same routing from the same truth, and a guest never loses a route because a process restarted; a reload that fails keeps the old state and fingerprint, so `/health` reports drift.
+The activity counters are the only state a restart resets, because they are observations, and each says since when it counts.
+
+Rejected: routes set by admin operations and held in memory (lost on every restart, and a reload's result would be ambiguous), or persisted by the proxy to a state file of its own (a third store duplicating instance lifetimes: an instance destroyed or copied while the proxy is down leaves it wrong).
+Secrets never go in stamps: a guest reads its own `user.*` keys through `/dev/incus`, so a stamp names a declared config entry, never a value (as `InstanceSecret` keeps only a hash).
+
+The rules for what comes next, agreed with the decision on #935:
+- A new capability (per-instance routes, header grants, leases) is data in one of those two stores, with its copy rule stated: a stamp is no-inherit, stripped by `configureBranch` on every copy in the same change, as `mcp.caller` is.
+- An operation that changes them is done by `isx` (the CLI and `isx mcp` tools): validate, write the store, signal the proxy, as `isx account set` does.
+  The proxy may itself write to Incus later, but only `PATCH`ing `user.incus-spawn.*` stamps of instances the registry lists, never devices, profiles or lifecycle, through a narrow wrapper around `IncusClient`, and only from a host-side admin surface that no bridge-facing handler (MITM routing, the WebSocket relay, `McpBridge`) can reach, pinned by a static test as `McpNoWritePathTest` pins the MCP package.
+- That surface is authenticated, not address-gated: the source address (`isHostCaller`) is enough for reads such as `/activity`, but a write needs a bearer secret in an owner-only file in the state directory, on a loopback listener or a JDK domain socket (Vert.x needs its native transport for domain-socket listeners, which the proxy does not use).
+- Every grant expires: the proxy enforces the expiry on read, revoking is the fast path and expiry the safety net for a coordinator that dies, and a grant without one is refused.
+Until a resource to lease exists, only the read side ships; the health server stays read-only (`MitmProxy.healthRoute`).
 
 ### Vertex AI: container in Vertex mode vs standard mode
 We initially ran containers in standard (non-Vertex) mode with proxy-side API translation — the container sent `/v1/messages` and the proxy rewrote to Vertex `rawPredict`.
