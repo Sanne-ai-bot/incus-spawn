@@ -264,7 +264,7 @@ public final class HostResourceSetup {
     }
 
     /**
-     * A value from a definition, quoted in an error: one line that cannot drive a terminal. The
+     * A value from a definition, quoted in an error or a build note: one line that cannot drive a terminal. The
      * line breaks in these messages are isx's own advice, and a project-local template's source
      * or path must not add one that reads as isx's (#1133).
      */
@@ -367,16 +367,15 @@ public final class HostResourceSetup {
                 }
                 case "readonly" -> {
                     if (warnIfMissing(hr)) continue;
-                    BuildOutput.note("Mounted " + hr.getSource() + " -> "
-                            + resolveContainerPath(hr.getSource(), hr.getPath()) + " (readonly)");
+                    noteReadonlyMounted(hr);
                 }
                 case "overlay" -> {
                     requireOverlaySupported(hr);
                     applyOverlay(container, hr);
                     overlayEntries.add(hr);
                 }
-                default -> System.err.println("Warning: unknown host-resource mode '" + hr.getMode()
-                        + "' for " + hr.getSource() + ", skipping.");
+                default -> System.err.println("Warning: unknown host-resource mode '" + shown(hr.getMode())
+                        + "' for " + shown(hr.getSource()) + ", skipping.");
             }
         }
         if (!overlayEntries.isEmpty()) {
@@ -412,7 +411,7 @@ public final class HostResourceSetup {
             if (!Files.exists(Path.of(expandedSource))) {
                 removeExistingDevice(incus, container, deviceNameForMode(hr));
                 warn.accept("Warning: host-resource source not found: "
-                        + hr.getSource() + " (device removed)");
+                        + shown(hr.getSource()) + " (device removed)");
             }
         }
     }
@@ -456,8 +455,7 @@ public final class HostResourceSetup {
                     removeExistingDevice(incus, container, deviceNameForMode(hr));
                     if (warnIfMissing(hr)) continue;
                     addReadonlyDevice(incus, container, hr, machineType);
-                    BuildOutput.note("Mounted " + hr.getSource() + " -> "
-                            + resolveContainerPath(hr.getSource(), hr.getPath()) + " (readonly)");
+                    noteReadonlyMounted(hr);
                 }
                 case "overlay" -> {
                     requireOverlaySupported(hr);
@@ -484,7 +482,7 @@ public final class HostResourceSetup {
                 }
                 incus.deviceRemove(container, deviceNameForMode(hr));
             } catch (Exception e) {
-                System.err.println("Warning: failed to remove build device: " + e.getMessage());
+                System.err.println("Warning: failed to remove build device: " + shown(e.getMessage()));
             }
         }
     }
@@ -502,7 +500,7 @@ public final class HostResourceSetup {
         try {
             return JSON.readValue(json, new TypeReference<>() {});
         } catch (JsonProcessingException e) {
-            System.err.println("Warning: could not parse host-resources metadata: " + e.getMessage());
+            System.err.println("Warning: could not parse host-resources metadata: " + shown(e.getMessage()));
             return List.of();
         }
     }
@@ -522,8 +520,13 @@ public final class HostResourceSetup {
 
     private static void noteVmCopyFallback(ImageDef.HostResource hr) {
         if (!"copy".equals(hr.getMode())) {
-            BuildOutput.note("VM: falling back to copy mode for file " + hr.getSource());
+            BuildOutput.note("VM: falling back to copy mode for file " + shown(hr.getSource()));
         }
+    }
+
+    private static void noteReadonlyMounted(ImageDef.HostResource hr) {
+        BuildOutput.note("Mounted " + shown(hr.getSource()) + " -> "
+                + shown(resolveContainerPath(hr.getSource(), hr.getPath())) + " (readonly)");
     }
 
     private static boolean sourceExists(ImageDef.HostResource hr) {
@@ -533,14 +536,14 @@ public final class HostResourceSetup {
     /** Warns and returns true when the resource's host source is gone, so the caller skips it. */
     private static boolean warnIfMissing(ImageDef.HostResource hr) {
         if (sourceExists(hr)) return false;
-        System.err.println("Warning: host-resource source not found: " + hr.getSource() + " (skipping)");
+        System.err.println("Warning: host-resource source not found: " + shown(hr.getSource()) + " (skipping)");
         return true;
     }
 
     private static void requireOverlaySupported(ImageDef.HostResource hr) {
         if (Platform.isMacOS()) {
             throw new IllegalStateException(
-                    "Host-resource '" + hr.getSource() + "' uses overlay mode, which is not yet supported on macOS.\n"
+                    "Host-resource '" + shown(hr.getSource()) + "' uses overlay mode, which is not yet supported on macOS.\n"
                     + "  Change the mode to 'readonly' in your image definition to mount it read-only,\n"
                     + "  or remove the host-resource entry to skip it entirely.\n"
                     + "  Tracking: https://github.com/Sanne/incus-spawn/issues/157");
@@ -563,17 +566,14 @@ public final class HostResourceSetup {
                 container.filePush(downloaded.toString(), containerPath);
                 container.chown(containerPath, "agentuser:agentuser");
                 chownHomeParents(container, containerPath);
-                BuildOutput.note("Copied " + hr.getSource() + " -> " + containerPath);
+                BuildOutput.note("Copied " + shown(hr.getSource()) + " -> " + shown(containerPath));
             } catch (IOException e) {
-                System.err.println("Warning: failed to download " + hr.getSource() + ": " + e.getMessage());
+                System.err.println("Warning: failed to download " + shown(hr.getSource()) + ": " + shown(e.getMessage()));
             }
         } else {
+            if (warnIfMissing(hr)) return;
             var expandedSource = expandHostTilde(hr.getSource());
             var sourcePath = Path.of(expandedSource);
-            if (!Files.exists(sourcePath)) {
-                System.err.println("Warning: host-resource source not found: " + hr.getSource() + " (skipping)");
-                return;
-            }
             container.exec("mkdir", "-p", parentDir);
             if (Files.isDirectory(sourcePath)) {
                 container.filePushRecursive(expandedSource, parentDir);
@@ -582,7 +582,7 @@ public final class HostResourceSetup {
             }
             container.chown(containerPath, "agentuser:agentuser");
             chownHomeParents(container, containerPath);
-            BuildOutput.note("Copied " + hr.getSource() + " -> " + containerPath);
+            BuildOutput.note("Copied " + shown(hr.getSource()) + " -> " + shown(containerPath));
         }
     }
 
@@ -634,12 +634,12 @@ public final class HostResourceSetup {
                 + "mount -t overlay overlay -o \"lowerdir=$1,upperdir=$2,workdir=$3,metacopy=off\" \"$4\"",
                 "sh", lowerDir, upperDir, workDir, containerPath);
         if (!mountResult.success()) {
-            System.err.println("  Warning: overlay mount failed for " + hr.getSource()
-                    + ": " + mountResult.stderr());
+            System.err.println("  Warning: overlay mount failed for " + shown(hr.getSource())
+                    + ": " + shown(mountResult.stderr().strip()));
             return;
         }
 
-        BuildOutput.note("Mounted " + hr.getSource() + " -> " + containerPath + " (overlay)");
+        BuildOutput.note("Mounted " + shown(hr.getSource()) + " -> " + shown(containerPath) + " (overlay)");
     }
 
     private static void chownHomeParents(Container container, String containerPath) {
