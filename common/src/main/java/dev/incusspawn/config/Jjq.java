@@ -148,14 +148,32 @@ public final class Jjq {
 
     /** {@link #exactInt} of a JSON or YAML number; null for anything else. */
     public static Integer exactInt(JqValue value) {
-        return value != null && value.isNumber() ? exactInt(value.decimalValue()) : null;
+        var number = literalNumber(value);
+        return number == null ? null : exactInt(number);
+    }
+
+    /**
+     * The value of a number, or null when it is not a number or cannot be trusted: the YAML
+     * parser reads {@code .inf}, {@code .nan} and {@code 1e400} as numbers whose value is 0
+     * (Hyperfoil/jjq#133), so a number whose source text is not a finite decimal equal to its
+     * value is refused. JSON numbers carry no source text and keep their exact value.
+     */
+    private static java.math.BigDecimal literalNumber(JqValue value) {
+        if (value == null || !value.isNumber()) return null;
+        var number = value.decimalValue();
+        var written = value.sourceText();
+        if (written == null) return number;
+        try {
+            return new java.math.BigDecimal(written.strip()).compareTo(number) == 0 ? number : null;
+        } catch (NumberFormatException notFinite) {
+            return null;
+        }
     }
 
     /** As {@link #exactInt}, for a long. */
     public static Long exactLong(JqValue value) {
-        if (value == null || !value.isNumber()) return null;
-        var number = value.decimalValue();
-        if (number.compareTo(LONG_MIN) < 0 || number.compareTo(LONG_MAX) > 0) return null;
+        var number = literalNumber(value);
+        if (number == null || number.compareTo(LONG_MIN) < 0 || number.compareTo(LONG_MAX) > 0) return null;
         try {
             return number.longValueExact();
         } catch (ArithmeticException fractional) {

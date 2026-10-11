@@ -7,7 +7,6 @@ import io.hyperfoil.tools.jjq.value.JqNumber;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
-import java.math.BigDecimal;
 
 /**
  * An {@code Integer} setting as Jackson bound it: a whole number in the int range, or a string
@@ -28,8 +27,8 @@ public class IntegerConverter implements ValueConverter<Integer> {
         } else if (value.isString()) {
             if (value.asText().isBlank()) return null; // as Jackson bound "" to a wrapper
             try {
-                bound = Jjq.exactInt(new BigDecimal(value.asText().strip()));
-            } catch (NumberFormatException notANumber) {
+                bound = Integer.parseInt(value.asText().strip());
+            } catch (NumberFormatException notAnInteger) {
                 // refused below
             }
         }
