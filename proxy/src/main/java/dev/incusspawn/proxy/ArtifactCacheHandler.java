@@ -1552,7 +1552,7 @@ class ArtifactCacheHandler {
      */
     Future<SidecarAnswer> fetchChecksumHeader(String domain, String path, Revalidation revalidation) {
         return retryOnceAfterConnect(() -> upstream.requestWithAsyncDns(upstream.probeClient, probeOptions(HttpMethod.HEAD, domain, 443, path))
-                        .compose(req -> afterConnect(req.send().compose(resp -> resp.end().map(v -> {
+                        .compose(req -> afterConnect(upstream.sendProbe(req, (resp, read) -> resp.end().map(v -> {
                             var status = resp.statusCode();
                             if (status != 200) return new SidecarAnswer(status, null, true);
                             var hex = revalidation.checksumFrom(resp);
@@ -1609,7 +1609,7 @@ class ArtifactCacheHandler {
     // both to UNREACHABLE); an answer we cannot use is UNUSABLE.
     private Future<SidecarAnswer> fetchSmallBody(String host, int port, String uri, int depth, int maxBytes) {
         return upstream.requestWithAsyncDns(upstream.probeClient, probeOptions(HttpMethod.GET, host, port, uri))
-                .compose(req -> afterConnect(req.send().compose(resp -> {
+                .compose(req -> afterConnect(upstream.sendProbe(req, (resp, read) -> {
                     var location = resp.getHeader("Location");
                     if (resp.statusCode() >= 300 && resp.statusCode() < 400 && location != null) {
                         var target = redirectTarget(host, port, uri, location);
@@ -1620,11 +1620,13 @@ class ArtifactCacheHandler {
                             resp.request().reset();
                             return Future.succeededFuture(SidecarAnswer.UNUSABLE);
                         }
+                        // Draining the redirect's body is a read too
+                        resp.handler(chunk -> read.run());
                         return resp.end().compose(v -> fetchSmallBody(target.getHost(),
                                 target.getPort() > 0 ? target.getPort() : 443, rawPathAndQuery(target), depth + 1,
                                 maxBytes));
                     }
-                    return readSmallBody(resp, maxBytes);
+                    return readSmallBody(resp, maxBytes, read);
                 })));
     }
 
@@ -1655,10 +1657,11 @@ class ArtifactCacheHandler {
         return uri.getRawPath() + (uri.getRawQuery() != null ? "?" + uri.getRawQuery() : "");
     }
 
-    private static Future<SidecarAnswer> readSmallBody(HttpClientResponse resp, int maxBytes) {
+    private static Future<SidecarAnswer> readSmallBody(HttpClientResponse resp, int maxBytes, Runnable read) {
         var promise = Promise.<SidecarAnswer>promise();
         var body = Buffer.buffer();
         resp.handler(chunk -> {
+            read.run();
             if (body.length() + chunk.length() > maxBytes) {
                 resp.handler(null);
                 // An oversized sidecar is unusable; an oversized error page is still that error

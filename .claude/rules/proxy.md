@@ -198,7 +198,8 @@ Key design:
   For any other copy it must be upstream's **current** value, never synthesized from the store, which would turn the client's check against upstream into a check against our own cache.
   `Revalidation` is also the caching allowlist, and its javadoc states why a domain must be vetted even though hits are confirmed: offline serves are unconfirmed, and serves within the tiers not confirmed now (so they rely on the repository not changing or withdrawing releases), the confirmation must be sound for that repository (`SIDECAR` only where artifact and sidecar are published together and never replaced), and the cache is shared across instances without per-client authorization (public repositories only).
   Keep those reasons, not "immutability", in comments.
-  `probeClient` (h2) needs its connection-level `readIdleTimeout` below `probeOptions()`' request timeout: it fires only while an exchange waits, and is the only thing that evicts a silently dead h2 connection (a request timeout resets just its stream).
+  Send every `probeClient` request through `Upstream.sendProbe()`, with `probeReadIdleSeconds` below `probeOptions()`' request timeout: it closes a connection with nothing read since the request, the only thing that evicts a silently dead h2 connection (a request timeout resets just its stream).
+  Don't give `probeClient` a read-idle or all-idle timeout instead: Netty ticks the first from the last read, cutting a request just sent on a long-pooled connection, and requests' writes restart the second (#1007).
   Keep `setHttp2MaxPoolSize` above 1, or bursts to HTTP/1.1-only or unreachable hosts serialize.
   `~/.m2` imports copy/reflink, never hardlink.
   Commit/reconcile/evict go through `VerifiedArtifactStore`'s striped lock; don't touch the cache files around it

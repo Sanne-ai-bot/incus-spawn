@@ -8,6 +8,7 @@ import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpClientResponse;
+import io.vertx.core.http.HttpConnection;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
@@ -16,10 +17,13 @@ import io.vertx.core.net.SocketAddress;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
 
 /**
  * The proxy's side towards upstream, shared by {@link MitmProxy} and its caches: the upstream
@@ -57,8 +61,10 @@ class Upstream {
 
     // Overridable for tests
     boolean upstreamTrustAll = false;
-    // Overridable for tests: see probeClient's options
+    // Overridable for tests: see sendProbe()
     int probeReadIdleSeconds = 15;
+    // Per probeClient connection, when an exchange on it last read something (sendProbe())
+    private final Map<HttpConnection, Long> probeLastRead = Collections.synchronizedMap(new WeakHashMap<>());
     // How long a client fetching into the cache may go without a byte from us. Below the MITM
     // server's idle timeout, which drops the client silently, with the upstream read still
     // pending: the upstream client's read-idle timeout (300s) outlasts it. Waiting for a
@@ -117,9 +123,9 @@ class Upstream {
         upstreamClient = vertx.createHttpClient(clientOptions);
 
         // Every cache hit waits on one of these: h2 (via ALPN) shares a connection.
-        // The read-idle timeout only fires while an exchange is waiting, and being
-        // shorter than probeOptions()' it closes a silently dead connection (whose
-        // exchange is then retried on a new one) before any request times out on it.
+        // No read-idle timeout: Netty's ticks from the connection's last read, so it would
+        // cut a pooled connection just after a request went out on it; sendProbe() times
+        // the dead-connection check from the request instead.
         // A few h2 connections per host, so a burst to a host that falls back to
         // HTTP/1.1, or does not answer at all, is not handled one connect at a time.
         var probeOptions = new HttpClientOptions()
@@ -132,8 +138,7 @@ class Upstream {
                 .setHttp2MaxPoolSize(4)
                 .setMaxPoolSize(32)
                 .setKeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
-                .setConnectTimeout(10_000)
-                .setReadIdleTimeout(probeReadIdleSeconds);
+                .setConnectTimeout(10_000);
         if (upstreamTrust != null) probeOptions.setTrustOptions(upstreamTrust);
         probeClient = vertx.createHttpClient(probeOptions);
 
@@ -163,6 +168,42 @@ class Upstream {
         try {
             if (wsUpstreamClient != null) wsUpstreamClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * Sends a request made on {@link #probeClient} and hands its response to {@code exchange}, which
+     * calls the {@code Runnable} it is given on every read of the response's body.
+     * <p>
+     * Closes the connection once nothing has been read on it for {@link #probeReadIdleSeconds},
+     * counted from the request (#1007): shorter than the exchange's own timeout, this evicts a
+     * silently dead connection, and fails what waits on it as broken rather than timed out, before
+     * any exchange times out on it. A timed-out exchange would reset only its own stream.
+     */
+    <T> Future<T> sendProbe(HttpClientRequest req,
+                            BiFunction<HttpClientResponse, Runnable, Future<T>> exchange) {
+        var connection = req.connection();
+        long sent = System.nanoTime();
+        Runnable read = () -> probeLastRead.put(connection, System.nanoTime());
+        // Over when the response has ended, not when the exchange has: it may go on to follow a redirect
+        var over = Promise.<Void>promise();
+        var result = req.send().compose(resp -> {
+            read.run();
+            resp.end().onComplete(r -> over.tryComplete());
+            return exchange.apply(resp, read);
+        });
+        result.onComplete(r -> over.tryComplete());
+        long idleNanos = TimeUnit.SECONDS.toNanos(probeReadIdleSeconds);
+        closeWhenReadIdle(connection, sent, over.future(), idleNanos, idleNanos);
+        return result;
+    }
+
+    private void closeWhenReadIdle(HttpConnection connection, long sent, Future<Void> over, long idleNanos, long delayNanos) {
+        vertx.setTimer(Math.max(1, TimeUnit.NANOSECONDS.toMillis(delayNanos)), t -> {
+            if (over.isComplete()) return;
+            long idle = System.nanoTime() - Math.max(sent, probeLastRead.getOrDefault(connection, sent));
+            if (idle >= idleNanos) connection.close();
+            else closeWhenReadIdle(connection, sent, over, idleNanos, idleNanos - idle);
+        });
     }
 
     Future<HttpClientRequest> requestWithAsyncDns(RequestOptions options) {
