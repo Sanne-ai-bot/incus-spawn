@@ -117,7 +117,8 @@ class RepoClonerTest {
 
         // Local clone from mounted reference
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'");
+                RepoCloner.awaitMount("/mnt/ref/repo")
+                        + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'");
         // URL fixup + fetch + detect default branch
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
@@ -186,7 +187,8 @@ class RepoClonerTest {
 
         // Local clone (no --branch — handled after fetch)
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'");
+                RepoCloner.awaitMount("/mnt/ref/repo")
+                        + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'");
         // URL fixup + fetch + detect default branch
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
@@ -319,6 +321,64 @@ class RepoClonerTest {
     }
 
     @Test
+    void awaitMountRunsUnderShAndTimesOutOnlyOnAPathThatIsNotAMountPoint() throws Exception {
+        // The script runs in a Linux guest. macOS has no `mountpoint` (awaitMount then skips the
+        // wait, by design) and no `timeout`, so only a host with both can exercise the wait.
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                runSh("command -v mountpoint >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1") == 0,
+                "needs mountpoint and timeout on the host, as a Linux guest has");
+        assertEquals(0, runSh(RepoCloner.awaitMount("/", 5)));
+        assertEquals(0, runSh(RepoCloner.awaitMount("/", 5) + " && true"));
+        var dir = java.nio.file.Files.createTempDirectory("not-a-mount");
+        try {
+            assertEquals(124, runSh(RepoCloner.awaitMount(dir.toString(), 1)));
+            assertNotEquals(0, runSh(RepoCloner.awaitMount(dir.toString(), 1) + " && true"));
+        } finally {
+            java.nio.file.Files.delete(dir);
+        }
+    }
+
+    @Test
+    void awaitMountIsSkippedWhereTheGuestHasNoMountpoint() throws Exception {
+        var empty = java.nio.file.Files.createTempDirectory("empty-path");
+        try {
+            // A PATH with nothing on it finds no `mountpoint`, as in a guest without util-linux.
+            assertEquals(0, runSh("PATH='" + empty + "'; " + RepoCloner.awaitMount("/nowhere", 1)));
+        } finally {
+            java.nio.file.Files.delete(empty);
+        }
+    }
+
+    private static int runSh(String script) throws Exception {
+        return new ProcessBuilder("sh", "-c", script).inheritIO().start().waitFor();
+    }
+
+    @Test
+    void aFailedCloneFromTheReferenceSaysWhyItClonedFromTheNetwork() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(new IncusClient.ExecResult(128, "",
+                        "fatal: repository '/mnt/ref/repo' does not exist\n")) // local clone fails
+                .thenReturn(OK); // cleanup, network clone, refspec restore
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+        var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+
+        var states = new java.util.concurrent.atomic.AtomicReferenceArray<BuildProgress.StepProgress>(1);
+        new RepoCloner(incus).prepareOne(container, repo, ref, states, 0,
+                new java.util.concurrent.atomic.AtomicBoolean());
+
+        verify(incus).execInContainer("test", "agentuser",
+                "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
+        assertEquals(BuildProgress.StepState.DONE, states.get(0).state());
+        assertEquals("could not use the host reference: fatal: repository '/mnt/ref/repo' does not exist",
+                states.get(0).note());
+    }
+
+    @Test
     void cloneReposThrowsWhenCloneFails() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
@@ -407,7 +467,7 @@ class RepoClonerTest {
                 primes.incrementAndGet();
                 if (mounted.get() > 0) primesWhileMounted.incrementAndGet();
             }
-            if (cmdLine.startsWith("git clone --no-hardlinks")) Thread.sleep(50); // slow local clones
+            if (cmdLine.contains("git clone --no-hardlinks")) Thread.sleep(50); // slow local clones
             return OK;
         });
         doAnswer(inv -> { mounted.decrementAndGet(); return null; }).when(incus).deviceRemove(eq("test"), anyString());

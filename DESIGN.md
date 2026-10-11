@@ -2244,6 +2244,12 @@ The slots are a budget (`HotplugSlots`) that starts at `min(references, 8)` on a
 It is a hint, not a count.
 An attach Incus refuses for want of a slot retires one permit for good and waits for another, so a device nobody counted shrinks the budget instead of reintroducing the bug.
 Only when the budget would reach zero does a repo clone from the network, with a note saying why on its line.
+On a VM, an attach is not a mount: Incus returns once the device is added, and incus-agent mounts the share in the guest shortly afterwards (about half a second measured), so a clone started at once found an empty directory and fell back to the network, silently (#1233).
+So the clone from a reference first polls `mountpoint -q` for at most `MOUNT_WAIT_SECONDS` (30 s, bounded by `timeout`, so a guest clock step cannot lengthen it), in the clone's own exec: the wait costs no request, and runs outside the device lock.
+A container's disk is mounted by the add itself, so there the loop ends at its first check.
+A guest without `mountpoint` is not waited on: the clone runs at once, as it did before.
+A reference that does not appear in time fails that exec with a status of its own, so its line says it was not mounted rather than quoting git.
+Every way a repo ends up on the network clone instead of its reference says why on its line: no slot, no mount, or the git error of a failed clone from the reference.
 The latch the primes wait on counts *planned* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached.
 So a failed or re-queued attach can neither hang the primes nor land after them.
 Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every reference has been detached**, so priming still pipelines with the network clones in flight.

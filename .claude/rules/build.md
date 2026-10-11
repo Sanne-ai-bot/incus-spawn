@@ -139,6 +139,8 @@ Which repos have a reference is decided on the host up front (`planReference`).
 Each worker attaches its own just before its clone and detaches it right after (`DeviceMounts`, #826), both under one lock, because a device removal rewrites the whole device map and would drop an attach that landed meanwhile.
 A VM has only 8 PCI hotplug slots, so attaches go through `HotplugSlots`: a budget starting at `min(references, 8)` (unbounded for containers), where an attach Incus refuses for want of a slot (`IncusClient.NoHotplugSlotException`) retires a permit for good and waits for another.
 Only when the budget would reach zero does the repo clone from the network, with a `RepoReference.skipped` note on its line.
+A VM's incus-agent mounts the share some time after the device add returns (#1233), so the reference clone's exec starts with `awaitMount` (`mountpoint -q` under `timeout`, at most `MOUNT_WAIT_SECONDS`, no extra request; skipped where the guest has no `mountpoint`); a share that never appears exits `MOUNT_TIMEOUT_EXIT` and the repo clones from the network.
+A failed clone from a reference also says why on its line (`CloneResult.fallbackReason`): no fallback to the network is silent.
 The `referencesDetached` latch counts *planned* references, each counted down once in a `finally` after its attach is resolved and anything attached is detached.
 A failed detach fails the build, before the count-down.
 Concurrency is bounded by a semaphore in `prepareOne` held around clone and prime separately, never while waiting (`repoConcurrency()`).
