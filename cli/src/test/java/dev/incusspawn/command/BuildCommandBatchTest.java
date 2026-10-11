@@ -273,8 +273,9 @@ class BuildCommandBatchTest {
                 "tpl-isx", "2026-10-01T09:02:00", "tpl-quarkus", "2026-10-01T09:02:00",
                 "tpl-other", "2026-10-01T09:00:00", "tpl-other-child", "2026-10-01T09:01:00"));
 
-        assertThrows(IllegalArgumentException.class, () -> build("--out-of-sync"));
+        var e = assertThrows(IllegalArgumentException.class, () -> build("--out-of-sync"));
 
+        assertTrue(e.getMessage().contains("tpl-broken"), "names the template: " + e.getMessage());
         assertEquals(List.of(), built);
     }
 

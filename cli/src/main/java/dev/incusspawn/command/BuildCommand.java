@@ -533,7 +533,11 @@ public class BuildCommand extends BaseCommand {
             }
             // Tool parameters that no longer validate are thrown before anything is built, not halfway through
             for (var name : result) {
-                BuildTools.resolveTools(defs.get(name), toolDefLoader, true);
+                try {
+                    BuildTools.resolveTools(defs.get(name), toolDefLoader, true);
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException("Template '" + name + "': " + e.getMessage(), e);
+                }
             }
         } else {
             for (var leaf : leaves) {
