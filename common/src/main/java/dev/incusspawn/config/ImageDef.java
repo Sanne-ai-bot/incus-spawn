@@ -746,6 +746,7 @@ public class ImageDef {
                 try (var is = Files.newInputStream(path)) {
                     var def = YAML.readValue(is, ImageDef.class);
                     var source = path.toAbsolutePath().normalize();
+                    if (def == null) def = new ImageDef(); // a document of just `~`: no name either
                     def.setSource(source.toString());
                     def.setProjectRoot(projectRoot);
                     if (validate(def, path.getFileName().toString(), warnings)) {

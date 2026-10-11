@@ -506,6 +506,20 @@ class ImageDefTest {
     }
 
     @Test
+    void aNullDocumentIsRefusedLikeADefinitionWithoutAName(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        var refused = imagesDir.resolve("java.yaml");
+        Files.writeString(refused, "~\n");
+        var warnings = new java.util.ArrayList<String>();
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), warnings::add);
+
+        assertEquals(List.of(refused.toAbsolutePath().normalize()), result.parseFailures());
+        assertEquals(1, warnings.size(), warnings.toString());
+    }
+
+    @Test
     void aParentThatCannotBeAnInstanceIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
         var imagesDir = tempDir.resolve("images");
         Files.createDirectories(imagesDir);
