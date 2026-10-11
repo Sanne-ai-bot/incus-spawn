@@ -350,15 +350,18 @@ public class GuestProvisioning {
     }
 
     /**
-     * Writes {@link #TRUST_ENV} for systemd user sessions ({@code environment.d}) as
-     * {@code NAME=${NAME:-value}}, so a value an earlier-sorting file already set (a user's
-     * {@code ~/.config/environment.d/10-*.conf}) is kept; login shells
-     * get the same names from {@code isx-env.sh} (see {@link #writeEnvFile}).
+     * Writes {@link #TRUST_ENV} for systemd user sessions ({@code environment.d}) as plain
+     * assignments in {@code 00-isx-trust.conf}. {@code environment.d} files are applied in
+     * filename order and the last assignment wins, so the first-sorting name lets any other
+     * file (a user's {@code ~/.config/environment.d/10-*.conf}) override these defaults.
+     * ({@code NAME=${NAME:-value}} would say the same but broke rootless podman's registry
+     * pulls in the integration run.) Login shells get the same names from {@code isx-env.sh}
+     * (see {@link #writeEnvFile}).
      */
     static void writeTrustEnvironmentD(Container container) {
         var sb = new StringBuilder();
-        TRUST_ENV.forEach((name, value) -> sb.append(name).append("=${").append(name).append(":-").append(value).append("}\n"));
-        container.writeFile("/etc/environment.d/50-isx-trust.conf", sb.toString());
+        TRUST_ENV.forEach((name, value) -> sb.append(name).append('=').append(value).append('\n'));
+        container.writeFile("/etc/environment.d/00-isx-trust.conf", sb.toString());
     }
 
     /** Installs {@code isx-trust}, the one helper that applies the file bindings. */

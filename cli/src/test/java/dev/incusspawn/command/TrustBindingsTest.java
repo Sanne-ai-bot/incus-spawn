@@ -67,15 +67,18 @@ class TrustBindingsTest {
     }
 
     @Test
-    void theEnvironmentDropInLeavesAnAlreadySetValueAlone() {
+    void theEnvironmentDropInSortsFirstSoAnyOtherFileOverridesIt() {
         var incus = mock(IncusClient.class);
         var container = recordingContainer(incus);
 
         GuestProvisioning.writeTrustEnvironmentD(container);
 
         var all = String.join("\n", writtenScripts(incus));
-        assertTrue(all.contains("SSL_CERT_FILE=${SSL_CERT_FILE:-/etc/pki/tls/certs/ca-bundle.crt}"), all);
-        assertTrue(all.contains("UV_NATIVE_TLS=${UV_NATIVE_TLS:-1}"), all);
+        // First in filename order, so a user's own file wins; plain values, because the
+        // ${NAME:-value} form broke rootless podman's registry pulls in CI.
+        assertTrue(all.contains("cat > '/etc/environment.d/00-isx-trust.conf'"), all);
+        assertTrue(all.contains("\nSSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt\n"), all);
+        assertFalse(all.contains("${"), all);
     }
 
     @Test
@@ -95,8 +98,8 @@ class TrustBindingsTest {
 
         var all = String.join("\n", writtenScripts(incus));
         assertTrue(all.contains("cat > '/usr/local/bin/isx-trust'"), all);
-        assertTrue(all.contains("cat > '/etc/environment.d/50-isx-trust.conf'"), all);
-        assertTrue(all.contains("SSL_CERT_FILE=${SSL_CERT_FILE:-/etc/pki/tls/certs/ca-bundle.crt}"), all);
+        assertTrue(all.contains("cat > '/etc/environment.d/00-isx-trust.conf'"), all);
+        assertTrue(all.contains("SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt"), all);
         assertTrue(all.contains("/usr/local/bin/isx-trust /usr/lib/jvm /opt"), all);
     }
 
