@@ -100,12 +100,12 @@ import static dev.incusspawn.util.BuildOutput.styled;
 
 @CommandDefinition(
         name = "build",
-        description = "Build or rebuild a template image (e.g. tpl-minimal, tpl-java)",
+        description = "Build or rebuild a template image (e.g. tpl-minimal)",
         generateHelp = true
 )
 public class BuildCommand extends BaseCommand {
 
-    @Arguments(description = "Names of the templates (e.g. tpl-minimal tpl-java)")
+    @Arguments(description = "Names of the templates (e.g. tpl-minimal my-template)")
     List<String> names;
 
     @Option(name = "all", hasValue = false, description = "Rebuild all defined templates")
@@ -753,7 +753,6 @@ public class BuildCommand extends BaseCommand {
         if (reportNameTooLong(canonicalName)) throw new BuildFailedException(canonicalName);
 
         BuildOutput.buildHeader(canonicalName, buildIndex, buildTotal);
-        warnDeprecated(imageDef, defs);
 
         // Refuse before anything is created: the same check runs again when the resources are
         // applied, but by then the build container exists and the failure would leave it behind.
@@ -778,6 +777,8 @@ public class BuildCommand extends BaseCommand {
             if (!confirm("Rebuild?")) return;
         }
 
+        // Once the build is certain to go ahead: a refused or declined build built nothing on it
+        warnDeprecated(imageDef, defs);
         incus.deleteIfExists(tempName);
         activeBuild = new ActiveBuild(tempName, canonicalName, effectiveMachineType(imageDef));
 

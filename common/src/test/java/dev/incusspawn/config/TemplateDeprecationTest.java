@@ -49,4 +49,12 @@ class TemplateDeprecationTest {
         var deprecated = def("name: a\nparent: tpl-root\npackages: [git]\ndeprecated: going away\n");
         assertEquals(plain.contentFingerprint(Map.of()), deprecated.contentFingerprint(Map.of()));
     }
+
+    @Test
+    void theBuiltInDevAndJavaTemplatesAreDeprecatedButMinimalIsNot() {
+        assertTrue(ImageDef.loadBuiltinByName("tpl-dev").isDeprecated());
+        assertTrue(ImageDef.loadBuiltinByName("tpl-java").isDeprecated());
+        assertFalse(ImageDef.loadBuiltinByName("tpl-minimal").isDeprecated());
+        assertTrue(ImageDef.loadBuiltinByName("tpl-java").getDeprecated().contains("incus-spawn-templates"));
+    }
 }

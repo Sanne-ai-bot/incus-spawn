@@ -66,8 +66,8 @@ jbang app install isx-proxy@Sanne/incus-spawn
 # One-time host setup (Incus, firewall, auth)
 isx init
 
-# Build a template (builds parent images automatically)
-isx build tpl-java
+# Build a template (builds missing parent images first)
+isx build tpl-minimal
 
 # Launch the interactive TUI
 isx
@@ -299,7 +299,7 @@ tools:
   - maven-3
 ```
 
-Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). The root image (`tpl-minimal`) uses a custom Fedora base from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images). Use `isx update-base` to check for new base image releases, pin a specific version, or track the latest:
+Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). `tpl-dev` and `tpl-java` are deprecated and will be removed from isx: they still build, with a warning, and their maintained copies live in [`incus-spawn-templates`](https://github.com/Sanne/incus-spawn-templates) under the same names. Add that checkout to `searchPaths` (or copy its `images/dev.yaml` and `images/java.yaml` into `~/.config/incus-spawn/images/`) and the copies replace the built-ins; the definitions are the same, so nothing already built goes out of sync. The root image (`tpl-minimal`) uses a custom Fedora base from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images). Use `isx update-base` to check for new base image releases, pin a specific version, or track the latest:
 
 ```shell
 isx update-base              # interactive — shows versions, prompts for action

@@ -262,7 +262,7 @@ public class InitCommand extends BaseCommand {
                 "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"),
                 "",
                 "   " + styled(BOLD, "Next steps:"),
-                "   1. Build a template:      isx build tpl-java",
+                "   1. Build a template:      isx build tpl-minimal",
                 proxyStep,
                 "   3. Launch the TUI:        isx");
         return CommandResult.SUCCESS;
@@ -286,7 +286,7 @@ public class InitCommand extends BaseCommand {
                 "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"),
                 "",
                 "   " + styled(BOLD, "Next steps:"),
-                "   1. Build a template:  isx build tpl-java",
+                "   1. Build a template:  isx build tpl-minimal",
                 "   2. Launch the TUI:    isx");
         return CommandResult.SUCCESS;
     }

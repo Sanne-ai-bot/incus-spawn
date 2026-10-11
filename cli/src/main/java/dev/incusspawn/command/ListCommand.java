@@ -76,7 +76,7 @@ public class ListCommand extends BaseCommand {
             case TABLE -> {
                 if (all.isEmpty()) {
                     out.println("No incus-spawn environments found.");
-                    out.println("Run 'isx build tpl-java' to create your first template.");
+                    out.println("Run 'isx build tpl-minimal' to create your first template.");
                 } else {
                     printTable(instances, out);
                 }

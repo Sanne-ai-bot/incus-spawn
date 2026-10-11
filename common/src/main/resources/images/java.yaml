@@ -1,6 +1,10 @@
 name: tpl-java
 description: JDK + Maven
 parent: tpl-dev
+deprecated: >-
+  will be removed from isx; its copy lives on in
+  https://github.com/Sanne/incus-spawn-templates (add that checkout to searchPaths
+  in config.yaml, or copy images/java.yaml into ~/.config/incus-spawn/images/)
 packages:
   - java-25-openjdk-devel
   - java-25-openjdk-javadoc
