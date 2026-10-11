@@ -11,6 +11,7 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.Warnings;
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
@@ -113,9 +114,7 @@ public class Tui {
                 @Override public boolean parentRebuilt(String template) { return templatesParentRebuilt.contains(template); }
                 @Override public String overriddenSource(String template) { return imageLayers.overriddenSource(template); }
                 @Override public String builtFrom(String template) { return Tui.this.loader.builtFrom(template); }
-                @Override public dev.incusspawn.config.BuildSource buildSource(String template) {
-                    return Tui.this.loader.buildSource(template);
-                }
+                @Override public BuildSource buildSource(String template) { return Tui.this.loader.buildSource(template); }
                 @Override public String currentVersion() { return Tui.this.currentVersion(); }
             }, java.time.LocalDateTime::now);
 
