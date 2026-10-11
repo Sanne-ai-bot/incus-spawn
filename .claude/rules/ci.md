@@ -34,6 +34,11 @@ Key jobs:
 - **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`), then runs test scripts inside branched instances
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
+`.github/workflows/test-vm-kernel.yml` (**`boot (x86_64)`**, **`boot (aarch64)`**) runs when `appliance/kernel/**`, `appliance/test-vm-kernel.sh` or `minimal.yaml` change (#1255).
+It builds the VM base image's kernel with `build-kernel.sh vm` and boots it with `appliance/test-vm-kernel.sh` on the VM image `minimal.yaml` pins, downloaded and checked against `vm_image_sha256`.
+x86_64 boots under KVM, aarch64 under TCG; the console logs and `systemd-analyze plot`s are uploaded.
+It shares the kernel-source cache key with `build-appliance.yml`, and depends on no image release.
+
 `scripts/local-incus.sh` reproduces the `isx-integration-tests-native` setup (packages, `sg incus-admin -c "isx init </dev/null"`, the default profile on the `cow` pool) on a local host, for the `validate-on-real-incus` skill.
 A change to how that job prepares Incus belongs in the script too.
 The script also installs `virtiofsd`, which Fedora's `incus` package does not pull in: without it Incus shares VM disks over 9p, which cannot be hot-plugged (#853).
@@ -84,7 +89,7 @@ Still uncovered: vfkit itself, and boots under vfkit's hvc0 console and devices.
 So anything touching the kernel config, the console, or the boot path still needs a boot on a Mac before it ships (#791).
 A green CI is not evidence that vfkit behaves.
 
-The appliance cache key hashes `appliance/**` except `appliance/test-*.sh` and `appliance/*.md`, which are host-side and never enter the image, so editing a test script does not force an appliance rebuild.
+The appliance cache key hashes `appliance/**` except `appliance/test-*.sh`, `appliance/*.md` and `appliance/kernel/vm*.config`, which never enter the image, so editing a test script or a VM kernel fragment does not force an appliance rebuild.
 Anything `build.sh` copies into the image (`root/`, `config.sh`, the kernel) must stay inside the hash.
 
 The kernel-source cache (`/tmp/kernel-cache/`) is keyed `kernel-source-<version>-<sha256>`, both read from `appliance/kernel/build-kernel.sh`.

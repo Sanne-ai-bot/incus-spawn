@@ -3035,6 +3035,28 @@ What was decided (Sanne, 2026-10-10, on #1240):
   The LVM units have a user in a nested Incus with an LVM pool, and `upower` and `rtkit-daemon` come from templates, rtkit for GUI audio.
 - **Resuming a VM from a stateful snapshot is deferred**; it would need its own design.
 
+#### The VM base image's own kernel (#1255)
+
+The plan on #1255 removes the initrd, the boot loader and the modules from the VM base image: the kernel is built from the appliance's source pin, and OVMF starts it straight from the ESP.
+Its first step is in isx: `appliance/kernel/build-kernel.sh vm` builds that kernel, and `appliance/test-vm-kernel.sh` boots it.
+The `vm` role layers `vm.config` and `vm-<arch>.config` over the appliance fragments.
+They add an ext4 root on virtio-blk, the EFI stub, autofs, nested KVM with vhost-net and vhost-vsock, and 9p for the agent's config share.
+The command line is built in, since nothing passes one: the root is found by its GPT partition name, `isx-root`, which the kernel resolves itself, with no udev.
+A feature goes in when a template asks for it, and what is deliberately absent is listed in the fragment's header.
+
+`test-vm-kernel.sh` boots a copy of a VM image's disk under QEMU with the kernel as the ESP's only file, OVMF or AAVMF with Secure Boot off, 8 vCPUs and 4 GiB.
+It asserts the guest reaches `basic.target`, and prints firmware, kernel, userspace and ready times, `critical-chain`, `blame` and on request the plot.
+It prepares the copy with `sgdisk`, `mtools` and `debugfs`, so it needs neither root nor a loop device, and the firmware is a parameter, so a trimmed OVMF build is measured by the same harness.
+Until the from-scratch image exists, it boots the stock image `minimal.yaml` pins; `test-vm-kernel.yml` runs it in CI, x86_64 under KVM and aarch64 under TCG.
+
+Measured on 2026-10-11 under nested KVM (the same host as above, inside an isx VM), on `fedora-44-20261011`, median of five boots: firmware 2.6 s, kernel 0.76 s, userspace to `basic.target` 1.24 s, ready 4.6 s.
+Firmware here includes QEMU's own start.
+Two options the plan asked to measure did not show at this level of nesting, where the kernel time alone varied by ±0.15 s between runs (on the stock image of 2026-10-09).
+`DEFERRED_STRUCT_PAGE_INIT` averaged 0.58 s of kernel time against 0.66 s over eight interleaved pairs, so it is left out.
+Turning `CPU_MITIGATIONS` back on measured no worse either, so the vm role keeps the appliance's `n`.
+Both are for step 6 to measure again on bare metal.
+aarch64 boots to `basic.target` under TCG with this kernel and AAVMF, which no one had tried before.
+
 ### Why nothing is pushed into an instance just before it starts
 
 `bench/trace-branch.sh` showed a full second of every 2.2 s branch spent idle inside Incus's start operation, right after it logged "Stopping forkfile".
