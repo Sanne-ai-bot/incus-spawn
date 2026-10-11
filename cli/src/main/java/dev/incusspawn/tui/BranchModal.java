@@ -35,6 +35,8 @@ final class BranchModal {
     private final ModalRenderer modal;
     private final TuiTheme theme;
     private final String branchSourceName;
+    /** The widest hint line's width, which the dialog's width follows. */
+    private final int hintsWidth;
 
 
     private TextInputState branchNameInput;
@@ -109,6 +111,7 @@ final class BranchModal {
         vmDiskInput = new TextInputState(shown.disk());
         branchAccounts = accounts;
         branchFieldIndex = 0;
+        hintsWidth = widestHints();
     }
 
     /** Whether the dialog branches a VM, and so offers its limits. */
@@ -260,7 +263,11 @@ final class BranchModal {
         // Nine field lines, the key hints, and the two borders. It was 11, which left the hints
         // a zero-height line: they were never shown.
         int height = 12 + accountLines;
-        var modalArea = ModalRenderer.centerRect(screen, accountRows == 0 ? 54 : 64, height);
+        // Wide enough for the widest key hints the dialog can show, so none is cut off, and the
+        // same width whichever field has focus; never narrower than it was, and never wider than
+        // the screen less a margin.
+        int width = Math.max(accountRows == 0 ? 54 : 64, Math.min(hintsWidth + 4, screen.width() - 4));
+        var modalArea = ModalRenderer.centerRect(screen, width, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
                 .title(modal.styledTitle(" Branch from '" + branchSourceName + "' ", modal.border()))
@@ -325,21 +332,9 @@ final class BranchModal {
             }
         }
 
-        var hintSpans = new ArrayList<Span>();
-        if (branchAccounts.isOpen()) {
-            modal.addKey(hintSpans, "Enter", "Choose");
-            modal.addKey(hintSpans, "Esc", "Close");
-            modal.addKey(hintSpans, "↑↓", "Move");
-        } else if (isAccountField(branchFieldIndex)) {
-            modal.addKey(hintSpans, "Enter", "Confirm");
-            modal.addKey(hintSpans, "Space", "Choose account");
-            modal.addKey(hintSpans, "←→", "Cycle");
-        } else {
-            modal.addKey(hintSpans, "Enter", "Confirm");
-            modal.addKey(hintSpans, "Esc", "Cancel");
-            modal.addKey(hintSpans, "↑↓/Tab", "Navigate");
-            modal.addKey(hintSpans, "Space", "Toggle");
-        }
+        var hintSpans = branchAccounts.isOpen() ? hints(DROPDOWN_HINTS)
+                : isAccountField(branchFieldIndex) ? hints(ACCOUNT_FIELD_HINTS)
+                : hints(FIELD_HINTS);
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
 
         // Last, so the dropdown is drawn over everything below its row.
@@ -422,5 +417,26 @@ final class BranchModal {
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
                 cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of());
         return request;
+    }
+
+    // Key, label pairs for the hint line: while a dropdown is open, on an account row, elsewhere.
+    private static final String[] DROPDOWN_HINTS = {"Enter", "Choose", "Esc", "Close", "↑↓", "Move"};
+    private static final String[] ACCOUNT_FIELD_HINTS = {"Enter", "Confirm", "Space", "Choose account", "←→", "Cycle"};
+    private static final String[] FIELD_HINTS = {"Enter", "Confirm", "Esc", "Cancel", "↑↓/Tab", "Navigate", "Space", "Toggle"};
+
+    private ArrayList<Span> hints(String[] keysAndLabels) {
+        var spans = new ArrayList<Span>();
+        for (int i = 0; i < keysAndLabels.length; i += 2) modal.addKey(spans, keysAndLabels[i], keysAndLabels[i + 1]);
+        return spans;
+    }
+
+    /** The width of the widest hint line the dialog can show; account rows add two more lines. */
+    private int widestHints() {
+        int widest = 0;
+        for (var set : branchAccounts.size() == 0 ? new String[][] {FIELD_HINTS}
+                : new String[][] {DROPDOWN_HINTS, ACCOUNT_FIELD_HINTS, FIELD_HINTS}) {
+            widest = Math.max(widest, ModalRenderer.hintWidth(hints(set)));
+        }
+        return widest;
     }
 }

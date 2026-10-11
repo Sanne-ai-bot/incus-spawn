@@ -4,18 +4,18 @@
 
 
 
-             ╔ Branch from 'tpl-dev' ═════════════════════════════╗
-             ║ Name:                                              ║
-             ║ dev-1                                              ║
-             ║                                                    ║
-             ║   CPU 4       RAM 13113MiB  Disk 100GB             ║
-             ║                                                    ║
-             ║    [ ] GUI passthrough                             ║
-             ║    [ ] KVM passthrough                             ║
-             ║    Network < Full internet >                       ║
-             ║    [ ] Inbox /path/to/dir                          ║
-             ║  Enter Confirm   Esc Cancel   ↑↓/Tab Navigate   Sp ║
-             ╚════════════════════════════════════════════════════╝
+        ╔ Branch from 'tpl-dev' ═══════════════════════════════════════╗
+        ║ Name:                                                        ║
+        ║ dev-1                                                        ║
+        ║                                                              ║
+        ║   CPU 4       RAM 13113MiB  Disk 100GB                       ║
+        ║                                                              ║
+        ║    [ ] GUI passthrough                                       ║
+        ║    [ ] KVM passthrough                                       ║
+        ║    Network < Full internet >                                 ║
+        ║    [ ] Inbox /path/to/dir                                    ║
+        ║  Enter Confirm   Esc Cancel   ↑↓/Tab Navigate   Space Toggle ║
+        ╚══════════════════════════════════════════════════════════════╝
 
 
 

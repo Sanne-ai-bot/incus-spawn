@@ -114,6 +114,13 @@ final class ModalRenderer {
         spans.add(Span.styled(" " + label + "  ", Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg())));
     }
 
+    /** The columns a hint line built with {@link #addKey} takes, without the padding after its last label. */
+    static int hintWidth(List<Span> spans) {
+        if (spans.isEmpty()) return 0;
+        var last = spans.getLast().content();
+        return spans.stream().mapToInt(Span::width).sum() - (last.length() - last.stripTrailing().length());
+    }
+
     /** Width of the focus-marker column (" ▸ ") that precedes every form field. */
     static final int FIELD_PREFIX = 3;
 
