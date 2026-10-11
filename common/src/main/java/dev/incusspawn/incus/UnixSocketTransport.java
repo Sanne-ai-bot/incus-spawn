@@ -305,7 +305,7 @@ class UnixSocketTransport implements IncusTransport {
 
     private static RawResponse readResponse(InputStream in) throws IOException {
         var resp = HttpResponseReader.read(in);
-        return new RawResponse(resp.statusCode(), resp.body());
+        return new RawResponse(resp.statusCode(), resp.body(), resp.etag());
     }
 
     /** Send HTTP Upgrade request and require a 101 response. */

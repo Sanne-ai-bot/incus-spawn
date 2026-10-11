@@ -12,7 +12,9 @@ import java.util.Map;
  */
 interface IncusTransport {
 
-    record RawResponse(int statusCode, byte[] body) {
+    /** @param etag the response's {@code ETag} header, as sent (quoted), or null if it had none */
+    record RawResponse(int statusCode, byte[] body, String etag) {
+        RawResponse(int statusCode, byte[] body) { this(statusCode, body, null); }
         boolean isSuccess() { return statusCode >= 200 && statusCode < 300; }
     }
 

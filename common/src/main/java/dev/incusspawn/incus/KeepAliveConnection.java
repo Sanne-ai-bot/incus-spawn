@@ -155,7 +155,7 @@ final class KeepAliveConnection {
         }
         // Connection: close, or a body framed by close -- either way this socket is done.
         if (!resp.reusable()) serverWantsClose = true;
-        return new IncusTransport.RawResponse(resp.statusCode(), resp.body());
+        return new IncusTransport.RawResponse(resp.statusCode(), resp.body(), resp.etag());
     }
 
     void close() {

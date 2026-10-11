@@ -89,6 +89,13 @@ class HttpResponseReaderTest {
     // --- read ---
 
     @Test
+    void keepsTheETagAsSentForAnIfMatch() throws Exception {
+        var r = HttpResponseReader.read(stream("HTTP/1.1 200 OK\r\nEtag: \"a1b2\"\r\nContent-Length: 0\r\n\r\n"));
+        assertEquals("\"a1b2\"", r.etag());
+        assertNull(HttpResponseReader.read(stream("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")).etag());
+    }
+
+    @Test
     void readsLengthFramedResponseAndLeavesTheConnectionReusable() throws Exception {
         var in = stream("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}NEXT");
         var r = HttpResponseReader.read(in);
