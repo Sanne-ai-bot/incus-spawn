@@ -283,6 +283,12 @@ class YamlSemanticsTest {
     }
 
     @Test
+    void aLabelNeverFailsOnASegmentThatIsNotAKeyOrIndex() {
+        assertEquals("a[\"b.c\"][2]", SecretRedactor.label(java.util.List.of("a", "b.c", 2)));
+        assertEquals("a.7", SecretRedactor.label(java.util.List.of("a", 7L)));
+    }
+
+    @Test
     void aStringIsAnIntegerOnlyIfItIsOneLiterally() throws Exception {
         for (var text : java.util.List.of("1e2", "5.0", "0x10", "abc", "9999999999")) {
             assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: \"" + text + "\"\n"), text);
