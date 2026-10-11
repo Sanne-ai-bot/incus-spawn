@@ -93,6 +93,13 @@ class DoctorCommandTest {
         assertTrue(f.detail().endsWith("— " + VmManager.LeakLayer.FORWARDER.description), f.detail());
     }
 
+    // The detail blames vfkit, so the fix must not blame the forwarder (#1214).
+    @Test
+    void hostLeakFixDoesNotBlameTheForwarder() {
+        var fix = DoctorCommand.forwarderLeakFinding(300, () -> OptionalInt.of(5), AGENT_NOT_ASKED).remediation();
+        assertFalse(fix.description().contains("forwarder"), fix.description());
+    }
+
     @Test
     void layerBoundaryPicksTheFix() {
         assertOffersVmRestart(DoctorCommand.forwarderLeakFinding(100, () -> OptionalInt.of(50), AGENT_NOT_ASKED));
