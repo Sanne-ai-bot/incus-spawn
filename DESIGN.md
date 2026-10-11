@@ -3870,7 +3870,7 @@ A new `isx image delete` or `isx move` command, or "run it in `isx vm shell`", w
 The hints `isx init` prints during Linux setup, before isx manages a pool or profile, are the exception, along with `noCowPoolMsg`'s Linux arm. #1139 extended the rule to `incus network` and `incus remote`: the bridge-subnet conflict diagnostic now says only to run `isx init`, which reconfigures the subnet itself and prints the manual command (Linux setup) only when it finds no free one; an image naming an unknown remote says on macOS which remotes isx knows and which file it reads others from, and the `incus remote add` hint stays on Linux.
 `gatewayUnavailableHint` and the proxy's `--gateway-ip` check already named `incus network` only on Linux.
 `NoIncusCliHintTest` allowlists those literals one by one, scanning `cli`, `common` and `proxy`, and fails on any other.
-The `incus console` and `incus config device` hints are not covered yet.
+#1139 then covered `incus console` and `incus config`: a VM agent failure saves the console log on the host and names that file, and an inbox removed for a missing directory is mounted again by the start that finds it back.
 The macOS remediation for "no CoW pool" is still open (#1085): doctor offers none, and `noCowPoolMsg` names `isx vm delete`, which does not exist.
 
 ### Support bundles: redaction by construction

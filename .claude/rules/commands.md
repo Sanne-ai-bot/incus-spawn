@@ -67,7 +67,7 @@ The exit status is opt-in so `isx vm stop && ...` keeps working.
 **Remediations act through isx, never name an `incus` command (#986).**
 Doctor and build say what is done and do it through `IncusClient` (REST, so the same on Linux and over the macOS vsock tunnel, whose host has no `incus` CLI).
 A destructive step on a trust gate still asks, at a terminal, via `Prompts`.
-`NoIncusCliHintTest` fails on any `"... incus storage|profile|move|image|network|remote ..."` literal in `cli`, `common` or `proxy` outside its allowlist (Linux-only `isx init` setup hints, the Linux arms of `noCowPoolMsg`, `unknownRemoteMsg` and `gatewayUnavailableHint`, and the proxy's Linux `--gateway-ip` check, #1139).
+`NoIncusCliHintTest` fails on any `"... incus storage|profile|move|image|network|remote|console|config ..."` literal in `cli`, `common` or `proxy` outside its allowlist (Linux-only `isx init` setup hints, the Linux arms of `noCowPoolMsg`, `unknownRemoteMsg` and `gatewayUnavailableHint`, and the proxy's Linux `--gateway-ip` check, #1139).
 See DESIGN.md "Doctor and build remediations act through isx".
 
 **A shell without a terminal is skipped or refused, never retried.**
