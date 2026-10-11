@@ -15,9 +15,8 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -86,15 +85,6 @@ public final class ProofToken {
         /** What the build exports in the variable until a start fills it: the prefix, then this. */
         public String staticValuePrefix() {
             return prefix + STATIC_MARKER;
-        }
-
-        /**
-         * Whether a start replaces {@code value} in the variable: the build's static placeholder
-         * or an earlier proof, never a value somebody else put there -- {@link #profile}'s
-         * {@code case} pattern, for code that checks what a login did.
-         */
-        public boolean replaces(String value) {
-            return value.startsWith(staticValuePrefix()) || value.startsWith(prefix + MARKER);
         }
 
         /** This start's value for the variable, from the instance's {@code secret}. */
@@ -217,7 +207,7 @@ public final class ProofToken {
             if (!placeholder.problem().isEmpty()) continue;
             var env = placeholder.env();
             var export = "export " + env + "=" + Container.shellQuote(placeholder.tokenFor(secret));
-            // Placeholder.replaces in shell. The prefix is [A-Za-z0-9._-]: nothing in it is special to a case pattern
+            // The prefix is [A-Za-z0-9._-]: nothing in it is special to a case pattern
             sb.append("case \"${").append(env).append("-}\" in ")
               .append(placeholder.staticValuePrefix()).append("*|").append(placeholder.prefix()).append(MARKER).append("*) ")
               .append(placeholder.guard().isEmpty() ? export : "if " + placeholder.guard() + "; then " + export + "; fi")
@@ -226,15 +216,18 @@ public final class ProofToken {
         return sb.toString();
     }
 
-    private static final Pattern PROFILE_LINE = Pattern.compile("^case \"\\$\\{([A-Za-z_][A-Za-z0-9_]*)-}\" in ");
+    private static final Pattern PROFILE_LINE =
+            Pattern.compile("^case \"\\$\\{([A-Za-z_][A-Za-z0-9_]*)-}\" in .* export \\1='([^']*)'");
 
     /**
-     * The variables a {@link #profile} fills, read back from the proofs file in the guest by
-     * {@code isx doctor}: which of the declared placeholders this start delivered a proof for.
+     * What a {@link #profile} delivered, read back from the proofs file in the guest by
+     * {@code isx doctor}: each variable it fills, and the token it gives it. The exact token, not
+     * one derived again, so the host's declaration -- which this isx may not share -- is judged
+     * by what it did.
      */
-    public static Set<String> filledBy(String profile) {
-        var envs = new LinkedHashSet<String>();
-        profile.lines().map(PROFILE_LINE::matcher).filter(Matcher::find).forEach(m -> envs.add(m.group(1)));
-        return envs;
+    public static Map<String, String> delivered(String profile) {
+        var tokens = new LinkedHashMap<String, String>();
+        profile.lines().map(PROFILE_LINE::matcher).filter(Matcher::find).forEach(m -> tokens.put(m.group(1), m.group(2)));
+        return tokens;
     }
 }

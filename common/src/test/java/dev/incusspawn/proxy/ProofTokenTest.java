@@ -62,20 +62,15 @@ class ProofTokenTest {
     }
 
     @Test
-    void doctorReadsBackWhichVariablesAProfileFills() {
+    void doctorReadsBackWhatAProfileDelivers() {
+        var secret = InstanceSecret.generate();
         var guarded = new ProofToken.Placeholder("ANTHROPIC_API_KEY", "sk-ant-", "claude").onlyWhen("[ -e /x ]");
-        var profile = ProofToken.profile(InstanceSecret.generate(),
-                List.of(new ProofToken.Placeholder("GH_TOKEN", "gho_", "github"), guarded));
-        assertEquals(List.of("GH_TOKEN", "ANTHROPIC_API_KEY"), List.copyOf(ProofToken.filledBy(profile)));
-        assertEquals(Set.of(), ProofToken.filledBy(""), "a start in which no tool declared a placeholder");
-    }
-
-    @Test
-    void doctorReplacesWhatTheProfileWould() {
         var gh = new ProofToken.Placeholder("GH_TOKEN", "gho_", "github");
-        assertTrue(gh.replaces("gho_placeholder"));
-        assertTrue(gh.replaces(gh.tokenFor(InstanceSecret.generate())));
-        assertFalse(gh.replaces("ghp_mine"), "a value somebody else set stays theirs");
+        var delivered = ProofToken.delivered(ProofToken.profile(secret, List.of(gh, guarded)));
+        assertEquals(List.of("GH_TOKEN", "ANTHROPIC_API_KEY"), List.copyOf(delivered.keySet()));
+        assertEquals(gh.tokenFor(secret), delivered.get("GH_TOKEN"));
+        assertEquals(guarded.tokenFor(secret), delivered.get("ANTHROPIC_API_KEY"));
+        assertEquals(Map.of(), ProofToken.delivered(""), "a start in which no tool declared a placeholder");
     }
 
     @Test

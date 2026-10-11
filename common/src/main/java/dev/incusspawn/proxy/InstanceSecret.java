@@ -188,8 +188,9 @@ public final class InstanceSecret {
         return secret;
     }
 
-    /** Whether {@code secret} has the shape {@link #generate} gives one: hex, and not empty. */
+    /** Whether {@code secret} has the shape {@link #generate} gives one: whole bytes of hex, and not empty. */
     public static boolean isWellFormed(String secret) {
-        return secret != null && !secret.isEmpty() && secret.chars().allMatch(c -> Character.digit(c, 16) >= 0);
+        return secret != null && !secret.isEmpty() && secret.length() % 2 == 0
+                && secret.chars().allMatch(c -> Character.digit(c, 16) >= 0);
     }
 }
