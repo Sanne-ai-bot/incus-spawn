@@ -745,16 +745,14 @@ public class ImageDef {
             for (var path : paths) {
                 try (var is = Files.newInputStream(path)) {
                     var def = YAML.readValue(is, ImageDef.class);
-                    if (def.getName() != null) {
-                        var source = path.toAbsolutePath().normalize();
-                        def.setSource(source.toString());
-                        def.setProjectRoot(projectRoot);
-                        if (validate(def, path.getFileName().toString(), warnings)) {
-                            defs.put(def.getName(), def, source);
-                        } else {
-                            // Like an unparsable file, it may have meant to replace a lower layer's.
-                            defs.parseFailed(source);
-                        }
+                    var source = path.toAbsolutePath().normalize();
+                    def.setSource(source.toString());
+                    def.setProjectRoot(projectRoot);
+                    if (validate(def, path.getFileName().toString(), warnings)) {
+                        defs.put(def.getName(), def, source);
+                    } else {
+                        // Like an unparsable file, it may have meant to replace a lower layer's.
+                        defs.parseFailed(source);
                     }
                 } catch (IOException e) {
                     warnings.accept(YamlErrors.friendly(path.getFileName().toString(), e));
@@ -770,6 +768,10 @@ public class ImageDef {
     /** False when {@code def} cannot be a template at all, which it has then warned about. */
     private static boolean validate(ImageDef def, String source, Consumer<String> warnings) {
         var file = OutputFormat.oneLine(source);
+        if (def.getName() == null) {
+            warnings.accept(file + ": no 'name:'; it is skipped, and isx build refuses until it is fixed");
+            return false;
+        }
         var invalidName = notAnInstanceName("template name", def.getName());
         if (invalidName == null && !def.isRoot()) invalidName = notAnInstanceName("parent", def.getParent());
         if (invalidName != null) {

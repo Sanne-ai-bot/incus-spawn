@@ -254,6 +254,7 @@ Refusing it where definitions load keeps a cloned repository's name from every p
 That name could carry escape sequences or line breaks.
 The template drops out of `isx templates`, the TUI and `isx build` alike.
 It is recorded with the parse failures, because it too may have meant to replace a lower layer's definition, so `isx build` refuses in the same way.
+A definition with no `name:` at all is refused the same way, with a warning naming the file, rather than skipped silently.
 `isx templates edit` reports the same as a validation error.
 
 ### Tool System
