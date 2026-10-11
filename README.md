@@ -95,6 +95,13 @@ The proxy must be running for non-airgapped containers. `isx init` can install i
 
 The proxy also caches container image layers and build artifacts on the host — the same dependency is never downloaded twice (see [Caching](#caching)).
 
+### Credentials reach the login environment
+
+Each start also replaces the placeholders with **proof tokens** derived from that start's secret (e.g. `gho_isx_…` in `GH_TOKEN`), exported by the login profile.
+They reach exactly what runs in an instance's login environment.
+A nested container, a sandbox or anything started without that environment gets none, unless you pass one in deliberately, e.g. `podman run -e GH_TOKEN …`.
+A shell opened before the last `isx start` or `isx shell` keeps the tokens it was opened with: `isx doctor` run inside the instance compares them with the secret file and says what to do (a new login shell, or `isx shell` again from the host).
+
 ### Git Configuration
 
 With a GitHub PAT configured, containers get a ready-made `.gitconfig` with your GitHub name and email (the private `@users.noreply.github.com` address when there is one) and sensible defaults.

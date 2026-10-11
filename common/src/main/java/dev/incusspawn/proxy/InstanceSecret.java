@@ -184,9 +184,12 @@ public final class InstanceSecret {
 
     /** Only what {@link #generate} makes is ever handed to the guest as a secret. */
     static String requireHex(String secret) {
-        if (secret == null || secret.isEmpty() || !secret.chars().allMatch(c -> Character.digit(c, 16) >= 0)) {
-            throw new IllegalArgumentException("Not an instance secret");
-        }
+        if (!isWellFormed(secret)) throw new IllegalArgumentException("Not an instance secret");
         return secret;
+    }
+
+    /** Whether {@code secret} has the shape {@link #generate} gives one: hex, and not empty. */
+    public static boolean isWellFormed(String secret) {
+        return secret != null && !secret.isEmpty() && secret.chars().allMatch(c -> Character.digit(c, 16) >= 0);
     }
 }

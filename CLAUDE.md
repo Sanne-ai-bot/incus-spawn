@@ -129,6 +129,7 @@ A VM's agent probe asks the guest instead (#1024).
 Each start also turns the credential placeholders into proof tokens, an HMAC of that start's secret per namespace (`ProofToken`, #1106).
 Which variables carry them is declared on the tool's `proxy:` entry (`placeholders:`).
 They are written beside the secret in `/run/isx` by the same exec, and the raw secret never enters the environment.
+`isx doctor` inside an instance checks the exported ones against the secret file (`DoctorCommand.instanceCredentialFindings`, #1109); the proofs file's format is read back only by `ProofToken.filledBy`, beside `profile`, so the two change together.
 A placeholder token in the guest is read when the tool runs, never fixed by a build (#1108): where a tool reads a file instead of its variable, a login script in `/etc/profile.d/isx-zz-*` rewrites the file from the variable.
 See `.claude/rules/proxy.md` and DESIGN.md.
 

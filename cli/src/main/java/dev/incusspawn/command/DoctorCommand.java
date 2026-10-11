@@ -21,6 +21,8 @@ import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.proxy.BridgeDns;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceRegistry;
+import dev.incusspawn.proxy.InstanceSecret;
+import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
@@ -245,6 +247,8 @@ public class DoctorCommand extends BaseCommand {
 
         // Layer 1: Host configuration
         findings.addAll(checkHostConfig());
+        // Layer 1b: when isx runs inside an instance, the credentials it was given
+        findings.addAll(checkInstanceCredentials());
 
         // Layer 2: Incus daemon
         boolean incusUp;
@@ -284,6 +288,133 @@ public class DoctorCommand extends BaseCommand {
         findings.add(checkCaCertificate());
         findings.addAll(checkCredentials());
         return findings;
+    }
+
+    // ---- Layer 1b: Inside an instance ----
+
+    /** Where {@link #instanceCredentialFindings} sends a user who wants a nested machine to share them. */
+    static final String CREDENTIALS_DOCS = "https://isx.run/docs.html#credentials-reach-the-login-environment";
+
+    private List<Finding> checkInstanceCredentials() {
+        return instanceCredentialFindings(System.getenv(), Path.of(InstanceSecret.GUEST_PATH),
+                Path.of(InstanceSecret.PROOFS_PATH), ProofToken::declared, DoctorCommand::guardHolds);
+    }
+
+    /**
+     * Inside an instance -- its secret file exists, or the login profile named one -- whether the
+     * proof tokens this shell exports are the ones the secret derives ({@link ProofToken}, #1109):
+     * a box rebooted behind isx's back has no secret, and a shell opened before the last
+     * {@code isx start} or {@code isx shell} keeps the proofs, or the build's placeholders, it
+     * was opened with. Only what this start delivered a proof for is compared ({@link
+     * ProofToken#filledBy}): a variable the host's tools leave alone, or whose guard fails in this
+     * image, keeps its static placeholder by design, and a value somebody else set is theirs.
+     * Nothing outside the instance: on the host, {@code declared} is never read.
+     */
+    static List<Finding> instanceCredentialFindings(Map<String, String> env, Path guestSecret, Path proofsFile,
+                                                    Supplier<List<ProofToken.Placeholder>> declared,
+                                                    Predicate<String> guardHolds) {
+        var named = env.get(InstanceSecret.FILE_ENV_VAR);
+        boolean profileNamedOne = named != null && !named.isBlank();
+        var secretFile = profileNamedOne ? Path.of(named) : guestSecret;
+        if (!profileNamedOne && !Files.exists(secretFile)) return List.of();
+
+        var findings = new ArrayList<Finding>();
+        findings.add(Finding.note("Credentials", "(reach only processes started from this login environment;"
+                + " a nested container or sandbox gets them only if you pass them in: " + CREDENTIALS_DOCS + ")"));
+        var redeliverText = "run 'isx shell' (or 'isx start') for this instance on the host, which gives it a new secret";
+        var redeliver = new Remediation(redeliverText, false, null);
+        String secret;
+        try {
+            secret = Files.readString(secretFile).strip();
+        } catch (java.nio.file.NoSuchFileException e) {
+            secret = ""; // as the guest's own check does (InstanceSecret.GUEST_CHECK): absent and empty are both missing
+        } catch (IOException e) {
+            findings.add(Finding.warn("Instance secret unreadable", "(" + secretFile + ": " + e.getMessage()
+                    + "; it is readable by the instance user's group only)", null));
+            return findings;
+        }
+        if (secret.isEmpty()) {
+            findings.add(Finding.warn("Instance secret missing", "(" + secretFile
+                    + ": the proxy and the MCP bridge cannot verify this instance, as after a reboot isx did not do)",
+                    redeliver));
+            return findings;
+        }
+        if (!InstanceSecret.isWellFormed(secret)) {
+            findings.add(Finding.warn("Instance secret invalid", "(" + secretFile + " holds no secret isx made)", redeliver));
+            return findings;
+        }
+        String proofs;
+        try {
+            proofs = Files.readString(proofsFile);
+        } catch (java.nio.file.NoSuchFileException e) {
+            findings.add(Finding.warn("Proof tokens missing", "(" + proofsFile
+                    + ": this instance's secret came without them, from an older isx or a failed write)", redeliver));
+            return findings;
+        } catch (IOException e) {
+            findings.add(Finding.warn("Proof tokens unreadable", "(" + proofsFile + ": " + e.getMessage()
+                    + "; they are readable by the instance user's group only)", null));
+            return findings;
+        }
+
+        var delivered = ProofToken.filledBy(proofs);
+        var fix = new Remediation("Start a new login shell; if it still shows this, " + redeliverText, false, null);
+        List<ProofToken.Placeholder> placeholders;
+        try {
+            placeholders = delivered.isEmpty() ? List.of() : declared.get();
+        } catch (RuntimeException e) {
+            findings.add(Finding.warn("Proof tokens not checked", "(could not read the tools' placeholder declarations: "
+                    + e.getMessage() + ")", null));
+            return findings;
+        }
+        int matching = 0;
+        boolean mismatch = false;
+        var unchecked = new LinkedHashSet<>(delivered);
+        unchecked.removeIf(name -> !env.containsKey(name));
+        for (var placeholder : placeholders) {
+            var value = env.get(placeholder.env());
+            if (value == null || !delivered.contains(placeholder.env())) continue;
+            unchecked.remove(placeholder.env());
+            if (value.equals(placeholder.tokenFor(secret))) {
+                matching++;
+            } else if (placeholder.replaces(value)
+                    && (placeholder.guard().isEmpty() || guardHolds.test(placeholder.guard()))) {
+                mismatch = true;
+                findings.add(Finding.warn(placeholder.env() + " does not match this start's secret",
+                        value.startsWith(placeholder.staticValuePrefix()) ? "(it still holds the build's placeholder)"
+                                : "(it holds an earlier start's proof token)", fix));
+            }
+        }
+        if (!unchecked.isEmpty()) {
+            // The host's tools filled them; this isx declares them otherwise, or not at all
+            findings.add(Finding.note("Proof tokens not checked", "(" + String.join(", ", unchecked)
+                    + ": this isx does not declare them as the host that started the instance did)"));
+        }
+        if (!mismatch) {
+            findings.add(Finding.ok("Proof tokens", matching == 0 ? "(none to compare in this shell)"
+                    : "(" + matching + " match this start's secret)"));
+        }
+        return findings;
+    }
+
+    /**
+     * Whether a placeholder's guard holds in this login, as the profile would test it. Code-only
+     * shell ({@link ProofToken.Placeholder#onlyWhen}), never read from a file. When it cannot
+     * tell, it says the guard holds: a mismatch reported with its fix beats one hidden.
+     */
+    private static boolean guardHolds(String guard) {
+        try {
+            var process = new ProcessBuilder("sh", "-c", guard)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            if (process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) return process.exitValue() == 0;
+            process.destroyForcibly();
+            return true;
+        } catch (IOException e) {
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return true;
+        }
     }
 
     private Finding checkConfigFile() {
