@@ -72,5 +72,5 @@ Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (DESIGN.md "
   `JjqGeneratedMappingTest` fails for a reachable DTO without a registered mapping, and for a reachable enum without the annotation (#1316).
 - A converter that reads scalars from the tree uses `Jjq.text`, so `0022` stays `0022`; `asText()` gives the resolved `18`.
 - An object is never iterated with `asList()` (empty for an object); use `JqObject.values()`/`forEach`.
-- An `Integer` field takes `@JqConverter(IntegerConverter.class)`: jjq binds a word or a boolean as 0 and wraps an out-of-range number (Hyperfoil/jjq#133), where a bad value must fail the file.
+- An `Integer` field takes `@JqConverter(IntegerConverter.class)`: jjq binds `.inf` and `.nan` as 0 where a bad value must fail the file, refuses a blank string Jackson left unset, and names the field as a `$` path rather than as written.
 - JSON is read with `JqValues.parseStrict`, and a parse failure is shown with `Jjq.brief`.

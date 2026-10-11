@@ -3333,7 +3333,7 @@ Jackson's semantics are the ones users' files were written against, so where jjq
 - A tree is immutable: code that changes one (the support-bundle redaction) rebuilds it along key/index segments, never along a dotted path re-split, since keys may contain `.` or `[`.
 - A strict-parse failure quotes the whole document; messages show `Jjq.brief`.
 - A JSON document with a repeated key is refused, where Jackson kept the last value: a request body, an MCP message or `~/.claude.json` with one fails like malformed JSON rather than being read one way or the other.
-- An `Integer` field binds through `IntegerConverter`: jjq gives 0 for `abc` or `true` and wraps `99999999999`, and for `mcp.orphan-grace-hours` or `max-instances` that would fail open.
+- An `Integer` field binds through `IntegerConverter`: jjq gives 0 for `.inf` and `.nan`, which for `mcp.orphan-grace-hours` or `max-instances` would fail open, and refuses `""`, which Jackson left unset (a word, a boolean, a fraction or an out-of-range number it refuses itself since 0.2.3).
 The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2), #131-#134 (fixed in 0.2.3) and #130 (open).
 
 ### DNS: static resolv.conf + bridge dnsmasq
