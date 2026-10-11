@@ -1268,17 +1268,22 @@ Only an unreachable upstream serves an older one.
   A client that leaves mid-download, or while its head was still awaited, does not stop it.
   It goes on into the cache, as it always has, so a client that gave up and retries gets a hit.
   With nobody waiting the budget no longer applies.
-  Plain relays (`relayRequest`, including an npm tarball whose shasum could not be fetched) are held to the same budget without a resume (`RelayWatchdog`, #929): 110s since the client's last byte either way, not counting the time its request body is still arriving or the client holds the response back.
-  So an upload is never cut and nothing is ended that the 120s timeout would have let live.
+  Plain relays (`relayRequest`, including an npm tarball whose shasum could not be fetched) are held to the same budget without a resume (`RelayWatchdog`, #929): 110s since the client's last byte either way, not counting the time its request body is streaming or the client holds the response back.
+  So an upload is never cut while the client sends, and nothing is ended that the 120s timeout would have let live: while upstream holds the body back the client is paused too, and its connection idle.
+  An early answer can stream while the upload still does, so the watchdog keeps the two waits apart: the end of one never ends the other.
   A head that never comes is a logged 502, a body that stops a logged reset, and the upstream request is let go rather than left for its 300s read-idle timeout.
   A relay cannot resume, so a shasum lookup answered with a `5xx` is asked once more, while over half the client's budget is left, before the tarball falls back to a relay (`fetchNpmVersion`).
   A `429` is not, since asked again at once it would be refused again.
   The npm fallback logs that it relays, so a codex install that fails without a stall or resume line in the proxy log points at it directly.
-  A relayed request's body is claimed as the request is routed (`claimBody`), before the proxy waits on anything (#1164).
-  Vert.x drops a body that arrives with nothing reading it, and then refuses to read the request at all.
-  So a body read only once the upstream connection was ready was lost whenever it beat the connect -- a small POST that found no idle pooled connection, such as npm's audit request after an install, which sends its tarballs with `Connection: close` -- and the relay waited forever with nothing to cut it.
+  A relayed request's body is paused as the request is routed, before the proxy waits on anything (#1164), and streamed upstream once the connection is ready (`pipeRequest`, #1175), with backpressure both ways.
+  Vert.x drops a body that arrives with nothing reading it, and then refuses to read the request at all, but queues a paused one.
+  So a body left unread until the upstream connection was ready was lost whenever it beat the connect -- a small POST that found no idle pooled connection, such as npm's audit request after an install, which sends its tarballs with `Connection: close` -- and the relay waited forever with nothing to cut it.
+  An upload is never held whole: buffered, a registry push of a 64 MiB layer exhausted the native proxy's 256 MB heap, failing uploads from every instance, and a Vert.x buffer cannot hold 2 GiB at all.
+  There is no upload size limit: the relay stays transparent, and with nothing held there is nothing to protect.
+  A relay whose response ends, an error included, before the upload was all read closes the client's connection (`Connection: close` on a response not yet sent) rather than read the rest only to discard it; left unread on a keep-alive connection, it would stall the next request.
+  So upstream's early answer (a `413`, a `401`) reaches the client while it is still sending, and a failed connect reads no more of the upload.
   A request with a body is therefore never served from a cache (all of them are keyed by path alone).
-  A relay whose client left before its body was all sent resets its unsent upstream request, which gives the connection back to the pool instead of holding it for good.
+  A relay whose client left before its body was all sent resets its upstream request, also when it left while the body was paused, which gives the connection back to the pool instead of holding it for good.
 - *Offline.*
   Only when upstream cannot be reached (connect/DNS/TLS failure, an exchange that broke on an established connection, or a 5xx or 429, i.e. cases where the client would otherwise get an error) are cached artifacts and stored sidecars served unconfirmed.
   A broken exchange is retried once first, since a pooled keep-alive connection may simply have died while idle; a timeout is not, which would double the wait on a black-holed network.
