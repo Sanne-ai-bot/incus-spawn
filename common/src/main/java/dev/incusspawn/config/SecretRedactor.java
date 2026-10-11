@@ -98,9 +98,11 @@ public final class SecretRedactor {
         }
         // Collect replacements while walking, then fold them in: JqValue trees are
         // immutable, so unlike the old ObjectNode walk nothing is replaced in place.
-        // A path recorded by an earlier pass is not recorded again (putIfAbsent below),
+        // A location recorded by an earlier pass is not recorded again (putIfAbsent below),
         // which is what keeps the name backstop from double-reporting a declared secret.
-        var replacements = new LinkedHashMap<String, String>();
+        // Locations are kept as key/index segments, never re-split from the dotted path they
+        // are reported as: a key may itself contain '.' or '[' (#1263 review).
+        var replacements = new LinkedHashMap<List<Object>, String>();
         var values = new LinkedHashMap<String, String>();
 
         for (var location : locations) {
@@ -113,13 +115,14 @@ public final class SecretRedactor {
         // redact a repository called "secret-sauce" and then scrub its path out of every log
         // line, destroying the diagnostics this bundle exists to carry.
         for (var extra : config.getExtras().keySet()) {
-            if (tree instanceof JqObject root) redactUndeclared(root, extra, extra, replacements, values);
+            if (tree instanceof JqObject root) redactUndeclared(root, extra, List.of(extra), replacements, values);
         }
 
-        var redacted = new ArrayList<>(replacements.keySet());
+        var redacted = new ArrayList<>(replacements.values());
         var folded = tree;
         for (var entry : replacements.entrySet()) {
-            folded = setPath(folded, entry.getKey(), io.hyperfoil.tools.jjq.value.JqString.of(entry.getValue()));
+            folded = setSegments(folded, entry.getKey(), 0,
+                    io.hyperfoil.tools.jjq.value.JqString.of(marker(entry.getValue())));
         }
         try {
             return new Redaction(JqYaml.toYaml(folded), List.copyOf(redacted), Map.copyOf(values));
@@ -129,56 +132,54 @@ public final class SecretRedactor {
         }
     }
 
-    /** Rebuild the tree with the dotted/indexed path set to a value, creating nothing. */
-    static JqValue setPath(JqValue node, String path, JqValue leaf) {
-        return setSegments(node, segments(path), 0, leaf);
-    }
-
-    private record Segment(String field, int index) {
-        static Segment field(String name) { return new Segment(name, -1); }
-        static Segment index(int i) { return new Segment(null, i); }
-        boolean isIndex() { return field == null; }
-    }
-
-    static List<Segment> segments(String path) {
-        var out = new ArrayList<Segment>();
-        var current = new StringBuilder();
-        Runnable flush = () -> {
-            if (!current.isEmpty()) { out.add(Segment.field(current.toString())); current.setLength(0); }
-        };
-        for (int i = 0; i < path.length(); i++) {
-            var c = path.charAt(i);
-            if (c == '.') flush.run();
-            else if (c == '[') {
-                flush.run();
-                var end = path.indexOf(']', i);
-                out.add(Segment.index(Integer.parseInt(path.substring(i + 1, end))));
-                i = end;
-            } else current.append(c);
-        }
-        flush.run();
-        return out;
-    }
-
-    private static JqValue setSegments(JqValue node, List<Segment> segments, int i, JqValue leaf) {
-        if (i >= segments.size()) return leaf;
-        var segment = segments.get(i);
-        if (segment.isIndex()) {
-            if (!(node instanceof JqArray array) || segment.index() < 0 || segment.index() >= array.size()) {
-                return node;
-            }
+    /** Rebuild the tree with the value at {@code at} (keys and indexes) replaced, creating nothing. */
+    private static JqValue setSegments(JqValue node, List<Object> at, int i, JqValue leaf) {
+        if (i >= at.size()) return leaf;
+        if (at.get(i) instanceof Integer index) {
+            if (!(node instanceof JqArray array) || index < 0 || index >= array.size()) return node;
             var builder = JqArray.arrayBuilder();
             for (int j = 0; j < array.size(); j++) {
-                builder.add(j == segment.index() ? setSegments(array.getElement(j), segments, i + 1, leaf)
-                        : array.getElement(j));
+                builder.add(j == index ? setSegments(array.getElement(j), at, i + 1, leaf) : array.getElement(j));
             }
             return builder.build();
         }
-        if (!(node instanceof JqObject object) || !object.keys().contains(segment.field())) return node;
+        var field = (String) at.get(i);
+        if (!(node instanceof JqObject object) || !object.keys().contains(field)) return node;
         var builder = JqObject.builder(object.size());
         object.forEach((key, value) -> builder.put(key,
-                key.equals(segment.field()) ? setSegments(value, segments, i + 1, leaf) : value));
+                key.equals(field) ? setSegments(value, at, i + 1, leaf) : value));
         return builder.build();
+    }
+
+    /**
+     * The label a location is reported as: dotted, as a reader looks it up, with an index as
+     * {@code [i]} and a key that holds '.', '[' or ']' itself written {@code ["..."]}, so two
+     * locations never read the same ({@code a.token} the nested key, {@code ["a.token"]} the one
+     * key).
+     */
+    static String label(List<Object> at) {
+        var label = new StringBuilder();
+        for (var segment : at) {
+            if (segment instanceof Integer index) {
+                label.append('[').append(index).append(']');
+            } else {
+                var key = (String) segment;
+                if (key.indexOf('.') >= 0 || key.indexOf('[') >= 0 || key.indexOf(']') >= 0) {
+                    label.append("[\"").append(key.replace("\"", "\\\"")).append("\"]");
+                } else {
+                    if (!label.isEmpty()) label.append('.');
+                    label.append(key);
+                }
+            }
+        }
+        return label.toString();
+    }
+
+    private static List<Object> with(List<Object> at, Object segment) {
+        var next = new ArrayList<Object>(at.size() + 1);
+        next.addAll(at);
+        next.add(segment);
+        return next;
     }
 
     /**
@@ -195,7 +196,7 @@ public final class SecretRedactor {
      * data, like {@code repo-paths}, is neither.
      */
     private static void redactPath(JqValue root, String path,
-                               Map<String, String> replacements, Map<String, String> values) {
+                               Map<List<Object>, String> replacements, Map<String, String> values) {
         var segments = path.split("\\.");
         if (segments.length == 0) return;
         JqValue node = root;
@@ -206,28 +207,27 @@ public final class SecretRedactor {
         }
         var leaf = segments[segments.length - 1];
         if (node instanceof JqObject parent) {
-            redactDeclared(parent, leaf, path, replacements, values);
+            redactDeclared(parent, leaf, List.<Object>of(segments), replacements, values);
         }
         if (segments.length > 1 && root instanceof JqObject rootObj) {
-            redactNested(rootObj.getField(segments[0]), segments[0], leaf, replacements, values);
+            redactNested(rootObj.getField(segments[0]), List.of(segments[0]), leaf, replacements, values);
         }
     }
 
     /** Redact every occurrence of a declared leaf name below its namespace, at any depth. */
-    private static void redactNested(JqValue node, String path, String leaf,
-                                 Map<String, String> replacements, Map<String, String> values) {
+    private static void redactNested(JqValue node, List<Object> at, String leaf,
+                                 Map<List<Object>, String> replacements, Map<String, String> values) {
         if (node instanceof JqObject object) {
             for (var field : object.keys()) {
-                var childPath = path + "." + field;
                 if (field.equals(leaf)) {
-                    redactDeclared(object, field, childPath, replacements, values);
+                    redactDeclared(object, field, with(at, field), replacements, values);
                 } else {
-                    redactNested(object.getField(field), childPath, leaf, replacements, values);
+                    redactNested(object.getField(field), with(at, field), leaf, replacements, values);
                 }
             }
         } else if (node instanceof JqArray array) {
             for (int i = 0; i < array.size(); i++) {
-                redactNested(array.getElement(i), path + "[" + i + "]", leaf, replacements, values);
+                redactNested(array.getElement(i), with(at, i), leaf, replacements, values);
             }
         }
     }
@@ -238,33 +238,32 @@ public final class SecretRedactor {
      * credential stored as a list or an object is still a credential, and skipping it would
      * leave it in the bundle *and* out of the manifest, so nobody would know.
      */
-    private static void redactDeclared(JqObject parent, String field, String path,
-                                   Map<String, String> replacements, Map<String, String> values) {
+    private static void redactDeclared(JqObject parent, String field, List<Object> at,
+                                   Map<List<Object>, String> replacements, Map<String, String> values) {
         if (!parent.keys().contains(field)) return;
         var child = parent.getField(field);
         if (child.isContainer()) {
-            redactSubtree(child, path, replacements, values);
+            redactSubtree(child, at, replacements, values);
         } else {
-            replaceIfSecret(child, path, replacements, values);
+            replaceIfSecret(child, at, replacements, values);
         }
     }
 
     /** Redact every text leaf below a node whose key already marked it secret. */
-    private static void redactSubtree(JqValue node, String path,
-                                  Map<String, String> replacements, Map<String, String> values) {
+    private static void redactSubtree(JqValue node, List<Object> at,
+                                  Map<List<Object>, String> replacements, Map<String, String> values) {
         if (node instanceof JqArray array) {
             for (int i = 0; i < array.size(); i++) {
                 var element = array.getElement(i);
-                var elementPath = path + "[" + i + "]";
                 if (element.isContainer()) {
-                    redactSubtree(element, elementPath, replacements, values);
+                    redactSubtree(element, with(at, i), replacements, values);
                 } else if (element.isString()) {
-                    replaceIfSecret(element, elementPath, replacements, values);
+                    replaceIfSecret(element, with(at, i), replacements, values);
                 }
             }
         } else if (node instanceof JqObject object) {
             for (var field : object.keys()) {
-                redactDeclared(object, field, path + "." + field, replacements, values);
+                redactDeclared(object, field, with(at, field), replacements, values);
             }
         }
     }
@@ -285,24 +284,23 @@ public final class SecretRedactor {
      * <p>A tool that stores a structured credential should declare it — a declared path is
      * taken at its word and redacted whole, whatever shape it holds.
      */
-    private static void redactUndeclared(JqObject parent, String field, String path,
-                                     Map<String, String> replacements, Map<String, String> values) {
+    private static void redactUndeclared(JqObject parent, String field, List<Object> at,
+                                     Map<List<Object>, String> replacements, Map<String, String> values) {
         if (!parent.keys().contains(field)) return;
         var child = parent.getField(field);
         if (looksSecret(field) && (child.isString() || child.isArray())) {
-            redactDeclared(parent, field, path, replacements, values);
+            redactDeclared(parent, field, at, replacements, values);
             return;
         }
         if (child instanceof JqObject object) {
             for (var nested : object.keys()) {
-                redactUndeclared(object, nested, path + "." + nested, replacements, values);
+                redactUndeclared(object, nested, with(at, nested), replacements, values);
             }
         } else if (child instanceof JqArray array) {
             for (int i = 0; i < array.size(); i++) {
                 if (array.getElement(i) instanceof JqObject element) {
                     for (var nested : element.keys()) {
-                        redactUndeclared(element, nested,
-                                path + "[" + i + "]." + nested, replacements, values);
+                        redactUndeclared(element, nested, with(with(at, i), nested), replacements, values);
                     }
                 }
             }
@@ -319,14 +317,15 @@ public final class SecretRedactor {
      * An already-recorded path is left alone: the declared pass runs before the name
      * backstop, so the first recording wins and a secret is never double-reported.
      */
-    private static void replaceIfSecret(JqValue value, String path,
-                                        Map<String, String> replacements, Map<String, String> values) {
+    private static void replaceIfSecret(JqValue value, List<Object> at,
+                                        Map<List<Object>, String> replacements, Map<String, String> values) {
         if (!isRedactableValue(value)) return;
         // Two keys can hold the same literal secret. Keep the first path — declarations are
         // processed before the name backstop — so the log scrubber labels it with the key a
         // reader can actually look up, rather than whichever happened to be visited last.
+        var path = label(at);
         values.putIfAbsent(value.asText(), path);
-        replacements.putIfAbsent(path, marker(path));
+        replacements.putIfAbsent(List.copyOf(at), path);
     }
 
     private static boolean isRedactableValue(JqValue value) {
