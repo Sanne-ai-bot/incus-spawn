@@ -128,8 +128,8 @@ class InstanceLifecycleRequestBudgetTest {
     @Test
     void aBranchsCaCheckReusesTheReadThatRecordsItsBoot() {
         // After the branch's start: the read that finds its boot and the stamp (#1024), then the
-        // CA check with nothing of its own, then resolv.conf's bridge lookup and exec (which this
-        // daemon cannot serve, so the flow ends there).
+        // CA check with nothing of its own, then resolv.conf's exec (which this daemon does not
+        // serve, so the flow ends there). The nameserver is the gateway that read carries.
         var daemon = new FakeIncusDaemon().container("dev-0", Map.of(Metadata.PROFILE, "tpl-dev"));
         var incus = spy(daemon.client());
         doReturn(true).when(incus).pollUntilReady(eq(NAME), anyInt(), anyMap(), any(String[].class));
@@ -148,7 +148,7 @@ class InstanceLifecycleRequestBudgetTest {
         var requests = daemon.requests();
         var afterStart = requests.subList(requests.indexOf("PUT /1.0/instances/" + NAME + "/state") + 2, requests.size());
         assertEquals(List.of("GET /1.0/instances/" + NAME, "PATCH /1.0/instances/" + NAME,
-                "GET /1.0/networks/incusbr0", "POST /1.0/instances/" + NAME + "/exec"), afterStart,
+                "POST /1.0/instances/" + NAME + "/exec"), afterStart,
                 () -> "the CA check must not read the instance again:\n" + String.join("\n", requests));
     }
 
@@ -157,7 +157,8 @@ class InstanceLifecycleRequestBudgetTest {
         // #1238 saw about 2.3 s from the agent answering to the branch being ready. Everything after
         // the readiness wait: the .network file pushed for the MAC Incus gave the NIC at the start,
         // the secret's guest script, and the resolv.conf check. Each exec is its POST, a WebSocket
-        // per fd and the wait for its exit code.
+        // per fd and the wait for its exit code. The CA and resolv.conf checks read nothing of
+        // their own: the instance as read for the push says both, so 15 where it was 17.
         var daemon = new FakeIncusDaemon()
                 .instance("dev-0", "virtual-machine", "Stopped", Map.of(Metadata.PROFILE, "tpl-dev",
                         "volatile.eth0.hwaddr", "00:16:3e:12:34:56"))
@@ -181,10 +182,9 @@ class InstanceLifecycleRequestBudgetTest {
                         "GET /1.0/instances/" + NAME, "GET /1.0/networks/incusbr0",
                         "POST /1.0/instances/" + NAME + "/files?path=%2Fetc%2Fsystemd%2Fnetwork%2F10-eth0.network",
                         "POST /1.0/instances/" + NAME + "/exec", "GET /1.0/operations/exec-1/wait?timeout=120",
-                        "GET /1.0/instances/" + NAME, "GET /1.0/networks/incusbr0",
                         "POST /1.0/instances/" + NAME + "/exec", "GET /1.0/operations/exec-2/wait?timeout=120"),
                 afterStart.stream().filter(r -> !r.startsWith("WS ")).toList(), () -> String.join("\n", afterStart));
-        assertEquals(17, afterStart.size(), () -> "after the VM's agent answers, made " + afterStart.size()
+        assertEquals(15, afterStart.size(), () -> "after the VM's agent answers, made " + afterStart.size()
                 + ":\n  " + String.join("\n  ", afterStart)
                 + "\nMore is a latency regression; fewer is an improvement -- lower the budget.");
     }

@@ -384,12 +384,15 @@ public final class InstanceNetwork {
      * Push files that can't be written to a stopped VM (file push requires the
      * incus-agent). Call after {@code incus.start()} + {@code waitForReady()}.
      * SSH keys and terminfo are not among them: {@link RuntimeSetup#setupRuntime} writes those.
+     *
+     * @return the instance as read after its start, for the checks that follow; null when nothing
+     *         was read
      */
-    public static void pushDeferredVmFiles(IncusClient incus, String name, NetworkMode networkMode) {
-        if (networkMode != NetworkMode.AIRGAP) {
-            pushVmNetworkConfig(incus, name, incus.instanceMetadata(name), bridgePrefixLen(incus),
-                    STDERR_WARN);
-        }
+    public static JqValue pushDeferredVmFiles(IncusClient incus, String name, NetworkMode networkMode) {
+        if (networkMode == NetworkMode.AIRGAP) return null;
+        var instance = incus.instanceMetadata(name);
+        pushVmNetworkConfig(incus, name, instance, bridgePrefixLen(incus), STDERR_WARN);
+        return instance.isMissingNode() ? null : instance;
     }
 
     /**

@@ -347,11 +347,12 @@ public final class BranchFlow {
         // API calls after start due to seccomp_notify lock contention.
         var prefetched = RuntimeSetup.prefetchAndStart(incus, name, machineType);
 
+        JqValue started = null;
         if (machineType == MachineType.VM) {
             BuildOutput.stepStart("Waiting for VM agent...");
             incus.waitForReady(name, MachineType.VM);
             BuildOutput.stepDone();
-            InstanceNetwork.pushDeferredVmFiles(incus, name, networkMode);
+            started = InstanceNetwork.pushDeferredVmFiles(incus, name, networkMode);
         }
 
         // The grant is the request's own: a copy never carries its source's (configureBranch)
@@ -359,10 +360,13 @@ public final class BranchFlow {
                 Metadata.isMcpCaller(req.extraConfig()), placeholders.join());
         // Or the first shell would take this boot for one isx did not start, and replace its secret
         var booted = InstanceLifecycle.recordSecretBoot(incus, name, machineType);
+        // A VM records no boot; its read after the start answers the same questions: nothing
+        // since has written the CA fingerprint or the gateway
+        if (booted == null) booted = started;
 
         if (networkMode != NetworkMode.AIRGAP) {
             CertificateAuthority.fixContainerCaIfNeeded(incus, name, booted);
-            ProxyConfig.fixResolvConfIfNeeded(incus, name);
+            ProxyConfig.fixResolvConfIfNeeded(incus, name, booted);
             // The template baked its own account's identity; a branch pinned to a different one
             // must not commit under it. Re-derived here rather than only on the next
             // InstancePrep, so an instance used via incus exec, SSH or an IDE is right too.
