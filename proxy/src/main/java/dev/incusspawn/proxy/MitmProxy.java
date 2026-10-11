@@ -133,8 +133,11 @@ public class MitmProxy {
      */
     private volatile InstanceRegistry instanceRegistry;
 
-    /** Each instance's model calls and all its traffic, for {@code /activity} (#898, #935). */
-    final ApiActivity apiActivity = new ApiActivity();
+    /**
+     * Each instance's model calls and all its traffic, for {@code /activity} (#898, #935).
+     * Replaced only by a test, before any request, to give it a clock of its own.
+     */
+    ApiActivity apiActivity = new ApiActivity();
 
     /** {@code isx mcp} for coordinator instances, at {@link ProxyConfig#MCP_DOMAIN} (#915). */
     private McpBridge mcpBridge;
@@ -212,10 +215,12 @@ public class MitmProxy {
      *
      * @param caller the instance that asked, with its incarnation as the same listing has it
      *               (for {@link ApiActivity}); null for any other caller
+     * @param flow   the request's traffic in {@link ApiActivity}, which a model call ends with;
+     *               null where nothing counts it
      */
     record RequestContext(String domain, InstanceRegistry.Caller caller,
                           ProxyCredentials creds, ToolProxyRouting routing,
-                          boolean usesDefaultCredentials) {}
+                          boolean usesDefaultCredentials, ApiActivity.Flow flow) {}
 
     /**
      * Credentials plus the routing that indexes them, cached together per selection; or, for
@@ -327,7 +332,7 @@ public class MitmProxy {
      * <p>Never blocks: reads the registry snapshot and schedules a refresh when it is stale.
      */
     RequestContext contextFor(String domain, String sourceAddress) {
-        return contextFor(domain, callerAt(sourceAddress));
+        return contextFor(domain, callerAt(sourceAddress), null);
     }
 
     /**
@@ -348,7 +353,7 @@ public class MitmProxy {
         return caller;
     }
 
-    private RequestContext contextFor(String domain, InstanceRegistry.Caller caller) {
+    private RequestContext contextFor(String domain, InstanceRegistry.Caller caller, ApiActivity.Flow flow) {
         var state = configState;
         var instance = caller == null ? null : caller.accounts();
 
@@ -356,7 +361,7 @@ public class MitmProxy {
             refuseIfUnservable(state, instance, domain);
         }
         if (instance == null || instance.usesDefaults()) {
-            return new RequestContext(domain, caller, state.credentials(), state.routing(), true);
+            return new RequestContext(domain, caller, state.credentials(), state.routing(), true, flow);
         }
         var selection = instance.accountsByNamespace();
         // Plain get() first: this runs on the event loop for every intercepted request, and
@@ -373,7 +378,7 @@ public class MitmProxy {
             state.credentialsBySelection().putIfAbsent(selection, bundle);
         }
         if (bundle.unknown() != null) throw bundle.unknown();
-        return new RequestContext(domain, caller, bundle.creds(), bundle.routing(), false);
+        return new RequestContext(domain, caller, bundle.creds(), bundle.routing(), false, flow);
     }
 
     /**
@@ -876,7 +881,7 @@ public class MitmProxy {
         try {
             var domain = extractDomain(clientReq);
             var caller = callerAt(sourceAddressOf(clientReq));
-            countTraffic(clientReq, caller, domain);
+            var flow = countTraffic(clientReq, caller, domain);
             if (domain == null) {
                 sendError(clientReq.response(), 502, "Unknown domain");
                 return;
@@ -897,7 +902,7 @@ public class MitmProxy {
             } else if (isInterceptedDomain(domain)) {
                 RequestContext ctx;
                 try {
-                    ctx = contextFor(domain, caller);
+                    ctx = contextFor(domain, caller, flow);
                 } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
                     // Fail closed: this instance is pinned to an account that is gone.
                     // Falling back to the default would quietly spend another account.
@@ -934,7 +939,7 @@ public class MitmProxy {
      * {@link #beginModelCall} each set their own, and a handler set later replaces the earlier.
      * An HTTP/1.1 connection answers one request at a time, so its close ends this one.
      */
-    private void countTraffic(HttpServerRequest clientReq, InstanceRegistry.Caller caller, String domain) {
+    private ApiActivity.Flow countTraffic(HttpServerRequest clientReq, InstanceRegistry.Caller caller, String domain) {
         var flow = trafficFlow(caller, domain);
         var resp = clientReq.response();
         io.vertx.core.Handler<Void> ended = v -> {
@@ -944,6 +949,7 @@ public class MitmProxy {
         };
         resp.bodyEndHandler(ended);
         clientReq.connection().closeHandler(ended);
+        return flow;
     }
 
     /** A request or WebSocket to {@code domain} begins, from {@code caller} (null: no known instance). */
@@ -1020,7 +1026,7 @@ public class MitmProxy {
         }
         RequestContext ctx;
         try {
-            ctx = contextFor(domain, caller);
+            ctx = contextFor(domain, caller, null);
         } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
             // Same fail-closed rule as the HTTP path: an instance pinned to an account
             // that is gone gets an error, never someone else's credential.
@@ -1308,6 +1314,8 @@ public class MitmProxy {
             return null;
         }
         var exchange = apiActivity.begin(caller.accounts().instanceName(), caller.incarnation(), caller.view());
+        if (ctx.flow() != null) ctx.flow().carries(exchange);
+        // The flow ends it first; these stay as the backstop
         clientReq.response().endHandler(v -> exchange.end());
         clientReq.response().closeHandler(v -> exchange.end());
         return exchange;

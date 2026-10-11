@@ -270,6 +270,8 @@ final class ApiActivity {
         private final AtomicBoolean ended = new AtomicBoolean();
         private final AtomicLong requestBytes = new AtomicLong();
         private final AtomicLong responseBytes = new AtomicLong();
+        private volatile Exchange call;
+        private volatile long endedAt;
 
         private Flow(Traffic traffic, Tally tally) {
             this.traffic = traffic;
@@ -284,9 +286,30 @@ final class ApiActivity {
             responseBytes.addAndGet(n);
         }
 
+        /**
+         * {@code call} is the model call this request makes, ended by this flow's end on the same
+         * reading of the clock (#1281): the response's handlers end them one after the other, and
+         * two readings would put the call's response after the last activity of its own domain.
+         * A flow already over (its connection gone while the body was read) ends it now.
+         */
+        void carries(Exchange call) {
+            this.call = call;
+            // Each side writes before it reads the other's, so at least one ends the call; once only
+            var at = endedAt;
+            if (at != 0) call.end(at);
+        }
+
         void end() {
             if (!ended.compareAndSet(false, true)) return;
-            traffic.end(tally, clock.getAsLong(), requestBytes.get(), responseBytes.get());
+            var now = clock.getAsLong();
+            endedAt = now;
+            // The call first: a read in between sees the domain still busy, never the call
+            var carried = call;
+            if (carried != null) {
+                carried.end(now);
+                call = null;
+            }
+            traffic.end(tally, now, requestBytes.get(), responseBytes.get());
         }
     }
 
@@ -318,12 +341,16 @@ final class ApiActivity {
         }
 
         void end() {
+            end(clock.getAsLong());
+        }
+
+        private void end(long now) {
             if (!ended.compareAndSet(false, true)) return;
             var read = tap;
             var usage = read == null ? null : read.finish();
             synchronized (counters) {
                 counters.inFlight--;
-                counters.lastResponseAt = clock.getAsLong();
+                counters.lastResponseAt = now;
                 if (usage != null) counters.usage.add(usage);
             }
         }
