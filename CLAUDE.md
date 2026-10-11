@@ -84,7 +84,7 @@ To check a change against a real Incus on a disposable Linux host, `scripts/loca
 Three Maven modules under a parent POM:
 
 - **`common`** (`incus-spawn-common`): shared code -- Incus client, proxy config, image/tool definitions, configuration loading.
-  Not a Quarkus app; uses the Jandex Maven plugin to produce a `META-INF/jandex.idx` so Quarkus discovers its CDI beans and `@RegisterForReflection` annotations from dependent modules.
+  Not a Quarkus app; uses the Jandex Maven plugin to produce a `META-INF/jandex.idx` so Quarkus indexes its classes from dependent modules, including the `@RegisterForReflection` on `SpawnConfig.ClaudeAccountType`: without the index the native image binds every Claude account `type:` to null while every JVM test passes.
   Its test classes are also published as a test-jar, which `cli` depends on in test scope, so `cli` tests drive commands against `FakeIncusDaemon`.
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`).
   Depends on common.

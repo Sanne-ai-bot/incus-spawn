@@ -10,7 +10,6 @@ import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
-import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -282,7 +281,6 @@ public class ImageDef {
         public boolean hasPrime() { return prime != null && !prime.isBlank(); }
     }
 
-    @RegisterForReflection
     @JqMapped
     public static class PackageRepo {
         private String type;

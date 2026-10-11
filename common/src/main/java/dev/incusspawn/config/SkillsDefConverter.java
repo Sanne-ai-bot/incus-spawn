@@ -1,6 +1,5 @@
 package dev.incusspawn.config;
 
-import io.quarkus.runtime.annotations.RegisterForReflection;
 import dev.incusspawn.config.ImageDef.SkillsDef;
 import io.hyperfoil.tools.jjq.mapper.JqMapperException;
 import io.hyperfoil.tools.jjq.mapper.ValueConverter;
@@ -16,7 +15,6 @@ import java.util.List;
  * {@code skills} union — either a list shorthand or an object with
  * {@code repo}/{@code list} — mirroring {@code SkillsDef.Deserializer}.
  */
-@RegisterForReflection
 public class SkillsDefConverter implements ValueConverter<SkillsDef> {
 
     @Override

@@ -4,7 +4,6 @@ import dev.incusspawn.tool.ToolDef;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.value.JqValues;
-import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -16,7 +15,6 @@ import java.util.Map;
  * source locations. Stored as JSON in Incus container metadata so that
  * out-of-scope templates can be displayed and rebuilt.
  */
-@RegisterForReflection
 @JqMapped
 public class BuildSource {
 
@@ -71,7 +69,6 @@ public class BuildSource {
         this.toolInstances = instances != null ? instances : new LinkedHashMap<>();
     }
 
-    @RegisterForReflection
     @JqMapped
     public static class ToolInstance {
         private String name;

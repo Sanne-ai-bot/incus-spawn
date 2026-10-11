@@ -3319,6 +3319,13 @@ User-defined tools in `.incus-spawn/tools/` are discovered via filesystem scanni
 
 ### jjq rather than Jackson
 YAML definitions, `config.yaml` and every JSON isx reads or writes go through jjq (#1250, from #1249): `Jjq` holds one mapper with the generated `@JqMapped` mappings registered explicitly (no reflection, no `ServiceLoader`), YAML in `YamlOptions.STRICT` (duplicate keys fail), JSON through `JqValues.parseStrict`.
+Every DTO it binds has a registered generated mapping (`JjqGeneratedMappingTest`), `ImageDef` included, so no DTO carries `@RegisterForReflection`: jjq's reflective fallback would need it in the native image (#1316).
+The exceptions are the types a field's `@JqConverter` builds from the tree itself (`ToolRefListConverter`, `SkillsDefConverter`, `EnvEntryListConverter`), which the mapper never binds.
+An enum needs registration all the same: jjq reads an enum's `@JqEnum` and the `@JqName` on its constants by reflection even under a generated mapping, and unregistered in the native image `ClaudeAccountType` binds every `type:` to null, so the account is inferred from its fields and a save drops the line.
+Such an enum keeps `@RegisterForReflection`, and the same test fails for a reachable enum without it.
+A generated mapping still reaches a private field without a setter through a `java.lang.reflect.Field` it looks up in its static initializer.
+That works without registration because the mappings are initialized at image-build time, like every application class not on the `--initialize-at-run-time` lists in the cli's and the proxy's `application.properties`: the initializer runs in the builder and the `Field`s go into the image heap, where native-image keeps them usable (checked on both native binaries: Claude accounts read by `isx account list`, and the proxy injecting OAuth, API-key and tool credentials and reading the Vertex region and project).
+Putting a mapping, or `Jjq`, on either run-time list would move that lookup to run time, where it needs reflection metadata again.
 Cold Jackson databind cost about 108 ms of a ~194 ms CLI start; with jjq `isx tools` takes 4.8 ms native instead of 9.6 (with 100 user tools), and the JVM distribution no longer carries Jackson or SnakeYAML.
 Jackson's semantics are the ones users' files were written against, so where jjq differs isx restores them rather than following it:
 - A plain scalar bound to a `String` keeps its source text (`0022`, `3.10`, `yes`); converters that read the tree themselves use `Jjq.text`, which reads `JqValue.sourceText()`, since `asText()` renders the resolved number or boolean.

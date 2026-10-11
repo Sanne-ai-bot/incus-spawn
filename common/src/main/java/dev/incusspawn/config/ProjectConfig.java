@@ -1,7 +1,6 @@
 package dev.incusspawn.config;
 
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
-import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -11,7 +10,6 @@ import java.util.List;
 /**
  * Per-project configuration stored in incus-spawn.yaml in the project repo.
  */
-@RegisterForReflection
 @JqMapped
 public class ProjectConfig {
 

@@ -1,7 +1,6 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.Jjq;
-import io.quarkus.runtime.annotations.RegisterForReflection;
 import dev.incusspawn.tool.ToolDef.ToolRef;
 import io.hyperfoil.tools.jjq.mapper.ValueConverter;
 import io.hyperfoil.tools.jjq.mapper.JqMapperException;
@@ -25,7 +24,6 @@ import java.util.Map;
  * <p>Wired via {@code @JqConverter} on the owning fields; the union shapes live
  * here, in one place, for both reads and writes.
  */
-@RegisterForReflection
 public class ToolRefListConverter implements ValueConverter<List<ToolRef>> {
 
     private final String fieldName;
@@ -118,7 +116,6 @@ public class ToolRefListConverter implements ValueConverter<List<ToolRef>> {
     }
 
     /** Variant reporting {@code requires} as the field name, for {@code ToolDef.requires}. */
-    @RegisterForReflection
     public static class ForRequires extends ToolRefListConverter {
         public ForRequires() {
             super("requires");
