@@ -1,13 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build a minimal custom kernel for the incus-spawn VM appliance.
+# Build a minimal custom kernel for the incus-spawn VM appliance, or for the
+# VM base image.
 #
 # Downloads vanilla kernel source from kernel.org, verifies it against the
-# pinned KERNEL_SHA256, applies isx.config plus the matching isx-<arch>.config
-# on top of allnoconfig, and builds a vmlinuz with zero modules.
+# pinned KERNEL_SHA256, applies the role's fragments on top of allnoconfig, and
+# builds a vmlinuz with zero modules:
+#   appliance  isx.config + isx-<arch>.config (the macOS appliance)
+#   vm         those, then vm.config + vm-<arch>.config: the VM base image's
+#              kernel, an EFI application with its command line built in
 #
-# Usage:  ./build-kernel.sh [output-dir] [arch]
+# Usage:  ./build-kernel.sh [appliance|vm] [output-dir] [arch]
+#
+# The role defaults to appliance, so the older two-argument form still builds
+# the appliance kernel. The default output is ../build for appliance and
+# ../build/vm-kernel for vm.
 #
 # A non-host [arch] is cross-compiled with <arch>-linux-gnu- unless
 # CROSS_COMPILE is set.
@@ -22,13 +30,25 @@ KERNEL_SHA256="b4c5dfbe51a364a6c7f03869200f88c8e1f77403539005f14b7fc6bc91b8d8ba"
 KERNEL_MAJOR="${KERNEL_VERSION%%.*}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-OUTPUT_DIR="${1:-$SCRIPT_DIR/../build}"
+ROLE="appliance"
+case "${1:-}" in
+    appliance|vm) ROLE="$1"; shift ;;
+esac
+# The vm kernel never defaults to the appliance's directory: build.sh reuses a
+# vmlinuz it finds there, and the vm kernel does not boot the appliance.
+DEFAULT_OUTPUT="$SCRIPT_DIR/../build"
+[ "$ROLE" = vm ] && DEFAULT_OUTPUT="$SCRIPT_DIR/../build/vm-kernel"
+OUTPUT_DIR="${1:-$DEFAULT_OUTPUT}"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 BUILD_ARCH="${2:-$(uname -m)}"
 CACHE_DIR="${KERNEL_CACHE_DIR:-/tmp/kernel-cache}"
-BASE_FRAGMENT="$SCRIPT_DIR/isx.config"
-ARCH_FRAGMENT="$SCRIPT_DIR/isx-${BUILD_ARCH}.config"
+# Later fragments override earlier ones: each arch fragment follows its shared
+# one, and the vm pair follows the appliance pair it builds on.
+FRAGMENTS=("$SCRIPT_DIR/isx.config" "$SCRIPT_DIR/isx-${BUILD_ARCH}.config")
+if [ "$ROLE" = vm ]; then
+    FRAGMENTS+=("$SCRIPT_DIR/vm.config" "$SCRIPT_DIR/vm-${BUILD_ARCH}.config")
+fi
 
 case "$BUILD_ARCH" in
     x86_64)  KARCH="x86";   TARGET="bzImage"; IMAGE="arch/x86/boot/bzImage" ;;
@@ -46,12 +66,14 @@ if [ "$BUILD_ARCH" != "$(uname -m)" ] && [ -z "${CROSS_COMPILE:-}" ]; then
     }
 fi
 
-for f in "$BASE_FRAGMENT" "$ARCH_FRAGMENT"; do
+for f in "${FRAGMENTS[@]}"; do
     [ -f "$f" ] || { echo "ERROR: config fragment not found: $f" >&2; exit 1; }
 done
 
-echo "Building kernel $KERNEL_VERSION for $BUILD_ARCH..."
-echo "  Config: $BASE_FRAGMENT + $(basename "$ARCH_FRAGMENT")"
+FRAGMENT_NAMES=$(for f in "${FRAGMENTS[@]}"; do basename "$f"; done | paste -sd+ | sed 's/+/ + /g')
+
+echo "Building the $ROLE kernel $KERNEL_VERSION for $BUILD_ARCH..."
+echo "  Config: $FRAGMENT_NAMES"
 echo "  Output: $OUTPUT_DIR"
 
 mkdir -p "$CACHE_DIR"
@@ -94,13 +116,12 @@ tar xf "$TARBALL" -C "$BUILD_DIR" --strip-components=1
 
 cd "$BUILD_DIR"
 
-# kconfig takes a single KCONFIG_ALLCONFIG file, so the shared and per-arch
-# fragments are concatenated here. Order matters: the arch fragment comes last
-# so it can override a shared default.
+# kconfig takes a single KCONFIG_ALLCONFIG file, so the fragments are
+# concatenated here, in the order FRAGMENTS lists them.
 CONFIG_FRAGMENT="$BUILD_DIR/.isx-merged.config"
-cat "$BASE_FRAGMENT" "$ARCH_FRAGMENT" > "$CONFIG_FRAGMENT"
+cat "${FRAGMENTS[@]}" > "$CONFIG_FRAGMENT"
 
-echo "==> Configuring (allnoconfig + isx.config + isx-${BUILD_ARCH}.config)..."
+echo "==> Configuring (allnoconfig + $FRAGMENT_NAMES)..."
 KCONFIG_ALLCONFIG="$CONFIG_FRAGMENT" make -s ARCH="$KARCH" allnoconfig
 make -s ARCH="$KARCH" olddefconfig
 
@@ -139,7 +160,9 @@ while IFS= read -r line; do
             SKIPPED=$((SKIPPED + 1))
         fi
     fi
-done < <(grep '^CONFIG_' "$CONFIG_FRAGMENT" | grep -v '^#')
+# A key set twice is checked at its last value, the one kconfig applied.
+done < <(grep '^CONFIG_' "$CONFIG_FRAGMENT" \
+    | awk -F= '!($1 in last) { order[++n] = $1 } { last[$1] = $0 } END { for (i = 1; i <= n; i++) print last[order[i]] }')
 echo "  $APPLIED applied, $SKIPPED skipped"
 
 echo "==> Building ($TARGET)..."
