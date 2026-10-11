@@ -55,9 +55,9 @@ public final class InstanceListing {
     public static List<InstanceInfo> collectEntries(String listingJson) {
         final io.hyperfoil.tools.jjq.value.JqValue nodes;
         try {
-            nodes = io.hyperfoil.tools.jjq.value.JqValues.parse(listingJson);
+            nodes = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(listingJson);
         } catch (RuntimeException e) {
-            var detail = e.getMessage() == null ? "" : e.getMessage().lines().findFirst().orElse("");
+            var detail = Jjq.brief(e);
             throw new IncusException("Cannot read the instance listing from Incus: " + detail, e);
         }
         return collectEntries(nodes);

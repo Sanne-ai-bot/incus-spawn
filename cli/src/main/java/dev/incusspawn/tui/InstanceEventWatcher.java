@@ -168,7 +168,7 @@ public final class InstanceEventWatcher implements AutoCloseable {
     static Change parse(String message) {
         JqValue node;
         try {
-            node = JqValues.parse(message);
+            node = JqValues.parseStrict(message);
         } catch (Exception e) {
             return null;
         }

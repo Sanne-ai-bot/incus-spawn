@@ -34,18 +34,21 @@ public final class YamlErrors {
         return OutputFormat.oneLine(describe(filename, ex));
     }
 
+    private static final Pattern AT_LINE = Pattern.compile(" at line (\\d+)$");
+
     private static String describe(String filename, Exception ex) {
+        return describe(filename, ex, -1);
+    }
+
+    private static String describe(String filename, Exception ex, int boundLine) {
         // jjq failures are wrapped in IOException at the parse entry points
-        // (see Jjq) to preserve caller contracts; render the structured cause.
-        if (ex instanceof IOException && ex.getCause() instanceof JqMapperException) {
-            return describe(filename, (Exception) ex.getCause());
-        }
-        if (ex instanceof IOException && ex.getCause() instanceof JqYamlException) {
-            return describe(filename, (Exception) ex.getCause());
-        }
-        if (ex instanceof IOException
-                && ex.getCause() instanceof io.hyperfoil.tools.jjq.yaml.YamlParseException) {
-            return describe(filename, (Exception) ex.getCause());
+        // (see Jjq) to preserve caller contracts; render the structured cause. A binding failure
+        // carries the line of the offending value on the wrapper ("... at line N").
+        if (ex instanceof IOException && ex.getCause() instanceof Exception cause
+                && (cause instanceof JqMapperException || cause instanceof JqYamlException
+                    || cause instanceof io.hyperfoil.tools.jjq.yaml.YamlParseException)) {
+            var at = ex.getMessage() == null ? null : AT_LINE.matcher(ex.getMessage());
+            return describe(filename, cause, at != null && at.find() ? Integer.parseInt(at.group(1)) : -1);
         }
         if (ex instanceof io.hyperfoil.tools.jjq.yaml.YamlParseException nativeParse) {
             return friendlyNative(filename, nativeParse);
@@ -53,7 +56,7 @@ public final class YamlErrors {
         var raw = ex.getMessage();
         if (raw == null) return filename + ": unknown YAML error";
 
-        var line = extractLine(raw);
+        var line = extractLine(raw) > 0 ? extractLine(raw) : boundLine;
         var prefix = line > 0 ? filename + ":" + line + ": " : filename + ": ";
 
         var dup = DUPLICATE_FIELD.matcher(raw);
@@ -143,13 +146,18 @@ public final class YamlErrors {
      * through to the generic path.
      */
     private static String describeJjqMismatch(ShapeMismatchException ex) {
+        var path = ex.displayPath();
+        boolean root = path == null || path.isEmpty() || path.equals("$");
+        if (ex.expected() == JqValue.Type.BOOLEAN && ex.actual() == JqValue.Type.STRING && !root) {
+            return "'" + path + "' expects true or false";
+        }
         var expected = shapeName(ex.expected());
         var received = receivedName(ex.actual());
         if (expected == null || received == null || expected.equals(received)) return null;
-        var path = ex.path();
-        if (path == null || path.isEmpty()) return null;
-        if (path.startsWith("$.")) path = path.substring(2);
-        if (path.equals("$")) return null;
+        if (root) {
+            return ex.expected() == JqValue.Type.OBJECT
+                    ? "the file must be a mapping of settings, but is " + received : null;
+        }
         return mismatchMessage(path, expected, received, leafName(path));
     }
 

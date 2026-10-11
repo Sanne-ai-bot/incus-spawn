@@ -125,7 +125,7 @@ public class BuildSource {
     public static String sourceOf(String json, String template) {
         if (json == null || json.isBlank()) return null;
         try {
-            var node = JqValues.parse(json).path("sources").path(template);
+            var node = JqValues.parseStrict(json).path("sources").path(template);
             return node.isString() ? node.asText() : null;
         } catch (Exception e) {
             return null;
@@ -135,7 +135,7 @@ public class BuildSource {
     public static BuildSource fromJson(String json) {
         if (json == null || json.isBlank()) return null;
         try {
-            var parsed = io.hyperfoil.tools.jjq.value.JqValues.parse(json);
+            var parsed = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(json);
             // Jackson refuses a scalar or array for a POJO; a lenient bind would
             // answer an empty snapshot instead of reporting the corrupt metadata.
             if (!(parsed instanceof io.hyperfoil.tools.jjq.value.JqObject)) return null;

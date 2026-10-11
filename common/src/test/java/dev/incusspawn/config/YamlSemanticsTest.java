@@ -45,6 +45,10 @@ class YamlSemanticsTest {
         return ImageDef.parseYaml(HEAD + body);
     }
 
+    private static String friendly(java.io.IOException e) {
+        return YamlErrors.friendly("x.yaml", e);
+    }
+
     private static ToolDef tool(String body) throws Exception {
         return ToolDef.loadFromStream(new ByteArrayInputStream(("name: x\n" + body).getBytes(StandardCharsets.UTF_8)));
     }
@@ -144,6 +148,44 @@ class YamlSemanticsTest {
         var env = image("base: &b\n  name: X\n  value: \"1\"\nenv:\n  - <<: *b\n    value: \"2\"\n").getEnv().getFirst();
         assertEquals("X", env.getName());
         assertEquals("2", env.getValue(), "a key next to the merge wins over the merged one");
+    }
+
+    // Fixed in jjq 0.2.2 (Hyperfoil/jjq#126, #128); these held with Jackson and were lost with 0.2.1.
+
+    @Test
+    void anUnquotedScalarBoundToAStringKeepsItsText() throws Exception {
+        var env = image("env:\n  - name: A\n    value: 0022\n  - name: B\n    value: 3.10\n"
+                + "  - name: C\n    value: yes\n  - name: D\n    value: 0x1F\n").getEnv();
+        assertEquals(List.of("0022", "3.10", "yes", "0x1F"), env.stream().map(EnvEntry::getValue).toList());
+    }
+
+    @Test
+    void unquotedToolParametersAndSkillsKeepTheirText() throws Exception {
+        var def = image("tools:\n  - mvnd:\n      version: 3.10\n      umask: 0022\nskills:\n  - 0123\n");
+        var params = def.getTools().getFirst().getParams();
+        assertEquals("3.10", params.get("version"));
+        assertEquals("0022", params.get("umask"));
+        assertEquals(List.of("0123"), def.getSkills().getList());
+    }
+
+    @Test
+    void aTypeErrorNamesTheLineAndTheKeyAsWritten() throws Exception {
+        var shape = assertThrows(java.io.IOException.class, () -> image("# c\npackages: vim\n"));
+        assertTrue(friendly(shape).startsWith("x.yaml:4: 'packages' expects a list"), friendly(shape));
+        var bool = assertThrows(java.io.IOException.class, () -> image("gui: maybe\n"));
+        assertTrue(friendly(bool).startsWith("x.yaml:3: "), friendly(bool));
+        assertTrue(friendly(bool).contains("'gui' expects true or false"), friendly(bool));
+        var top = assertThrows(java.io.IOException.class, () -> ImageDef.parseYaml("- a\n"));
+        assertTrue(friendly(top).contains("must be a mapping of settings, but is a list"), friendly(top));
+        var hyphen = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("auto-clone-repos:\n  - a\n"));
+        var message = YamlErrors.friendly("config.yaml", hyphen);
+        assertTrue(message.contains("'auto-clone-repos' expects a single value"), message);
+        assertFalse(message.contains("$"), message);
+    }
+
+    @Test
+    void aScalarWhereAMappingBelongsIsRejected() {
+        assertThrows(java.io.IOException.class, () -> tool("proxy: x\n"));
     }
 
     /** Saving writes back what was read: strings a plain scalar would turn into something else stay strings. */

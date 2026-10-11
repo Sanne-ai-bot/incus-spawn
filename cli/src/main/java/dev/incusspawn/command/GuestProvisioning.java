@@ -2,7 +2,6 @@ package dev.incusspawn.command;
 
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqObject;
-import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.command.BuildTools.ResolvedTool;
@@ -520,16 +519,16 @@ public class GuestProvisioning {
         try {
             // Like the old casts: a file that is not the shape Claude Code writes is left alone,
             // never rewritten from the part that could be read.
-            if (!(JqValues.parse(catResult.stdout()) instanceof JqObject root)) {
+            if (!(JqValues.parseStrict(catResult.stdout()) instanceof JqObject root)) {
                 throw new IllegalStateException("not a JSON object");
             }
             var projects = objectOrEmpty(root, "projects");
             var githubRepoPaths = objectOrEmpty(root, "githubRepoPaths");
 
             var projectsBuilder = JqObject.builder(8);
-            if (projects instanceof JqObject projectsObj) projectsObj.forEach(projectsBuilder::put);
+            projects.forEach(projectsBuilder::put);
             var pathsBuilder = JqObject.builder(8);
-            if (githubRepoPaths instanceof JqObject pathsObj) pathsObj.forEach(pathsBuilder::put);
+            githubRepoPaths.forEach(pathsBuilder::put);
 
             // Inherited repos are usually trusted already: skip the write when nothing changes.
             boolean changed = false;
@@ -586,10 +585,10 @@ public class GuestProvisioning {
     }
 
     /** The object under {@code key}, empty when absent; anything else there is corrupt. */
-    private static JqValue objectOrEmpty(JqObject root, String key) {
+    private static JqObject objectOrEmpty(JqObject root, String key) {
         if (!root.keys().contains(key)) return JqObject.builder(0).build();
         var value = root.getField(key);
-        if (value.isObject()) return value;
+        if (value instanceof JqObject object) return object;
         throw new IllegalStateException("'" + key + "' is not an object in " + CLAUDE_JSON_PATH);
     }
 

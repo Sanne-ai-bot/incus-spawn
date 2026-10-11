@@ -138,7 +138,7 @@ public final class McpClientCheck {
             var json = line.startsWith("data:") ? line.substring("data:".length()).strip() : line.strip();
             if (!json.startsWith("{")) continue;
             try {
-                var message = JqValues.parse(json);
+                var message = JqValues.parseStrict(json);
                 if (message instanceof JqObject obj && obj.keys().contains("error")) {
                     throw new Unanswered(obj.getField("error").pathText("message", "error"));
                 }

@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
@@ -144,9 +145,9 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
     static ProxyActivity parse(String json) {
         JqValue root;
         try {
-            root = JqValues.parse(json);
+            root = JqValues.parseStrict(json);
         } catch (Exception e) {
-            throw new Unavailable("the isx proxy's activity could not be read (" + e.getMessage() + ")");
+            throw new Unavailable("the isx proxy's activity could not be read (" + Jjq.brief(e) + ")");
         }
         var instances = new HashMap<String, Instance>();
         if (root.getField("instances") instanceof JqObject objs) {

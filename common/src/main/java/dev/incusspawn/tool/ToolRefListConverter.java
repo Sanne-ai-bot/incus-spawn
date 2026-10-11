@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.Jjq;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 import dev.incusspawn.tool.ToolDef.ToolRef;
 import io.hyperfoil.tools.jjq.mapper.ValueConverter;
@@ -82,7 +83,7 @@ public class ToolRefListConverter implements ValueConverter<List<ToolRef>> {
                     throw new JqMapperException("Parameter '" + param.getKey() + "' for tool '" + name
                             + "' in " + fieldName + " must be a scalar value (string, number, boolean)");
                 }
-                params.put(param.getKey(), param.getValue().asText());
+                params.put(param.getKey(), Jjq.text(param.getValue()));
             }
         } else {
             throw new JqMapperException("Parameters for '" + name + "' in " + fieldName

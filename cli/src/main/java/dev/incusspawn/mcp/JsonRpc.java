@@ -19,7 +19,7 @@ final class JsonRpc {
     private JsonRpc() {}
 
     static JqValue parse(String line) {
-        return JqValues.parse(line);
+        return JqValues.parseStrict(line);
     }
 
     static JqObject emptyObject() {

@@ -327,9 +327,9 @@ public final class InstanceRegistry {
     static Parsed parse(String instancesJson) {
         var claimants = new LinkedHashMap<String, List<Claimant>>();
         try {
-            return parse(JqValues.parse(instancesJson));
+            return parse(JqValues.parseStrict(instancesJson));
         } catch (Exception e) {
-            ProxyLog.warn("Could not parse instance list for the account registry: " + e.getMessage());
+            ProxyLog.warn("Could not parse instance list for the account registry: " + Jjq.brief(e));
             return new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of());
         }
     }
@@ -354,7 +354,7 @@ public final class InstanceRegistry {
                         instance.pathText("created_at", "").strip()));
             }
         } catch (Exception e) {
-            ProxyLog.warn("Could not parse instance list for the account registry: " + e.getMessage());
+            ProxyLog.warn("Could not parse instance list for the account registry: " + Jjq.brief(e));
         }
         var byAddress = new LinkedHashMap<String, InstanceAccounts>();
         var secretByAddress = new LinkedHashMap<String, String>();

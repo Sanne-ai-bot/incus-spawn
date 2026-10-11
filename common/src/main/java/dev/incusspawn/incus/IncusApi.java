@@ -653,9 +653,9 @@ class IncusApi {
     private static JqValue parseBody(byte[] body) {
         if (body.length == 0) return io.hyperfoil.tools.jjq.value.JqNull.NULL;
         try {
-            return JqValues.parse(body);
+            return JqValues.parseStrict(body);
         } catch (RuntimeException e) {
-            throw new IncusException("Incus REST response was not JSON: " + e.getMessage(), e);
+            throw new IncusException("Incus REST response was not JSON: " + Jjq.brief(e), e);
         }
     }
 

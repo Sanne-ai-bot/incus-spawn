@@ -269,7 +269,7 @@ public final class ProxyHealthCheck {
 
     static ProxyInfo parseProxyInfo(String json) {
         try {
-            var node = JqValues.parse(json);
+            var node = JqValues.parseStrict(json);
             // Missing reads as the healthy default; a present non-boolean is unhealthy.
             // (The proxy writes booleans; this is only exactness against the old parse.)
             var dnsConfigured = !(node instanceof io.hyperfoil.tools.jjq.value.JqObject dnsObj)

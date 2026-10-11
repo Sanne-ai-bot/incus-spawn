@@ -360,7 +360,7 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     static String extractChecksum(String manifestJson, String platform) throws IOException {
-        var root = io.hyperfoil.tools.jjq.value.JqValues.parse(manifestJson);
+        var root = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(manifestJson);
         var checksum = root.getField("platforms").getField(platform).pathText("checksum", null);
         if (checksum == null) {
             throw new IOException("Platform " + platform + " not found in manifest");

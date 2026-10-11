@@ -995,7 +995,7 @@ class ArtifactCacheHandler {
     static String npmShasum(byte[] body) {
         if (body == null) return null;
         try {
-            var dist = JqValues.parse(body).getField("dist").getField("shasum");
+            var dist = JqValues.parseStrict(body).getField("dist").getField("shasum");
             if (dist.isString()) {
                 var hex = dist.asText().trim().toLowerCase();
                 if (hex.matches("[a-f0-9]{40}")) return hex;

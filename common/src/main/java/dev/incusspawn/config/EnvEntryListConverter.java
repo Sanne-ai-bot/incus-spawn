@@ -60,7 +60,7 @@ public class EnvEntryListConverter implements ValueConverter<List<EnvEntry>> {
         for (var field : entry.asMap().entrySet()) {
             switch (field.getKey()) {
                 case "name" -> name = field.getValue().asText();
-                case "value" -> entryValue = field.getValue().asText();
+                case "value" -> entryValue = Jjq.text(field.getValue());
                 case "strategy" -> {
                     var strategyStr = field.getValue().asText();
                     var resolved = STRATEGY_MAP.get(strategyStr);
@@ -70,7 +70,7 @@ public class EnvEntryListConverter implements ValueConverter<List<EnvEntry>> {
                     }
                     strategy = resolved;
                 }
-                case "separator" -> separator = field.getValue().asText();
+                case "separator" -> separator = Jjq.text(field.getValue());
                 default -> { /* ignoreUnknown, like Jackson */ }
             }
         }
