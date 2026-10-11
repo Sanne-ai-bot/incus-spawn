@@ -4,7 +4,6 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
-import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.util.BuildOutput;
 
 import java.util.ArrayList;
@@ -14,7 +13,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 
 /**
  * Which tools a template installs: each one found by name, its parameters checked, its
@@ -198,24 +196,14 @@ public final class BuildTools {
         return null;
     }
 
-    static Map<String, String> computeToolFingerprints(
-            dev.incusspawn.config.ImageDef imageDef,
-            ToolDefLoader toolDefLoader,
-            Map<String, ImageDef> defs) {
-        var rawFps = new TreeMap<String, String>();
-        var depMap = new TreeMap<String, List<String>>();
-        // Always quiet: this method only fingerprints YAML tools and doesn't have
-        // CDI tools, so non-YAML tools would produce spurious "unknown tool" warnings.
-        for (var resolvedTool : resolveTools(imageDef, toolDefLoader, true)) {
-            if (resolvedTool.setup() instanceof YamlToolSetup yts) {
-                rawFps.put(yts.toolDef().getName(), yts.toolDef().contentFingerprint());
-                var depNames = yts.toolDef().getRequires().stream()
-                    .map(dev.incusspawn.tool.ToolDef.ToolRef::getName)
-                    .toList();
-                depMap.put(yts.toolDef().getName(), depNames);
-            }
-        }
-        return dev.incusspawn.tool.ToolDef.compositeFingerprints(rawFps, depMap);
+    /**
+     * The tool fingerprints {@code imageDef}'s stamp folds in: only its own tools, not its
+     * ancestors', computed as the TUI and {@code isx templates} compute them (#1142). Tool
+     * parameters that no longer validate are thrown, as the build would.
+     */
+    static Map<String, String> computeToolFingerprints(ImageDef imageDef, ToolDefLoader toolDefLoader) {
+        resolveTools(imageDef, toolDefLoader, true);
+        return TemplateStaleness.toolFingerprints(List.of(imageDef), toolDefLoader);
     }
 
     /**

@@ -514,7 +514,7 @@ public class BuildCommand extends BaseCommand {
             var batch = new HashSet<String>();
             for (var template : defs.values()) {
                 if (batch.contains(template.getName())) continue;
-                if (isImageOutdated(template.getName(), template, incus, toolDefLoader, defs)) {
+                if (isImageOutdated(template.getName(), template, incus, toolDefLoader)) {
                     batch.add(template.getName());
                     collectDescendants(template.getName(), defs, new ArrayList<>(), batch);
                 }
@@ -710,7 +710,7 @@ public class BuildCommand extends BaseCommand {
         // parent Incus instances are not needed.
         if (effectiveMachineType(imageDef) != effectiveMachineType(parentDef)) return;
 
-        if (!parentNeedsBuild(parentName, parentDef, defs)) return;
+        if (!parentNeedsBuild(parentName, parentDef)) return;
         collectParentsToBuild(parentDef, defs, chain);
         chain.add(parentName);
     }
@@ -727,14 +727,14 @@ public class BuildCommand extends BaseCommand {
      * and be rebuilt a second time, racing the first (#1212). Its own parent too: the outdated check
      * reads it, and one caught missing would make the parent look current.
      */
-    boolean parentNeedsBuild(String parentName, ImageDef parentDef, Map<String, ImageDef> defs) {
+    boolean parentNeedsBuild(String parentName, ImageDef parentDef) {
         try (var parentHeld = TemplateLock.reading(parentName, BuildOutput::note);
              var grandparentHeld = TemplateLock.reading(parentDef.getParent(), BuildOutput::note)) {
             if (!incus.exists(parentName)) {
                 BuildOutput.note("Parent '" + parentName + "' not found, building first.");
                 return true;
             }
-            if (isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs)) {
+            if (isImageOutdated(parentName, parentDef, incus, toolDefLoader)) {
                 BuildOutput.note("Parent '" + parentName + "' is outdated, rebuilding first.");
                 return true;
             }
@@ -968,15 +968,14 @@ public class BuildCommand extends BaseCommand {
      * current. A template that is not built is outdated; a failure to ask Incus is thrown.
      */
     static boolean isImageOutdated(String imageName, ImageDef imageDef,
-                                    IncusClient incus, ToolDefLoader toolDefLoader,
-                                    Map<String, ImageDef> defs) {
+                                    IncusClient incus, ToolDefLoader toolDefLoader) {
         var instance = incus.instanceMetadataOrThrow(imageName);
         if (instance == null) return true;
         var built = TemplateStaleness.Built.of(imageName, instance);
         if (TemplateStaleness.versionOutdated(built.buildVersion(), BuildInfo.instance().version())) return true;
         // Checked here too so the tools are fingerprinted only when there is a stamp to compare.
         if (!built.definitionSha().isEmpty() && TemplateStaleness.definitionChanged(built.definitionSha(),
-                imageDef, computeToolFingerprints(imageDef, toolDefLoader, defs))) return true;
+                imageDef, computeToolFingerprints(imageDef, toolDefLoader))) return true;
         if (imageDef.isRoot()) return false;
         var parent = incus.instanceMetadataOrThrow(imageDef.getParent());
         return parent != null && TemplateStaleness.parentRebuilt(
@@ -2030,13 +2029,13 @@ public class BuildCommand extends BaseCommand {
     }
 
     void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef,
-                                    Map<String, ImageDef> defs, Map<String, String> identityStamps) {
+                                    Map<String, String> identityStamps) {
         var info = BuildInfo.instance();
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
         incus.configSet(container, Metadata.DEFINITION_SHA,
-                imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
+                imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader)));
         stampAccountIdentities(container, identityStamps);
     }
 
@@ -2207,7 +2206,7 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, Metadata.PARENT, parentCanonicalName);
         }
         incus.configSet(buildName, Metadata.CREATED, Metadata.today());
-        stampBuildVersion(buildName, imageDef, defs, identityStamps);
+        stampBuildVersion(buildName, imageDef, identityStamps);
         if (!hostResources.isEmpty()) {
             incus.configSet(buildName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));
@@ -2261,7 +2260,7 @@ public class BuildCommand extends BaseCommand {
             // Any template may fail here, e.g. on tool parameters that no longer validate. It is
             // not the one this build was about, so it must not turn a finished build into an error.
             try {
-                if (!builtFromCurrentChain(chain, config, defs)) continue;
+                if (!builtFromCurrentChain(chain, config)) continue;
                 if (effective != null) {
                     incus.configSet(name, Metadata.DEFAULT_ACTION, effective);
                 } else {
@@ -2296,10 +2295,10 @@ public class BuildCommand extends BaseCommand {
      * that matches what it has installed until it is rebuilt, and a template built from another
      * project's definitions is not theirs to change.
      */
-    private boolean builtFromCurrentChain(List<ImageDef> chain, JsonNode config, Map<String, ImageDef> defs) {
+    private boolean builtFromCurrentChain(List<ImageDef> chain, JsonNode config) {
         var def = chain.getFirst();
         if (!BuildInfo.instance().version().equals(config.path(Metadata.BUILD_VERSION).asText(""))
-                || !def.contentFingerprint(computeToolFingerprints(def, toolDefLoader, defs))
+                || !def.contentFingerprint(computeToolFingerprints(def, toolDefLoader))
                         .equals(config.path(Metadata.DEFINITION_SHA).asText(""))) {
             return false;
         }
