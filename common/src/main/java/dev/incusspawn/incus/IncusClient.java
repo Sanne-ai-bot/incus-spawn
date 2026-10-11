@@ -7,7 +7,9 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ReadyTimeoutsConfig;
+import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.tool.ShellMenu;
+import dev.incusspawn.util.OutputFormat;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -1192,9 +1194,12 @@ public class IncusClient {
         }
         var remoteName = image.substring(0, colon);
         var alias = image.substring(colon + 1);
-        var remote = readIncusRemote(remoteName);
+        var problems = new ArrayList<String>();
+        var remote = readIncusRemote(remoteName, Environment.incusConfigCandidates(), problems);
         if (remote == null) {
-            throw new IncusException(unknownRemoteMsg(remoteName, image, Platform.isMacOS()));
+            throw new IncusException(problems.isEmpty()
+                    ? unknownRemoteMsg(remoteName, image, Platform.isMacOS())
+                    : unusableRemoteMsg(remoteName, image, problems, Platform.isMacOS()));
         }
         var source = new LinkedHashMap<String, Object>();
         source.put("type", "image");
@@ -1211,37 +1216,69 @@ public class IncusClient {
      */
     static String unknownRemoteMsg(String remoteName, String image, boolean macOS) {
         return "Unknown Incus remote '" + remoteName + "' for image '" + image + "'. " + (macOS
-                ? "isx knows '" + String.join("', '", WELL_KNOWN_REMOTES.keySet())
-                        + "' and reads others, each with an addr (the protocol defaults to simplestreams), from the 'remotes:' section of "
-                        + Environment.incusConfigCandidates().getFirst() + "."
+                ? remotesFormatHint()
                 : "Add it with: incus remote add " + remoteName + " <url>");
     }
 
-    private record RemoteConfig(String addr, String protocol) {}
+    /**
+     * A config file isx found could not be read, or names the remote without an addr (#1221):
+     * saying the remote is unknown would send the user to add what may already be there. On Linux
+     * the file is the incus CLI's own, which needs the same repair, so only macOS gets the format.
+     */
+    static String unusableRemoteMsg(String remoteName, String image, List<String> problems, boolean macOS) {
+        var why = String.join("; ", problems);
+        if (why.endsWith(".")) why = why.substring(0, why.length() - 1);
+        return "Cannot resolve Incus remote '" + remoteName + "' for image '" + image + "': " + why + "."
+                + (macOS ? " " + remotesFormatHint() : "");
+    }
+
+    private static String remotesFormatHint() {
+        return "isx knows '" + String.join("', '", WELL_KNOWN_REMOTES.keySet())
+                + "' and reads others, each with an addr (the protocol defaults to simplestreams), from the 'remotes:' section of "
+                + Environment.incusConfigCandidates().getFirst() + ".";
+    }
+
+    record RemoteConfig(String addr, String protocol) {}
 
     private static final Map<String, RemoteConfig> WELL_KNOWN_REMOTES = Map.of(
             "images", new RemoteConfig("https://images.linuxcontainers.org", "simplestreams")
     );
 
     /**
-     * Read a named remote's configuration from the Incus client config file.
+     * Read a named remote's configuration from the first of {@code candidates} that defines it.
      * Falls back to well-known defaults (e.g. "images") when no config file
      * defines the remote — common on macOS where there is no host-side Incus CLI.
+     * A file that exists but cannot be parsed, or names the remote without an addr, adds the
+     * file and the reason to {@code problems} (#1221); a remote named without an addr gets no
+     * well-known fallback, which would quietly pull from a server the user meant to replace.
      */
-    private static RemoteConfig readIncusRemote(String name) {
-        for (var path : Environment.incusConfigCandidates()) {
+    static RemoteConfig readIncusRemote(String name, List<Path> candidates, List<String> problems) {
+        boolean named = false;
+        for (var path : candidates) {
             if (!Files.exists(path)) continue;
+            JsonNode root;
             try {
-                var yaml = new YAMLMapper();
-                var root = yaml.readTree(path.toFile());
-                var remoteNode = root.path("remotes").path(name);
-                if (remoteNode.isMissingNode()) continue;
-                var addr = remoteNode.path("addr").asText("");
-                var protocol = remoteNode.path("protocol").asText("simplestreams");
-                if (!addr.isEmpty()) return new RemoteConfig(addr, protocol);
-            } catch (Exception ignored) {}
+                root = new YAMLMapper().readTree(path.toFile());
+            } catch (Exception e) {
+                problems.add(YamlErrors.friendly(path.toString(), e));
+                continue;
+            }
+            if (root == null) continue;
+            var remoteNode = root.path("remotes").path(name);
+            if (remoteNode.isMissingNode()) continue;
+            var addr = remoteNode.path("addr").asText("");
+            if (addr.isEmpty()) {
+                named = true;
+                var keys = new ArrayList<String>();
+                remoteNode.fieldNames().forEachRemaining(keys::add);
+                // The keys are the file's text: one line, as YamlErrors.friendly makes the parse errors.
+                problems.add(OutputFormat.oneLine(path + " defines remote '" + name + "' with no 'addr'"
+                        + (keys.isEmpty() ? "" : " (it has: " + String.join(", ", keys) + ")")));
+                continue;
+            }
+            return new RemoteConfig(addr, remoteNode.path("protocol").asText("simplestreams"));
         }
-        return WELL_KNOWN_REMOTES.get(name);
+        return named ? null : WELL_KNOWN_REMOTES.get(name);
     }
 
     /**
