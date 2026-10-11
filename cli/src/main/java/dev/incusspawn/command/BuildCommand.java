@@ -1262,11 +1262,13 @@ public class BuildCommand extends BaseCommand {
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         verifyTools(container, toolResolution.effective());
-        bindTrustStores(container);
         maskServices(container, imageDef);
         // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
         installSkills(container, imageDef, defs, toolResolution.effective());
         cloneRepos(container, imageDef, machineType);
+        // After the repos' prime commands, which may download a runtime (a Gradle toolchain into
+        // ~/.gradle/jdks); the parent's path units do not settle in time before the stop.
+        bindTrustStores(container);
         updateClaudeJsonTrust(container, imageDef, defs);
         updateCodexTrust(container, imageDef, defs);
         // After the repos it lists have actually been cloned, matching buildFromScratch.
