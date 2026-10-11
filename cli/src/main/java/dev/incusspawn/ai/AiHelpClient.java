@@ -26,7 +26,7 @@ import java.util.function.Consumer;
 
 public class AiHelpClient {
 
-        private static volatile HttpClient httpClient;
+    private static volatile HttpClient httpClient;
 
     private static HttpClient client() {
         if (httpClient == null) {

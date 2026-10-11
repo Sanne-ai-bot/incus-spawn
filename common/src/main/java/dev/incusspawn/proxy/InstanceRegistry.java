@@ -58,7 +58,6 @@ public final class InstanceRegistry {
      */
     public static final long MISS_REFRESH_INTERVAL_MS = 1_000L;
 
-    
     /**
      * One instance's identity, as far as credential selection is concerned.
      *

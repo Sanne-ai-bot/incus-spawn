@@ -55,7 +55,7 @@ public final class InstanceEventWatcher implements AutoCloseable {
     private static final Set<String> STARTS = Set.of(
             "instance-started", "instance-restarted", "instance-resumed");
 
-        static final long INITIAL_BACKOFF_MS = 2_000;
+    static final long INITIAL_BACKOFF_MS = 2_000;
     static final int MAX_CONSECUTIVE_FAILURES = 3;
     static final long HEALTHY_SESSION_MS = 60_000;
 

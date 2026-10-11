@@ -31,7 +31,7 @@ import java.util.regex.Pattern;
  */
 public final class BaseImageReleases {
 
-        private static final Pattern GITHUB_RELEASE_URL =
+    private static final Pattern GITHUB_RELEASE_URL =
             Pattern.compile("^https://github\\.com/([^/]+)/([^/]+)/releases/");
 
     private final String releasesApi;

@@ -1746,7 +1746,6 @@ public class DoctorCommand extends BaseCommand {
 
     // ---- Bundle generation ----
 
-    
     private void generateBundle(List<Finding> findings) {
         SupportBundle.Result result;
         try {

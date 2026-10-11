@@ -16,7 +16,7 @@ import java.util.Map;
 public class ClaudeSetup implements ToolSetup {
 
     private static final String DOWNLOAD_BASE_URL = "https://downloads.claude.ai/claude-code-releases";
-    
+
     private final DownloadCache downloadCache;
 
     public ClaudeSetup() {

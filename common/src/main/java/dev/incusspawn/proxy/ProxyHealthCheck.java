@@ -47,7 +47,6 @@ public final class ProxyHealthCheck {
 
     private record HealthResult(boolean healthy, boolean dnsConfigured) {}
 
-    
     private ProxyHealthCheck() {}
 
     /**

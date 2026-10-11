@@ -62,7 +62,6 @@ public class MitmProxy {
     private final int requestedMitmPort;
     private final int requestedHealthPort;
 
-    
     // Top-level fields accepted by Vertex AI rawPredict. Anything else (beta features
     // like context_management, etc.) is stripped to avoid "Extra inputs" rejections.
     private static final Set<String> VERTEX_ALLOWED_FIELDS = Set.of(
