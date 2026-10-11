@@ -5,6 +5,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -300,6 +303,55 @@ class ToolDefValidatorTest {
         var result = ToolDefValidator.validate(file);
         assertTrue(result.hasErrors());
         assertTrue(result.errors().stream().anyMatch(e -> e.contains("no 'config-namespace'")));
+    }
+
+    /**
+     * A namespace is an identifier: it is printed in isx init's account prompts and in isx
+     * account, and is a key of config.yaml. A cloned repository's tool must not carry terminal
+     * control sequences or line breaks there (#1266).
+     */
+    @Test
+    void configNamespaceMustBeAnIdentifier() throws Exception {
+        for (var bad : List.of("\u001b]0;x\u0007", "a\u009bb", "two\nlines", "rtl\u202eok", "-lead", "has space")) {
+            var def = proxyTool(bad, "token");
+            var errors = new ArrayList<String>();
+            ToolDefValidator.validateDef(def, errors, new ArrayList<>());
+            assertTrue(errors.stream().anyMatch(e -> e.contains("config-namespace")), bad + ": " + errors);
+            assertTrue(errors.stream().allMatch(e -> e.chars().noneMatch(c -> Character.isISOControl(c) || c == 0x202e)),
+                    "printed raw: " + errors);
+        }
+    }
+
+    /** A config.yaml a previous release wrote may hold camelCase or dotted namespaces; they still load. */
+    @Test
+    void configNamespaceAcceptsExistingIdentifiers() {
+        for (var good : List.of("github", "testAccountTool", "my-service", "my_service", "corp.artifactory", "s3")) {
+            var errors = new ArrayList<String>();
+            ToolDefValidator.validateDef(proxyTool(good, "token"), errors, new ArrayList<>());
+            assertEquals(List.of(), errors, good);
+        }
+    }
+
+    /** A tool borrowing another namespace names it in config-path, which is checked the same way. */
+    @Test
+    void borrowedNamespaceMustBeAnIdentifier() {
+        var errors = new ArrayList<String>();
+        ToolDefValidator.validateDef(proxyTool("", "\u001b[2Jgh.token"), errors, new ArrayList<>());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("namespace")), errors.toString());
+    }
+
+    private static ToolDef proxyTool(String namespace, String configPath) {
+        var entry = new ToolDef.ConfigEntry();
+        entry.setConfigPath(configPath);
+        entry.setSecret(true);
+        entry.setDescription("Token");
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace(namespace);
+        proxy.setConfiguration(Map.of("token", entry));
+        var def = new ToolDef();
+        def.setName("ns-tool");
+        def.setProxy(proxy);
+        return def;
     }
 
     @Test

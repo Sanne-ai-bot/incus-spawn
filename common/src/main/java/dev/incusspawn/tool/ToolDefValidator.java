@@ -5,6 +5,7 @@ import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ToolProxyResolver;
+import dev.incusspawn.util.OutputFormat;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -78,6 +79,9 @@ public class ToolDefValidator {
                         + ") greater than max (" + param.getMax() + ")");
             }
         }
+
+        var invalidNamespace = invalidNamespace(def);
+        if (invalidNamespace != null) errors.add(invalidNamespace);
 
         var proxyDef = def.getProxy();
         if (proxyDef != null) {
@@ -181,6 +185,48 @@ public class ToolDefValidator {
                 }
             }
         }
+    }
+
+    /**
+     * What a credential namespace may be: an identifier, which {@code isx init} and {@code isx
+     * account} can print as is. Allows the camelCase and '.' a previous release's config may hold.
+     */
+    private static final Pattern NAMESPACE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
+    private static final String NAMESPACE_RULE = "letters, digits, '.', '-' and '_', starting with a letter or digit";
+
+    /** Whether {@code namespace} is a credential namespace isx accepts, from a tool or a proof token. */
+    public static boolean isNamespace(String namespace) {
+        return namespace != null && NAMESPACE.matcher(namespace).matches();
+    }
+
+    /**
+     * Why {@code def} names a credential namespace that is not an identifier, or null: its own
+     * {@code config-namespace}, or one it borrows through a {@code config-path}. Such a tool is
+     * refused where definitions load, so a cloned repository's namespace, which could carry
+     * escape sequences or line breaks, never reaches a prompt, a config path or an instance
+     * stamp (#1266).
+     */
+    public static String invalidNamespace(ToolDef def) {
+        var proxy = def.getProxy();
+        if (proxy == null) return null;
+        var own = proxy.getConfigNamespace();
+        if (!own.isBlank()) {
+            return isNamespace(own) ? null : notAnIdentifier(def, "config-namespace", own);
+        }
+        for (var entry : proxy.getConfiguration().values()) {
+            // A key left empty in YAML ('token:') arrives as null
+            if (entry == null) continue;
+            var borrowed = proxy.namespaceOf(entry);
+            if (!borrowed.isEmpty() && !isNamespace(borrowed)) {
+                return notAnIdentifier(def, "config-path '" + entry.getConfigPath() + "' names namespace", borrowed);
+            }
+        }
+        return null;
+    }
+
+    private static String notAnIdentifier(ToolDef def, String what, String namespace) {
+        return OutputFormat.oneLine(what + " '" + namespace + "' in proxy for '" + def.getName()
+                + "' is not an identifier (" + NAMESPACE_RULE + ")");
     }
 
     /** Shorter values ({@code 1}, {@code true}) are settings, and would match by accident. */

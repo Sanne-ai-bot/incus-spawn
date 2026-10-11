@@ -132,6 +132,9 @@ public final class LayeredDefinitions<T> {
         currentDir = null;
     }
 
+    /** What a warning about a definition refused at load ends with, for images and tools alike. */
+    public static final String REFUSED = "; it is skipped, and isx build refuses until it is fixed";
+
     /**
      * Record a file that could not be parsed, or was refused once parsed. Its {@code name:} is
      * unknown or unusable, so it may have defined anything: a build target, one of its parents,

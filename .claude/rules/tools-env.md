@@ -73,6 +73,7 @@ A `ProxyDef` also declares `placeholders:` (`PlaceholderDef`: `env`, `prefix`), 
 A tool that exports a static credential placeholder declares it there -- `ProofTokenTest` fails for a built-in that does not.
 A YAML tool's placeholder must name a variable its own `env:` entries set, to a value starting with its prefix and `placeholder` (`ToolDefValidator` errors; `YamlToolSetup.placeholders()` drops the former, and a start never replaces another value).
 `ToolDefValidator.embeddedTokens` checks exactly a tool's declared placeholders, and guesses from names only for a tool that declares none.
+`ToolDefLoader` refuses a tool whose credential namespace (`config-namespace`, or one a `config-path` borrows) is not an identifier (`ToolDefValidator.invalidNamespace`, #1266): it records it with the parse failures, so `isx build` refuses, and skips it among a template's stored definitions.
 `ToolProxyResolver` (in `common`) handles configuration resolution.
 Its `fingerprint(List<ResolvedToolProxy>)` (a SHA-256 of the resolved proxy config) is used only by tests -- nothing in production compares it, so it does not drive restarts.
 `findUnresolved()` returns configuration entries that could not be resolved (excluding `type: anthropic`); `ProxyMain` displays a warning for these at startup.

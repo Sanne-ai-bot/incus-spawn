@@ -5,6 +5,7 @@ import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.tool.ToolDefValidator;
 import dev.incusspawn.tool.ToolSetup;
 
 import javax.crypto.Mac;
@@ -55,7 +56,6 @@ public final class ProofToken {
     private static final String CONTEXT = "isx-proof-token:";
 
     private static final Pattern PREFIX = Pattern.compile("[A-Za-z0-9._-]*");
-    private static final Pattern NAMESPACE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
     private ProofToken() {}
 
@@ -96,7 +96,7 @@ public final class ProofToken {
             if (prefix == null || !PREFIX.matcher(prefix).matches()) {
                 return "the prefix of " + env + " may only hold letters, digits, '.', '_' and '-'";
             }
-            if (namespace == null || !NAMESPACE.matcher(namespace).matches()) {
+            if (!ToolDefValidator.isNamespace(namespace)) {
                 return env + " belongs to no single credential namespace";
             }
             return "";
@@ -112,7 +112,7 @@ public final class ProofToken {
      */
     public static String derive(String secret, String namespace) {
         InstanceSecret.requireHex(secret);
-        if (namespace == null || !NAMESPACE.matcher(namespace).matches()) {
+        if (!ToolDefValidator.isNamespace(namespace)) {
             throw new IllegalArgumentException("Not a credential namespace: " + namespace);
         }
         try {
