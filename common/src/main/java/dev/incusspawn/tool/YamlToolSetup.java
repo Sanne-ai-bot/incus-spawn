@@ -84,6 +84,11 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public java.util.List<ToolDef.ActionEntry> actions() {
+        return def.getActions();
+    }
+
+    @Override
     public java.util.List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
         return def.getEnv().stream()
                 .map(e -> e.withSubstitution(s -> ParameterSubstitutor.substitute(s, resolvedParams)))
