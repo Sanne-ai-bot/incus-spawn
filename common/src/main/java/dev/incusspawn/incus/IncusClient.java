@@ -1286,7 +1286,8 @@ public class IncusClient {
                 unusable = true;
                 continue;
             }
-            return new RemoteConfig(addr, remoteNode.path("protocol").asText(DEFAULT_REMOTE_PROTOCOL));
+            var protocol = remoteNode.path("protocol").asText("");
+            return new RemoteConfig(addr, protocol.isEmpty() ? DEFAULT_REMOTE_PROTOCOL : protocol);
         }
         return unusable ? null : WELL_KNOWN_REMOTES.get(name);
     }

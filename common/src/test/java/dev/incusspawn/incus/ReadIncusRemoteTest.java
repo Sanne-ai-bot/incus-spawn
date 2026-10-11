@@ -33,6 +33,13 @@ class ReadIncusRemoteTest {
     }
 
     @Test
+    void anEmptyProtocolTakesTheDefault() throws Exception {
+        // Incus rejects an empty protocol with an opaque error; the entry meant "no protocol".
+        var file = write("config.yml", "remotes:\n  mine:\n    addr: https://example.org\n    protocol: ''\n");
+        assertEquals("simplestreams", IncusClient.readIncusRemote("mine", List.of(file), new ArrayList<>()).protocol());
+    }
+
+    @Test
     void aRemoteNamingItsProtocolKeepsIt() throws Exception {
         var file = write("config.yml", "remotes:\n  mine:\n    addr: https://example.org\n    protocol: incus\n");
         assertEquals("incus", IncusClient.readIncusRemote("mine", List.of(file), new ArrayList<>()).protocol());
