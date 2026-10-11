@@ -362,6 +362,16 @@ bench/vm-boot.sh tpl-isx-vm --runs=5 --set limits.cpu=8       # config on each c
 bench/vm-boot.sh tpl-isx-vm --set security.secureboot=false
 ```
 
+`--isx` times the same through isx: each run is an `isx branch --format plain` of the template,
+so the copy, isx's own writes, its readiness wait and everything it does once the agent answers
+count, until `isx branch` returns; then `isx destroy`. The console is isx's, so firmware, grub and
+connected stay empty; the first column is the whole branch, and kernel and agent count from its
+start. The branch minus the agent is what isx adds after the agent is up (#1238):
+
+```shell
+bench/vm-boot.sh tpl-minimal --isx --runs=5
+```
+
 `--set` is how to try a change on real hardware before deciding on it: it applies to the
 copies, never to the VM they are copied from. It is plain `incus`, Linux only, and needs
 `script(1)` (util-linux) for the console's terminal. A start that fails stops the run with its

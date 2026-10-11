@@ -383,7 +383,11 @@ So container parent rebuilds are skipped when a type change is detected in `buil
 Additional differences:
 
 - **Base image**: uses `vm_image_url` (pre-baked VM qcow2) when available, falls back to a stock Incus VM image otherwise
-- **Disk expansion**: runs `growpart` + `resize2fs`/`xfs_growfs` before package install (both for pre-baked images that ship at 10G and the final build which defaults to 100G)
+- **Disk expansion**: runs `growpart` + `resize2fs`/`xfs_growfs` before package install (both for pre-baked images that ship at 10G and the final build which defaults to 100G).
+  The partition is the root's mount source, its disk comes from `lsblk` and its number from its name, so it grows on virtio-scsi (`sda`), virtio-blk (`vda`) and NVMe alike.
+- **Root disk on virtio-blk**: `prepareVmBuild` sets `io.bus=virtio-blk` on the root in the one write it makes, and branches copy the device (#1255).
+  The base VM image's own kernel has no virtio-scsi, Incus's default; the stock Fedora kernel builds virtio-blk in, so an image built from it boots on either.
+  Per request, virtio-blk measured about 18 µs less than virtio-scsi at queue depth 1 (#810).
 - **Security config**: container-specific security settings (raw.idmap, nesting, setxattr interception) are skipped — VMs have their own kernel and don't need them
 - **No restart**: VMs don't need the container restart that applies security config changes
 - **Guest SELinux pinned to `disabled`** (#842): the VM base image ships no SELinux policy and a filesystem nothing ever labelled, but ordinary packages pull the policy in (`perl` -> `selinux-policy-targeted`), and its `%post` writes `SELINUX=enforcing`.
@@ -3123,6 +3127,14 @@ Two options the plan asked to measure did not show at this level of nesting, whe
 Turning `CPU_MITIGATIONS` back on measured no worse either, so the vm role keeps the appliance's `n`.
 Both are for step 6 to measure again on bare metal.
 aarch64 boots to `basic.target` under TCG with this kernel and AAVMF, which no one had tried before.
+
+The host side is step 4.
+VM builds put the root disk on virtio-blk (see "VM behavior" above), and grow the root wherever it is attached.
+Before any image release, it is exercised with the from-scratch image built locally (incus-spawn-images `fedora/build-vm-scratch.sh`) and named by a project-local template, `image_url` and `vm_image_url` pointing at the tarballs with `file://`.
+A template built and branched that way found the three kernel options `appliance/DESIGN.md` lists for it: online `resize2fs`, PCI hotplug, the power button.
+`bench/vm-boot.sh --isx` times `isx branch` itself: under nested KVM, about 2 s pass between the agent going active and `isx branch` returning, on the stock image and the new one alike.
+`InstanceLifecycleRequestBudgetTest` counts that part of a VM branch: 15 requests, two of them execs (the secret's guest script and the `resolv.conf` check), with the `.network` push, one instance read and one bridge read.
+Counted first, it was 17: the CA and `resolv.conf` checks each read again what the push had just read.
 
 A trimmed OVMF was measured with the same harness before anything is built for it (#1255, step 8).
 EDK2 `edk2-stable202608`, the release Fedora's `edk2-20260812` packages, was built for `OvmfPkgX64` twice: with its defaults, and with `NETWORK_ENABLE`, `SECURE_BOOT_ENABLE`, `TPM2_ENABLE`, `TPM1_ENABLE`, `BUILD_SHELL` and `SMM_REQUIRE` all `FALSE`.
