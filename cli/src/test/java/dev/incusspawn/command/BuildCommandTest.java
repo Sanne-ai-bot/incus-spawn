@@ -504,6 +504,51 @@ class BuildCommandTest {
                 BuildCommand.resolveEffectiveWorkdir(imageDef, java.util.Map.of()));
     }
 
+    @Test
+    void resolveEffectiveWorkdirParentExplicitBeatsChildRepo() {
+        var parentRepo = new ImageDef.RepoEntry();
+        parentRepo.setUrl("https://github.com/owner/main.git");
+        parentRepo.setPath("~/main");
+
+        var helperRepo = new ImageDef.RepoEntry();
+        helperRepo.setUrl("https://github.com/owner/helper.git");
+        helperRepo.setPath("~/helper");
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(List.of(parentRepo));
+        parent.setWorkdir("~/main");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setRepos(List.of(helperRepo));
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        assertEquals("/home/agentuser/main",
+                BuildCommand.resolveEffectiveWorkdir(child, defs));
+    }
+
+    @Test
+    void resolveEffectiveWorkdirNearestExplicitWins() {
+        var grandparent = new ImageDef();
+        grandparent.setName("tpl-grandparent");
+        grandparent.setWorkdir("~/far");
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setParent("tpl-grandparent");
+        parent.setWorkdir("~/near");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var defs = java.util.Map.of("tpl-grandparent", grandparent, "tpl-parent", parent, "tpl-child", child);
+        assertEquals("/home/agentuser/near",
+                BuildCommand.resolveEffectiveWorkdir(child, defs));
+    }
+
     // --- resolveEffectiveDefaultAction ---
 
     @Test
