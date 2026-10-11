@@ -6,9 +6,13 @@ import io.vertx.core.buffer.Buffer;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 /**
@@ -18,8 +22,11 @@ import java.util.function.LongSupplier;
  * incarnation of a name: an instance destroyed and branched again under it starts afresh (#1063). Served to the host only, on {@code /activity}, so {@code isx mcp} can tell
  * a working agent from a stuck or silently finished one without touching its instance.
  *
- * <p>Only model calls count -- Claude Code's other traffic to the same domain (settings,
- * telemetry) would make an idle agent look busy.
+ * <p>Only model calls count as model calls -- Claude Code's other traffic to the same domain
+ * (settings, telemetry) would make an idle agent look busy. All of an instance's traffic, model
+ * calls included, is counted apart, by domain ({@link Flow}, #935), on the same counters, and
+ * that of callers that are no known instance under {@code unattributed}. Counters are
+ * observations, the only state of the proxy a restart loses: the snapshot says since when each counts.
  */
 final class ApiActivity {
 
@@ -27,6 +34,8 @@ final class ApiActivity {
 
     private final LongSupplier clock;
     private final ConcurrentHashMap<String, Counters> byInstance = new ConcurrentHashMap<>();
+    private final long startedAt;
+    private final Traffic unattributed = new Traffic();
 
     ApiActivity() {
         this(System::currentTimeMillis);
@@ -34,6 +43,24 @@ final class ApiActivity {
 
     ApiActivity(LongSupplier clock) {
         this.clock = clock;
+        this.startedAt = clock.getAsLong();
+    }
+
+    /**
+     * The domain a request to {@code host} is counted under: {@code host} if intercepted, else
+     * the closest intercepted domain it is a subdomain of (dnsmasq sends every subdomain here),
+     * else {@link ProxyActivity.Traffic#OTHER_DOMAIN}. The Host header is the guest's to write,
+     * so only names from the configuration ever become keys.
+     */
+    static String trafficDomain(String host, Set<String> intercepted) {
+        if (host == null) return ProxyActivity.Traffic.OTHER_DOMAIN;
+        if (intercepted.contains(host)) return host;
+        // Each dot from the left leaves a shorter parent: the first intercepted one is the closest
+        for (int dot = host.indexOf('.'); dot >= 0; dot = host.indexOf('.', dot + 1)) {
+            var parent = host.substring(dot + 1);
+            if (intercepted.contains(parent)) return parent;
+        }
+        return ProxyActivity.Traffic.OTHER_DOMAIN;
     }
 
     /**
@@ -54,21 +81,42 @@ final class ApiActivity {
      * listing {@code view} ({@code InstanceRegistry.resolve}).
      */
     Exchange begin(String instance, String incarnation, long view) {
-        var charged = new Counters[1];
-        // Atomic per key with the prune in snapshot(): a call never lands on dropped counters
-        byInstance.compute(instance, (k, existing) -> {
-            var kept = kept(existing, incarnation, view);
-            // Kept counters of another incarnation are a later view's: the call is a stale one's
-            var c = kept.incarnation.equals(incarnation) ? kept : new Counters(clock.getAsLong(), incarnation, view);
+        return new Exchange(charge(instance, incarnation, view, c -> {
             synchronized (c) {
                 c.requests++;
                 c.inFlight++;
                 c.lastRequestAt = clock.getAsLong();
             }
+        }));
+    }
+
+    /**
+     * Counts a request, or a WebSocket, to {@code domain} ({@link #trafficDomain}) as started,
+     * from {@code instance} as {@link #begin} names it, or from a caller that is no known
+     * instance when it is null; {@link Flow#end} counts it done.
+     */
+    Flow flow(String instance, String incarnation, long view, String domain) {
+        if (instance == null) return new Flow(unattributed, unattributed.begin(domain, clock.getAsLong()));
+        var started = new Tally[1];
+        var counters = charge(instance, incarnation, view, c -> started[0] = c.traffic.begin(domain, clock.getAsLong()));
+        return new Flow(counters.traffic, started[0]);
+    }
+
+    /**
+     * The counters a call from {@code instance} lands on, {@code start} run on them atomically
+     * with the prune in {@link #snapshot}, so nothing lands on counters already dropped.
+     */
+    private Counters charge(String instance, String incarnation, long view, Consumer<Counters> start) {
+        var charged = new Counters[1];
+        byInstance.compute(instance, (k, existing) -> {
+            var kept = kept(existing, incarnation, view);
+            // Kept counters of another incarnation are a later view's: the call is a stale one's
+            var c = kept.incarnation.equals(incarnation) ? kept : new Counters(clock.getAsLong(), incarnation, view);
+            start.accept(c);
             charged[0] = c;
             return kept;
         });
-        return new Exchange(charged[0]);
+        return charged[0];
     }
 
     /**
@@ -87,19 +135,20 @@ final class ApiActivity {
             byInstance.computeIfPresent(name, (k, c) -> {
                 synchronized (c) {
                     // Not a read from a listing older than the one that made them
-                    return c.inFlight == 0 && view >= c.view ? null : c;
+                    return c.inFlight == 0 && c.traffic.idle() && view >= c.view ? null : c;
                 }
             });
         }
-        var instances = new java.util.HashMap<String, ProxyActivity.Instance>();
+        var instances = new HashMap<String, ProxyActivity.Instance>();
         byInstance.forEach((name, c) -> {
             synchronized (c) {
                 instances.put(name, new ProxyActivity.Instance(Instant.ofEpochMilli(c.since),
                         c.requests, c.inFlight, instant(c.lastRequestAt), instant(c.lastResponseAt),
-                        c.usage.input, c.usage.output, c.usage.cacheRead, c.usage.cacheCreation));
+                        c.usage.input, c.usage.output, c.usage.cacheRead, c.usage.cacheCreation,
+                        c.traffic.read()));
             }
         });
-        return new ProxyActivity(instances);
+        return new ProxyActivity(instances, Instant.ofEpochMilli(startedAt), unattributed.read());
     }
 
     /**
@@ -138,11 +187,106 @@ final class ApiActivity {
         long lastRequestAt;
         long lastResponseAt;
         final Usage usage = new Usage();
+        final Traffic traffic = new Traffic();
 
         Counters(long since, String incarnation, long view) {
             this.since = since;
             this.incarnation = incarnation;
             this.view = view;
+        }
+    }
+
+    /**
+     * One caller's requests, in all and by domain. Guarded by itself: a request starts and ends
+     * on the event loop, so this is one short lock each time, never contended for long.
+     */
+    private static final class Traffic {
+        private final Tally total = new Tally(null);
+        private final HashMap<String, Tally> byDomain = new HashMap<>();
+
+        synchronized Tally begin(String domain, long now) {
+            var tally = byDomain.get(domain);
+            if (tally == null) byDomain.put(domain, tally = new Tally(total));
+            tally.begin(now);
+            return tally;
+        }
+
+        synchronized void end(Tally tally, long now, long sent, long received) {
+            tally.end(now, sent, received);
+        }
+
+        synchronized boolean idle() {
+            return total.inFlight == 0;
+        }
+
+        synchronized ProxyActivity.Traffic read() {
+            var domains = new HashMap<String, ProxyActivity.Counts>();
+            byDomain.forEach((domain, tally) -> domains.put(domain, tally.read()));
+            return new ProxyActivity.Traffic(total.read(), Map.copyOf(domains));
+        }
+    }
+
+    /** Counts of one domain, or of all of them ({@code total} null); only under its {@link Traffic}'s lock. */
+    private static final class Tally {
+        private final Tally total;
+        long requests;
+        long inFlight;
+        long lastActivityAt;
+        long requestBytes;
+        long responseBytes;
+
+        Tally(Tally total) {
+            this.total = total;
+        }
+
+        void begin(long now) {
+            requests++;
+            inFlight++;
+            lastActivityAt = now;
+            if (total != null) total.begin(now);
+        }
+
+        void end(long now, long sent, long received) {
+            inFlight--;
+            lastActivityAt = now;
+            requestBytes += sent;
+            responseBytes += received;
+            if (total != null) total.end(now, sent, received);
+        }
+
+        ProxyActivity.Counts read() {
+            return new ProxyActivity.Counts(requests, inFlight, instant(lastActivityAt), requestBytes, responseBytes);
+        }
+    }
+
+    /**
+     * One request or WebSocket. Ends once, however it finishes: answered, refused, or its
+     * connection gone. Its body bytes are added as they are known (a WebSocket's frame by
+     * frame, a request's at its end) and counted when it ends.
+     */
+    final class Flow {
+        private final Traffic traffic;
+        private final Tally tally;
+        private final AtomicBoolean ended = new AtomicBoolean();
+        private final AtomicLong requestBytes = new AtomicLong();
+        private final AtomicLong responseBytes = new AtomicLong();
+
+        private Flow(Traffic traffic, Tally tally) {
+            this.traffic = traffic;
+            this.tally = tally;
+        }
+
+        void addRequestBytes(long n) {
+            requestBytes.addAndGet(n);
+        }
+
+        void addResponseBytes(long n) {
+            responseBytes.addAndGet(n);
+        }
+
+        void end() {
+            if (!ended.compareAndSet(false, true)) return;
+            traffic.end(tally, clock.getAsLong(), requestBytes.get(), responseBytes.get());
         }
     }
 

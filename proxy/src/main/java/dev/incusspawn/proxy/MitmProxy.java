@@ -133,7 +133,7 @@ public class MitmProxy {
      */
     private volatile InstanceRegistry instanceRegistry;
 
-    /** Each instance's model calls, for {@code /activity} (#898). */
+    /** Each instance's model calls and all its traffic, for {@code /activity} (#898, #935). */
     final ApiActivity apiActivity = new ApiActivity();
 
     /** {@code isx mcp} for coordinator instances, at {@link ProxyConfig#MCP_DOMAIN} (#915). */
@@ -327,18 +327,30 @@ public class MitmProxy {
      * <p>Never blocks: reads the registry snapshot and schedules a refresh when it is stale.
      */
     RequestContext contextFor(String domain, String sourceAddress) {
-        var state = configState;
-        var registry = instanceRegistry;
-        if (registry == null) return new RequestContext(domain, null, state.credentials(), state.routing(), true);
+        return contextFor(domain, callerAt(sourceAddress));
+    }
 
+    /**
+     * The instance at {@code sourceAddress} as the registry has it, null for none (or no
+     * registry). Looked up once per request, for its credentials and its activity alike, so
+     * both name the same incarnation.
+     */
+    private InstanceRegistry.Caller callerAt(String sourceAddress) {
+        var registry = instanceRegistry;
+        if (registry == null) return null;
         var caller = registry.resolve(sourceAddress);
-        var instance = caller == null ? null : caller.accounts();
         // A miss is the case worth refreshing for: a branch that happened since the last
         // snapshot. isx signals the proxy on branch, so this is only the backstop -- and it is
         // rate-limited, because host-side traffic has no static IP and so misses every time.
-        if (instance == null ? registry.wantsMissRefresh() : registry.isStale()) {
+        if (caller == null ? registry.wantsMissRefresh() : registry.isStale()) {
             scheduleRegistryRefresh(registry);
         }
+        return caller;
+    }
+
+    private RequestContext contextFor(String domain, InstanceRegistry.Caller caller) {
+        var state = configState;
+        var instance = caller == null ? null : caller.accounts();
 
         if (instance != null && !instance.bakedIdentities().isEmpty()) {
             refuseIfUnservable(state, instance, domain);
@@ -738,13 +750,7 @@ public class MitmProxy {
 
         // Health check HTTP server (plain, no TLS)
         healthHttpServer = vertx.createHttpServer()
-                .requestHandler(req -> {
-                    switch (req.path()) {
-                        case "/health" -> handleHealthCheck(req);
-                        case "/activity" -> sendActivity(req);
-                        default -> req.response().setStatusCode(404).end();
-                    }
-                });
+                .requestHandler(this::routeHealth);
         boundHealthPort = healthHttpServer.listen(requestedHealthPort, healthBindAddress)
                 .toCompletionStage().toCompletableFuture().get().actualPort();
 
@@ -869,6 +875,8 @@ public class MitmProxy {
         var started = System.nanoTime();
         try {
             var domain = extractDomain(clientReq);
+            var caller = callerAt(sourceAddressOf(clientReq));
+            countTraffic(clientReq, caller, domain);
             if (domain == null) {
                 sendError(clientReq.response(), 502, "Unknown domain");
                 return;
@@ -889,7 +897,7 @@ public class MitmProxy {
             } else if (isInterceptedDomain(domain)) {
                 RequestContext ctx;
                 try {
-                    ctx = contextFor(domain, sourceAddressOf(clientReq));
+                    ctx = contextFor(domain, caller);
                 } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
                     // Fail closed: this instance is pinned to an account that is gone.
                     // Falling back to the default would quietly spend another account.
@@ -918,6 +926,31 @@ public class MitmProxy {
             e.printStackTrace(System.err);
             sendError(clientReq.response(), 502, "Internal proxy error");
         }
+    }
+
+    /**
+     * Counts a request in {@link #apiActivity}'s traffic (#935), ending it however its response
+     * finishes. Not by the response's end and close handlers: the relay, the cache and
+     * {@link #beginModelCall} each set their own, and a handler set later replaces the earlier.
+     * An HTTP/1.1 connection answers one request at a time, so its close ends this one.
+     */
+    private void countTraffic(HttpServerRequest clientReq, InstanceRegistry.Caller caller, String domain) {
+        var flow = trafficFlow(caller, domain);
+        var resp = clientReq.response();
+        io.vertx.core.Handler<Void> ended = v -> {
+            flow.addRequestBytes(clientReq.bytesRead());
+            flow.addResponseBytes(resp.bytesWritten());
+            flow.end();
+        };
+        resp.bodyEndHandler(ended);
+        clientReq.connection().closeHandler(ended);
+    }
+
+    /** A request or WebSocket to {@code domain} begins, from {@code caller} (null: no known instance). */
+    private ApiActivity.Flow trafficFlow(InstanceRegistry.Caller caller, String domain) {
+        var counted = ApiActivity.trafficDomain(domain, configState.routing().allInterceptedDomains());
+        return caller == null ? apiActivity.flow(null, null, 0, counted)
+                : apiActivity.flow(caller.accounts().instanceName(), caller.incarnation(), caller.view(), counted);
     }
 
     /**
@@ -960,20 +993,34 @@ public class MitmProxy {
 
     private void routeWebSocket(ServerWebSocket clientWs) {
         var host = clientWs.headers().get("Host");
-        if (host == null) {
-            clientWs.reject(400);
-            return;
-        }
-        var colon = host.indexOf(':');
+        var colon = host == null ? -1 : host.indexOf(':');
         var domain = colon > 0 ? host.substring(0, colon) : host;
+        var caller = callerAt(sourceAddressOf(clientWs));
+        var flow = trafficFlow(caller, domain);
+        var accepted = false;
+        try {
+            accepted = relayWebSocket(clientWs, domain, caller, flow);
+        } finally {
+            // Until relayWebSocket hands the socket's close the end of the flow, every way out ends it
+            if (!accepted) flow.end();
+        }
+    }
+
+    /** Whether {@code clientWs} was accepted, so that its close ends {@code flow}. */
+    private boolean relayWebSocket(ServerWebSocket clientWs, String domain, InstanceRegistry.Caller caller,
+                                   ApiActivity.Flow flow) {
+        if (domain == null) {
+            clientWs.reject(400);
+            return false;
+        }
         if (ProxyConfig.MCP_DOMAIN.equals(domain)) {
             // MCP is plain HTTP here, and the name has no upstream to relay a socket to.
             clientWs.reject(404);
-            return;
+            return false;
         }
         RequestContext ctx;
         try {
-            ctx = contextFor(domain, sourceAddressOf(clientWs));
+            ctx = contextFor(domain, caller);
         } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
             // Same fail-closed rule as the HTTP path: an instance pinned to an account
             // that is gone gets an error, never someone else's credential.
@@ -981,22 +1028,26 @@ public class MitmProxy {
                     + describeCaller(sourceAddressOf(clientWs)) + ", pinned to missing "
                     + e.namespace() + " account '" + e.accountName() + "'");
             clientWs.reject(502);
-            return;
+            return false;
         } catch (dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
             ProxyLog.warn("Refusing WebSocket to " + domain + " for "
                     + describeCaller(sourceAddressOf(clientWs)) + ": " + e.getMessage());
             clientWs.reject(502);
-            return;
+            return false;
         }
-        if (!completeHandshake(clientWs, domain)) return;
+        if (!completeHandshake(clientWs, domain)) return false;
+        // Until the relay is up, and on its way to a failure; the relay's own replaces it
+        clientWs.closeHandler(v -> flow.end());
         try {
-            handleWebSocketUpgrade(clientWs, ctx);
+            handleWebSocketUpgrade(clientWs, ctx, flow);
         } catch (RuntimeException e) {
             // The 101 has gone out, so a refusal can only be a close: a paused socket with
             // no relay would otherwise hang until the idle timeout
             ProxyLog.warn("WebSocket relay setup failed (" + domain + "): " + e.getMessage());
             if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
+            flow.end();
         }
+        return true;
     }
 
     /**
@@ -1027,7 +1078,7 @@ public class MitmProxy {
         }
     }
 
-    private void handleWebSocketUpgrade(ServerWebSocket clientWs, RequestContext ctx) {
+    private void handleWebSocketUpgrade(ServerWebSocket clientWs, RequestContext ctx, ApiActivity.Flow flow) {
         var domain = ctx.domain();
         var wsOptions = new WebSocketConnectOptions()
                 .setHost(domain)
@@ -1086,17 +1137,20 @@ public class MitmProxy {
             clientWs.frameHandler(frame -> {
                 if ((frame.isText() || frame.isBinary() || frame.isContinuation())
                         && !upstreamWs.isClosed()) {
+                    flow.addRequestBytes(frame.binaryData().length());
                     upstreamWs.writeFrame(frame);
                 }
             });
             upstreamWs.frameHandler(frame -> {
                 if ((frame.isText() || frame.isBinary() || frame.isContinuation())
                         && !clientWs.isClosed()) {
+                    flow.addResponseBytes(frame.binaryData().length());
                     clientWs.writeFrame(frame);
                 }
             });
 
             clientWs.closeHandler(v -> {
+                flow.end();
                 vertx.cancelTimer(upstreamPingTimer);
                 vertx.cancelTimer(clientPingTimer);
                 if (!upstreamWs.isClosed()) {
@@ -1748,15 +1802,38 @@ public class MitmProxy {
                 .end(body);
     }
 
+    /** What the health server answers a request with. */
+    enum HealthRoute { HEALTH, ACTIVITY, NOT_FOUND, METHOD_NOT_ALLOWED }
+
     /**
-     * Each instance's model calls ({@link ApiActivity}), for the host only: a container gets
-     * the 404 of an unknown path, since what its neighbours do is none of its business.
+     * The health server's routing. It only reads: a write to the proxy's state is never one
+     * address check away from the bridge, which every container reaches (DESIGN.md "The proxy
+     * holds no configuration of its own", #935). {@code /activity} is the host's only: a
+     * container gets the 404 of an unknown path, since what its neighbours do is none of its
+     * business, whatever the method.
      */
-    private void sendActivity(HttpServerRequest req) {
-        if (!isHostCaller(req)) {
-            req.response().setStatusCode(404).end();
-            return;
+    static HealthRoute healthRoute(io.vertx.core.http.HttpMethod method, String path,
+                                   java.util.function.BooleanSupplier hostCaller) {
+        var route = switch (path) {
+            case "/health" -> HealthRoute.HEALTH;
+            case "/activity" -> hostCaller.getAsBoolean() ? HealthRoute.ACTIVITY : HealthRoute.NOT_FOUND;
+            case null, default -> HealthRoute.NOT_FOUND;
+        };
+        return route == HealthRoute.NOT_FOUND || method == io.vertx.core.http.HttpMethod.GET
+                || method == io.vertx.core.http.HttpMethod.HEAD ? route : HealthRoute.METHOD_NOT_ALLOWED;
+    }
+
+    private void routeHealth(HttpServerRequest req) {
+        switch (healthRoute(req.method(), req.path(), () -> isHostCaller(req))) {
+            case HEALTH -> handleHealthCheck(req);
+            case ACTIVITY -> sendActivity(req);
+            case NOT_FOUND -> req.response().setStatusCode(404).end();
+            case METHOD_NOT_ALLOWED -> req.response().setStatusCode(405).putHeader("Allow", "GET, HEAD").end();
         }
+    }
+
+    /** Each instance's model calls and traffic ({@link ApiActivity}); {@link #healthRoute} keeps it the host's. */
+    private void sendActivity(HttpServerRequest req) {
         var registry = instanceRegistry;
         var known = registry == null ? new InstanceRegistry.Incarnations(Map.of(), 0) : registry.incarnations();
         req.response()

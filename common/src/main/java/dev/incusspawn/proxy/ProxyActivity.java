@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -9,10 +10,16 @@ import java.util.Map;
 
 /**
  * The proxy's {@code /activity} (#898): each instance's Claude model calls -- requests made and
- * in flight, when the last started and ended, and the tokens their responses reported. Only the
- * host is answered.
+ * in flight, when the last started and ended, and the tokens their responses reported -- and all
+ * of its traffic through the proxy, by domain (#935). Traffic from no instance the proxy knows
+ * (the host, or an address it has not listed) is counted apart, as {@code unattributed}, from
+ * {@code unattributedSince}. Only the host is answered. Fields are only ever added.
  */
-public record ProxyActivity(Map<String, Instance> instances) {
+public record ProxyActivity(Map<String, Instance> instances, Instant unattributedSince, Traffic unattributed) {
+
+    public ProxyActivity(Map<String, Instance> instances) {
+        this(instances, null, Traffic.NONE);
+    }
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -25,8 +32,37 @@ public record ProxyActivity(Map<String, Instance> instances) {
     public record Instance(Instant countingSince, long requests, long inFlight,
                            Instant lastRequestAt, Instant lastResponseAt,
                            long inputTokens, long outputTokens,
-                           long cacheReadInputTokens, long cacheCreationInputTokens) {
+                           long cacheReadInputTokens, long cacheCreationInputTokens,
+                           Traffic traffic) {
         public static final Instance NONE = new Instance(null, 0, 0, null, null, 0, 0, 0, 0);
+
+        /** Model calls only, with no traffic counted. */
+        public Instance(Instant countingSince, long requests, long inFlight,
+                        Instant lastRequestAt, Instant lastResponseAt,
+                        long inputTokens, long outputTokens,
+                        long cacheReadInputTokens, long cacheCreationInputTokens) {
+            this(countingSince, requests, inFlight, lastRequestAt, lastResponseAt,
+                    inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, Traffic.NONE);
+        }
+    }
+
+    /**
+     * Requests (a WebSocket counts as one, in flight while open) and their body bytes, model
+     * calls included. Bytes and {@code lastActivityAt} move when a request starts and ends, so
+     * a long download or an open WebSocket shows as {@code inFlight}, not as bytes.
+     */
+    public record Counts(long requests, long inFlight, Instant lastActivityAt, long requestBytes, long responseBytes) {
+        public static final Counts NONE = new Counts(0, 0, null, 0, 0);
+    }
+
+    /**
+     * All of one caller's requests, and the same by domain: an intercepted domain, a
+     * subdomain counted under the intercepted domain it is relayed for, or {@link #OTHER_DOMAIN}.
+     */
+    public record Traffic(Counts total, Map<String, Counts> byDomain) {
+        public static final Traffic NONE = new Traffic(Counts.NONE, Map.of());
+        /** Where a request to a name the proxy does not intercept is counted; never a DNS name. */
+        public static final String OTHER_DOMAIN = "(other)";
     }
 
     /** No answer worth reading: the proxy is down, or older than {@code /activity}. */
@@ -80,8 +116,26 @@ public record ProxyActivity(Map<String, Instance> instances) {
             n.put("output_tokens", c.outputTokens());
             n.put("cache_read_input_tokens", c.cacheReadInputTokens());
             n.put("cache_creation_input_tokens", c.cacheCreationInputTokens());
+            putTraffic(n.putObject("traffic"), c.traffic());
         });
+        var other = root.putObject("unattributed");
+        if (unattributedSince != null) other.put("counting_since", unattributedSince.toEpochMilli());
+        putTraffic(other, unattributed);
         return root.toString();
+    }
+
+    private static void putTraffic(ObjectNode n, Traffic traffic) {
+        putCounts(n, traffic.total());
+        var domains = n.putObject("domains");
+        traffic.byDomain().forEach((domain, counts) -> putCounts(domains.putObject(domain), counts));
+    }
+
+    private static void putCounts(ObjectNode n, Counts c) {
+        n.put("requests", c.requests());
+        n.put("in_flight", c.inFlight());
+        if (c.lastActivityAt() != null) n.put("last_activity_at", c.lastActivityAt().toEpochMilli());
+        n.put("request_bytes", c.requestBytes());
+        n.put("response_bytes", c.responseBytes());
     }
 
     static ProxyActivity parse(String json) {
@@ -98,9 +152,24 @@ public record ProxyActivity(Map<String, Instance> instances) {
                     n.path("requests").asLong(), n.path("in_flight").asLong(),
                     instant(n.path("last_request_at")), instant(n.path("last_response_at")),
                     n.path("input_tokens").asLong(), n.path("output_tokens").asLong(),
-                    n.path("cache_read_input_tokens").asLong(), n.path("cache_creation_input_tokens").asLong()));
+                    n.path("cache_read_input_tokens").asLong(), n.path("cache_creation_input_tokens").asLong(),
+                    traffic(n.path("traffic"))));
         });
-        return new ProxyActivity(Map.copyOf(instances));
+        var other = root.path("unattributed");
+        return new ProxyActivity(Map.copyOf(instances), instant(other.path("counting_since")), traffic(other));
+    }
+
+    /** A proxy older than #935 reports no traffic: {@link Traffic#NONE}. */
+    private static Traffic traffic(JsonNode n) {
+        if (!n.isObject()) return Traffic.NONE;
+        var domains = new HashMap<String, Counts>();
+        n.path("domains").properties().forEach(e -> domains.put(e.getKey(), counts(e.getValue())));
+        return new Traffic(counts(n), Map.copyOf(domains));
+    }
+
+    private static Counts counts(JsonNode n) {
+        return new Counts(n.path("requests").asLong(), n.path("in_flight").asLong(),
+                instant(n.path("last_activity_at")), n.path("request_bytes").asLong(), n.path("response_bytes").asLong());
     }
 
     private static Instant instant(JsonNode millis) {

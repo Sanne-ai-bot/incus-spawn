@@ -121,6 +121,7 @@ Selection is always `<ns>=<account>`; never accept a bare account name, which wo
 Resolution **fails closed**: a pin to a missing account errors rather than serving the default.
 Every namespace, Claude included, follows one model (#773): a flat, pre-accounts credential *presents as the account `default`*, and writes always produce the accounts layout.
 What differs between namespaces is declared as an `AccountShape` (`ToolSetup.accountShape()`), never branched on by name.
+The proxy holds no configuration of its own (#935): what it routes and injects is derived from host config and these stamps, so a restart or reload rebuilds it, and a new per-instance capability is a no-inherit stamp `isx` writes, never proxy memory (DESIGN.md "The proxy holds no configuration of its own").
 The proxy identifies the caller by source address (static IP + `security.ipv4_filtering`, which is load-bearing, not optional hardening).
 A per-start secret (`InstanceSecret`, #934) adds a second check for host-side services: `InstanceRegistry.identify()` wants address *and* secret.
 Only its hash is recorded on the host, and every isx start rotates it, for one PATCH on a stopped start and none on a branch (`InstanceLifecycle.startForUse`).
@@ -196,7 +197,7 @@ A person sees the same: `isx list` (`mcp_state`, `mcp_purpose`) and the TUI's in
 `exec` has no default time limit (cancel kills the process tree).
 Background commands and `delegate` (the Claude Code inside the instance) run as systemd units in the guest.
 A client that lists `isx/task_changed` under `capabilities.experimental` is notified of every task state change (`TaskWatcher`, #1014), and only then are tasks polled.
-`instance_activity` reads what the proxy counted of an instance's model calls (its host-only `/activity`), so a coordinator tells working from stuck without touching the instance.
+`instance_activity` reads what the proxy counted of an instance's model calls and, by domain, of all its traffic (its host-only, read-only `/activity`, #935; `isx proxy activity` for a person), so a coordinator tells working from stuck without touching the instance.
 Every tool declares an `outputSchema` and returns matching `structuredContent` for programs, while the text stays for the model; a refusal carries no `structuredContent`, only a code in `_meta["dev.incusspawn/error"]` (#1010).
 Stdout is the protocol: `StdioGuard` redirects `System.out` to stderr and `Headless` disables prompts.
 An agent may also run in an instance branched with `--mcp-client` (#915).

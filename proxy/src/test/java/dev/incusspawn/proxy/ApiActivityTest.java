@@ -231,6 +231,102 @@ class ApiActivityTest {
         assertEquals(ProxyActivity.Instance.NONE, read.of("never-called"));
     }
 
+    @Test
+    void aRequestCountsForItsInstanceAloneAndByDomain() {
+        // #935: all traffic, not only model calls
+        var now = new AtomicLong(1_000);
+        var activity = new ApiActivity(now::get);
+        var flow = activity.flow("a", "", 0, "github.com");
+        now.set(2_000);
+        end(flow, 10, 200);
+        activity.flow("a", "", 0, "api.anthropic.com");
+
+        var read = activity.snapshot(Map.of("a", "", "b", ""), 0);
+        var a = read.of("a").traffic();
+        assertEquals(new ProxyActivity.Counts(2, 1, Instant.ofEpochMilli(2_000), 10, 200), a.total());
+        assertEquals(new ProxyActivity.Counts(1, 0, Instant.ofEpochMilli(2_000), 10, 200), a.byDomain().get("github.com"));
+        assertEquals(new ProxyActivity.Counts(1, 1, Instant.ofEpochMilli(2_000), 0, 0), a.byDomain().get("api.anthropic.com"));
+        assertEquals(0, read.of("a").requests(), "a request that is not a model call is no model call");
+        assertEquals(ProxyActivity.Traffic.NONE, read.of("b").traffic(), "nothing of b's");
+        assertEquals(ProxyActivity.Traffic.NONE, read.unattributed());
+    }
+
+    @Test
+    void aCallerThatIsNoKnownInstanceCountsAsUnattributed() {
+        var now = new AtomicLong(1_000);
+        var activity = new ApiActivity(now::get);
+        now.set(2_000);
+        end(activity.flow(null, null, 0, "registry.npmjs.org"), 0, 5);
+
+        var read = activity.snapshot(Map.of(), 0);
+        assertTrue(read.instances().isEmpty(), read.toString());
+        assertEquals(Instant.ofEpochMilli(1_000), read.unattributedSince(), "counted since the proxy started");
+        assertEquals(new ProxyActivity.Counts(1, 0, Instant.ofEpochMilli(2_000), 0, 5), read.unattributed().total());
+        assertEquals(Map.of("registry.npmjs.org", new ProxyActivity.Counts(1, 0, Instant.ofEpochMilli(2_000), 0, 5)),
+                read.unattributed().byDomain());
+    }
+
+    @Test
+    void aFlowIsInFlightUntilItEndsOnceHoweverItEnds() {
+        var activity = new ApiActivity();
+        var socket = activity.flow("w", "", 0, "github.com");
+        socket.addRequestBytes(3);
+        socket.addResponseBytes(4);
+        assertEquals(1, activity.snapshot(Map.of("w", ""), 0).of("w").traffic().total().inFlight());
+
+        socket.end();
+        end(socket, 100, 100); // the socket's close and its connection's both report it
+        var total = activity.snapshot(Map.of("w", ""), 0).of("w").traffic().total();
+        assertEquals(0, total.inFlight());
+        assertEquals(3, total.requestBytes());
+        assertEquals(4, total.responseBytes());
+    }
+
+    @Test
+    void anInstanceNoLongerKnownKeepsItsTrafficCountersOnlyWhileAFlowIsOpen() {
+        var activity = new ApiActivity();
+        var open = activity.flow("gone", "", 0, "github.com");
+
+        assertTrue(activity.snapshot(Map.of(), 0).instances().containsKey("gone"), "an open WebSocket keeps them");
+        open.end();
+        assertFalse(activity.snapshot(Map.of(), 0).instances().containsKey("gone"));
+    }
+
+    @Test
+    void aSubdomainCountsUnderTheInterceptedDomainItIsRelayedFor() {
+        var intercepted = java.util.Set.of("quay.io", "github.com", "api.github.com");
+        assertEquals("quay.io", ApiActivity.trafficDomain("cdn01.quay.io", intercepted));
+        assertEquals("api.github.com", ApiActivity.trafficDomain("uploads.api.github.com", intercepted), "the closest");
+        assertEquals("github.com", ApiActivity.trafficDomain("github.com", intercepted));
+        // The Host header is the guest's to write: names it makes up must not grow the map
+        assertEquals(ProxyActivity.Traffic.OTHER_DOMAIN, ApiActivity.trafficDomain("made-up-1.example", intercepted));
+        assertEquals(ProxyActivity.Traffic.OTHER_DOMAIN, ApiActivity.trafficDomain("evilquay.io", intercepted));
+        assertEquals(ProxyActivity.Traffic.OTHER_DOMAIN, ApiActivity.trafficDomain(null, intercepted));
+    }
+
+    @Test
+    void trafficSurvivesTheJsonTheCliReads() {
+        var now = new AtomicLong(5_000);
+        var activity = new ApiActivity(now::get);
+        end(activity.flow("w", "", 0, "github.com"), 1, 2);
+        activity.flow(null, null, 0, ProxyActivity.Traffic.OTHER_DOMAIN);
+
+        var served = activity.snapshot(Map.of("w", ""), 0);
+        var read = ProxyActivity.parse(served.toJson());
+
+        assertEquals(served.of("w").traffic(), read.of("w").traffic());
+        assertEquals(served.unattributed(), read.unattributed());
+        assertEquals(Instant.ofEpochMilli(5_000), read.unattributedSince());
+        assertEquals(ProxyActivity.Traffic.NONE, ProxyActivity.parse("{\"instances\":{\"w\":{\"requests\":1}}}")
+                .of("w").traffic(), "a proxy from before #935 reports none");
+    }
+
+    private static void end(ApiActivity.Flow flow, long requestBytes, long responseBytes) {
+        flow.addRequestBytes(requestBytes);
+        flow.addResponseBytes(responseBytes);
+        flow.end();
+    }
+
     private static Buffer bytes(String s) {
         return Buffer.buffer(s);
     }
