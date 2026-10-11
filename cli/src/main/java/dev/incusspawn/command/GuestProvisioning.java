@@ -264,8 +264,6 @@ public class GuestProvisioning {
         resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");
         resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
         resolver.add(EnvEntry.set("ISX_VERSION", BuildInfo.instance().version()), "built-in");
-        // setIfUnset: a value the user or a tool already has wins.
-        TRUST_ENV.forEach((name, value) -> resolver.add(EnvEntry.setIfUnset(name, value), "built-in trust"));
         for (var layer : ImageDef.chain(imageDef, defs)) {
             resolver.addAll(layer.getEnv(), "template " + layer.getName());
         }
@@ -277,6 +275,10 @@ public class GuestProvisioning {
             var entries = resolved.setup().envEntries(resolved.parameters(), accountSelection);
             resolver.addAll(entries, "tool " + resolved.name());
         }
+
+        // Added last, as setIfUnset: the first setIfUnset for a name wins, so a template's or
+        // tool's own value for the same variable keeps precedence over isx's default.
+        TRUST_ENV.forEach((name, value) -> resolver.add(EnvEntry.setIfUnset(name, value), "built-in trust"));
 
         var script = resolver.resolve();
         container.writeFile("/etc/profile.d/isx-env.sh", script);
@@ -348,12 +350,14 @@ public class GuestProvisioning {
     }
 
     /**
-     * Writes {@link #TRUST_ENV} for systemd user sessions ({@code environment.d}); login shells
+     * Writes {@link #TRUST_ENV} for systemd user sessions ({@code environment.d}) as
+     * {@code NAME=${NAME:-value}}, so a value an earlier-sorting file already set (a user's
+     * {@code ~/.config/environment.d/10-*.conf}) is kept; login shells
      * get the same names from {@code isx-env.sh} (see {@link #writeEnvFile}).
      */
     static void writeTrustEnvironmentD(Container container) {
         var sb = new StringBuilder();
-        TRUST_ENV.forEach((name, value) -> sb.append(name).append('=').append(value).append('\n'));
+        TRUST_ENV.forEach((name, value) -> sb.append(name).append("=${").append(name).append(":-").append(value).append("}\n"));
         container.writeFile("/etc/environment.d/50-isx-trust.conf", sb.toString());
     }
 
