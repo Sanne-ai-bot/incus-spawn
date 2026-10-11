@@ -163,7 +163,7 @@ public final class SecretRedactor {
             if (segment instanceof Integer index) {
                 label.append('[').append(index).append(']');
             } else {
-                var key = (String) segment;
+                var key = String.valueOf(segment);
                 if (key.indexOf('.') >= 0 || key.indexOf('[') >= 0 || key.indexOf(']') >= 0) {
                     label.append("[\"").append(key.replace("\"", "\\\"")).append("\"]");
                 } else {

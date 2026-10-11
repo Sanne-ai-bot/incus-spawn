@@ -207,7 +207,7 @@ public final class YamlErrors {
     static String leafName(JqMapperException ex) {
         var segments = ex.pathSegments();
         for (int i = segments.size() - 1; i >= 0; i--) {
-            if (segments.get(i) instanceof String key) return key;
+            if (segments.get(i) instanceof String key && !key.isEmpty()) return key;
         }
         return "key";
     }
