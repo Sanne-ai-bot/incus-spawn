@@ -1,10 +1,12 @@
 package dev.incusspawn.proxy;
 
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.UfwCheck;
 
@@ -131,14 +133,30 @@ public final class ProxyConfig {
     }
 
     public static String resolvConfContent(IncusClient incus) {
-        return "nameserver " + resolveGatewayIp(incus) + "\n";
+        return resolvConfContent(resolveGatewayIp(incus));
+    }
+
+    private static String resolvConfContent(String gatewayIp) {
+        return "nameserver " + gatewayIp + "\n";
     }
 
     /**
      * @return true if resolv.conf was updated
      */
     public static boolean fixResolvConfIfNeeded(IncusClient incus, String name) {
-        var expected = resolvConfContent(incus);
+        return fixResolvConfIfNeeded(incus, name, null);
+    }
+
+    /**
+     * {@link #fixResolvConfIfNeeded(IncusClient, String)}, with the nameserver taken from the
+     * gateway {@code instance} was given when the caller has just read it -- a branch, whose
+     * gateway was written from the bridge moments before -- rather than reading the bridge again.
+     * Only for such an instance: one whose bridge may have moved since must pass null. Null, or
+     * an instance with no gateway, reads the bridge.
+     */
+    public static boolean fixResolvConfIfNeeded(IncusClient incus, String name, JqValue instance) {
+        var gateway = instance == null ? "" : instance.path("config").path(Metadata.STATIC_GATEWAY).asText("");
+        var expected = resolvConfContent(gateway.isEmpty() ? resolveGatewayIp(incus) : gateway);
         var result = incus.shellExec(name, "cat", "/etc/resolv.conf");
         if (result.success() && result.stdout().contains(expected.strip())) return false;
         var write = incus.shellExec(name, "sh", "-c",
