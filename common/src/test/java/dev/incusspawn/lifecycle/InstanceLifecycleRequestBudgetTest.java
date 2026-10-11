@@ -668,6 +668,16 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void removingADeviceUncontendedIsOneReadAndOneWrite() {
+        // The write carries the read's ETag so a concurrent add is not lost (#1234); that
+        // costs a second round only when another writer actually got in between.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of())
+                .device(NAME, "kvm", Map.of("type", "unix-char", "path", "/dev/kvm"));
+        daemon.client().devicesRemoveAll(NAME, List.of("kvm"));
+        assertBudget(2, daemon, "devicesRemoveAll of a present device");
+    }
+
+    @Test
     void staleSubnetScanCostDoesNotGrowWithInstanceCount() {
         // The bridge lookup and one listing, which already carries every instance's config.
         for (int n : new int[] {1, 10}) {

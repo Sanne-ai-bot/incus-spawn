@@ -74,6 +74,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final List<String> brokenFetches = new ArrayList<>();
     private int nextFetch = 1;
     private boolean refuseNextWrite;
+    private final Map<String, ArrayDeque<Runnable>> writesAfterRead = new LinkedHashMap<>();
     private int failReadsWith;
     /** What the next operation reads answer, in order; {@code Success} once it is empty. */
     private final ArrayDeque<String> operationStatuses = new ArrayDeque<>();
@@ -260,6 +261,15 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /**
+     * After each of the next reads of {@code instanceName}, run one of {@code writes}, in order:
+     * another process changing the instance between a caller's read and its write.
+     */
+    public FakeIncusDaemon writeAfterRead(String instanceName, Runnable... writes) {
+        writesAfterRead.computeIfAbsent(instanceName, n -> new ArrayDeque<>()).addAll(List.of(writes));
+        return this;
+    }
+
     /** Refuse the next instance PUT or PATCH, whatever it carries, as a transient failure would. */
     public FakeIncusDaemon refuseNextWrite() {
         refuseNextWrite = true;
@@ -394,7 +404,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             exec.path("environment").properties().forEach(e -> environment.put(e.getKey(), e.getValue().asText()));
             execs.add(new Exec(command, environment));
         }
-        return handle(method, path, body);
+        return handle(method, path, extraHeaders, body);
     }
 
     @Override
@@ -437,13 +447,10 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
-    private RawResponse handle(String method, String path, byte[] body) throws IOException {
+    private RawResponse handle(String method, String path, Map<String, String> headers,
+                               byte[] body) throws IOException {
         if (failReadsWith != 0 && method.equals("GET") && path.startsWith("/1.0/instances/")) {
-            var error = JSON.createObjectNode();
-            error.put("type", "error");
-            error.put("error", "refused by FakeIncusDaemon");
-            error.put("error_code", failReadsWith);
-            return new RawResponse(failReadsWith, bytes(error));
+            return error(failReadsWith, "refused by FakeIncusDaemon");
         }
         if (path.equals("/1.0") && method.equals("GET")) {
             var server = JSON.createObjectNode();
@@ -519,7 +526,13 @@ public final class FakeIncusDaemon implements IncusTransport {
         if (instance == null) return notFound();
 
         var rest = path.substring(("/1.0/instances/" + name).length());
-        if (rest.isEmpty() && method.equals("GET")) return sync(instance);
+        if (rest.isEmpty() && method.equals("GET")) {
+            var read = sync(instance, etag(instance));
+            var writes = writesAfterRead.get(name);
+            var write = writes == null ? null : writes.poll();
+            if (write != null) write.run();
+            return read;
+        }
         if (rest.isEmpty() && method.equals("POST") && JSON.readTree(body).has("pool")) {
             // A pool move: the name stays, and the root disk becomes a local device on the new pool.
             var pool = JSON.readTree(body).path("pool").asText();
@@ -543,6 +556,9 @@ public final class FakeIncusDaemon implements IncusTransport {
             return async();
         }
         if (rest.isEmpty() && (method.equals("PUT") || method.equals("PATCH")) && body != null) {
+            // Incus checks the ETag before it looks at what the write carries.
+            var ifMatch = headers.get("If-Match");
+            if (ifMatch != null && !ifMatch.equals(etag(instance))) return error(412, "ETag doesn't match");
             if (refuseNextWrite) {
                 refuseNextWrite = false;
                 return badRequest();
@@ -751,12 +767,8 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     /** What Incus answers when a running VM has no PCI hotplug slot left for a device. */
     private static RawResponse noHotplugSlot(String device) {
-        var body = JSON.createObjectNode();
-        body.put("type", "error");
-        body.put("error", "Failed to start device \"" + device + "\": Failed to call monitor hook for block device:"
+        return badRequest("Failed to start device \"" + device + "\": Failed to call monitor hook for block device:"
                 + " No available PCI hotplug slots could be found");
-        body.put("error_code", 400);
-        return new RawResponse(400, bytes(body));
     }
 
     /** A frozen guest is paused, not stopped: it keeps its process and its addresses. */
@@ -795,11 +807,26 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     private static RawResponse sync(JsonNode metadata) {
+        return sync(metadata, null);
+    }
+
+    private static RawResponse sync(JsonNode metadata, String etag) {
         var body = JSON.createObjectNode();
         body.put("type", "sync");
         body.put("status_code", 200);
         body.set("metadata", metadata);
-        return new RawResponse(200, bytes(body));
+        return new RawResponse(200, bytes(body), etag);
+    }
+
+    /** The instance's writable state, hashed as Incus derives its ETag; quoted as Incus sends it. */
+    private static String etag(ObjectNode instance) {
+        var state = JSON.createObjectNode();
+        state.set("architecture", instance.path("architecture"));
+        state.set("config", instance.path("config"));
+        state.set("devices", instance.path("devices"));
+        state.set("ephemeral", instance.path("ephemeral"));
+        state.set("profiles", instance.path("profiles"));
+        return "\"" + Integer.toHexString(java.util.Arrays.hashCode(bytes(state))) + "\"";
     }
 
     private RawResponse async() {
@@ -815,19 +842,19 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     private static RawResponse badRequest(String error) {
-        var body = JSON.createObjectNode();
-        body.put("type", "error");
-        body.put("error", error);
-        body.put("error_code", 400);
-        return new RawResponse(400, bytes(body));
+        return error(400, error);
     }
 
     private static RawResponse notFound() {
+        return error(404, "Not Found");
+    }
+
+    private static RawResponse error(int status, String error) {
         var body = JSON.createObjectNode();
         body.put("type", "error");
-        body.put("error", "Not Found");
-        body.put("error_code", 404);
-        return new RawResponse(404, bytes(body));
+        body.put("error", error);
+        body.put("error_code", status);
+        return new RawResponse(status, bytes(body));
     }
 
     private static byte[] bytes(JsonNode node) {

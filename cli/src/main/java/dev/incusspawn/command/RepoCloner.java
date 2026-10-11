@@ -97,8 +97,9 @@ class RepoCloner {
 
     /**
      * Each reference is attached under a hotplug slot, which stays taken until it is detached.
-     * Attaches and detaches share one lock: a removal rewrites the whole device map, and would
-     * drop a device added meanwhile.
+     * Attaches and detaches share one lock: a removal rewrites the whole device map, and a device
+     * added meanwhile makes Incus refuse it (#1234). Its retries are bounded, so a burst of
+     * parallel attaches could otherwise fail a detach.
      */
     private final class DeviceMounts implements ReferenceMounts {
         private final Container container;
@@ -179,7 +180,9 @@ class RepoCloner {
      * its clone and detaches it as soon as the clone is done, so a VM never
      * holds more references than it has PCI hotplug slots ({@link HotplugSlots},
      * #826). Attaches and detaches are serialized by a lock, because removing a
-     * device rewrites the whole device map and would drop one added meanwhile.
+     * device rewrites the whole device map, and one added meanwhile makes Incus
+     * refuse it (#1234): its retries are bounded, and parallel attaches could
+     * exhaust them.
      * A failed detach fails the build rather than prime next to it.
      *
      * <p>Project-local definitions get no host references at all: their repos
