@@ -127,6 +127,42 @@ public final class Jjq {
     // explicit null ("null") because user files can mean both — these treat a null
     // like a missing node. Containers read as "" (Jackson's asText on a container).
 
+    private static final java.math.BigDecimal INT_MIN = java.math.BigDecimal.valueOf(Integer.MIN_VALUE);
+    private static final java.math.BigDecimal INT_MAX = java.math.BigDecimal.valueOf(Integer.MAX_VALUE);
+    private static final java.math.BigDecimal LONG_MIN = java.math.BigDecimal.valueOf(Long.MIN_VALUE);
+    private static final java.math.BigDecimal LONG_MAX = java.math.BigDecimal.valueOf(Long.MAX_VALUE);
+
+    /**
+     * A whole number that fits an int, or null: jjq's {@code intValue()}/{@code asInt()} wrap
+     * beyond the range and truncate a fraction. Bounds are compared first, so a huge literal is
+     * refused before its digits are looked at.
+     */
+    public static Integer exactInt(java.math.BigDecimal number) {
+        if (number == null || number.compareTo(INT_MIN) < 0 || number.compareTo(INT_MAX) > 0) return null;
+        try {
+            return number.intValueExact();
+        } catch (ArithmeticException fractional) {
+            return null;
+        }
+    }
+
+    /** {@link #exactInt} of a JSON or YAML number; null for anything else. */
+    public static Integer exactInt(JqValue value) {
+        return value != null && value.isNumber() ? exactInt(value.decimalValue()) : null;
+    }
+
+    /** As {@link #exactInt}, for a long. */
+    public static Long exactLong(JqValue value) {
+        if (value == null || !value.isNumber()) return null;
+        var number = value.decimalValue();
+        if (number.compareTo(LONG_MIN) < 0 || number.compareTo(LONG_MAX) > 0) return null;
+        try {
+            return number.longValueExact();
+        } catch (ArithmeticException fractional) {
+            return null;
+        }
+    }
+
     /** Jackson's {@code asLong(dflt)}. */
     public static long longOr(JqValue value, long dflt) {
         return value != null && value.isIntegralNumber() ? value.longValue() : dflt;

@@ -2,6 +2,7 @@ package dev.incusspawn.config;
 
 import io.hyperfoil.tools.jjq.mapper.JqMapperException;
 import io.hyperfoil.tools.jjq.mapper.ValueConverter;
+import io.hyperfoil.tools.jjq.value.JqNull;
 import io.hyperfoil.tools.jjq.value.JqNumber;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.quarkus.runtime.annotations.RegisterForReflection;
@@ -18,31 +19,21 @@ import java.math.BigDecimal;
 @RegisterForReflection
 public class IntegerConverter implements ValueConverter<Integer> {
 
-    private static final BigDecimal INT_MIN = BigDecimal.valueOf(Integer.MIN_VALUE);
-    private static final BigDecimal INT_MAX = BigDecimal.valueOf(Integer.MAX_VALUE);
-
     @Override
     public Integer fromJqValue(JqValue value) {
         if (value == null || value.isNull()) return null;
-        BigDecimal number = null;
+        Integer bound = null;
         if (value.isNumber()) {
-            number = value.decimalValue();
+            bound = Jjq.exactInt(value);
         } else if (value.isString()) {
             if (value.asText().isBlank()) return null; // as Jackson bound "" to a wrapper
             try {
-                number = new BigDecimal(value.asText().strip());
+                bound = Jjq.exactInt(new BigDecimal(value.asText().strip()));
             } catch (NumberFormatException notANumber) {
                 // refused below
             }
         }
-        // Bounds before intValueExact, which would otherwise look at every digit of a huge literal
-        if (number != null && number.compareTo(INT_MIN) >= 0 && number.compareTo(INT_MAX) <= 0) {
-            try {
-                return number.intValueExact();
-            } catch (ArithmeticException fractional) {
-                // refused below
-            }
-        }
+        if (bound != null) return bound;
         throw new JqMapperException("expects a whole number, but got " + shown(value));
     }
 
@@ -53,6 +44,6 @@ public class IntegerConverter implements ValueConverter<Integer> {
 
     @Override
     public JqValue toJqValue(Integer value) {
-        return value == null ? io.hyperfoil.tools.jjq.value.JqNull.NULL : JqNumber.of((long) value);
+        return value == null ? JqNull.NULL : JqNumber.of((long) value);
     }
 }

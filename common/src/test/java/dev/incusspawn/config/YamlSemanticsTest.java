@@ -261,9 +261,7 @@ class YamlSemanticsTest {
         assertEquals(3, tool("parameters:\n  n:\n    type: integer\n    min: 3\n").getParameters().get("n").getMin());
     }
 
-    // jjq 0.2.2 nests the keys after an empty value inside a list item under that value
-    // (Hyperfoil/jjq#134): "value:" followed by "strategy: append" binds value = {strategy: append}.
-    // The env converter refuses that rather than writing its JSON into the variable.
+    // Hyperfoil/jjq#134, guarded in EnvEntryListConverter.
 
     @Test
     void anEnvValueThatParsedAsAMappingIsRefused() {

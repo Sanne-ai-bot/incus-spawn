@@ -111,9 +111,12 @@ public final class YamlErrors {
         }
         // A converter's "expects ..." (IntegerConverter) names the field as written, like a shape error
         if (ex instanceof JqMapperException mapper && !(ex instanceof ShapeMismatchException)
-                && raw.startsWith("expects ") && !written(mapper).isEmpty()) {
-            var reason = raw.endsWith("'") && raw.contains(" at '$") ? raw.substring(0, raw.lastIndexOf(" at '$")) : raw;
-            return prefix + "'" + written(mapper) + "' " + reason;
+                && raw.startsWith("expects ")) {
+            var field = written(mapper);
+            if (!field.isEmpty()) {
+                var reason = raw.contains(" at '$") ? raw.substring(0, raw.lastIndexOf(" at '$")) : raw;
+                return prefix + "'" + field + "' " + reason;
+            }
         }
 
         // Fallback: extract the first meaningful message line
