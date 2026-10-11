@@ -1226,8 +1226,8 @@ public class IncusClient {
      * the file is the incus CLI's own, which needs the same repair, so only macOS gets the format.
      */
     static String unusableRemoteMsg(String remoteName, String image, List<String> problems, boolean macOS) {
-        var why = String.join("; ", problems);
-        if (why.endsWith(".")) why = why.substring(0, why.length() - 1);
+        var why = String.join("; ", problems.stream()
+                .map(p -> p.endsWith(".") ? p.substring(0, p.length() - 1) : p).toList());
         return "Cannot resolve Incus remote '" + remoteName + "' for image '" + image + "': " + why + "."
                 + (macOS ? " " + remotesFormatHint() : "");
     }
@@ -1248,12 +1248,13 @@ public class IncusClient {
      * Read a named remote's configuration from the first of {@code candidates} that defines it.
      * Falls back to well-known defaults (e.g. "images") when no config file
      * defines the remote — common on macOS where there is no host-side Incus CLI.
-     * A file that exists but cannot be parsed, or names the remote without an addr, adds the
-     * file and the reason to {@code problems} (#1221); a remote named without an addr gets no
-     * well-known fallback, which would quietly pull from a server the user meant to replace.
+     * A file that exists but cannot be parsed, or names the remote without a usable addr, adds
+     * the file and the reason to {@code problems} (#1221), and then no well-known fallback
+     * applies: what isx could not read may be the mirror the user meant instead, and the incus
+     * CLI refuses a broken config too.
      */
     static RemoteConfig readIncusRemote(String name, List<Path> candidates, List<String> problems) {
-        boolean named = false;
+        boolean unusable = false;
         for (var path : candidates) {
             if (!Files.exists(path)) continue;
             JsonNode root;
@@ -1261,24 +1262,44 @@ public class IncusClient {
                 root = new YAMLMapper().readTree(path.toFile());
             } catch (Exception e) {
                 problems.add(YamlErrors.friendly(path.toString(), e));
+                unusable = true;
                 continue;
             }
             if (root == null) continue;
-            var remoteNode = root.path("remotes").path(name);
+            var remotes = root.path("remotes");
+            if (!remotes.isMissingNode() && !remotes.isNull() && !remotes.isObject()) {
+                problems.add(path + " has a 'remotes:' that is not a mapping of remote names");
+                unusable = true;
+                continue;
+            }
+            var remoteNode = remotes.path(name);
             if (remoteNode.isMissingNode()) continue;
-            var addr = remoteNode.path("addr").asText("");
+            var addrNode = remoteNode.path("addr");
+            var addr = addrNode.isTextual() ? addrNode.asText().strip() : "";
             if (addr.isEmpty()) {
-                named = true;
-                var keys = new ArrayList<String>();
-                remoteNode.fieldNames().forEachRemaining(keys::add);
-                // The keys are the file's text: one line, as YamlErrors.friendly makes the parse errors.
-                problems.add(OutputFormat.oneLine(path + " defines remote '" + name + "' with no 'addr'"
-                        + (keys.isEmpty() ? "" : " (it has: " + String.join(", ", keys) + ")")));
+                // It quotes the file's keys: one line, as YamlErrors.friendly makes the parse errors.
+                problems.add(OutputFormat.oneLine(path + " defines remote '" + name + "' " + whyNoAddr(remoteNode)));
+                unusable = true;
                 continue;
             }
             return new RemoteConfig(addr, remoteNode.path("protocol").asText("simplestreams"));
         }
-        return named ? null : WELL_KNOWN_REMOTES.get(name);
+        return unusable ? null : WELL_KNOWN_REMOTES.get(name);
+    }
+
+    /** What is wrong with a remote's entry that yields no addr, for the user who wrote it. */
+    private static String whyNoAddr(JsonNode remote) {
+        if (!remote.isObject()) {
+            var shape = remote.isArray() ? "a list" : remote.isNull() ? "an empty value" : "a single value";
+            return "as " + shape + ", where isx needs a mapping with an 'addr'";
+        }
+        var addr = remote.path("addr");
+        if (addr.isMissingNode()) {
+            var keys = new ArrayList<String>();
+            remote.fieldNames().forEachRemaining(keys::add);
+            return "with no 'addr'" + (keys.isEmpty() ? "" : " (it has: " + String.join(", ", keys) + ")");
+        }
+        return addr.isTextual() || addr.isNull() ? "with an empty 'addr'" : "with an 'addr' that is not a URL";
     }
 
     /**
