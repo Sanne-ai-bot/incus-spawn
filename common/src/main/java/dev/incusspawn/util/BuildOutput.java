@@ -144,7 +144,7 @@ public final class BuildOutput {
     public static void stepNote(String msg) {
         if (msg == null || msg.isBlank()) return;
         blankLineEnded = false;
-        System.out.println(indent() + GROUP_INDENT + styled(DIM, msg));
+        System.out.println(indent() + GROUP_INDENT + styled(DIM, safeLines(msg)));
     }
 
     /**
@@ -266,6 +266,7 @@ public final class BuildOutput {
      * animated line.
      */
     public static void stepStart(String msg) {
+        msg = safeLines(msg);
         synchronized (LOCK) {
             if (live != null) endLocked(live, null);
             blankLineEnded = false;
@@ -333,7 +334,7 @@ public final class BuildOutput {
      */
     public static void stepFail(String msg) {
         stepBreak();
-        System.err.println(msg);
+        System.err.println(safeLines(msg));
     }
 
     /**
@@ -560,7 +561,7 @@ public final class BuildOutput {
      * line breaks of the advice isx writes into it, but what it quotes cannot drive the terminal.
      */
     private static String safeLines(String text) {
-        return Arrays.stream(text.split("\n", -1)).map(OutputFormat::oneLine).collect(Collectors.joining("\n"));
+        return Arrays.stream(String.valueOf(text).split("\n", -1)).map(OutputFormat::oneLine).collect(Collectors.joining("\n"));
     }
 
     /**
