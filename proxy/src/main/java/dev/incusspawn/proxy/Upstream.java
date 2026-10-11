@@ -311,30 +311,33 @@ class Upstream {
      * Relay a request to upstream with an optional response callback.
      * When {@code responseCallback} is non-null it fires after the upstream
      * response headers arrive but before the body is piped to the client.
-     * Its body is claimed here ({@link #claimBody}), so a request with one is relayed before anything
-     * waits; the caching handlers, which wait, only ever get requests without one.
+     * A body is paused here and streamed upstream once the connection is ready ({@link #pipeRequest}),
+     * so an upload is never held whole in memory (#1175); a request with one is relayed before
+     * anything waits, and the caching handlers, which wait, only ever get requests without one.
      */
     void relayRequest(HttpServerRequest clientReq, String domain,
                                java.util.function.Consumer<HttpClientResponse> responseCallback) {
-        var body = claimBody(clientReq);
+        var streaming = hasBody(clientReq);
+        // At once, before anything waits: Vert.x queues a paused body, but drops one that arrives
+        // with nothing reading it, and then refuses to read the request at all (#1164)
+        if (streaming) clientReq.pause();
         var options = new RequestOptions()
                 .setMethod(clientReq.method())
                 .setHost(domain)
                 .setPort(443)
                 .setURI(clientReq.uri());
-        var watchdog = new RelayWatchdog(clientReq, domain, body != null);
-        // From here on, waiting is upstream's time: a lookup or connect that stalls is cut (#929)
-        if (body != null) body.onSuccess(read -> watchdog.requestRead());
+        var watchdog = new RelayWatchdog(clientReq, domain, streaming);
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
-            if (watchdog.cut) {
-                upReq.reset();
+            // A client that left while its body was paused has no handler yet to say so
+            if (watchdog.gone()) {
+                upReq.exceptionHandler(ignored -> {}).reset();
                 return;
             }
             watchdog.upReq = upReq;
             copyRequestHeaders(clientReq, upReq, domain);
 
-            sendWithBody(body, upReq).onSuccess(upResp -> {
+            upReq.response().onSuccess(upResp -> {
                 if (watchdog.cut) return;
                 if (responseCallback != null) {
                     responseCallback.accept(upResp);
@@ -343,21 +346,18 @@ class Upstream {
                 clientResp.setStatusCode(upResp.statusCode());
                 clientResp.setStatusMessage(upResp.statusMessage());
                 copyResponseHeaders(upResp, clientResp);
+                // Upstream answered before the upload ended: the rest of it is never read (RelayWatchdog)
+                if (watchdog.uploadUnread()) clientResp.putHeader("Connection", "close");
                 watchdog.upResp = upResp;
                 pipeResponse(upResp, clientResp, watchdog);
             }).onFailure(err -> {
-                if (watchdog.cut) return;
-                if (body != null && body.failed()) {
-                    // Never sent: give its connection back to the pool rather than hold it for good
-                    upReq.exceptionHandler(ignored -> {}).reset();
-                    System.err.println("Relay (" + domain + "): request body not received from the client: "
-                            + err.getMessage());
-                    sendError(clientReq.response(), 502, "Request body not received");
-                    return;
-                }
+                // A client that left mid-upload resets the request itself
+                if (watchdog.gone()) return;
                 System.err.println("Relay upstream error (" + domain + "): " + err.getMessage());
                 sendError(clientReq.response(), 502, "Upstream error");
             });
+            if (streaming) pipeRequest(clientReq, upReq, watchdog);
+            else upReq.end();
         }).onFailure(err -> {
             if (watchdog.cut) return;
             System.err.println("Relay connect error (" + domain + "): " + err.getMessage());
@@ -366,49 +366,106 @@ class Upstream {
     }
 
     /**
+     * Streams the client's paused request body to upstream as it arrives, pausing the client while
+     * upstream's write queue is full. While the client sends, the relay is never cut; while upstream
+     * holds the body back, that is upstream's time. A client that leaves mid-upload resets the
+     * request, which gives its connection back to the pool instead of holding it for good.
+     */
+    private static void pipeRequest(HttpServerRequest clientReq, HttpClientRequest upReq, RelayWatchdog watchdog) {
+        if (clientReq.getHeader("Content-Length") == null) upReq.setChunked(true);
+        watchdog.uploading(true);
+        clientReq.handler(chunk -> {
+            upReq.write(chunk);
+            watchdog.touch();
+            if (upReq.writeQueueFull()) {
+                clientReq.pause();
+                watchdog.uploading(false);
+                upReq.drainHandler(v -> {
+                    upReq.drainHandler(null);
+                    watchdog.uploading(true);
+                    clientReq.resume();
+                });
+            }
+        });
+        clientReq.endHandler(v -> {
+            upReq.end();
+            watchdog.uploading(false);
+        });
+        clientReq.exceptionHandler(err -> upReq.exceptionHandler(ignored -> {}).reset());
+        clientReq.resume();
+    }
+
+    /**
      * Ends a relay whose client has gone {@link #clientSilenceBudgetSeconds} without a byte either
      * way, with a line and a 502, or a reset once the head was sent (#929). Just short of the MITM
      * server's idle timeout, which would drop the client silently with the upstream read still
      * pending (the upstream client's read-idle timeout outlasts it), so it cuts nothing that
-     * would have lived: an upload counts as the client's bytes until its body is read. Not while
-     * upstream is paused because the client holds the response back.
+     * would have lived: an upload counts as the client's bytes while it streams. Not while
+     * upstream is paused because the client holds the response back. An early answer streams while
+     * the upload still does, so each direction keeps its own wait: neither ends the other's.
+     * <p>
+     * A response that ends, an error included, before the upload it answers was read closes the
+     * client's connection: reading the rest only to discard it could be gigabytes (#1175), and the
+     * unread body would otherwise sit on a keep-alive connection, in front of its next request.
      */
     final class RelayWatchdog {
         private final HttpServerRequest clientReq;
         private final String domain;
+        private final boolean streaming;
         HttpClientRequest upReq;
         HttpClientResponse upResp;
         boolean cut;
-        // Until the request body is read, and while the client holds the response back
-        private boolean waitingOnClient = true;
+        // The request body streams; not while the DNS lookup and connect wait, nor while a paused
+        // body does, nor while upstream holds it back: that is upstream's time
+        private boolean uploading;
+        // The client holds the response back
+        private boolean holdingResponse;
         private boolean over;
         private long clientActive = System.nanoTime();
         // Vert.x numbers timers from 0: cancelling 0 before one is set would cancel another's
         private long timer = -1;
 
-        RelayWatchdog(HttpServerRequest clientReq, String domain, boolean hasBody) {
+        RelayWatchdog(HttpServerRequest clientReq, String domain, boolean streaming) {
             this.clientReq = clientReq;
             this.domain = domain;
-            // With no body to wait for, the DNS lookup and connect are already upstream's time
-            waitingOnClient = hasBody;
+            this.streaming = streaming;
             var clientResp = clientReq.response();
-            clientResp.endHandler(v -> stop());
+            clientResp.endHandler(v -> {
+                stop();
+                if (uploadUnread()) {
+                    clientResp.close();
+                    // An upstream that answered early may read no more: a half-sent request would
+                    // hold its pooled connection until the read-idle timeout
+                    if (upReq != null) upReq.exceptionHandler(ignored -> {}).reset();
+                }
+            });
             clientResp.closeHandler(v -> stop());
             // It may have left during the lookups before the relay, with no handler yet to tell
             if (clientResp.closed()) stop();
             check();
         }
 
-        void requestRead() {
-            if (waitingOnClient) waitingOnClient(false);
+        /** Cut, or the client has left: nothing is to be sent to it any more. */
+        boolean gone() {
+            return cut || clientReq.response().closed();
+        }
+
+        /** The request has a body that has not all been read. */
+        boolean uploadUnread() {
+            return streaming && !clientReq.isEnded();
         }
 
         void touch() {
             clientActive = System.nanoTime();
         }
 
-        void waitingOnClient(boolean waiting) {
-            waitingOnClient = waiting;
+        void uploading(boolean uploading) {
+            this.uploading = uploading;
+            touch();
+        }
+
+        void holdingResponse(boolean holding) {
+            holdingResponse = holding;
             touch();
         }
 
@@ -420,7 +477,7 @@ class Upstream {
         private void check() {
             if (over) return;
             // Not a stall
-            if (waitingOnClient) touch();
+            if (uploading || holdingResponse) touch();
             var left = silenceLeftMillis(clientActive);
             if (left > 0) {
                 timer = vertx.setTimer(left, id -> check());
@@ -480,27 +537,6 @@ class Upstream {
         clientResp.headers().remove("Transfer-Encoding");
     }
 
-    /** Sends the client's request body, if any, once it has all arrived. */
-    private static Future<HttpClientResponse> sendWithBody(Future<Buffer> body, HttpClientRequest upReq) {
-        return body != null ? body.compose(upReq::send) : upReq.send();
-    }
-
-    /**
-     * Starts reading the request's body, if it has one, for a relay to send on. Called as the request
-     * is routed, before anything waits: Vert.x drops a body that arrives with nothing reading it, and
-     * then refuses to read the request at all, so a body claimed only once the upstream connection was
-     * ready was gone whenever it beat the connect, and the relay hung (#1164). One claimed too late
-     * anyway fails here, for the relay to answer, rather than throwing where nothing would.
-     */
-    private static Future<Buffer> claimBody(HttpServerRequest clientReq) {
-        if (!hasBody(clientReq)) return null;
-        try {
-            return clientReq.body();
-        } catch (IllegalStateException e) {
-            return Future.failedFuture(e);
-        }
-    }
-
     static boolean hasBody(HttpServerRequest clientReq) {
         var cl = clientReq.getHeader("Content-Length");
         var te = clientReq.getHeader("Transfer-Encoding");
@@ -530,9 +566,9 @@ class Upstream {
             if (watchdog != null) watchdog.touch();
             if (clientResp.writeQueueFull()) {
                 upResp.pause();
-                if (watchdog != null) watchdog.waitingOnClient(true);
+                if (watchdog != null) watchdog.holdingResponse(true);
                 clientResp.drainHandler(v -> {
-                    if (watchdog != null) watchdog.waitingOnClient(false);
+                    if (watchdog != null) watchdog.holdingResponse(false);
                     upResp.resume();
                 });
             }
