@@ -24,6 +24,8 @@ On Linux, requests go over a Unix domain socket (`UnixSocketTransport`); on macO
 There is no HTTPS fallback (the old HTTPS-over-TCP path was removed -- it hit macOS Local Network prompts and VPN socket filters, and two transports made field issues undiagnosable; `HttpsTransport` remains in the tree but is unwired).
 `IncusApi` handles request serialization, async operation waiting, and WebSocket-based exec (capture, stream, PTY).
 An operation `/wait` that times out answers 200 with the operation still `Running`, so `waitForOperation` re-polls while it is `Running`/`Pending`/`Cancelling`, up to a 4-hour ceiling, then throws (a `Cancelled` one throws too) -- never treats a timed-out poll as done (#1089; `OperationWaitTest`).
+A device removal is a GET and a whole-instance PUT (PATCH cannot remove a device); the PUT carries the GET's `ETag` as `If-Match`, and a 412 (another writer got in between) re-reads and retries, bounded (`IncusApi.removeDevices`, #1234; `DeviceRemovalConflictTest`).
+The transports keep the `ETag` header on `RawResponse`/`ApiResponse`; `FakeIncusDaemon` sends one and refuses a stale `If-Match`, and `writeAfterRead` stages a concurrent write.
 `Container` is a helper for running commands inside a specific container (`exec`, `runAsUser`, `runInteractive`).
 The `incus` CLI binary is not required at runtime.
 

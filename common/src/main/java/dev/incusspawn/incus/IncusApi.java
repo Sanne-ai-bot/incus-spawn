@@ -36,6 +36,12 @@ class IncusApi {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int WAIT_TIMEOUT_SECONDS = 120;
     /**
+     * How many times a conditional instance write is read and tried while another writer keeps
+     * changing the instance (412), and the pause before the n-th retry, n times this.
+     */
+    static final int CONFLICT_ATTEMPTS = 5;
+    private static final long CONFLICT_BACKOFF_MS = 20;
+    /**
      * How long an async operation is waited for, over successive {@code /wait} polls: as long as
      * the exec ceiling, well past any real copy or image download, so only a stuck operation hits it.
      */
@@ -172,7 +178,12 @@ class IncusApi {
         }
     }
 
-    record ApiResponse(int statusCode, JsonNode body) {
+    /** @param etag the response's {@code ETag} header, or null; see {@link IncusTransport.RawResponse} */
+    record ApiResponse(int statusCode, JsonNode body, String etag) {
+        ApiResponse(int statusCode, JsonNode body) {
+            this(statusCode, body, null);
+        }
+
         boolean isSuccess() {
             return statusCode >= 200 && statusCode < 300;
         }
@@ -282,18 +293,34 @@ class IncusApi {
     /**
      * Remove a named device from an instance.
      * Incus PATCH cannot remove devices (null/empty are rejected), so this does a
-     * read-modify-write: GET the current config, drop the device, PUT the full config back.
+     * read-modify-write: GET the current config, drop the device, PUT the full config back,
+     * conditional on the GET (see {@link #removeDevices}).
      */
     ApiResponse removeDevice(String instanceName, String deviceName) {
         return removeDevices(instanceName, List.of(deviceName));
     }
 
+    /**
+     * The PUT carries the read's ETag as {@code If-Match}, so a device another process added
+     * between the read and the write is never dropped: Incus refuses the stale write with 412,
+     * and the removal is read and written again. Uncontended, it is still one GET and one PUT.
+     */
     ApiResponse removeDevices(String instanceName, java.util.Collection<String> deviceNames) {
-        var getResp = get("/1.0/instances/" + instanceName);
-        if (!getResp.isSuccess()) throw new IncusException("Failed to get instance " + instanceName);
         var update = new InstanceUpdate();
         deviceNames.forEach(update::removeDevice);
-        return update(instanceName, getResp.body().path("metadata"), update);
+        for (int attempt = 1; ; attempt++) {
+            var getResp = get("/1.0/instances/" + instanceName);
+            if (!getResp.isSuccess()) throw new IncusException("Failed to get instance " + instanceName);
+            var resp = update(instanceName, getResp.body().path("metadata"), update, getResp.etag());
+            if (resp.statusCode() != 412 || attempt == CONFLICT_ATTEMPTS) return resp;
+            // A start writes several volatile keys in a burst, each a new ETag: let it pass.
+            try {
+                Thread.sleep(CONFLICT_BACKOFF_MS * attempt);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return resp;
+            }
+        }
     }
 
     /**
@@ -311,6 +338,15 @@ class IncusApi {
      * device whole, so it needs no PUT either.
      */
     ApiResponse update(String instanceName, JsonNode metadata, InstanceUpdate update) {
+        return update(instanceName, metadata, update, null);
+    }
+
+    /**
+     * As above; a non-null {@code etag} (of the read {@code metadata} came from) is sent as
+     * {@code If-Match} on the PUT, which Incus refuses with 412 if the instance changed since.
+     * The PATCH needs none: it replaces only what it names.
+     */
+    ApiResponse update(String instanceName, JsonNode metadata, InstanceUpdate update, String etag) {
         var instanceDevices = metadata.path("devices");
         var changedDevices = new LinkedHashMap<String, ObjectNode>();
         update.deviceProperties().forEach((deviceName, props) -> {
@@ -358,7 +394,8 @@ class IncusApi {
         metadata.path("profiles").forEach(p -> profiles.add(p.asText()));
         putBody.put("stateful", metadata.path("stateful").asBoolean(false));
 
-        return requestAndWait("PUT", "/1.0/instances/" + instanceName, putBody);
+        return requestAndWait("PUT", "/1.0/instances/" + instanceName, putBody,
+                etag == null ? Map.of() : Map.of("If-Match", etag));
     }
 
     ApiResponse patch(String path, Object body) {
@@ -374,7 +411,12 @@ class IncusApi {
      * Incus returns HTTP 202 with an operation URL for async operations (start, stop, copy, etc.).
      */
     ApiResponse requestAndWait(String method, String apiPath, Object body) {
-        var resp = request(method, apiPath, body);
+        return requestAndWait(method, apiPath, body, Map.of());
+    }
+
+    private ApiResponse requestAndWait(String method, String apiPath, Object body,
+                                       Map<String, String> headers) {
+        var resp = request(method, apiPath, body, headers);
         if (!resp.isAsync()) return resp;
         var opPath = resp.operationPath();
         if (opPath.isEmpty()) throw new IncusException("Async response missing operation path");
@@ -574,11 +616,14 @@ class IncusApi {
     }
 
     private ApiResponse request(String method, String path, Object bodyObj) {
+        return request(method, path, bodyObj, Map.of());
+    }
+
+    private ApiResponse request(String method, String path, Object bodyObj, Map<String, String> headers) {
         try {
             byte[] bodyBytes = bodyObj != null ? JSON.writeValueAsBytes(bodyObj) : new byte[0];
-            var raw = transport.requestPooled(method, path, "application/json", Map.of(), bodyBytes);
-            var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
-            return new ApiResponse(raw.statusCode(), bodyJson);
+            var raw = transport.requestPooled(method, path, "application/json", headers, bodyBytes);
+            return toApiResponse(raw);
         } catch (IOException e) {
             throw new IncusException("Incus REST request failed: " + method + " " + path, e);
         }
@@ -590,8 +635,7 @@ class IncusApi {
             byte[] bodyBytes = bodyObj != null ? JSON.writeValueAsBytes(bodyObj) : new byte[0];
             var raw = transport.requestPooled(method, path, "application/json", Map.of(),
                     bodyBytes, timeoutSeconds);
-            var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
-            return new ApiResponse(raw.statusCode(), bodyJson);
+            return toApiResponse(raw);
         } catch (IOException e) {
             throw new IncusException("Incus REST request failed: " + method + " " + path, e);
         }
@@ -601,19 +645,22 @@ class IncusApi {
                                    Map<String, String> extraHeaders, byte[] bodyBytes) {
         try {
             var raw = transport.request(method, path, contentType, extraHeaders, bodyBytes);
-            var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
-            return new ApiResponse(raw.statusCode(), bodyJson);
+            return toApiResponse(raw);
         } catch (IOException e) {
             throw new IncusException("Incus REST request failed: " + method + " " + path, e);
         }
+    }
+
+    private static ApiResponse toApiResponse(IncusTransport.RawResponse raw) throws IOException {
+        var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
+        return new ApiResponse(raw.statusCode(), bodyJson, raw.etag());
     }
 
     private ApiResponse requestRawFromFile(String method, String path, String contentType,
                                            Map<String, String> extraHeaders, Path bodyFile) {
         try {
             var raw = transport.request(method, path, contentType, extraHeaders, bodyFile);
-            var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
-            return new ApiResponse(raw.statusCode(), bodyJson);
+            return toApiResponse(raw);
         } catch (IOException e) {
             throw new IncusException("Incus REST request failed: " + method + " " + path, e);
         }
