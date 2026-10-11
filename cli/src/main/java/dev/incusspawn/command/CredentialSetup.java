@@ -16,6 +16,7 @@ import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.Platform;
 
@@ -1712,8 +1713,12 @@ class CredentialSetup {
         }
     }
 
+    /**
+     * The tool's description, else its name, as one line: a definition can come from a cloned
+     * repository's {@code .incus-spawn/tools/}, so neither is printed raw (#1222).
+     */
     static String describeTool(String toolName, ToolSetup tool) {
-        return tool.description().isBlank() ? toolName : tool.description();
+        return OutputFormat.oneLine(tool.description().isBlank() ? toolName : tool.description());
     }
 
     void setupGenericToolCredentials(String toolName, ToolSetup tool, SpawnConfig config, Prompts prompts) {
@@ -1750,7 +1755,9 @@ class CredentialSetup {
             if (!configDef.getValue().isBlank()) continue;
             if (configDef.getConfigPath().isBlank()) continue;
 
-            var label = configDef.getDescription().isBlank() ? configKey : configDef.getDescription();
+            // Definition text, so one line each, like describeTool.
+            var description = OutputFormat.oneLine(configDef.getDescription());
+            var label = description.isBlank() ? OutputFormat.oneLine(configKey) : description;
 
             // Per account: what the shape says an identity holds. Everything else -- a licence
             // consent -- belongs to the namespace, and every account inherits it.
@@ -1777,9 +1784,9 @@ class CredentialSetup {
             }
 
             for (var helpLine : configDef.getHelp()) {
-                System.out.println("  " + helpLine);
+                System.out.println("  " + OutputFormat.oneLine(helpLine));
             }
-            if (configDef.getHelp().isEmpty() && !configDef.getDescription().isBlank()) {
+            if (configDef.getHelp().isEmpty() && !description.isBlank()) {
                 System.out.println("  " + label);
             }
 

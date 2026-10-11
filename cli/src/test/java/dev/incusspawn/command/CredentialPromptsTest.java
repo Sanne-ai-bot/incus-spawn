@@ -271,6 +271,82 @@ class CredentialPromptsTest {
         assertEquals(List.of(), new CredentialSetup().selectCredentials(tools, new SpawnConfig(), new ScriptedPrompts()));
     }
 
+    // ── text a tool definition supplies ──────────────────────────────────────────
+
+    /**
+     * Text a cloned repository can ship in {@code .incus-spawn/tools/}: an ESC sequence, an 8-bit
+     * CSI, a line break and a bidi override, in every string init prints from a definition.
+     */
+    private static final String HOSTILE = "a\u001b]0;pwned\u0007\u009b2J\nfake: prompt\u202Egnp.exe";
+
+    private static ToolSetup hostileTool() {
+        var key = new ToolDef.ConfigEntry();
+        key.setConfigPath("apiKey");
+        key.setSecret(true);
+        key.setDescription("key " + HOSTILE);
+        key.setHelp(List.of("help " + HOSTILE));
+        var region = new ToolDef.ConfigEntry();
+        region.setConfigPath("region");
+        region.setDescription("region " + HOSTILE);
+        var consent = new ToolDef.ConfigEntry();
+        consent.setConfigPath("consent");
+        consent.setType("confirm");
+        consent.setDescription("consent " + HOSTILE);
+        var unlabelled = new ToolDef.ConfigEntry();
+        unlabelled.setConfigPath("zone");
+        unlabelled.setDescription("\u001b\n");
+        var configuration = new LinkedHashMap<String, ToolDef.ConfigEntry>();
+        configuration.put("key", key);
+        configuration.put("region", region);
+        configuration.put("consent", consent);
+        configuration.put("zone " + HOSTILE, unlabelled);
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace("evil");
+        proxy.setConfiguration(configuration);
+        var def = new ToolDef();
+        def.setName("evil");
+        def.setDescription("tool " + HOSTILE);
+        def.setProxy(proxy);
+        return new YamlToolSetup(def);
+    }
+
+    /**
+     * Init prints a definition's description, labels and help one line each, with nothing a
+     * terminal acts on: the step title, the credentials menu, every prompt and the closing line
+     * (#1222). A description with nothing printable falls back to the entry's key.
+     */
+    @Test
+    void definitionTextCannotDriveTheTerminal() {
+        var tools = Map.of("evil", hostileTool());
+        var out = captureStdout(() -> {
+            var prompts = ScriptedPrompts.lines("1").secret("s3cret").line("").line("n").line("");
+            var setup = new CredentialSetup();
+            assertEquals(List.of("evil"), setup.selectCredentials(tools, new SpawnConfig(), prompts));
+            setup.setupGenericToolCredentials("evil", tools.get("evil"), new SpawnConfig(), prompts);
+            prompts.assertFullyConsumed();
+        });
+
+        for (var shown : List.of("tool ", "key ", "help ", "region ", "consent ", "zone ")) {
+            assertTrue(out.contains(shown + "a ]0;pwned  2J fake: prompt gnp.exe"), shown + " in:\n" + out);
+        }
+        assertTrue(out.contains("tool a ]0;pwned  2J fake: prompt gnp.exe credentials saved."), out);
+        out.codePoints().filter(c -> c != '\n').forEach(c -> assertFalse(
+                Character.isISOControl(c) || c >= 0x2028 && c <= 0x202E || c >= 0x2066 && c <= 0x2069,
+                () -> "U+%04X printed raw:%n%s".formatted(c, out)));
+    }
+
+    private static String captureStdout(Runnable body) {
+        var original = System.out;
+        var buffer = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            body.run();
+        } finally {
+            System.setOut(original);
+        }
+        return buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     // ── where to clone the templates repo ────────────────────────────────────────
 
     private static String clonePath(String... input) {
