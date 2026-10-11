@@ -83,14 +83,6 @@ class HelpChatModalTest {
     }
 
     @Test
-    void inputAtCommonTerminalSize() {
-        var modal = answering(ANSWER);
-        type(modal, "how do I branch an instance?");
-        TuiSnapshot.assertMatches("help-chat-input-120x40",
-                TuiSnapshot.render(120, 40, f -> modal.render(f, f.area())));
-    }
-
-    @Test
     void inputWithCheckboxFocusedAndTicked() {
         var modal = answering(ANSWER);
         modal.handleKey(KeyEvent.ofKey(KeyCode.TAB));

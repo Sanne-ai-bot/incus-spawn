@@ -1,4 +1,4 @@
- isx   <version>
+ isx   1.2.3
 ╭ Templates ───────────────────────────────────────────────────────────────────╮
 │  NAME                    BUILT                DISK     DESCRIPTION           │
 │▸ tpl-minimal             3 days ago           -        Minimal Fedora        │

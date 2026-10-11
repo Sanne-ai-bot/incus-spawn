@@ -35,4 +35,11 @@ class DeleteConfirmTest {
         var dialog = dialog("--all", "");
         TuiSnapshot.assertMatches("delete-confirm-all-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
     }
+
+    @Test
+    void rendersAllInstances() {
+        var dialog = dialog("--all-instances", "");
+        TuiSnapshot.assertMatches("delete-confirm-all-instances-80x24",
+                TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+    }
 }

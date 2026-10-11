@@ -111,6 +111,11 @@ final class BranchModal {
         branchFieldIndex = 0;
     }
 
+    /** Whether the dialog branches a VM, and so offers its limits. */
+    boolean sourceIsVm() {
+        return branchSourceIsVm;
+    }
+
     /** The name typed so far, stripped. */
     String name() {
         return branchNameInput.text().strip();

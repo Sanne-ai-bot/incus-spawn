@@ -81,7 +81,7 @@ class BranchModalTest {
 
     @Test
     void rendersAVmBranchWithItsLimits() {
-        // In the shapes BranchFlow's defaults take; the values themselves come from this host (#1251).
+        // Given rather than this host's defaults, in the shapes BranchFlow's defaults take (#1251).
         var dialog = vmDialog(new BranchModal.VmLimits("4", "13113MiB", "100GB"));
         TuiSnapshot.assertMatches("branch-modal-vm-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
     }
