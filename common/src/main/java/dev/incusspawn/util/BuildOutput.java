@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -152,7 +153,7 @@ public final class BuildOutput {
      */
     public static void stepWarn(String msg) {
         if (msg == null || msg.isBlank()) return;
-        System.err.println(indent() + GROUP_INDENT + styled(YELLOW, "⚠ " + msg));
+        System.err.println(indent() + GROUP_INDENT + styled(YELLOW, "⚠ " + safeLines(msg)));
         endWithBlankLine();
     }
 
@@ -547,11 +548,19 @@ public final class BuildOutput {
             listener.accept(String.join("\n", Stream.concat(Stream.of(msg), Arrays.stream(details))
                     .map(OutputFormat::oneLine).toList()));
         }
-        System.err.println(indent() + styled(YELLOW, "⚠ " + msg));
+        System.err.println(indent() + styled(YELLOW, "⚠ " + safeLines(msg)));
         for (var detail : details) {
-            System.err.println(indent() + GROUP_INDENT + styled(DIM, detail));
+            System.err.println(indent() + GROUP_INDENT + styled(DIM, safeLines(detail)));
         }
         endWithBlankLine();
+    }
+
+    /**
+     * {@code text} with each line made safe ({@link OutputFormat#oneLine}): a warning keeps the
+     * line breaks of the advice isx writes into it, but what it quotes cannot drive the terminal.
+     */
+    private static String safeLines(String text) {
+        return Arrays.stream(text.split("\n", -1)).map(OutputFormat::oneLine).collect(Collectors.joining("\n"));
     }
 
     /**
@@ -567,12 +576,17 @@ public final class BuildOutput {
 
     /**
      * Print an indented dim note (informational, not a warning) to stderr, beside the warnings.
-     * Blank messages are skipped.
+     * Blank messages are skipped. A note is one line (advice over several lines is several
+     * notes), and it quotes template text (a repository's path and URL, a host-resource source),
+     * so it is printed through {@link OutputFormat#oneLine}: nothing in it can start a line of its
+     * own or drive the terminal (#1235).
      */
     public static void note(String msg) {
-        if (msg == null || msg.isBlank()) return;
+        if (msg == null) return;
+        var line = OutputFormat.oneLine(msg);
+        if (line.isBlank()) return;
         blankLineEnded = false;
-        System.err.println(indent() + styled(DIM, msg));
+        System.err.println(indent() + styled(DIM, line));
     }
 
     /** Print a green checkmark success line. */

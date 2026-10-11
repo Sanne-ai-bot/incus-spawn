@@ -680,6 +680,7 @@ So query commands take `--format` (#1036), through one shared helper, `OutputFor
   A validation error keeps the line breaks of the advice isx writes into it.
   So the definition text it quotes goes through `oneLine` where the message is built (`HostResourceSetup`'s refusals, `YamlErrors.friendly`).
   `HostResourceSetup`'s build and start notes and warnings (mounted, copied, source not found, the macOS overlay refusal) quote a source, mode and container path the same way (#1235): a confined source is the project's real path with the definition's text appended.
+  `BuildOutput.note` prints a note through `oneLine` as a whole (a note is one line; advice over several lines is several notes), and `warn` and `stepWarn` make each line safe while keeping isx's own line breaks, so text they quote that no call site quoted (a repository's path, URL or prime command) cannot drive the terminal either.
   Once a message is assembled, a forged line break cannot be told from isx's own.
   Each line is made safe again when it is printed.
   `isx init`'s credential step prints a tool's description and each configuration entry's description and help through `oneLine` too (`CredentialSetup`, #1222): `ToolDefLoader` reads the project's `.incus-spawn/tools/`, so running init in a cloned repository shows its text.

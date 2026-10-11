@@ -205,6 +205,25 @@ class BuildOutputTest {
         assertTrue(text().contains("● Building tpl-dev"));
     }
 
+    /** A note quotes template text, which must not start a line or drive the terminal (#1235). */
+    @Test
+    void noteIsOneLineThatCannotDriveTheTerminal() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.note("Host repo /p/\u001b[2Jx\u009b31m\r✓ built\nTemplate is valid.\u0007");
+        BuildOutput.note("\u001b\u0007");
+        assertEquals("Host repo /p/ [2Jx 31m ✓ built Template is valid. \n", text().stripLeading());
+    }
+
+    /** A warning keeps isx's own line breaks, but what it quotes cannot drive the terminal (#1235). */
+    @Test
+    void warningLinesCannotDriveTheTerminal() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.warn("Mount of /p/\u001b[2Jx refused.\nFix the definition.", "detail \u009b31m");
+        BuildOutput.stepWarn("step /p/\u001b[2J");
+        assertFalse(text().contains("\u001b") || text().contains("\u009b"), text());
+        assertTrue(text().contains("Mount of /p/ [2Jx refused.\nFix the definition."), text());
+    }
+
     /**
      * A build the TUI runs prints on the released terminal, which the TUI then redraws over: its
      * warnings are also handed to the TUI's log, but only while the TUI listens (#1195).
