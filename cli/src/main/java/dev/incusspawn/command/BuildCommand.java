@@ -165,7 +165,7 @@ public class BuildCommand extends BaseCommand {
     /** True once it has said that {@code name} is too long to be built under its temporary name. */
     static boolean reportNameTooLong(String name) {
         if (name.length() <= MAX_TEMPLATE_NAME_LENGTH) return false;
-        var shown = OutputFormat.oneLine(name);
+        var shown = shown(name);
         System.err.println("Error: '" + shown + "' is too long to build: it is built as '" + shown + REBUILDING_SUFFIX
                 + "' first, and Incus allows " + TemplateLock.MAX_INSTANCE_NAME_LENGTH
                 + " characters, so a template name may have at most " + MAX_TEMPLATE_NAME_LENGTH + ".");
@@ -194,6 +194,17 @@ public class BuildCommand extends BaseCommand {
     /** The base image each tracked root resolved to this invocation (avoids re-fetching). */
     private final Map<String, BaseImage> trackedBaseImages = new HashMap<>();
 
+    /** On exit mid-build (Ctrl-C): report the build that was running and keep it for inspection. */
+    void reportInterruptedBuild() {
+        var build = activeBuild;
+        if (build != null) {
+            reportBuildFailure(build.tempName(), build.canonicalName(),
+                    "Build interrupted for " + shown(build.canonicalName()));
+            promoteToFailedInstance(build.tempName(), build.canonicalName(),
+                    build.machineType());
+        }
+    }
+
     private void buildDone(String name) {
         BuildOutput.success(name + " built successfully.");
     }
@@ -207,15 +218,7 @@ public class BuildCommand extends BaseCommand {
         buildTotal = 1;
         buildIndex = 1;
 
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            var build = activeBuild;
-            if (build != null) {
-                reportBuildFailure(build.tempName(), build.canonicalName(),
-                        "Build interrupted for " + build.canonicalName());
-                promoteToFailedInstance(build.tempName(), build.canonicalName(),
-                        build.machineType());
-            }
-        }));
+        Runtime.getRuntime().addShutdownHook(new Thread(this::reportInterruptedBuild));
 
         // Re-read tool defs from disk before resolving/stamping. The loader is a
         // process-lifetime singleton; when a build is triggered in-process from the TUI it
@@ -366,7 +369,8 @@ public class BuildCommand extends BaseCommand {
                         : files.size() + " definition files could not be parsed")
                 .append(" (see the error above):\n");
         for (var file : files) {
-            sb.append("  • ").append(file).append('\n');
+            // A cloned repository names the files in its .incus-spawn/ (#1228).
+            sb.append("  • ").append(shown(file.toString())).append('\n');
         }
         return sb.append("Fix the file, or move it out of the definitions directory.").toString();
     }
@@ -485,7 +489,7 @@ public class BuildCommand extends BaseCommand {
     static void failIfAny(Collection<String> failed) {
         if (failed.isEmpty()) return;
         System.err.println("\n" + styled(BOLD + RED, "Some templates failed to build: "
-                + OutputFormat.oneLine(String.join(", ", failed))));
+                + shown(String.join(", ", failed))));
         throw new BuildFailedException();
     }
 
@@ -753,7 +757,9 @@ public class BuildCommand extends BaseCommand {
             requireConfinedBaseImages(imageDef, defs);
         } catch (HostResourceSetup.HostPathOutsideProjectException
                  | HostResourceSetup.ForbiddenMountTargetException e) {
-            System.err.println(e.getMessage());
+            // Built with the template's text quoted safely; each line is made safe again as it
+            // is printed, so nothing added to these messages later can slip through (#1228).
+            e.getMessage().lines().forEach(line -> System.err.println(shown(line)));
             throw new BuildFailedException(canonicalName);
         }
 
@@ -791,7 +797,7 @@ public class BuildCommand extends BaseCommand {
         } catch (Exception e) {
             BuildOutput.abandonStep();
             reportBuildFailure(tempName, canonicalName,
-                    "Build failed for " + canonicalName + ": " + e.getMessage());
+                    "Build failed for " + shown(canonicalName) + ": " + e.getMessage());
             try {
                 // A build that failed before its instance existed has no devices to remove, and
                 // trying would print one warning per resource.
@@ -830,8 +836,8 @@ public class BuildCommand extends BaseCommand {
             }
         }
         if (problems.isEmpty()) return false;
-        System.err.println("Cannot build " + canonicalName + ":");
-        problems.forEach(p -> System.err.println("  - " + p));
+        System.err.println("Cannot build " + shown(canonicalName) + ":");
+        problems.forEach(p -> System.err.println("  - " + shown(p)));
         System.err.println("Run 'isx doctor' to inspect the storage pool.");
         return true;
     }
@@ -1084,17 +1090,28 @@ public class BuildCommand extends BaseCommand {
             var hint = savedHostReport
                     ? " — see " + Environment.buildFailureLogFile(canonicalName)
                     : (savedFailureSummary ? " — see ~/inbox/BUILD_FAILURE.txt inside the instance" : "");
-            System.err.println(styled(BOLD, "Container promoted to instance '" + promotedName
-                    + "' for inspection" + hint + "."));
+            System.err.println(styled(BOLD, "Container promoted to instance '" + shown(promotedName)
+                    + "' for inspection" + shown(hint) + "."));
         } catch (Exception promoteError) {
-            System.err.println("Failed to promote container: " + promoteError.getMessage());
-            System.err.println("Container '" + buildName + "' may still exist for manual cleanup.");
+            System.err.println("Failed to promote container: " + shown(promoteError.getMessage()));
+            System.err.println("Container '" + shown(buildName) + "' may still exist for manual cleanup.");
         }
+    }
+
+    /**
+     * {@code value} as one line that cannot drive a terminal, for a message that quotes a
+     * template's name or what was derived from it (a cloned repository chooses a project-local
+     * template's name, #1228). The same rule as {@code HostResourceSetup.shown}.
+     */
+    private static String shown(Object value) {
+        return OutputFormat.oneLine(String.valueOf(value));
     }
 
     void reportBuildFailure(String buildName, String canonicalName, String errorLine) {
         System.err.println("\n" + styled(YELLOW, "─".repeat(60)));
-        System.err.println(styled(BOLD, errorLine));
+        // The message can quote what a template chose, and only isx's own line breaks are kept:
+        // each line is made safe as it is printed (#1228).
+        errorLine.lines().forEach(line -> System.err.println(styled(BOLD, shown(line))));
 
         // Resolve the host log path first; the path-traversal guard in buildFailureLogFile can
         // throw for a malformed template name, and that must not abort failure handling.
@@ -1102,7 +1119,7 @@ public class BuildCommand extends BaseCommand {
         try {
             hostLog = Environment.buildFailureLogFile(canonicalName);
         } catch (Exception e) {
-            System.err.println("Could not resolve host failure log path: " + e.getMessage());
+            System.err.println("Could not resolve host failure log path: " + shown(e.getMessage()));
             hostLog = null;
         }
 
@@ -1114,7 +1131,7 @@ public class BuildCommand extends BaseCommand {
                 Files.createDirectories(hostLog.getParent());
                 Files.writeString(hostLog, errorLine + "\n");
             } catch (Exception e) {
-                System.err.println("Could not save failure report to " + hostLog + ": " + e.getMessage());
+                System.err.println("Could not save failure report to " + shown(hostLog) + ": " + shown(e.getMessage()));
             }
         }
 
@@ -1130,9 +1147,9 @@ public class BuildCommand extends BaseCommand {
                 Files.writeString(tmp, report);
                 Files.move(tmp, hostLog, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 savedHostReport = true;
-                System.err.println("Failure report saved to " + hostLog + ".");
+                System.err.println("Failure report saved to " + shown(hostLog) + ".");
             } catch (Exception e) {
-                System.err.println("Could not save failure report to " + hostLog + ": " + e.getMessage());
+                System.err.println("Could not save failure report to " + shown(hostLog) + ": " + shown(e.getMessage()));
                 try { Files.deleteIfExists(tmp); } catch (Exception ignored) {}
             }
         }
@@ -1144,7 +1161,7 @@ public class BuildCommand extends BaseCommand {
             savedFailureSummary = true;
         } catch (Exception e) {
             System.err.println("Could not write " + INBOX_FAILURE_PATH + " inside the container: "
-                    + e.getMessage());
+                    + shown(e.getMessage()));
         }
     }
 
@@ -1316,7 +1333,7 @@ public class BuildCommand extends BaseCommand {
                             BuildOutput.step("Base image is container-only, using " + image + " for VM build.");
                         } else {
                             throw new RuntimeException(
-                                    "Cannot build VM from container image '" + rootDef.getImage() + "'. "
+                                    "Cannot build VM from container image '" + shown(rootDef.getImage()) + "'. "
                                     + "The image lacks OS/release metadata to derive a VM image source.");
                         }
                     }
@@ -1645,10 +1662,10 @@ public class BuildCommand extends BaseCommand {
         if (existingFingerprint != null) {
             var importedBy = importingProject(existingFingerprint);
             if (!ownerProject.isEmpty() && !ownerProject.equals(importedBy)) {
-                throw new IllegalStateException("Template '" + OutputFormat.oneLine(owner.getName())
-                        + "' is project-local (" + OutputFormat.oneLine(String.valueOf(owner.getSource())) + "),\n"
+                throw new IllegalStateException("Template '" + shown(owner.getName())
+                        + "' is project-local (" + shown(owner.getSource()) + "),\n"
                         + "  and its image_url would replace the existing local image '"
-                        + OutputFormat.oneLine(localAlias) + "'.\n"
+                        + shown(localAlias) + "'.\n"
                         + "  A project-local template may only replace images it imported itself;"
                         + " otherwise a cloned repository could swap the base image of your own templates.\n"
                         + "  Give it an image name of its own, or, if you trust it, move it to "
@@ -1689,7 +1706,7 @@ public class BuildCommand extends BaseCommand {
         if (!stamped) {
             incus.deleteImage(fingerprint);
             throw new IllegalStateException("Could not record which project imported base image '"
-                    + localAlias + "'; the imported image was deleted.");
+                    + shown(localAlias) + "'; the imported image was deleted.");
         }
         if (tag != null) {
             incus.setImageProperty(fingerprint, "incus-spawn.tag", tag);
@@ -1779,11 +1796,11 @@ public class BuildCommand extends BaseCommand {
         var importedBy = importingProject(fingerprint);
         if (importedBy.isEmpty() || importedBy.equals(projectOf(rootDef))) return;
         // The image, the project and the name are a project's choosing: one line each (#1228).
-        var shownImage = OutputFormat.oneLine(image);
-        var shownProject = OutputFormat.oneLine(importedBy);
+        var shownImage = shown(image);
+        var shownProject = shown(importedBy);
         var refused = "Local image '" + shownImage + "' was imported by a project-local template in "
                 + shownProject + ",\n"
-                + "  so '" + OutputFormat.oneLine(rootDef.getName()) + "' will not be built on it.\n";
+                + "  so '" + shown(rootDef.getName()) + "' will not be built on it.\n";
         var reimport = " (a template with an image_url re-imports it automatically).";
         if (prompts == null) {
             throw new IllegalStateException(refused + "  Re-run the build in a terminal to remove it" + reimport);
@@ -1820,7 +1837,7 @@ public class BuildCommand extends BaseCommand {
                 BuildOutput.stepBreak();
                 if (attempt > 1) {
                     if (hasBrokenInit(buildName)) {
-                        throw new RuntimeException("The image fetched again for '" + image
+                        throw new RuntimeException("The image fetched again for '" + shown(image)
                                 + "' has a broken /sbin/init too (Exec format error).", e);
                     }
                     throw e;
@@ -1847,21 +1864,24 @@ public class BuildCommand extends BaseCommand {
                                       IncusException e) {
         if (!hasBrokenInit(buildName)) return false;
         var remote = isRemoteImage(image);
+        // Both from the definition: one line each in the refusals below (#1228).
+        var shownImage = shown(image);
+        var shownName = shown(templateName);
         if (!remote && !reimportable) {
-            throw new RuntimeException("The local image '" + image + "' has a broken /sbin/init (Exec format error)."
-                    + " isx did not import it, as '" + templateName + "' has no image_url to import it from,"
+            throw new RuntimeException("The local image '" + shownImage + "' has a broken /sbin/init (Exec format error)."
+                    + " isx did not import it, as '" + shownName + "' has no image_url to import it from,"
                     + " so it is left in place: replace the image under that alias, or give the template an"
-                    + " image_url, then re-run 'isx build " + templateName + "'.", e);
+                    + " image_url, then re-run 'isx build " + shownName + "'.", e);
         }
         var fingerprint = incus.configGet(buildName, "volatile.base_image");
         incus.delete(buildName, true);
-        var broken = "The cached image for '" + image + "' has a broken /sbin/init (Exec format error)";
+        var broken = "The cached image for '" + shownImage + "' has a broken /sbin/init (Exec format error)";
         if (fingerprint.isEmpty()) {
             throw new RuntimeException(broken + ", and Incus did not record which image it was.", e);
         }
         incus.deleteImageOrThrow(fingerprint);
         if (!remote) {
-            throw new RuntimeException(broken + ". isx removed it: re-run 'isx build " + templateName
+            throw new RuntimeException(broken + ". isx removed it: re-run 'isx build " + shownName
                     + "' to import it again.", e);
         }
         BuildOutput.step(broken + "; removed it, fetching it again.");
@@ -2035,7 +2055,8 @@ public class BuildCommand extends BaseCommand {
             try {
                 AccountSelection.validate(config, selection);
             } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
-                return "template '" + name + "': " + e.getMessage();
+                // The namespace and account come from the template's accounts: map (#1228).
+                return "template '" + shown(name) + "': " + shown(e.getMessage());
             }
         }
         return null;
