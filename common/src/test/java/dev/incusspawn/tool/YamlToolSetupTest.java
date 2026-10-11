@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.InOrder;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,6 +42,26 @@ class YamlToolSetupTest {
 
         var setup = new YamlToolSetup(def);
         assertEquals(List.of("pkg-a", "pkg-b"), setup.packages());
+    }
+
+    @Test
+    void actionsAreTheDeclaredOnes() throws IOException {
+        var def = ToolDef.loadFromStream(new ByteArrayInputStream("""
+                name: test
+                actions:
+                  - label: Open
+                    type: url
+                """.getBytes()));
+        assertEquals(List.of("Open"), new YamlToolSetup(def).actions().stream().map(ToolDef.ActionEntry::getLabel).toList());
+    }
+
+    @Test
+    void emptyActionsKeyMeansNoActions() throws IOException {
+        var def = ToolDef.loadFromStream(new ByteArrayInputStream("""
+                name: test
+                actions:
+                """.getBytes()));
+        assertEquals(List.of(), new YamlToolSetup(def).actions());
     }
 
     @Test

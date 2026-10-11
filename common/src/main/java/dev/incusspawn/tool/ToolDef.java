@@ -93,7 +93,7 @@ public class ToolDef {
     public String getReady() { return ready; }
     public void setReady(String ready) { this.ready = ready; }
     public List<ActionEntry> getActions() { return actions; }
-    public void setActions(List<ActionEntry> actions) { this.actions = actions; }
+    public void setActions(List<ActionEntry> actions) { this.actions = actions != null ? actions : List.of(); }
     public List<ImageDef.PackageRepo> getPackageRepos() { return packageRepos; }
     public void setPackageRepos(List<ImageDef.PackageRepo> packageRepos) { this.packageRepos = packageRepos; }
     public Map<String, ParameterDef> getParameters() { return parameters; }

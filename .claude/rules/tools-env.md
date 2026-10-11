@@ -42,6 +42,7 @@ The Java tool instances themselves live in `RuntimeConstants.CDI_TOOLS` (module 
 
 Tools can declare runtime actions (`ActionEntry`) shown in the TUI's F9 actions menu and available via `RunCommand` (`isx run`).
 Both YAML tools (via `actions:` in the YAML) and Java/CDI tools (via `ToolSetup.actions()`) can contribute actions.
+A YAML tool's `ToolSetup.actions()` returns its `actions:` too, which is what `isx tools show` lists (#1226); the action resolvers still read the `ToolDef` directly and walk only `CDI_TOOLS` through `actions()`, so nothing is listed twice.
 An action with `shell_menu: true` and a one-key `shortcut` also appears in the shell status bar's F12 menu (`ShellMenu.of`, url actions only; see `.claude/rules/incus.md`).
 F9 runs in-process actions through `ToolAction.executeWithoutPrompting` (#982, `TuiActionDispatchTest`); `execute`, which may prompt on stdin, is only for `isx run` and deferred `command` actions.
 Templates select a default action via `ImageDef.defaultAction` (`default-action` in YAML), which is run on Enter in the TUI or when executing `isx run <instance>`.

@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.RuntimeServices;
 import org.aesh.command.CommandResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -7,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -91,6 +93,24 @@ class ToolsCommandTest {
         assertTrue(output.contains("memory"), "must show memory parameter");
         assertTrue(output.contains("Requires:"), "must show dependencies");
         assertTrue(output.contains("sshd"), "idea-backend requires sshd");
+    }
+
+    @Test
+    void showPrintsYamlToolActions() throws Exception {
+        var cmd = new ToolsCommand.Show();
+        cmd.name = "idea-backend";
+        assertEquals(CommandResult.SUCCESS, cmd.doExecute());
+
+        var output = out.toString();
+        assertTrue(output.contains("Actions:"), "YAML tools must show their actions: " + output);
+        assertTrue(output.contains("in Gateway (url)"), "must show the Gateway action: " + output);
+    }
+
+    @Test
+    void recordListsYamlToolActions() {
+        var tool = RuntimeServices.toolDefLoader().find("vscode-remote");
+        var record = ToolsCommand.Show.record(tool, "built-in");
+        assertEquals(List.of("Open repo '${repo_name}' in VS Code"), record.get("actions"));
     }
 
     @Test

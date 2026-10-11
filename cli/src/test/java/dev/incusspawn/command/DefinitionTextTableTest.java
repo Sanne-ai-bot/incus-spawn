@@ -14,7 +14,6 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -127,10 +126,7 @@ class DefinitionTextTableTest {
                       domains: ["api.example.com\\e[2J"]
                 """;
         var def = ToolDef.loadFromStream(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
-        // YamlToolSetup does not yet return its ToolDef's actions from actions() (#1226).
-        return new YamlToolSetup(def) {
-            @Override public List<ToolDef.ActionEntry> actions() { return def.getActions(); }
-        };
+        return new YamlToolSetup(def);
     }
 
     private static String print(Consumer<PrintStream> printer) {
