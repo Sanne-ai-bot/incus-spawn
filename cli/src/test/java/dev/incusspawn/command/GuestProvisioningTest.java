@@ -137,6 +137,40 @@ class GuestProvisioningTest {
         assertEquals("/home/agentuser/quarkus", githubPaths.getField("quarkusio/quarkus").getElement(0).asText());
     }
 
+    /**
+     * A {@code .claude.json} that is not the object Claude Code writes is left alone, with a
+     * warning: rewriting it from what could be read would replace the user's file with a
+     * {@code projects} map alone.
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "not json at all",
+            "[1, 2]",
+            "\"a string\"",
+            "{\"hasCompletedOnboarding\": true, \"projects\": \"oops\"}",
+            "{\"hasCompletedOnboarding\": true, \"githubRepoPaths\": [1]}",
+    })
+    void updateClaudeJsonTrustLeavesAnUnreadableFileAlone(String existingJson) {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.shellExec(eq("test"), eq("test"), eq("-f"), anyString())).thenReturn(OK);
+        when(incus.shellExec(eq("test"), eq("cat"), anyString())).thenReturn(
+                new IncusClient.ExecResult(0, existingJson, ""));
+        when(incus.shellExec(eq("test"), eq("sh"), eq("-c"), anyString())).thenReturn(OK);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/quarkusio/quarkus.git");
+        repo.setPath("~/quarkus");
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-quarkus");
+        imageDef.setRepos(List.of(repo));
+
+        GuestProvisioning.updateClaudeJsonTrust(container, imageDef, Map.of());
+
+        // An unreadable .claude.json must not be rewritten.
+        verify(incus, never()).shellExec(eq("test"), eq("sh"), eq("-c"), contains(".claude.json"));
+    }
+
     @Test
     void updateClaudeJsonTrustRestoresInheritedReposAfterReconfiguration() throws Exception {
         var incus = mock(IncusClient.class);

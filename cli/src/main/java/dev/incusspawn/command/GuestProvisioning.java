@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.command.BuildTools.ResolvedTool;
@@ -517,12 +518,13 @@ public class GuestProvisioning {
         }
 
         try {
-            var root = JqValues.parse(catResult.stdout());
-
-            var projects = root.getField("projects");
-            if (!projects.isObject()) projects = JqObject.builder(0).build();
-            var githubRepoPaths = root.getField("githubRepoPaths");
-            if (!githubRepoPaths.isObject()) githubRepoPaths = JqObject.builder(0).build();
+            // Like the old casts: a file that is not the shape Claude Code writes is left alone,
+            // never rewritten from the part that could be read.
+            if (!(JqValues.parse(catResult.stdout()) instanceof JqObject root)) {
+                throw new IllegalStateException("not a JSON object");
+            }
+            var projects = objectOrEmpty(root, "projects");
+            var githubRepoPaths = objectOrEmpty(root, "githubRepoPaths");
 
             var projectsBuilder = JqObject.builder(8);
             if (projects instanceof JqObject projectsObj) projectsObj.forEach(projectsBuilder::put);
@@ -569,11 +571,9 @@ public class GuestProvisioning {
             if (!changed) return;
 
             var updated = JqObject.builder(4);
-            if (root instanceof JqObject rootObj) {
-                rootObj.forEach((key, value) -> {
-                    if (!key.equals("projects") && !key.equals("githubRepoPaths")) updated.put(key, value);
-                });
-            }
+            root.forEach((key, value) -> {
+                if (!key.equals("projects") && !key.equals("githubRepoPaths")) updated.put(key, value);
+            });
             updated.put("projects", projectsBuilder.build());
             updated.put("githubRepoPaths", pathsBuilder.build());
             // Pretty style differs from Jackson's; Claude Code parses the file, so only the shape matters.
@@ -583,6 +583,14 @@ public class GuestProvisioning {
         } catch (Exception e) {
             System.err.println("Warning: failed to update " + CLAUDE_JSON_PATH + ": " + e.getMessage());
         }
+    }
+
+    /** The object under {@code key}, empty when absent; anything else there is corrupt. */
+    private static JqValue objectOrEmpty(JqObject root, String key) {
+        if (!root.keys().contains(key)) return JqObject.builder(0).build();
+        var value = root.getField(key);
+        if (value.isObject()) return value;
+        throw new IllegalStateException("'" + key + "' is not an object in " + CLAUDE_JSON_PATH);
     }
 
     public static String expandHome(String path) {
