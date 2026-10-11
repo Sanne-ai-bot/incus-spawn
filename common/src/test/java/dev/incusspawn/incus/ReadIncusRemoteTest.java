@@ -98,10 +98,70 @@ class ReadIncusRemoteTest {
     }
 
     @Test
-    void theWellKnownImagesRemoteStillResolvesPastABrokenFile() throws Exception {
-        var file = write("config.yml", "remotes: [\n");
-        var remote = IncusClient.readIncusRemote("images", List.of(file), new ArrayList<>());
+    void aBrokenFileStopsTheWellKnownFallback() throws Exception {
+        // isx cannot see what the file says: it may define the mirror the user meant for 'images'.
+        // The incus CLI refuses a config it cannot decode, too.
+        var file = write("config.yml", "remotes:\n  images:\n    addr: https://mirror.example.org\n   protocol: [\n");
+        var problems = new ArrayList<String>();
+        assertNull(IncusClient.readIncusRemote("images", List.of(file), problems));
+        assertEquals(1, problems.size(), problems.toString());
+    }
+
+    @Test
+    void theWellKnownImagesRemoteResolvesWhenNoFileDefinesIt() throws Exception {
+        var file = write("config.yml", "remotes:\n  other:\n    addr: https://example.org\n");
+        var remote = IncusClient.readIncusRemote("images", List.of(file, dir.resolve("absent.yml")), new ArrayList<>());
         assertNotNull(remote);
         assertEquals("https://images.linuxcontainers.org", remote.addr());
+    }
+
+    @Test
+    void anEntryThatIsNotAMappingSaysAMappingIsNeeded() throws Exception {
+        var file = write("config.yml", "remotes:\n  mine: https://example.org\n");
+        var problems = new ArrayList<String>();
+        assertNull(IncusClient.readIncusRemote("mine", List.of(file), problems));
+        assertTrue(problems.getFirst().endsWith("defines remote 'mine' as a single value, where isx needs a mapping with an 'addr'"),
+                problems.getFirst());
+    }
+
+    @Test
+    void anAddrThatIsNotAValueIsNamedAsSuch() throws Exception {
+        var file = write("config.yml", "remotes:\n  mine:\n    addr:\n      url: https://example.org\n");
+        var problems = new ArrayList<String>();
+        assertNull(IncusClient.readIncusRemote("mine", List.of(file), problems));
+        assertTrue(problems.getFirst().endsWith("with an 'addr' that is not a URL"), problems.getFirst());
+    }
+
+    @Test
+    void aBlankOrNonStringAddrIsNotAServer() throws Exception {
+        for (var addr : List.of("' '", "true", "42")) {
+            var file = write("config.yml", "remotes:\n  mine:\n    addr: " + addr + "\n");
+            var problems = new ArrayList<String>();
+            assertNull(IncusClient.readIncusRemote("mine", List.of(file), problems), addr);
+            assertEquals(1, problems.size(), problems.toString());
+        }
+    }
+
+    @Test
+    void anEmptyRemotesSectionIsNoProblem() throws Exception {
+        var file = write("config.yml", "remotes:\n");
+        var problems = new ArrayList<String>();
+        assertNotNull(IncusClient.readIncusRemote("images", List.of(file), problems));
+        assertTrue(problems.isEmpty(), problems.toString());
+    }
+
+    @Test
+    void aRemotesThatIsNotAMappingStopsTheWellKnownFallback() throws Exception {
+        // A list may hold the mirror the user meant for 'images'.
+        var file = write("config.yml", "remotes:\n  - name: images\n    addr: https://mirror.example.org\n");
+        var problems = new ArrayList<String>();
+        assertNull(IncusClient.readIncusRemote("images", List.of(file), problems));
+        assertTrue(problems.getFirst().endsWith("has a 'remotes:' that is not a mapping of remote names"), problems.getFirst());
+    }
+
+    @Test
+    void everyProblemLosesItsTrailingPeriodInTheMessage() {
+        var msg = IncusClient.unusableRemoteMsg("mine", "mine:x", List.of("/a: one.", "/b: two."), false);
+        assertEquals("Cannot resolve Incus remote 'mine' for image 'mine:x': /a: one; /b: two.", msg);
     }
 }
