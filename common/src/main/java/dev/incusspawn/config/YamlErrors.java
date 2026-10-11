@@ -109,6 +109,12 @@ public final class YamlErrors {
             var shape = describeJjqMismatch(mismatch);
             if (shape != null) return prefix + shape;
         }
+        // A converter's "expects ..." (IntegerConverter) names the field as written, like a shape error
+        if (ex instanceof JqMapperException mapper && !(ex instanceof ShapeMismatchException)
+                && raw.startsWith("expects ") && !written(mapper).isEmpty()) {
+            var reason = raw.endsWith("'") && raw.contains(" at '$") ? raw.substring(0, raw.lastIndexOf(" at '$")) : raw;
+            return prefix + "'" + written(mapper) + "' " + reason;
+        }
 
         // Fallback: extract the first meaningful message line
         var firstLine = extractFirstMeaningfulLine(raw);
@@ -146,8 +152,8 @@ public final class YamlErrors {
      * through to the generic path.
      */
     private static String describeJjqMismatch(ShapeMismatchException ex) {
-        var path = ex.displayPath();
-        boolean root = path == null || path.isEmpty() || path.equals("$");
+        var path = written(ex);
+        boolean root = path.isEmpty();
         if (ex.expected() == JqValue.Type.BOOLEAN && ex.actual() == JqValue.Type.STRING && !root) {
             return "'" + path + "' expects true or false";
         }
@@ -187,6 +193,16 @@ public final class YamlErrors {
             default -> "";
         };
         return field + " expects " + expected + ", but got " + received + hint;
+    }
+
+    /** Where a binding failed, as the file writes it: {@code mcp.orphan-grace-hours}, {@code repos[1].url}. */
+    static String written(JqMapperException ex) {
+        var path = new StringBuilder();
+        for (var segment : ex.pathSegments()) {
+            if (segment instanceof Integer index) path.append('[').append(index).append(']');
+            else path.append(path.isEmpty() ? "" : ".").append(segment);
+        }
+        return path.toString();
     }
 
     /** Last dotted segment of a {@code $.a[0].b}-style path, without indices. */
