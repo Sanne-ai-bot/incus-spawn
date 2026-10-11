@@ -335,6 +335,15 @@ class YamlSemanticsTest {
     }
 
     @Test
+    void anEnvFieldWrittenAsAMappingOrListIsRefused() {
+        var mapping = assertThrows(java.io.IOException.class, () -> image("env:\n  - name: A\n    value:\n      k: v\n"));
+        assertTrue(friendly(mapping).contains("Env entry field 'value' must be a single value"), friendly(mapping));
+        assertFalse(friendly(mapping).contains("YAML parser"), "no hint about the parser bug jjq 0.2.3 fixed: " + friendly(mapping));
+        var list = assertThrows(java.io.IOException.class, () -> image("env:\n  - name: [A]\n    value: x\n"));
+        assertTrue(friendly(list).contains("Env entry field 'name' must be a single value"), friendly(list));
+    }
+
+    @Test
     void anEmptyEnvValueAsTheLastKeyIsEmpty() throws Exception {
         var env = image("env:\n  - name: FOO\n    strategy: append\n    value:\n").getEnv().getFirst();
         assertEquals("", env.getValue());
