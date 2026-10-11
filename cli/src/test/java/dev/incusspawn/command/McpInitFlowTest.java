@@ -81,6 +81,22 @@ class McpInitFlowTest {
         prompts.assertFullyConsumed();
     }
 
+    interface Body {
+        void run() throws Exception;
+    }
+
+    private static String captureStdout(Body body) throws Exception {
+        var original = System.out;
+        var buffer = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            body.run();
+        } finally {
+            System.setOut(original);
+        }
+        return buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     private static List<String> approved() {
         return SpawnConfig.load().mcp().templates();
     }
@@ -120,8 +136,8 @@ class McpInitFlowTest {
         var host = new Host();
         host.registered = true;
         var config = seed("mcp:\n  templates: [tpl-dev, tpl-agent]\n");
-        // Enabled is the default now: Enter keeps it; Enter keeps tpl-agent; Enter declines tpl-agent-java.
-        run(host, config, ScriptedPrompts.lines("", "", ""));
+        // Already set up: 't' to change; Enter keeps tpl-agent; Enter declines tpl-agent-java.
+        run(host, config, ScriptedPrompts.lines("t", "", ""));
         assertEquals(List.of(), host.registrations, "already registered: not again");
         assertEquals(List.of("tpl-dev", "tpl-agent"), approved(),
                 "tpl-dev was approved by hand and is not this step's to drop");
@@ -132,19 +148,64 @@ class McpInitFlowTest {
         var host = new Host();
         host.registered = true;
         var config = seed("mcp:\n  templates: [tpl-agent, tpl-agent-java]\n  max-instances: 5\n");
-        run(host, config, ScriptedPrompts.lines("y", "n", "y"));
+        run(host, config, ScriptedPrompts.lines("t", "n", "y"));
         assertEquals(List.of("tpl-agent-java"), approved());
         assertEquals(5, SpawnConfig.load().mcp().maxInstances(), "the other mcp settings survive");
     }
 
     @Test
-    void decliningLeavesAnExistingSetupAlone() throws Exception {
+    void turningItOffOnlyShowsHow() throws Exception {
         var host = new Host();
         host.registered = true;
         var seeded = "mcp:\n  templates: [tpl-agent]\n";
         var config = seed(seeded);
         run(host, config, ScriptedPrompts.lines("n"));
         assertUnchanged(seeded);
+    }
+
+    @Test
+    void registeredWithNothingApprovedStillAsksAboutEachTemplate() throws Exception {
+        var host = new Host();
+        host.registered = true;
+        // Enabled is the default: Enter keeps it; then tpl-agent yes, tpl-agent-java no.
+        run(host, new SpawnConfig(), ScriptedPrompts.lines("", "y", "n"));
+        assertEquals(List.of(), host.registrations);
+        assertEquals(List.of("tpl-agent"), approved());
+    }
+
+    @Test
+    void aReRunKeepsAnExistingSetupWithOneEnter() throws Exception {
+        // #1292: re-running init for something else must not walk through every template again.
+        var host = new Host();
+        host.registered = true;
+        var seeded = "mcp:\n  templates: [tpl-agent]\n";
+        var out = captureStdout(() -> run(host, seed(seeded), ScriptedPrompts.lines("")));
+        assertUnchanged(seeded);
+        assertTrue(out.contains("Not approved: tpl-agent-java."), "a template not yet approved is named: " + out);
+
+        // 'isx init </dev/null': the one question reads end of input, which keeps it too.
+        host.setupMcp(seed(seeded), ScriptedPrompts.lines(), templates());
+        assertUnchanged(seeded);
+        assertEquals(List.of(), host.registrations);
+    }
+
+    @Test
+    void anUnknownChoiceAsksAgain() throws Exception {
+        var host = new Host();
+        host.registered = true;
+        var config = seed("mcp:\n  templates: [tpl-agent]\n");
+        run(host, config, ScriptedPrompts.lines("y", "t", "n", "y"));
+        assertEquals(List.of("tpl-agent-java"), approved());
+    }
+
+    @Test
+    void halfASetupStillGetsTheWholeStep() throws Exception {
+        // Templates approved by hand but never registered: there is something to finish.
+        var host = new Host();
+        var config = seed("mcp:\n  templates: [tpl-agent]\n");
+        run(host, config, ScriptedPrompts.lines("", "", "y"));
+        assertEquals(List.of("/home/u/.local/bin/isx"), host.registrations);
+        assertEquals(List.of("tpl-agent", "tpl-agent-java"), approved());
     }
 
     @Test
