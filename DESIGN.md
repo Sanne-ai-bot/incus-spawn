@@ -1281,6 +1281,7 @@ Only an unreachable upstream serves an older one.
   There is no upload size limit: the relay stays transparent, and with nothing held there is nothing to protect.
   A relay whose response ends, an error included, before the upload was all read closes the client's connection (`Connection: close` on a response not yet sent) rather than read the rest only to discard it; left unread on a keep-alive connection, it would stall the next request.
   So upstream's early answer (a `413`, a `401`) reaches the client while it is still sending, and a failed connect reads no more of the upload.
+  A client that sends `Expect: 100-continue` (curl above 1 MB) gets upstream's `100`: the relay sends upstream the head at once instead of on the first body byte, which the client withheld until its own timeout, about a second per upload.
   A request with a body is therefore never served from a cache (all of them are keyed by path alone).
   A relay whose client left before its body was all sent resets its upstream request, also when it left while the body was paused, which gives the connection back to the pool instead of holding it for good.
 - *Offline.*

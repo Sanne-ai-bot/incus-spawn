@@ -373,8 +373,7 @@ class Upstream {
      */
     private static void pipeRequest(HttpServerRequest clientReq, HttpClientRequest upReq, RelayWatchdog watchdog) {
         if (clientReq.getHeader("Content-Length") == null) upReq.setChunked(true);
-        watchdog.uploading(true);
-        clientReq.handler(chunk -> {
+        io.vertx.core.Handler<Buffer> pump = chunk -> {
             upReq.write(chunk);
             watchdog.touch();
             if (upReq.writeQueueFull()) {
@@ -386,7 +385,21 @@ class Upstream {
                     clientReq.resume();
                 });
             }
-        });
+        };
+        if ("100-continue".equalsIgnoreCase(clientReq.getHeader("Expect"))) {
+            // The client sends no body until it is told to: send upstream the head now, and relay its
+            // 100. Waiting for that is upstream's time; the client's starts with its first byte
+            upReq.continueHandler(v -> clientReq.response().writeContinue());
+            upReq.sendHead();
+            clientReq.handler(first -> {
+                watchdog.uploading(true);
+                clientReq.handler(pump);
+                pump.handle(first);
+            });
+        } else {
+            watchdog.uploading(true);
+            clientReq.handler(pump);
+        }
         clientReq.endHandler(v -> {
             upReq.end();
             watchdog.uploading(false);
