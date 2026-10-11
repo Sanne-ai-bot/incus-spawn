@@ -36,11 +36,15 @@ public final class InstanceDetailView {
     private final ModalRenderer modal;
     private final TuiTheme theme;
 
+    /** Now, for the "Created:" row's age; given, so a test can pin it. */
+    private final java.util.function.Supplier<java.time.LocalDateTime> clock;
+
     private int instanceDetailScrollOffset;
 
-    InstanceDetailView(ModalRenderer modal, TuiTheme theme) {
+    InstanceDetailView(ModalRenderer modal, TuiTheme theme, java.util.function.Supplier<java.time.LocalDateTime> clock) {
         this.modal = modal;
         this.theme = theme;
+        this.clock = clock;
     }
 
     /** Back at the top, as each F3 opens it. */
@@ -187,7 +191,7 @@ public final class InstanceDetailView {
                 Span.styled(info.parent().isEmpty() ? "-" : OutputFormat.oneLine(info.parent()), lineStyle))));
 
         if (!info.created().isEmpty()) {
-            var age = Metadata.ageDescription(info.created());
+            var age = Metadata.ageDescription(info.created(), clock.get());
             lines.add(Line.from(List.of(
                     Span.styled("Created:        ", labelStyle),
                     Span.styled(OutputFormat.oneLine(info.created()), lineStyle),

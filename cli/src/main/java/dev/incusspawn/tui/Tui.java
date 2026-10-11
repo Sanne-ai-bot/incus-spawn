@@ -117,7 +117,7 @@ public class Tui {
                 @Override public String currentVersion() { return Tui.this.currentVersion(); }
             }, java.time.LocalDateTime::now);
 
-    private final InstanceDetailView instanceDetail = new InstanceDetailView(modal, theme);
+    private final InstanceDetailView instanceDetail = new InstanceDetailView(modal, theme, java.time.LocalDateTime::now);
 
     private final ActionsMenu actionsMenu = new ActionsMenu(modal, theme);
 
