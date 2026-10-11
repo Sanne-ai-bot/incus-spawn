@@ -398,6 +398,18 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void aVmBuildPutsItsRootOnVirtioBlkInTheSameWrite() {
+        // The base VM image's own kernel has no virtio-scsi, Incus's default root bus (#1255)
+        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped", Map.of());
+        InstanceLifecycle.prepareVmBuild(daemon.client(), NAME);
+        assertBudget(2, daemon, "prepareVmBuild");
+        var root = daemon.instance(NAME).path("devices").path("root");
+        assertEquals("virtio-blk", root.path("io.bus").asText(), root.toString());
+        assertEquals("/", root.path("path").asText(), "the profile's root device, overridden, not replaced");
+        assertEquals("default", root.path("pool").asText());
+    }
+
+    @Test
     void preparingAVmBuildKeepsSomeoneElsesRawQemuConf() {
         var custom = "[machine]\nfoo = \"bar\"\n";
         var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped",

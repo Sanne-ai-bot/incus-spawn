@@ -184,9 +184,10 @@ public final class InstanceLifecycle {
 
     /**
      * What every VM template build sets before its first start, in one write: the default memory
-     * size, free page reporting unless someone else's {@code raw.qemu.conf} is there, and
-     * Secure Boot off ({@link #SECURE_BOOT}). A build copied from a parent gets it too, since a
-     * parent built by an older isx carries none of it.
+     * size, free page reporting unless someone else's {@code raw.qemu.conf} is there,
+     * Secure Boot off ({@link #SECURE_BOOT}) and the root disk on virtio-blk ({@link #ROOT_BUS}).
+     * A build copied from a parent gets it too, since a parent built by an older isx carries
+     * none of it. Branches copy the template's devices, so they boot the same way.
      */
     public static void prepareVmBuild(IncusClient incus, String name) {
         var read = incus.readInstance(name);
@@ -198,8 +199,18 @@ public final class InstanceLifecycle {
             update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
         }
         update.config(SECURE_BOOT, "false");
+        update.device("root", ROOT_BUS, "virtio-blk");
         incus.update(name, read, update);
     }
+
+    /**
+     * The root disk's bus. Incus defaults to virtio-scsi, which the base VM image's own kernel
+     * does not have: it boots with no initrd and no modules, and mounts its root from virtio-blk
+     * (#1255). The stock Fedora kernel builds virtio-blk in as well, so an image built from it
+     * boots either way. virtio-blk is also the cheaper path per I/O: about 18 us less per request
+     * at queue depth 1 than virtio-scsi, whose SCSI layer it skips in the guest and in QEMU (#810).
+     */
+    static final String ROOT_BUS = "io.bus";
 
     static final String RAW_QEMU_CONF = "raw.qemu.conf";
 
