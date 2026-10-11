@@ -4,6 +4,7 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.proxy.ApiTrafficLog;
+import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.DumpProxy;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -19,9 +20,15 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TreeSet;
 
 @CommandDefinition(
         name = "proxy",
@@ -32,6 +39,7 @@ import java.util.Map;
                 ProxyCommand.Stop.class,
                 ProxyCommand.Restart.class,
                 ProxyCommand.Status.class,
+                ProxyCommand.Activity.class,
                 ProxyCommand.Install.class,
                 ProxyCommand.Uninstall.class,
                 ProxyCommand.Logs.class,
@@ -218,6 +226,163 @@ public class ProxyCommand extends BaseCommand {
             record.put("restart_helps", drifted ? drift.restartHelps() : null);
             record.put("check_error", checkError);
             return record;
+        }
+    }
+
+    @CommandDefinition(
+            name = "activity",
+            description = "Show what each instance has sent through the proxy, by domain and in model calls",
+            generateHelp = true
+    )
+    public static class Activity extends BaseCommand {
+
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", description = "Output format: table (default), plain or json")
+        String format;
+
+        @Option(name = "by-domain", hasValue = false, description = "One row per instance and domain")
+        boolean byDomain;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
+            ProxyActivity activity;
+            try {
+                activity = ProxyActivity.fetch(ProxyHealthCheck.healthAddress(RuntimeServices.incus()));
+            } catch (ProxyActivity.Unavailable e) {
+                System.err.println("Cannot read the proxy's activity: " + e.getMessage()
+                        + ". Check it with: isx proxy status");
+                return CommandResult.valueOf(1);
+            }
+            print(activity, outputFormat, byDomain, ZoneId.systemDefault(), Instant.now(), System.out);
+            return CommandResult.SUCCESS;
+        }
+
+        private static final String DOMAIN_ROW = "%-30s %-28s %9s %9s %10s %10s  %s%n";
+        private static final String ROW = "%-30s %9s %9s %10s %10s  %-14s %11s %13s%n";
+
+        static void print(ProxyActivity activity, OutputFormat format, boolean byDomain, ZoneId zone,
+                          Instant now, PrintStream out) {
+            var records = byDomain ? domainRecords(activity, zone) : records(activity, zone);
+            if (format != OutputFormat.TABLE) {
+                format.print(out, records);
+                return;
+            }
+            if (byDomain) {
+                out.printf(DOMAIN_ROW, "INSTANCE", "DOMAIN", "REQUESTS", "IN FLIGHT", "SENT", "RECEIVED", "LAST ACTIVITY");
+                for (var r : records) {
+                    out.printf(DOMAIN_ROW, name(r), r.get("domain"), r.get("requests"), r.get("in_flight"),
+                            size(r.get("request_bytes")), size(r.get("response_bytes")), ago(r.get("last_activity_at"), now));
+                }
+                return;
+            }
+            out.printf(ROW, "INSTANCE", "REQUESTS", "IN FLIGHT", "SENT", "RECEIVED", "LAST ACTIVITY", "MODEL CALLS",
+                    "OUTPUT TOKENS");
+            for (var r : records) {
+                out.printf(ROW, name(r), r.get("requests"), r.get("in_flight"), size(r.get("request_bytes")),
+                        size(r.get("response_bytes")), ago(r.get("last_activity_at"), now),
+                        dash(r.get("model_requests")), dash(r.get("output_tokens")));
+            }
+        }
+
+        private static String name(Map<String, Object> record) {
+            var instance = record.get("instance");
+            return instance == null ? "(unattributed)" : OutputFormat.oneLine(instance.toString());
+        }
+
+        private static String size(Object bytes) {
+            return CleanCommand.formatSize((long) bytes);
+        }
+
+        private static Object dash(Object value) {
+            return value == null ? "-" : value;
+        }
+
+        /**
+         * Seconds, not {@code Metadata.ageDescription}'s minutes: "just now" cannot tell an agent
+         * that answered a second ago from one silent for most of a minute.
+         */
+        private static String ago(Object iso, Instant now) {
+            if (iso == null) return "-";
+            var seconds = Math.max(0, java.time.Duration.between(java.time.OffsetDateTime.parse(iso.toString()).toInstant(), now).toSeconds());
+            if (seconds < 60) return seconds + "s ago";
+            if (seconds < 3600) return seconds / 60 + "m ago";
+            if (seconds < 86400) return seconds / 3600 + "h ago";
+            return seconds / 86400 + "d ago";
+        }
+
+        /**
+         * The fields of {@code isx proxy activity --format=plain|json}, one record per instance the
+         * proxy knows, by name, then one whose {@code instance} is {@code null}: traffic from no
+         * known instance (the host, or an address the proxy has not listed), whose model calls
+         * are not counted ({@code null}). In order: add to the end, never rename. Counts run from
+         * {@code counting_since}; two reads subtract only with the same one. The {@code requests}
+         * to {@code response_bytes} fields are all traffic, model calls included; the
+         * {@code model_} ones and the tokens are model calls alone.
+         */
+        static List<Map<String, Object>> records(ProxyActivity activity, ZoneId zone) {
+            var records = new ArrayList<Map<String, Object>>();
+            for (var name : new TreeSet<>(activity.instances().keySet())) {
+                var i = activity.of(name);
+                records.add(record(name, i.countingSince(), i.traffic().total(), i, zone));
+            }
+            records.add(record(null, activity.unattributedSince(), activity.unattributed().total(), null, zone));
+            return records;
+        }
+
+        private static Map<String, Object> record(String instance, Instant since, ProxyActivity.Counts traffic,
+                                                  ProxyActivity.Instance model, ZoneId zone) {
+            var record = traffic(instance, null, since, traffic, zone);
+            record.put("model_requests", model == null ? null : model.requests());
+            record.put("model_in_flight", model == null ? null : model.inFlight());
+            record.put("last_model_request_at", model == null ? null : iso(model.lastRequestAt(), zone));
+            record.put("last_model_response_at", model == null ? null : iso(model.lastResponseAt(), zone));
+            record.put("input_tokens", model == null ? null : model.inputTokens());
+            record.put("output_tokens", model == null ? null : model.outputTokens());
+            record.put("cache_read_input_tokens", model == null ? null : model.cacheReadInputTokens());
+            record.put("cache_creation_input_tokens", model == null ? null : model.cacheCreationInputTokens());
+            return record;
+        }
+
+        /**
+         * The fields of {@code --by-domain}: one record per instance and domain it reached, in the
+         * order of {@link #records}, {@code domain} being an intercepted domain (a subdomain counts
+         * under it) or {@code (other)}. In order: add to the end, never rename.
+         */
+        static List<Map<String, Object>> domainRecords(ProxyActivity activity, ZoneId zone) {
+            var records = new ArrayList<Map<String, Object>>();
+            for (var name : new TreeSet<>(activity.instances().keySet())) {
+                var i = activity.of(name);
+                addDomains(records, name, i.countingSince(), i.traffic(), zone);
+            }
+            addDomains(records, null, activity.unattributedSince(), activity.unattributed(), zone);
+            return records;
+        }
+
+        private static void addDomains(List<Map<String, Object>> records, String instance, Instant since,
+                                       ProxyActivity.Traffic traffic, ZoneId zone) {
+            for (var domain : new TreeSet<>(traffic.byDomain().keySet())) {
+                records.add(traffic(instance, domain, since, traffic.byDomain().get(domain), zone));
+            }
+        }
+
+        /** {@code instance}, {@code domain} unless null, then the traffic fields. */
+        private static Map<String, Object> traffic(String instance, String domain, Instant since,
+                                                   ProxyActivity.Counts counts, ZoneId zone) {
+            var record = new LinkedHashMap<String, Object>();
+            record.put("instance", instance);
+            if (domain != null) record.put("domain", domain);
+            record.put("counting_since", iso(since, zone));
+            record.put("requests", counts.requests());
+            record.put("in_flight", counts.inFlight());
+            record.put("last_activity_at", iso(counts.lastActivityAt(), zone));
+            record.put("request_bytes", counts.requestBytes());
+            record.put("response_bytes", counts.responseBytes());
+            return record;
+        }
+
+        private static String iso(Instant instant, ZoneId zone) {
+            return instant == null ? null : instant.atZone(zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         }
     }
 

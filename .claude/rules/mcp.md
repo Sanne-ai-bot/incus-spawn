@@ -115,7 +115,7 @@ A replay is not refused by `max-concurrent-tasks`: it starts nothing.
 **Activity (#898).**
 `instance_activity` is a read of the proxy's `/activity` (`ProxyActivity`, `common`) through `InstanceBackend.proxyActivity()`, after `requireOwned()` (a stopped instance has its last counts).
 The health address is resolved once and kept until a read fails; an unreachable or older proxy is a `ToolError` naming `isx proxy status`, never `requireProxy`.
-The result's field names are the contract: `counting_since` (per instance, when the proxy created its counters; absent only for an instance the proxy does not know; a client subtracts two reads only when both carry the same one), `requests`, `requests_in_flight`, `last_request_at`, `last_response_at`, `idle_seconds` (only with nothing in flight), and the API's own `input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`.
+The result's field names are the contract: `counting_since` (per instance, when the proxy created its counters; absent only for an instance the proxy does not know; a client subtracts two reads only when both carry the same one), `requests`, `requests_in_flight`, `last_request_at`, `last_response_at`, `idle_seconds` (only with nothing in flight), and the API's own `input_tokens`/`output_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`, then all its traffic (#935): `traffic_requests`, `traffic_in_flight`, `last_traffic_at`, `traffic_request_bytes`, `traffic_response_bytes`.
 Grow it additively.
 
 **Task notifications (#1014).**

@@ -384,6 +384,26 @@ class McpToolsTest {
     }
 
     @Test
+    void activityAddsAllOfTheInstancesTrafficToItsModelCalls() throws Exception {
+        // #935: only added fields; the model-call ones above keep their names and meaning
+        var name = createJava();
+        var at = java.time.Instant.parse("2026-10-11T10:00:00Z");
+        backend.activity = new dev.incusspawn.proxy.ProxyActivity(Map.of(
+                name, new dev.incusspawn.proxy.ProxyActivity.Instance(at, 1, 0, at, at, 0, 0, 0, 0,
+                        new dev.incusspawn.proxy.ProxyActivity.Traffic(
+                                new dev.incusspawn.proxy.ProxyActivity.Counts(7, 2, at.plusSeconds(5), 300, 9000), Map.of()))));
+
+        var node = JsonRpc.JSON.readTree(text(call("instance_activity", "{\"instance\":\"" + name + "\"}")));
+
+        assertEquals(1, node.path("requests").asLong());
+        assertEquals(7, node.path("traffic_requests").asLong());
+        assertEquals(2, node.path("traffic_in_flight").asLong());
+        assertEquals("2026-10-11T10:00:05Z", node.path("last_traffic_at").asText());
+        assertEquals(300, node.path("traffic_request_bytes").asLong());
+        assertEquals(9000, node.path("traffic_response_bytes").asLong());
+    }
+
+    @Test
     void anInstanceThatNeverCalledReadsAsZeroAndACallInFlightIsNotIdle() throws Exception {
         var name = createJava();
         var silent = JsonRpc.JSON.readTree(text(call("instance_activity", "{\"instance\":\"" + name + "\"}")));

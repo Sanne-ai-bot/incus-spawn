@@ -267,6 +267,11 @@ final class OutputSchemas {
                 .integer("output_tokens", null, true)
                 .integer("cache_read_input_tokens", null, true)
                 .integer("cache_creation_input_tokens", null, true)
+                .integer("traffic_requests", "All requests through the proxy, model calls included", true)
+                .integer("traffic_in_flight", "Requests and open WebSockets not yet ended", true)
+                .string("last_traffic_at", "ISO-8601: when a request last started or ended", false)
+                .integer("traffic_request_bytes", "Body bytes sent, counted as each request ends", true)
+                .integer("traffic_response_bytes", "Body bytes received, counted as each request ends", true)
                 .build();
     }
 

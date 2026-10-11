@@ -470,4 +470,85 @@ class QueryCommandFormatTest {
                 }
                 """, json(BranchCommand.record("dev-2")));
     }
+
+    private static dev.incusspawn.proxy.ProxyActivity activity() {
+        var at = java.time.Instant.parse("2026-10-11T10:00:00Z");
+        var traffic = new dev.incusspawn.proxy.ProxyActivity.Traffic(
+                new dev.incusspawn.proxy.ProxyActivity.Counts(5, 1, at.plusSeconds(60), 300, 4000),
+                Map.of("api.anthropic.com", new dev.incusspawn.proxy.ProxyActivity.Counts(3, 1, at.plusSeconds(60), 200, 3000),
+                        "github.com", new dev.incusspawn.proxy.ProxyActivity.Counts(2, 0, at.plusSeconds(30), 100, 1000)));
+        return new dev.incusspawn.proxy.ProxyActivity(
+                Map.of("worker", new dev.incusspawn.proxy.ProxyActivity.Instance(at, 2, 1, at.plusSeconds(60), at.plusSeconds(45),
+                        10, 20, 30, 40, traffic)),
+                at.minusSeconds(3600),
+                new dev.incusspawn.proxy.ProxyActivity.Traffic(
+                        new dev.incusspawn.proxy.ProxyActivity.Counts(1, 0, at, 0, 50),
+                        Map.of("registry.npmjs.org", new dev.incusspawn.proxy.ProxyActivity.Counts(1, 0, at, 0, 50))));
+    }
+
+    @Test
+    void proxyActivityHasOneRecordPerInstanceThenTheUnattributedOne() {
+        var records = ProxyCommand.Activity.records(activity(), java.time.ZoneOffset.UTC);
+        assertEquals("""
+                [ {
+                  "instance" : "worker",
+                  "counting_since" : "2026-10-11T10:00:00Z",
+                  "requests" : 5,
+                  "in_flight" : 1,
+                  "last_activity_at" : "2026-10-11T10:01:00Z",
+                  "request_bytes" : 300,
+                  "response_bytes" : 4000,
+                  "model_requests" : 2,
+                  "model_in_flight" : 1,
+                  "last_model_request_at" : "2026-10-11T10:01:00Z",
+                  "last_model_response_at" : "2026-10-11T10:00:45Z",
+                  "input_tokens" : 10,
+                  "output_tokens" : 20,
+                  "cache_read_input_tokens" : 30,
+                  "cache_creation_input_tokens" : 40
+                }, {
+                  "instance" : null,
+                  "counting_since" : "2026-10-11T09:00:00Z",
+                  "requests" : 1,
+                  "in_flight" : 0,
+                  "last_activity_at" : "2026-10-11T10:00:00Z",
+                  "request_bytes" : 0,
+                  "response_bytes" : 50,
+                  "model_requests" : null,
+                  "model_in_flight" : null,
+                  "last_model_request_at" : null,
+                  "last_model_response_at" : null,
+                  "input_tokens" : null,
+                  "output_tokens" : null,
+                  "cache_read_input_tokens" : null,
+                  "cache_creation_input_tokens" : null
+                } ]
+                """, json(records));
+        assertEquals("worker\t2026-10-11T10:00:00Z\t5\t1\t2026-10-11T10:01:00Z\t300\t4000\t2\t1"
+                        + "\t2026-10-11T10:01:00Z\t2026-10-11T10:00:45Z\t10\t20\t30\t40\n"
+                        + "-\t2026-10-11T09:00:00Z\t1\t0\t2026-10-11T10:00:00Z\t0\t50\t-\t-\t-\t-\t-\t-\t-\t-\n",
+                plain(records));
+    }
+
+    @Test
+    void proxyActivityByDomainHasOneRecordPerInstanceAndDomain() {
+        assertEquals("""
+                worker\tapi.anthropic.com\t2026-10-11T10:00:00Z\t3\t1\t2026-10-11T10:01:00Z\t200\t3000
+                worker\tgithub.com\t2026-10-11T10:00:00Z\t2\t0\t2026-10-11T10:00:30Z\t100\t1000
+                -\tregistry.npmjs.org\t2026-10-11T09:00:00Z\t1\t0\t2026-10-11T10:00:00Z\t0\t50
+                """, plain(ProxyCommand.Activity.domainRecords(activity(), java.time.ZoneOffset.UTC)));
+        assertEquals(List.of("instance", "domain", "counting_since", "requests", "in_flight", "last_activity_at",
+                        "request_bytes", "response_bytes"),
+                List.copyOf(ProxyCommand.Activity.domainRecords(activity(), java.time.ZoneOffset.UTC).get(0).keySet()));
+    }
+
+    @Test
+    void proxyActivityTableNamesTheUnattributedRow() {
+        var bytes = new ByteArrayOutputStream();
+        ProxyCommand.Activity.print(activity(), OutputFormat.TABLE, false, java.time.ZoneOffset.UTC,
+                java.time.Instant.parse("2026-10-11T10:02:00Z"), new PrintStream(bytes, true, StandardCharsets.UTF_8));
+        var table = bytes.toString(StandardCharsets.UTF_8);
+        assertTrue(table.contains("(unattributed)"), table);
+        assertTrue(table.lines().anyMatch(l -> l.startsWith("worker") && l.contains("1m ago")), table);
+    }
 }
