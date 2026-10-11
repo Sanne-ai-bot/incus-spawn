@@ -626,6 +626,18 @@ class DelegationToolsTest {
         assertTrue(text(call("task_status", "{\"task_id\":\"" + task + "\"}")).contains("permission_denials: 1"));
     }
 
+    /** A turn count that is not an int is left out, not wrapped (Jackson's canConvertToInt). */
+    @Test
+    void aTurnCountBeyondTheIntRangeIsLeftOut() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        finishedEvents = """
+                {"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":99999999999,"total_cost_usd":0.1}
+                """;
+        var result = structured(call("task_result", "{\"task_id\":\"" + task + "\"}"));
+        assertFalse(((io.hyperfoil.tools.jjq.value.JqObject) result).keys().contains("turns"), result.toJsonString());
+    }
+
     @Test
     void askAnswersInsteadOfReturningTheText() throws Exception {
         var task = delegateFresh();
