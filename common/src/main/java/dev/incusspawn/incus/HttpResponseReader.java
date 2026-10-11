@@ -28,12 +28,13 @@ final class HttpResponseReader {
     /**
      * Status line and the headers the transports act on.
      * @param closeDelimited no length framing: the body runs until the server closes
+     * @param etag the {@code ETag} header as sent, or null
      */
-    record Head(int statusCode, int contentLength, boolean chunked, boolean connectionClose) {
+    record Head(int statusCode, int contentLength, boolean chunked, boolean connectionClose, String etag) {
         boolean closeDelimited() { return !chunked && contentLength < 0; }
     }
 
-    record Response(int statusCode, byte[] body, boolean reusable) {}
+    record Response(int statusCode, byte[] body, boolean reusable, String etag) {}
 
     /** Read one full response. {@code reusable} is false if the server will close the connection. */
     static Response read(InputStream in) throws IOException {
@@ -49,7 +50,8 @@ final class HttpResponseReader {
         } else {
             body = in.readAllBytes();
         }
-        return new Response(head.statusCode(), body, !head.connectionClose() && !head.closeDelimited());
+        return new Response(head.statusCode(), body, !head.connectionClose() && !head.closeDelimited(),
+                head.etag());
     }
 
     /** Read the status line and headers, stopping after the blank line. */
@@ -71,6 +73,7 @@ final class HttpResponseReader {
         int contentLength = -1;
         boolean chunked = false;
         boolean close = false;
+        String etag = null;
         String line;
         while (!(line = requireLine(in, "headers")).isEmpty()) {
             var lower = line.toLowerCase();
@@ -81,9 +84,11 @@ final class HttpResponseReader {
                 chunked = true;
             } else if (lower.startsWith("connection:") && lower.contains("close")) {
                 close = true;
+            } else if (lower.startsWith("etag:")) {
+                etag = line.substring(5).trim();
             }
         }
-        return new Head(statusCode, contentLength, chunked, close);
+        return new Head(statusCode, contentLength, chunked, close, etag);
     }
 
     /**
