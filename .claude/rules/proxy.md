@@ -42,7 +42,7 @@ Key design:
   `ClaudeConfig.accountFor(Predicate)` picks the default when it qualifies, else the first that does.
   Which accounts exist and which is the default are answered by `AccountResolver` against `ClaudeConfig.ACCOUNT_SHAPE`, the same rule as every namespace (a pre-accounts flat file presents as the account `default`; see `config.md`), so nothing outside `ClaudeConfig` branches on Claude.
   `ClaudeConfig`'s `isOauthMode()`/`getApiKey()`/`isUseVertex()` accessors are **derived from the resolved account**, so `ProxyCredentials`, `ClaudeSetup` and `PiSetup` read them unchanged.
-  Both config classes bind Jackson **by field** (`@JsonAutoDetect` getters `NONE`) because the derived getters collide with the legacy field names -- an `@JsonIgnore` there disables the whole split property and a flat `config.yaml` silently stops deserializing.
+  Both config classes bind **by field** (`@JqVisibility` with getters and is-getters `NONE`) because the derived getters collide with the legacy field names -- binding through them would make the split property derived, and a flat `config.yaml` would silently stop deserializing.
   Account selection is **per instance** and **generic across config namespaces** -- see the next two bullets.
 - **Per-instance accounts.**
   Three layers, resolved lowest-first: the namespace's `default` in config.yaml, the template's `accounts:` map (merged per key down `ImageDef.chain()` via `resolveAccounts`), and a per-instance override (`isx branch --account <ns>=<account>`, `isx account set`; `isx account unset` removes it).

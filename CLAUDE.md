@@ -76,7 +76,7 @@ To check a change against a real Incus on a disposable Linux host, `scripts/loca
 
 - **Java 25**, **Quarkus 3.x** with aesh for CLI commands
 - **Tamboui** for the interactive TUI (terminal UI framework)
-- **Jackson YAML** for configuration/definition parsing
+- **jjq** (`io.hyperfoil.tools:jjq-*`) for YAML and JSON: definitions and `config.yaml` bind through generated `@JqMapped` mappings (`Jjq`), and JSON from Incus, MCP and the network is read with `JqValues.parseStrict`
 - **Quarkus CDI** for dependency injection (tool discovery, command wiring)
 
 ## Module Structure
