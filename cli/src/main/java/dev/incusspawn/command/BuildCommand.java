@@ -37,6 +37,7 @@ import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.command.BuildProgress.StepProgress;
 import dev.incusspawn.command.BuildProgress.TransferProgress;
@@ -164,7 +165,8 @@ public class BuildCommand extends BaseCommand {
     /** True once it has said that {@code name} is too long to be built under its temporary name. */
     static boolean reportNameTooLong(String name) {
         if (name.length() <= MAX_TEMPLATE_NAME_LENGTH) return false;
-        System.err.println("Error: '" + name + "' is too long to build: it is built as '" + name + REBUILDING_SUFFIX
+        var shown = OutputFormat.oneLine(name);
+        System.err.println("Error: '" + shown + "' is too long to build: it is built as '" + shown + REBUILDING_SUFFIX
                 + "' first, and Incus allows " + TemplateLock.MAX_INSTANCE_NAME_LENGTH
                 + " characters, so a template name may have at most " + MAX_TEMPLATE_NAME_LENGTH + ".");
         return true;
@@ -480,9 +482,10 @@ public class BuildCommand extends BaseCommand {
     }
 
     /** End a run that left templates unbuilt by naming them, as a failed build. */
-    private static void failIfAny(Collection<String> failed) {
+    static void failIfAny(Collection<String> failed) {
         if (failed.isEmpty()) return;
-        System.err.println("\n" + styled(BOLD + RED, "Some templates failed to build: " + String.join(", ", failed)));
+        System.err.println("\n" + styled(BOLD + RED, "Some templates failed to build: "
+                + OutputFormat.oneLine(String.join(", ", failed))));
         throw new BuildFailedException();
     }
 
@@ -1642,9 +1645,10 @@ public class BuildCommand extends BaseCommand {
         if (existingFingerprint != null) {
             var importedBy = importingProject(existingFingerprint);
             if (!ownerProject.isEmpty() && !ownerProject.equals(importedBy)) {
-                throw new IllegalStateException("Template '" + owner.getName() + "' is project-local ("
-                        + owner.getSource() + "),\n"
-                        + "  and its image_url would replace the existing local image '" + localAlias + "'.\n"
+                throw new IllegalStateException("Template '" + OutputFormat.oneLine(owner.getName())
+                        + "' is project-local (" + OutputFormat.oneLine(String.valueOf(owner.getSource())) + "),\n"
+                        + "  and its image_url would replace the existing local image '"
+                        + OutputFormat.oneLine(localAlias) + "'.\n"
                         + "  A project-local template may only replace images it imported itself;"
                         + " otherwise a cloned repository could swap the base image of your own templates.\n"
                         + "  Give it an image name of its own, or, if you trust it, move it to "
@@ -1774,15 +1778,18 @@ public class BuildCommand extends BaseCommand {
         if (fingerprint == null) return;
         var importedBy = importingProject(fingerprint);
         if (importedBy.isEmpty() || importedBy.equals(projectOf(rootDef))) return;
-        var refused = "Local image '" + image + "' was imported by a project-local template in "
-                + importedBy + ",\n"
-                + "  so '" + rootDef.getName() + "' will not be built on it.\n";
+        // The image, the project and the name are a project's choosing: one line each (#1228).
+        var shownImage = OutputFormat.oneLine(image);
+        var shownProject = OutputFormat.oneLine(importedBy);
+        var refused = "Local image '" + shownImage + "' was imported by a project-local template in "
+                + shownProject + ",\n"
+                + "  so '" + OutputFormat.oneLine(rootDef.getName()) + "' will not be built on it.\n";
         var reimport = " (a template with an image_url re-imports it automatically).";
         if (prompts == null) {
             throw new IllegalStateException(refused + "  Re-run the build in a terminal to remove it" + reimport);
         }
-        if (!askConfirmation(prompts, "  Delete local image '" + image + "' (imported by project "
-                + importedBy + ")?", false)) {
+        if (!askConfirmation(prompts, "  Delete local image '" + shownImage + "' (imported by project "
+                + shownProject + ")?", false)) {
             throw new IllegalStateException(refused + "  It was kept, so the build cannot start from it.");
         }
         incus.deleteImageOrThrow(fingerprint);

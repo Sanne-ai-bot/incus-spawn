@@ -486,8 +486,13 @@ public final class BuildOutput {
         System.out.println("  " + styled(BOLD, "● " + msg) + " " + styled(DIM, detail));
     }
 
-    /** Print a bold bullet header: {@code  ● Building tpl-dev  [1/3]} */
+    /**
+     * Print a bold bullet header: {@code  ● Building tpl-dev  [1/3]}. The name is a template's,
+     * which a cloned repository's {@code .incus-spawn/} can choose, so it is shown as one line
+     * ({@link OutputFormat#oneLine}, #1228).
+     */
     public static void buildHeader(String name, int index, int total) {
+        name = OutputFormat.oneLine(name);
         depth = 0;
         if (total > 1) {
             blankLine();
