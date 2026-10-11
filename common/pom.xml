@@ -24,7 +24,7 @@
                         <path>
                             <groupId>io.hyperfoil.tools</groupId>
                             <artifactId>jjq-mapper-processor</artifactId>
-                            <version>0.2.2</version>
+                            <version>${jjq.version}</version>
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
@@ -72,24 +72,23 @@
             <artifactId>nativeimage</artifactId>
             <scope>provided</scope>
         </dependency>
-        <!-- Phase 1 spike (incus-spawn-jjq-migration): jjq YAML/mapper.
-             Pinned to the locally installed snapshot; not for main. -->
+        <!-- jjq for YAML and JSON (DESIGN.md "jjq rather than Jackson"). -->
         <dependency>
             <groupId>io.hyperfoil.tools</groupId>
             <artifactId>jjq-yaml</artifactId>
-            <version>0.2.2</version>
+            <version>${jjq.version}</version>
         </dependency>
         <dependency>
             <groupId>io.hyperfoil.tools</groupId>
             <artifactId>jjq-mapper</artifactId>
-            <version>0.2.2</version>
+            <version>${jjq.version}</version>
         </dependency>
         <!-- Compile-time only: generates _JqMapping classes for @JqMapped DTOs
              (direct calls, no reflection or MethodHandle dispatch at runtime). -->
         <dependency>
             <groupId>io.hyperfoil.tools</groupId>
             <artifactId>jjq-mapper-processor</artifactId>
-            <version>0.2.2</version>
+            <version>${jjq.version}</version>
             <scope>provided</scope>
         </dependency>
 
