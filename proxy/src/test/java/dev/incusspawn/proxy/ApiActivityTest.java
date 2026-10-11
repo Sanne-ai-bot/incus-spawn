@@ -191,6 +191,19 @@ class ApiActivityTest {
         assertEquals(5, usage.output);
     }
 
+    /** A body cut short is not counted: a truncated number would read as a smaller one. */
+    @Test
+    void aTruncatedResponseCountsNoUsage() {
+        var json = new ApiActivity.UsageTap(false);
+        json.accept(bytes("{\"type\":\"message\",\"usage\":{\"input_tokens\":12"));
+        assertNull(json.finish(), "{\"input_tokens\":1234} cut after 12 must not count 12");
+
+        var stream = new ApiActivity.UsageTap(true);
+        stream.accept(bytes("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":12\n"));
+        stream.accept(bytes("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":5}}\n"));
+        assertEquals(5, stream.finish().output, "the cut event is skipped, the next one read");
+    }
+
     @Test
     void aResponseWithoutUsageReportsNone() {
         var tap = new ApiActivity.UsageTap(true);

@@ -470,7 +470,7 @@ final class ApiActivity {
         private void read(int offset, int length) {
             JqValue node;
             try {
-                node = JqValues.parse(pending, offset, length);
+                node = JqValues.parseStrict(java.util.Arrays.copyOfRange(pending, offset, offset + length));
             } catch (RuntimeException e) {
                 return;
             }
