@@ -38,7 +38,7 @@ import java.util.function.Consumer;
  * reported as {@link NameConflict}s by {@link #loadAllWithConflicts()} so callers
  * can refuse to build and insist the user disambiguate.
  */
-@RegisterForReflection
+@JqMapped
 public class ImageDef {
 
     private static final String RESOURCE_DIR = "images/";
