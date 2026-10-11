@@ -1046,20 +1046,21 @@ public class DoctorCommand extends BaseCommand {
             long running = instances.stream()
                     .filter(i -> "Running".equals(i.get("status")))
                     .count();
-            long estimated = running * 10;
+            int perContainer = IncusDiagnostics.INOTIFY_INSTANCES_PER_CONTAINER;
+            long estimated = running * perContainer;
 
             if (limit < INOTIFY_RECOMMENDED_MIN) {
                 return Finding.warn("Inotify instance limit low",
                         "max_user_instances=" + limit + " (recommended ≥" + INOTIFY_RECOMMENDED_MIN
-                                + "); at ~10 per container, builds will fail around "
-                                + (limit / 10) + " concurrent containers",
+                                + "); at ~" + perContainer + " per container, builds will fail around "
+                                + (limit / perContainer) + " concurrent containers",
                         new Remediation(
                                 "Run 'isx init' to raise fs.inotify.max_user_instances to 8192",
                                 false, null));
             }
             if (estimated >= limit * 0.7) {
                 return Finding.warn("Inotify budget nearly exhausted",
-                        running + " running containers × ~10 ≈ " + estimated
+                        running + " running containers × ~" + perContainer + " ≈ " + estimated
                                 + " instances, limit is " + limit,
                         new Remediation(
                                 "Run 'isx init' to raise fs.inotify.max_user_instances",

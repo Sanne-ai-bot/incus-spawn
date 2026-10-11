@@ -1066,10 +1066,11 @@ public class BuildCommand extends BaseCommand {
                     .filter(i -> "Running".equals(i.get("status")))
                     .count();
             // +1: the container that just died isn't Running anymore but was consuming inotify instances
-            long estimatedUsage = (running + 1) * 10;
+            long estimatedUsage = (running + 1) * IncusDiagnostics.INOTIFY_INSTANCES_PER_CONTAINER;
             if (estimatedUsage >= limit * 0.7) {
                 return "inotify instance limit likely exhausted — ~" + (running + 1)
-                        + " containers × ~10 inotify instances each ≈ " + estimatedUsage
+                        + " containers × ~" + IncusDiagnostics.INOTIFY_INSTANCES_PER_CONTAINER
+                        + " inotify instances each ≈ " + estimatedUsage
                         + ", limit is " + limit
                         + ". Fix: sudo sysctl -w fs.inotify.max_user_instances=8192"
                         + " (or run 'isx init' to apply permanently)";

@@ -25,6 +25,17 @@ class AgentContextGeneratorTest {
     }
 
     @Test
+    void pairsTheTlsSymptomsWithTheTrustHelper() {
+        // #713: an agent that unpacks a JDK or makes a venv repairs the binding rather than
+        // disabling verification.
+        var out = minimal();
+        assertTrue(out.contains("`PKIX path\n  building failed`"), out);
+        assertTrue(out.contains("`CERTIFICATE_VERIFY_FAILED`"), out);
+        assertTrue(out.contains("run `isx-trust <its directory>`"), out);
+        assertTrue(out.contains("Never turn verification off"), out);
+    }
+
+    @Test
     void makesNoClaimThatIsOnlyConditionallyTrue() {
         // host-resources can mount real credentials into the box (a template sharing
         // ~/.config/gh or ~/.m2/settings.xml), and the file is written for VMs too.

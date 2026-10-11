@@ -1,30 +1,83 @@
 #!/bin/sh
-# isx-trust [DIR...] -- bind runtimes that ship their own root store to the system store.
+# isx-trust [--settle] [DIR...] -- bind runtimes that ship their own root store to the system store.
 #
 # A runtime that carries its own bundle ignores the system store, where `update-ca-trust`
 # put the isx CA, so every HTTPS call through the proxy fails (certificate_unknown,
-# PKIX path building failed). File bindings fix that by replacing the bundled file with a
-# symlink to the system store. Environment bindings need no file; `isx build`
-# exports them from /etc/profile.d/isx-env.sh. Installed by `isx build` beside the CA.
+# PKIX path building failed, CERTIFICATE_VERIFY_FAILED). File bindings fix that by replacing
+# the bundled file with a symlink to the system store:
+#   Java     <jdk>/lib/security/cacerts  -> /etc/pki/java/cacerts
+#   certifi  site-packages/.../certifi/cacert.pem -> /etc/pki/tls/certs/ca-bundle.crt
+#            (installed packages only, pip's vendored copy included; never a source checkout)
+# Environment bindings need no file; `isx build` exports them from /etc/profile.d/isx-env.sh.
+# Installed by `isx build` beside the CA.
 #
-#   isx-trust [DIR...]   bind every runtime found under each DIR (default: /usr/lib/jvm /opt)
+#   isx-trust [DIR...]            bind every runtime found under each DIR (default: the directories
+#                                 `isx build` binds: /usr/lib/jvm /opt /usr/local and the home ones)
+#   isx-trust --settle DIR...     the same, repeated while a runtime that just landed may still be
+#                                 unpacking (run by the isx-trust-*.path units)
 #
-# ISX_TRUST_JAVA_STORE overrides the system Java store (tests only).
+# ISX_TRUST_JAVA_STORE, ISX_TRUST_PEM_BUNDLE and ISX_TRUST_SETTLE (the pauses between passes,
+# in seconds) override the defaults (tests only).
 
 store=${ISX_TRUST_JAVA_STORE:-/etc/pki/java/cacerts}
+bundle=${ISX_TRUST_PEM_BUNDLE:-/etc/pki/tls/certs/ca-bundle.crt}
 
-[ "$#" -gt 0 ] || set -- /usr/lib/jvm /opt
+pauses=
+if [ "$1" = --settle ]; then
+    pauses=${ISX_TRUST_SETTLE:-1 2 4 8 15 30}
+    shift
+fi
 
-# Java: <jdk>/lib/security/cacerts.
-for dir in "$@"; do
-    [ -d "$dir" ] || continue
-    find -H "$dir" -name cacerts -path '*/lib/security/cacerts' 2>/dev/null | while IFS= read -r f; do
-        [ "$(readlink -f "$f" 2>/dev/null)" = "$(readlink -f "$store" 2>/dev/null)" ] && continue
-        if ln -sf "$store" "$f" 2>/dev/null || sudo -n ln -sf "$store" "$f" 2>/dev/null; then
-            echo "isx-trust: $f now trusts the system store (and the isx CA)"
-        else
-            echo "isx-trust: could not link $f; run: sudo ln -sf $store $f" >&2
-        fi
+# The default is the table `isx build` binds: GuestProvisioning.TRUST_SYSTEM_DIRS and
+# TRUST_HOME_DIRS. The home ones are agentuser's whoever runs this (`sudo isx-trust` has HOME=/root).
+home=/home/agentuser
+[ "$#" -gt 0 ] || set -- /usr/lib/jvm /opt /usr/local \
+    "$home/opt" "$home/.jdks" "$home/.sdkman/candidates/java" "$home/.gradle/jdks" \
+    "$home/.jbang/cache/jdks" "$home/.local/share/mise/installs/java" "$home/.asdf/installs/java"
+
+store_real=$(readlink -f "$store" 2>/dev/null)
+bundle_real=$(readlink -f "$bundle" 2>/dev/null)
+
+bind() {
+    for dir in "$@"; do
+        [ -d "$dir" ] || continue
+        find -H "$dir" \( -name cacerts -path '*/lib/security/cacerts' \
+                -o -name cacert.pem \( -path '*/site-packages/certifi/cacert.pem' \
+                -o -path '*/site-packages/*/certifi/cacert.pem' \) \) 2>/dev/null | while IFS= read -r f; do
+            case "$f" in
+                */cacerts) target=$store; target_real=$store_real ;;
+                *) target=$bundle; target_real=$bundle_real ;;
+            esac
+            [ "$(readlink -f "$f" 2>/dev/null)" = "$target_real" ] && continue
+            if ln -sfn "$target" "$f" 2>/dev/null || sudo -n ln -sfn "$target" "$f" 2>/dev/null; then
+                echo "isx-trust: $f now trusts the system store (and the isx CA)"
+            else
+                echo "isx-trust: could not link $f; run: sudo ln -sfn $target $f" >&2
+            fi
+        done
     done
+}
+
+# What each landing directory holds now: an entry that appears while the settle passes run
+# starts no second service (systemd absorbs the trigger), so a change means another round.
+entries() {
+    for dir in "$@"; do ls -A "$dir" 2>/dev/null; done | cksum
+}
+
+bind "$@"
+[ -n "$pauses" ] || exit 0
+before=$(entries "$@")
+# At most five rounds (about five minutes): a tool that keeps churning a landing directory must
+# not keep a find running for ever. The agent context covers what lands after the last round.
+rounds=0
+while [ "$rounds" -lt 5 ]; do
+    rounds=$((rounds + 1))
+    for pause in $pauses; do
+        sleep "$pause"
+        bind "$@"
+    done
+    after=$(entries "$@")
+    [ "$after" = "$before" ] && break
+    before=$after
 done
 exit 0

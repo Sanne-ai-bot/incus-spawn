@@ -321,6 +321,8 @@ public class GuestProvisioning {
         container.writeFile(ClaudeSetup.MANAGED_MEMORY_PATH, content);
     }
 
+    private static final String AGENTUSER_HOME = "/home/agentuser";
+
     /** Where {@link #installTrustHelper} puts the helper. */
     static final String TRUST_HELPER_PATH = "/usr/local/bin/isx-trust";
 
@@ -378,14 +380,73 @@ public class GuestProvisioning {
     }
 
     /**
-     * Installs the trust helper and the environment drop-in, then applies the file bindings to
-     * what the image already carries: a JDK under {@code /usr/lib/jvm} or {@code /opt} (GraalVM,
-     * labsjdk, ...) trusts the isx CA without {@code JAVA_TOOL_OPTIONS}.
+     * Where runtimes with their own root store land, by owner: by hand ({@code /opt},
+     * {@code ~/opt}), or through SDKMAN, Gradle toolchains, jbang, mise, asdf and IntelliJ.
+     * The build binds what is already there, and an {@code isx-trust-<group>.path} unit watches
+     * each directory and binds what lands in it later (#515). A watch is not recursive and costs
+     * one inotify instance, so this lists landing directories, not trees.
+     */
+    static final List<String> TRUST_SYSTEM_DIRS = List.of("/usr/lib/jvm", "/opt", "/usr/local");
+    static final List<String> TRUST_HOME_DIRS = List.of(
+            AGENTUSER_HOME + "/opt",
+            AGENTUSER_HOME + "/.jdks",
+            AGENTUSER_HOME + "/.sdkman/candidates/java",
+            AGENTUSER_HOME + "/.gradle/jdks",
+            AGENTUSER_HOME + "/.jbang/cache/jdks",
+            AGENTUSER_HOME + "/.local/share/mise/installs/java",
+            AGENTUSER_HOME + "/.asdf/installs/java");
+
+    static final String TRUST_UNIT_DIR = "/etc/systemd/system";
+
+    /**
+     * Installs the trust helper, the environment drop-in and the path units, then applies the
+     * file bindings to what the image already carries: a JDK under {@code /usr/lib/jvm} or
+     * {@code /opt} (GraalVM, labsjdk, ...) trusts the isx CA without {@code JAVA_TOOL_OPTIONS}.
+     * The home directories are bound as {@code agentuser}, who owns them.
      */
     static void bindTrustStores(Container container) {
         installTrustHelper(container);
         writeTrustEnvironmentD(container);
-        container.exec(TRUST_HELPER_PATH, "/usr/lib/jvm", "/opt");
+        installTrustPathUnits(container);
+        var system = new ArrayList<>(List.of(TRUST_HELPER_PATH));
+        system.addAll(TRUST_SYSTEM_DIRS);
+        container.exec(system.toArray(String[]::new));
+        container.shAsUser("agentuser", TRUST_HELPER_PATH + " "
+                + String.join(" ", TRUST_HOME_DIRS.stream().map(Container::shellQuote).toList()));
+    }
+
+    /**
+     * Two path units, one per owner, run {@code isx-trust --settle} on their directories when an
+     * entry appears in one of them: root for the system directories, {@code agentuser} for the
+     * home ones. No resident process: systemd holds the watches.
+     */
+    static void installTrustPathUnits(Container container) {
+        writeTrustUnits(container, "system", null, TRUST_SYSTEM_DIRS);
+        writeTrustUnits(container, "home", "agentuser", TRUST_HOME_DIRS);
+        container.exec("systemctl", "enable", "isx-trust-system.path", "isx-trust-home.path")
+                .assertSuccess("Failed to enable the isx-trust path units");
+    }
+
+    private static void writeTrustUnits(Container container, String group, String user, List<String> dirs) {
+        var watches = new StringBuilder();
+        dirs.forEach(dir -> watches.append("PathChanged=").append(dir).append('\n'));
+        container.writeFile(TRUST_UNIT_DIR + "/isx-trust-" + group + ".path", """
+                [Unit]
+                Description=Watch where runtimes land, to bind them to the system trust store (isx-trust)
+
+                [Path]
+                %s
+                [Install]
+                WantedBy=paths.target
+                """.formatted(watches));
+        container.writeFile(TRUST_UNIT_DIR + "/isx-trust-" + group + ".service", """
+                [Unit]
+                Description=Bind runtimes that just landed to the system trust store (isx-trust)
+
+                [Service]
+                Type=oneshot
+                %sExecStart=%s --settle %s
+                """.formatted(user == null ? "" : "User=" + user + "\n", TRUST_HELPER_PATH, String.join(" ", dirs)));
     }
 
     /**
@@ -498,7 +559,6 @@ public class GuestProvisioning {
     }
 
     private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
-    private static final String AGENTUSER_HOME = "/home/agentuser";
 
     /**
      * Update .claude.json to pre-trust cloned repo directories and register GitHub repo paths.

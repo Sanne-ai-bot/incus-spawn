@@ -50,6 +50,10 @@ public final class AgentContextGenerator {
             - Credentials for the services isx proxies are injected by a host-side TLS proxy
               and are not stored here. Don't hunt for those API keys, and don't change
               endpoints or TLS verification to work around auth that looks missing.
+            - A TLS failure from a runtime you installed (`certificate_unknown`, `PKIX path
+              building failed`, `CERTIFICATE_VERIFY_FAILED`) means it ships its own root
+              bundle: run `isx-trust <its directory>` to bind it to the system store, which
+              trusts the proxy. Never turn verification off instead.
             - You are running autonomously here. Use that for investigation, not for scope or
               outward-facing action: ask when the request is ambiguous, plan non-trivial work
               before starting it, and don't push branches, open PRs, or comment on issues or
