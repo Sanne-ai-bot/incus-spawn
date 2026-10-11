@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolDef;
@@ -23,11 +24,11 @@ import java.util.function.Supplier;
  * --out-of-sync} ({@link #versionOutdated}, {@link #definitionChanged} and
  * {@link #parentRebuilt}, read from the instance's config) all apply these rules, so a rule
  * cannot change for one of them only. All three make a template out of sync (#1130).
- * The tool fingerprints a definition is compared with are each caller's input: the build
- * computes them per chain ({@code BuildTools.computeToolFingerprints}), the others with
- * {@link #toolFingerprints}. It reads only what it is handed -- the built templates' stamps from one
- * Incus listing, the definitions, and the tool fingerprints, asked for only when a definition is
- * compared -- so the CLI pays for none of the TUI's reload.
+ * The tool fingerprints a definition is compared with are each caller's input, all from
+ * {@link #toolFingerprints}: the build's over one definition, the others' over all of them.
+ * It reads only what it is handed -- the built templates' stamps from one Incus listing, the
+ * definitions, and the tool fingerprints, asked for only when a definition is compared -- so
+ * the CLI pays for none of the TUI's reload.
  */
 public final class TemplateStaleness {
 
@@ -124,25 +125,30 @@ public final class TemplateStaleness {
         return parentTs != null && ts != null && parentTs.isAfter(ts);
     }
 
-    /** The composite fingerprints of every tool {@code defs} use, their {@code requires} folded in. */
+    /**
+     * The composite fingerprints of every tool {@code defs} use, their {@code requires} folded in:
+     * what a build stamps. A tool whose feature is off is not installed, so it has none (#1142).
+     */
     public static Map<String, String> toolFingerprints(Collection<ImageDef> defs, ToolDefLoader loader) {
+        var config = SpawnConfig.load();
         var rawFps = new TreeMap<String, String>();
         var depMap = new TreeMap<String, List<String>>();
         var visited = new HashSet<String>();
         for (var def : defs) {
             for (var toolRef : def.getTools()) {
-                collectToolFps(toolRef.getName(), loader, rawFps, depMap, visited);
+                collectToolFps(toolRef.getName(), loader, config, rawFps, depMap, visited);
             }
         }
         return ToolDef.compositeFingerprints(rawFps, depMap);
     }
 
-    private static void collectToolFps(String name, ToolDefLoader loader, Map<String, String> rawFps,
-                                       Map<String, List<String>> depMap, Set<String> visited) {
+    private static void collectToolFps(String name, ToolDefLoader loader, SpawnConfig config,
+                                       Map<String, String> rawFps, Map<String, List<String>> depMap,
+                                       Set<String> visited) {
         if (!visited.add(name)) return;
-        if (loader.find(name) instanceof YamlToolSetup yts) {
+        if (loader.find(name) instanceof YamlToolSetup yts && !BuildTools.isFeatureGated(yts, config)) {
             for (var depRef : yts.toolDef().getRequires()) {
-                collectToolFps(depRef.getName(), loader, rawFps, depMap, visited);
+                collectToolFps(depRef.getName(), loader, config, rawFps, depMap, visited);
             }
             rawFps.put(name, yts.toolDef().contentFingerprint());
             depMap.put(name, yts.toolDef().getRequires().stream().map(ToolDef.ToolRef::getName).toList());

@@ -5,6 +5,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.util.OutputFormat;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -116,6 +117,27 @@ class TemplatesStalenessTest {
                         new TemplateStaleness.Built("tpl-minimal", "2026-10-01T08:00:00", CURRENT, "another", MachineType.CONTAINER)),
                 defs, Set.of(), () -> fps, CURRENT);
         assertEquals(new TemplateStaleness.Staleness(false, true, false), changed.get("tpl-minimal"));
+    }
+
+    /**
+     * A tool whose feature is off is not installed, so the build leaves it out of the stamp; the
+     * TUI's {@code △} and {@code isx templates} leave it out too, or a current template shows as
+     * changed and {@code --out-of-sync} rebuilds it on every run (#1142).
+     */
+    @Test
+    void aToolWhoseFeatureIsOffIsLeftOutOfTheFingerprintTheBuildStamps() {
+        var def = new ImageDef();
+        def.setName("tpl-typed");
+        def.setTools(List.of(new ToolDef.ToolRef("typesafe"), new ToolDef.ToolRef("tmux")));
+        var defs = Map.of("tpl-typed", def);
+        var stamped = def.contentFingerprint(
+                BuildTools.computeToolFingerprints(def, RuntimeServices.toolDefLoader()));
+
+        var stale = TemplateStaleness.assess(List.of(
+                        new TemplateStaleness.Built("tpl-typed", "2026-10-01T08:00:00", CURRENT, stamped, MachineType.CONTAINER)),
+                defs, Set.of(), () -> toolFingerprints(defs), CURRENT);
+
+        assertFalse(stale.get("tpl-typed").definitionChanged());
     }
 
     @Test

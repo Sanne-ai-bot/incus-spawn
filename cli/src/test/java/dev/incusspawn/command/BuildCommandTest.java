@@ -891,9 +891,9 @@ class BuildCommandTest {
         return incus;
     }
 
-    private static boolean outdated(IncusClient incus, ImageDef imageDef, Map<String, ImageDef> defs) {
+    private static boolean outdated(IncusClient incus, ImageDef imageDef) {
         return BuildCommand.isImageOutdated(imageDef.getName(), imageDef, incus,
-                mock(dev.incusspawn.tool.ToolDefLoader.class), defs);
+                mock(dev.incusspawn.tool.ToolDefLoader.class));
     }
 
     private static ImageDef def(String name, String parent) {
@@ -907,23 +907,23 @@ class BuildCommandTest {
     void isImageOutdatedDifferentVersion() {
         var imageDef = def("tpl-test", null);
         assertTrue(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, "0.0.1")),
-                imageDef, Map.of("tpl-test", imageDef)), "Image with different version should be outdated");
+                imageDef), "Image with different version should be outdated");
     }
 
     @Test
     void isImageOutdatedMissingVersion() {
         var imageDef = def("tpl-test", null);
         assertTrue(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, "")),
-                imageDef, Map.of("tpl-test", imageDef)), "Image with missing version should be outdated");
+                imageDef), "Image with missing version should be outdated");
         // Never stamped at all: a build with no recorded version.
-        assertTrue(outdated(stamped("tpl-test", Map.of()), imageDef, Map.of("tpl-test", imageDef)));
+        assertTrue(outdated(stamped("tpl-test", Map.of()), imageDef));
     }
 
     @Test
     void isImageOutdatedSameVersionNoDefinitionChange() {
         var imageDef = def("tpl-test", null);
         assertFalse(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
-                        Metadata.DEFINITION_SHA, "")), imageDef, Map.of("tpl-test", imageDef)),
+                        Metadata.DEFINITION_SHA, "")), imageDef),
                 "Image with same version and no definition SHA should not be outdated");
     }
 
@@ -931,7 +931,7 @@ class BuildCommandTest {
     void isImageOutdatedDefinitionChanged() {
         var imageDef = def("tpl-test", null);
         assertTrue(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
-                        Metadata.DEFINITION_SHA, "old-sha-123")), imageDef, Map.of("tpl-test", imageDef)),
+                        Metadata.DEFINITION_SHA, "old-sha-123")), imageDef),
                 "Image with changed definition should be outdated");
     }
 
@@ -940,7 +940,7 @@ class BuildCommandTest {
         var imageDef = def("tpl-test", null);
         assertFalse(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
                         Metadata.DEFINITION_SHA, imageDef.contentFingerprint(Map.of()))),
-                imageDef, Map.of("tpl-test", imageDef)));
+                imageDef));
     }
 
     /**
@@ -952,10 +952,9 @@ class BuildCommandTest {
     void isImageOutdatedReadsItsStampsOnceAndItsParentOnlyWhenOtherwiseCurrent() {
         var parent = def("tpl-parent", null);
         var child = def("tpl-child", "tpl-parent");
-        var defs = Map.of("tpl-parent", parent, "tpl-child", child);
 
         var old = stamped("tpl-child", Map.of(Metadata.BUILD_VERSION, "0.0.1", Metadata.CREATED, "2026-10-01T10:00:00"));
-        assertTrue(outdated(old, child, defs));
+        assertTrue(outdated(old, child));
         verify(old).instanceMetadataOrThrow("tpl-child");
         verifyNoMoreInteractions(old);
 
@@ -963,7 +962,7 @@ class BuildCommandTest {
                 Metadata.CREATED, "2026-10-01T10:00:00"));
         when(current.instanceMetadataOrThrow("tpl-parent"))
                 .thenReturn(instance("container", Map.of(Metadata.CREATED, "2026-09-30T10:00:00")));
-        assertFalse(outdated(current, child, defs));
+        assertFalse(outdated(current, child));
         verify(current).instanceMetadataOrThrow("tpl-child");
         verify(current).instanceMetadataOrThrow("tpl-parent");
         verifyNoMoreInteractions(current);
@@ -978,18 +977,17 @@ class BuildCommandTest {
     void isImageOutdatedWhenItsParentWasBuiltAfterIt() {
         var parent = def("tpl-parent", null);
         var child = def("tpl-child", "tpl-parent");
-        var defs = Map.of("tpl-parent", parent, "tpl-child", child);
         var incus = stamped("tpl-child", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
                 Metadata.CREATED, "2026-10-01T10:00:00"));
 
         for (var parentBuilt : List.of("2026-10-01T11:00:00", "2026-10-01T10:00:00", "")) {
             when(incus.instanceMetadataOrThrow("tpl-parent"))
                     .thenReturn(instance("container", Map.of(Metadata.CREATED, parentBuilt)));
-            assertEquals(parentBuilt.startsWith("2026-10-01T11"), outdated(incus, child, defs), parentBuilt);
+            assertEquals(parentBuilt.startsWith("2026-10-01T11"), outdated(incus, child), parentBuilt);
         }
 
         when(incus.instanceMetadataOrThrow("tpl-parent")).thenReturn(null);
-        assertFalse(outdated(incus, child, defs), "a parent that is not built was not rebuilt");
+        assertFalse(outdated(incus, child), "a parent that is not built was not rebuilt");
     }
 
     /**
@@ -1002,7 +1000,6 @@ class BuildCommandTest {
         var parent = def("tpl-isx", null);
         var child = def("tpl-isx-vm", "tpl-isx");
         child.setType("vm");
-        var defs = Map.of("tpl-isx", parent, "tpl-isx-vm", child);
         var incus = mock(IncusClient.class);
         when(incus.instanceMetadataOrThrow("tpl-isx-vm")).thenReturn(instance("virtual-machine", Map.of(
                 Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
@@ -1010,7 +1007,7 @@ class BuildCommandTest {
         when(incus.instanceMetadataOrThrow("tpl-isx"))
                 .thenReturn(instance("container", Map.of(Metadata.CREATED, "2026-10-07T10:00:00")));
 
-        assertFalse(outdated(incus, child, defs));
+        assertFalse(outdated(incus, child));
     }
 
     /** An unpinned root as loaded from its YAML: the built-in base image tag is only a fallback. */
@@ -1047,11 +1044,10 @@ class BuildCommandTest {
             doReturn(releases).when(cmd).baseImageReleases(anyString());
 
             var root = trackedRoot();
-            var defs = Map.of("tpl-minimal", root);
             var base = cmd.resolveTrackedBaseImage(root);
             assertEquals("fedora-44-20261010", base.tag(), "the build downloads the newest release");
             assertEquals(Map.of("x86_64", "tracked-sha"), base.sha256());
-            cmd.stampBuildVersion("tpl-minimal", root, defs, Map.of());
+            cmd.stampBuildVersion("tpl-minimal", root, Map.of());
 
             var stamp = ArgumentCaptor.forClass(String.class);
             verify(incus).configSet(eq("tpl-minimal"), eq(Metadata.DEFINITION_SHA), stamp.capture());
@@ -1061,7 +1057,7 @@ class BuildCommandTest {
             assertFalse(outdated(stamped("tpl-minimal", Map.of(
                             Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
                             Metadata.DEFINITION_SHA, stamp.getValue())),
-                    reloaded, Map.of("tpl-minimal", reloaded)), "--out-of-sync must not rebuild it again");
+                    reloaded), "--out-of-sync must not rebuild it again");
         });
     }
 
@@ -1074,7 +1070,7 @@ class BuildCommandTest {
                 Metadata.CREATED, "2026-10-01T10:00:00"));
         when(incus.instanceMetadataOrThrow("tpl-parent")).thenThrow(new IncusException("HTTP 500"));
 
-        assertThrows(IncusException.class, () -> outdated(incus, child, Map.of("tpl-parent", parent, "tpl-child", child)));
+        assertThrows(IncusException.class, () -> outdated(incus, child));
     }
 
     // --- default-action sync after every build (#284) ---
