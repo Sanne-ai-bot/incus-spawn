@@ -80,7 +80,7 @@ import static dev.incusspawn.command.GuestProvisioning.disableGuestSelinux;
 import static dev.incusspawn.command.GuestProvisioning.enablePackageRepos;
 import static dev.incusspawn.command.GuestProvisioning.expandHome;
 import static dev.incusspawn.command.GuestProvisioning.installAllPackages;
-import static dev.incusspawn.command.GuestProvisioning.linkJavaTrustStores;
+import static dev.incusspawn.command.GuestProvisioning.bindTrustStores;
 import static dev.incusspawn.command.GuestProvisioning.maskServices;
 import static dev.incusspawn.command.GuestProvisioning.refreshInheritedTools;
 import static dev.incusspawn.command.GuestProvisioning.removePackages;
@@ -1270,7 +1270,7 @@ public class BuildCommand extends BaseCommand {
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         verifyTools(container, toolResolution.effective());
-        linkJavaTrustStores(container);
+        bindTrustStores(container);
         maskServices(container, imageDef);
         // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
         installSkills(container, imageDef, defs, toolResolution.effective());
@@ -1525,7 +1525,7 @@ public class BuildCommand extends BaseCommand {
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         verifyTools(container, allTools);
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
-        linkJavaTrustStores(container);
+        bindTrustStores(container);
         if (machineType == MachineType.VM) {
             assertGuestSelinuxNotEnforcing(container);
         }

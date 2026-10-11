@@ -281,6 +281,17 @@ It gets exactly the tools, approved templates and limits a host agent gets, and 
 - **No coordinator makes another.** Only `isx branch --mcp-client` grants it, never to a copy: not to `isx branch --from coord`, and not to anything created through MCP.
 - **Only the host proxy is reached.** `mcp.isx.internal` resolves to the bridge gateway, so this works with `--proxy-only`; an `--airgap` instance cannot use it.
 
+## What differs from a stock Fedora install
+
+An isx instance is a Fedora system with a few deliberate deviations. This is where they are listed; a change to what a box does that a Fedora user would not expect belongs here.
+
+**Trust.** Traffic to intercepted domains passes through the host proxy, which signs with the isx CA. The CA is installed in the system anchors (`update-ca-trust`), so everything that reads the system store trusts it. A runtime that ships its own root bundle does not, so isx binds it to the system store:
+
+- *Environment bindings.* Every login shell (`/etc/profile.d/isx-env.sh`) and systemd user session (`/etc/environment.d/50-isx-trust.conf`) gets `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `PIP_CERT`, `NODE_EXTRA_CA_CERTS`, `CARGO_HTTP_CAINFO`, `AWS_CA_BUNDLE`, `NIX_SSL_CERT_FILE` (the system bundle, `/etc/pki/tls/certs/ca-bundle.crt`), `DENO_TLS_CA_STORE=system` and `UV_NATIVE_TLS=1`. A value you set yourself wins. Java is never bound through a variable: `JAVA_TOOL_OPTIONS` prints a "Picked up" line that breaks tools parsing `java -version`.
+- *File bindings.* A JDK's `lib/security/cacerts` under `/usr/lib/jvm` or `/opt` is replaced at build time by a symlink to `/etc/pki/java/cacerts`. Such a JDK then trusts the Fedora/Mozilla root set plus the isx CA instead of its vendor's bundle. For a JDK you unpack afterwards, run `isx-trust <dir>` (for example `isx-trust ~/opt/graalvm`); the symptoms are `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`.
+
+No verification is turned off anywhere: every runtime still verifies chains and hostnames, against the system store.
+
 ## Why full system containers?
 
 **Application containers**, the kind Docker and Podman run by default, are built for shipping applications: a minimal filesystem, one process, fast startup. isx is built for a different job, and the choice that follows from it is what a sandbox *is*. An isx sandbox is a workstation, a complete machine: a full [Incus](https://linuxcontainers.org/incus/) **system container**, or a KVM virtual machine (`--vm`), with its own init system, real networking (`ping`, `strace`, nested Podman/Docker), and GUI and audio passthrough (Linux only). Templates pre-install your baseline tools and repos, but what the agent gets is a real Linux system, where it can `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation.

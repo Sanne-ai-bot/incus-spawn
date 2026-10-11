@@ -936,10 +936,18 @@ A host-side MITM TLS proxy (`isx proxy`) provides transparent authentication.
 Placeholder values satisfy tools' local auth checks (e.g. `GH_TOKEN`, `ANTHROPIC_API_KEY`), but the proxy replaces them with real credentials before requests reach upstream servers.
 Every start fills them with proof tokens derived from that start's secret (`gho_isx_<digest>`; see "Proof tokens" below).
 
+**Trust bindings (#713).** isx owns the binding of upstream runtimes to the system store, because a runtime that ships its own root bundle ignores the store that holds the isx CA.
+Two kinds, one table (`GuestProvisioning.TRUST_ENV` for the first, `isx-trust` for the second):
+environment variables (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, ...) are exported `setIfUnset` from `isx-env.sh` and written to `environment.d`, read at process start so they cover a runtime installed at any time anywhere, and none prints a "Picked up" line.
+file bindings, for runtimes that read no variable, replace a file in the runtime by a symlink to the system store, applied by the guest helper `/usr/local/bin/isx-trust [DIR...]` (Java: `lib/security/cacerts` to `/etc/pki/java/cacerts`).
+Java has no variable on purpose: `JAVA_TOOL_OPTIONS`/`JDK_JAVA_OPTIONS` print "Picked up" on stderr, which OpenJDK's configure rejects in a boot JDK (#464).
+The build installs the helper and runs it on `/usr/lib/jvm` and `/opt`; a JDK unpacked later is bound by running `isx-trust <dir>` (discovery without a command is #515).
+The README section "What differs from a stock Fedora install" lists these deviations for users.
+
 **How it works:**
 
 1. The proxy configures bridge-level DNS overrides (via `raw.dnsmasq` on `incusbr0`) so all containers resolve intercepted domains to the gateway IP
-2. Template images include a custom CA certificate (generated during `isx init`) so containers trust the proxy's TLS certificates
+2. Template images include a custom CA certificate (generated during `isx init`) so containers trust the proxy's TLS certificates (system anchors, plus the trust bindings below for runtimes with their own bundle)
 3. The proxy listens on port 18443 on the gateway IP.
    An iptables PREROUTING redirect rule (installed by `isx init` via `firewall-cmd --permanent --direct`) transparently redirects traffic arriving on `incusbr0` destined for port 443 to port 18443, avoiding conflicts with the Incus daemon on port 443.
    The proxy terminates TLS using per-domain certificates signed by the custom CA
