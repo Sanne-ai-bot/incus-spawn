@@ -22,6 +22,13 @@ class BranchModalTest {
                 new BranchAccountChoices(new ModalRenderer(THEME), THEME, List.of()));
     }
 
+    /** A VM's dialog with its limits given, rather than this host's defaults. */
+    private static BranchModal vmDialog(BranchModal.VmLimits limits) {
+        return new BranchModal(new ModalRenderer(THEME), THEME, "tpl-dev", "dev-1",
+                new BranchFlow.Defaults(MachineType.VM, false, false, null),
+                new BranchAccountChoices(new ModalRenderer(THEME), THEME, List.of()), limits);
+    }
+
     private static BranchModal.Outcome press(BranchModal dialog, KeyEvent... keys) {
         var outcome = BranchModal.Outcome.HANDLED;
         for (var key : keys) outcome = dialog.handleKey(key);
@@ -70,5 +77,12 @@ class BranchModalTest {
     void rendersAContainerBranch() {
         var dialog = dialog(MachineType.CONTAINER);
         TuiSnapshot.assertMatches("branch-modal-container-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+    }
+
+    @Test
+    void rendersAVmBranchWithItsLimits() {
+        // In the shapes BranchFlow's defaults take; the values themselves come from this host (#1251).
+        var dialog = vmDialog(new BranchModal.VmLimits("4", "13113MiB", "100GB"));
+        TuiSnapshot.assertMatches("branch-modal-vm-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
     }
 }

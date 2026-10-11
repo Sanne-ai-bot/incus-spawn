@@ -5,6 +5,7 @@ import dev.incusspawn.command.InstanceListing;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.tamboui.tui.TuiConfig;
@@ -133,9 +134,17 @@ class TuiCharacterisationTest {
     }
 
     private static void snapshot(String name, Tui tui) {
-        TuiSnapshot.assertMatches("tui-" + name + "-80x24", TuiSnapshot.render(80, 24, tui::render),
-                TuiCharacterisationTest::withoutVersion);
+        snapshotInContext(name, tui);
         TuiSnapshot.assertMatches("tui-" + name + "-120x40", TuiSnapshot.render(120, 40, tui::render),
+                TuiCharacterisationTest::withoutVersion);
+    }
+
+    /**
+     * One size only, for a rendering that exists only over the main screen: each rendering keeps
+     * one snapshot, and the main screen itself is pinned at both sizes above (#1251).
+     */
+    private static void snapshotInContext(String name, Tui tui) {
+        TuiSnapshot.assertMatches("tui-" + name + "-80x24", TuiSnapshot.render(80, 24, tui::render),
                 TuiCharacterisationTest::withoutVersion);
     }
 
@@ -168,6 +177,17 @@ class TuiCharacterisationTest {
     @Test
     void mainScreenWithoutInstances() {
         snapshot("main-empty", tui(false));
+    }
+
+    @Test
+    void mainScreenWithGaugeLegendAndStatus() {
+        // Another isx built tpl-dev, so it is outdated and the legend shows; the pool is 63% full.
+        var old = template("tpl-dev", "tpl-minimal");
+        old.put(Metadata.BUILD_VERSION, BuildInfo.instance().version() + "-older");
+        var tui = tui(true, new FakeIncusDaemon().container("tpl-dev", old));
+        tui.poolUsage = new IncusClient.PoolUsage(63L << 30, 100L << 30);
+        tui.statusMessage = "Created branch work-2";
+        snapshotInContext("main-gauge-legend-status", tui);
     }
 
     @Test
@@ -218,8 +238,11 @@ class TuiCharacterisationTest {
     @Test
     void branchFromAnUnbuiltTemplateOffersABuild() {
         var tui = tui();
-        press(tui, DOWN);
-        opensAndCloses("confirm-build-for-branch", tui, Tui.Mode.CONFIRM_BUILD_FOR_BRANCH, ENTER);
+        press(tui, DOWN, ENTER);
+        assertEquals(Tui.Mode.CONFIRM_BUILD_FOR_BRANCH, tui.mode());
+        snapshotInContext("confirm-build-for-branch", tui);
+        press(tui, ESC);
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
 
     @Test
@@ -265,9 +288,11 @@ class TuiCharacterisationTest {
     @Test
     void renameARunningInstanceAsksToStopIt() {
         var tui = tui();
-        press(tui, TAB);
-        opensAndCloses("confirm-stop-for-rename", tui, Tui.Mode.CONFIRM_STOP_FOR_RENAME,
-                KeyEvent.ofKey(KeyCode.F6));
+        press(tui, TAB, KeyEvent.ofKey(KeyCode.F6));
+        assertEquals(Tui.Mode.CONFIRM_STOP_FOR_RENAME, tui.mode());
+        snapshotInContext("confirm-stop-for-rename", tui);
+        press(tui, ESC);
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
 
     @Test
