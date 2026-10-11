@@ -11,6 +11,7 @@
 ║ Built:          2026-09-20T10:00:00  (1 week ago)                          │ ║
 ║                 ! built with isx v1.3.0 (current: v1.4.0)                  │ ║
 ║                 △ definition changed since last build                      │ ║
+║                   rebuild with: isx build tpl-kvm                          │ ║
 ║ Disk:           ~3.0G  (approx, excludes shared blocks)                    │ ║
 ║                                                                            │ ║
 ║ Source:         unknown                                                    │ ║
@@ -19,6 +20,5 @@
 ║ Inherits:       tpl-root → tpl-kvm                                         │ ║
 ║                                                                            │ ║
 ║ Packages:                                                                  │ ║
-║   git                                                                      │ ║
 ║  Tab Tree view   ↑↓/PgUp/PgDn Scroll   F4 Edit   n New child…   F3/Esc Close ║
 ╚══════════════════════════════════════════════════════════════════════════════╝

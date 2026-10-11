@@ -1,5 +1,6 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.command.InstanceListing;
 import dev.incusspawn.config.ImageDef;
@@ -95,6 +96,12 @@ class TemplateDetailViewTest {
 
     private static TemplateDetailView view(Map<String, ImageDef> defs, Set<String> defChanged,
                                            Map<String, String> overridden, Map<String, String> builtFrom) {
+        return view(defs, defChanged, overridden, builtFrom, Map.of());
+    }
+
+    private static TemplateDetailView view(Map<String, ImageDef> defs, Set<String> defChanged,
+                                           Map<String, String> overridden, Map<String, String> builtFrom,
+                                           Map<String, BuildSource> stamps) {
         var source = new TemplateDetailView.Source() {
             @Override public Map<String, ImageDef> imageDefs() { return defs; }
             @Override public List<String> autoDeps(List<String> tools) {
@@ -105,6 +112,7 @@ class TemplateDetailViewTest {
             @Override public boolean parentRebuilt(String t) { return false; }
             @Override public String overriddenSource(String t) { return overridden.get(t); }
             @Override public String builtFrom(String t) { return builtFrom.get(t); }
+            @Override public BuildSource buildSource(String t) { return stamps.get(t); }
             @Override public String currentVersion() { return "1.4.0"; }
         };
         return new TemplateDetailView(new ModalRenderer(THEME), THEME, source, () -> NOW);
@@ -216,6 +224,61 @@ class TemplateDetailViewTest {
         defs.get("tpl-root").setDeprecated("use tpl-base instead");
         var screen = text(view(defs, Set.of(), Map.of(), Map.of()), NOT_BUILT, 120, 50);
         assertTrue(screen.contains("⚠ tpl-kvm derives from tpl-root, which is deprecated: use tpl-base instead"), screen);
+    }
+
+    /** The build stamp of tpl-kvm from before its definition and its parent's changed. */
+    private static BuildSource earlierBuild() throws Exception {
+        var kvm = ImageDef.parseYaml("""
+                name: tpl-kvm
+                parent: tpl-root
+                type: kvm
+                packages: [qemu-kvm, htop]
+                repos:
+                  - url: https://github.com/acme/app.git
+                  - url: https://github.com/acme/old.git
+                """);
+        var root = ImageDef.parseYaml("""
+                name: tpl-root
+                image: fedora-44-base
+                packages: [git]
+                tools: [gh]
+                """);
+        var definitions = new LinkedHashMap<String, ImageDef>();
+        definitions.put("tpl-kvm", kvm);
+        definitions.put("tpl-root", root);
+        return new BuildSource(definitions, Map.of(), Map.of(), Map.of());
+    }
+
+    /** What changed behind △, as built versus now, with the command that applies it (#1201). */
+    @Test
+    void aChangedDefinitionSaysWhatChangedAndHowToRebuild() throws Exception {
+        var screen = text(view(defs(), Set.of("tpl-kvm"), Map.of(), Map.of(),
+                Map.of("tpl-kvm", earlierBuild())), BUILT_STALE, 120, 60);
+        assertTrue(screen.contains("△ definition changed since last build"), screen);
+        assertTrue(screen.contains("  − package htop"), screen);
+        assertTrue(screen.contains("  + tool claude"), screen);
+        assertTrue(screen.contains("  − repo https://github.com/acme/old.git → ~/old"), screen);
+        assertFalse(screen.contains("repo https://github.com/acme/app.git"), screen);
+        assertTrue(screen.contains("rebuild with: isx build tpl-kvm"), screen);
+    }
+
+    /** Without a stamp to compare, the △ flag still says how to rebuild. */
+    @Test
+    void aChangedDefinitionWithoutAStampStillGivesTheRebuildCommand() throws Exception {
+        var screen = text(view(Set.of("tpl-kvm")), BUILT_STALE, 120, 50);
+        assertTrue(screen.contains("rebuild with: isx build tpl-kvm"), screen);
+        assertFalse(screen.contains("  + "), screen);
+    }
+
+    /** A tool the parent provided at build time and no longer does is named under Tools (#1201). */
+    @Test
+    void aToolNoLongerInheritedIsNamedUnderTools() throws Exception {
+        var screen = text(view(defs(), Set.of(), Map.of(), Map.of(),
+                Map.of("tpl-kvm", earlierBuild())), BUILT_STALE, 120, 60);
+        assertTrue(screen.contains("gh: no longer inherited from tpl-root (still in the built image)"), screen);
+        // Nothing listed behind a △ that is not raised
+        assertFalse(screen.contains("− package htop"), screen);
+        assertFalse(screen.contains("rebuild with:"), screen);
     }
 
     @Test

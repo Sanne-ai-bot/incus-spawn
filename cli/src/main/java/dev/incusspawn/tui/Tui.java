@@ -113,6 +113,9 @@ public class Tui {
                 @Override public boolean parentRebuilt(String template) { return templatesParentRebuilt.contains(template); }
                 @Override public String overriddenSource(String template) { return imageLayers.overriddenSource(template); }
                 @Override public String builtFrom(String template) { return Tui.this.loader.builtFrom(template); }
+                @Override public dev.incusspawn.config.BuildSource buildSource(String template) {
+                    return Tui.this.loader.buildSource(template);
+                }
                 @Override public String currentVersion() { return Tui.this.currentVersion(); }
             }, java.time.LocalDateTime::now);
 
