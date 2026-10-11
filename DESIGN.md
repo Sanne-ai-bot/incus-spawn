@@ -2043,7 +2043,15 @@ Hooking each skip branch instead (a parent `buildChain` leaves alone, the untouc
 Folding `default-action` into the fingerprint was rejected: a whole rebuild to change one metadata key.
 
 **Staleness detection**: The TUI uses `build-version`, `definition-sha` and `created` to display staleness indicators next to template names, and `isx templates --format=plain|json` reports the same three as fields.
-Both come from `TemplateStaleness` (`cli/.../command/`), whose `versionOutdated`, `definitionChanged` and `parentRebuilt` are also what `isx build --out-of-sync` rebuilds on (`BuildCommand.isImageOutdated`, which reads the template's instance in one request and its parent's in a second, only when the rest are current; a parent that is not built is not rebuilt, but Incus failing to answer is thrown, never read as current).
+Both come from `TemplateStaleness.assess` (`cli/.../command/`), which is also what `isx build --out-of-sync` rebuilds on.
+It reads the same one instance listing (`InstanceListing.builtTemplates`), so judging staleness costs one request whatever the number of templates (#1142).
+A defined template not in the listing is rebuilt.
+A listing Incus cannot give is thrown, never read as "nothing is built".
+The parents of a named build are checked by `BuildCommand.isImageOutdated` with the same rules, one instance read each.
+There, a parent that is not built is not rebuilt, but Incus failing to answer is thrown, never read as current.
+Every caller fingerprints a definition's tools with `TemplateStaleness.toolFingerprints`, the build's stamp included.
+A tool whose feature is off is left out, since it is not installed.
+A tool in a `requires` cycle is resolved from itself, so fingerprinting one template's tools or all of them gives it the same value.
 Any one of the three makes a template out of sync (`Staleness.outOfSync()`), which is also the TUI's count for "Rebuild out of sync templates".
 `↑` counts since #1130: a child copied from its parent's previous build does not have what the parent has now, and before, nothing short of rebuilding the parent again repaired it.
 It applies only to a template copied from its parent, which is one of the same machine type as Incus reports it (`TemplateStaleness.Built.machineType`, so a `--type` override counts).

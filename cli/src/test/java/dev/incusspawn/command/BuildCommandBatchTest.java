@@ -1,9 +1,12 @@
 package dev.incusspawn.command;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,6 +68,8 @@ class BuildCommandBatchTest {
     private boolean buildsLeaveImages;
     /** Recorded builds of these fail, as a real failed build does. */
     private final Set<String> failing = new HashSet<>();
+    /** Tools the loader knows, each taking no parameters. */
+    private final Set<String> tools = new HashSet<>();
     /** Definitions besides {@link #tree()}. */
     private final Map<String, ImageDef> extraDefs = new LinkedHashMap<>();
 
@@ -72,6 +77,7 @@ class BuildCommandBatchTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = daemon.client();
         cmd.toolDefLoader = mock(ToolDefLoader.class);
+        tools.forEach(name -> when(cmd.toolDefLoader.find(name)).thenReturn(BuildCommandTest.simpleToolSetup(name)));
         cmd.yes = true;
         cmd.skipGitRefresh = true;
         var names = new ArrayList<String>();
@@ -219,6 +225,68 @@ class BuildCommandBatchTest {
 
         assertEquals(List.of(), built);
         assertFalse(daemon.requests().stream().anyMatch(r -> r.contains("/networks")), daemon.requests().toString());
+    }
+
+    /**
+     * Which templates are out of sync is judged from one instance listing, as {@code isx
+     * templates} and the TUI judge it, not from a read per template and its parent (#1142).
+     */
+    @Test
+    void outOfSyncReadsTheInstancesOnce() {
+        builtAt(Map.of(
+                "tpl-base", "2026-10-01T09:00:00", "tpl-layer", "2026-10-01T09:01:00",
+                "tpl-isx", "2026-10-01T09:02:00", "tpl-quarkus", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00", "tpl-other-child", "2026-10-01T09:01:00"));
+        daemon.clearRequests();
+
+        assertEquals(0, build("--out-of-sync"));
+
+        assertEquals(List.of(), built);
+        assertEquals(List.of("GET /1.0/instances?recursion=1"),
+                daemon.requests().stream().filter(r -> r.startsWith("GET /1.0/instances")).toList());
+    }
+
+    /** A template that is defined but not built is built, its descendants with it. */
+    @Test
+    void outOfSyncBuildsAMissingTemplate() {
+        builtAt(Map.of(
+                "tpl-base", "2026-10-01T09:00:00", "tpl-layer", "2026-10-01T09:01:00",
+                "tpl-quarkus", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00", "tpl-other-child", "2026-10-01T09:01:00"));
+
+        assertEquals(0, build("--out-of-sync"));
+
+        assertEquals(List.of("tpl-isx"), built);
+    }
+
+    /**
+     * Tool parameters that no longer validate stop the run before anything is built, as the
+     * per-template check did, not halfway through the batch (#1142).
+     */
+    @Test
+    void outOfSyncRefusesATemplateWhoseToolParametersNoLongerValidateBeforeBuilding() {
+        tools.add("maven-3");
+        extra(List.of("tpl-broken", "tpl-layer"));
+        extraDefs.get("tpl-broken").setTools(List.of(new ToolDef.ToolRef("maven-3", Map.of("version", "9"))));
+        builtAt(Map.of(
+                "tpl-base", "2026-10-01T09:00:00", "tpl-layer", "2026-10-07T09:01:00",
+                "tpl-isx", "2026-10-01T09:02:00", "tpl-quarkus", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00", "tpl-other-child", "2026-10-01T09:01:00"));
+
+        assertThrows(IllegalArgumentException.class, () -> build("--out-of-sync"));
+
+        assertEquals(List.of(), built);
+    }
+
+    /** An Incus that cannot list its instances fails the run; it is never "nothing is built". */
+    @Test
+    void outOfSyncFailsWhenTheInstancesCannotBeListed() {
+        builtAt(Map.of("tpl-base", "2026-10-01T09:00:00"));
+        daemon.listingAnswers(JsonNodeFactory.instance.objectNode());
+
+        assertThrows(IncusException.class, () -> build("--out-of-sync"));
+
+        assertEquals(List.of(), built);
     }
 
     /**
