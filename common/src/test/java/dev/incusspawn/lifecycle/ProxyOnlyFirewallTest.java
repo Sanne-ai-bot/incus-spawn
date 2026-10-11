@@ -1,9 +1,9 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -141,7 +141,7 @@ class ProxyOnlyFirewallTest {
     }
 
     private void stillThere() {
-        when(incus.instanceMetadataOrThrow("box")).thenReturn(JsonNodeFactory.instance.objectNode());
+        when(incus.instanceMetadataOrThrow("box")).thenReturn(JqObject.builder(0).build());
     }
 
     private void iptablesFails(int exitCode, String stderr) {
