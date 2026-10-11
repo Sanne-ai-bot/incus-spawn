@@ -2255,7 +2255,7 @@ public class BuildCommand extends BaseCommand {
         JqValue instances;
         try {
             instances = incus.listJsonConfig();
-        } catch (RuntimeException e) {
+        } catch (IncusException e) {
             System.err.println("Warning: could not sync default-action onto templates: " + e.getMessage());
             return;
         }
