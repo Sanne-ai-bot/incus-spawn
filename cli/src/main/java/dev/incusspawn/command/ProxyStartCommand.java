@@ -33,7 +33,7 @@ public class ProxyStartCommand extends BaseCommand {
             defaultValue = {"" + ProxyConfig.DEFAULT_HEALTH_PORT})
     int healthPort;
 
-    @Option(name = "gateway-ip", description = "Incus bridge gateway IP (Linux: private, loopback or the bridge; macOS: the VM bridge)")
+    @Option(name = "gateway-ip", description = "Incus bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)")
     String gatewayIpOption;
 
     @Option(name = "debug", description = "Log full API request/response details for traffic inspection",

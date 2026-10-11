@@ -43,7 +43,7 @@ public class ProxyMain implements QuarkusApplication {
                     System.out.println("Options:");
                     System.out.println("  --port <port>         MITM listen port (default: " + ProxyConfig.DEFAULT_MITM_PORT + ")");
                     System.out.println("  --health-port <port>  Health check port (default: " + ProxyConfig.DEFAULT_HEALTH_PORT + ")");
-                    System.out.println("  --gateway-ip <ip>     Gateway IP to listen on (Linux: private, loopback or the bridge; macOS: the VM bridge)");
+                    System.out.println("  --gateway-ip <ip>     Bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)");
                     System.out.println("  --debug               Enable API traffic debug logging");
                     System.out.println("  --version, -V         Display version info");
                     System.out.println("  --help, -h            Show this help");
@@ -267,10 +267,17 @@ public class ProxyMain implements QuarkusApplication {
      * Where the MITM listener serves instances, where the health endpoint listens, and where
      * bridge DNS sends intercepted domains -- null on macOS, where DNS inside the VM points at
      * the VM's own bridge gateway, not at the host address the proxy listens on.
-     * {@code followsBridge} when the gateway came from the Incus bridge rather than
-     * {@code --gateway-ip} or the VM link, and so moves when the bridge's address does (#966).
      */
-    record Addresses(String gateway, String healthBind, String bridgeDns, boolean followsBridge) {
+    record Addresses(String gateway, String healthBind, String bridgeDns) {
+        /**
+         * Whether the gateway is the Incus bridge's, and so moves when the bridge's address
+         * does (#966): always on Linux, {@code --gateway-ip} included (#933), never on macOS,
+         * where it is the VM link.
+         */
+        boolean followsBridge() {
+            return bridgeDns != null;
+        }
+
         /** Write the bridge DNS block at startup, and say where it points. */
         void configureBridgeDns(IncusClient incus, java.util.Set<String> domains) {
             ProxyConfig.configureBridgeDns(incus, domains, bridgeDnsTarget(incus));
@@ -287,13 +294,12 @@ public class ProxyMain implements QuarkusApplication {
         }
 
         /**
-         * Whether the bridge now has another address than {@link #gateway()}. Never for an
-         * explicit {@code --gateway-ip} (#933), which is not read from the bridge at all, nor
-         * for a bridge that cannot be read or has no address: a restart would find nothing
-         * better, and the cached gateway is not the bridge's word.
+         * Whether the bridge now has another address than {@link #gateway()}. Never without
+         * {@link #followsBridge()}, nor for a bridge that cannot be read or has no address: a
+         * restart would find nothing better, and the cached gateway is not the bridge's word.
          */
         java.util.Optional<GatewayMoved> movedTo(IncusClient incus) {
-            if (!followsBridge) return java.util.Optional.empty();
+            if (!followsBridge()) return java.util.Optional.empty();
             String current;
             try {
                 current = BridgeAddress.read(incus).map(BridgeAddress::gateway).orElse(null);
@@ -318,7 +324,6 @@ public class ProxyMain implements QuarkusApplication {
      */
     static Addresses resolveAddresses(String gatewayIpOption, IncusClient incus) {
         String gatewayIp;
-        var followsBridge = false;
         if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
             gatewayIp = gatewayIpOption;
         } else if (Platform.isMacOS()) {
@@ -330,7 +335,6 @@ public class ProxyMain implements QuarkusApplication {
         } else {
             try {
                 gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-                followsBridge = true;
             } catch (Exception e) {
                 System.err.println("Error: could not determine Incus bridge gateway IP.");
                 System.err.println(ProxyConfig.gatewayUnavailableHint(false));
@@ -338,7 +342,7 @@ public class ProxyMain implements QuarkusApplication {
             }
         }
         return new Addresses(gatewayIp, ProxyHealthCheck.healthAddress(gatewayIp),
-                Platform.isMacOS() ? null : gatewayIp, followsBridge);
+                Platform.isMacOS() ? null : gatewayIp);
     }
 
     /**
@@ -348,19 +352,22 @@ public class ProxyMain implements QuarkusApplication {
      * in the canonical form: {@code 10.1} or {@code ::ffff:10.99.0.1} parse as the same address
      * but are not what dnsmasq would read, and a wildcard would expose /health everywhere.
      * <p>
-     * On both platforms the override is also the bind address of the credential-injecting
-     * listener, and a caller the proxy cannot place is served the default accounts, so it must
-     * not be somewhere other hosts can route to. On macOS it must be exactly the address
-     * {@link VmNetwork#discoverHostBridgeIp()} finds (#937). On Linux it may be a private
-     * (RFC 1918) or loopback address, which needs no bridge read and so still works around a
-     * bridge with no address to read (#892), or else the bridge's current gateway itself, read from Incus without the cached fallback (#1022). When the
-     * bridge address is needed and cannot be read, the override cannot be checked and the proxy
-     * stops as it would without one.
+     * The CLI looks for the proxy at the bridge's gateway, or at the one {@code isx init} cached
+     * when the bridge cannot be read, so the override must be that address: anywhere else every
+     * {@code isx} command would find no proxy and point bridge DNS away from it (#933). On macOS
+     * it must be exactly the address {@link VmNetwork#discoverHostBridgeIp()} finds (#937). On
+     * Linux, with the bridge read from Incus and found, it must equal its current gateway. With
+     * no bridge address to read it stands in for one (#892): it must then be private (RFC 1918)
+     * or loopback, since the credential-injecting listener binds to it and serves the default
+     * accounts to a caller it cannot place (#1022), and equal the cached gateway if there is one.
+     * When the bridge address is needed and cannot be found, the override cannot be checked and
+     * the proxy stops as it would without one.
      */
     static int checkGatewayOverride(String gatewayIpOption, IncusClient incus) {
         var macOS = Platform.isMacOS();
         return checkGatewayOverride(gatewayIpOption, macOS,
-                macOS ? VmNetwork::discoverHostBridgeIp : () -> readBridgeGatewayOrNull(incus));
+                macOS ? VmNetwork::discoverHostBridgeIp : () -> readBridgeGatewayOrNull(incus),
+                ProxyConfig::cachedGateway);
     }
 
     /**
@@ -376,44 +383,54 @@ public class ProxyMain implements QuarkusApplication {
         }
     }
 
-    /** {@code bridgeIp} is read only when the decision depends on it, and is null if it cannot be. */
+    /**
+     * {@code bridgeIp} is null if it cannot be read; {@code cachedGateway} is empty when
+     * {@code isx init} recorded none. Each is read only when the decision depends on it.
+     */
     static int checkGatewayOverride(String gatewayIpOption, boolean macOS,
-            java.util.function.Supplier<String> bridgeIp) {
+            java.util.function.Supplier<String> bridgeIp, java.util.function.Supplier<String> cachedGateway) {
         if (gatewayIpOption == null || gatewayIpOption.isBlank()) return 0;
-        if (!macOS) {
-            var literal = bridgeGatewayLiteral(gatewayIpOption);
-            if (literal == null) {
-                System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a bridge gateway address.");
-                System.err.println("Pass the Incus bridge's own IPv4 address, without the prefix length that");
-                System.err.println("'incus network get incusbr0 ipv4.address' shows (10.166.11.1, not 10.166.11.1/24).");
-                return ProxyService.EXIT_CONFIG;
-            }
-            if (literal.isSiteLocalAddress() || literal.isLoopbackAddress()) return 0;
-        }
-        return checkAgainstBridge(gatewayIpOption, macOS, bridgeIp.get());
-    }
-
-    /** Exit 1 when the bridge cannot be read, as without an override: that is transient, not config. */
-    private static int checkAgainstBridge(String gatewayIpOption, boolean macOS, String bridgeIp) {
-        if (bridgeIp == null) {
-            if (macOS) {
-                reportNoVmBridge();
-            } else {
-                System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a private address, and the");
-                System.err.println("Incus bridge address to compare it with could not be read.");
-                System.err.println(ProxyConfig.gatewayUnavailableHint(false));
-            }
+        if (macOS) {
+            var vmBridge = bridgeIp.get();
+            if (vmBridge != null) return checkAgainstBridge(gatewayIpOption, true, vmBridge);
+            // Exit 1, as without an override: a VM not up yet is transient, not a config error.
+            reportNoVmBridge();
             return 1;
         }
+        var literal = bridgeGatewayLiteral(gatewayIpOption);
+        if (literal == null) {
+            System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a bridge gateway address.");
+            System.err.println("Pass the Incus bridge's own IPv4 address, without the prefix length that");
+            System.err.println("'incus network get incusbr0 ipv4.address' shows (10.166.11.1, not 10.166.11.1/24).");
+            return ProxyService.EXIT_CONFIG;
+        }
+        var bridge = bridgeIp.get();
+        if (bridge != null) return checkAgainstBridge(gatewayIpOption, false, bridge);
+        var cached = cachedGateway.get();
+        if (!cached.isEmpty() && !cached.equals(gatewayIpOption)) {
+            System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not the bridge gateway 'isx init' recorded ("
+                    + cached + "), where isx looks for the proxy while the bridge address cannot be read.");
+            System.err.println("Omit --gateway-ip to use " + cached + ".");
+            return ProxyService.EXIT_CONFIG;
+        }
+        if (literal.isSiteLocalAddress() || literal.isLoopbackAddress()) return 0;
+        // Exit 1, as without an override: Incus not up yet is transient, not a config error.
+        System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a private address, and the");
+        System.err.println("Incus bridge address to compare it with could not be read.");
+        System.err.println(ProxyConfig.gatewayUnavailableHint(false));
+        return 1;
+    }
+
+    private static int checkAgainstBridge(String gatewayIpOption, boolean macOS, String bridgeIp) {
         if (bridgeIp.equals(gatewayIpOption)) return 0;
         if (macOS) {
             System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not the VM-facing bridge address ("
                     + bridgeIp + ").");
             System.err.println("The proxy injects credentials, so on macOS it listens only where the VM reaches it.");
         } else {
-            System.err.println("Error: --gateway-ip " + gatewayIpOption + " is neither a private address nor the Incus");
-            System.err.println("bridge address (" + bridgeIp + "). The proxy injects credentials, so it does not");
-            System.err.println("listen on addresses other networks can route to.");
+            System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not the Incus bridge address ("
+                    + bridgeIp + ").");
+            System.err.println("isx looks for the proxy at the bridge's address, so the proxy serves only there.");
         }
         System.err.println("Omit --gateway-ip to use " + bridgeIp + ".");
         return ProxyService.EXIT_CONFIG;

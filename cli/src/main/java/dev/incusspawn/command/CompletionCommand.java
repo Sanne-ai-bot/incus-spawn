@@ -278,7 +278,7 @@ public class CompletionCommand extends BaseCommand {
                         '(-h --help)'{-h,--help}'[Show help]' \\
                         '--port=[MITM TLS proxy port]:port' \\
                         '--health-port=[Health check HTTP port]:port' \\
-                        '--gateway-ip=[Incus bridge gateway IP (Linux: private, loopback or the bridge; macOS: the VM bridge)]:ip' \\
+                        '--gateway-ip=[Incus bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)]:ip' \\
                         '--debug[Log full API request/response details for traffic inspection]' ;;
                     dump)
                       _arguments \\
@@ -906,7 +906,7 @@ public class CompletionCommand extends BaseCommand {
 
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l port        -d 'MITM TLS proxy port'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l health-port -d 'Health check HTTP port'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l gateway-ip  -d 'Incus bridge gateway IP (Linux: private, loopback or the bridge; macOS: the VM bridge)'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l gateway-ip  -d 'Incus bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l debug       -d 'Log full API request/response details'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand dump'  -l port        -d 'Local HTTP port'
 

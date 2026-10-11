@@ -23,9 +23,10 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * {@code --gateway-ip} decides where the health endpoint listens and where bridge DNS points,
  * without a second bridge lookup that would ignore the override or fail when the bridge has no
- * address to read (#892). On macOS neither follows the gateway (health is on localhost, DNS
- * inside the VM points at the VM's own bridge), so those cases guard the Linux behaviour; what
- * the override may be is checked for both platforms on every platform.
+ * address to read (#892). It may only name the address the CLI looks for the proxy at (#933).
+ * On macOS neither follows the gateway (health is on localhost, DNS inside the VM points at the
+ * VM's own bridge), so those cases guard the Linux behaviour; what the override may be is
+ * checked for both platforms on every platform.
  */
 class GatewayOverrideTest {
 
@@ -57,16 +58,36 @@ class GatewayOverrideTest {
     }
 
     @Test
-    void healthBindsToTheOverrideRatherThanTheDetectedBridge() {
+    void healthBindsToTheOverrideWithoutReadingTheBridgeAgain() {
         var bridgeReads = new AtomicInteger();
-        var incus = bridgeAt("10.166.11.1/24", bridgeReads);
+        var incus = bridgeAt(OVERRIDE + "/24", bridgeReads);
 
         var addresses = ProxyMain.resolveAddresses(OVERRIDE, incus);
 
         assertEquals(OVERRIDE, addresses.gateway());
         assertEquals(expectedHealthBind(), addresses.healthBind());
         assertEquals(expectedBridgeDns(), addresses.bridgeDns());
-        assertEquals(0, bridgeReads.get(), "the override leaves nothing to look up");
+        assertEquals(0, bridgeReads.get(), "the check already compared the override with the bridge");
+    }
+
+    /** With no bridge address to read, the proxy and the CLI both find the gateway {@code isx init} cached. */
+    @Test
+    void withNoBridgeAddressTheProxyAndTheCliAgreeOnTheCachedGateway() {
+        if (Platform.isMacOS()) return;
+        var cached = "10.166.11.1";
+        var config = SpawnConfig.load();
+        config.setIncusBridgeGateway(cached);
+        config.save();
+        var incus = bridgeWithNoAddress(new ArrayList<>());
+
+        var addresses = ProxyMain.resolveAddresses(null, incus);
+
+        assertEquals(cached, ProxyHealthCheck.healthAddress(incus));
+        assertEquals(cached, addresses.gateway());
+        assertEquals(cached, addresses.healthBind());
+        assertEquals(0, ProxyMain.checkGatewayOverride(cached, incus));
+        assertEquals(ProxyService.EXIT_CONFIG, ProxyMain.checkGatewayOverride(OVERRIDE, incus),
+                "the CLI would look for the proxy at the cached gateway");
     }
 
     @Test
@@ -100,7 +121,6 @@ class GatewayOverrideTest {
     @Test
     void refusesAnOverrideThatCannotBeTheBridgeGatewayAsAConfigError() {
         assertEquals(0, checkOnLinux(null));
-        assertEquals(0, checkOnLinux(OVERRIDE));
         assertEquals(0, checkOnLinux(" "), "blank means no override, as before");
         // Each would be written verbatim into every address=/<domain>/ line: not IPv4, not
         // this host's bridge, or not the canonical form dnsmasq and Vert.x would both read the
@@ -113,21 +133,43 @@ class GatewayOverrideTest {
     }
 
     /**
-     * On Linux the override is also the credential listener's bind address, so it may only be
-     * somewhere other hosts cannot route to: a private range, loopback, or the bridge's own
-     * address (#1022). A private override needs no bridge read, so it still works around a
-     * bridge with no address to read (#892).
+     * With no bridge address to read, the override stands in for it (#892). It is also the
+     * credential listener's bind address, so it may then only be somewhere other hosts cannot
+     * route to: a private range or loopback (#1022).
      */
     @Test
-    void onLinuxAcceptsPrivateLoopbackOrTheBridgeAddress() {
-        var bridge = "100.64.10.1";
-        for (var bad : List.of("8.8.8.8", "100.64.10.2", "172.32.0.1", "192.169.1.1", "11.0.0.1")) {
-            assertEquals(ProxyService.EXIT_CONFIG, checkOnLinux(bad, bridge), bad);
-        }
+    void onLinuxWithNoBridgeAddressAcceptsPrivateOrLoopback() {
         for (var local : List.of("10.99.0.1", "172.16.0.5", "172.31.255.254", "192.168.1.20", "127.0.0.1")) {
-            assertEquals(0, checkOnLinux(local), local);
+            assertEquals(0, checkOnLinux(local, null), local);
         }
-        assertEquals(0, checkOnLinux(bridge, bridge), "a bridge outside the private ranges is still the bridge");
+        for (var routable : List.of("8.8.8.8", "100.64.10.2", "172.32.0.1", "192.169.1.1", "11.0.0.1")) {
+            assertEquals(1, checkOnLinux(routable, null), routable);
+        }
+    }
+
+    /** Where the CLI looks while the bridge cannot be read: the gateway {@code isx init} cached (#933). */
+    @Test
+    void onLinuxWithNoBridgeAddressAnOverrideMustMatchTheCachedGateway() {
+        var cached = "10.166.11.1";
+        assertEquals(0, checkOnLinux(cached, null, cached));
+        for (var other : List.of(OVERRIDE, "127.0.0.1", "8.8.8.8")) {
+            assertEquals(ProxyService.EXIT_CONFIG, checkOnLinux(other, null, cached),
+                    other + ": a config error, never the transient exit 1");
+        }
+    }
+
+    /**
+     * The CLI finds the proxy at the bridge's address, so an override that differs from a bridge
+     * it can read would put the proxy where no {@code isx} command looks for it (#933).
+     */
+    @Test
+    void onLinuxAnOverrideOtherThanAReadableBridgeIsRefused() {
+        var bridge = "10.166.11.1";
+        for (var other : List.of("10.99.0.1", "192.168.1.20", "127.0.0.1", "8.8.8.8", "10.166.11.2")) {
+            assertEquals(ProxyService.EXIT_CONFIG, checkOnLinux(other, bridge), other);
+        }
+        assertEquals(0, checkOnLinux(bridge, bridge));
+        assertEquals(0, checkOnLinux("100.64.10.1", "100.64.10.1"), "a bridge outside the private ranges is still the bridge");
     }
 
     @Test
@@ -142,8 +184,8 @@ class GatewayOverrideTest {
     void onMacOsAcceptsOnlyTheVmBridgeAddress() {
         var bridge = "192.168.64.1";
         Supplier<String> noLookup = () -> fail("no override, nothing to check");
-        assertEquals(0, ProxyMain.checkGatewayOverride(null, true, noLookup));
-        assertEquals(0, ProxyMain.checkGatewayOverride(" ", true, noLookup), "blank means no override, as before");
+        assertEquals(0, ProxyMain.checkGatewayOverride(null, true, noLookup, noLookup));
+        assertEquals(0, ProxyMain.checkGatewayOverride(" ", true, noLookup, noLookup), "blank means no override, as before");
         assertEquals(0, checkOnMacOs(bridge, bridge));
         for (var bad : List.of("0.0.0.0", "::", "192.168.1.20", "10.99.0.1", "8.8.8.8",
                 "127.0.0.1", "192.168.064.001", "::ffff:192.168.64.1", "192.168.64.1/24",
@@ -159,8 +201,7 @@ class GatewayOverrideTest {
                 "with no VM bridge to compare against, nothing is known safe");
     }
 
-    /** A check that must not need the bridge address: a private override is enough on its own. */
-    /** What the proxy compares a non-private override with: the bridge as Incus reports it now. */
+    /** What the proxy compares an override with: the bridge as Incus reports it now. */
     @Test
     void onLinuxTheBridgeIsReadFromIncusWithoutTheCachedGateway() {
         if (Platform.isMacOS()) return;
@@ -168,8 +209,9 @@ class GatewayOverrideTest {
         assertEquals(0, ProxyMain.checkGatewayOverride("100.64.10.1", bridgeAt("100.64.10.1/24", reads)));
         assertEquals(ProxyService.EXIT_CONFIG,
                 ProxyMain.checkGatewayOverride("100.64.10.2", bridgeAt("100.64.10.1/24", reads)));
-        assertEquals(0, ProxyMain.checkGatewayOverride("192.168.1.20", bridgeAt("100.64.10.1/24", reads)));
-        assertEquals(2, reads.get(), "a private override reads nothing");
+        assertEquals(ProxyService.EXIT_CONFIG,
+                ProxyMain.checkGatewayOverride("192.168.1.20", bridgeAt("100.64.10.1/24", reads)));
+        assertEquals(3, reads.get());
 
         // A cached gateway must not stand in for a bridge that cannot be read.
         var config = SpawnConfig.load();
@@ -181,15 +223,21 @@ class GatewayOverrideTest {
     }
 
     private static int checkOnLinux(String option) {
-        return ProxyMain.checkGatewayOverride(option, false, () -> fail("no bridge read needed for " + option));
+        Supplier<String> noLookup = () -> fail("no lookup needed for " + option);
+        return ProxyMain.checkGatewayOverride(option, false, noLookup, noLookup);
     }
 
+    /** {@code bridge} null: it cannot be read, and {@code isx init} cached no gateway. */
     private static int checkOnLinux(String option, String bridge) {
-        return ProxyMain.checkGatewayOverride(option, false, () -> bridge);
+        return checkOnLinux(option, bridge, "");
+    }
+
+    private static int checkOnLinux(String option, String bridge, String cached) {
+        return ProxyMain.checkGatewayOverride(option, false, () -> bridge, () -> cached);
     }
 
     private static int checkOnMacOs(String option, String bridge) {
-        return ProxyMain.checkGatewayOverride(option, true, () -> bridge);
+        return ProxyMain.checkGatewayOverride(option, true, () -> bridge, () -> fail("no cache on macOS"));
     }
 
     @Test

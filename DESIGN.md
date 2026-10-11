@@ -3352,20 +3352,20 @@ With it down, they would send every intercepted domain to a gateway where nothin
 A proxy that outlived a change of the bridge's address is still running, bound to the old gateway, and its block still points there.
 Probing the new gateway finds nothing and probing the old one cannot help either: once the bridge drops the address nothing answers on it, though the socket bound to it lives on.
 So when the probe fails and the block points elsewhere, `ProxyHealthCheck` looks for a listener on the health port at that address in `/proc/net/tcp` and `tcp6`, and, when the host no longer has that address, reports `STALE_GATEWAY` (restart the proxy) instead of `STALE_DNS` (start it) (#919).
-An address the host still has is a proxy started there on purpose with `--gateway-ip`, which a restart would not move (#933).
+An address the host still has is a proxy started there with `--gateway-ip` while the bridge had no address to read, which a restart would not move (#892).
 The automatic restart before a command, and the TUI's, restart the service for `STALE_GATEWAY` only when the service is active.
 When the stale proxy runs in the foreground, starting the service would put a second proxy beside it.
 The user is shown the restart advice instead.
 It reads two local files, never the network, and only after the probe has already failed, so a healthy proxy pays nothing.
 Doctor does not rewrite the block in that state either: the current gateway is where nothing listens.
-The proxy also heals itself when its gateway came from the bridge (Linux, no `--gateway-ip`) (#966).
+The proxy also heals itself when the bridge moves (Linux) (#966).
 Every 60 s, and before a reload rewrites the block, it reads the bridge's address again (`ProxyMain.Addresses.movedTo()`).
 When the bridge now has another address, it does not write the block, which would point every intercepted domain back at an address nothing reaches.
 Instead it stops and exits 1, and the unit's `Restart=on-failure` starts it again, and startup binds to the new address and writes it into the block.
 Rebinding in place was the alternative, rejected because it would need the listener, the health endpoint and the block moved together, which is exactly what startup already does.
 A foreground proxy just exits with the reason in its log.
 A bridge that cannot be read, or has no address, is not a move: a restart would find nothing better, and the gateway `isx init` cached is not the bridge's word.
-An explicit `--gateway-ip` is never compared with the bridge, since it is the user's choice of address (#933).
+A `--gateway-ip` is the bridge's address too (see below), so it is compared the same way.
 On macOS the gateway is the VM link, which the Incus bridge does not move.
 One Incus request a minute is the cost; it is not on any branch, start or shell path.
 On Linux the proxy points the block at the gateway it resolved at startup and listens on, which `--gateway-ip` can set, passing it in rather than reading the bridge again.
@@ -3374,12 +3374,17 @@ The override is written into dnsmasq verbatim, so it must be a unicast IPv4 addr
 A hostname, IPv6, link-local, multicast, broadcast or wildcard address would become every intercepted domain's answer, and most of them break the bridge's dnsmasq outright.
 A shorthand such as `10.1`, or an IPv4-mapped `::ffff:10.99.0.1`, parses as the right address in Java, but dnsmasq would not read it the same way: the mapped form becomes an AAAA answer, leaving intercepted domains with no A record.
 The override is also the bind address of the credential-injecting listener, which serves the default accounts to a caller it cannot place, so a LAN or public address would inject the user's credentials into requests from other hosts.
-On Linux it must therefore also be a private (RFC 1918) or loopback address, or the bridge's current gateway itself (`BridgeAddress.read()`, not `ProxyConfig.resolveGatewayIp()`, whose fallback to the gateway `isx init` cached could vouch for an address the bridge has since given up).
-Anything else is `EXIT_CONFIG` (#1022).
-A private or loopback override is accepted without reading the bridge, because working around a bridge whose address cannot be read is what the override is for (#892).
-The bridge is read only for an address outside those ranges (a bridge on, say, `100.64.0.0/10`), and when that read fails the proxy stops with exit 1, as it does without an override.
-Requiring exactly the bridge address, as on macOS, was the alternative, rejected because it would break that workaround; the cost is that a private LAN address remains accepted, which is the user's explicit choice of a network they control.
+The proxy serves the bridge gateway and nothing else, because that is where every `isx` command looks for it: health checks, auto-restart, `isx list`, doctor and the CLI's bridge DNS writers all resolve the address with `ProxyConfig.resolveGatewayIp()`, the bridge's gateway or, when the bridge cannot be read, the one `isx init` cached.
+A proxy anywhere else was reported down, restarted beside itself, and had its DNS block pointed back at the bridge (#933).
+So on Linux, when Incus reports the bridge's address, the override must equal it (`BridgeAddress.read()`, never the cached one), and anything else is `EXIT_CONFIG`.
+The override's one use is the bridge's address when Incus cannot report it (#892).
+Then it must equal the gateway `isx init` cached, if there is one, else `EXIT_CONFIG`.
+As the credential listener's bind address it must also be private (RFC 1918) or loopback, since nothing vouches for it: a cached gateway could be an address the bridge has since given up (#1022).
+A routable override that passes the cache comparison stops the proxy with exit 1, as it does without an override when the bridge cannot be read.
 Loopback is accepted though, as an A record, it sends instances to themselves: it exposes nothing.
+Recording a differing override where the CLI could read it (a `proxy-gateway-ip` key in `config.yaml`, used by the health address, the DNS writers, init's PREROUTING redirect and the `PROXY_GATEWAY` stamp) was the alternative, rejected because nobody needs a proxy away from the bridge and no such configuration ever worked on Linux: the redirect and the in-instance proxy-only firewall both target the bridge gateway.
+It is the path to take if a second bridge or a dedicated proxy interface ever becomes a real request.
+Saving `isx proxy start --gateway-ip` into `config.yaml` was rejected too: a command must not rewrite the user's secrets-bearing file to remember an option.
 On macOS the address the proxy listens on is the host's end of the VM link, so the block, which dnsmasq serves inside the VM, still points at the VM's own bridge gateway.
 There `--gateway-ip` is not written anywhere but it is the bind address of the credential-injecting listener, and a caller the proxy cannot place is served the default accounts (build containers and host traffic rely on that).
 So an override of `0.0.0.0` or a LAN address would inject the user's credentials into any host's requests.
