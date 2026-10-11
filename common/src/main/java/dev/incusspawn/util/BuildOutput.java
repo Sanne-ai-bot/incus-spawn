@@ -1,10 +1,14 @@
 package dev.incusspawn.util;
 
+import dev.incusspawn.Warnings;
+
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 /**
  * Shared terminal output helpers for build and branch operations.
@@ -513,6 +517,18 @@ public final class BuildOutput {
         System.out.println("  " + styled(BOLD, "● " + name) + " " + styled(DIM, "← " + source));
     }
 
+    private static volatile Consumer<String> warningListener;
+
+    /**
+     * Also hand every {@link #warn} to {@code listener}, until the returned handle is closed: for
+     * the TUI, which runs a build on the released terminal and then redraws over what it printed.
+     */
+    public static Warnings.Redirect copyWarningsTo(Consumer<String> listener) {
+        var previous = warningListener;
+        warningListener = listener;
+        return () -> warningListener = previous;
+    }
+
     /**
      * Print a yellow warning line and any dim {@code details} under it (e.g. what to do about
      * it), then a blank line separating them from the regular flow. Blank messages are skipped.
@@ -520,6 +536,12 @@ public final class BuildOutput {
      */
     public static void warn(String msg, String... details) {
         if (msg == null || msg.isBlank()) return;
+        var listener = warningListener;
+        if (listener != null) {
+            // Each line made safe: messages can quote template text, and the TUI's log renders it
+            listener.accept(String.join("\n", Stream.concat(Stream.of(msg), Arrays.stream(details))
+                    .map(OutputFormat::oneLine).toList()));
+        }
         System.err.println(indent() + styled(YELLOW, "⚠ " + msg));
         for (var detail : details) {
             System.err.println(indent() + GROUP_INDENT + styled(DIM, detail));

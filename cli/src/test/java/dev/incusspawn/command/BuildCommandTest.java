@@ -107,6 +107,40 @@ class BuildCommandTest {
         });
     }
 
+    /**
+     * A deprecated template still builds, and so does what derives from it, but each build says
+     * so: once per deprecated template in the run, however many of its descendants are built (#1195).
+     */
+    @Test
+    void buildingOnADeprecatedTemplateWarnsOncePerDeprecatedTemplate(@TempDir Path tmp) throws Exception {
+        InitCommandTest.withHome(tmp, () -> {
+            var cmd = spy(new BuildCommand());
+            cmd.incus = mock(IncusClient.class);
+            cmd.yes = true;
+            doNothing().when(cmd).buildInto(any(), any(), anyString());
+            var root = new ImageDef();
+            root.setName("tpl-root");
+            var old = new ImageDef();
+            old.setName("tpl-old");
+            old.setParent("tpl-root");
+            old.setDeprecated("use tpl-new instead");
+            var mine = new ImageDef();
+            mine.setName("tpl-mine");
+            mine.setParent("tpl-old");
+            var defs = Map.of("tpl-root", root, "tpl-old", old, "tpl-mine", mine);
+
+            var out = bothStreams(() -> {
+                cmd.buildSingleImage(root, defs);
+                cmd.buildSingleImage(mine, defs);
+                cmd.buildSingleImage(mine, defs);
+            });
+
+            assertEquals(1, out.split("deprecated", -1).length - 1, out);
+            assertTrue(out.contains("tpl-mine derives from tpl-old, which is deprecated: use tpl-new instead"), out);
+            verify(cmd.incus, times(2)).rename("tpl-mine-rebuilding", "tpl-mine");
+        });
+    }
+
     private static InstanceSubvolumes.Scan scan(Set<String> orphans, Set<String> dangling) {
         var kind = InstanceSubvolumes.Kind.CONTAINER;
         return new InstanceSubvolumes.Scan("cow",

@@ -24,6 +24,8 @@ paths:
 # Image Hierarchy and Build System
 
 Templates are YAML definitions (`common/src/main/resources/images/`) with optional parent inheritance forming a chain: `tpl-minimal` -> `tpl-dev` -> `tpl-java`.
+A `deprecated:` definition (#1195) still builds, but `ImageDef.deprecationWarnings` gives one warning per deprecated template in a chain, which `BuildCommand` prints once per run; the TUI shows them in template details, and copies every `BuildOutput.warn` of a build it runs into its warning log (`BuildOutput.copyWarningsTo`), since it redraws over the released terminal.
+`deprecated` is not fingerprinted.
 Building an image auto-builds missing parents.
 Each definition can set `type` (`container`, `vm`, or `kvm` -- the last is a *container* that branches get `/dev/kvm` passed into, not a VM) which inherits through the parent chain via `inheritTypes()` at `ImageDef.loadAll()` time.
 VM definitions also support `vm_image_url` and `vm_image_sha256` for a pre-baked VM base image.

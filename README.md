@@ -356,6 +356,7 @@ Image schema fields (all optional except `name`):
 - `shell-command` -- command to run instead of the login shell (see below)
 - `default-action` -- tool action to run when pressing Enter on an instance in the TUI (see below)
 - `description` -- human-readable description for the TUI
+- `deprecated` -- `true`, or a note saying what to use instead: the template still builds, but every build of it or of a template derived from it warns, and the TUI shows the warning in the template's details
 
 ```shell
 # Build a specific image (builds missing parents automatically)

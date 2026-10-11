@@ -438,7 +438,12 @@ public class Tui {
                         } else {
                             buildStart = java.time.Instant.now();
                         }
-                        var buildResult = org.aesh.AeshRuntimeRunner.builder().command(BuildCommand.class).args(args).execute();
+                        // The build prints its warnings on the released terminal, which the TUI is about
+                        // to redraw over: the log keeps them (a deprecated parent, #1195; dropped tools)
+                        org.aesh.command.CommandResult buildResult;
+                        try (var ignored = BuildOutput.copyWarningsTo(warningLog::add)) {
+                            buildResult = org.aesh.AeshRuntimeRunner.builder().command(BuildCommand.class).args(args).execute();
+                        }
                         int exitCode = buildResult != null ? buildResult.getResultValue() : 1;
                         statusMessage = buildStatusMessage(pendingBuildArgs, exitCode == 0, buildStart);
                         if (exitCode != 0) pendingAction = PendingAction.BUILD_TEMPLATE;

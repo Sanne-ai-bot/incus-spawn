@@ -190,6 +190,8 @@ public class BuildCommand extends BaseCommand {
 
     /** The user accepted a batch rebuild up front, which covers replacing each existing image. */
     private boolean batchConfirmed;
+    /** Deprecated templates this run already warned about: a chain of builds names each once. */
+    private final Set<String> warnedDeprecated = new HashSet<>();
 
     /** The base image each tracked root resolved to this invocation (avoids re-fetching). */
     private final Map<String, BaseImage> trackedBaseImages = new HashMap<>();
@@ -749,6 +751,7 @@ public class BuildCommand extends BaseCommand {
         if (reportNameTooLong(canonicalName)) throw new BuildFailedException(canonicalName);
 
         BuildOutput.buildHeader(canonicalName, buildIndex, buildTotal);
+        warnDeprecated(imageDef, defs);
 
         // Refuse before anything is created: the same check runs again when the resources are
         // applied, but by then the build container exists and the failure would leave it behind.
@@ -910,6 +913,13 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(canonicalName, Metadata.DISK_REFERENCED, String.valueOf(referenced));
         } catch (Exception ignored) {
             // Non-fatal: the referenced-size stamp is a display optimisation, not build state.
+        }
+    }
+
+    /** Warn about each deprecated template {@code imageDef} is built on, itself included (#1195). */
+    private void warnDeprecated(ImageDef imageDef, Map<String, ImageDef> defs) {
+        for (var warning : ImageDef.deprecationWarnings(imageDef, defs, warnedDeprecated)) {
+            BuildOutput.warn(shown(warning));
         }
     }
 
