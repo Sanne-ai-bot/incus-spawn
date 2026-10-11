@@ -84,8 +84,15 @@ public final class InstanceDetailView {
     void render(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen, InstanceInfo selected,
                 List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses) {
         var contentLines = buildInstanceDetailLines(selected, detailAccountUses);
+        var hintSpans = new ArrayList<Span>();
+        modal.addKey(hintSpans, "F2", "Shell");
+        modal.addKey(hintSpans, "a", "Accounts");
+        modal.addKey(hintSpans, "F3/Esc", "Close");
 
-        int maxLineWidth = 0;
+        // As wide as the widest line, the key hints included (without the padding after the last),
+        // so a narrow view does not cut them off.
+        var hintText = hintSpans.stream().map(Span::content).collect(java.util.stream.Collectors.joining());
+        int maxLineWidth = hintText.stripTrailing().length();
         for (var line : contentLines) {
             int w = line.spans().stream().mapToInt(s -> s.content().length()).sum();
             if (w > maxLineWidth) maxLineWidth = w;
@@ -111,10 +118,6 @@ public final class InstanceDetailView {
 
         instanceDetailScrollOffset = modal.renderScrollableContent(frame, rows.get(0), contentLines, instanceDetailScrollOffset);
 
-        var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "F2", "Shell");
-        modal.addKey(hintSpans, "a", "Accounts");
-        modal.addKey(hintSpans, "F3/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
