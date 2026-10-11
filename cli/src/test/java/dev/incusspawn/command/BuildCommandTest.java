@@ -1777,6 +1777,48 @@ class BuildCommandTest {
         assertFalse(chowned.contains(mount.toString()), "chowned into a mount: " + chowned);
     }
 
+    /**
+     * The root expansion a VM build runs, with the guest's tools stubbed: each reports a root at
+     * {@code /dev/<partition>} of {@code disk}, and the resize commands log what they were asked to grow.
+     */
+    private static String expandVmRoot(Path tempDir, String fsType, String disk, String partition)
+            throws Exception {
+        assumeTrue(Platform.isLinux(), "runs a guest script with the host's sh and grep");
+        var bin = Files.createDirectories(tempDir.resolve("bin"));
+        var log = tempDir.resolve("resize.log");
+        writeStub(bin.resolve("findmnt"), "case \"$*\" in *SOURCE*) echo /dev/" + partition + " ;; *FSTYPE*) echo " + fsType + " ;; esac");
+        writeStub(bin.resolve("lsblk"), "[ \"$2\" = PKNAME ] && [ \"$3\" = /dev/" + partition + " ] && echo " + disk);
+        for (var tool : List.of("growpart", "resize2fs", "xfs_growfs")) {
+            writeStub(bin.resolve(tool), "echo " + tool + " \"$@\" >> " + log);
+        }
+        var pb = new ProcessBuilder("sh", "-c", BuildCommand.VM_ROOT_EXPANSION).redirectErrorStream(true);
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        var proc = pb.start();
+        var out = new String(proc.getInputStream().readAllBytes());
+        assertEquals(0, proc.waitFor(), out);
+        return Files.readString(log);
+    }
+
+    @Test
+    void aVmRootOnVirtioBlkIsGrownWhereItIs(@TempDir Path tempDir) throws Exception {
+        // VM builds put the root on virtio-blk (#1255)
+        assertEquals("growpart /dev/vda 2\nresize2fs /dev/vda2\n",
+                expandVmRoot(tempDir, "ext4", "vda", "vda2"));
+    }
+
+    @Test
+    void aVmRootOnVirtioScsiIsStillGrown(@TempDir Path tempDir) throws Exception {
+        // Templates built before #1255 keep their root on virtio-scsi, and so do their derivations' parents
+        assertEquals("growpart /dev/sda 2\nresize2fs /dev/sda2\n",
+                expandVmRoot(tempDir, "ext4", "sda", "sda2"));
+    }
+
+    @Test
+    void anXfsVmRootOnNvmeIsGrownToo(@TempDir Path tempDir) throws Exception {
+        assertEquals("growpart /dev/nvme0n1 2\nxfs_growfs /\n",
+                expandVmRoot(tempDir, "xfs", "nvme0n1", "nvme0n1p2"));
+    }
+
     private static void writeStub(Path path, String body) throws Exception {
         Files.writeString(path, "#!/bin/sh\n" + body + "\n");
         path.toFile().setExecutable(true);
