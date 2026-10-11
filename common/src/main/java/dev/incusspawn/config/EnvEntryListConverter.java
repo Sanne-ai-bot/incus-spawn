@@ -59,10 +59,10 @@ public class EnvEntryListConverter implements ValueConverter<List<EnvEntry>> {
         String separator = " ";
         for (var field : entry.asMap().entrySet()) {
             switch (field.getKey()) {
-                case "name" -> name = field.getValue().asText();
+                case "name" -> name = field.getValue().isNull() ? null : field.getValue().asText();
                 case "value" -> entryValue = Jjq.text(field.getValue());
                 case "strategy" -> {
-                    var strategyStr = field.getValue().asText();
+                    var strategyStr = field.getValue().isNull() ? "" : field.getValue().asText();
                     var resolved = STRATEGY_MAP.get(strategyStr);
                     if (resolved == null) {
                         throw new JqMapperException("Unknown env strategy '" + strategyStr
@@ -70,7 +70,10 @@ public class EnvEntryListConverter implements ValueConverter<List<EnvEntry>> {
                     }
                     strategy = resolved;
                 }
-                case "separator" -> separator = Jjq.text(field.getValue());
+                case "separator" -> {
+                    // An empty 'separator:' is the default, as if it were absent
+                    if (!field.getValue().isNull()) separator = Jjq.text(field.getValue());
+                }
                 default -> { /* ignoreUnknown, like Jackson */ }
             }
         }

@@ -209,4 +209,24 @@ class EnvEntryTest {
     private static List<EnvEntry> parseEnvList(String yaml) throws Exception {
         return JqYaml.fromYaml(yaml, JqMapper.create(), Wrapper.class, YamlOptions.STRICT).env();
     }
+
+    /** An empty strategy is an unknown one, said so, not a NullPointerException. */
+    @Test
+    void anEmptyStrategyIsReportedAsUnknown() {
+        for (var strategy : List.of("", " ~")) {
+            var e = assertThrows(java.io.IOException.class, () -> ImageDef.parseYaml(
+                    "name: tpl-x\nparent: tpl-minimal\nenv:\n  - name: A\n    value: b\n    strategy:" + strategy + "\n"));
+            assertTrue(e.getMessage().contains("Unknown env strategy"), e.getMessage());
+        }
+    }
+
+    /** An empty separator is the default one, not a null that fails when the env script is written. */
+    @Test
+    void anEmptySeparatorIsTheDefault() throws Exception {
+        for (var separator : List.of("", " ~")) {
+            var def = ImageDef.parseYaml("name: tpl-x\nparent: tpl-minimal\nenv:\n  - name: A\n    value: b\n"
+                    + "    strategy: prepend\n    separator:" + separator + "\n");
+            assertEquals(" ", def.getEnv().getFirst().getSeparator());
+        }
+    }
 }
