@@ -18,8 +18,13 @@ import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.ToolVerifier;
 import dev.incusspawn.util.BuildOutput;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -259,6 +264,8 @@ public class GuestProvisioning {
         resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");
         resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
         resolver.add(EnvEntry.set("ISX_VERSION", BuildInfo.instance().version()), "built-in");
+        // setIfUnset: a value the user or a tool already has wins.
+        TRUST_ENV.forEach((name, value) -> resolver.add(EnvEntry.setIfUnset(name, value), "built-in trust"));
         for (var layer : ImageDef.chain(imageDef, defs)) {
             resolver.addAll(layer.getEnv(), "template " + layer.getName());
         }
@@ -320,13 +327,66 @@ public class GuestProvisioning {
         container.writeFile(ClaudeSetup.MANAGED_MEMORY_PATH, content);
     }
 
-    static void linkJavaTrustStores(Container container) {
-        container.sh(
-                "find /usr/lib/jvm /opt -name cacerts -path '*/lib/security/cacerts' 2>/dev/null | while IFS= read -r f; do " +
-                "t=$(readlink -f \"$f\" 2>/dev/null); " +
-                "if [ \"$t\" != /etc/pki/java/cacerts ]; then " +
-                "ln -sf /etc/pki/java/cacerts \"$f\"; " +
-                "fi; done");
+    /** Where {@link #installTrustHelper} puts the helper. */
+    static final String TRUST_HELPER_PATH = "/usr/local/bin/isx-trust";
+
+    /**
+     * Runtimes that read a variable for their root bundle, pointed at the system store that
+     * {@code update-ca-trust} keeps the isx CA in. Read at process start, so they cover a
+     * runtime installed at any time in any directory. None of them prints a "Picked up" line
+     * (what {@code JAVA_TOOL_OPTIONS} did, #464).
+     */
+    static final Map<String, String> TRUST_ENV = trustEnv();
+
+    private static Map<String, String> trustEnv() {
+        var bundle = "/etc/pki/tls/certs/ca-bundle.crt";
+        var env = new LinkedHashMap<String, String>();
+        env.put("SSL_CERT_FILE", bundle);
+        env.put("SSL_CERT_DIR", "/etc/pki/tls/certs");
+        env.put("REQUESTS_CA_BUNDLE", bundle);
+        env.put("CURL_CA_BUNDLE", bundle);
+        env.put("PIP_CERT", bundle);
+        env.put("NODE_EXTRA_CA_CERTS", bundle);
+        env.put("CARGO_HTTP_CAINFO", bundle);
+        env.put("AWS_CA_BUNDLE", bundle);
+        env.put("NIX_SSL_CERT_FILE", bundle);
+        env.put("DENO_TLS_CA_STORE", "system");
+        env.put("UV_NATIVE_TLS", "1");
+        return Collections.unmodifiableMap(env);
+    }
+
+    /**
+     * Writes {@link #TRUST_ENV} for systemd user sessions ({@code environment.d}); login shells
+     * get the same names from {@code isx-env.sh} (see {@link #writeEnvFile}).
+     */
+    static void writeTrustEnvironmentD(Container container) {
+        var sb = new StringBuilder();
+        TRUST_ENV.forEach((name, value) -> sb.append(name).append('=').append(value).append('\n'));
+        container.writeFile("/etc/environment.d/50-isx-trust.conf", sb.toString());
+    }
+
+    /** Installs {@code isx-trust}, the one helper that applies the file bindings. */
+    static void installTrustHelper(Container container) {
+        String script;
+        try (var is = GuestProvisioning.class.getClassLoader().getResourceAsStream("isx-trust")) {
+            if (is == null) throw new IllegalStateException("isx-trust resource missing");
+            script = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        container.writeFile(TRUST_HELPER_PATH, script);
+        container.exec("chmod", "755", TRUST_HELPER_PATH).assertSuccess("Failed to install " + TRUST_HELPER_PATH);
+    }
+
+    /**
+     * Installs the trust helper and the environment drop-in, then applies the file bindings to
+     * what the image already carries: a JDK under {@code /usr/lib/jvm} or {@code /opt} (GraalVM,
+     * labsjdk, ...) trusts the isx CA without {@code JAVA_TOOL_OPTIONS}.
+     */
+    static void bindTrustStores(Container container) {
+        installTrustHelper(container);
+        writeTrustEnvironmentD(container);
+        container.exec(TRUST_HELPER_PATH, "/usr/lib/jvm", "/opt");
     }
 
     /**

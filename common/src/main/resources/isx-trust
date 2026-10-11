@@ -1,0 +1,30 @@
+#!/bin/sh
+# isx-trust [DIR...] -- bind runtimes that ship their own root store to the system store.
+#
+# A runtime that carries its own bundle ignores the system store, where `update-ca-trust`
+# put the isx CA, so every HTTPS call through the proxy fails (certificate_unknown,
+# PKIX path building failed). File bindings fix that by replacing the bundled file with a
+# symlink to the system store. Environment bindings need no file; `isx build`
+# exports them from /etc/profile.d/isx-env.sh. Installed by `isx build` beside the CA.
+#
+#   isx-trust [DIR...]   bind every runtime found under each DIR (default: /usr/lib/jvm /opt)
+#
+# ISX_TRUST_JAVA_STORE overrides the system Java store (tests only).
+
+store=${ISX_TRUST_JAVA_STORE:-/etc/pki/java/cacerts}
+
+[ "$#" -gt 0 ] || set -- /usr/lib/jvm /opt
+
+# Java: <jdk>/lib/security/cacerts.
+for dir in "$@"; do
+    [ -d "$dir" ] || continue
+    find "$dir" -name cacerts -path '*/lib/security/cacerts' 2>/dev/null | while IFS= read -r f; do
+        [ "$(readlink -f "$f" 2>/dev/null)" = "$(readlink -f "$store" 2>/dev/null)" ] && continue
+        if ln -sf "$store" "$f" 2>/dev/null || sudo -n ln -sf "$store" "$f" 2>/dev/null; then
+            echo "isx-trust: $f now trusts the system store (and the isx CA)"
+        else
+            echo "isx-trust: could not link $f; run: sudo ln -sf $store $f" >&2
+        fi
+    done
+done
+exit 0
