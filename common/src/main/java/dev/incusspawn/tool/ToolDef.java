@@ -591,6 +591,8 @@ public class ToolDef {
      * Compute composite fingerprints that incorporate transitive deps.
      * Each tool's entry in the result includes the fingerprints of all its
      * transitive dependencies, so a change in any dep propagates upward.
+     * Each tool is resolved on its own, so a {@code requires} cycle is entered at that tool
+     * whatever else is fingerprinted with it (#1142).
      *
      * @param rawFingerprints  tool name → own contentFingerprint()
      * @param depMap           tool name → list of required tool names
@@ -598,11 +600,12 @@ public class ToolDef {
      */
     public static Map<String, String> compositeFingerprints(
             Map<String, String> rawFingerprints, Map<String, java.util.List<String>> depMap) {
-        var cache = new TreeMap<String, String>();
+        var result = new TreeMap<String, String>();
         for (var name : rawFingerprints.keySet()) {
-            resolveComposite(name, rawFingerprints, depMap, cache, new java.util.LinkedHashSet<>());
+            result.put(name, resolveComposite(name, rawFingerprints, depMap, new TreeMap<>(),
+                    new java.util.LinkedHashSet<>()));
         }
-        return cache;
+        return result;
     }
 
     private static String resolveComposite(String name, Map<String, String> rawFps,

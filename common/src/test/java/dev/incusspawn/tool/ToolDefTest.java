@@ -812,6 +812,21 @@ class ToolDefTest {
         assertDoesNotThrow(() -> ToolDef.compositeFingerprints(raw, deps));
     }
 
+    /**
+     * A tool in a {@code requires} cycle has one fingerprint whatever else is fingerprinted with
+     * it: the build fingerprints one template's tools, the TUI and {@code isx build --out-of-sync}
+     * every template's, and they compare the same stamp (#1142).
+     */
+    @Test
+    void compositeOfACycleDoesNotDependOnTheOtherToolsFingerprinted() {
+        var deps = new TreeMap<>(Map.of("a", List.of("b"), "b", List.of("a"), "0-uses-b", List.of("b")));
+        var alone = ToolDef.compositeFingerprints(new TreeMap<>(Map.of("a", "fp-a", "b", "fp-b")), deps);
+        var withOthers = ToolDef.compositeFingerprints(
+                new TreeMap<>(Map.of("a", "fp-a", "b", "fp-b", "0-uses-b", "fp-0")), deps);
+        assertEquals(alone.get("a"), withOthers.get("a"));
+        assertEquals(alone.get("b"), withOthers.get("b"));
+    }
+
     @Test
     void compositeStableForDepOrder() {
         var raw = new TreeMap<>(Map.of("parent", "fp-p", "depA", "fp-a", "depB", "fp-b"));
