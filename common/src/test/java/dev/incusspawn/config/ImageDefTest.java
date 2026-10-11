@@ -486,6 +486,26 @@ class ImageDefTest {
     }
 
     @Test
+    void aDefinitionWithoutANameIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        // Meant to override the built-in tpl-java, but the name: line is missing.
+        var refused = imagesDir.resolve("java.yaml");
+        Files.writeString(refused, """
+                parent: tpl-minimal
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), warnings::add);
+
+        assertEquals("built-in", result.getSource("tpl-java"));
+        // So isx build refuses, as for an unparsable file, instead of building the built-in in its place.
+        assertEquals(List.of(refused.toAbsolutePath().normalize()), result.parseFailures());
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains("java.yaml") && warnings.get(0).contains("name"), warnings.get(0));
+    }
+
+    @Test
     void aParentThatCannotBeAnInstanceIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
         var imagesDir = tempDir.resolve("images");
         Files.createDirectories(imagesDir);
