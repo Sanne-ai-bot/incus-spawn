@@ -1279,7 +1279,7 @@ public class BuildCommand extends BaseCommand {
         var canonicalName = imageDef.getName();
         var ancestors = ImageDef.ancestors(imageDef, defs);
         var rootDef = ancestors.isEmpty() ? imageDef : ancestors.get(ancestors.size() - 1);
-        resolveTrackedBaseImage(rootDef);
+        var base = resolveTrackedBaseImage(rootDef);
         var image = rootDef.getImage();
         var machineType = activeBuild.machineType();
         var prebaked = false;
@@ -1287,13 +1287,13 @@ public class BuildCommand extends BaseCommand {
         if (machineType == MachineType.VM && rootDef.getVmImageUrl() != null) {
             // Prebaked VM disk image available — use it directly
             var vmAlias = vmImageAlias(rootDef.getImage());
-            ensureBaseImage(imageDef);
+            ensureBaseImage(imageDef, imageDef == rootDef ? base : null);
             downloadAndAliasImage(vmAlias, rootDef.getVmImageUrl(),
-                    rootDef.getVmImageSha256(), rootDef.getImageTag(), rootDef);
+                    base.vmSha256(), base.tag(), rootDef);
             image = vmAlias;
             prebaked = true;
         } else {
-            ensureBaseImage(imageDef);
+            ensureBaseImage(imageDef, imageDef == rootDef ? base : null);
             prebaked = imageDef.getImageUrl() != null;
 
             // Prebaked images are container format (.tar.xz) — VMs need a disk image.
@@ -1515,24 +1515,24 @@ public class BuildCommand extends BaseCommand {
      * or read the release list leaves the definition untouched and the build
      * proceeds on the built-in version. A pin ({@code pinned: true}) opts out.
      */
-    private void resolveTrackedBaseImage(ImageDef rootDef) {
-        if (rootDef.isPinned()) return;
-        var releases = BaseImageReleases.fromImageUrl(rootDef.getImageUrl());
-        if (releases == null) return; // not a releases-tracked base image
-        if (!resolvedRoots.add(rootDef.getName())) return; // already resolved this build
+    BaseImage resolveTrackedBaseImage(ImageDef rootDef) {
+        if (rootDef.isPinned()) return BaseImage.of(rootDef);
+        var releases = baseImageReleases(rootDef.getImageUrl());
+        if (releases == null) return BaseImage.of(rootDef); // not a releases-tracked base image
+        if (!resolvedRoots.add(rootDef.getName())) return BaseImage.of(rootDef); // already resolved this build
 
         var builtinTag = rootDef.getImageTag();
         var fallback = "; using built-in base image (" + builtinTag + ").";
         try {
             var available = releases.fetchReleases();
-            if (available.isEmpty()) return;
+            if (available.isEmpty()) return BaseImage.of(rootDef);
             var latest = available.get(0);
-            if (latest.tag().equals(builtinTag)) return; // already newest
+            if (latest.tag().equals(builtinTag)) return BaseImage.of(rootDef); // already newest
 
             var checksums = releases.fetchChecksums(latest);
             if (checksums == null || checksums.container().isEmpty()) {
                 BuildOutput.note("Could not fetch checksums for " + latest.tag() + fallback);
-                return;
+                return BaseImage.of(rootDef);
             }
             rootDef.setImageTag(latest.tag());
             rootDef.setImageSha256(checksums.container());
@@ -1543,6 +1543,19 @@ public class BuildCommand extends BaseCommand {
                     + (builtinTag != null ? builtinTag + " -> " : "") + latest.tag() + ".");
         } catch (IOException e) {
             BuildOutput.note("Could not reach base-image release list (" + e.getMessage() + ")" + fallback);
+        }
+        return BaseImage.of(rootDef);
+    }
+
+    /** The release list a base image is tracked against, or null if it is not tracked; a test seam. */
+    BaseImageReleases baseImageReleases(String imageUrl) {
+        return BaseImageReleases.fromImageUrl(imageUrl);
+    }
+
+    /** The base image release a build from scratch downloads: its tag and per-arch checksums. */
+    record BaseImage(String tag, Map<String, String> sha256, Map<String, String> vmSha256) {
+        static BaseImage of(ImageDef def) {
+            return new BaseImage(def.getImageTag(), def.getImageSha256(), def.getVmImageSha256());
         }
     }
 
@@ -1588,10 +1601,12 @@ public class BuildCommand extends BaseCommand {
         return tag != null ? resolved.replace("{tag}", tag) : resolved;
     }
 
-    private void ensureBaseImage(ImageDef imageDef) {
+    /** {@code base} is the release to download, null for the one {@code imageDef} names. */
+    private void ensureBaseImage(ImageDef imageDef, BaseImage base) {
         checkPinnedWarning(imageDef);
+        if (base == null) base = BaseImage.of(imageDef);
         downloadAndAliasImage(imageDef.getImage(), imageDef.getImageUrl(),
-                imageDef.getImageSha256(), imageDef.getImageTag(), imageDef);
+                base.sha256(), base.tag(), imageDef);
     }
 
     /**
@@ -1972,7 +1987,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef,
+    void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef,
                                     Map<String, ImageDef> defs, Map<String, String> identityStamps) {
         var info = BuildInfo.instance();
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
