@@ -156,7 +156,7 @@ final class NewTemplateModal {
 
         renderLabeledTextField(frame, rows.get(0), rows.get(1), "Name:", "my-app",
                 newTemplateNameInput, newTemplateFieldIndex == 0);
-        renderLabeledTextField(frame, rows.get(2), rows.get(3), "Parent:", "tpl-dev",
+        renderLabeledTextField(frame, rows.get(2), rows.get(3), "Parent:", "tpl-minimal",
                 newTemplateParentInput, newTemplateFieldIndex == 1);
 
         modal.renderSelect(frame, rows.get(4), "Save to", newTemplateLocationSelect,

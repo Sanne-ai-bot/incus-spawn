@@ -146,7 +146,7 @@ public class TemplatesCommand extends BaseCommand {
             generateHelp = true)
     public static class Edit extends BaseCommand {
 
-        @Argument(required = true, description = "Template name (e.g. tpl-java)")
+        @Argument(required = true, description = "Template name (e.g. tpl-minimal)")
         public String name;
 
         @Override
@@ -272,7 +272,7 @@ public class TemplatesCommand extends BaseCommand {
         Files.createDirectories(dir);
         var skeleton = SKELETON.replace("tpl-CHANGEME", name);
         if (parent != null && !parent.isEmpty()) {
-            skeleton = skeleton.replace("# parent: tpl-dev", "parent: " + parent);
+            skeleton = skeleton.replace("# parent: tpl-minimal", "parent: " + parent);
         }
         Files.writeString(targetPath, skeleton);
         return targetPath;
@@ -394,8 +394,7 @@ public class TemplatesCommand extends BaseCommand {
             # description: My custom template
 
             # Parent template to inherit from (packages, tools, repos are additive)
-            # Common parents: tpl-minimal, tpl-dev, tpl-java
-            # parent: tpl-dev
+            # parent: tpl-minimal
 
             # Base image (only for root templates without a parent)
             # Default: images:fedora/44

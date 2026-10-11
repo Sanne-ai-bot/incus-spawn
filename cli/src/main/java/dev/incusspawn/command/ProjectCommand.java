@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
@@ -8,6 +9,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -15,6 +17,7 @@ import org.aesh.command.option.Option;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.List;
 
 import static dev.incusspawn.incus.Container.shellQuote;
 
@@ -63,6 +66,14 @@ public class ProjectCommand extends BaseCommand {
             return CommandResult.valueOf(create(RuntimeServices.incus(), loadConfig()));
         }
 
+        /** A project template built on a deprecated one says so, as {@code isx build} does (#1195). */
+        private static List<String> deprecationWarnings(String imageName, String parent) {
+            var project = new ImageDef();
+            project.setName(imageName);
+            project.setParent(parent);
+            return ImageDef.deprecationWarnings(project, ImageDef.loadLayers(w -> { }).defs());
+        }
+
         /**
          * Builds the template from {@code projectConfig} under a temporary name and, once that
          * succeeds, puts it in place of the one there was, as {@code isx build} does: a failed repo
@@ -79,6 +90,8 @@ public class ProjectCommand extends BaseCommand {
             if (BuildCommand.reportNameTooLong(imageName)) return 1;
 
             var parent = projectConfig.getParent();
+            // Read before the parent is locked: loading definitions is I/O the lock need not wait for
+            var deprecations = deprecationWarnings(imageName, parent);
             boolean exists;
             boolean built;
             var buildName = imageName + BuildCommand.REBUILDING_SUFFIX;
@@ -92,6 +105,7 @@ public class ProjectCommand extends BaseCommand {
 
                 BuildOutput.header("Creating project template " + imageName);
                 BuildOutput.note("Parent: " + parent);
+                deprecations.forEach(w -> BuildOutput.warn(OutputFormat.oneLine(w)));
 
                 exists = incus.exists(imageName);
                 if (exists) {

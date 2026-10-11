@@ -91,6 +91,26 @@ class ProjectCommandTest {
         verify(incus, never()).delete(eq(NAME), anyBoolean());
     }
 
+    /** Created on the built-in tpl-java, deprecated by #1195: it still works, and says so. */
+    @Test
+    void createOnADeprecatedParentWarns() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-java")).thenReturn(true);
+        when(incus.execInContainer(eq(BUILD), eq("agentuser"), anyString())).thenReturn(OK);
+        var config = config(null);
+        config.setParent("tpl-java");
+        var originalErr = System.err;
+        var err = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(err, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            assertEquals(0, create(incus, config));
+        } finally {
+            System.setErr(originalErr);
+        }
+        var printed = err.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(printed.contains(NAME + " derives from tpl-java, which is deprecated"), printed);
+    }
+
     @Test
     void aFailedCloneFailsCreateAndLeavesNoTemplate() {
         var incus = parentWhoseGuestAnswers(FAILED);

@@ -1,7 +1,5 @@
 package dev.incusspawn.util;
 
-import dev.incusspawn.Warnings;
-
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.Arrays;
@@ -517,13 +515,20 @@ public final class BuildOutput {
         System.out.println("  " + styled(BOLD, "● " + name) + " " + styled(DIM, "← " + source));
     }
 
+    /** The handle of {@link #copyWarningsTo}: closing it stops the copying. */
+    @FunctionalInterface
+    public interface WarningCopy extends AutoCloseable {
+        @Override
+        void close();
+    }
+
     private static volatile Consumer<String> warningListener;
 
     /**
      * Also hand every {@link #warn} to {@code listener}, until the returned handle is closed: for
      * the TUI, which runs a build on the released terminal and then redraws over what it printed.
      */
-    public static Warnings.Redirect copyWarningsTo(Consumer<String> listener) {
+    public static WarningCopy copyWarningsTo(Consumer<String> listener) {
         var previous = warningListener;
         warningListener = listener;
         return () -> warningListener = previous;

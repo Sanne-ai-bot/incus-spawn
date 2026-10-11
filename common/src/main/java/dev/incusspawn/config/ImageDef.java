@@ -577,14 +577,14 @@ public class ImageDef {
 
     /**
      * Like {@link #deprecationWarnings(ImageDef, Map)}, leaving out the deprecated templates named
-     * in {@code warned} and adding the rest to it: a run that builds several templates on one
-     * deprecated template warns about it once.
+     * in {@code warned} and adding the rest to it: a run names each template built on a deprecated
+     * one once, however many times it is built.
      */
     public static List<String> deprecationWarnings(ImageDef start, Map<String, ImageDef> defs,
                                                    java.util.Set<String> warned) {
         var warnings = new ArrayList<String>();
         for (var layer : chain(start, defs)) {
-            if (!layer.isDeprecated() || !warned.add(layer.getName())) continue;
+            if (!layer.isDeprecated() || !warned.add(start.getName() + " on " + layer.getName())) continue;
             var what = layer == start
                     ? layer.getName() + " is deprecated"
                     : start.getName() + " derives from " + layer.getName() + ", which is deprecated";

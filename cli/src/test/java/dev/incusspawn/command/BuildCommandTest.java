@@ -109,10 +109,11 @@ class BuildCommandTest {
 
     /**
      * A deprecated template still builds, and so does what derives from it, but each build says
-     * so: once per deprecated template in the run, however many of its descendants are built (#1195).
+     * so, naming the template built (the deprecated parent's own build, then the user's), and
+     * once per template however many times it is built in the run (#1195).
      */
     @Test
-    void buildingOnADeprecatedTemplateWarnsOncePerDeprecatedTemplate(@TempDir Path tmp) throws Exception {
+    void everyTemplateBuiltOnADeprecatedOneIsNamedOnce(@TempDir Path tmp) throws Exception {
         InitCommandTest.withHome(tmp, () -> {
             var cmd = spy(new BuildCommand());
             cmd.incus = mock(IncusClient.class);
@@ -131,11 +132,13 @@ class BuildCommandTest {
 
             var out = bothStreams(() -> {
                 cmd.buildSingleImage(root, defs);
+                cmd.buildSingleImage(old, defs);
                 cmd.buildSingleImage(mine, defs);
                 cmd.buildSingleImage(mine, defs);
             });
 
-            assertEquals(1, out.split("deprecated", -1).length - 1, out);
+            assertEquals(2, out.split("deprecated", -1).length - 1, out);
+            assertTrue(out.contains("tpl-old is deprecated: use tpl-new instead"), out);
             assertTrue(out.contains("tpl-mine derives from tpl-old, which is deprecated: use tpl-new instead"), out);
             verify(cmd.incus, times(2)).rename("tpl-mine-rebuilding", "tpl-mine");
         });
