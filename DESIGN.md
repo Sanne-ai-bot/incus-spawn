@@ -949,9 +949,14 @@ Every start fills them with proof tokens derived from that start's secret (`gho_
 **Trust bindings (#713).** isx owns the binding of upstream runtimes to the system store, because a runtime that ships its own root bundle ignores the store that holds the isx CA.
 Two kinds, one table (`GuestProvisioning.TRUST_ENV` for the first, `isx-trust` for the second):
 environment variables (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, ...) are exported `setIfUnset` from `isx-env.sh` and written to `environment.d`, read at process start so they cover a runtime installed at any time anywhere, and none prints a "Picked up" line.
-file bindings, for runtimes that read no variable, replace a file in the runtime by a symlink to the system store, applied by the guest helper `/usr/local/bin/isx-trust [DIR...]` (Java: `lib/security/cacerts` to `/etc/pki/java/cacerts`).
+file bindings, for runtimes that read no variable, replace a file in the runtime by a symlink to the system store, applied by the guest helper `/usr/local/bin/isx-trust [DIR...]` (Java: `lib/security/cacerts` to `/etc/pki/java/cacerts`; certifi: `certifi/cacert.pem` under `site-packages`, never a source checkout, to `/etc/pki/tls/certs/ca-bundle.crt`).
 Java has no variable on purpose: `JAVA_TOOL_OPTIONS`/`JDK_JAVA_OPTIONS` print "Picked up" on stderr, which OpenJDK's configure rejects in a boot JDK (#464).
-The build installs the helper and runs it on `/usr/lib/jvm` and `/opt`; a JDK unpacked later is bound by running `isx-trust <dir>` (discovery without a command is #515).
+A child build binds twice: `bindInstalledRuntimes` before its repos' prime commands (a vendor JDK this layer installed must trust the isx CA when a prime uses it), and `bindTrustStores` after them (a prime may download a runtime, and the parent's units do not settle before the stop).
+The build installs the helper and runs it on the landing directories in `GuestProvisioning.TRUST_SYSTEM_DIRS` (as root) and `TRUST_HOME_DIRS` (as `agentuser`, who owns them).
+A runtime that lands later is found by systemd path units, not a daemon (#515): `isx-trust-system.path` and `isx-trust-home.path` hold one non-recursive `PathChanged=` watch per landing directory and start a oneshot `isx-trust --settle` over their group, which repeats its pass for about a minute because the new entry appears before the runtime has finished unpacking, and runs further rounds, at most five, while the landing directories keep gaining entries (systemd absorbs a trigger that arrives while the service runs).
+A bare `isx-trust` covers the same directories as the build, the home ones as `agentuser`'s whoever runs it.
+The cost is one inotify instance per watched directory (systemd opens one per path), counted in `IncusDiagnostics.INOTIFY_INSTANCES_PER_CONTAINER`.
+What lands outside those directories, or whose bundled file appears only after the last pass, is bound by running `isx-trust <dir>`, and the agent context pairs the TLS symptoms with that command so an agent repairs the binding rather than turning verification off.
 The README section "What differs from a stock Fedora install" lists these deviations for users.
 
 **How it works:**

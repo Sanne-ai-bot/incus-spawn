@@ -103,6 +103,54 @@ class TrustBindingsTest {
         assertTrue(all.contains("/usr/local/bin/isx-trust /usr/lib/jvm /opt"), all);
     }
 
+    @Test
+    void buildWatchesWhereRuntimesLandWithOnePathUnitPerOwner() {
+        // #515: a JDK that lands after the build (sdk install, a Gradle toolchain, a GraalVM
+        // unpacked into ~/opt) is bound without anyone running a command.
+        var incus = mock(IncusClient.class);
+        var container = recordingContainer(incus);
+
+        GuestProvisioning.bindTrustStores(container);
+
+        var all = String.join("\n", writtenScripts(incus));
+        assertTrue(all.contains("cat > '/etc/systemd/system/isx-trust-system.path'"), all);
+        assertTrue(all.contains("PathChanged=/usr/lib/jvm\nPathChanged=/opt\nPathChanged=/usr/local\n"), all);
+        assertTrue(all.contains("cat > '/etc/systemd/system/isx-trust-home.path'"), all);
+        for (var dir : List.of("opt", ".jdks", ".sdkman/candidates/java", ".gradle/jdks",
+                ".jbang/cache/jdks", ".local/share/mise/installs/java", ".asdf/installs/java")) {
+            assertTrue(all.contains("PathChanged=/home/agentuser/" + dir + "\n"), dir + "\n" + all);
+        }
+        assertTrue(all.contains("WantedBy=paths.target"), all);
+        assertTrue(all.contains("Type=oneshot\nExecStart=/usr/local/bin/isx-trust --settle /usr/lib/jvm /opt /usr/local\n"), all);
+        assertTrue(all.contains("Type=oneshot\nUser=agentuser\nExecStart=/usr/local/bin/isx-trust --settle /home/agentuser/opt "), all);
+        assertTrue(all.contains("systemctl enable isx-trust-system.path isx-trust-home.path"), all);
+    }
+
+    @Test
+    void theInotifyEstimateCountsOneInstancePerWatchedDirectory() {
+        // systemd opens one inotify instance per PathChanged=; doctor's estimate has to follow.
+        assertEquals(10 + GuestProvisioning.TRUST_SYSTEM_DIRS.size() + GuestProvisioning.TRUST_HOME_DIRS.size(),
+                dev.incusspawn.incus.IncusDiagnostics.INOTIFY_INSTANCES_PER_CONTAINER);
+    }
+
+    @Test
+    void theLandingDirectoriesNeedNoQuotingInAUnitFile() {
+        // They go unquoted into PathChanged= and ExecStart=, where a space splits and % expands.
+        for (var dir : GuestProvisioning.TRUST_SYSTEM_DIRS) assertTrue(dir.matches("/[\\w./-]+"), dir);
+        for (var dir : GuestProvisioning.TRUST_HOME_DIRS) assertTrue(dir.matches("/[\\w./-]+"), dir);
+    }
+
+    @Test
+    void buildBindsTheHomeDirectoriesAsTheirOwner() {
+        var incus = mock(IncusClient.class);
+        var container = recordingContainer(incus);
+
+        GuestProvisioning.bindTrustStores(container);
+
+        verify(incus).execInContainer(eq("test"), eq("agentuser"),
+                startsWith("/usr/local/bin/isx-trust '/home/agentuser/opt' '/home/agentuser/.jdks' "));
+    }
+
     // --- the helper itself, run for real against fake JDK trees ---
 
     private static Path helper(Path dir) throws Exception {
@@ -116,11 +164,17 @@ class TrustBindingsTest {
     }
 
     private static String run(Path script, Path store, Path... dirs) throws Exception {
+        var args = new String[dirs.length];
+        for (int i = 0; i < dirs.length; i++) args[i] = dirs[i].toString();
+        return run(script, Map.of("ISX_TRUST_JAVA_STORE", store.toString()), args);
+    }
+
+    private static String run(Path script, Map<String, String> env, String... args) throws Exception {
         var cmd = new java.util.ArrayList<String>();
         cmd.add(script.toString());
-        for (var d : dirs) cmd.add(d.toString());
-        var pb = new ProcessBuilder(cmd).redirectErrorStream(true);
-        pb.environment().put("ISX_TRUST_JAVA_STORE", store.toString());
+        cmd.addAll(List.of(args));
+        var pb = new ProcessBuilder(cmd).redirectErrorStream(true).directory(script.getParent().toFile());
+        pb.environment().putAll(env);
         var p = pb.start();
         var out = new String(p.getInputStream().readAllBytes());
         assertEquals(0, p.waitFor(), out);
@@ -168,6 +222,93 @@ class TrustBindingsTest {
 
         assertTrue(Files.isSymbolicLink(cacerts));
         assertEquals("system", Files.readString(cacerts));
+    }
+
+    @Test
+    void helperLinksCertifisBundleToTheSystemPemBundle(@TempDir Path tmp) throws Exception {
+        var store = Files.writeString(tmp.resolve("system-cacerts"), "system");
+        var pem = Files.writeString(tmp.resolve("ca-bundle.crt"), "system pem");
+        var certifi = Files.createDirectories(tmp.resolve("venvs/tool/lib/python3.13/site-packages/certifi"));
+        var cacert = Files.writeString(certifi.resolve("cacert.pem"), "vendor");
+        var other = Files.writeString(Files.createDirectories(tmp.resolve("venvs/tool/share")).resolve("cacert.pem"), "keep");
+        // A source checkout of certifi is somebody's working tree, not an installed package.
+        var lookalike = Files.writeString(Files.createDirectories(
+                tmp.resolve("venvs/tool/lib/python3.13/site-packages/notcertifi")).resolve("cacert.pem"), "keep");
+        var checkout = Files.writeString(Files.createDirectories(tmp.resolve("venvs/python-certifi/certifi"))
+                .resolve("cacert.pem"), "keep");
+
+        var out = run(helper(tmp), Map.of("ISX_TRUST_JAVA_STORE", store.toString(),
+                "ISX_TRUST_PEM_BUNDLE", pem.toString()), "venvs");
+
+        assertTrue(Files.isSymbolicLink(cacert), out);
+        assertEquals("system pem", Files.readString(cacert));
+        assertFalse(Files.isSymbolicLink(other));
+        assertFalse(Files.isSymbolicLink(checkout));
+        assertFalse(Files.isSymbolicLink(lookalike));
+    }
+
+    @Test
+    void helperSettlingBindsARuntimeThatFinishesUnpackingAfterTheFirstPass(@TempDir Path tmp) throws Exception {
+        var store = Files.writeString(tmp.resolve("system-cacerts"), "system");
+        Files.writeString(Files.createDirectories(tmp.resolve("opt/first/lib/security")).resolve("cacerts"), "vendor");
+        var late = Files.createDirectories(tmp.resolve("opt/late/lib/security"));
+
+        var pb = new ProcessBuilder(helper(tmp).toString(), "--settle", tmp.resolve("opt").toString())
+                .redirectErrorStream(true);
+        pb.environment().put("ISX_TRUST_JAVA_STORE", store.toString());
+        pb.environment().put("ISX_TRUST_SETTLE", "5");
+        var p = pb.start();
+        var reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()));
+        // The first pass has bound "first"; "late" finishes unpacking only now.
+        assertTrue(reader.readLine().contains("opt/first/lib/security/cacerts"));
+        var cacerts = Files.writeString(late.resolve("cacerts"), "vendor");
+        var rest = reader.lines().collect(java.util.stream.Collectors.joining("\n"));
+        assertEquals(0, p.waitFor(), rest);
+
+        assertTrue(Files.isSymbolicLink(cacerts), rest);
+        assertEquals("system", Files.readString(cacerts));
+    }
+
+    @Test
+    void helperLinksPipsVendoredCertifiToo(@TempDir Path tmp) throws Exception {
+        var store = Files.writeString(tmp.resolve("system-cacerts"), "system");
+        var pem = Files.writeString(tmp.resolve("ca-bundle.crt"), "system pem");
+        var vendored = Files.writeString(Files.createDirectories(
+                tmp.resolve("v/lib/python3.13/site-packages/pip/_vendor/certifi")).resolve("cacert.pem"), "vendor");
+
+        run(helper(tmp), Map.of("ISX_TRUST_JAVA_STORE", store.toString(),
+                "ISX_TRUST_PEM_BUNDLE", pem.toString()), "v");
+
+        assertTrue(Files.isSymbolicLink(vendored));
+    }
+
+    @Test
+    void helperWithoutArgumentsCoversTheHomeDirectoriesTheBuildBinds(@TempDir Path tmp) throws Exception {
+        var store = Files.writeString(tmp.resolve("system-cacerts"), "system");
+        var cacerts = Files.writeString(Files.createDirectories(
+                tmp.resolve("home/.gradle/jdks/x/lib/security")).resolve("cacerts"), "vendor");
+
+        run(helper(tmp), Map.of("ISX_TRUST_JAVA_STORE", store.toString(),
+                "HOME", tmp.resolve("home").toString()));
+
+        assertTrue(Files.isSymbolicLink(cacerts));
+    }
+
+    @Test
+    void helperSettlingStopsAfterFiveRoundsEvenIfTheDirectoryKeepsChanging(@TempDir Path tmp) throws Exception {
+        var store = Files.writeString(tmp.resolve("system-cacerts"), "system");
+        var opt = Files.createDirectories(tmp.resolve("opt"));
+        var pb = new ProcessBuilder(helper(tmp).toString(), "--settle", opt.toString()).redirectErrorStream(true);
+        pb.environment().put("ISX_TRUST_JAVA_STORE", store.toString());
+        pb.environment().put("ISX_TRUST_SETTLE", "0.1");
+        var p = pb.start();
+        int n = 0;
+        while (p.isAlive() && n < 600) { // churn: a new entry every 50 ms
+            Files.createDirectories(opt.resolve("e" + n++));
+            Thread.sleep(50);
+        }
+        assertFalse(p.isAlive(), "the settle loop must end although the directory keeps changing");
+        assertEquals(0, p.waitFor());
     }
 
     @Test

@@ -11,6 +11,12 @@ import java.util.Map;
  */
 public final class IncusDiagnostics {
 
+    /**
+     * Inotify instances one running instance uses: about 10 for systemd and the base services,
+     * plus one per directory the {@code isx-trust} path units watch (10, #713).
+     */
+    public static final int INOTIFY_INSTANCES_PER_CONTAINER = 20;
+
     private final IncusClient incus;
 
     public IncusDiagnostics(IncusClient incus) {
