@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
@@ -51,6 +52,33 @@ class TrustBindingsTest {
     }
 
     @Test
+    void aTemplatesOwnSetIfUnsetValueBeatsTheDefault() {
+        var incus = mock(IncusClient.class);
+        var container = recordingContainer(incus);
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-x");
+        imageDef.setEnv(List.of(EnvEntry.setIfUnset("SSL_CERT_FILE", "/corp/ca.pem")));
+
+        GuestProvisioning.writeEnvFile(container, imageDef, Map.of("tpl-x", imageDef), List.of(), "tpl-x");
+
+        var all = String.join("\n", writtenScripts(incus));
+        assertTrue(all.contains("${SSL_CERT_FILE:-/corp/ca.pem}"), all);
+        assertFalse(all.contains("${SSL_CERT_FILE:-/etc/pki"), all);
+    }
+
+    @Test
+    void theEnvironmentDropInLeavesAnAlreadySetValueAlone() {
+        var incus = mock(IncusClient.class);
+        var container = recordingContainer(incus);
+
+        GuestProvisioning.writeTrustEnvironmentD(container);
+
+        var all = String.join("\n", writtenScripts(incus));
+        assertTrue(all.contains("SSL_CERT_FILE=${SSL_CERT_FILE:-/etc/pki/tls/certs/ca-bundle.crt}"), all);
+        assertTrue(all.contains("UV_NATIVE_TLS=${UV_NATIVE_TLS:-1}"), all);
+    }
+
+    @Test
     void javaIsNeverBoundThroughAVariable() {
         // JAVA_TOOL_OPTIONS and JDK_JAVA_OPTIONS print "Picked up ..." and break OpenJDK's
         // configure (#464); a Java store is bound by symlink only.
@@ -68,7 +96,7 @@ class TrustBindingsTest {
         var all = String.join("\n", writtenScripts(incus));
         assertTrue(all.contains("cat > '/usr/local/bin/isx-trust'"), all);
         assertTrue(all.contains("cat > '/etc/environment.d/50-isx-trust.conf'"), all);
-        assertTrue(all.contains("SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt"), all);
+        assertTrue(all.contains("SSL_CERT_FILE=${SSL_CERT_FILE:-/etc/pki/tls/certs/ca-bundle.crt}"), all);
         assertTrue(all.contains("/usr/local/bin/isx-trust /usr/lib/jvm /opt"), all);
     }
 
@@ -124,6 +152,19 @@ class TrustBindingsTest {
 
         assertFalse(run(script, store, tmp.resolve("opt")).isEmpty());
         assertEquals("", run(script, store, tmp.resolve("opt")));
+    }
+
+    @Test
+    void helperFollowsADirectoryThatIsASymlink(@TempDir Path tmp) throws Exception {
+        var store = Files.writeString(tmp.resolve("system-cacerts"), "system");
+        var real = Files.createDirectories(tmp.resolve("graalvm-25/lib/security"));
+        var cacerts = Files.writeString(real.resolve("cacerts"), "vendor");
+        var link = Files.createSymbolicLink(tmp.resolve("graalvm"), tmp.resolve("graalvm-25"));
+
+        run(helper(tmp), store, link);
+
+        assertTrue(Files.isSymbolicLink(cacerts));
+        assertEquals("system", Files.readString(cacerts));
     }
 
     @Test
