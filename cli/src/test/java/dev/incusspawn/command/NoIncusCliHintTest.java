@@ -15,8 +15,8 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * No message tells the user to run an {@code incus storage|profile|move|image|network|remote}
- * command (#986, #1139):
+ * No message tells the user to run an
+ * {@code incus storage|profile|move|image|network|remote|console|config} command (#986, #1139):
  * isx runs the operation itself, through {@code IncusClient}, so a remediation works the same
  * over the Unix socket and over the macOS vsock tunnel, where the host has no {@code incus} CLI
  * at all (#939). The only exceptions are Linux-only hints, listed here literal by literal: a new
@@ -28,7 +28,7 @@ class NoIncusCliHintTest {
             Path.of("src/main/java"), Path.of("../common/src/main/java"), Path.of("../proxy/src/main/java"));
 
     private static final Pattern HINT =
-            Pattern.compile("\"[^\"\\n]*\\bincus (storage|profile|move|image|network|remote)\\b[^\"\\n]*\"");
+            Pattern.compile("\"[^\"\\n]*\\bincus (storage|profile|move|image|network|remote|console|config)\\b[^\"\\n]*\"");
 
     /** Linux-only hints, by file. */
     private static final Map<String, Set<String>> ALLOWED = Map.of(
