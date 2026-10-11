@@ -113,9 +113,29 @@ public final class InstanceRegistry {
      * @param incarnationByName when each instance owning an address was created, which tells a
      *                        new instance from a destroyed one that had its name (#1063); kept
      *                        out of {@link InstanceAccounts} for the same reason as the secret
+     * @param lineageByName   what each instance owning an address was built from, for the
+     *                        host routes' {@code templates:} filter (#936)
      */
     record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
-                  java.util.Set<String> mcpCallers, Map<String, String> incarnationByName) {}
+                  java.util.Set<String> mcpCallers, Map<String, String> incarnationByName,
+                  Map<String, Lineage> lineageByName) {
+        static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of());
+    }
+
+    /**
+     * What an instance was built from.
+     *
+     * @param template     its leaf template ({@link Metadata#templateOf}), "" when none is recorded
+     * @param projectLocal whether a project-local definition went into it ({@code isx project},
+     *                     or a {@code .incus-spawn/} template anywhere in its chain)
+     */
+    public record Lineage(String template, boolean projectLocal) {
+        /** For an instance whose lineage is not known: admitted by nothing. */
+        static final Lineage UNKNOWN = new Lineage("", true);
+    }
+
+    /** An instance that proved who it is ({@link #identify}), with what it was built from. */
+    public record Identified(String instanceName, Lineage lineage) {}
 
     /**
      * @param view from {@link #VIEWS}, so a later snapshot always has a higher one, even from a
@@ -123,7 +143,7 @@ public final class InstanceRegistry {
      */
     private record Snapshot(Parsed parsed, long takenAt, long view) {}
 
-    private static final Snapshot EMPTY = new Snapshot(new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of()), 0L, 0L);
+    private static final Snapshot EMPTY = new Snapshot(Parsed.EMPTY, 0L, 0L);
 
     private static final java.util.concurrent.atomic.AtomicLong VIEWS = new java.util.concurrent.atomic.AtomicLong();
 
@@ -215,6 +235,20 @@ public final class InstanceRegistry {
         var instance = identify(current, sourceAddress, presentedSecret);
         return instance != null && current.mcpCallers().contains(instance.instanceName())
                 ? instance.instanceName() : null;
+    }
+
+    /**
+     * The instance a caller is, by {@link #identify}, with its {@link Lineage}: what a host
+     * route's {@code templates:} filter is decided on (#936). Null when {@link #identify} is,
+     * with the same refresh-and-retry advice.
+     */
+    public Identified identifyWithLineage(String sourceAddress, String presentedSecret) {
+        var current = snapshot.parsed();
+        var instance = identify(current, sourceAddress, presentedSecret);
+        if (instance == null) return null;
+        // Every identified instance owns an address, so has a lineage; fail closed regardless
+        var lineage = current.lineageByName().getOrDefault(instance.instanceName(), Lineage.UNKNOWN);
+        return new Identified(instance.instanceName(), lineage);
     }
 
     /**
@@ -329,14 +363,14 @@ public final class InstanceRegistry {
             return parse(JqValues.parseStrict(instancesJson));
         } catch (Exception e) {
             ProxyLog.warn("Could not parse instance list for the account registry: " + Jjq.brief(e));
-            return new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of());
+            return Parsed.EMPTY;
         }
     }
 
     static Parsed parse(io.hyperfoil.tools.jjq.value.JqValue root) {
         var claimants = new LinkedHashMap<String, List<Claimant>>();
         try {
-            if (!root.isArray()) return new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of());
+            if (!root.isArray()) return Parsed.EMPTY;
             for (var instance : root.asList()) {
                 var name = instance.pathText("name", "");
                 var config = instance.getField("config");
@@ -350,7 +384,8 @@ public final class InstanceRegistry {
                         "Running".equalsIgnoreCase(instance.pathText("status", "")),
                         config.pathText(Metadata.INSTANCE_SECRET_SHA256, "").strip(),
                         Metadata.isMcpCallerGrant(config.pathText(Metadata.MCP_CALLER, null)),
-                        instance.pathText("created_at", "").strip()));
+                        instance.pathText("created_at", "").strip(),
+                        config));
             }
         } catch (Exception e) {
             ProxyLog.warn("Could not parse instance list for the account registry: " + Jjq.brief(e));
@@ -359,6 +394,7 @@ public final class InstanceRegistry {
         var secretByAddress = new LinkedHashMap<String, String>();
         var mcpCallers = new java.util.HashSet<String>();
         var incarnationByName = new java.util.HashMap<String, String>();
+        var lineageByName = new java.util.HashMap<String, Lineage>();
         claimants.forEach((address, all) -> {
             var owner = owner(address, all);
             if (owner == null) return;
@@ -366,13 +402,25 @@ public final class InstanceRegistry {
             if (!owner.secretSha256().isEmpty()) secretByAddress.put(address, owner.secretSha256());
             if (owner.mcpCaller()) mcpCallers.add(owner.accounts().instanceName());
             incarnationByName.put(owner.accounts().instanceName(), owner.createdAt());
+            // Only for owners: a build stamp is parsed for no address nobody serves
+            lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config()));
         });
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
-                Map.copyOf(incarnationByName));
+                Map.copyOf(incarnationByName), Map.copyOf(lineageByName));
     }
 
     private record Claimant(InstanceAccounts accounts, boolean running, String secretSha256, boolean mcpCaller,
-                            String createdAt) {}
+                            String createdAt, JqValue config) {}
+
+    private static Lineage lineageOf(JqValue config) {
+        var template = java.util.Objects.requireNonNullElse(Metadata.templateOf(Map.of(
+                Metadata.PROFILE, config.pathText(Metadata.PROFILE, ""),
+                Metadata.PARENT, config.pathText(Metadata.PARENT, ""))), "");
+        var projectLocal = Metadata.TYPE_PROJECT.equals(config.pathText(Metadata.TYPE, ""))
+                || !config.pathText(Metadata.PROJECT, "").isBlank()
+                || dev.incusspawn.config.BuildSource.usedProjectLocal(config.pathText(Metadata.BUILD_SOURCE, ""));
+        return new Lineage(template, projectLocal);
+    }
 
     /**
      * Who an address belongs to. isx gives each address to one instance, but a copy made by an

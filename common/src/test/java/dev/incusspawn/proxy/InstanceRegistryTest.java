@@ -264,6 +264,35 @@ class InstanceRegistryTest {
     }
 
     @Test
+    void anIdentifiedCallerCarriesWhatItWasBuiltFrom() {
+        // A host route's templates: filter is decided on these (#936)
+        var secret = InstanceSecret.generate();
+        var hash = InstanceSecret.sha256(secret);
+        var projectSource = "{\"definitions\":{\"tpl-repo\":{\"name\":\"tpl-repo\"}},"
+                + "\"projectRoots\":{\"tpl-repo\":\"/home/me/repo\"}}";
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("agent", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, hash, dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent"))
+                .instance("repo-box", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.6",
+                        SECRET_KEY, hash, dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",
+                        dev.incusspawn.incus.Metadata.BUILD_SOURCE, projectSource))
+                .instance("project-box", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.7",
+                        SECRET_KEY, hash, dev.incusspawn.incus.Metadata.PROJECT, "my-repo"))
+                .instance("broken", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.8",
+                        SECRET_KEY, hash, dev.incusspawn.incus.Metadata.BUILD_SOURCE, "{not json"));
+        var registry = new InstanceRegistry(daemon.client());
+        registry.refresh();
+
+        assertEquals(new InstanceRegistry.Identified("agent", new InstanceRegistry.Lineage("tpl-agent", false)),
+                registry.identifyWithLineage("10.0.0.5", secret));
+        assertTrue(registry.identifyWithLineage("10.0.0.6", secret).lineage().projectLocal());
+        assertTrue(registry.identifyWithLineage("10.0.0.7", secret).lineage().projectLocal());
+        assertTrue(registry.identifyWithLineage("10.0.0.8", secret).lineage().projectLocal(),
+                "a build stamp that cannot be read cannot show it was not");
+        assertNull(registry.identifyWithLineage("10.0.0.5", InstanceSecret.generate()));
+    }
+
+    @Test
     void anInstanceWithoutASecretIsNeverIdentified() {
         // Started before #934, or only ever by incus itself: still served its accounts by
         // address, but nothing it presents identifies it
