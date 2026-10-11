@@ -66,8 +66,10 @@ echo " --mcp-client registration (#1182)"
 echo "========================================"
 echo ""
 
+# No --proxy-only on these branches: it needs an iptables in the guest, which tpl-minimal's
+# image lacks, so such a branch now fails closed (#1136, #1312). Registration does not depend on it.
 echo "[1] A coordinator is registered on its first start"
-isx branch "$COORD" --from tpl-test-mcp --proxy-only --mcp-client --format=plain 2> "$LOG/coord" >/dev/null
+isx branch "$COORD" --from tpl-test-mcp --mcp-client --format=plain 2> "$LOG/coord" >/dev/null
 cat "$LOG/coord"
 assert "the branch reaches isx mcp from the guest" grep -qE "Checking isx mcp from $COORD.* \\(isx [^,]+, [1-9][0-9]* tools\\)" "$LOG/coord"
 assert "and finds the server in its Claude Code config" bash -c "! grep -q 'has no .isx. server' '$LOG/coord'"
@@ -92,7 +94,7 @@ assert_eq "the marker stays" "root" marker "$COORD"
 echo ""
 echo "[3] A copy loses it on its first start"
 incus stop "$COORD"
-isx branch "$COPY" --from "$COORD" --proxy-only --format=plain 2> "$LOG/copy" >/dev/null
+isx branch "$COPY" --from "$COORD" --format=plain 2> "$LOG/copy" >/dev/null
 assert "an ordinary branch does not check the endpoint" bash -c "! grep -q 'isx mcp' '$LOG/copy'"
 assert_eq "the copy's first start removed it" \
     "agentuser mcp remove --scope user isx|agentuser mcp add-json --scope user isx|agentuser mcp remove --scope user isx" \
@@ -103,7 +105,7 @@ assert_eq "and so is the marker" "none" marker "$COPY"
 
 echo ""
 echo "[4] An ordinary branch runs no Claude Code"
-isx branch "$PLAIN" --from tpl-test-mcp --proxy-only --format=plain 2> "$LOG/plain" >/dev/null
+isx branch "$PLAIN" --from tpl-test-mcp --format=plain 2> "$LOG/plain" >/dev/null
 assert_eq "no calls" "" calls "$PLAIN"
 assert_eq "no marker" "none" marker "$PLAIN"
 
