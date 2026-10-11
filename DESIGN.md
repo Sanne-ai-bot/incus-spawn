@@ -3034,6 +3034,14 @@ Turning `CPU_MITIGATIONS` back on measured no worse either, so the vm role keeps
 Both are for step 6 to measure again on bare metal.
 aarch64 boots to `basic.target` under TCG with this kernel and AAVMF, which no one had tried before.
 
+A trimmed OVMF was measured with the same harness before anything is built for it (#1255, step 8).
+EDK2 `edk2-stable202608`, the release Fedora's `edk2-20260812` packages, was built for `OvmfPkgX64` twice: with its defaults, and with `NETWORK_ENABLE`, `SECURE_BOOT_ENABLE`, `TPM2_ENABLE`, `TPM1_ENABLE`, `BUILD_SHELL` and `SMM_REQUIRE` all `FALSE`.
+Nine interleaved boots each, same kernel and root, mean firmware time: Fedora's `OVMF_CODE.fd` 2.51 s, upstream defaults 2.43 s, trimmed 2.25 s.
+So trimming saves about a quarter of a second under nested KVM, where the firmware takes about 2.5 times the 1.0 s it took at one level of virtualization, which suggests about 0.1 s there.
+That is short of the several hundred milliseconds the plan asked for before shipping a firmware build, so nothing is shipped.
+A boot on Sanne's host with `FIRMWARE_CODE` pointed at the trimmed build would settle it.
+USB has no build flag and was left in.
+
 ### Why nothing is pushed into an instance just before it starts
 
 `bench/trace-branch.sh` showed a full second of every 2.2 s branch spent idle inside Incus's start operation, right after it logged "Stopping forkfile".
