@@ -420,7 +420,7 @@ workdir: ~/quarkus
 default-action: claude
 ```
 
-- `workdir` -- the directory to `cd` into when opening a shell. Defaults to the first declared repo's path if omitted.
+- `workdir` -- the directory to `cd` into when opening a shell. Inherits from parent templates (the nearest one that sets it wins), even when a child adds repos of its own; when no template in the chain sets it, defaults to the first repo of the nearest template that declares any.
 - `shell-command` -- a command to run instead of the default login shell (e.g. `claude` or `pi`). Falls back to `bash --login` if it fails to start.
 - `default-action` -- a tool action to run when pressing Enter on an instance in the TUI or when running `isx run <instance>` from the CLI. The value is a tool name (e.g. `claude`) if the tool has a single action, or `tool:action-id` (e.g. `claude:launch`) if the tool has multiple actions (see [Tool Actions](#tool-actions) for the `id` field). When set, Enter runs the action and F2 opens a shell; when unset, Enter/`isx run` opens a shell. Inherits from parent templates; a child overrides the parent's default action. No rebuild required when changing this field.
 

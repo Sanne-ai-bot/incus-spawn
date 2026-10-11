@@ -2303,17 +2303,22 @@ public class BuildCommand extends BaseCommand {
         return true;
     }
 
+    /**
+     * The nearest explicit {@code workdir} in the chain, else the first repo of the nearest
+     * template that declares any. An explicit workdir is checked across the whole chain first,
+     * so a child that only adds a helper repo keeps the workdir its parent chose (#1262).
+     */
     static String resolveEffectiveWorkdir(ImageDef imageDef, Map<String, ImageDef> defs) {
-        if (imageDef.getWorkdir() != null && !imageDef.getWorkdir().isBlank()) {
-            return expandHome(imageDef.getWorkdir());
-        }
-        var current = imageDef;
-        while (current != null) {
-            if (!current.getRepos().isEmpty()) {
-                return expandHome(current.getRepos().get(0).getPath());
+        var chain = ImageDef.chain(imageDef, defs).reversed();
+        for (var def : chain) {
+            if (def.getWorkdir() != null && !def.getWorkdir().isBlank()) {
+                return expandHome(def.getWorkdir());
             }
-            if (current.isRoot() || current.getParent() == null) break;
-            current = defs.get(current.getParent());
+        }
+        for (var def : chain) {
+            if (!def.getRepos().isEmpty()) {
+                return expandHome(def.getRepos().get(0).getPath());
+            }
         }
         return null;
     }

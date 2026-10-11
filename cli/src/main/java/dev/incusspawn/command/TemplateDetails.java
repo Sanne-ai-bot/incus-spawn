@@ -69,7 +69,7 @@ public record TemplateDetails(String type, boolean gui, String workdir, String s
         return new TemplateDetails(
                 type != null ? type : "container",
                 def.isGui(),
-                resolveWorkdir(def, defs),
+                BuildCommand.resolveEffectiveWorkdir(def, defs),
                 shellCommand,
                 BuildCommand.resolveEffectiveDefaultAction(def, defs),
                 List.copyOf(env),
@@ -77,20 +77,6 @@ public record TemplateDetails(String type, boolean gui, String workdir, String s
                 List.copyOf(skills), List.copyOf(skillRepos), List.copyOf(packageRepos),
                 List.copyOf(removePackages), List.copyOf(maskServices),
                 List.copyOf(agentNotes), chain.get(0));
-    }
-
-    /**
-     * The workdir a build stamps, or -- when this layer resolves none -- the nearest ancestor's:
-     * a child is copied from its parent's instance, and a null resolution leaves that stamp alone.
-     */
-    private static String resolveWorkdir(ImageDef def, Map<String, ImageDef> defs) {
-        var own = BuildCommand.resolveEffectiveWorkdir(def, defs);
-        if (own != null) return own;
-        for (var ancestor : ImageDef.ancestors(def, defs)) {
-            var inherited = BuildCommand.resolveEffectiveWorkdir(ancestor, defs);
-            if (inherited != null) return inherited;
-        }
-        return null;
     }
 
     /** A human label for an instance type, as declared ({@code type:}) or stamped at build. */

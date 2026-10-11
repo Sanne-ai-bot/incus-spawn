@@ -94,6 +94,14 @@ class TemplateDetailsTest {
     }
 
     @Test
+    void anAncestorsWorkdirBeatsAChildsHelperRepo() throws Exception {
+        // #1262: F3 shows what the build stamps, and a child adding a repo keeps its parent's workdir.
+        var defs = defs("name: tpl-a\nworkdir: /srv/app\n",
+                "name: tpl-b\nparent: tpl-a\nrepos:\n  - url: https://github.com/o/helper.git\n    path: /srv/helper\n");
+        assertEquals("/srv/app", TemplateDetails.resolve(defs.get("tpl-b"), defs).workdir());
+    }
+
+    @Test
     void guiIsTheTemplatesOwnFlag() throws Exception {
         // BranchCommand reads def.isGui() of the source template only.
         var defs = defs("name: tpl-root\ngui: true\n", "name: tpl-leaf\nparent: tpl-root\n");
