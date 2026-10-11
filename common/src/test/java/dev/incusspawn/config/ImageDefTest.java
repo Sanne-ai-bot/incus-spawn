@@ -466,6 +466,64 @@ class ImageDefTest {
     }
 
     @Test
+    void aNameThatCannotBeAnInstanceIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        // A cloned repository's template, whose name would reach the terminal raw wherever isx shows it.
+        Files.writeString(imagesDir.resolve("evil.yaml"), """
+                name: "tpl-\\e]0;pwned\\a\\nfake"
+                parent: tpl-minimal
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()), warnings::add);
+
+        assertTrue(defs.keySet().stream().noneMatch(name -> name.contains("pwned")), defs.keySet().toString());
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains("evil.yaml"), warnings.get(0));
+        assertTrue(warnings.get(0).contains("tpl- ]0;pwned  fake"), warnings.get(0));
+        assertTrue(warnings.get(0).codePoints().noneMatch(Character::isISOControl), warnings.get(0));
+    }
+
+    @Test
+    void aParentThatCannotBeAnInstanceIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        // Meant to override the built-in tpl-java.
+        var refused = imagesDir.resolve("java.yaml");
+        Files.writeString(refused, """
+                name: tpl-java
+                parent: "tpl-\\u009b2Jminimal"
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), warnings::add);
+
+        assertEquals("built-in", result.getSource("tpl-java"));
+        // So isx build refuses, as for an unparsable file, instead of building the built-in in its place.
+        assertEquals(List.of(refused.toAbsolutePath().normalize()), result.parseFailures());
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains("parent 'tpl- 2Jminimal'"), warnings.get(0));
+        assertTrue(warnings.get(0).codePoints().noneMatch(Character::isISOControl), warnings.get(0));
+    }
+
+    @Test
+    void namesIncusAcceptsStillLoad(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("ok.yaml"), """
+                name: Tpl-9-ok
+                parent: tpl-minimal
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()), warnings::add);
+
+        assertNotNull(defs.get("Tpl-9-ok"));
+        assertEquals(List.of(), warnings);
+    }
+
+    @Test
     void emptySearchPathsWorks() {
         var defs = ImageDef.loadAll(List.of());
         // Should still load builtins

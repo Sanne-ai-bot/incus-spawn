@@ -12,8 +12,10 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.Warnings;
+import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ToolDef;
+import dev.incusspawn.util.OutputFormat;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
@@ -680,8 +682,7 @@ public class ImageDef {
             var def = loadResource(RESOURCE_DIR + filename, warnings);
             if (def != null) {
                 def.setSource("built-in");
-                validate(def, filename, warnings);
-                defs.putBuiltin(def.getName(), def);
+                if (validate(def, filename, warnings)) defs.putBuiltin(def.getName(), def);
             }
         }
     }
@@ -707,8 +708,12 @@ public class ImageDef {
                         var source = path.toAbsolutePath().normalize();
                         def.setSource(source.toString());
                         def.setProjectRoot(projectRoot);
-                        validate(def, path.getFileName().toString(), warnings);
-                        defs.put(def.getName(), def, source);
+                        if (validate(def, path.getFileName().toString(), warnings)) {
+                            defs.put(def.getName(), def, source);
+                        } else {
+                            // Like an unparsable file, it may have meant to replace a lower layer's.
+                            defs.parseFailed(source);
+                        }
                     }
                 } catch (IOException e) {
                     warnings.accept(YamlErrors.friendly(path.getFileName().toString(), e));
@@ -721,11 +726,31 @@ public class ImageDef {
         defs.endDirectory();
     }
 
-    private static void validate(ImageDef def, String source, Consumer<String> warnings) {
+    /** False when {@code def} cannot be a template at all, which it has then warned about. */
+    private static boolean validate(ImageDef def, String source, Consumer<String> warnings) {
+        var file = OutputFormat.oneLine(source);
+        var invalidName = notAnInstanceName("template name", def.getName());
+        if (invalidName == null && !def.isRoot()) invalidName = notAnInstanceName("parent", def.getParent());
+        if (invalidName != null) {
+            warnings.accept(file + ": " + invalidName + "; it is skipped, and isx build refuses until it is fixed");
+            return false;
+        }
         if (def.getDefaultAction() != null && def.getDefaultAction().isBlank()) {
             warnings.accept(source + ": 'default-action' is blank; remove it or set a valid tool reference");
             def.setDefaultAction(null);
         }
+        return true;
+    }
+
+    /**
+     * Why {@code name}, a template's {@code what}, can never be built, or null: a template is an
+     * instance, so its name and its parent's must be names Incus accepts for one. Checked at load,
+     * this also keeps a cloned repository's name from reaching the terminal raw wherever isx shows it.
+     */
+    static String notAnInstanceName(String what, String name) {
+        if (InstanceNames.isValid(name)) return null;
+        return what + " '" + OutputFormat.oneLine(String.valueOf(name)) + "' is not a valid Incus instance name ("
+                + InstanceNames.RULE + ")";
     }
 
     private static ImageDef loadResource(String path, Consumer<String> warnings) {

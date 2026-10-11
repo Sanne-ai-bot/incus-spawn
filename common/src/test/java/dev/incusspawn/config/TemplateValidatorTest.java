@@ -56,6 +56,28 @@ class TemplateValidatorTest {
     }
 
     @Test
+    void nameThatCannotBeAnInstanceIsError(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: tpl_test
+                parent: tpl-dev
+                """);
+        var result = TemplateValidator.validate(file, knownTemplates());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("'tpl_test'")), result.errors().toString());
+    }
+
+    @Test
+    void parentThatCannotBeAnInstanceIsError(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                parent: "tpl-\\edev"
+                """);
+        var result = TemplateValidator.validate(file, knownTemplates());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("parent 'tpl- dev'")), result.errors().toString());
+    }
+
+    @Test
     void invalidYaml(@TempDir Path dir) throws Exception {
         var file = dir.resolve("test.yaml");
         Files.writeString(file, """

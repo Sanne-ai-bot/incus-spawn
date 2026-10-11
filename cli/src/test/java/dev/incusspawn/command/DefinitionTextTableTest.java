@@ -83,17 +83,17 @@ class DefinitionTextTableTest {
         TemplatesCommand.validateAndReport(file, Map.of(), new PrintStream(out, true, StandardCharsets.UTF_8),
                 new PrintStream(err, true, StandardCharsets.UTF_8));
 
-        // The name, the parent, the host-resource mode and the duplicate tool.
+        // The host-resource mode and the duplicate tool.
         var warnings = out.toString(StandardCharsets.UTF_8);
-        assertSafe(warnings, 4);
-        assertTrue(warnings.contains("Template name 'evil [2J'"), warnings);
-        assertTrue(warnings.contains("Parent 'tpl- 2J x'"), warnings);
+        assertSafe(warnings, 2);
         assertTrue(warnings.contains("mode 'copy ]0;t '"), warnings);
         assertTrue(warnings.contains("tool 'dup [2J'"), warnings);
-        // The forbidden mount target: its message is isx's multi-line advice, each line made safe,
-        // and the quoted source and path add no line of their own.
+        // The name and the parent no instance can have, and the forbidden mount target: its message
+        // is isx's multi-line advice, each line made safe, and the quoted source and path add no line of their own.
         var errors = err.toString(StandardCharsets.UTF_8);
-        assertSafe(errors, 5);
+        assertSafe(errors, 7);
+        assertTrue(errors.contains("  ERROR: template name 'evil [2J' is not a valid Incus instance name"), errors);
+        assertTrue(errors.contains("  ERROR: parent 'tpl- 2J x' is not a valid Incus instance name"), errors);
         assertTrue(errors.contains("  ERROR: Host-resource '/tmp/s [2J Template is valid.' would be mounted"
                 + " (readonly) at /etc/evil ok, a system directory."), errors);
     }
