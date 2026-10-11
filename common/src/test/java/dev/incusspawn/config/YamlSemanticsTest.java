@@ -243,6 +243,11 @@ class YamlSemanticsTest {
     }
 
     @Test
+    void aBlankIntegerSettingIsUnset() throws Exception {
+        assertEquals(McpConfig.DEFAULT_MAX_INSTANCES, Jjq.spawnConfig("mcp:\n  max-instances: \"\"\n").mcp().maxInstances());
+    }
+
+    @Test
     void anIntegerSettingBeyondTheIntRangeFailsRatherThanWrapping() {
         var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: 99999999999\n"));
         var message = YamlErrors.friendly("config.yaml", e);
@@ -254,5 +259,45 @@ class YamlSemanticsTest {
         assertThrows(java.io.IOException.class, () -> tool("parameters:\n  n:\n    type: integer\n    min: abc\n"));
         assertThrows(java.io.IOException.class, () -> tool("parameters:\n  n:\n    type: integer\n    max: 99999999999\n"));
         assertEquals(3, tool("parameters:\n  n:\n    type: integer\n    min: 3\n").getParameters().get("n").getMin());
+    }
+
+    // jjq 0.2.2 nests the keys after an empty value inside a list item under that value
+    // (Hyperfoil/jjq#134): "value:" followed by "strategy: append" binds value = {strategy: append}.
+    // The env converter refuses that rather than writing its JSON into the variable.
+
+    @Test
+    void anEnvValueThatParsedAsAMappingIsRefused() {
+        var e = assertThrows(java.io.IOException.class, () -> image(
+                "env:\n  - name: FOO\n    value:\n    strategy: append\n    separator: \":\"\n"));
+        assertTrue(friendly(e).contains("'value' must be a single value"), friendly(e));
+    }
+
+    /** An empty separator before the strategy would otherwise drop the strategy: PATH set, not prepended. */
+    @Test
+    void anyEnvFieldThatParsedAsAMappingIsRefused() {
+        var separator = assertThrows(java.io.IOException.class, () -> image(
+                "env:\n  - name: PATH\n    value: /x\n    separator:\n    strategy: prepend\n"));
+        assertTrue(friendly(separator).contains("'separator' must be a single value"), friendly(separator));
+        var name = assertThrows(java.io.IOException.class, () -> image("env:\n  - name:\n    value: x\n"));
+        assertTrue(friendly(name).contains("'name' must be a single value"), friendly(name));
+    }
+
+    @Test
+    void anEmptyEnvValueAsTheLastKeyIsEmpty() throws Exception {
+        var env = image("env:\n  - name: FOO\n    strategy: append\n    value:\n").getEnv().getFirst();
+        assertEquals("", env.getValue());
+        assertEquals(EnvEntry.Strategy.APPEND, env.getStrategy());
+    }
+
+    @Test
+    void anEnvNameIsTakenAsWritten() throws Exception {
+        assertEquals("on", image("env:\n  - name: on\n    value: x\n").getEnv().getFirst().getName());
+    }
+
+    /** Pins the parser bug itself, so the day jjq fixes it this fails and the note can go. */
+    @Test
+    void jjqStillNestsTheKeyAfterAnEmptyValueInAListItem() {
+        assertEquals("[{\"n\":1,\"a\":{\"b\":1}}]",
+                io.hyperfoil.tools.jjq.yaml.JqYaml.parse("- n: 1\n  a:\n  b: 1\n").toJsonString());
     }
 }

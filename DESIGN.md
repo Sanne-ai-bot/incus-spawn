@@ -3309,6 +3309,7 @@ Jackson's semantics are the ones users' files were written against, so where jjq
 - `asList()` on a JSON object is empty, where Jackson iterated its values: an object (a devices map, `state.network`) is walked as a `JqObject`.
 - A tree is immutable: code that changes one (the support-bundle redaction) rebuilds it along key/index segments, never along a dotted path re-split, since keys may contain `.` or `[`.
 - A strict-parse failure quotes the whole document; messages show `Jjq.brief`.
+- Inside a list item, an empty value takes the keys after it as its value (Hyperfoil/jjq#134); typed fields then fail on the shape, and the env converter refuses a `value` that is not a single value.
 - An `Integer` field binds through `IntegerConverter`: jjq gives 0 for `abc` or `true` and wraps `99999999999`, and for `mcp.orphan-grace-hours` or `max-instances` that would fail open.
 The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2) and #130-#134 (open).
 

@@ -58,9 +58,19 @@ public class EnvEntryListConverter implements ValueConverter<List<EnvEntry>> {
         EnvEntry.Strategy strategy = EnvEntry.Strategy.SET;
         String separator = " ";
         for (var field : entry.asMap().entrySet()) {
+            // Every field is a single value. A container here is jjq 0.2.2 nesting the next keys
+            // under an empty one (Hyperfoil/jjq#134), or a mistake: refused either way, never
+            // read as text, so a lost 'strategy:' cannot silently turn an append into a set.
+            if (field.getValue().isContainer()) {
+                throw new JqMapperException("Env entry field '" + field.getKey() + "' must be a single value"
+                        + " (an empty value followed by more keys reads as a mapping in this YAML parser:"
+                        + " write it as \"\")");
+            }
             switch (field.getKey()) {
-                case "name" -> name = field.getValue().isNull() ? null : field.getValue().asText();
-                case "value" -> entryValue = Jjq.text(field.getValue());
+                // As written, like Jackson's getText(): 'name: on' is on, not true
+                case "name" -> name = field.getValue().isNull() ? null : Jjq.text(field.getValue());
+                // An empty 'value:' sets the variable empty
+                case "value" -> entryValue = field.getValue().isNull() ? "" : Jjq.text(field.getValue());
                 case "strategy" -> {
                     var strategyStr = field.getValue().isNull() ? "" : field.getValue().asText();
                     var resolved = STRATEGY_MAP.get(strategyStr);
