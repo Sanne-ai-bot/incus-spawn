@@ -139,6 +139,65 @@ class DoctorCommandTest {
         assertOffersVmRestart(DoctorCommand.forwarderLeakFinding(300, OptionalInt::empty, AGENT_SILENT));
     }
 
+    // ---- Incus reachability on macOS: defers to the forwarder finding that holds the fix ----
+
+    private static final Supplier<String> CONNECTIVITY_NOT_ASKED =
+            () -> fail("the VM-pointing connectivity diagnosis must not be asked");
+
+    // A saturated forwarder stops the Incus API answering: the unreachable finding must not offer
+    // the VM restart ahead of the forwarder restart that clears it, nor point at the VM (#1277).
+    @Test
+    void unreachableIncusDefersToTheForwarderRestart() {
+        var forwarder = DoctorCommand.forwarderLeakFinding(108, () -> OptionalInt.of(109), AGENT_NOT_ASKED);
+        assertOffersForwarderRestart(forwarder);
+        var f = DoctorCommand.incusReachableFinding(false, 3.0, CONNECTIVITY_NOT_ASKED, forwarder);
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertNull(f.remediation(), "the forwarder finding holds the fix");
+        assertFalse(f.detail().contains("VM"), f.detail());
+        assertTrue(f.detail().contains("leaked vsock connections"), f.detail());
+    }
+
+    @Test
+    void unreachableIncusDefersWhenTheLeakCannotBeLocatedButTheAgentAnswers() {
+        var forwarder = DoctorCommand.forwarderLeakFinding(300, OptionalInt::empty, AGENT_ANSWERS);
+        var f = DoctorCommand.incusReachableFinding(false, 3.0, CONNECTIVITY_NOT_ASKED, forwarder);
+        assertNull(f.remediation());
+    }
+
+    @Test
+    void slowIncusDefersToTheForwarderRestart() {
+        var forwarder = DoctorCommand.forwarderLeakFinding(300, () -> OptionalInt.of(280), AGENT_NOT_ASKED);
+        var f = DoctorCommand.incusReachableFinding(true, 6.0, CONNECTIVITY_NOT_ASKED, forwarder);
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertNull(f.remediation());
+    }
+
+    @Test
+    void unreachableIncusOffersTheVmRestartWhenTheForwarderDoesNot() {
+        // A vfkit leak, a healthy forwarder, or one that cannot be measured: the VM restart is the fix.
+        for (var forwarder : List.of(
+                DoctorCommand.forwarderLeakFinding(300, () -> OptionalInt.of(5), AGENT_NOT_ASKED),
+                DoctorCommand.forwarderLeakFinding(1, GUEST_NOT_ASKED, AGENT_NOT_ASKED),
+                DoctorCommand.forwarderLeakFinding(-1, OptionalInt::empty, AGENT_NOT_ASKED))) {
+            var f = DoctorCommand.incusReachableFinding(false, 3.0, () -> "timed out", forwarder);
+            assertEquals(DoctorCommand.Status.FAIL, f.status());
+            assertEquals("(timed out)", f.detail());
+            assertTrue(f.remediation().destructive());
+            assertTrue(f.remediation().description().startsWith("Restart the VM"), f.remediation().description());
+        }
+        var slow = DoctorCommand.incusReachableFinding(true, 6.0, CONNECTIVITY_NOT_ASKED,
+                DoctorCommand.forwarderLeakFinding(1, GUEST_NOT_ASKED, AGENT_NOT_ASKED));
+        assertTrue(slow.remediation().description().startsWith("Restart the VM"));
+    }
+
+    @Test
+    void reachableIncusIsOk() {
+        var f = DoctorCommand.incusReachableFinding(true, 0.2, CONNECTIVITY_NOT_ASKED,
+                DoctorCommand.forwarderLeakFinding(300, () -> OptionalInt.of(280), AGENT_NOT_ASKED));
+        assertEquals(DoctorCommand.Status.OK, f.status());
+        assertNull(f.remediation());
+    }
+
     // ---- Storage pool usage evaluation ----
 
     @Test

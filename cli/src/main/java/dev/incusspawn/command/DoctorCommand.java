@@ -225,10 +225,17 @@ public class DoctorCommand extends BaseCommand {
         }
         boolean incusUp = false;
         if (vmRunning) {
-            var incusFinding = checkIncusReachable();
+            long t0 = System.nanoTime();
+            boolean reachable = IncusClient.isReachable();
+            double seconds = (System.nanoTime() - t0) / 1_000_000_000.0;
+            // The forwarder is checked before the Incus finding is made: when it locates a leak
+            // the no-reboot restart clears, that finding must not offer the VM restart first (#1277).
+            var forwarderFinding = checkForwarderLeak();
+            var incusFinding = incusReachableFinding(reachable, seconds,
+                    () -> RuntimeServices.incus().checkConnectivity(), forwarderFinding);
             findings.add(incusFinding);
             incusUp = incusFinding.status() == Status.OK;
-            findings.add(checkForwarderLeak());
+            findings.add(forwarderFinding);
             findings.add(checkApplianceVersion());
             findings.add(checkVmDiskHeadroom());
         }
@@ -936,12 +943,20 @@ public class DoctorCommand extends BaseCommand {
                 new Remediation("Start the VM", false, VmManager::start));
     }
 
-    private Finding checkIncusReachable() {
-        long t0 = System.nanoTime();
-        boolean reachable = IncusClient.isReachable();
-        double seconds = (System.nanoTime() - t0) / 1_000_000_000.0;
+    /**
+     * The Incus reachability finding on macOS. When {@code forwarder} offers the no-reboot forwarder
+     * restart, leaked forwarder connections are the likely cause, so this finding defers to it: no
+     * VM restart of its own, and no detail pointing at the VM (#1277).
+     */
+    static Finding incusReachableFinding(boolean reachable, double seconds, Supplier<String> connectivity,
+                                         Finding forwarder) {
+        if (forwarder.remediation() == FORWARDER_RESTART) {
+            var cause = "the leaked vsock connections below are the likely cause";
+            if (!reachable) return Finding.fail("Incus not reachable", "(the Incus API did not answer — " + cause + ")", null);
+            if (seconds > 5.0) return Finding.warn("Incus reachable but slow", String.format("(%.1fs — %s)", seconds, cause), null);
+        }
         if (!reachable) {
-            var detail = RuntimeServices.incus().checkConnectivity();
+            var detail = connectivity.get();
             return Finding.fail("Incus not reachable", detail == null ? "" : "(" + detail + ")",
                     new Remediation("Restart the VM to restore the tunnel", true, DoctorCommand::restartVm));
         }
@@ -988,10 +1003,13 @@ public class DoctorCommand extends BaseCommand {
                 : new Finding(base.status(), base.label(), detail, base.remediation());
     }
 
+    /** One instance, so {@link #incusReachableFinding} can tell when the forwarder finding offers it. */
+    private static final Remediation FORWARDER_RESTART = new Remediation(
+            "Restart the forwarder in the VM (no reboot — running containers keep going)",
+            false, DoctorCommand::restartForwarderViaAgent);
+
     private static Finding offerForwarderRestart(Finding base, String detail) {
-        return Finding.warn(base.label(), detail,
-                new Remediation("Restart the forwarder in the VM (no reboot — running containers keep going)",
-                        false, DoctorCommand::restartForwarderViaAgent));
+        return Finding.warn(base.label(), detail, FORWARDER_RESTART);
     }
 
     private Finding checkApplianceVersion() {
