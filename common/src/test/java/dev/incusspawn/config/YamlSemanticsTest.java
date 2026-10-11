@@ -276,6 +276,13 @@ class YamlSemanticsTest {
     }
 
     @Test
+    void aCountBeyondTheLongRangeIsTheDefaultNotAWrappedValue() {
+        assertEquals(7, Jjq.longOr(io.hyperfoil.tools.jjq.value.JqValues.parseStrict("7"), -1));
+        assertEquals(-1, Jjq.longOr(io.hyperfoil.tools.jjq.value.JqValues.parseStrict("99999999999999999999"), -1));
+        assertEquals(-1, Jjq.longOr(io.hyperfoil.tools.jjq.value.JqValues.parseStrict("\"7\""), -1));
+    }
+
+    @Test
     void aStringIsAnIntegerOnlyIfItIsOneLiterally() throws Exception {
         for (var text : java.util.List.of("1e2", "5.0", "0x10", "abc", "9999999999")) {
             assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: \"" + text + "\"\n"), text);

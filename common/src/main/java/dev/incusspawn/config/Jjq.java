@@ -183,7 +183,8 @@ public final class Jjq {
 
     /** Jackson's {@code asLong(dflt)}. */
     public static long longOr(JqValue value, long dflt) {
-        return value != null && value.isIntegralNumber() ? value.longValue() : dflt;
+        var exact = exactLong(value); // longValue() would wrap beyond the long range
+        return exact != null ? exact : dflt;
     }
 
     /** Jackson's {@code isMissingNode()}: absent (or, for responses, null). */
