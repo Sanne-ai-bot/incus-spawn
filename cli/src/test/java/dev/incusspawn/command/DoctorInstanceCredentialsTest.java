@@ -131,6 +131,33 @@ class DoctorInstanceCredentialsTest {
     }
 
     @Test
+    void anOddLengthHexSecretIsReportedNotACrash() throws IOException {
+        start(List.of(GH));
+        Files.writeString(secretFile(), "abc\n");
+        var problems = problems(check(env("GH_TOKEN", "gho_placeholder"), List.of(GH), GUARDS_HOLD));
+        assertEquals(1, problems.size(), problems.toString());
+        assertTrue(problems.get(0).label().contains("invalid"), problems.toString());
+    }
+
+    @Test
+    void aDifferentPrefixOrNamespaceThanTheStartUsedIsNotedAndNeverAFixThatCannotWork() throws IOException {
+        var secret = start(List.of(new ProofToken.Placeholder("GH_TOKEN", "xyz_", "github")));
+        var prefix = check(env("GH_TOKEN", "xyz_isx_" + ProofToken.derive(secret, "github")), List.of(GH), GUARDS_HOLD);
+        assertEquals(List.of(), problems(prefix), prefix.toString());
+        assertTrue(prefix.stream().anyMatch(f -> f.status() == DoctorCommand.Status.NOTE
+                && f.detail().contains("GH_TOKEN")), prefix.toString());
+
+        start(List.of(new ProofToken.Placeholder("GH_TOKEN", "gho_", "other")));
+        var current = new ProofToken.Placeholder("GH_TOKEN", "gho_", "other").tokenFor(
+                Files.readString(secretFile()).strip());
+        var namespace = check(env("GH_TOKEN", current), List.of(GH), GUARDS_HOLD);
+        assertEquals(List.of(), problems(namespace), "the shell is current: a new shell would change nothing");
+        assertTrue(namespace.stream().anyMatch(f -> f.status() == DoctorCommand.Status.NOTE
+                && f.detail().contains("GH_TOKEN")), namespace.toString());
+        assertFalse(namespace.toString().contains(current), "a proof never reaches the output");
+    }
+
+    @Test
     void aSecretFileThatIsNotASecretIsReported() throws IOException {
         Files.writeString(secretFile(), "not hex\n");
         Files.writeString(proofsFile(), "");
@@ -152,12 +179,14 @@ class DoctorInstanceCredentialsTest {
     }
 
     @Test
-    void aDeliveredVariableThisIsxDoesNotDeclareIsNotedNotPassed() throws IOException {
-        start(List.of(GH));
-        var findings = check(env("GH_TOKEN", "gho_placeholder"), List.of(), GUARDS_HOLD);
-        assertEquals(List.of(), problems(findings));
-        assertTrue(findings.stream().anyMatch(f -> f.status() == DoctorCommand.Status.NOTE
-                && f.detail().contains("GH_TOKEN")), "a host and guest that disagree must not read as all clear: " + findings);
+    void aDeliveredVariableThisIsxDoesNotDeclareIsStillJudgedByWhatWasDelivered() throws IOException {
+        var secret = start(List.of(GH));
+        var current = check(env("GH_TOKEN", GH.tokenFor(secret)), List.of(), GUARDS_HOLD);
+        assertEquals(List.of(), problems(current));
+        assertTrue(current.stream().anyMatch(f -> f.status() == DoctorCommand.Status.NOTE
+                && f.detail().contains("GH_TOKEN")), "a host and guest that disagree must not read as all clear: " + current);
+        var stale = problems(check(env("GH_TOKEN", "gho_placeholder"), List.of(), GUARDS_HOLD));
+        assertEquals(1, stale.size(), "the file says this start filled it, so the shell is stale");
     }
 
     @Test

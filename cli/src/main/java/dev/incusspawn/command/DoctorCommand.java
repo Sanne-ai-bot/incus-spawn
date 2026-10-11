@@ -305,8 +305,8 @@ public class DoctorCommand extends BaseCommand {
      * proof tokens this shell exports are the ones the secret derives ({@link ProofToken}, #1109):
      * a box rebooted behind isx's back has no secret, and a shell opened before the last
      * {@code isx start} or {@code isx shell} keeps the proofs, or the build's placeholders, it
-     * was opened with. Only what this start delivered a proof for is compared ({@link
-     * ProofToken#filledBy}): a variable the host's tools leave alone, or whose guard fails in this
+     * was opened with. Only what this start delivered a proof for is compared, against the token it delivered ({@link
+     * ProofToken#delivered}): a variable the host's tools leave alone, or whose guard fails in this
      * image, keeps its static placeholder by design, and a value somebody else set is theirs.
      * Nothing outside the instance: on the host, {@code declared} is never read.
      */
@@ -356,7 +356,7 @@ public class DoctorCommand extends BaseCommand {
             return findings;
         }
 
-        var delivered = ProofToken.filledBy(proofs);
+        var delivered = ProofToken.delivered(proofs);
         var fix = new Remediation("Start a new login shell; if it still shows this, " + redeliverText, false, null);
         List<ProofToken.Placeholder> placeholders;
         try {
@@ -366,28 +366,39 @@ public class DoctorCommand extends BaseCommand {
                     + e.getMessage() + ")", null));
             return findings;
         }
+        var declaredByEnv = new java.util.HashMap<String, ProofToken.Placeholder>();
+        for (var placeholder : placeholders) declaredByEnv.put(placeholder.env(), placeholder);
         int matching = 0;
         boolean mismatch = false;
-        var unchecked = new LinkedHashSet<>(delivered);
-        unchecked.removeIf(name -> !env.containsKey(name));
-        for (var placeholder : placeholders) {
-            var value = env.get(placeholder.env());
-            if (value == null || !delivered.contains(placeholder.env())) continue;
-            unchecked.remove(placeholder.env());
-            if (value.equals(placeholder.tokenFor(secret))) {
+        var skewed = new LinkedHashSet<String>();
+        for (var entry : delivered.entrySet()) {
+            var name = entry.getKey();
+            var token = entry.getValue();
+            var value = env.get(name);
+            if (value == null) continue;
+            var placeholder = declaredByEnv.get(name);
+            // What this start gave the variable is what the file says; this isx's own reading of the
+            // declaration is only a cross-check, and where they differ no fix here would change it
+            if (placeholder == null || !token.equals(placeholder.tokenFor(secret))) skewed.add(name);
+            if (value.equals(token)) {
                 matching++;
-            } else if (placeholder.replaces(value)
-                    && (placeholder.guard().isEmpty() || guardHolds.test(placeholder.guard()))) {
+                continue;
+            }
+            var marker = token.indexOf(ProofToken.MARKER);
+            var prefix = marker < 0 ? token : token.substring(0, marker);
+            boolean earlier = value.startsWith(prefix + ProofToken.MARKER);
+            boolean build = value.startsWith(prefix + ProofToken.STATIC_MARKER)
+                    && (placeholder == null || placeholder.guard().isEmpty() || guardHolds.test(placeholder.guard()));
+            if (earlier || build) {
                 mismatch = true;
-                findings.add(Finding.warn(placeholder.env() + " does not match this start's secret",
-                        value.startsWith(placeholder.staticValuePrefix()) ? "(it still holds the build's placeholder)"
-                                : "(it holds an earlier start's proof token)", fix));
+                findings.add(Finding.warn(name + " does not match this start's secret",
+                        earlier ? "(it holds an earlier start's proof token)" : "(it still holds the build's placeholder)", fix));
             }
         }
-        if (!unchecked.isEmpty()) {
-            // The host's tools filled them; this isx declares them otherwise, or not at all
-            findings.add(Finding.note("Proof tokens not checked", "(" + String.join(", ", unchecked)
-                    + ": this isx does not declare them as the host that started the instance did)"));
+        if (!skewed.isEmpty()) {
+            findings.add(Finding.note("Proof tokens not cross-checked", "(" + String.join(", ", skewed)
+                    + ": this isx does not derive what the host that started the instance delivered, so its tool"
+                    + " declarations differ from the host's; compared with what was delivered)"));
         }
         if (!mismatch) {
             findings.add(Finding.ok("Proof tokens", matching == 0 ? "(none to compare in this shell)"
