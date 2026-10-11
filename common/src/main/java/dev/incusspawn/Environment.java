@@ -187,10 +187,23 @@ public final class Environment {
      * is the one the user is always pointed at.
      */
     public static Path buildFailureLogFile(String template) {
-        var dir = home().resolve(".local/state/incus-spawn/build-failures");
-        var file = dir.resolve(template + ".log").normalize();
+        return stateLogFile("build-failures", "Template", template);
+    }
+
+    /**
+     * Host-side copy of a VM's console log, saved when its incus-agent does not come up so the
+     * message can point at it: the macOS host has no {@code incus console} to show it (#1139).
+     */
+    public static Path consoleLogFile(String instance) {
+        return stateLogFile("console-logs", "Instance", instance);
+    }
+
+    /** {@code <name>.log} in {@code subdir} of the state directory, refusing a name that escapes it. */
+    private static Path stateLogFile(String subdir, String what, String name) {
+        var dir = home().resolve(".local/state/incus-spawn").resolve(subdir);
+        var file = dir.resolve(name + ".log").normalize();
         if (!file.startsWith(dir)) {
-            throw new IllegalArgumentException("Template name escapes build-failures directory: " + template);
+            throw new IllegalArgumentException(what + " name escapes " + subdir + " directory: " + name);
         }
         return file;
     }

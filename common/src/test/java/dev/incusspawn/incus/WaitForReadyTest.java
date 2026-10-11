@@ -1,7 +1,12 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.Environment;
+import dev.incusspawn.lifecycle.TempHome;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -11,8 +16,10 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * {@link IncusClient#waitForReady} against instances that never answer exec ({@link
  * FakeIncusDaemon} serves none), with its waits shortened. A VM's failure must name the VM and
- * its agent, and quote the console lines that say why (#844).
+ * its agent, and quote the console lines that say why (#844). The full console log is saved on the
+ * host and named, since the macOS host has no {@code incus console} to show it (#1139).
  */
+@ExtendWith(TempHome.class)
 class WaitForReadyTest {
 
     private static final String AVC = "[    4.105712] audit: type=1400 audit(1758000000.123:4): avc:  denied  { listen } "
@@ -34,6 +41,13 @@ class WaitForReadyTest {
         return client;
     }
 
+    /** {@code msg} names the host file VM vm1's console log was saved to, holding {@code log}. */
+    static void assertPointsAtSavedBootLog(String msg, String log) throws IOException {
+        var file = Environment.consoleLogFile("vm1");
+        assertTrue(msg.contains(file.toString()), msg);
+        assertEquals(log, Files.readString(file));
+    }
+
     private static long ms(long millis) {
         return Duration.ofMillis(millis).toNanos();
     }
@@ -49,23 +63,23 @@ class WaitForReadyTest {
     }
 
     @Test
-    void vmGetsTheLongerBudgetAndNamesTheAgent() {
-        daemon.instance("vm1", "virtual-machine", "Running", Map.of())
-                .consoleLog("vm1", "[  OK  ] Reached target multi-user.target\n");
+    void vmGetsTheLongerBudgetAndNamesTheAgent() throws IOException {
+        var log = "[  OK  ] Reached target multi-user.target\n";
+        daemon.instance("vm1", "virtual-machine", "Running", Map.of()).consoleLog("vm1", log);
         long start = System.nanoTime();
         var e = assertThrows(IncusException.class, () -> client(50, 400, 100).waitForReady("vm1", MachineType.VM));
 
         assertTrue(System.nanoTime() - start >= ms(400), "a VM must wait out the VM budget, not a container's");
         var msg = e.getMessage();
         assertTrue(msg.startsWith("VM vm1 is running, but its incus-agent did not come up within"), msg);
-        assertTrue(msg.contains("incus console vm1 --show-log"), msg);
+        assertPointsAtSavedBootLog(msg, log);
         assertFalse(msg.contains("Container"), msg);
     }
 
     @Test
-    void vmFailsFastOnceTheConsoleShowsTheAgentFailing() {
-        daemon.instance("vm1", "virtual-machine", "Running", Map.of())
-                .consoleLog("vm1", "booting\n" + AVC + "\n" + FAILED + "\n" + FAILED + "\n");
+    void vmFailsFastOnceTheConsoleShowsTheAgentFailing() throws IOException {
+        var log = "booting\n" + AVC + "\n" + FAILED + "\n" + FAILED + "\n";
+        daemon.instance("vm1", "virtual-machine", "Running", Map.of()).consoleLog("vm1", log);
         long start = System.nanoTime();
         var e = assertThrows(IncusException.class, () -> client(50, 60_000, 150).waitForReady("vm1", MachineType.VM));
 
@@ -77,7 +91,7 @@ class WaitForReadyTest {
         assertTrue(msg.contains("tclass=vsock_socket"), msg);
         assertEquals(1, msg.split("Failed to start incus-agent", -1).length - 1,
                 "repeated lines are reported once: " + msg);
-        assertTrue(msg.contains("incus console vm1 --show-log"), msg);
+        assertPointsAtSavedBootLog(msg, log);
     }
 
     @Test
