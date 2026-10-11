@@ -2512,6 +2512,8 @@ So `/activity` also counts every request and WebSocket through the MITM listener
 What comes from no known instance -- the host itself, or an address the registry has not listed -- is counted as `unattributed`, from the proxy's start.
 The domain is the intercepted one a request is relayed for: a subdomain reached through dnsmasq's wildcard counts under its closest intercepted parent, and any other name under `(other)`, since the Host header is the guest's to write and a key per made-up name would grow without bound.
 A request ends on its response's `bodyEndHandler` or its connection's `closeHandler`, the two handlers nothing else on the path sets (the relay, the cache and the model-call count each set the response's single end and close handlers); an HTTP/1.1 connection answers one request at a time, so its close ends the one in progress.
+A model call ends with its request's flow, on the same reading of the clock (`Flow.carries`, #1281): Vert.x runs the body-end and end handlers one after the other, and two readings could put the call's `last_response_at` after the `last_activity_at` of its own domain.
+Its own end and close handlers stay as the backstop.
 A WebSocket ends on its close and adds its frames' bytes as they pass.
 An open stream is in flight for as long as it is open, whatever passes on it -- a WebSocket, or the MCP stream an `--mcp-client` instance holds to `mcp.isx.internal` -- so a reader telling working from idle by `in_flight` looks at the domains, which is why they are kept apart.
 Bytes and the last activity move when a request starts and ends, not per chunk: an open stream shows as in flight, which is what stuck detection reads, and the event loop takes one short lock per request rather than one per chunk.

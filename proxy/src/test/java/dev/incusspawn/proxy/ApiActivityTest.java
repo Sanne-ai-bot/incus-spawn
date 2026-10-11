@@ -267,6 +267,30 @@ class ApiActivityTest {
     }
 
     @Test
+    void aModelCallEndsWithItsRequestOnOneReadingOfTheClock() {
+        // #1281: the response's handlers end the flow and the call one after the other
+        var now = new AtomicLong(1_000);
+        var activity = new ApiActivity(now::incrementAndGet);
+        var flow = activity.flow("w", "", 0, "api.anthropic.com");
+        var call = activity.begin("w", "", 0);
+        flow.carries(call);
+
+        flow.end();
+        call.end();
+        var w = activity.snapshot(Map.of("w", ""), 0).of("w");
+        assertEquals(0, w.inFlight());
+        assertEquals(w.traffic().byDomain().get("api.anthropic.com").lastActivityAt(), w.lastResponseAt());
+
+        // A call that begins once its request's connection is gone ends at once
+        var gone = activity.flow("w", "", 0, "api.anthropic.com");
+        gone.end();
+        gone.carries(activity.begin("w", "", 0));
+        w = activity.snapshot(Map.of("w", ""), 0).of("w");
+        assertEquals(0, w.inFlight());
+        assertEquals(w.traffic().byDomain().get("api.anthropic.com").lastActivityAt(), w.lastResponseAt());
+    }
+
+    @Test
     void aFlowIsInFlightUntilItEndsOnceHoweverItEnds() {
         var activity = new ApiActivity();
         var socket = activity.flow("w", "", 0, "github.com");

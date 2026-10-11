@@ -74,6 +74,9 @@ class ApiActivityProxyTest {
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
                 new ProxyCredentials("sk-ant-api03-real", "", false, "", "", List.of()));
         proxy.upstream.upstreamTrustAll = true;
+        // The real clock, moving on every reading as a slow machine's does between two handlers (#1281)
+        var last = new java.util.concurrent.atomic.AtomicLong();
+        proxy.apiActivity = new ApiActivity(() -> last.updateAndGet(t -> Math.max(t + 1, System.currentTimeMillis())));
         ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
         healthPort = proxy.healthPort();

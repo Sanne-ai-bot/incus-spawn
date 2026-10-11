@@ -285,6 +285,7 @@ Key design:
   The prune obeys views too: a read never drops counters a later listing made.
 - **All traffic on `/activity` (#935)**: every request and WebSocket of the MITM listener is an `ApiActivity.Flow` (`countTraffic` in `routeRequest`, `trafficFlow` in `routeWebSocket`), on the same per-incarnation counters, per domain (`ApiActivity.trafficDomain`: an intercepted domain, a subdomain under its closest intercepted parent, else `(other)` -- never a key per Host header), and `unattributed` for callers that are no known instance.
   A request ends on the response's `bodyEndHandler` or the connection's `closeHandler`: the response's end and close handlers are single slots the relay, the cache and `beginModelCall` already set, so never use them for this.
+  A model call ends with that flow, on one clock reading (`RequestContext.flow` → `Flow.carries`, #1281), so its `last_response_at` is never after its domain's `last_activity_at`.
   A WebSocket ends on its close (an early close handler until the relay installs its own, and `flow.end` on every refusal before the handshake).
   Bytes and last activity move at start and end only.
   A flow in flight keeps an unlisted instance's counters from the prune.
