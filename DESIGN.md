@@ -1310,8 +1310,10 @@ It negotiates HTTP/2 through ALPN (Central offers it; others fall back to HTTP/1
 Idle connections stay open for `PROBE_KEEP_ALIVE_SECONDS` (60s), across short pauses between a build's Maven invocations.
 Longer buys little (one handshake per longer pause) and widens the window for a connection dropped silently while idle (NAT, suspend, a VPN coming up).
 Such a connection is still found.
-The client's read-idle timeout (15s) fires only while an exchange is waiting on the connection.
-Being shorter than the exchange's own (30s) it closes the dead connection first, so the exchange fails as broken and gets the one retry above, on a new connection.
+`Upstream.sendProbe()` closes a connection once nothing has been read on it for 15s while an exchange waits, counted from that exchange's request (#1007).
+Being shorter than the exchange's own timeout (30s) it closes the dead connection first, so the exchange fails as broken and gets the one retry above, on a new connection.
+It is not the client's read-idle timeout: Netty ticks that from the connection's last read, so a request on a connection pooled idle for longer could be cut by a tick just after it went out, while upstream was answering.
+Nor an all-idle timeout, which a request's write restarts: confirmations going out every few seconds would then keep a dead connection open.
 Without it an HTTP/2 connection would never be evicted: a timed-out exchange resets only its own stream, and every later confirmation would wait out 30s on the dead connection and be served unconfirmed.
 Up to four HTTP/2 connections per host (`setHttp2MaxPoolSize`): with one, Vert.x admits a single connect at a time, so a burst to a host that falls back to HTTP/1.1 (a nested isx's own proxy, the benchmark stub) ran one request at a time, and a burst to one that does not answer failed one connect timeout after another.
 Connections are pooled per resolved address, so reuse also ends when the DNS cache (60s) re-resolves a host to a different one.

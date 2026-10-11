@@ -591,6 +591,22 @@ class ArtifactCacheProxyTest {
         assertTrue(ms < 10_000, "took " + ms + "ms");
     }
 
+    @Test
+    void aHealthyPooledConnectionIdleForLongIsNotClosedUnderAnAnswer() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        assertNotEquals(ArtifactCacheHandler.SidecarAnswer.UNREACHABLE, confirm());
+        var pooled = lastHeadConnection;
+
+        // Idle for 1.6 read-idle periods, then an answer that takes 0.6 of one: well inside the
+        // period counted from the HEAD, across the one counted from the connection's last read (#1007)
+        Thread.sleep(1600);
+        headDelayMs = 600;
+        var heads = headsAnswered.get();
+        assertNotEquals(ArtifactCacheHandler.SidecarAnswer.UNREACHABLE, confirm());
+        assertEquals(heads + 1, headsAnswered.get(), "one HEAD, not retried");
+        assertSame(pooled, lastHeadConnection, "on the pooled connection");
+    }
+
     // --- confirmation tiers (artifact-cache: fresh / max-stale) ---
 
     /**
@@ -827,9 +843,8 @@ class ArtifactCacheProxyTest {
         assertTrue(proxy.artifactCache.inBackoff(CENTRAL), "a refused connect starts the backoff");
 
         // Back to the address the pooled connection was made to: acquiring it needs no network I/O.
-        // The read-idle timeout closes the stalled connection and the HEAD is retried on a new one,
-        // possibly at once: the idle check ticks from the last read, not from the HEAD. So the
-        // retry stalls too, or its answer would end the backoff before it is checked (#1005).
+        // The stalled connection is closed and the HEAD retried on a new one. The retry stalls too,
+        // or its answer could end the backoff before it is checked (#1005).
         online(CENTRAL);
         headsToStall.set(2);
         var stalled = confirmAsync();
