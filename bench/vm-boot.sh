@@ -8,6 +8,12 @@
 # active. Then the copy is deleted. Nothing is added to isx: this is plain `incus`, to measure
 # the boot itself rather than isx around it (bench/trace-branch.sh does that).
 #
+# --isx times the same through isx instead: each run is an `isx branch --format plain` of the
+# template, so the copy, the branch's own config, the start, isx's readiness wait and everything
+# it does after the agent answers, until it returns; then `isx destroy`. The console is isx's, so
+# firmware, grub and connected stay empty; branch is the whole `isx branch`, and kernel and agent
+# count from its start. branch minus agent is what isx adds after the agent is up (#1238).
+#
 # Columns: copy is the copy alone (any --set writes follow it, untimed). The rest count from the
 # start request, on the host's clock unless noted:
 #   firmware   until the firmware hands over to shim ("BdsDxe: loading" on the console)
@@ -31,6 +37,7 @@
 #   bench/vm-boot.sh tpl-isx-vm                                  # 3 runs
 #   bench/vm-boot.sh tpl-isx-vm --runs=5 --set limits.cpu=8      # config on the copy only
 #   bench/vm-boot.sh tpl-isx-vm --set security.secureboot=false
+#   bench/vm-boot.sh tpl-minimal --isx                           # through isx branch
 # A copy that does not answer exec within 300 s stops the run, and is deleted.
 set -euo pipefail
 # $EPOCHREALTIME and awk must agree on the decimal point
@@ -40,8 +47,9 @@ RUNS=3
 TIMEOUT=300
 SETS=()
 BASE=""
+ISX=""
 
-usage() { echo "Usage: bench/vm-boot.sh <stopped-vm> [--runs=N] [--set key=value]..."; }
+usage() { echo "Usage: bench/vm-boot.sh <stopped-vm> [--runs=N] [--set key=value]... | <template> --isx [--runs=N]"; }
 die() { echo "Error: $*" >&2; exit 2; }
 
 while [ $# -gt 0 ]; do
@@ -49,6 +57,7 @@ while [ $# -gt 0 ]; do
         --runs=*) RUNS="${1#--runs=}" ;;
         --set) shift; SETS+=("${1:?--set needs key=value}") ;;
         --set=*) SETS+=("${1#--set=}") ;;
+        --isx) ISX=1 ;;
         --help|-h)
             usage
             echo ""
@@ -56,7 +65,8 @@ while [ $# -gt 0 ]; do
             echo "the time from the start request to the firmware handing over, GRUB booting, the"
             echo "guest kernel starting, incus-agent active, Incus reporting it connected and exec"
             echo "answering, plus the guest's systemd-analyze. --set applies instance config to"
-            echo "each copy, never the source."
+            echo "each copy, never the source. --isx branches with isx instead, timing the"
+            echo "whole 'isx branch' (no --set; firmware, grub and connected stay empty)."
             exit 0
             ;;
         -*) die "unknown option: $1 (see --help)" ;;
@@ -67,14 +77,16 @@ done
 
 [ -n "$BASE" ] || { usage >&2; exit 2; }
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || die "--runs must be a positive integer"
+[ -z "$ISX" ] || [ ${#SETS[@]} -eq 0 ] || die "--set is for plain copies: isx configures its branches itself"
+[ -z "$ISX" ] || command -v isx >/dev/null || die "--isx needs isx on PATH"
 [ "$(uname -s)" = "Linux" ] || die "Linux only"
-command -v script >/dev/null || die "needs script(1) from util-linux"
+[ -n "$ISX" ] || command -v script >/dev/null || die "needs script(1) from util-linux"
 read -r type status <<<"$(incus list "^${BASE}\$" -c ts -f csv | tr ',' ' ')"
 [ "${type:-}" = VIRTUAL-MACHINE ] || die "$BASE is not a virtual machine"
 [ "${status:-}" = STOPPED ] || die "$BASE must be stopped: a branch copies a stopped template"
 # A plain copy keeps what isx's own copy clears, a branch's static address among it, and two
 # instances on one address do not both start
-! incus query "/1.0/instances/$BASE" | grep -q '"ipv4.address"' \
+[ -n "$ISX" ] || ! incus query "/1.0/instances/$BASE" | grep -q '"ipv4.address"' \
     || die "$BASE has a static address, as an isx branch does: copy its template instead"
 
 LOG="$(mktemp)"
@@ -83,6 +95,7 @@ console=""
 teardown_copy() {
     [ -z "$console" ] || kill "$console" 2>/dev/null || true
     pkill -f "incus start --console $COPY\$" 2>/dev/null || true
+    [ -z "$ISX" ] || isx destroy "$COPY" --skip-confirmation >/dev/null 2>&1 || true
     incus delete -f "$COPY" >/dev/null 2>&1 || true
 }
 trap 'teardown_copy; rm -f "$LOG"' EXIT
@@ -102,35 +115,47 @@ connected() {
     (( BASH_REMATCH[1] >= 0 ))
 }
 
-printf '%-4s %7s %9s %7s %7s %7s %9s %7s  %s\n' run copy firmware grub kernel agent connected exec \
+first=copy
+[ -z "$ISX" ] || first=branch
+printf '%-4s %7s %9s %7s %7s %7s %9s %7s  %s\n' run "$first" firmware grub kernel agent connected exec \
     "guest systemd-analyze"
 for run in $(seq 1 "$RUNS"); do
     t0=$EPOCHREALTIME
-    incus copy "$BASE" "$COPY"
-    tc=$EPOCHREALTIME
-    for kv in "${SETS[@]}"; do incus config set "$COPY" "$kv"; done
-    ts=$EPOCHREALTIME
-    # The console needs a terminal; script(1) gives it one and the loop stamps each line
-    # with the shell's own clock, so no process is started per line
-    ( script -qfc "incus start --console $COPY" /dev/null 2>&1 \
-        | while IFS= read -r line; do printf '%s %s\n' "$EPOCHREALTIME" "$line"; done > "$LOG" ) \
-        </dev/null >/dev/null 2>&1 &
-    console=$!
-    deadline=$(( ${ts%.*} + TIMEOUT ))
     tconn=""
-    until [ -n "$tconn" ] && timeout 10 incus exec "$COPY" -- true >/dev/null 2>&1; do
-        if ! kill -0 "$console" 2>/dev/null; then
-            cat "$LOG" >&2
-            die "incus start $COPY ended; its output is above"
-        fi
-        if (( ${EPOCHREALTIME%.*} >= deadline )); then
-            cat "$LOG" >&2
-            die "$COPY did not answer exec within ${TIMEOUT}s; its console output is above"
-        fi
-        # Probe exec at once when the agent has just connected
-        if [ -z "$tconn" ] && connected; then tconn=$EPOCHREALTIME; continue; fi
-        sleep 0.05
-    done
+    if [ -n "$ISX" ]; then
+        # Returns once the branch is ready: the agent up and isx done with it
+        isx branch "$COPY" --from "$BASE" --format plain >/dev/null 2>"$LOG" \
+            || { cat "$LOG" >&2; die "isx branch $COPY failed; its output is above"; }
+        tc=$EPOCHREALTIME
+        # Every column counts from the branch's start
+        ts=$t0
+        timeout 10 incus exec "$COPY" -- true >/dev/null 2>&1 || die "$COPY does not answer exec after isx branch"
+    else
+        incus copy "$BASE" "$COPY"
+        tc=$EPOCHREALTIME
+        for kv in "${SETS[@]}"; do incus config set "$COPY" "$kv"; done
+        ts=$EPOCHREALTIME
+        # The console needs a terminal; script(1) gives it one and the loop stamps each line
+        # with the shell's own clock, so no process is started per line
+        ( script -qfc "incus start --console $COPY" /dev/null 2>&1 \
+            | while IFS= read -r line; do printf '%s %s\n' "$EPOCHREALTIME" "$line"; done > "$LOG" ) \
+            </dev/null >/dev/null 2>&1 &
+        console=$!
+        deadline=$(( ${ts%.*} + TIMEOUT ))
+        until [ -n "$tconn" ] && timeout 10 incus exec "$COPY" -- true >/dev/null 2>&1; do
+            if ! kill -0 "$console" 2>/dev/null; then
+                cat "$LOG" >&2
+                die "incus start $COPY ended; its output is above"
+            fi
+            if (( ${EPOCHREALTIME%.*} >= deadline )); then
+                cat "$LOG" >&2
+                die "$COPY did not answer exec within ${TIMEOUT}s; its console output is above"
+            fi
+            # Probe exec at once when the agent has just connected
+            if [ -z "$tconn" ] && connected; then tconn=$EPOCHREALTIME; continue; fi
+            sleep 0.05
+        done
+    fi
     te=$EPOCHREALTIME
     read -r kernel agent analyze <<<"$(incus exec "$COPY" -- sh -c '
         up=$(cut -d" " -f1 /proc/uptime); n=$(date +%s.%N)
