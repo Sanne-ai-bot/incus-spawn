@@ -69,9 +69,9 @@ record McpTool(String name, String description, JqObject inputSchema, JqObject o
         Integer integer(String name) {
             var v = field(name);
             if (v.isNull()) return null;
-            // A whole number that fits an int: longValue() wraps beyond the long range, so the
-            // check is on the exact value (Jackson's canConvertToInt).
-            // Bounds first, so a huge literal is refused before intValueExact looks at its digits
+            // A whole number in the int range, checked on the exact value (longValue() wraps
+            // beyond the long range); a fraction is refused. Bounds first, so a huge literal is
+            // refused before intValueExact looks at its digits.
             var decimal = v.isNumber() ? v.decimalValue() : null;
             try {
                 if (decimal != null && decimal.compareTo(INT_MIN) >= 0 && decimal.compareTo(INT_MAX) <= 0) {
