@@ -201,10 +201,17 @@ echo ""
 # curl and Codex fail on a missing one instead of falling back to the system store.
 echo "[8b] Trust variables"
 TRUST_CONF=/etc/environment.d/00-isx-trust.conf
-assert "every path in $TRUST_CONF exists" \
-    sh -c "! grep '=/' $TRUST_CONF | while IFS== read -r n v; do [ -e \"\$v\" ] || echo \"\$n=\$v\"; done | grep ."
-assert "a login shell exports the same paths" \
-    su - agentuser -c "grep '=/' $TRUST_CONF | while IFS== read -r n v; do eval \"[ \\\"\\\$\$n\\\" = \\\"\$v\\\" ]\" || { echo \$n; exit 1; }; done"
+# Each path-valued line of the drop-in, checked as root and then as a login shell sees it; every
+# bad line is reported. A drop-in that is missing or names no path fails, so neither check can
+# pass on nothing.
+TRUST_CHECK='grep -q "=/" '"$TRUST_CONF"' || { echo "no paths in '"$TRUST_CONF"'"; exit 1; }
+bad=$(grep "=/" '"$TRUST_CONF"' | while IFS== read -r n v; do
+    [ -e "$v" ] || echo "$n=$v is missing"
+    [ -z "$ISX_TRUST_CHECK_LOGIN" ] || [ "$(printenv "$n")" = "$v" ] || echo "$n=$(printenv "$n") in the login shell"
+done)
+[ -z "$bad" ] || { echo "$bad"; exit 1; }'
+assert "every path in $TRUST_CONF exists" sh -c "$TRUST_CHECK"
+assert "a login shell exports the same paths" su - agentuser -c "ISX_TRUST_CHECK_LOGIN=1; $TRUST_CHECK"
 assert "curl in a login shell trusts the proxy" \
     su - agentuser -c "curl -sSf -o /dev/null https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom"
 echo ""
