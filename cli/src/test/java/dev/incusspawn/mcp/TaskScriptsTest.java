@@ -7,11 +7,13 @@ import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -1038,7 +1040,15 @@ class TaskScriptsTest {
         assertTrue(lines.stream().anyMatch(l -> l.startsWith("t2-abc agent 1 done - - - ")), lines.toString());
     }
 
+    /** Codex ships as a Node script, so its stand-ins are too; a box without Node skips them (#1363). */
+    private static void assumeNode() {
+        var path = System.getenv("PATH");
+        assumeTrue(path != null && Arrays.stream(path.split(File.pathSeparator)).map(dir -> Path.of(dir, "node"))
+                .anyMatch(node -> Files.isRegularFile(node) && Files.isExecutable(node)), "node is not on PATH");
+    }
+
     private void codexStub(String events) throws Exception {
+        assumeNode();
         var script = home.resolve("codex-stub.cjs");
         Files.writeString(script, """
                 const fs = require('node:fs');
@@ -1188,15 +1198,16 @@ class TaskScriptsTest {
         Files.writeString(d.resolve("identity"), "1 codex\n");
         Files.writeString(d.resolve("session_id"), sessionId());
         Files.writeString(d.resolve("cwd"), work.toString());
-        for (var args : List.of(
-                List.of("exec", "resume", "--json", sessionId(), "follow up"),
-                List.of("resume", "--all", "--model", "model-value", "-c", "key=value", sessionId()),
-                List.of("exec", "resume", "--output-last-message", "report-value", "--image", "image-value", sessionId(), "-"),
-                List.of("resume", "-mattached-value", "--config=key=value", "--", sessionId(), "prompt-value"),
-                List.of("--profile", "profile-value", "exec", "--color", "never", "resume", "--enable", "feature-value", sessionId()),
-                List.of("e", "resume", "-o", "report-value", "-m", "model-value", sessionId()))) {
-            // Native argv and the Node launcher both occur in supported Codex installs.
-            for (var launcher : List.of(false, true)) {
+        // Native argv and the Node launcher both occur in supported Codex installs; native first, so a
+        // box without Node still runs every native case before the launcher skips.
+        for (var launcher : List.of(false, true)) {
+            for (var args : List.of(
+                    List.of("exec", "resume", "--json", sessionId(), "follow up"),
+                    List.of("resume", "--all", "--model", "model-value", "-c", "key=value", sessionId()),
+                    List.of("exec", "resume", "--output-last-message", "report-value", "--image", "image-value", sessionId(), "-"),
+                    List.of("resume", "-mattached-value", "--config=key=value", "--", sessionId(), "prompt-value"),
+                    List.of("--profile", "profile-value", "exec", "--color", "never", "resume", "--enable", "feature-value", sessionId()),
+                    List.of("e", "resume", "-o", "report-value", "-m", "model-value", sessionId()))) {
                 var resumed = codexPresence(args, launcher, false);
                 try {
                     var status = Tasks.parse(sh(TaskScripts.status(id, 0), ""));
@@ -1247,6 +1258,7 @@ class TaskScriptsTest {
         Files.deleteIfExists(ready);
         var command = new java.util.ArrayList<String>();
         if (launcher) {
+            assumeNode();
             var script = home.resolve("codex-presence.cjs");
             Files.writeString(script, "require('node:fs').writeFileSync(process.env.CODEX_PRESENCE_READY, 'ready'); setTimeout(() => {}, 30000);");
             command.addAll(List.of("node", script.toString()));
