@@ -3206,6 +3206,8 @@ The VM base image isx uses (`-vm-direct.tar.xz`, from the first incus-spawn-imag
   The kernel is built from kernel.org source, checksummed, by `appliance/kernel/build-kernel.sh vm` at the incus-spawn commit the images repo pins (`fedora/build-vm-kernel.sh`), so its config has one home and reaches the image only through a bump of that pin.
   The image carries no kernel package, no `/boot`, and no module files: `/usr/lib/modules/<release>/` holds only the index of built-in drivers, so `modprobe` of one succeeds (a nested Incus needs `modprobe vhost_vsock`).
   dnf in the image refuses kernel packages (`/etc/dnf/libdnf5.conf.d/isx-kernel.conf`), since a Fedora kernel would land in a `/boot` nothing boots.
+  So a template cannot upgrade or replace the kernel of this image, by design: `dnf upgrade` leaves it alone, and `dnf install kernel-core` answers "matches only excluded packages" (seen on #1217); a new kernel comes with a bump of the pin.
+  The stock-based image (`-vm.tar.xz`, for older isx) still takes kernel upgrades, and from incus-spawn-images#27 on boots the newest one: its later kernels' boot entries share the image's own entry id (`KERNEL_INSTALL_MACHINE_ID` in `/etc/machine-info`), so GRUB's order no longer depends on the template build's random machine-id (#1217).
   **Kernel fixes do not arrive with the ten-day rebuild.**
   The image is rebuilt every ten days, which brings Fedora's userspace updates, but its kernel is the version `KERNEL_VERSION` and `KERNEL_SHA256` in `appliance/kernel/build-kernel.sh` name, at the incus-spawn commit `ISX_REF` pins in the images repo, and the images CI caches the built kernel by that pin: every rebuild ships the same kernel until both are bumped.
   Nothing bumps either automatically.
