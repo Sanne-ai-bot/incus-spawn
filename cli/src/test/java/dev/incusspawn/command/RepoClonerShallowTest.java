@@ -15,6 +15,8 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -38,6 +40,7 @@ class RepoClonerShallowTest {
     private Path upstream;
     private IncusClient incus;
     private Container container;
+    private final List<String> stderr = Collections.synchronizedList(new ArrayList<>());
 
     @BeforeEach
     void setUp() throws Exception {
@@ -48,7 +51,9 @@ class RepoClonerShallowTest {
         // The guest is this machine; a reference is a plain directory here, so it needs no mount wait.
         when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenAnswer(inv -> {
             String cmd = inv.getArgument(2);
-            return sh(rewrite.apply(cmd.replaceAll("\\{ ! command -v mountpoint .*?; \\} && ", "")));
+            var result = sh(rewrite.apply(cmd.replaceAll("\\{ ! command -v mountpoint .*?; \\} && ", "")));
+            stderr.add(result.stderr());
+            return result;
         });
     }
 
@@ -310,6 +315,110 @@ class RepoClonerShallowTest {
         assertEquals("false", git(guest, "rev-parse", "--is-shallow-repository"));
         assertEquals("5", git(guest, "rev-list", "--count", "HEAD"));
         assertTrue(states.get(0).note().contains("host checkout is shallow"), states.get(0).note());
+    }
+
+    @Test
+    void aRepoPinnedToATagClonesFromItsHostReferenceDetachedAtTheTag() throws Exception {
+        // A tag is a valid "branch:" (#1350); the host checkout has no branch of that name.
+        var tagged = git(upstream, "rev-parse", "HEAD~1");
+        git(upstream, "tag", "v4", "HEAD~1");
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+
+        var guest = prepare(repo(null, "v4"), host);
+
+        assertEquals(tagged, git(guest, "rev-parse", "HEAD"));
+        assertEquals("", git(guest, "branch", "--show-current"), "a tag checks out detached, as a network clone does");
+        assertEquals("4", git(guest, "rev-list", "--count", "HEAD"));
+    }
+
+    @Test
+    void aShallowRepoPinnedToAnAnnotatedTagClonesFromItsHostReference() throws Exception {
+        var tagged = git(upstream, "rev-parse", "HEAD~1");
+        git(upstream, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "-m", "v4", "v4", "HEAD~1");
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+
+        var guest = prepare(repo(1, "v4"), host);
+
+        assertEquals(tagged, git(guest, "rev-parse", "HEAD"));
+        assertEquals("", git(guest, "branch", "--show-current"));
+        assertEquals("true", git(guest, "rev-parse", "--is-shallow-repository"));
+        assertEquals("1", git(guest, "rev-list", "--count", "HEAD"));
+        assertEquals("+refs/tags/v4:refs/tags/v4", git(guest, "config", "--get-all", "remote.origin.fetch"),
+                "the refspec a shallow network clone of a tag has");
+        assertEquals("", git(guest, "for-each-ref", "refs/heads", "refs/remotes"),
+                "nothing of the host checkout's branches is left");
+    }
+
+    @Test
+    void aTagIsNotMistakenForTheHostCheckoutsBranchOfTheSameName() throws Exception {
+        // The host has a branch named like the tag, at another commit, holding unpushed work.
+        var tagged = git(upstream, "rev-parse", "HEAD~1");
+        git(upstream, "tag", "v4", "HEAD~1");
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(host, "checkout", "-q", "-b", "v4");
+        commitBinary(host, "unpushed work");
+        git(host, "tag", "host-only");
+        var unpushed = git(host, "rev-parse", "--short", "HEAD");
+
+        var full = prepare(repo(null, "v4"), host);
+        assertEquals(tagged, git(full, "rev-parse", "HEAD"));
+        assertEquals("", git(full, "for-each-ref", "refs/heads", "refs/remotes/origin/v4"),
+                "neither the host's branch nor a host-only branch as origin's");
+        assertEquals("v4", git(full, "tag", "-l"), "only the remote's tag, as a network clone of it has");
+        assertFalse(git(full, "reflog", "--all").contains(unpushed), "the clone's reflog entry reaches the host's work");
+        assertFalse(hasObject(full, unpushed), "the host's unpushed commit is still in the guest's objects");
+
+        var shallow = prepare(repo(1, "v4"), host);
+        assertEquals(tagged, git(shallow, "rev-parse", "HEAD"));
+        assertEquals("", git(shallow, "for-each-ref", "refs/heads", "refs/remotes"));
+        assertEquals("v4", git(shallow, "tag", "-l"));
+        assertFalse(hasObject(shallow, unpushed), "the host's unpushed commit is still in the guest's objects");
+    }
+
+    @Test
+    void aNameOriginHasAsBothBranchAndTagChecksOutTheBranch() throws Exception {
+        // As git clone --branch does: the branch wins over a tag of the same name.
+        git(upstream, "tag", "stable", "HEAD~2");
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+
+        for (var depth : new Integer[] {null, 1}) {
+            var guest = prepare(repo(depth, "stable"), host);
+            assertEquals("stable", git(guest, "branch", "--show-current"), "depth " + depth);
+            assertEquals("stable release", git(guest, "log", "-1", "--format=%s"), "depth " + depth);
+        }
+    }
+
+    @Test
+    void aNameOriginHasAsNeitherBranchNorTagSaysSo() throws Exception {
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+
+        for (var depth : new Integer[] {null, 1}) {
+            assertEquals(StepState.FAILED, run(repo(depth, "stabel"), host).state(), "the network clone fails too");
+            assertTrue(stderr.stream().anyMatch(e -> e.contains("fatal: origin has no branch or tag 'stabel'")),
+                    "depth " + depth + ": " + stderr);
+            stderr.clear();
+        }
+    }
+
+    @Test
+    void aShallowBranchPinWhoseRemoteCannotBeListedReportsTheRemotesError() throws Exception {
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        var repo = repo(1, "main");
+        repo.setUrl(tmp.resolve("gone").toUri().toString());
+
+        assertEquals(StepState.FAILED, run(repo, host).state(), "the network clone fails too");
+        assertTrue(stderr.stream().anyMatch(e -> e.contains("does not appear to be a git repository")), stderr.toString());
+        assertFalse(stderr.stream().anyMatch(e -> e.contains("no branch or tag") || e.contains("refs/tags/")), stderr.toString());
+    }
+
+    private static boolean hasObject(Path repo, String sha) throws Exception {
+        return new ProcessBuilder("git", "-C", repo.toString(), "cat-file", "-e", sha).start().waitFor() == 0;
     }
 
     private int guests;
