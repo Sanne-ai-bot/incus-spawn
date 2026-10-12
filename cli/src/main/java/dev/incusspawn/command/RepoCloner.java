@@ -651,7 +651,7 @@ class RepoCloner {
                 // prune drops the shallow boundaries the refs no longer reach, the host's among them.
                 + " && { [ ! -e \"$g/shallow\" ] || " + git + " prune --expire=now; }"
                 + " && rm -rf \"$n\" && mkdir -p \"$n/pack\""
-                + " && " + git + " pack-objects --all --reflog --indexed-objects -q \"$n/pack/pack\" </dev/null >/dev/null"
+                + " && " + git + " pack-objects --all --reflog --indexed-objects --delta-base-offset -q \"$n/pack/pack\" </dev/null >/dev/null"
                 + " && rm -rf \"$o\" && mv \"$n\" \"$o\""
                 + " && [ \"$(ls -A \"$o\")\" = pack ] && [ \"$(ls -A \"$o/pack\" | sed 's/\\.[a-z]*$//' | sort -u | sed -n '$=')\" = 1 ]"
                 + " && c=$(" + git + " count-objects -v) && r=$(" + git + " rev-list --objects --all --reflog --indexed-objects --count)"
