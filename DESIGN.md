@@ -1198,6 +1198,19 @@ So a newly added domain is covered without being listed.
 **Vertex AI token refresh**: Vertex AI requests that receive a 401 response are retried once with a fresh GCP access token (the cached token is invalidated).
 This handles token expiry during long-running sessions without user intervention.
 
+**API request bodies (#1315)**: a request to a credential-injecting domain is streamed upstream as it arrives, as the plain relay streams an upload, unless it is a Vertex model call.
+Every credential is a header, so nothing but Vertex needs the body: its URL is built from the body's `model` and `stream`, and its 401 retry sends the body again.
+Held whole, a body cost about three times its size in heap, and a Vertex one about six, so a 64 MiB `git push` or a 24 MiB translated Messages request exhausted the native proxy's 256 MB heap, and a failed Vertex request was never answered.
+`MitmProxy.streamApiRequest` hands the request to `Upstream.relayRequest` with `RelayHooks`: `prepare` copies the head and runs `injectHeaders` before any of the request leaves, so the credential is on the head even when the head goes out early for a client's `Expect: 100-continue`.
+Everything else is the plain relay's (the pause at routing, backpressure, `RelayWatchdog`, the early answer that closes the connection, upstream's `100`), and its framing too: a chunked upload such as git's push reaches upstream chunked, where the whole-body path gave it a `Content-Length` of its own.
+There is no upload size limit, for the reason the relay has none.
+Vertex model calls are still read whole; bounding them is the second half of #1315 (a spool and a streaming rewriter).
+
+`--debug` does not hold a body to log it: each body is captured as it passes, up to `ApiTrafficLog.MAX_BODY_CAPTURE` (64 KiB), and a body cut there is logged as `[captured N of M bytes]` and its first 4 KiB, as much as an uncut body that is not JSON shows; a translated Vertex body is logged as it was forwarded too.
+`isx proxy dump` (`DumpProxy`), which holds each body whole anyway, still logs it whole (`ApiTrafficLog.Capture.whole`).
+Responses are piped as they are without it; the log is written once the response ends.
+Otherwise turning on diagnostics would change what it diagnoses: the upload's latency, its framing, and the proxy's memory.
+
 **Proxy caching**: The proxy caches three types of upstream content to avoid redundant downloads:
 - **OCI blobs** — keyed by SHA256 content digest, verified on store
 - **Maven/Gradle artifacts and Gradle distributions** — keyed by repository path, verified on store, confirmed with upstream as recently as `artifact-cache:` asks (see below)

@@ -124,7 +124,8 @@ Key design:
   `InstanceLifecycle.startInstance` is therefore the way isx starts an instance: it recognises that one failure, drops the setting, says plainly what is no longer enforced, and retries.
   Keep the match narrow -- it strips a security setting, so any other start failure must surface as itself.
 - **Per-request credentials.**
-  `RequestContext(domain, instanceName, creds, routing, usesDefaultCredentials)` replaces the bare `domain` parameter down `routeRequest -> handleApiRequest -> handleApiRequestWithBody -> sendApiRequest -> injectHeaders`.
+  `RequestContext(domain, instanceName, creds, routing, usesDefaultCredentials)` replaces the bare `domain` parameter down `routeRequest -> handleApiRequest -> streamApiRequest` (the relay's `RelayHooks.prepare`), or `-> handleVertexRequest -> sendVertexRequest`, to `injectHeaders`.
+  Only a Vertex model call is read whole (#1315): every other API request streams through `Upstream.relayRequest`, and its credential must be set in `prepare`, before any of the head leaves; `--debug` captures 64 KiB of each body as it passes, never more (DESIGN.md "API request bodies").
   Routing is global (which domains are intercepted never varies by account); only the credential inside the entry does, so a pinned instance gets its own `ToolProxyRouting` built by the pure `buildRouting(list, warn)`.
   Everything derived from the config -- its serialized tree (the one every selection resolves against: serialize once per read, never per request), default credentials and routing, tool setups, the per-namespace indexes, and the `credentialsBySelection`/`mismatchesByInstance` caches (the first also caching a dangling pin's `UnknownAccountException`, #891) -- is one immutable `ConfigState`, built eagerly by `useConfig()` (the single path for the `MitmProxy(..., ConfigFingerprint.Loaded)` constructor and `reload()`) and **replaced whole on every reload**.
   A late request writes only into the old state's caches, so a rotated token is never put back.
@@ -277,7 +278,7 @@ Key design:
   `runQuiet()` returns `boolean` success; cleanup callers check and warn on failure.
   `clearRedirectRules()` returns `boolean` so callers like `ResetCommand` can propagate cleanup failures.
   The no-arg `uninstall()` is private — callers must pass an `IncusClient` so DNS cleanup can reach the bridge.
-- **`/activity` (#898)** serves `ApiActivity`: per instance, Messages API creates only (`ApiActivity.isModelCall`), counted in `handleApiRequestWithBody` (`beginModelCall`) and ended once on the client response's end or close, with tokens read from 2xx responses' `usage` by `UsageTap` as `pipeResponse` relays them (cumulative stream counts: keep the max per field).
+- **`/activity` (#898)** serves `ApiActivity`: per instance, Messages API creates only (`ApiActivity.isModelCall`), counted in `streamApiRequest` and `handleVertexRequest` (`beginModelCall`) and ended once on the client response's end or close, with tokens read from 2xx responses' `usage` by `UsageTap` as `pipeResponse` relays them (cumulative stream counts: keep the max per field).
   Counted calls go upstream with `Accept-Encoding: identity`; nothing else's headers change.
   Each instance's counters carry their own creation time (`counting_since`), never the proxy's start, and a read creates them for every instance the registry knows, so a known instance always has one.
   A read drops those of instances the registry no longer lists, but only idle ones and through `computeIfPresent` against `begin`'s `compute`, and counters made again must show a new stamp or a client's before/after subtraction goes wrong.

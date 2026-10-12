@@ -62,6 +62,9 @@ public class MitmProxy {
     private final int requestedMitmPort;
     private final int requestedHealthPort;
 
+    // The Vertex SDK's @date model suffix in a URL, which the global endpoint rejects
+    private static final java.util.regex.Pattern VERTEX_DATE_SUFFIX = java.util.regex.Pattern.compile("@\\d{8}(?=:)");
+
     // Top-level fields accepted by Vertex AI rawPredict. Anything else (beta features
     // like context_management, etc.) is stripped to avoid "Extra inputs" rejections.
     private static final Set<String> VERTEX_ALLOWED_FIELDS = Set.of(
@@ -1330,10 +1333,19 @@ public class MitmProxy {
 
     // --- API requests (Anthropic, GitHub) ---
 
+    /**
+     * A request to a credential-injecting domain. Streamed upstream as it arrives, unless it is a
+     * Vertex model call: that is translated, its URL depends on its body, and it is sent again on a
+     * 401, so it is read whole first (#1315).
+     */
     private void handleApiRequest(HttpServerRequest clientReq, RequestContext ctx) {
+        if (!isVertexModelRequest(clientReq, ctx)) {
+            streamApiRequest(clientReq, ctx);
+            return;
+        }
         clientReq.body().onSuccess(bodyBuffer -> {
             try {
-                handleApiRequestWithBody(clientReq, ctx, bodyBuffer);
+                handleVertexRequest(clientReq, ctx, bodyBuffer);
             } catch (Exception e) {
                 System.err.println("API request error: " + e.getMessage());
                 e.printStackTrace(System.err);
@@ -1345,58 +1357,87 @@ public class MitmProxy {
         });
     }
 
-    private void handleApiRequestWithBody(HttpServerRequest clientReq, RequestContext ctx,
-                                           Buffer bodyBuffer) throws Exception {
+    private static boolean isVertexModelRequest(HttpServerRequest clientReq, RequestContext ctx) {
+        var path = clientReq.path();
+        return ctx.creds().useVertex() && ANTHROPIC_DOMAINS.contains(ctx.domain()) && path != null
+                && (path.startsWith("/v1/projects/") || path.startsWith("/v1/messages"));
+    }
+
+    /**
+     * Relays the request as {@link Upstream#relayRequest} relays any other, with the credential set
+     * on its head before any of it leaves: the body is never held, nor needed, since every credential
+     * is a header.
+     */
+    private void streamApiRequest(HttpServerRequest clientReq, RequestContext ctx) {
         var domain = ctx.domain();
+        var exchange = beginModelCall(clientReq, ctx);
+        var debug = debugExchange(clientReq, null);
+        upstream.relayRequest(clientReq, domain, new Upstream.RelayHooks(
+                upReq -> prepareApiHead(clientReq, upReq, ctx, domain, false, exchange),
+                upResp -> onApiResponse(ctx, upResp, exchange, debug),
+                debug == null ? null : chunk -> capture(debug.original, chunk),
+                responseTap(exchange, debug)));
+    }
+
+    /**
+     * Sets the upstream head: the client's, with the credential for {@code upstreamHost} put in.
+     * Completes false, having answered the client, when the credential could not be had.
+     */
+    private Future<Boolean> prepareApiHead(HttpServerRequest clientReq, HttpClientRequest upReq, RequestContext ctx,
+                                           String upstreamHost, boolean isVertexRequest, ApiActivity.Exchange exchange) {
+        copyRequestHeaders(clientReq, upReq, ctx.domain());
+        // A compressed answer would hide its token usage from apiActivity
+        if (exchange != null) upReq.putHeader("Accept-Encoding", "identity");
+        return injectHeaders(upReq, ctx, upstreamHost, isVertexRequest).map(ok -> {
+            if (!ok) {
+                var err = authError;
+                sendError(clientReq.response(), 502, err != null ? err : "Failed to obtain upstream credentials");
+            }
+            return ok;
+        });
+    }
+
+    /** What the proxy notes of an upstream answer's head, before relaying it. */
+    private void onApiResponse(RequestContext ctx, HttpClientResponse upResp, ApiActivity.Exchange exchange,
+                               DebugExchange debug) {
+        noteAuthStatus(ctx, upResp);
+        if (exchange != null) {
+            exchange.respond(upResp.statusCode(), upResp.getHeader("Content-Type"), upResp.getHeader("Content-Encoding"));
+        }
+        if (debug != null) debug.logAtEnd(upResp);
+    }
+
+    /** A Vertex model call, its body read whole: translated if it is in the standard API's format. */
+    private void handleVertexRequest(HttpServerRequest clientReq, RequestContext ctx,
+                                     Buffer bodyBuffer) {
         var credentials = ctx.creds();
-        String upstreamHost;
+        var upstreamHost = vertexHost(credentials);
         byte[] bodyBytes = bodyBuffer.getBytes();
         var exchange = beginModelCall(clientReq, ctx);
-        boolean isVertexRequest = false;
-        boolean bodyRewritten = false;
-        String originalDump = null;
-        byte[] originalBody = null;
-
-        if (debugLog != null) {
-            originalDump = dumpRequest(clientReq);
-            originalBody = bodyBytes;
-        }
+        var debug = debugExchange(clientReq, bodyBytes);
 
         var path = clientReq.path();
-        var uri = clientReq.uri();
+        String uri;
+        if (path.startsWith("/v1/projects/")) {
+            // Already Vertex-formatted (container running in Vertex mode with
+            // ANTHROPIC_VERTEX_BASE_URL pointing here): forward to real Vertex.
+            // The Vertex SDK uses @date suffixes (e.g. claude-haiku-4-5@20251001)
+            // which the global endpoint rejects — strip them.
+            uri = VERTEX_DATE_SUFFIX.matcher(path).replaceFirst("");
+        } else {
+            // Standard API format (/v1/messages): translate to Vertex AI rawPredict
+            var translated = translateToVertex(path, bodyBytes, upstreamHost, credentials);
+            uri = translated.path;
+            bodyBytes = translated.body;
+            if (debug != null) debug.forwarded = ApiTrafficLog.Capture.of(bodyBytes);
+        }
         var requestOptions = new RequestOptions()
                 .setMethod(clientReq.method())
-                .setPort(443);
+                .setPort(443)
+                .setHost(upstreamHost)
+                .setURI(uri);
 
-        if (credentials.useVertex() && ANTHROPIC_DOMAINS.contains(domain) && path != null) {
-            if (path.startsWith("/v1/projects/")) {
-                // Already Vertex-formatted (container running in Vertex mode with
-                // ANTHROPIC_VERTEX_BASE_URL pointing here): forward to real Vertex.
-                // The Vertex SDK uses @date suffixes (e.g. claude-haiku-4-5@20251001)
-                // which the global endpoint rejects — strip them.
-                upstreamHost = vertexHost(credentials);
-                isVertexRequest = true;
-                uri = path.replaceFirst("@\\d{8}(?=:)", "");
-            } else if (path.startsWith("/v1/messages")) {
-                // Standard API format: translate to Vertex AI rawPredict
-                upstreamHost = vertexHost(credentials);
-                isVertexRequest = true;
-                var translated = translateToVertex(path, bodyBytes, upstreamHost, credentials);
-                uri = translated.path;
-                bodyBytes = translated.body;
-                bodyRewritten = true;
-            } else {
-                // Non-messages endpoints (settings, bootstrap, feature flags, etc.)
-                upstreamHost = domain;
-            }
-        } else {
-            upstreamHost = domain;
-        }
-        requestOptions.setHost(upstreamHost).setURI(uri);
-
-        sendApiRequest(clientReq, requestOptions, upstreamHost, ctx,
-                bodyBytes, isVertexRequest, bodyRewritten, false,
-                originalDump, originalBody, exchange);
+        sendVertexRequest(clientReq, requestOptions, upstreamHost, ctx, bodyBytes, false, exchange, debug);
     }
 
     /**
@@ -1411,7 +1452,8 @@ public class MitmProxy {
         }
         var exchange = apiActivity.begin(caller.accounts().instanceName(), caller.incarnation(), caller.view());
         if (ctx.flow() != null) ctx.flow().carries(exchange);
-        // The flow ends it first; these stay as the backstop
+        // The flow ends it first; these stay as the backstop where nothing replaces them (on a
+        // streamed request, the relay's watchdog sets the response's own end and close handlers)
         clientReq.response().endHandler(v -> exchange.end());
         clientReq.response().closeHandler(v -> exchange.end());
         return exchange;
@@ -1426,53 +1468,27 @@ public class MitmProxy {
         return InetAddress.getByName(host).getHostAddress();
     }
 
-    private void sendApiRequest(HttpServerRequest clientReq, RequestOptions requestOptions,
-                                String upstreamHost, RequestContext ctx,
-                                byte[] bodyBytes, boolean isVertexRequest,
-                                boolean bodyRewritten, boolean isRetry,
-                                String originalDump, byte[] originalBody, ApiActivity.Exchange exchange) {
+    private void sendVertexRequest(HttpServerRequest clientReq, RequestOptions requestOptions,
+                                   String upstreamHost, RequestContext ctx, byte[] bodyBytes, boolean isRetry,
+                                   ApiActivity.Exchange exchange, DebugExchange debug) {
         var domain = ctx.domain();
-        var credentials = ctx.creds();
         requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
-            copyRequestHeaders(clientReq, upReq, domain);
-            // A compressed answer would hide its token usage from apiActivity
-            if (exchange != null) upReq.putHeader("Accept-Encoding", "identity");
-            injectHeaders(upReq, ctx, upstreamHost, isVertexRequest).onSuccess(ok -> {
-                if (!ok) {
-                    var err = authError;
-                    var detail = err != null ? err : "Failed to obtain upstream credentials";
-                    sendError(clientReq.response(), 502, detail);
-                    return;
-                }
+            prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, exchange).onSuccess(ok -> {
+                if (!ok) return;
                 upReq.putHeader("Content-Length", String.valueOf(bodyBytes.length));
 
                 upReq.send(Buffer.buffer(bodyBytes)).onSuccess(upResp -> {
-                    if (!isRetry && isVertexRequest && upResp.statusCode() == 401) {
+                    if (!isRetry && upResp.statusCode() == 401) {
                         System.err.println("Vertex 401: invalidating cached token and retrying");
                         invalidateVertexToken();
-                        sendApiRequest(clientReq, requestOptions, upstreamHost, ctx,
-                                bodyBytes, isVertexRequest, bodyRewritten, true,
-                                originalDump, originalBody, exchange);
+                        sendVertexRequest(clientReq, requestOptions, upstreamHost, ctx,
+                                bodyBytes, true, exchange, debug);
                         return;
                     }
-
-                    // Only the default credentials drive the host's auth status. A pinned
-                    // instance's broken token is reported to that instance (it sees the 401)
-                    // but must not tell the user their own default credential has failed --
-                    // nor clear a real default-account error by succeeding.
-                    if (ctx.usesDefaultCredentials()
-                            && !credentials.oauthToken().isBlank() && ANTHROPIC_DOMAINS.contains(domain)) {
-                        if (upResp.statusCode() == 401) {
-                            setAuthError("Claude OAuth token rejected (HTTP 401). "
-                                    + "The token may have expired — run 'isx init' to refresh.",
-                                    "isx init");
-                        } else {
-                            clearAuthError();
-                        }
-                    }
-
-                    relayApiResponse(clientReq, upResp, upstreamHost, domain,
-                            bodyBytes, bodyRewritten, originalDump, originalBody, exchange);
+                    onApiResponse(ctx, upResp, exchange, debug);
+                    var clientResp = clientReq.response();
+                    upstream.copyResponseHead(upResp, clientResp);
+                    upstream.pipeResponse(upResp, clientResp, null, responseTap(exchange, debug));
                 }).onFailure(err -> {
                     System.err.println("Upstream send error (" + domain + "): " + err.getMessage());
                     sendError(clientReq.response(), 502, "Upstream error");
@@ -1484,34 +1500,74 @@ public class MitmProxy {
         });
     }
 
-    private void relayApiResponse(HttpServerRequest clientReq, HttpClientResponse upResp,
-                                   String upstreamHost, String domain,
-                                   byte[] sentBody, boolean bodyRewritten,
-                                   String originalDump, byte[] originalBody, ApiActivity.Exchange exchange) {
-        var clientResp = clientReq.response();
-        upstream.copyResponseHead(upResp, clientResp);
-        if (exchange != null) {
-            exchange.respond(upResp.statusCode(), upResp.getHeader("Content-Type"), upResp.getHeader("Content-Encoding"));
+    /**
+     * Only the default credentials drive the host's auth status. A pinned instance's broken token is
+     * reported to that instance (it sees the 401) but must not tell the user their own default
+     * credential has failed -- nor clear a real default-account error by succeeding.
+     */
+    private void noteAuthStatus(RequestContext ctx, HttpClientResponse upResp) {
+        if (ctx.usesDefaultCredentials()
+                && !ctx.creds().oauthToken().isBlank() && ANTHROPIC_DOMAINS.contains(ctx.domain())) {
+            if (upResp.statusCode() == 401) {
+                setAuthError("Claude OAuth token rejected (HTTP 401). "
+                        + "The token may have expired — run 'isx init' to refresh.",
+                        "isx init");
+            } else {
+                clearAuthError();
+            }
+        }
+    }
+
+    // --- Debug log (--debug) ---
+
+    /**
+     * What {@code --debug} logs of one exchange: the client's head, and a prefix of each body taken as
+     * it passed, so logging never holds a body back nor whole (#1315).
+     */
+    private static final class DebugExchange {
+        private final ApiTrafficLog log;
+        private final String originalDump;
+        final ApiTrafficLog.Capture original;
+        /** The body as translated, when it was. */
+        ApiTrafficLog.Capture forwarded;
+        final ApiTrafficLog.Capture response = new ApiTrafficLog.Capture();
+
+        DebugExchange(ApiTrafficLog log, String originalDump, ApiTrafficLog.Capture original) {
+            this.log = log;
+            this.originalDump = originalDump;
+            this.original = original;
         }
 
-        if (debugLog != null) {
-            upResp.body().onSuccess(respBody -> {
-                var respBytes = respBody.getBytes();
-                if (exchange != null) exchange.accept(respBody);
-                var responseDump = dumpResponse(upResp);
-                debugLog.logExchange(
-                        originalDump, originalBody,
-                        null, bodyRewritten ? sentBody : null,
-                        responseDump, respBytes.length > 0 ? respBytes : null);
-                clientResp.putHeader("Content-Length", String.valueOf(respBytes.length));
-                clientResp.end(Buffer.buffer(respBytes));
-            }).onFailure(err -> {
-                System.err.println("Failed to capture debug response: " + err.getMessage());
-                sendError(clientResp, 502, "Debug capture error");
-            });
-        } else {
-            pipeResponse(upResp, clientResp, null, exchange == null ? null : exchange::accept);
+        /** Logs the exchange once the response has ended, or failed. */
+        void logAtEnd(HttpClientResponse upResp) {
+            var responseDump = dumpResponse(upResp);
+            upResp.end().onComplete(ignored ->
+                    log.logExchange(originalDump, original, null, forwarded, responseDump, response));
         }
+    }
+
+    /**
+     * The exchange's debug record, or null when {@code --debug} is off; {@code body} is the request's
+     * when it was read whole, else null and it is captured as it passes.
+     */
+    private DebugExchange debugExchange(HttpServerRequest clientReq, byte[] body) {
+        var log = debugLog;
+        if (log == null) return null;
+        return new DebugExchange(log, dumpRequest(clientReq),
+                body == null ? new ApiTrafficLog.Capture() : ApiTrafficLog.Capture.of(body));
+    }
+
+    private static void capture(ApiTrafficLog.Capture capture, Buffer chunk) {
+        capture.accept(chunk.length(), chunk::getBytes);
+    }
+
+    /** What sees each chunk of the response: the model-call count and the debug log, or null for neither. */
+    private static java.util.function.Consumer<Buffer> responseTap(ApiActivity.Exchange exchange, DebugExchange debug) {
+        if (debug == null) return exchange == null ? null : exchange::accept;
+        return chunk -> {
+            if (exchange != null) exchange.accept(chunk);
+            capture(debug.response, chunk);
+        };
     }
 
     // --- Upstream helpers the credential path uses ---
@@ -1527,11 +1583,6 @@ public class MitmProxy {
     private void copyRequestHeaders(HttpServerRequest clientReq, HttpClientRequest upReq,
                                     String domain) {
         upstream.copyRequestHeaders(clientReq, upReq, domain);
-    }
-
-    private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp,
-                              Upstream.RelayWatchdog watchdog, java.util.function.Consumer<Buffer> tap) {
-        upstream.pipeResponse(upResp, clientResp, watchdog, tap);
     }
 
     private void sendError(HttpServerResponse resp, int statusCode, String message) {
@@ -1722,7 +1773,8 @@ public class MitmProxy {
         }
     }
 
-    private String fetchGcloudToken() {
+    /** The token from {@code gcloud}; overridable so tests need none. */
+    String fetchGcloudToken() {
         try {
             var pb = new ProcessBuilder("gcloud", "auth", "print-access-token");
             var process = pb.start();
@@ -1984,7 +2036,7 @@ public class MitmProxy {
 
     // --- Debug logging helpers ---
 
-    private String dumpRequest(HttpServerRequest req) {
+    private static String dumpRequest(HttpServerRequest req) {
         var sb = new StringBuilder();
         sb.append(req.method()).append(' ').append(req.uri())
                 .append(' ').append(req.version() == HttpVersion.HTTP_1_1 ? "HTTP/1.1" : "HTTP/1.0")
@@ -1995,7 +2047,7 @@ public class MitmProxy {
         return sb.toString();
     }
 
-    private String dumpResponse(HttpClientResponse resp) {
+    private static String dumpResponse(HttpClientResponse resp) {
         var sb = new StringBuilder();
         sb.append("HTTP/1.1 ").append(resp.statusCode())
                 .append(' ').append(resp.statusMessage()).append('\n');
