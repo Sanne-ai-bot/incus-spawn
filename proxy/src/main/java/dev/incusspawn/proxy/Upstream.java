@@ -558,10 +558,6 @@ class Upstream {
     void copyResponseHead(HttpClientResponse upResp, HttpServerResponse clientResp) {
         clientResp.setStatusCode(upResp.statusCode());
         clientResp.setStatusMessage(upResp.statusMessage());
-        copyResponseHeaders(upResp, clientResp);
-    }
-
-    void copyResponseHeaders(HttpClientResponse upResp, HttpServerResponse clientResp) {
         clientResp.headers().setAll(upResp.headers());
         clientResp.headers().remove("Connection");
         clientResp.headers().remove("Transfer-Encoding");
