@@ -4,6 +4,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -80,12 +81,23 @@ public final class VmAgentFailure {
         if (log.isEmpty()) return null;
         try {
             var file = Environment.consoleLogFile(name);
-            Files.createDirectories(file.getParent());
-            Files.writeString(file, log);
-            // What the guest printed is the user's alone, as it is through the Incus API
-            if (Files.getFileStore(file).supportsFileAttributeView("posix")) {
-                Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+            // What the guest printed is the user's alone, as it is through the Incus API: the
+            // directory and the file are created with that mode, never narrowed afterwards
+            var posix = FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
+            if (posix) {
+                // Only console-logs is private; the state directories above it are made as every
+                // other isx path makes them
+                var dir = file.getParent();
+                Files.createDirectories(dir.getParent());
+                if (!Files.isDirectory(dir)) Files.createDirectory(dir,
+                        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+                Files.deleteIfExists(file);
+                Files.createFile(file,
+                        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+            } else {
+                Files.createDirectories(file.getParent());
             }
+            Files.writeString(file, log);
             return file;
         } catch (IOException | IllegalArgumentException e) {
             return null;
