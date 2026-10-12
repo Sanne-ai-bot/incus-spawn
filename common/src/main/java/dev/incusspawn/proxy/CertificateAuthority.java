@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.ClientLog;
+import dev.incusspawn.Warnings;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
@@ -202,7 +203,7 @@ public class CertificateAuthority {
         var files = new TreeMap<String, String>();
         files.put(anchorFile(caFingerprint), ca.caCertPem().strip());
         if (SpawnConfig.load().hostCa().propagate()) {
-            addHostAnchors(files, ca);
+            addHostAnchors(files);
         }
         return new TrustAnchors(caFingerprint, files);
     }
@@ -211,9 +212,12 @@ public class CertificateAuthority {
         return "isx-" + fingerprint + ".crt";
     }
 
-    private static void addHostAnchors(SortedMap<String, String> anchors, CertificateAuthority ca) {
+    /**
+     * Adds the host's anchors, keyed by fingerprint: a host copy of the local CA lands on the
+     * CA's own entry and is skipped.
+     */
+    private static void addHostAnchors(SortedMap<String, String> anchors) {
         if (!Files.isDirectory(hostAnchorsDir)) return;
-        var localPem = ca.caCertPem().strip();
         try (var stream = Files.list(hostAnchorsDir)) {
             for (var path : stream.toList()) {
                 var name = path.getFileName().toString();
@@ -222,30 +226,13 @@ public class CertificateAuthority {
                 try {
                     var pem = Files.readString(path).strip();
                     if (pem.isEmpty()) continue;
-                    if (pem.equals(localPem)) continue;
-                    var cert = parseCertificate(pem);
-                    if (cert == null) {
-                        dev.incusspawn.Warnings.warn("host-ca: " + name + " is not a valid X.509 certificate");
-                        continue;
-                    }
-                    try {
-                        anchors.put(anchorFile(fingerprintOf(cert)), pem);
-                    } catch (Exception e) {
-                        dev.incusspawn.Warnings.warn("host-ca: " + name + ": " + e.getMessage());
-                    }
-                } catch (IOException ignored) {}
+                    anchors.putIfAbsent(anchorFile(fingerprintOf(parseCertificate(pem.getBytes(StandardCharsets.UTF_8)))), pem);
+                } catch (Exception e) {
+                    Warnings.warn("host-ca: " + name + " is not a readable X.509 certificate: " + e.getMessage());
+                }
             }
         } catch (IOException e) {
-            dev.incusspawn.Warnings.warn("host-ca: cannot list " + hostAnchorsDir + ": " + e.getMessage());
-        }
-    }
-
-    private static X509Certificate parseCertificate(String pem) {
-        try {
-            return (X509Certificate) CertificateFactory.getInstance("X.509")
-                    .generateCertificate(new ByteArrayInputStream(pem.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception e) {
-            return null;
+            Warnings.warn("host-ca: cannot list " + hostAnchorsDir + ": " + e.getMessage());
         }
     }
 
@@ -281,6 +268,11 @@ public class CertificateAuthority {
         }
         sb.append("update-ca-trust");
         return sb.toString();
+    }
+
+    /** Replaces the isx-managed anchors in {@code container} with {@code trust}, in one exec. */
+    public static IncusClient.ExecResult installTrustAnchors(IncusClient incus, String container, TrustAnchors trust) {
+        return incus.shellExec(container, "sh", "-c", buildReconcileScript(trust.files()));
     }
 
     /** How an image's stored CA fingerprint relates to the CA on this host. */
@@ -375,7 +367,7 @@ public class CertificateAuthority {
         // after removing the old anchors is retried, even once the set changes back. Not
         // empty, which would read as "built before stamps" and never be checked again.
         incus.configSet(container, Metadata.CA_FINGERPRINT, trust.caFingerprint() + "+pending");
-        if (incus.shellExec(container, "sh", "-c", buildReconcileScript(trust.files())).exitCode() != 0) {
+        if (installTrustAnchors(incus, container, trust).exitCode() != 0) {
             return false;
         }
         incus.configSet(container, Metadata.CA_FINGERPRINT, stamp);
@@ -577,10 +569,12 @@ public class CertificateAuthority {
     }
 
     private static X509Certificate loadCertificate(Path path) throws Exception {
-        var certPem = Files.readAllBytes(path);
-        var certFactory = CertificateFactory.getInstance("X.509");
-        return (X509Certificate) certFactory.generateCertificate(
-                new ByteArrayInputStream(certPem));
+        return parseCertificate(Files.readAllBytes(path));
+    }
+
+    private static X509Certificate parseCertificate(byte[] pem) throws Exception {
+        return (X509Certificate) CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(pem));
     }
 
     /**

@@ -78,11 +78,13 @@ public class SpawnConfig {
     @JqName("host-routes")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object hostRoutes;
-    // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
-    // never written back.
+    // Whether host CA anchors are propagated into instances (HostCaConfig). Raw like
+    // artifact-cache, so a mistyped section loads and is written back as it was.
     @JqName("host-ca")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object hostCa;
+    // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
+    // never written back.
     @JqName("mcp")
     @JqInclude(JqInclude.Include.NON_NULL)
     private McpConfig mcp;

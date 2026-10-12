@@ -1431,13 +1431,8 @@ public class BuildCommand extends BaseCommand {
         var container = new Container(incus, buildName);
 
         BuildOutput.stepStart("Installing trust anchors...");
-        for (var entry : CertificateAuthority.collectTrustAnchors().files().entrySet()) {
-            container.writeFile(
-                    "/etc/pki/ca-trust/source/anchors/" + entry.getKey(),
-                    entry.getValue());
-        }
-        container.exec("update-ca-trust")
-                .assertSuccess("Failed to update CA trust");
+        CertificateAuthority.installTrustAnchors(incus, buildName, CertificateAuthority.collectTrustAnchors())
+                .assertSuccess("Failed to install trust anchors");
         BuildOutput.stepDone();
 
         // Container-only security tweaks: UID mapping, nesting, capability

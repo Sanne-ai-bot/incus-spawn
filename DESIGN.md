@@ -1195,7 +1195,7 @@ One stamp covers the whole set, in `user.incus-spawn.ca-fingerprint` (the key th
 Without host anchors it is the CA's fingerprint alone, so images built before this stay current and nothing is reconciled on upgrade.
 `fixContainerCaIfNeeded` reconciles the entire set in one guest exec (`buildReconcileScript`): it first stamps `<ca fingerprint>+pending`, which matches no set, so a failed install is retried even if the set changes back (an empty stamp would read as "built before stamps" and never be checked again), removes both old `incus-spawn-mitm.crt` and `isx-*.crt`, writes the current set via `Container.heredoc` (safe against content escaping the heredoc), runs `update-ca-trust`, and re-stamps on success.
 `CaTrust.classify` compares only the stamp's CA part, which says which CA an image was built against: a host anchor added or removed since is reconciled on first use like a superseded CA, and does not make a template `FOREIGN` (which blocks `isx branch`).
-`buildFromScratch` writes each anchor via `Container.writeFile` and stamps the combined fingerprint; `buildFromParent`, `BranchFlow`, `InstancePrep` and the TUI shell prep reconcile through `fixContainerCaIfNeeded`.
+`buildFromScratch` installs the set through the same script (`installTrustAnchors`) and stamps it; `buildFromParent`, `BranchFlow`, `InstancePrep` and the TUI shell prep reconcile through `fixContainerCaIfNeeded`.
 The config follows the same raw-YAML pattern as `artifact-cache:` and `ready-timeouts:` (`HostCaConfig.of(raw)`): a mistyped section is ignored, not a fatal config error.
 
 **Leaf certificate persistence (clock-skew safety)**: Per-domain leaf certs are not minted fresh on every proxy start.
