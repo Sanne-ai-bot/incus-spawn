@@ -176,7 +176,9 @@ class YamlSemanticsTest {
         assertTrue(friendly(bool).startsWith("x.yaml:3: "), friendly(bool));
         assertTrue(friendly(bool).contains("'gui' expects true or false"), friendly(bool));
         var top = assertThrows(java.io.IOException.class, () -> ImageDef.parseYaml("- a\n"));
-        assertTrue(friendly(top).contains("must be a mapping of settings, but is a list"), friendly(top));
+        assertEquals("x.yaml:1: the file must be a mapping of settings, but is a list", friendly(top));
+        var commented = assertThrows(java.io.IOException.class, () -> ImageDef.parseYaml("# note\n- a\n"));
+        assertEquals("x.yaml:2: the file must be a mapping of settings, but is a list", friendly(commented));
         var hyphen = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("auto-clone-repos:\n  - a\n"));
         var message = YamlErrors.friendly("config.yaml", hyphen);
         assertTrue(message.contains("'auto-clone-repos' expects a single value"), message);
@@ -293,6 +295,13 @@ class YamlSemanticsTest {
         assertEquals(7, Jjq.longOr(io.hyperfoil.tools.jjq.value.JqValues.parseStrict("7"), -1));
         assertEquals(-1, Jjq.longOr(io.hyperfoil.tools.jjq.value.JqValues.parseStrict("99999999999999999999"), -1));
         assertEquals(-1, Jjq.longOr(io.hyperfoil.tools.jjq.value.JqValues.parseStrict("\"7\""), -1));
+    }
+
+    /** Since jjq 0.2.3 (Hyperfoil/jjq#132): a repeated key is refused, not kept with the first winning on lookup. */
+    @Test
+    void aJsonDocumentWithARepeatedKeyIsRefused() {
+        assertThrows(IllegalArgumentException.class,
+                () -> io.hyperfoil.tools.jjq.value.JqValues.parseStrict("{\"a\":1,\"a\":2}"));
     }
 
     @Test
