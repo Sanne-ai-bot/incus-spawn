@@ -23,9 +23,11 @@ class BashAccountCompletionTest {
     @TempDir
     Path dir;
 
-    /** Completes {@code line}; the cursor is at its end. Returns the line after readline applies each candidate. */
-    private static final String TWO_ACCOUNTS = "github=\\ngithub=personal\\tdefault\\ngithub=acme\\n";
+    /** github with two accounts; claude configured, but with no usable account. */
+    private static final String TWO_ACCOUNTS =
+            "claude\\ngithub\\ngithub=\\ngithub=personal\\tdefault\\ngithub=acme\\n";
 
+    /** Completes {@code line}; the cursor is at its end. Returns the line after readline applies each candidate. */
     private List<String> complete(String line) throws Exception {
         return complete(line, TWO_ACCOUNTS);
     }
@@ -96,9 +98,9 @@ class BashAccountCompletionTest {
     @Test
     void aTypedNamespaceWithOneAccountCompletesThatAccount() throws Exception {
         assertEquals(List.of("isx branch x --account github=solo"),
-                complete("isx branch x --account github=", "github=\\ngithub=solo\\tdefault\\n"));
+                complete("isx branch x --account github=", "github\\ngithub=\\ngithub=solo\\tdefault\\n"));
         assertEquals(List.of("isx account set box1 github=solo"),
-                complete("isx account set box1 github=", "github=\\ngithub=solo\\tdefault\\n"));
+                complete("isx account set box1 github=", "github\\ngithub=\\ngithub=solo\\tdefault\\n"));
     }
 
     @Test
@@ -110,5 +112,17 @@ class BashAccountCompletionTest {
     @Test
     void theOptionEqualsFormCompletesTheAccount() throws Exception {
         assertEquals(List.of("isx branch x --account=github=acme"), complete("isx branch x --account=github=a"));
+    }
+
+    @Test
+    void aNamespaceWithoutAUsableAccountIsNotOfferedForSelection() throws Exception {
+        assertEquals(List.of(), complete("isx branch x --account cl"));
+        assertEquals(List.of(), complete("isx account set box1 cl"));
+    }
+
+    @Test
+    void unsetOffersEveryNamespace() throws Exception {
+        assertEquals(List.of("isx account unset box1 claude", "isx account unset box1 github"),
+                complete("isx account unset box1 "));
     }
 }
