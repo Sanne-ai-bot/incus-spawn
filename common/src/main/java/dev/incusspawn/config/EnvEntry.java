@@ -1,6 +1,5 @@
 package dev.incusspawn.config;
 
-import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
 
 import java.io.IOException;
@@ -23,7 +22,6 @@ import java.util.regex.Pattern;
  * the entry {@link #expandingAtLogin()}; it keeps its name and strategy, so it is still
  * subject to conflict detection. YAML definitions cannot set that flag.
  */
-@JqMapped
 public class EnvEntry {
 
     public enum Strategy {
