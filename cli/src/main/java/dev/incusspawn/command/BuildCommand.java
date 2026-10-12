@@ -1335,10 +1335,25 @@ public class BuildCommand extends BaseCommand {
         return imageDef.machineType();
     }
 
-    /** The local alias a template's prebaked {@code vm_image_url} is imported under. */
-    static String vmImageAlias(String image) {
-        return image + "-vm";
+    /**
+     * The local alias a template's prebaked {@code vm_image_url} is imported under, chosen by the
+     * file. isx releases before #1255 import their stock {@code -vm.tar.xz} under
+     * {@code <image>-vm} and reuse it whenever its tag matches; the stock file goes there from
+     * this isx too, so both share one image of it. The image built from scratch
+     * ({@code -vm-direct.tar.xz}) goes under {@code <image>-vm-direct}, which no older isx reads:
+     * there it would pass for their stock image of the same tag, and their VMs, with Secure Boot
+     * on and the root on virtio-scsi, could not boot it.
+     */
+    static String vmImageAlias(String image, String vmImageUrl) {
+        return vmImageUrl != null && vmImageUrl.endsWith(DIRECT_VM_SUFFIX) ? image + "-vm-direct" : image + "-vm";
     }
+
+    /** Every alias {@link #vmImageAlias} can give a template's {@code image}. */
+    static List<String> vmImageAliases(String image) {
+        return List.of(image + "-vm", image + "-vm-direct");
+    }
+
+    private static final String DIRECT_VM_SUFFIX = "-vm-direct.tar.xz";
 
     private String effectiveType(ImageDef imageDef) {
         if (type != null) return type.name();
@@ -1358,7 +1373,7 @@ public class BuildCommand extends BaseCommand {
 
         if (vmFromUrl) {
             // Prebaked VM disk image available — use it directly
-            var vmAlias = vmImageAlias(rootDef.getImage());
+            var vmAlias = vmImageAlias(rootDef.getImage(), rootDef.getVmImageUrl());
             ensureBaseImage(imageDef, ownBase);
             downloadAndAliasImage(vmAlias, rootDef.getVmImageUrl(),
                     base.vmSha256(), base.vmTag(), rootDef);
@@ -1702,6 +1717,8 @@ public class BuildCommand extends BaseCommand {
      */
     static final String IMAGE_PROJECT_PROPERTY = "incus-spawn.project";
 
+    private static final java.util.regex.Pattern SHA256_HEX = java.util.regex.Pattern.compile("[0-9a-fA-F]{64}");
+
     /** Image property recording the URL a base image was imported from, {@code {arch}} and {@code {tag}} filled in. */
     static final String IMAGE_SOURCE_PROPERTY = "incus-spawn.source";
 
@@ -1723,6 +1740,12 @@ public class BuildCommand extends BaseCommand {
         String expectedSha256 = null;
         if (sha256Map != null) {
             expectedSha256 = sha256Map.get(arch);
+        }
+        // Incus resolves an image by fingerprint prefix, so a checksum that is not a full
+        // SHA-256 would match, and alias, any image starting with it: fail before anything is.
+        if (expectedSha256 != null && !SHA256_HEX.matcher(expectedSha256).matches()) {
+            throw new IllegalStateException("The " + arch + " checksum of base image '" + shown(localAlias)
+                    + "' is not a SHA-256 (64 hex digits): '" + shown(expectedSha256) + "'.");
         }
 
         var existingFingerprint = incus.imageAliasTargetOrThrow(localAlias);
@@ -1767,6 +1790,18 @@ public class BuildCommand extends BaseCommand {
             }
             incus.deleteImageAlias(localAlias);
             incus.deleteImage(existingFingerprint);
+        }
+        // Incus keeps one image per fingerprint, and a one-tarball import's fingerprint is the
+        // tarball's sha256: the expected file already imported under another alias (an older
+        // isx's, or none) cannot be imported again, so that image is aliased here as it is. Its
+        // properties stay as they are, since the other alias's owner reads them too.
+        if (expectedSha256 != null) {
+            var fingerprint = expectedSha256.toLowerCase(java.util.Locale.ROOT);
+            if (incus.imageExistsOrThrow(fingerprint) && ownerProject.equals(importingProject(fingerprint))) {
+                BuildOutput.step("Base image '" + localAlias + "': the expected file is already imported, reusing it.");
+                incus.createImageAlias(localAlias, fingerprint);
+                return;
+            }
         }
         var resolvedUrl = resolveImageUrl(imageUrl, tag);
 

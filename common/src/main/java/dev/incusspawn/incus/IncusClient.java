@@ -2251,6 +2251,14 @@ public class IncusClient {
         return val.isMissingNode() ? null : val.asText(null);
     }
 
+    /** Whether Incus has an image with this full fingerprint; failing to ask throws. */
+    public boolean imageExistsOrThrow(String fingerprint) {
+        var resp = http().get("/1.0/images/" + fingerprint);
+        if (resp.isSuccess()) return true;
+        if (resp.statusCode() == 404) return false;
+        throw new IncusException("Failed to read image " + fingerprint + " (HTTP " + resp.statusCode() + ")");
+    }
+
     public String getImageType(String fingerprint) {
         var resp = http().get("/1.0/images/" + fingerprint);
         if (!resp.isSuccess()) return null;
