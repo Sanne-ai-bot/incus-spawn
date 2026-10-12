@@ -1911,7 +1911,8 @@ A refusal pauses the request instead of draining its body, and the connection is
 Workspace discovery is on the list by a decision on #1332: before its first turn, Codex 0.162.1 asks `GET /backend-api/wham/accounts/check` where the workspace's requests must go, and without an answer it fails with "workspace routing discovery failed".
 Its answer, relayed as it comes, describes every ChatGPT account and workspace the signed-in user belongs to, not only the session's.
 For each one it gives the id, plan type, name, profile picture URL, structure (personal or workspace) and routing constraints; it also gives their order and the default (codex-rs `AccountsCheckResponse`).
-A 401 to it does not mark the session's token refused, so a guest cannot use it to force a refresh upstream.
+A 401 to it marks the token refused, as one to any allowed call does: it is Codex's first call, so a token the backend stops accepting before it expires would otherwise never be refreshed.
+The guest controls no more of this request than of the others, and the 30-second limit spaces the refreshes a refusing backend causes on any of them.
 Those are identifiers, not credentials, and the guest already holds the session's own ones in its id token; but a user in several workspaces shows them all to every instance that holds a proof.
 Widening the list further is a deliberate decision on #1332, not a fix.
 Codex's other calls (plugins, plugin MCP, analytics, user settings, usage) stay refused, and fail without stopping a turn.

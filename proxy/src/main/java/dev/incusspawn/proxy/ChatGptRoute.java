@@ -398,11 +398,7 @@ final class ChatGptRoute {
                 upReq.putHeader("Authorization", "Bearer " + session.tokens().accessToken());
                 upReq.putHeader("ChatGPT-Account-Id", session.tokens().accountId());
                 return Future.succeededFuture(true);
-            }, upResp -> {
-                // Only Codex's own calls say the token is bad; discovery may refuse for its own
-                // reasons, and must not let a guest force a rotation of the real refresh token
-                if (upResp.statusCode() == 401 && op != Operation.ACCOUNTS_CHECK) markRefused(session);
-            }, null, null));
+            }, upResp -> { if (upResp.statusCode() == 401) markRefused(session); }, null, null));
         });
     }
 

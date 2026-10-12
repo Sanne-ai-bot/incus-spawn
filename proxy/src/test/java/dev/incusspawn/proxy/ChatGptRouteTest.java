@@ -435,17 +435,6 @@ class ChatGptRouteTest {
         assertTrue(seen.isEmpty(), "never relayed: " + seen);
     }
 
-    @Test
-    void aWorkspaceDiscovery401DoesNotLetARefreshThrough() throws Exception {
-        backendRefuses = true;
-        assertEquals(401, backend("GET", "/backend-api/wham/accounts/check", accessPlaceholder(proofs().access())).status());
-        backendRefuses = false;
-
-        assertFalse(proxy.chatGpt.refuses(ACCOUNT, sessionId), "not the token's refusal");
-        assertEquals(200, refresh(proofs().refreshToken()).status());
-        assertEquals(0, refreshes.get(), "answered here: the real refresh token was not rotated");
-    }
-
     @ParameterizedTest
     @ValueSource(strings = {"POST /backend-api/wham/accounts/check", "GET /backend-api/wham/accounts",
             "POST /backend-api/codex/analytics-events/events",
@@ -771,9 +760,15 @@ class ChatGptRouteTest {
         assertEquals(1, refreshes.get());
     }
 
-    @Test
-    void aBackend401LetsTheNextRefreshThrough() throws Exception {
-        refuseTheCurrentToken();
+    /**
+     * A token the backend stops accepting before it expires is refreshed whichever allowed call
+     * finds out first: workspace discovery is Codex's first, so a turn never reaches the others.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"POST /backend-api/codex/responses", "GET /backend-api/wham/accounts/check"})
+    void aBackend401LetsTheNextRefreshThrough(String request) throws Exception {
+        var parts = request.split(" ");
+        refuseTheCurrentToken(parts[0], parts[1]);
         backendRefuses = false;
 
         assertTrue(proxy.chatGpt.refuses(ACCOUNT, sessionId));
@@ -782,6 +777,11 @@ class ChatGptRouteTest {
         assertFalse(proxy.chatGpt.refuses(ACCOUNT, sessionId), "a committed refresh clears the session's refusals");
         assertEquals(200, refresh(proofs().refreshToken()).status());
         assertEquals(1, refreshes.get(), "and only once");
+
+        // Refused again within 30 s: the limit holds, whichever call it was
+        refuseTheCurrentToken(parts[0], parts[1]);
+        assertEquals(503, refresh(proofs().refreshToken()).status());
+        assertEquals(1, refreshes.get(), "no second rotation inside the interval");
     }
 
     @Test
@@ -1126,8 +1126,12 @@ class ChatGptRouteTest {
 
     /** The backend refuses from now on, and has just refused the current access proof's token. */
     static void refuseTheCurrentToken() throws Exception {
+        refuseTheCurrentToken("POST", "/backend-api/codex/responses");
+    }
+
+    static void refuseTheCurrentToken(String method, String path) throws Exception {
         backendRefuses = true;
-        assertEquals(401, backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access())).status());
+        assertEquals(401, backend(method, path, accessPlaceholder(proofs().access())).status());
     }
 
     static void awaitRefreshes(int n) throws InterruptedException {
