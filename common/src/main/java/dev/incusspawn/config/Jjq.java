@@ -41,7 +41,11 @@ public final class Jjq {
      */
     private static final YamlMapper YAML = new YamlMapper(MAPPER, YamlOptions.STRICT);
 
-    private static JqMapper buildMapper() {
+    /**
+     * A DTO whose generated mapping is not registered here binds reflectively, which the native
+     * image cannot do; {@code JjqGeneratedMappingTest} reads what this registers to catch that.
+     */
+    static JqMapper buildMapper() {
         var builder = JqMapper.builder();
         dev.incusspawn.config.JqMappingRegistry.registerAll(builder);
         dev.incusspawn.tool.JqMappingRegistry.registerAll(builder);
