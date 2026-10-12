@@ -147,7 +147,10 @@ final class ChatGptRoute {
     private final ChatGptSessionStore store;
     /** One upstream refresh per session and generation at a time. */
     private final Map<String, Future<Refreshed>> refreshes = new ConcurrentHashMap<>();
-    /** Sessions the backend refused a token for since their last refresh: they may refresh now. */
+    /**
+     * The tokens the backend refused ({@link #tokenKey}): their session may refresh now. Keyed by
+     * generation, so a late 401 for a token a refresh has already replaced marks nothing current.
+     */
     private final Set<String> refused = ConcurrentHashMap.newKeySet();
     /** When each session last refreshed upstream, for {@link #MIN_UPSTREAM_INTERVAL_MILLIS}. */
     private final Map<String, Long> lastUpstream = new ConcurrentHashMap<>();
@@ -383,7 +386,7 @@ final class ChatGptRoute {
     // --- Backend ---
 
     private void forwardBackend(HttpServerRequest req, ChatGptSessionStore.Session session, Buffer body) {
-        var key = sessionKey(session);
+        var key = tokenKey(session);
         proxy.upstream.relayBuffered(req, CHATGPT, body, upReq -> {
             upReq.putHeader("Authorization", "Bearer " + session.tokens().accessToken());
             upReq.putHeader("ChatGPT-Account-Id", session.tokens().accountId());
@@ -431,16 +434,18 @@ final class ChatGptRoute {
             if (session == null) return Future.succeededFuture(Refreshed.refused(401, "invalid_grant"));
             var key = sessionKey(session);
             var expiresIn = ChatGptPlaceholders.expiry(session.tokens().accessToken()) - System.currentTimeMillis() / 1000;
-            var due = expiresIn <= REFRESH_WINDOW_SECONDS || refused.contains(key);
+            var tokenRefused = refused.contains(tokenKey(session));
+            var due = expiresIn <= REFRESH_WINDOW_SECONDS || tokenRefused;
             var last = lastUpstream.get(key);
             if (!due) return Future.succeededFuture(Refreshed.ok(session));
             if (last != null && System.currentTimeMillis() - last < MIN_UPSTREAM_INTERVAL_MILLIS) {
-                // Throttled: a token that still works is answered with; an expired one would only
-                // send Codex round a refresh-and-401 loop, so it is told to try again later
-                return Future.succeededFuture(expiresIn > 0 ? Refreshed.ok(session)
+                // Throttled: a token that still works is answered with. One that has expired, or
+                // that the backend has just refused, would only send Codex round a refresh-and-401
+                // loop with a bearer known to be bad, so it is told to try again later
+                return Future.succeededFuture(expiresIn > 0 && !tokenRefused ? Refreshed.ok(session)
                         : Refreshed.refused(503, "temporarily_unavailable"));
             }
-            return refreshes.computeIfAbsent(key + "@" + session.generation(), k -> {
+            return refreshes.computeIfAbsent(tokenKey(session), k -> {
                 var started = upstreamRefresh(req, session, request);
                 started.onComplete(ar -> refreshes.remove(k));
                 return started;
@@ -507,7 +512,10 @@ final class ChatGptRoute {
                 store.abandonRefresh(session);
                 return (Refreshed) null;
             }, false).transform(ignored -> Future.failedFuture(e)));
-        }).onSuccess(outcome -> { if (outcome.status() == 200) refused.remove(key); });
+        }).onSuccess(outcome -> {
+            // Refreshed: no earlier token of the session matters any more, late 401s for it included
+            if (outcome.status() == 200) refused.removeIf(token -> token.startsWith(key + "@"));
+        });
     }
 
     /** Commits or discards what OpenAI answered a refresh of {@code session} with. Blocks. */
@@ -613,7 +621,7 @@ final class ChatGptRoute {
      * {@code MitmProxy.relayWebSocket} does. Unclaimed sockets go back to the ordinary relay.
      */
     boolean handleWebSocket(ServerWebSocket ws, String domain, String sourceAddress, ApiActivity.Flow flow) {
-        if (!claims(ws.headers())) return proxy.relayWebSocketWith(ws, domain, flow, Future.succeededFuture(options -> {}));
+        if (!claims(ws.headers())) return proxy.relayWebSocketWith(ws, domain, flow, Future.succeededFuture(options -> {}), status -> {});
         var problem = shapeProblem(ws.headers(), domain, ws.uri(), sni(ws));
         if (problem != null) {
             warnOnce("Refusing a ChatGPT WebSocket from " + describe(sourceAddress) + ": " + problem);
@@ -634,13 +642,18 @@ final class ChatGptRoute {
             ws.reject(401);
             return false;
         }
+        var dialled = new java.util.concurrent.atomic.AtomicReference<ChatGptSessionStore.Session>();
         return proxy.relayWebSocketWith(ws, domain, flow, currentSession(binding).map(session -> {
             if (session == null) throw new IllegalStateException(SESSION_CHANGED);
+            dialled.set(session);
             return (java.util.function.Consumer<WebSocketConnectOptions>) options -> {
                 options.putHeader("Authorization", "Bearer " + session.tokens().accessToken());
                 options.putHeader("ChatGPT-Account-Id", session.tokens().accountId());
             };
-        }));
+        }), status -> {
+            // Refused like an HTTP request would be: the session may refresh upstream now
+            if (status == 401 && dialled.get() != null) refused.add(tokenKey(dialled.get()));
+        });
     }
 
     // --- Shared ---
@@ -681,13 +694,18 @@ final class ChatGptRoute {
         var now = store.read(session.account());
         if (now != null && now.sessionId().equals(session.sessionId())) return Refreshed.ok(now);
         // No longer the account's session: drop what is kept about it
-        refused.remove(sessionKey(session));
+        refused.removeIf(token -> token.startsWith(sessionKey(session) + "@"));
         lastUpstream.remove(sessionKey(session));
         return Refreshed.refused(401, "invalid_grant");
     }
 
     private static String sessionKey(ChatGptSessionStore.Session session) {
         return session.account() + ":" + session.sessionId();
+    }
+
+    /** One token of a session: the session at one generation. */
+    private static String tokenKey(ChatGptSessionStore.Session session) {
+        return sessionKey(session) + "@" + session.generation();
     }
 
     private void warnOnce(String message) {

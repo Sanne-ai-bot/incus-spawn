@@ -1913,7 +1913,8 @@ Its other calls (plugins, plugin MCP, analytics, user settings) fail without sto
 The proxy accepts only the body the tested Codex sends (`client_id`, `grant_type=refresh_token`, `refresh_token`, with Codex's client id), checks the refresh proof, and relays it with the real refresh token only when the real token needs it: within the same 5 minutes, or after the backend refused it.
 Otherwise it answers with the current session's placeholders.
 Concurrent refreshes of one session share one upstream call, and at most one goes upstream per 30 seconds: with tokens that stayed inside the window, real Codex otherwise refreshed nearly 6000 times in 5 minutes.
-Within that interval an expired token is answered 503, not handed back as if refreshed, which would only loop Codex between refreshes and 401s.
+Within that interval a token that has expired, or that the backend has just refused, is answered 503, not handed back as if refreshed, which would only loop Codex between refreshes and 401s with a bearer known to be bad.
+A refusal is a 401 to a backend request or to a WebSocket handshake, and is kept per token (the session at one generation), so a late 401 for a token a refresh has already replaced marks nothing current; a refresh that succeeds clears the session's earlier ones.
 A rate limit or server error from OpenAI reaches the guest as one too (429, 502), so Codex retries rather than treating its session as dead.
 The answer is committed only if the file still holds the session and generation the refresh started from.
 A refresh overtaken by another write of the same session is answered from that write.

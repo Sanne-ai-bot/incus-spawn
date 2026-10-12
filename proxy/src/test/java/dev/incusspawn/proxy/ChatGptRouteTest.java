@@ -79,6 +79,7 @@ class ChatGptRouteTest {
     static volatile String refreshError;
     static volatile int refreshErrorStatus = 400;
     static volatile boolean refreshAnswersEmpty;
+    static volatile CompletableFuture<Void> holdBackend = CompletableFuture.completedFuture(null);
     static final ConcurrentLinkedQueue<String> refreshEncodings = new ConcurrentLinkedQueue<>();
     static volatile CompletableFuture<Void> holdRefresh = CompletableFuture.completedFuture(null);
     static volatile boolean backendRefuses;
@@ -112,8 +113,14 @@ class ChatGptRouteTest {
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(ca, ChatGptRoute.CHATGPT)))
                 .requestHandler(ChatGptRouteTest::answer)
                 .webSocketHandler(ws -> {
+                    // Decided before it is recorded: a test waits for the record, then clears the flag
+                    var refuse = backendRefuses;
                     seen.add("WS " + ws.headers().get("Host") + " " + ws.path() + " | "
                             + ws.headers().get("Authorization") + " | " + ws.headers().get("ChatGPT-Account-Id"));
+                    if (refuse) {
+                        ws.reject(401);
+                        return;
+                    }
                     ws.textMessageHandler(msg -> ws.writeTextMessage("echo:" + msg));
                 });
         int stubPort = NpmCacheProxyTest.listen(stub);
@@ -147,6 +154,7 @@ class ChatGptRouteTest {
         refreshError = null;
         refreshErrorStatus = 400;
         refreshAnswersEmpty = false;
+        holdBackend = CompletableFuture.completedFuture(null);
         refreshEncodings.clear();
         holdRefresh = CompletableFuture.completedFuture(null);
         backendRefuses = false;
@@ -260,7 +268,10 @@ class ChatGptRouteTest {
                         resp.setStatusCode(backendRefuses ? 401 : 200).end("{\"models\":[]}");
                     }
                 }
-                default -> resp.setStatusCode(backendRefuses ? 401 : 200).end("{\"ok\":true}");
+                default -> {
+                    var status = backendRefuses ? 401 : 200;
+                    holdBackend.whenComplete((v, e) -> vertx.runOnContext(x -> resp.setStatusCode(status).end("{\"ok\":true}")));
+                }
             }
         });
     }
@@ -565,6 +576,58 @@ class ChatGptRouteTest {
     }
 
     @Test
+    void aThrottledRefreshDoesNotHandBackATokenTheBackendRefused() throws Exception {
+        backendRefuses = true;
+        var bearer = accessPlaceholder(proofs().access());
+        assertEquals(401, backend("POST", "/backend-api/codex/responses", bearer).status());
+        assertEquals(200, refresh(proofs().refreshToken()).status(), "the first one goes upstream");
+
+        // Refused again within the interval: the refreshed token is no better, so no token at all
+        assertEquals(401, backend("POST", "/backend-api/codex/responses", bearer).status());
+        var reply = refresh(proofs().refreshToken());
+        assertEquals(503, reply.status(), reply.body());
+        assertFalse(reply.body().contains("access_token"), reply.body());
+        assertEquals(1, refreshes.get());
+    }
+
+    @Test
+    void aLate401ForAReplacedTokenDoesNotMarkTheNewOne() throws Exception {
+        sessionId = store.create(ACCOUNT, mint(60)).sessionId();
+        bind(SECRET, sessionId);
+        // A request with the old token, answered 401 only after a refresh has replaced it
+        backendRefuses = true;
+        holdBackend = new CompletableFuture<>();
+        var late = CompletableFuture.supplyAsync(() -> uncheck(() ->
+                backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access()))));
+        for (int i = 0; i < 200 && seenOn("/backend-api/codex/responses").isEmpty(); i++) Thread.sleep(25);
+        assertEquals(200, refresh(proofs().refreshToken()).status(), "near expiry: refreshed upstream");
+        holdBackend.complete(null);
+        assertEquals(401, late.get(15, TimeUnit.SECONDS).status());
+        backendRefuses = false;
+
+        // The new token is fine: a refresh is answered with it, not throttled away
+        var reply = refresh(proofs().refreshToken());
+        assertEquals(200, reply.status(), reply.body());
+        assertEquals(1, refreshes.get());
+    }
+
+    @Test
+    void aWebSocketTheBackendRefusesLetsTheNextRefreshThrough() throws Exception {
+        backendRefuses = true;
+        upgrade(codexWebSocket());
+        // The client's handshake completes before the proxy dials: the stub refuses the dial itself
+        for (int i = 0; i < 200 && seen.stream().noneMatch(e -> e.startsWith("WS ")); i++) Thread.sleep(25);
+        backendRefuses = false;
+
+        // The refusal is recorded once upstream's answer is in: until then a refresh is answered here
+        for (int i = 0; i < 200 && refreshes.get() == 0; i++) {
+            assertEquals(200, refresh(proofs().refreshToken()).status());
+            if (refreshes.get() == 0) Thread.sleep(25);
+        }
+        assertEquals(1, refreshes.get(), "refreshed upstream although the token was not near expiry");
+    }
+
+    @Test
     void concurrentRefreshesOfOneSessionShareOneUpstreamCall() throws Exception {
         sessionId = store.create(ACCOUNT, mint(60)).sessionId();
         bind(SECRET, sessionId);
@@ -767,6 +830,11 @@ class ChatGptRouteTest {
         assertTrue(seen.isEmpty(), seen.toString());
     }
 
+    /** The upgrade Codex sends, with the worker's current access proof. */
+    static WebSocketConnectOptions codexWebSocket() {
+        return webSocket("/backend-api/codex/responses", "Bearer " + accessPlaceholder(proofs().access()));
+    }
+
     static WebSocketConnectOptions webSocket(String path, String... authorizations) {
         var options = new WebSocketConnectOptions().setHost(ChatGptRoute.CHATGPT).setPort(mitmPort).setSsl(true)
                 .setURI(path).putHeader("Host", ChatGptRoute.CHATGPT);
@@ -831,7 +899,7 @@ class ChatGptRouteTest {
 
     @Test
     void aWebSocketWhoseTlsNameIsNotItsHostIsRefused() throws Exception {
-        var options = webSocket("/backend-api/codex/responses", "Bearer " + accessPlaceholder(proofs().access()))
+        var options = codexWebSocket()
                 .setHost(ChatGptRoute.AUTH);
         assertEquals(400, upgrade(options));
         assertTrue(seen.isEmpty(), "nothing dialled: " + seen);
@@ -839,7 +907,7 @@ class ChatGptRouteTest {
 
     @Test
     void aWebSocketWithNoTlsNameIsRefused() throws Exception {
-        var options = webSocket("/backend-api/codex/responses", "Bearer " + accessPlaceholder(proofs().access()))
+        var options = codexWebSocket()
                 .setHost("127.0.0.1");
         assertNotEquals(101, upgrade(options));
         assertTrue(seen.isEmpty(), "nothing dialled: " + seen);

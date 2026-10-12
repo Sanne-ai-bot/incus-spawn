@@ -19,6 +19,7 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.http.UpgradeRejectedException;
 import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketConnectOptions;
 
@@ -35,6 +36,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.regex.Pattern;
 
 /**
@@ -1197,23 +1199,24 @@ public class MitmProxy {
             return false;
         }
         return relayWebSocketWith(clientWs, domain, flow,
-                Future.succeededFuture(options -> injectWebSocketAuth(options, ctx)));
+                Future.succeededFuture(options -> injectWebSocketAuth(options, ctx)), status -> {});
     }
 
     /**
      * Completes the client's handshake and relays it upstream with whatever {@code auth} adds to
      * the upstream handshake, once it is known; a failed {@code auth} closes the socket before
-     * anything is dialled. Returns whether the socket was accepted.
+     * anything is dialled. {@code upstreamRefused} hears the status upstream refused its
+     * handshake with, if it did. Returns whether the socket was accepted.
      */
     boolean relayWebSocketWith(ServerWebSocket clientWs, String domain, ApiActivity.Flow flow,
-                               Future<Consumer<WebSocketConnectOptions>> auth) {
+                               Future<Consumer<WebSocketConnectOptions>> auth, IntConsumer upstreamRefused) {
         if (!completeHandshake(clientWs, domain)) return false;
         // Until the relay is up, and on its way to a failure; the relay's own replaces it
         clientWs.closeHandler(v -> flow.end());
         auth.onComplete(ar -> {
             try {
                 if (ar.failed()) throw new IllegalStateException(ar.cause().getMessage(), ar.cause());
-                handleWebSocketUpgrade(clientWs, domain, flow, ar.result());
+                handleWebSocketUpgrade(clientWs, domain, flow, ar.result(), upstreamRefused);
             } catch (RuntimeException e) {
                 // The 101 has gone out, so a refusal can only be a close: a paused socket with
                 // no relay would otherwise hang until the idle timeout
@@ -1254,7 +1257,8 @@ public class MitmProxy {
     }
 
     private void handleWebSocketUpgrade(ServerWebSocket clientWs, String domain, ApiActivity.Flow flow,
-                                        Consumer<WebSocketConnectOptions> auth) {
+                                        Consumer<WebSocketConnectOptions> auth,
+                                        IntConsumer upstreamRefused) {
         var wsOptions = new WebSocketConnectOptions()
                 .setHost(domain)
                 .setPort(upstreamWsPort)
@@ -1370,6 +1374,9 @@ public class MitmProxy {
             clientWs.resume();
         }).onFailure(err -> {
             System.err.println("WebSocket upstream connect failed (" + domain + "): " + err.getMessage());
+            if (err instanceof UpgradeRejectedException rejected) {
+                upstreamRefused.accept(rejected.getStatus());
+            }
             if (!clientWs.isClosed()) clientWs.close((short) 1011, "Upstream connection failed");
         });
     }
