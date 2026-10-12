@@ -105,6 +105,29 @@ class BuildCommandTest {
         });
     }
 
+    @Test
+    void aFailedBuildIsMarkedUntrustedWhenItIsPromoted(@TempDir Path tmp) {
+        // #936: the promoted container still carries its parent's template stamps, which no host
+        // route may take for it (or for anything branched from it)
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doThrow(new IncusException("a build step failed")).when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+
+            assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
+
+            verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal-failed-build");
+            verify(incus).configSetAll(eq("tpl-minimal-failed-build"), argThat(config ->
+                    Metadata.TYPE_FAILED_BUILD.equals(config.get(Metadata.UNTRUSTED_LINEAGE))
+                            && Metadata.TYPE_FAILED_BUILD.equals(config.get(Metadata.TYPE))));
+        });
+    }
+
     /**
      * A deprecated template still builds, and so does what derives from it, but each build says
      * so, naming the template built (the deprecated parent's own build, then the user's), and

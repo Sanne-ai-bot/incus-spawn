@@ -1089,8 +1089,10 @@ public class BuildCommand extends BaseCommand {
                 incus.forceStop(buildName);
             }
             incus.rename(buildName, promotedName);
+            // In the same write as the type: the rename above left the parent's template stamps on it
             incus.configSetAll(promotedName, Map.of(
                     Metadata.TYPE, Metadata.TYPE_FAILED_BUILD,
+                    Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_FAILED_BUILD,
                     Metadata.PARENT, canonicalName,
                     Metadata.CREATED, Metadata.now()));
             var hint = savedHostReport

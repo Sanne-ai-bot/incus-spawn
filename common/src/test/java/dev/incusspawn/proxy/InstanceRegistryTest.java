@@ -251,6 +251,35 @@ class InstanceRegistryTest {
     }
 
     @Test
+    void aFailedBuildOrACopyOfOneIsNobodysTemplate() {
+        // #936: a failed build keeps its parent's PROFILE and BUILD_SOURCE (they are only replaced
+        // when a build succeeds), so on those alone it would pass for the parent's template
+        var secret = InstanceSecret.generate();
+        var hash = InstanceSecret.sha256(secret);
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("foo-failed-build", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, hash, dev.incusspawn.incus.Metadata.PROFILE, "tpl-isx-agent",
+                        dev.incusspawn.incus.Metadata.TYPE, dev.incusspawn.incus.Metadata.TYPE_FAILED_BUILD))
+                .instance("branch-of-it", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.6",
+                        SECRET_KEY, hash, dev.incusspawn.incus.Metadata.PROFILE, "tpl-isx-agent",
+                        dev.incusspawn.incus.Metadata.TYPE, dev.incusspawn.incus.Metadata.TYPE_CLONE,
+                        dev.incusspawn.incus.Metadata.UNTRUSTED_LINEAGE, "failed-build"))
+                .instance("agent", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.7",
+                        SECRET_KEY, hash, dev.incusspawn.incus.Metadata.PROFILE, "tpl-isx-agent",
+                        dev.incusspawn.incus.Metadata.TYPE, dev.incusspawn.incus.Metadata.TYPE_CLONE));
+        var registry = new InstanceRegistry(daemon.client());
+        registry.refresh();
+
+        var route = new dev.incusspawn.config.HostRoutes.Route("work.isx.internal", "127.0.0.1", 1, java.util.List.of("tpl-isx-agent"));
+        for (var address : java.util.List.of("10.0.0.5", "10.0.0.6")) {
+            var lineage = registry.identifyWithLineage(address, secret).lineage();
+            assertFalse(route.admits(lineage.template(), lineage.projectLocal()), address + " is admitted: " + lineage);
+        }
+        var agent = registry.identifyWithLineage("10.0.0.7", secret).lineage();
+        assertTrue(route.admits(agent.template(), agent.projectLocal()), "an ordinary branch still is");
+    }
+
+    @Test
     void aBurstOfRefreshesAfterNowSharesOneListing() throws Exception {
         // Refused callers are what a guest with a wrong secret makes at will: each must not list on its own
         var listings = new java.util.concurrent.atomic.AtomicInteger();
