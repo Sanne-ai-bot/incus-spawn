@@ -55,13 +55,9 @@ class ConfigWatcherTest {
         }
     }
 
-    /**
-     * Edits a tool until a reload is seen: the watcher registers directories on its own thread,
-     * and an edit made before that is not an event. 30s covers a polling WatchService.
-     */
     @Test
     void aHostRouteSecretDeletedOrChangedReloads(@TempDir Path dir) throws Exception {
-        // #936: deleting a secret is how it is rotated, and a chmod how a refused one is served
+        // #936: deleting or rewriting a secret takes effect at once, on every platform
         var configDir = Files.createDirectories(dir.resolve("config"));
         var secrets = Files.createDirectories(configDir.resolve(HostRouteSecret.DIR));
         var secret = Files.writeString(secrets.resolve("work.isx.internal" + HostRouteSecret.SUFFIX), "a".repeat(64));
@@ -84,6 +80,34 @@ class ConfigWatcherTest {
         }
     }
 
+    @Test
+    void aChmodOfTheHostRoutesDirectoryReloadsOnLinux(@TempDir Path dir) throws Exception {
+        // What a 503's warning asks for (chmod 700 it) must serve the route again without a restart.
+        // Linux only: macOS's polling watcher compares modification times, never modes
+        org.junit.jupiter.api.Assumptions.assumeTrue(System.getProperty("os.name").startsWith("Linux"));
+        var configDir = Files.createDirectories(dir.resolve("config"));
+        var secrets = Files.createDirectories(configDir.resolve(HostRouteSecret.DIR));
+        var reloads = new java.util.concurrent.Semaphore(0);
+        var watcher = new ConfigWatcher(configDir, List::of, reloads::release);
+        watcher.start();
+        try {
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            var reloaded = false;
+            for (int i = 0; !reloaded && System.nanoTime() < deadline; i++) {
+                java.nio.file.Files.setPosixFilePermissions(secrets,
+                        java.nio.file.attribute.PosixFilePermissions.fromString(i % 2 == 0 ? "rwxrwxrwx" : "rwx------"));
+                reloaded = reloads.tryAcquire(500, TimeUnit.MILLISECONDS);
+            }
+            assertTrue(reloaded, "a chmod of host-routes/ should reload the proxy");
+        } finally {
+            watcher.stop();
+        }
+    }
+
+    /**
+     * Edits a tool until a reload is seen: the watcher registers directories on its own thread,
+     * and an edit made before that is not an event. 30s covers a polling WatchService.
+     */
     private static boolean reloadsOnEdit(Path toolsDir, java.util.concurrent.Semaphore reloads) throws Exception {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         for (int i = 0; System.nanoTime() < deadline; i++) {

@@ -268,7 +268,7 @@ class HostRouteProxyTest {
         assertEquals(503, reply.status(), reply.body());
         assertEquals(List.of(), seen);
         var log = Files.readString(dev.incusspawn.Environment.proxyLifecycleLogFile());
-        assertTrue(log.contains("Ignoring host route '" + LEAKY + "'") && log.contains("owner only"), log);
+        assertTrue(log.contains("Refusing every request to host route '" + LEAKY + "' (503)") && log.contains("owner only"), log);
     }
 
     @Test

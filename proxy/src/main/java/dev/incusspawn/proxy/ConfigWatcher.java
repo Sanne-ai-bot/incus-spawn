@@ -31,8 +31,10 @@ import java.util.function.Supplier;
  * reload that adds a search path starts watching it. A directory that does not exist yet is
  * picked up once it does; an edit made before that still shows as drift on {@code /health}.
  * <p>
- * So are the host routes' secrets in {@code host-routes/} (#936): deleting one rotates it and a
- * {@code chmod} lets a refused one be served, both at once. The proxy creating one is a change
+ * So are the host routes' secrets in {@code host-routes/}, and that directory itself (#936):
+ * deleting a secret rotates it at once. A {@code chmod} of a secret or of the directory reloads at
+ * once on Linux (inotify reports attribute changes); macOS's polling watcher compares modification
+ * times only, so there one takes effect at the next reload. The proxy creating a secret is a change
  * too, which costs one more reload, after which nothing is created.
  */
 public class ConfigWatcher {
@@ -87,7 +89,10 @@ public class ConfigWatcher {
                     if (event.kind() == StandardWatchEventKinds.OVERFLOW) continue;
                     var path = (Path) event.context();
                     if (path == null) continue;
+                    // host-routes/ itself on the config directory's key, modified only: a chmod of it is
+                    // reported there, and its creation (by the proxy) or a rename is no reason to reload
                     if (key == configKey ? WATCHED_FILES.contains(path.toString())
+                            || (HostRouteSecret.DIR.equals(path.toString()) && event.kind() == StandardWatchEventKinds.ENTRY_MODIFY)
                             : key == toolDirKeys.get(hostRoutesDir()) ? path.toString().endsWith(HostRouteSecret.SUFFIX)
                             : ToolDefLoader.isToolFile(path)) {
                         relevant = true;
