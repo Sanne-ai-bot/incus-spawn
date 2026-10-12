@@ -497,6 +497,8 @@ class ImageDefTest {
 
         assertNotNull(defs.get("tpl-java"));
         assertNotNull(defs.get("tpl-empty"));
+        assertTrue(defs.get("tpl-empty").getRepos().isEmpty());
+        defs.get("tpl-empty").contentFingerprint(Map.of()); // would throw on a null item
     }
 
     @Test

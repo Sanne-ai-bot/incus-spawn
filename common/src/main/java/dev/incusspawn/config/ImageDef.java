@@ -724,8 +724,12 @@ public class ImageDef {
             warnings.accept(file + ": " + invalidName + LayeredDefinitions.REFUSED);
             return false;
         }
+        // A bare '-' under repos: is a null item that fingerprinting and cloning cannot take.
+        if (def.getRepos().stream().anyMatch(java.util.Objects::isNull)) {
+            def.setRepos(def.getRepos().stream().filter(java.util.Objects::nonNull).toList());
+        }
         for (var repo : def.getRepos()) {
-            if (repo != null && repo.getDepth() != null && repo.getDepth() < 1) {
+            if (repo.getDepth() != null && repo.getDepth() < 1) {
                 warnings.accept(file + ": repo " + OutputFormat.oneLine(String.valueOf(repo.getUrl()))
                         + ": 'depth' " + repo.getDepth() + " is not a positive number of commits"
                         + LayeredDefinitions.REFUSED);
