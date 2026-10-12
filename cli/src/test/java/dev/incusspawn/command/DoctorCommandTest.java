@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceSubvolumes;
@@ -1002,4 +1003,49 @@ class DoctorCommandTest {
         assertTrue(failure.getMessage().contains("did not answer"), failure.getMessage());
     }
 
+
+    // ---- Bridge subnet conflict (#1203) ----
+
+    private static final DoctorCommand.Action MOVE_NOT_RUN = () -> fail("the finding must not run its remedy");
+
+    @Test
+    void bridgeClearOfHostRoutesIsOk() {
+        var f = DoctorCommand.bridgeSubnetFinding(
+                new BridgeSubnetCheck.ConflictResult(false, null, "172.20.0.1/24", null), MOVE_NOT_RUN);
+        assertEquals(DoctorCommand.Status.OK, f.status());
+        assertNull(f.remediation());
+    }
+
+    @Test
+    void bridgeConflictOffersToMoveTheBridgeWithoutInit() throws Exception {
+        var moved = new boolean[1];
+        var f = DoctorCommand.bridgeSubnetFinding(new BridgeSubnetCheck.ConflictResult(true,
+                "10.0.0.0/8 via 10.64.0.1 dev tun0", "10.166.11.1/24", "172.20.0.1/24"), () -> moved[0] = true);
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertTrue(f.detail().contains("10.0.0.0/8"), f.detail());
+        var r = f.remediation();
+        assertNotNull(r.action(), "a free subnet must be offered as a fix doctor applies");
+        assertTrue(r.destructive(), "it stops and starts running instances and changes the firewall");
+        assertTrue(r.description().contains("172.20.0.1/24"), r.description());
+        assertFalse(r.description().contains("isx init"), r.description());
+        r.action().run();
+        assertTrue(moved[0]);
+    }
+
+    @Test
+    void bridgeConflictWithNoFreeSubnetOffersNoFixAndNoIncusCommand() {
+        var f = DoctorCommand.bridgeSubnetFinding(new BridgeSubnetCheck.ConflictResult(true,
+                "172.16.0.0/12 via 10.0.0.1 dev tun0", "172.20.0.1/24", null), MOVE_NOT_RUN);
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertNull(f.remediation().action());
+        assertFalse(f.remediation().description().contains("incus "), f.remediation().description());
+    }
+
+    @Test
+    void bridgeWithoutIpv4IsOk() {
+        var f = DoctorCommand.bridgeSubnetFinding(
+                new BridgeSubnetCheck.ConflictResult(false, null, null, null), MOVE_NOT_RUN);
+        assertEquals(DoctorCommand.Status.OK, f.status());
+        assertEquals("(no IPv4 address)", f.detail());
+    }
 }

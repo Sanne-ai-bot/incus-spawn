@@ -1041,6 +1041,36 @@ class HostSetup {
         }
     }
 
+    /**
+     * After {@code isx doctor} moved the bridge so its gateway is {@code gatewayIp} (#1203): redo
+     * only what names the bridge's address -- the gateway {@code config.yaml} caches and the
+     * PREROUTING redirect -- on {@code firewall}, the one already running, chosen as init chooses it.
+     * Installing or enabling a firewall stays init's. Whether the redirect was written.
+     */
+    boolean followBridgeMove(String gatewayIp, DetectionResult firewall) {
+        var config = SpawnConfig.load();
+        config.setIncusBridgeGateway(gatewayIp);
+        config.save();
+        return redirectToMovedGateway(gatewayIp, firewall, UfwCheck::readBeforeRules);
+    }
+
+    /**
+     * The redirect half of {@link #followBridgeMove}. On UFW the isx NAT block is replaced whole,
+     * so the old gateway's redirect and the old subnet's masquerade go with it; on firewalld the
+     * stale redirect is removed. The FORWARD and trust rules name the interface, not the address.
+     */
+    boolean redirectToMovedGateway(String gatewayIp, DetectionResult firewall,
+                                   java.util.function.Supplier<String> beforeRules) {
+        return switch (firewall) {
+            case DetectionResult.UseFirewalld fwd when !fwd.needsStart() -> configureMitmProxyFirewalld(gatewayIp);
+            case DetectionResult.UseUfw u -> configureMitmProxyUfw(gatewayIp, beforeRules.get());
+            default -> {
+                System.err.println("  No firewall is running to redirect the proxy's port on the new gateway.");
+                yield false;
+            }
+        };
+    }
+
     private record HostResult(int exitCode, String stderr) {}
 
     /** Run a host command with stdout shown, returning stderr so the caller can word the failure. */

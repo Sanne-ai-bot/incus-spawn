@@ -1,6 +1,8 @@
 package dev.incusspawn.incus;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 
 import java.util.List;
 
@@ -177,5 +179,81 @@ class BridgeSubnetCheckTest {
         var routes = List.of("", "   ", "unreachable", "blackhole 10.0.0.0/8");
         var conflict = BridgeSubnetCheck.findConflictingRoute("10.166.11.1/24", routes);
         assertNull(conflict);
+    }
+
+    private static final List<String> VPN_ROUTES = List.of(
+            "default via 192.168.1.1 dev wlp3s0",
+            "10.0.0.0/8 via 10.64.0.1 dev tun0",
+            "10.166.11.0/24 dev incusbr0 proto kernel scope link src 10.166.11.1");
+
+    // isx doctor reports the conflict, and the subnet it would move to, before the user agrees
+    // to anything: reading it must not reconfigure the bridge (#1203).
+    @Test
+    void detectReportsTheConflictAndTheFreeSubnetWithoutReconfiguring() {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.166.11.1/24");
+
+        try (var routes = mockStatic(BridgeSubnetCheck.class, CALLS_REAL_METHODS)) {
+            routes.when(BridgeSubnetCheck::getHostRoutes).thenReturn(VPN_ROUTES);
+            var result = BridgeSubnetCheck.detect(incus);
+            assertTrue(result.conflictDetected());
+            assertEquals("10.166.11.1/24", result.oldSubnet());
+            assertTrue(result.conflictingRoute().contains("10.0.0.0/8"));
+            assertEquals("172.20.0.1/24", result.newSubnet());
+        }
+        verify(incus, never()).networkConfigSet(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void detectAndFixMovesTheBridgeToTheFreeSubnet() {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.166.11.1/24");
+
+        try (var routes = mockStatic(BridgeSubnetCheck.class, CALLS_REAL_METHODS)) {
+            routes.when(BridgeSubnetCheck::getHostRoutes).thenReturn(VPN_ROUTES);
+            assertEquals("172.20.0.1/24", BridgeSubnetCheck.detectAndFix(incus).newSubnet());
+        }
+        verify(incus).networkConfigSet("incusbr0", "ipv4.address", "172.20.0.1/24");
+    }
+
+    // On Linux the diagnostic points at the narrow remedy, not at all of isx init (#1203).
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void diagnosticPointsAtDoctorOnLinux() {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.166.11.1/24");
+
+        try (var routes = mockStatic(BridgeSubnetCheck.class, CALLS_REAL_METHODS)) {
+            routes.when(BridgeSubnetCheck::getHostRoutes).thenReturn(VPN_ROUTES);
+            var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
+            assertTrue(diagnostic.contains("'isx doctor'"), diagnostic);
+            assertFalse(diagnostic.contains("isx init"), diagnostic);
+        }
+    }
+
+    // An IPv6-only bridge has nothing a host route could overlap; doctor must not warn about it.
+    @Test
+    void detectFindsNoConflictOnABridgeWithoutIpv4() {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("none");
+
+        try (var routes = mockStatic(BridgeSubnetCheck.class, CALLS_REAL_METHODS)) {
+            routes.when(BridgeSubnetCheck::getHostRoutes).thenReturn(VPN_ROUTES);
+            var result = BridgeSubnetCheck.detect(incus);
+            assertFalse(result.conflictDetected());
+            assertNull(result.oldSubnet());
+        }
+    }
+
+    // An address without a prefix length is the /24 BridgeAddress takes it for, not one host.
+    @Test
+    void detectReadsAPrefixlessBridgeAddressAsASlash24() {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.166.11.1");
+
+        try (var routes = mockStatic(BridgeSubnetCheck.class, CALLS_REAL_METHODS)) {
+            routes.when(BridgeSubnetCheck::getHostRoutes).thenReturn(List.of("10.166.11.128/25 dev tun0"));
+            assertTrue(BridgeSubnetCheck.detect(incus).conflictDetected());
+        }
     }
 }

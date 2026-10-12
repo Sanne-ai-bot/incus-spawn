@@ -10,6 +10,7 @@ import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.config.YamlErrors;
+import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.BtrfsUsage;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.UfwCheck;
@@ -1361,10 +1362,44 @@ public class DoctorCommand extends BaseCommand {
         var incus = RuntimeServices.incus();
         findings.add(checkBridgeDns(incus));
         if (Platform.isLinux()) {
+            // Linux only: on macOS the bridge is in the VM, whose routes the Mac's are not (#1202).
+            findings.add(checkBridgeSubnet(incus));
             var iptablesFinding = checkIptablesRedirect();
             if (iptablesFinding != null) findings.add(iptablesFinding);
         }
         return findings;
+    }
+
+    private Finding checkBridgeSubnet(IncusClient incus) {
+        try {
+            return bridgeSubnetFinding(BridgeSubnetCheck.detect(incus),
+                    () -> InitCommand.moveBridgeOffSubnetConflict(incus));
+        } catch (Exception e) {
+            return Finding.warn("Bridge subnet", "(could not check: " + e.getMessage() + ")", null);
+        }
+    }
+
+    /**
+     * A bridge subnet a host route (typically a VPN's) overlaps sends DNS for the gateway out
+     * through that route. The fix {@code move} applies is {@code isx init}'s, narrowed to the
+     * bridge and what follows its address (#1203); it detects again when applied, since the
+     * routes may have changed while the user read this.
+     */
+    static Finding bridgeSubnetFinding(BridgeSubnetCheck.ConflictResult result, Action move) {
+        if (!result.conflictDetected()) {
+            return Finding.ok("Bridge subnet", result.oldSubnet() == null ? "(no IPv4 address)"
+                    : "(" + result.oldSubnet() + ", clear of host routes)");
+        }
+        var detail = "(" + result.oldSubnet() + " overlaps host route: " + result.conflictingRoute() + ")";
+        if (result.newSubnet() == null) {
+            return Finding.warn("Bridge subnet conflict", detail, new Remediation(
+                    "Host routes cover every subnet isx would move the bridge to ("
+                            + BridgeSubnetCheck.candidateRange() + "); free one, then re-run 'isx doctor'", false, null));
+        }
+        return Finding.warn("Bridge subnet conflict", detail, new Remediation(
+                "Move the bridge to " + result.newSubnet() + ", migrate instances to it (running ones are"
+                        + " stopped and started again), and update the firewall redirect for the new gateway"
+                        + " (sudo required)", true, move));
     }
 
     private Finding checkBridgeDns(IncusClient incus) {
