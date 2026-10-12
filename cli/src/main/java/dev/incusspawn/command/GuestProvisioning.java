@@ -335,6 +335,8 @@ public class GuestProvisioning {
      */
     static final String SYSTEM_PEM_BUNDLE = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem";
     static final String SYSTEM_CERT_DIR = "/etc/pki/ca-trust/extracted/pem/directory-hash";
+    /** The Java form of the same store, what {@code isx-trust} links a JDK's cacerts to. */
+    static final String SYSTEM_JAVA_STORE = "/etc/pki/ca-trust/extracted/java/cacerts";
 
     /**
      * Runtimes that read a variable for their root bundle, pointed at the system store that
@@ -361,14 +363,18 @@ public class GuestProvisioning {
     }
 
     /**
-     * Fails the build when the base image lacks the bundle {@link #TRUST_ENV} points at, instead
-     * of baking variables that make every TLS call in the box fail (#713). A missing
+     * Fails the build when the base image lacks the bundle {@link #TRUST_ENV} points at, which
+     * would make every TLS call that reads those variables fail, or the Java store
+     * {@code isx-trust} links JDKs to, which would leave every JDK it finds on its vendor roots
+     * (#713). {@code update-ca-trust} writes both on every Fedora. A missing
      * {@link #SYSTEM_CERT_DIR} is only skipped by OpenSSL, so it is not checked.
      */
     static void assertSystemStoreExists(Container container) {
-        container.exec("test", "-s", SYSTEM_PEM_BUNDLE)
-                .assertSuccess("The base image has no system CA bundle at " + SYSTEM_PEM_BUNDLE
-                        + " (what ca-certificates' update-ca-trust extracts)");
+        for (var store : List.of(SYSTEM_PEM_BUNDLE, SYSTEM_JAVA_STORE)) {
+            container.exec("test", "-s", store)
+                    .assertSuccess("The base image has no system CA store at " + store
+                            + " (what ca-certificates' update-ca-trust extracts)");
+        }
     }
 
     /**

@@ -5,7 +5,7 @@
 # put the isx CA, so every HTTPS call through the proxy fails (certificate_unknown,
 # PKIX path building failed, CERTIFICATE_VERIFY_FAILED). File bindings fix that by replacing
 # the bundled file with a symlink to the system store:
-#   Java     <jdk>/lib/security/cacerts  -> /etc/pki/java/cacerts
+#   Java     <jdk>/lib/security/cacerts  -> /etc/pki/ca-trust/extracted/java/cacerts
 #   certifi  site-packages/.../certifi/cacert.pem -> /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 #            (installed packages only, pip's vendored copy included; never a source checkout)
 # Environment bindings need no file; `isx build` exports them from /etc/profile.d/isx-env.sh.
@@ -19,7 +19,7 @@
 # ISX_TRUST_JAVA_STORE, ISX_TRUST_PEM_BUNDLE and ISX_TRUST_SETTLE (the pauses between passes,
 # in seconds) override the defaults (tests only).
 
-store=${ISX_TRUST_JAVA_STORE:-/etc/pki/java/cacerts}
+store=${ISX_TRUST_JAVA_STORE:-/etc/pki/ca-trust/extracted/java/cacerts}
 bundle=${ISX_TRUST_PEM_BUNDLE:-/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem}
 
 pauses=
