@@ -3910,6 +3910,20 @@ The hints `isx init` prints during Linux setup, before isx manages a pool or pro
 #1139 then covered `incus console` and `incus config`: a VM agent failure saves the console log on the host and names that file, and an inbox removed for a missing directory is mounted again by the start that finds it back.
 The macOS remediation for "no CoW pool" is still open (#1085): doctor offers none, and `noCowPoolMsg` names `isx vm delete`, which does not exist.
 
+On Linux the bridge-subnet conflict diagnostic now points at `isx doctor` instead (#1203), whose "Bridge subnet conflict" finding applies init's fix without the rest of init (`InitCommand.moveBridgeOff`).
+Reading the conflict (`BridgeSubnetCheck.detect`) changes nothing.
+The remedy reads it again when the user agrees, since the routes may have changed meanwhile, and acts on that one read.
+It asks for sudo before anything moves, then moves the bridge and migrates the instances.
+It refuses before anything moves when no firewall is running, chosen as init chooses it (`FirewallDetector`), since the redirect could not follow the bridge.
+Then it redoes only what names the old address (`HostSetup.followBridgeMove`): the cached gateway and the PREROUTING redirect, on that firewall.
+On UFW that is the isx NAT block, which also holds the masquerade naming the subnet.
+Installing or enabling a firewall stays init's.
+It does not restart the proxy, which follows the move by itself (#966).
+A password refused at the first prompt leaves the bridge where it was.
+A migration that outlasts sudo's timestamp makes the firewall step ask again, after the bridge has moved; a refusal there fails the remedy and points at `isx init`.
+A redirect not written, or an instance left on the old subnet, fails the remedy instead of reporting it done.
+macOS gets no such finding: the bridge lives in the VM, whose routes the Mac's are not, and its wording is #1202's.
+
 ### Support bundles: redaction by construction
 
 `isx doctor --bundle` exists so that diagnosing a remote failure is an attachment rather than an hour of screen-sharing.

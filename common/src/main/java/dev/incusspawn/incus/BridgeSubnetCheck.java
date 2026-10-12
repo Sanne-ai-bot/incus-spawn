@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.Platform;
 import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
@@ -17,6 +18,11 @@ public final class BridgeSubnetCheck {
             "172.28.0.1/24", "172.29.0.1/24", "172.30.0.1/24");
 
     private BridgeSubnetCheck() {}
+
+    /** The subnets {@link #findNonConflictingSubnet} chooses from, first to last, for a message. */
+    public static String candidateRange() {
+        return CANDIDATE_SUBNETS.getFirst() + " to " + CANDIDATE_SUBNETS.getLast();
+    }
 
     public static String resolveBridgeCidr(IncusClient incus) {
         return incus.networkConfigGet(BridgeAddress.BRIDGE, "ipv4.address");
@@ -90,18 +96,28 @@ public final class BridgeSubnetCheck {
         return null;
     }
 
-    public static ConflictResult detectAndFix(IncusClient incus) {
+    /** Whether the bridge overlaps a host route, and the subnet {@link #detectAndFix} would move it to; changes nothing. */
+    public static ConflictResult detect(IncusClient incus) {
         var bridgeCidr = resolveBridgeCidr(incus);
+        if (bridgeCidr == null || BridgeAddress.parse(bridgeCidr).isEmpty()) {
+            return new ConflictResult(false, null, null, null); // no IPv4 address: nothing to overlap
+        }
+        // An address without a prefix length is a /24, as BridgeAddress reads it, not a single host
+        if (!bridgeCidr.contains("/")) bridgeCidr += "/24";
         var routes = getHostRoutes();
         var conflict = findConflictingRoute(bridgeCidr, routes);
         if (conflict == null) {
             return new ConflictResult(false, null, bridgeCidr, null);
         }
-        var newSubnet = findNonConflictingSubnet(bridgeCidr, routes);
-        if (newSubnet != null) {
-            incus.networkConfigSet("incusbr0", "ipv4.address", newSubnet);
+        return new ConflictResult(true, conflict, bridgeCidr, findNonConflictingSubnet(bridgeCidr, routes));
+    }
+
+    public static ConflictResult detectAndFix(IncusClient incus) {
+        var result = detect(incus);
+        if (result.newSubnet() != null) {
+            incus.networkConfigSet(BridgeAddress.BRIDGE, "ipv4.address", result.newSubnet());
         }
-        return new ConflictResult(true, conflict, bridgeCidr, newSubnet);
+        return result;
     }
 
     public static boolean warnIfConflict(IncusClient incus) {
@@ -117,15 +133,15 @@ public final class BridgeSubnetCheck {
 
     public static String detectConflictDiagnostic(IncusClient incus) {
         try {
-            var bridgeCidr = resolveBridgeCidr(incus);
-            var routes = getHostRoutes();
-            var conflict = findConflictingRoute(bridgeCidr, routes);
-            if (conflict == null) return null;
-            return "Possible cause: the Incus bridge subnet (" + bridgeCidr
-                    + ") overlaps with a host route:\n  " + conflict
+            var result = detect(incus);
+            if (!result.conflictDetected()) return null;
+            return "Possible cause: the Incus bridge subnet (" + result.oldSubnet()
+                    + ") overlaps with a host route:\n  " + result.conflictingRoute()
                     + "\n\nDNS queries to the bridge gateway are likely being routed"
                     + " through the VPN instead of reaching the bridge."
-                    + "\n\nFix: run 'isx init' to auto-detect and reconfigure the bridge subnet.";
+                    + "\n\nFix: run " + (Platform.isLinux()
+                            ? "'isx doctor', which offers to move the bridge to a free subnet."
+                            : "'isx init' to auto-detect and reconfigure the bridge subnet.");
         } catch (Exception e) {
             return null;
         }

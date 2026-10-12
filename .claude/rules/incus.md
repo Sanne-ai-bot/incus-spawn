@@ -128,6 +128,7 @@ A nested claim throws: the outer address is not written yet, so the inner one wo
 **Read the bridge once**: `BridgeAddress.read/require` gives gateway, subnet and prefix length from one request; a flow needing more than one of them passes the record along rather than calling `ProxyConfig.resolveGatewayIp` and `bridgePrefixLen` separately.
 Every isx of this user queues on this lock, so read everything that does not depend on the address before the claim.
 The listing fails closed; an unusable lock file does not: `HostLock.acquireOrDegrade` warns once and keeps only the in-process lock, since Incus's 409 still refuses the collision.
+**A bridge move redoes what names its address**: `isx doctor`'s bridge subnet remedy (`InitCommand.moveBridgeOff`, #1203) rewrites the cached gateway and the PREROUTING redirect on the running firewall (`HostSetup.followBridgeMove`), and leaves the proxy to follow by itself (#966).
 Anything the claim or the stale-subnet repair reports goes through a `StaticIpAllocator.Output` (step, warn), never straight to stdout/stderr: the TUI runs that repair on its own screen.
 The static `.network` is pushed root `0644` explicitly (`systemd-networkd` cannot read `0600`).
 **Never assume a VM's root disk is `sda`**: VM builds put it on virtio-blk (`vda`, #1255), templates built before stay on virtio-scsi (`sda`), so a guest command derives the device from the root's mount (`BuildCommand.VM_ROOT_EXPANSION`).

@@ -2585,7 +2585,8 @@ public class Tui {
         try {
             var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
             if (diagnostic != null) {
-                statusMessage = "Bridge subnet conflict detected — run 'isx init' to fix";
+                statusMessage = "Bridge subnet conflict detected — run "
+                        + (Platform.isLinux() ? "'isx doctor'" : "'isx init'") + " to fix";
             }
         } catch (Exception ignored) {
         }

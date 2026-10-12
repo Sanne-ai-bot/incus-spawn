@@ -4,7 +4,12 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.FirewallDetector.DetectionResult;
+import dev.incusspawn.incus.FirewallDetector;
+import dev.incusspawn.lifecycle.InstanceNetwork;
+import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.McpClientRegistration;
@@ -402,6 +407,87 @@ public class InitCommand extends BaseCommand {
     /** The Linux host configuration steps; they read this init's Incus client when they run. */
     HostSetup host() {
         return host;
+    }
+
+    /** {@code isx doctor}'s remedy for a bridge subnet conflict (#1203); see {@link #moveBridgeOff}. */
+    static void moveBridgeOffSubnetConflict(IncusClient incus) {
+        var init = new InitCommand();
+        init.incus = incus;
+        init.moveBridgeOff(BridgeSubnetCheck.detect(incus));
+    }
+
+    /**
+     * Init's move and instance migration, then only what names the bridge's address
+     * ({@link HostSetup#followBridgeMove}), without the rest of {@code isx init}. {@code conflict}
+     * is read when the user agreed, since the routes may have changed while they read the finding,
+     * and it is the one read the move acts on. With no running firewall, or without sudo, nothing
+     * moves; a long
+     * migration can outlast sudo's timestamp, so the firewall step may ask again. Throws when a
+     * step did not complete, so doctor does not report it done.
+     */
+    void moveBridgeOff(BridgeSubnetCheck.ConflictResult conflict) {
+        if (!conflict.conflictDetected()) {
+            System.out.println("     The bridge no longer overlaps a host route; nothing to move.");
+            return;
+        }
+        var subnet = conflict.newSubnet();
+        if (subnet == null) {
+            throw new IllegalStateException("host routes now cover every subnet isx would move the bridge to");
+        }
+        var firewall = runningFirewall();
+        if (!(firewall instanceof DetectionResult.UseUfw)
+                && !(firewall instanceof DetectionResult.UseFirewalld fwd && !fwd.needsStart())) {
+            throw new IllegalStateException("no firewall is running for the proxy's redirect to follow the"
+                    + " bridge; nothing was changed. Run 'isx init', which sets one up and moves the bridge");
+        }
+        if (!sudoValidated()) {
+            throw new IllegalStateException("sudo authentication failed; nothing was changed");
+        }
+        incus.networkConfigSet(BridgeAddress.BRIDGE, "ipv4.address", subnet);
+        System.out.println("     Moved the bridge from " + conflict.oldSubnet() + " to " + subnet + ".");
+        try {
+            var migrated = migrateInstances();
+            if (migrated > 0) {
+                System.out.println("     Migrated " + migrated + " instance" + (migrated == 1 ? "" : "s") + ".");
+            }
+        } catch (RuntimeException e) {
+            // The redirect still follows the bridge; the stale check below fails the remedy
+            System.err.println("     Warning: could not migrate instances: " + e.getMessage());
+        }
+        if (!followBridgeMove(subnet.substring(0, subnet.indexOf('/')), firewall)) {
+            throw new IllegalStateException("the bridge moved, but its firewall redirect was not updated"
+                    + " (see above); run 'isx init' to finish it");
+        }
+        var stale = staleInstances();
+        if (!stale.isEmpty()) {
+            throw new IllegalStateException(stale.size() + " instance(s) still on the old subnet ("
+                    + String.join(", ", stale) + "); re-run 'isx doctor' to migrate them");
+        }
+        // The proxy follows the move itself (#966): it exits on a moved bridge within a minute, and
+        // the service's Restart=on-failure binds it to the new gateway. A restart here would be a second one.
+        System.out.println("     The proxy moves to the new gateway by itself within a minute;"
+                + " one started in a terminal stops instead, and needs 'isx proxy start' again.");
+        System.out.println("     Re-run 'isx doctor' to check the bridge's firewall and DNS findings again.");
+    }
+
+    boolean sudoValidated() {
+        return runHost("sudo", "-v") == 0;
+    }
+
+    int migrateInstances() {
+        return InstanceNetwork.migrateAllInstancesToNewSubnet(incus);
+    }
+
+    List<String> staleInstances() {
+        return InstanceNetwork.findStaleSubnetInstances(incus);
+    }
+
+    DetectionResult runningFirewall() {
+        return FirewallDetector.detect();
+    }
+
+    boolean followBridgeMove(String gatewayIp, DetectionResult firewall) {
+        return host.followBridgeMove(gatewayIp, firewall);
     }
 
     private void setupSshKeyPair() {
