@@ -811,9 +811,10 @@ public class BuildCommand extends BaseCommand {
 
             // The swap is part of the build: when it fails the build has not produced a template, so it
             // must go through the same report-and-promote path as any other failure.
-            TemplateLock.replace(incus, tempName, canonicalName, BuildOutput::note);
+            // Trusted inside the swap's lock: a branch or an isx mcp delegate waiting on this rebuild
+            // copies the template only after, and would otherwise keep its taint for good
+            TemplateLock.replace(incus, tempName, canonicalName, BuildOutput::note, () -> trustBuilt(canonicalName));
             activeBuild = null;
-            trustBuilt(canonicalName);
             buildDone(canonicalName);
         } catch (Exception e) {
             BuildOutput.abandonStep();
@@ -959,12 +960,15 @@ public class BuildCommand extends BaseCommand {
      * Check if an image is outdated (built with an older version of isx or with a different
      * definition, or copied from an earlier build of its parent), by {@link TemplateStaleness}'s
      * rules. Its stamps are one read, and its parent's another, made only when the rest are
-     * current. A template that is not built is outdated; a failure to ask Incus is thrown.
+     * current. A template that is not built, or still carries a build's
+     * {@link Metadata#UNTRUSTED_LINEAGE}, is outdated; a failure to ask Incus is thrown.
      */
     static boolean isImageOutdated(String imageName, ImageDef imageDef,
                                     IncusClient incus, ToolDefLoader toolDefLoader) {
         var instance = incus.instanceMetadataOrThrow(imageName);
         if (instance == null) return true;
+        // A build that never reached its trustBuilt (#936): what it holds is not what its definition says
+        if (!instance.path("config").path(Metadata.UNTRUSTED_LINEAGE).asText("").isBlank()) return true;
         var built = TemplateStaleness.Built.of(imageName, instance);
         if (TemplateStaleness.versionOutdated(built.buildVersion(), BuildInfo.instance().version())) return true;
         // Checked here too so the tools are fingerprinted only when there is a stamp to compare.
@@ -1091,17 +1095,19 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * The last step of a build that succeeded, after its swap: only now is the template what its
-     * definition says, so only now does it lose {@link Metadata#UNTRUSTED_LINEAGE} (#936). Anything
-     * that stops a build before this, a failure after tagTemplateMetadata or in the swap included,
-     * leaves it set. Should this write fail, the template stays untrusted until it is rebuilt.
+     * The last step of a build that succeeded, after its swap and inside the swap's lock: only now
+     * is the template what its definition says, so only now does it lose
+     * {@link Metadata#UNTRUSTED_LINEAGE} (#936), and nothing copies it in between. Anything that
+     * stops a build before this, a failure after tagTemplateMetadata or in the swap included, leaves
+     * it set. Should this write fail, the template stays untrusted, which {@link #isImageOutdated}
+     * counts, so the next {@code isx build} of it or of a template built on it rebuilds it.
      */
     void trustBuilt(String template) {
         try {
             incus.configUnset(template, Metadata.UNTRUSTED_LINEAGE);
         } catch (RuntimeException e) {
-            BuildOutput.warn("'" + shown(template) + "' was built, but stays untrusted for host routes until it is "
-                    + "rebuilt: " + shown(e.getMessage()));
+            BuildOutput.warn("'" + shown(template) + "' was built, but host routes still refuse it and its branches: "
+                    + shown(e.getMessage()) + ". Run 'isx build " + shown(template) + "' again.");
         }
     }
 

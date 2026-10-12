@@ -82,12 +82,12 @@ class InterruptedBranchTest {
     }
 
     @Test
-    void aBranchOfAnOldBranchOfAFailedBuildIsUntrustedAndNoCallerCanUnsetIt() {
-        // dev-1 was branched from a failed build before #936: no taint, only its parent's name. A
-        // branch of it is stamped by its own copy request, over anything the caller passed
+    void aBranchOfAnUntrustedSourceStaysUntrustedAndNoCallerCanUnsetIt() {
+        // The source carries the taint; the copy inherits it, and no extra config the caller passes,
+        // an empty value (which unsets) included, removes it
         var daemon = new FakeIncusDaemon()
-                .container("dev-1", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "foo-failed-build",
-                        Metadata.PROFILE, "tpl-isx-agent"))
+                .container("dev-1", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PROFILE, "tpl-isx-agent",
+                        Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_FAILED_BUILD))
                 .refuseWritesContaining("limits.memory");
         var request = new BranchFlow.Request("dev-1", "dev-2", false, false, NetworkMode.AIRGAP,
                 null, null, null, null, List.of(), false, Map.of(Metadata.UNTRUSTED_LINEAGE, ""));
@@ -95,7 +95,53 @@ class InterruptedBranchTest {
         assertThrows(RuntimeException.class,
                 () -> BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of())));
 
-        assertEquals("branched from a failed-build",
+        assertEquals(Metadata.TYPE_FAILED_BUILD,
                 daemon.instance("dev-2").path("config").path(Metadata.UNTRUSTED_LINEAGE).asText());
+    }
+
+    @Test
+    void aSourcesParentsNameAloneNeverTaintsACopyForGood() {
+        // A template a user named ci-failed-build is no failed build: the registry refuses its
+        // branches while the name says so, but no copy request makes that permanent
+        var daemon = new FakeIncusDaemon()
+                .container("ci-failed-build", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "ci-failed-build"))
+                .container("dev-1", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "ci-failed-build",
+                        Metadata.PROFILE, "ci-failed-build"))
+                .refuseWritesContaining("limits.memory");
+        var request = new BranchFlow.Request("dev-1", "dev-2", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of());
+
+        assertThrows(RuntimeException.class,
+                () -> BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of())));
+
+        assertFalse(daemon.instance("dev-2").path("config").has(Metadata.UNTRUSTED_LINEAGE));
+    }
+
+    /** The taint of dev-2, branched from dev-1, whose parent is {@code parent}, in {@code daemon}. */
+    private static String taintOfABranchOfABranchOf(String parent, FakeIncusDaemon daemon) {
+        daemon.container("dev-1", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, parent,
+                        Metadata.PROFILE, "tpl-isx-agent"))
+                .refuseWritesContaining("limits.memory");
+        var request = new BranchFlow.Request("dev-1", "dev-2", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of());
+        assertThrows(RuntimeException.class,
+                () -> BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of())));
+        return daemon.instance("dev-2").path("config").path(Metadata.UNTRUSTED_LINEAGE).asText("");
+    }
+
+    @Test
+    void aBranchOfAnOldBranchOfAFailedBuildIsStampedSoItOutlivesTheInstancesBetween() {
+        // dev-1 was branched from foo-failed-build before #936: no taint of its own. A branch of it
+        // must carry one, or deleting dev-1 and the failed build would leave it admitted
+        var daemon = new FakeIncusDaemon().container("foo-failed-build",
+                Map.of(Metadata.TYPE, Metadata.TYPE_FAILED_BUILD, Metadata.PROFILE, "tpl-isx-agent"));
+        assertEquals("branched from failed-build", taintOfABranchOfABranchOf("foo-failed-build", daemon));
+    }
+
+    @Test
+    void aBranchOfABranchWhoseFailedBuildIsGoneIsStampedToo() {
+        // Gone, it cannot say it was not a failed build: fail closed
+        assertEquals("branched from a deleted *-failed-build",
+                taintOfABranchOfABranchOf("foo-failed-build", new FakeIncusDaemon()));
     }
 }

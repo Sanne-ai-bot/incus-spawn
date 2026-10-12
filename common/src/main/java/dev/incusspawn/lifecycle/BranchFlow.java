@@ -294,8 +294,22 @@ public final class BranchFlow {
         // answer for its source's create meanwhile (#1011). An empty value unsets.
         var sourceConfig = sourceInstance.path("config");
         // An untrusted source makes an untrusted copy (#936), whatever the caller asked to stamp: a
-        // failed build, or a branch of one, from before the taint existed gets it here
+        // failed build from before the taint existed gets it here. Never by a name alone, which
+        // would make a template merely named *-failed-build taint its tree for good
         var untrusted = Metadata.untrustedReason(key -> sourceConfig.path(key).asText(""));
+        if (untrusted.isEmpty() && !Metadata.untrustedByName(key -> sourceConfig.path(key).asText("")).isEmpty()) {
+            // The source was branched, before the stamp existed, from something named *-failed-build:
+            // stamp the copy when that is a failed build, or is gone and cannot say it was not, so
+            // the copy stays untrusted once the instances between are deleted. A template merely
+            // named so is asked, and spares the copy. Only for such a name: no other branch pays
+            // the request
+            var parentName = sourceConfig.path(Metadata.PARENT).asText("");
+            var parent = incus.instanceMetadataOrThrow(parentName);
+            var parentReason = parent == null ? "" : Metadata.untrustedReason(key -> parent.path("config").path(key).asText(""));
+            if (parent == null || !parentReason.isEmpty()) {
+                untrusted = "branched from " + (parent == null ? "a deleted *-" + Metadata.TYPE_FAILED_BUILD : parentReason);
+            }
+        }
         if (!untrusted.isEmpty()) copyConfig.put(Metadata.UNTRUSTED_LINEAGE, untrusted);
         if (sourceConfig instanceof io.hyperfoil.tools.jjq.value.JqObject sourceObj) {
             sourceObj.keys().forEach(key -> {
