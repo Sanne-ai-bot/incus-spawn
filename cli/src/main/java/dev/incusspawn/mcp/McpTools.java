@@ -177,6 +177,8 @@ final class McpTools {
                         .string("args", "Arguments to the skill", false)
                         .string("instance", "One of your instances to work in", false)
                         .string("template", "Or: a template to create a fresh instance from", false)
+                        .string("name_hint", "For a fresh instance: a word to include in its name instead "
+                                + "of 'task' (1-16 chars of a-z, 0-9, '-'), e.g. '870-impl'", false)
                         .string("purpose", "For a fresh instance: what it is for (see create_instance)", false)
                         .string("cwd", "Directory to work in (default: the template's workdir; a leading ~ is the agent user's home)", false)
                         .string("model", MODEL, false)
@@ -956,7 +958,8 @@ final class McpTools {
                     agent.requireBudget(session.config(), profile);
                     var mode = agent.permissionMode(session.config(), template);
                     tasks.checkCapacityForNewAgent();
-                    var created = provision(info, "task", args.string("purpose"), key, listing, ctx,
+                    var hint = java.util.Objects.requireNonNullElse(args.string("name_hint"), "task");
+                    var created = provision(info, hint, args.string("purpose"), key, listing, ctx,
                             name -> "Creating " + name + " from " + template, template, "created", (name, stamps) -> {
                                 var withAgent = new java.util.HashMap<>(stamps);
                                 withAgent.put(Metadata.MCP_DELEGATE_AGENT, agent.id);

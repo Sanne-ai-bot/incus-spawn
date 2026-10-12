@@ -62,7 +62,7 @@ Test hostile input in a real bash (`ExecScriptTest`, `TaskScriptsTest` run the g
 
 **Lifecycles.**
 Session id is `<pid>-<start>` (`SessionId`; on Linux `/proc` starttime ticks, see DESIGN.md), or `instance:<name>:<grant>` for a coordinator instance (below), read only for liveness: an instance belongs to its `mcp-owner`.
-Names are reserved before the copy.
+Names are reserved before the copy, as `mcp-<template>-<hint>-<suffix>` (`McpSession.reserve`): `create_instance` and `delegate(template)` take the same `name_hint`, validated there; a delegate without one is `task`, a create without one has no hint (#1242).
 `max-instances` counts the user's instances across sessions (`Orphans.othersOf`), and `max-concurrent-tasks` the user's busy tasks: this session's registry plus `TaskScripts.busy()` asked of each running instance another session holds or orphaned, or kept by a live one (`McpSession.taskInstancesElsewhere`; `InstanceBackend.running()` from the same listing), in parallel, nothing when there are none, recounted on every reservation, each task id once, named per instance in the refusal.
 An instance failing counts zero, and one silent past `Tasks.elsewhereTimeout`, or slower than half of it, is not asked for `elsewhereCooldown` and counts zero meanwhile (never a frozen earlier answer).
 Every `TaskScripts` read of a task file the host waits on goes through `ifFile` (`readFile` for `cat`; `ifFile(f, "read -r k")` on the poll path, which avoids a subshell), which opens it read-write -- never waiting on a FIFO, not even one swapped in after the path was checked (#1035, #1080) -- and reads only if `/dev/fd/3` is a regular file.
