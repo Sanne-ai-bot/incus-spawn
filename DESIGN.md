@@ -1013,7 +1013,7 @@ The proxy routes requests to `api.anthropic.com` through one of three paths base
    The body is passed through unmodified — the Vertex SDK already formats it correctly.
 
 2. **Standard-to-Vertex translation** (`/v1/messages`): Requests in standard Anthropic API format.
-   The proxy buffers the body and translates to Vertex `rawPredict` format (see translation details below).
+   The proxy translates the body to Vertex `rawPredict` format as it arrives, and holds the result until it has been sent for good (see translation details below, and "A body the proxy must hold").
    This path is used if a container happens to send standard-format requests (e.g. from curl).
 
 3. **Direct forwarding** (all other paths): Non-messages endpoints (settings, bootstrap, feature flags, MCP registry) are forwarded to the real `api.anthropic.com` with credential injection.
@@ -1026,11 +1026,22 @@ The proxy routes requests to `api.anthropic.com` through one of three paths base
 - Body: extracts `model` field and moves it into the URL path, stripping date suffixes (e.g. `claude-sonnet-4-6-20251001` → `claude-sonnet-4-6`)
 - Body: adds `"anthropic_version": "vertex-2023-10-16"` (required by Vertex rawPredict)
 - Body: strips all top-level fields not in the Vertex allowlist (beta features like `context_management` cause "Extra inputs" rejections)
-- Body: recursively strips `scope` from nested `cache_control` objects (beta feature unsupported by Vertex)
+- Body: recursively strips `scope` from nested `cache_control` objects (beta feature unsupported by Vertex); a `cache_control` object's other members are copied as they are
 - Header: removes `anthropic-beta` (Vertex rejects beta feature flags; features are enabled via `anthropic_version`)
 - Host: rewrites to the Vertex endpoint hostname for the configured region
 
-The body translation uses an allowlist approach: only known-good fields (`messages`, `system`, `max_tokens`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `stream`, `metadata`, `tools`, `tool_choice`, `thinking`, `output_config`, `anthropic_version`) are kept.
+The body translation uses an allowlist approach: only known-good fields (`messages`, `system`, `max_tokens`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `stream`, `metadata`, `tools`, `tool_choice`, `thinking`, `output_config`) are kept, and the client's own `anthropic_version` is replaced by the proxy's.
+
+`VertexBodyRewriter` does the translation as the bytes arrive (#1315), never holding a body or a tree of it: a tree cost about six times the body in heap, so a 24 MiB Messages request exhausted the native proxy's heap and was never answered, and the tree's recursion overflowed the stack a few thousand levels down.
+It validates the JSON as strictly as `JqValues.parseStrict`, which the tree translation used, and copies every value it keeps byte for byte.
+Its memory is bounded whatever the body: two bits per nesting level up to 10,000 (`parseStrict`'s own limit), a field name decoded up to 32 characters (longer than any it compares), `model` up to the Vertex front end's URL ceiling, a path of 16,384 bytes, and 16 distinct dropped field names to log; strings and numbers pass through in chunks.
+It parts from the tree translation where #1315 decided:
+- a duplicate key is forwarded as sent, for Vertex to judge, except a duplicate top-level `model` or `stream`, escaped spellings included, which is refused with a 400 (the tree translation refused every duplicate, with a 502);
+- a duplicate never carries a field past the rewrite: every occurrence of a dropped field, of the client's `anthropic_version` and of a `cache_control`'s `scope` is removed;
+- a name the rewriter compares (every key outside a dropped field and outside a copied `cache_control` value) must be well-formed: valid UTF-8 without overlong forms, no lone surrogate escapes; and `model`, which goes into the URL, must also hold no control or invisible (format) character, whitespace, `/`, `\`, `?`, `#` or `%`, and fit the URL ceiling, or the request is refused with a 400, since a lenient decoder upstream could read a name or a route the proxy did not;
+- values it keeps are forwarded as sent: malformed Unicode stays as it is (the tree re-encoded `\ud800` as `?`), and so does number spelling (`1.0e2`, not `100`);
+- whitespace before a body that is not an object is not forwarded.
+Each is a named case in `VertexBodyRewriterTest`, which also checks the rewriter against the tree translation (`LegacyVertexTranslation`, kept as the test's oracle) for a corpus and generated bodies, split into chunks every way.
 Everything else is dropped.
 This is more robust than blocklisting individual beta fields, since new Claude Code beta features are automatically stripped without proxy changes.
 
@@ -1202,7 +1213,7 @@ Because SNI names become file names in the cert store, `CertStore.get()` accepts
 `InterceptedCertOptionsTest` handshakes with a client that trusts only the isx CA and verifies hostnames, at several depths, and checks every shipped intercepted domain (built-ins plus every bundled tool's `proxy:` domains) resolves to a matching cert name at depths 0-3.
 So a newly added domain is covered without being listed.
 
-**Vertex AI token refresh**: Vertex AI requests that receive a 401 response are retried once with a fresh GCP access token (the cached token is invalidated).
+**Vertex AI token refresh**: Vertex AI requests that receive a 401 response are retried once with a fresh GCP access token (the cached token is invalidated), the body replayed from the same spool ("A body the proxy must hold").
 This handles token expiry during long-running sessions without user intervention.
 
 **API request bodies (#1315)**: a request to a credential-injecting domain is streamed upstream as it arrives, as the plain relay streams an upload, unless it is a Vertex model call.
@@ -1211,12 +1222,32 @@ Held whole, a body cost about three times its size in heap, and a Vertex one abo
 `MitmProxy.streamApiRequest` hands the request to `Upstream.relayRequest` with `RelayHooks`: `prepare` copies the head and runs `injectHeaders` before any of the request leaves, so the credential is on the head even when the head goes out early for a client's `Expect: 100-continue`.
 Everything else is the plain relay's (the pause at routing, backpressure, `RelayWatchdog`, the early answer that closes the connection, upstream's `100`), and its framing too: a chunked upload such as git's push reaches upstream chunked, where the whole-body path gave it a `Content-Length` of its own.
 There is no upload size limit, for the reason the relay has none.
-Vertex model calls are still read whole; bounding them is the second half of #1315 (a spool and a streaming rewriter).
+A Vertex model call is held instead, in bounded memory ("A body the proxy must hold").
 
 `--debug` does not hold a body to log it: each body is captured as it passes, up to `ApiTrafficLog.MAX_BODY_CAPTURE` (64 KiB), and a body cut there is logged as `[captured N of M bytes]` and its first 4 KiB, as much as an uncut body that is not JSON shows; a translated Vertex body is logged as it was forwarded too.
 `isx proxy dump` (`DumpProxy`), which holds each body whole anyway, still logs it whole (`ApiTrafficLog.Capture.whole`).
 Responses are piped as they are without it; the log is written once the response ends.
 Otherwise turning on diagnostics would change what it diagnoses: the upload's latency, its framing, and the proxy's memory.
+
+**A body the proxy must hold (#1315)**: a Vertex model call is sent only once its body has ended, since its URL is built from `model` and `stream`, which SDKs put last, and a 401 sends the same body again.
+`MitmProxy.retainVertexRequest` pauses it at routing (#1164), translates it as it arrives, and writes it to a `BodySpool`, kept across the 401 retry.
+It is released once an answer other than a 401 has come and the body has all gone upstream, or the exchange ends, whichever is first, so a long streamed answer does not keep it; the release runs on the spool's own event loop, and a spool gives back what it kept once, however many closes race.
+Memory is bounded by one `SpoolBudget` (32 MiB, an eighth of the native heap) shared by every spool, which counts bytes kept in memory, bytes waiting for their disk write and bytes read back but not yet written to the upstream socket.
+Kept bytes take at most half of it, so the other half always serves I/O in flight and a write never waits behind memory nobody gives back until their exchange ends.
+Beyond its share a spool writes to a file in an owner-only `~/.local/state/incus-spawn/proxy-spool/`, not `/tmp`, which is tmpfs, so RAM, on Fedora; the file is unlinked as soon as it is open, so a crash leaves no name behind, and closing its handle frees its storage.
+Backpressure holds both ways: the client is paused while its spool's disk writes queue beyond 256 KiB or the budget is spent, and the spool, its kept part as much as its file, is written upstream no faster than the socket drains.
+A replay has one cursor and one drain handler, installed before its first write, as Vert.x's own pipe does: a drain that lands just as the queue is found full is not missed, and a drain nobody waited for only resumes from the cursor, so no byte goes upstream twice.
+`BodySpool.close()` ends a spool on every path (the response's end or close, a refusal, a disk error, an unexpected error, which is answered with a 502), once, and a write still pending when it closes gives back its own share when it completes.
+A kept chunk a replay already handed to the socket may still sit in Netty's queue for a moment after the close gives its share back, so the budget can undercount by up to its kept half for that moment.
+A spool is only ever used on its own event loop: a replay asked for elsewhere (the shared token fetch completes on whichever request started it) hops there first, so it never races the spool's close, and a 401 stops the first send's replay before the retry's begins.
+So the heap held for bodies is the budget plus what Netty holds for any connection, a few TLS records each, whatever the size or the number of bodies.
+`DiskReserve` keeps the host's disk from filling: the spool leaves free min(15% of the filesystem, 4 GiB), journald's `SystemKeepFree` default, the rule the same host's logger keeps (3 GiB on 20 GiB, 4 GiB on 2 TiB; 5% would keep about 100 GiB on 2 TiB).
+Free space is sampled off the event loop every 8 MiB written or every second, and a write is admitted only if the sample, less every write pending and every write completed since the sample began, leaves the reserve free.
+A body that does not fit is answered `507 Insufficient Storage`, naming the host's free space and not the body, with the connection closed and nothing sent upstream.
+The same check runs before the proxy answers a client's `Expect: 100-continue`, but only for a body that may spill (no `Content-Length`, or more than half the budget): one that fits in memory never touches the disk, so a host short of disk still serves it.
+It answers that itself (RFC 9110 §10.1.1): upstream cannot be asked before the body is in, and a client that waits for `100` would otherwise wait out its own timeout; upstream gets the body whole, with a `Content-Length` and no `Expect`.
+There is no upload size limit: a body passes as long as the host has disk for it.
+**Rejected:** a 413 cap (it refuses what upstream accepts, against the relay's transparency); a memory budget alone (a body larger than it would deadlock or be refused); the tree translation over a spooled body (still six times the body in heap); translating while streaming with no copy (`stream` comes last, and the retry would be lost); `/tmp` and off-heap buffers (both RAM).
 
 **Proxy caching**: The proxy caches three types of upstream content to avoid redundant downloads:
 - **OCI blobs** — keyed by SHA256 content digest, verified on store
@@ -1784,7 +1815,7 @@ Refusing is the fallback for what cannot be fixed, not the general rule: GitHub 
 Moving git identity out of template-build time is also what closes the older complaint that every branch of a template shares one GitHub identity (#281).
 
 The deeper fix would be to stop telling the container which mode it is in at all.
-`handleApiRequestWithBody` already branches on the request *path*, not on how the container was built, and `translateToVertex()` already converts a standard `/v1/messages` call into a Vertex `rawPredict`.
+`handleApiRequest` already branches on the request *path*, not on how the container was built, and `VertexBodyRewriter` already converts a standard `/v1/messages` call into a Vertex `rawPredict`.
 So dropping `CLAUDE_CODE_USE_VERTEX` and always baking the standard placeholder would make all three Claude types environmentally identical and every swap live.
 The open risks are Vertex model-ID mapping and the non-messages endpoints that currently fall through to `api.anthropic.com`; both want measuring against a real Vertex project rather than arguing about.
 
@@ -3618,7 +3649,7 @@ The solution: containers now run in Vertex mode with `CLAUDE_CODE_USE_VERTEX=1`,
 The Vertex SDK formats requests in Vertex URL format (`/v1/projects/.../models/...:streamRawPredict`), sends them to the proxy, and the proxy injects real GCP credentials before forwarding to the actual Vertex endpoint.
 The proxy also retains the standard-to-Vertex translation path for `/v1/messages` requests — this is the primary path for tools like Pi that use the standard Anthropic API format, and also serves manual `curl` calls inside the container.
 
-**Fragility and mitigation:** The standard-to-Vertex translation path uses an allowlist (`VERTEX_ALLOWED_FIELDS` in `MitmProxy.java`) that may drift as Anthropic adds new standard fields.
+**Fragility and mitigation:** The standard-to-Vertex translation path uses an allowlist (`ALLOWED_FIELDS` in `VertexBodyRewriter.java`) that may drift as Anthropic adds new standard fields.
 However, the primary traffic flow (Vertex passthrough) doesn't use the allowlist — the Vertex SDK already formats the body correctly.
 The allowlist only affects the fallback translation path.
 The `anthropic_version: "vertex-2023-10-16"` value is hardcoded in the translation path — this matches the Anthropic Vertex SDK and has been stable since Vertex support launched.

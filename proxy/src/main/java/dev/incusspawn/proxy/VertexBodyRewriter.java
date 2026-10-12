@@ -32,7 +32,7 @@ import java.util.function.Consumer;
  * the rewriter compares, or the {@code model} that goes into the URL, must be well-formed, or the
  * request is refused.
  */
-final class VertexBodyRewriter {
+class VertexBodyRewriter {
 
     /** {@code parseStrict}'s own limit: 10,000 levels parse, 10,001 do not. */
     static final int MAX_DEPTH = 10_000;

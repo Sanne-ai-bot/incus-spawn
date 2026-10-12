@@ -1,13 +1,10 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 
 import dev.incusspawn.config.Jjq;
-import io.hyperfoil.tools.jjq.value.JqArray;
-import io.hyperfoil.tools.jjq.value.JqObject;
-import io.hyperfoil.tools.jjq.value.JqValue;
-import io.hyperfoil.tools.jjq.value.JqValues;
 
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -65,16 +62,13 @@ public class MitmProxy {
     // The Vertex SDK's @date model suffix in a URL, which the global endpoint rejects
     private static final java.util.regex.Pattern VERTEX_DATE_SUFFIX = java.util.regex.Pattern.compile("@\\d{8}(?=:)");
 
-    // Top-level fields accepted by Vertex AI rawPredict. Anything else (beta features
-    // like context_management, etc.) is stripped to avoid "Extra inputs" rejections.
-    private static final Set<String> VERTEX_ALLOWED_FIELDS = Set.of(
-            "anthropic_version", "messages", "system", "max_tokens",
-            "temperature", "top_p", "top_k", "stop_sequences", "stream",
-            "metadata", "tools", "tool_choice", "thinking", "output_config"
-    );
-
-    // Track which stripped fields have already been logged (avoid spam)
+    // Dropped top-level fields already logged, so each is logged once; bounded, since an instance names them
+    private static final int MAX_LOGGED_DROPPED_FIELDS = 256;
     private final Set<String> loggedStrippedFields = ConcurrentHashMap.newKeySet();
+
+    // What Vertex model calls' bodies may hold, in heap and on disk (#1315). Package-private for tests.
+    SpoolBudget spoolBudget = new SpoolBudget(SpoolBudget.DEFAULT_LIMIT);
+    SpoolStore spoolStore;
 
     // Cached GCP access token for Vertex AI (tokens last ~60 min, refresh at ~50 min).
     // Single-flight: concurrent callers share one in-flight gcloud invocation via the
@@ -736,6 +730,14 @@ public class MitmProxy {
         synchronized (this) {
             mitmCertOptions = buildKeyCertOptions();
         }
+        if (spoolStore == null) {
+            try {
+                spoolStore = new SpoolStore.OnDisk(vertx, Environment.proxySpoolDir());
+            } catch (IOException | RuntimeException e) {
+                ProxyLog.warn("No spool for Vertex request bodies (" + Environment.proxySpoolDir() + "): " + e.getMessage());
+                spoolStore = new SpoolStore.Unavailable(e.getMessage());
+            }
+        }
 
         // MITM TLS server with SNI
         var serverOptions = new HttpServerOptions()
@@ -1362,26 +1364,15 @@ public class MitmProxy {
 
     /**
      * A request to a credential-injecting domain. Streamed upstream as it arrives, unless it is a
-     * Vertex model call: that is translated, its URL depends on its body, and it is sent again on a
-     * 401, so it is read whole first (#1315).
+     * Vertex model call: its URL depends on its body, which may be translated, and it is sent again on
+     * a 401, so its body is held in a {@link BodySpool} until it has been sent for good (#1315).
      */
     private void handleApiRequest(HttpServerRequest clientReq, RequestContext ctx) {
         if (!isVertexModelRequest(clientReq, ctx)) {
             streamApiRequest(clientReq, ctx);
             return;
         }
-        clientReq.body().onSuccess(bodyBuffer -> {
-            try {
-                handleVertexRequest(clientReq, ctx, bodyBuffer);
-            } catch (Exception e) {
-                System.err.println("API request error: " + e.getMessage());
-                e.printStackTrace(System.err);
-                sendError(clientReq.response(), 502, "Proxy error");
-            }
-        }).onFailure(err -> {
-            System.err.println("Failed to read API request body: " + err.getMessage());
-            sendError(clientReq.response(), 502, "Proxy error");
-        });
+        retainVertexRequest(clientReq, ctx);
     }
 
     private static boolean isVertexModelRequest(HttpServerRequest clientReq, RequestContext ctx) {
@@ -1434,37 +1425,161 @@ public class MitmProxy {
         if (debug != null) debug.logAtEnd(upResp);
     }
 
-    /** A Vertex model call, its body read whole: translated if it is in the standard API's format. */
-    private void handleVertexRequest(HttpServerRequest clientReq, RequestContext ctx,
-                                     Buffer bodyBuffer) {
+    /**
+     * A Vertex model call: its body is translated as it arrives if it is in the standard API's format,
+     * and held in a {@link BodySpool} until it has been sent for good, since the URL is known only at its end
+     * and a 401 sends it again. Paused here, before anything waits (#1164).
+     */
+    private void retainVertexRequest(HttpServerRequest clientReq, RequestContext ctx) {
+        clientReq.pause();
         var credentials = ctx.creds();
         var upstreamHost = vertexHost(credentials);
-        byte[] bodyBytes = bodyBuffer.getBytes();
+        var clientResp = clientReq.response();
         var exchange = beginModelCall(clientReq, ctx);
-        var debug = debugExchange(clientReq, bodyBytes);
+        var debug = debugExchange(clientReq, null);
+        var store = spoolStore;
+        var spool = new BodySpool(spoolBudget, store, vertx.getOrCreateContext());
+        // The exchange ends however the client's response does; so do its count and its spool
+        io.vertx.core.Handler<Void> ended = v -> {
+            if (exchange != null) exchange.end();
+            spool.close();
+        };
+        clientResp.endHandler(ended);
+        clientResp.closeHandler(ended);
 
         var path = clientReq.path();
-        String uri;
-        if (path.startsWith("/v1/projects/")) {
-            // Already Vertex-formatted (container running in Vertex mode with
-            // ANTHROPIC_VERTEX_BASE_URL pointing here): forward to real Vertex.
-            // The Vertex SDK uses @date suffixes (e.g. claude-haiku-4-5@20251001)
-            // which the global endpoint rejects — strip them.
-            uri = VERTEX_DATE_SUFFIX.matcher(path).replaceFirst("");
-        } else {
-            // Standard API format (/v1/messages): translate to Vertex AI rawPredict
-            var translated = translateToVertex(path, bodyBytes, upstreamHost, credentials);
-            uri = translated.path;
-            bodyBytes = translated.body;
-            if (debug != null) debug.forwarded = ApiTrafficLog.Capture.of(bodyBytes);
+        VertexBodyRewriter rewriter = null;
+        if (!path.startsWith("/v1/projects/")) {
+            if (debug != null) debug.forwarded = new ApiTrafficLog.Capture();
+            rewriter = vertexRewriter(path, credentials,
+                    debug == null ? spool::write : chunk -> {
+                        capture(debug.forwarded, chunk);
+                        spool.write(chunk);
+                    });
         }
-        var requestOptions = new RequestOptions()
-                .setMethod(clientReq.method())
-                .setPort(443)
-                .setHost(upstreamHost)
-                .setURI(uri);
+        var translator = rewriter;
+        var refused = new boolean[1];
+        java.util.function.BiConsumer<Integer, String> refuse = (status, message) -> {
+            if (refused[0]) return;
+            refused[0] = true;
+            if (!clientReq.isEnded()) clientReq.handler(ignored -> {});
+            refuseUnread(clientReq, status, message);
+        };
+        // Checked before the client is told to send a body that may not fit in memory: one that does
+        // never reaches the disk, so the disk's state is no reason to refuse it
+        if (mayNeedDisk(clientReq) && !store.hasRoom()) {
+            ProxyLog.warn("Refusing a Vertex request (" + path + "): " + store.refusal());
+            refuse.accept(507, "isx-proxy: " + store.refusal() + "; this request could not be held");
+            return;
+        }
+        spool.failureHandler(err -> {
+            var full = err instanceof BodySpool.SpoolFull;
+            ProxyLog.warn("Could not hold a Vertex request (" + path + "): " + err.getMessage());
+            refuse.accept(full ? 507 : 502, full ? "isx-proxy: " + err.getMessage() + "; this request could not be held"
+                    : "Proxy error");
+        });
+        // Upstream cannot be asked before the body is in: the proxy answers for it (RFC 9110 10.1.1)
+        if ("100-continue".equalsIgnoreCase(clientReq.getHeader("Expect"))) clientResp.writeContinue();
 
-        sendVertexRequest(clientReq, requestOptions, upstreamHost, ctx, bodyBytes, false, exchange, debug);
+        clientReq.handler(chunk -> {
+            if (debug != null) capture(debug.original, chunk);
+            try {
+                if (translator != null) translator.accept(chunk);
+                else spool.write(chunk);
+            } catch (VertexBodyRewriter.InvalidBody | VertexBodyRewriter.RefusedBody | RuntimeException e) {
+                // Anything unexpected too: the client gets an answer, and the spool is closed with it
+                refuseTranslation(path, e, refuse);
+                return;
+            }
+            if (spool.writeQueueFull()) {
+                clientReq.pause();
+                spool.drainHandler(clientReq::resume);
+            }
+        });
+        clientReq.exceptionHandler(err -> spool.close());
+        clientReq.endHandler(v -> {
+            if (refused[0]) return;
+            String uri;
+            try {
+                if (translator == null) {
+                    // Already Vertex-formatted (container running in Vertex mode with
+                    // ANTHROPIC_VERTEX_BASE_URL pointing here): forward to real Vertex.
+                    // The Vertex SDK uses @date suffixes (e.g. claude-haiku-4-5@20251001)
+                    // which the global endpoint rejects — strip them.
+                    uri = VERTEX_DATE_SUFFIX.matcher(path).replaceFirst("");
+                } else {
+                    var result = translator.end();
+                    uri = result.path();
+                    logDroppedFields(result.droppedFields());
+                }
+            } catch (VertexBodyRewriter.InvalidBody | VertexBodyRewriter.RefusedBody | RuntimeException e) {
+                refuseTranslation(path, e, refuse);
+                return;
+            }
+            var requestOptions = new RequestOptions()
+                    .setMethod(clientReq.method())
+                    .setPort(443)
+                    .setHost(upstreamHost)
+                    .setURI(uri);
+            spool.end().onSuccess(done -> sendVertexRequest(clientReq, requestOptions, ctx, spool, false, exchange, debug));
+        });
+        clientReq.resume();
+    }
+
+    /** Answers a request whose body was not all read, and closes its connection, which still holds the rest. */
+    private void refuseUnread(HttpServerRequest clientReq, int status, String message) {
+        var resp = clientReq.response();
+        if (resp.ended() || resp.closed()) return;
+        if (resp.headWritten()) {
+            resp.reset();
+            return;
+        }
+        resp.headers().clear();
+        resp.putHeader("Connection", "close");
+        resp.setStatusCode(status).end(message).onComplete(v -> clientReq.connection().close());
+    }
+
+    /**
+     * Answers a body the rewriter would not translate: invalid JSON as before, with a 502; a refused
+     * one with a 400; and anything unexpected with a 502, as the handler's catch-all always did.
+     */
+    private static void refuseTranslation(String path, Exception e, java.util.function.BiConsumer<Integer, String> answer) {
+        if (e instanceof RuntimeException) {
+            System.err.println("Vertex request error (" + path + "): " + e);
+            e.printStackTrace(System.err);
+            answer.accept(502, "Proxy error");
+        } else if (e instanceof VertexBodyRewriter.InvalidBody) {
+            System.err.println("Failed to translate request body to Vertex format: " + e.getMessage());
+            answer.accept(502, "Proxy error");
+        } else {
+            ProxyLog.warn("Refusing a Vertex request (" + path + "): " + e.getMessage());
+            answer.accept(400, "isx-proxy: " + e.getMessage());
+        }
+    }
+
+    /** Whether a body may outgrow what the spool keeps in memory: unknown length, or more than half the budget. */
+    private boolean mayNeedDisk(HttpServerRequest clientReq) {
+        var length = clientReq.getHeader("Content-Length");
+        if (length == null) return true;
+        try {
+            return Long.parseLong(length.strip()) > spoolBudget.limit() / 2;
+        } catch (NumberFormatException e) {
+            return true;
+        }
+    }
+
+    /** The translation of a Vertex request's body; overridable so tests can make it fail. */
+    VertexBodyRewriter vertexRewriter(String path, ProxyCredentials credentials, Consumer<Buffer> output) {
+        return new VertexBodyRewriter(path, credentials.vertexProjectId(), credentials.vertexRegion(), output);
+    }
+
+    private void logDroppedFields(List<String> dropped) {
+        if (dropped.isEmpty() || loggedStrippedFields.size() >= MAX_LOGGED_DROPPED_FIELDS) return;
+        var fresh = dropped.stream().filter(loggedStrippedFields::add).toList();
+        if (!fresh.isEmpty()) System.err.println("Vertex translation: stripped unsupported fields: " + fresh);
+        if (loggedStrippedFields.size() >= MAX_LOGGED_DROPPED_FIELDS) {
+            System.err.println("Vertex translation: " + MAX_LOGGED_DROPPED_FIELDS + " field names logged; no more will be");
+        }
     }
 
     /**
@@ -1495,45 +1610,63 @@ public class MitmProxy {
         return InetAddress.getByName(host).getHostAddress();
     }
 
-    private void sendVertexRequest(HttpServerRequest clientReq, RequestOptions requestOptions,
-                                   String upstreamHost, RequestContext ctx, byte[] bodyBytes, boolean isRetry,
-                                   ApiActivity.Exchange exchange, DebugExchange debug) {
+    /**
+     * Sends the held body upstream with the GCP token; a 401 invalidates the token and sends it once
+     * more, replayed from the same spool, which is released once an answer other than a 401 has come and
+     * the body has all gone, or the exchange ends.
+     */
+    private void sendVertexRequest(HttpServerRequest clientReq, RequestOptions requestOptions, RequestContext ctx,
+                                   BodySpool spool, boolean isRetry, ApiActivity.Exchange exchange, DebugExchange debug) {
         var domain = ctx.domain();
+        var clientResp = clientReq.response();
+        if (clientResp.closed()) return;
         requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
             Future<Boolean> head;
             try {
-                head = prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, exchange);
+                head = prepareApiHead(clientReq, upReq, ctx, requestOptions.getHost(), true, exchange);
             } catch (RuntimeException e) {
                 // A header Vert.x refuses: answer now, as the relay does, not at the idle timeout
                 upReq.exceptionHandler(ignored -> {}).reset();
                 System.err.println("Vertex request error (" + domain + "): " + e.getMessage());
-                sendError(clientReq.response(), 502, "Proxy error");
+                sendError(clientResp, 502, "Proxy error");
                 return;
             }
             head.onSuccess(ok -> {
-                if (!ok) return;
-                upReq.putHeader("Content-Length", String.valueOf(bodyBytes.length));
-
-                upReq.send(Buffer.buffer(bodyBytes)).onSuccess(upResp -> {
+                // The token may take seconds: the client may have left, and its spool with it
+                if (!ok || clientResp.closed()) {
+                    upReq.exceptionHandler(ignored -> {}).reset();
+                    return;
+                }
+                // The proxy answered the client's expectation itself; upstream gets the whole body at once
+                upReq.headers().remove("Expect");
+                upReq.putHeader("Content-Length", String.valueOf(spool.size()));
+                upReq.exceptionHandler(ignored -> {});
+                upReq.response().onSuccess(upResp -> {
                     if (!isRetry && upResp.statusCode() == 401) {
                         System.err.println("Vertex 401: invalidating cached token and retrying");
                         invalidateVertexToken();
-                        sendVertexRequest(clientReq, requestOptions, upstreamHost, ctx,
-                                bodyBytes, true, exchange, debug);
+                        spool.stopReplay();
+                        upReq.reset();
+                        sendVertexRequest(clientReq, requestOptions, ctx, spool, true, exchange, debug);
                         return;
                     }
+                    // No send follows this answer: the body goes as soon as it has all gone upstream
+                    spool.closeOnceSent();
                     onApiResponse(ctx, upResp, exchange, debug);
-                    var clientResp = clientReq.response();
                     upstream.copyResponseHead(upResp, clientResp);
                     upstream.pipeResponse(upResp, clientResp, null, responseTap(exchange, debug));
                 }).onFailure(err -> {
                     System.err.println("Upstream send error (" + domain + "): " + err.getMessage());
-                    sendError(clientReq.response(), 502, "Upstream error");
+                    sendError(clientResp, 502, "Upstream error");
+                });
+                spool.replay(upReq).onComplete(sent -> {
+                    if (sent.succeeded()) upReq.end();
+                    else upReq.reset();
                 });
             });
         }).onFailure(err -> {
             System.err.println("Upstream connect error (" + domain + "): " + err.getMessage());
-            sendError(clientReq.response(), 502, "Upstream connection failed");
+            sendError(clientResp, 502, "Upstream connection failed");
         });
     }
 
@@ -1624,96 +1757,6 @@ public class MitmProxy {
 
     private void sendError(HttpServerResponse resp, int statusCode, String message) {
         upstream.sendError(resp, statusCode, message);
-    }
-
-    // --- Vertex AI translation ---
-
-    private record VertexTranslation(String path, byte[] body) {}
-
-    /**
-     * Translate a standard Anthropic API request into a Vertex AI rawPredict request.
-     * <p>
-     * Differences between the two APIs:
-     * <ul>
-     *   <li>URL: /v1/messages → /v1/projects/{pid}/locations/{region}/publishers/anthropic/models/{model}:rawPredict</li>
-     *   <li>Auth: x-api-key header → Authorization: Bearer (GCP token)</li>
-     *   <li>Body: only {@link #VERTEX_ALLOWED_FIELDS} are kept; everything else is stripped</li>
-     *   <li>Body: "model" replaced with "anthropic_version": "vertex-2023-10-16"</li>
-     *   <li>Body: "scope" removed from nested cache_control objects (beta feature)</li>
-     *   <li>Header: anthropic-beta removed (Vertex features are enabled via anthropic_version)</li>
-     *   <li>Streaming: :rawPredict → :streamRawPredict when stream=true</li>
-     * </ul>
-     */
-    private VertexTranslation translateToVertex(String originalPath, byte[] bodyBytes,
-                                                 String upstreamHost, ProxyCredentials credentials) {
-        try {
-            var tree = bodyBytes.length > 0 ? JqValues.parseStrict(bodyBytes) : null;
-
-            // Non-JSON or non-object body (e.g. GET /v1/models): just forward as-is
-            if (!(tree instanceof JqObject root)) {
-                return new VertexTranslation(originalPath, bodyBytes);
-            }
-
-            // Extract model (goes into URL, not body). The global Vertex endpoint
-            // only accepts short aliases, so strip date suffixes like -20251001.
-            var model = root.pathText("model", "claude-sonnet-4-6");
-            model = model.replaceFirst("-\\d{8}$", "");
-            var streaming = root.keys().contains("stream") && root.getField("stream").asBoolean(false);
-
-            // Strip all top-level fields Vertex doesn't support (beta features, etc.),
-            // then strip "scope" from cache_control objects deep in the tree (beta feature).
-            var stripped = new java.util.ArrayList<String>();
-            var rebuilt = JqObject.builder(root.size() + 1);
-            root.forEach((field, value) -> {
-                if (field.equals("model")) return;
-                if (!VERTEX_ALLOWED_FIELDS.contains(field)) {
-                    stripped.add(field);
-                    return;
-                }
-                rebuilt.put(field, stripCacheControlScope(value));
-            });
-            if (!stripped.isEmpty() && loggedStrippedFields.addAll(stripped)) {
-                System.err.println("Vertex translation: stripped unsupported fields: " + stripped);
-            }
-
-            rebuilt.put("anthropic_version", "vertex-2023-10-16");
-
-            var rewrittenBytes = rebuilt.build().toJsonString()
-                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-
-            var endpoint = streaming ? ":streamRawPredict" : ":rawPredict";
-            var vertexPath = "/v1/projects/" + credentials.vertexProjectId() + "/locations/" + credentials.vertexRegion() +
-                    "/publishers/anthropic/models/" + model + endpoint;
-
-            return new VertexTranslation(vertexPath, rewrittenBytes);
-        } catch (RuntimeException e) {
-            throw new RuntimeException("Failed to translate request body to Vertex format", e);
-        }
-    }
-
-    /** Recursively remove "scope" from any "cache_control" object in the JSON tree. */
-    private static JqValue stripCacheControlScope(JqValue node) {
-        if (node instanceof JqObject obj) {
-            var builder = JqObject.builder(obj.size());
-            obj.forEach((key, value) -> {
-                if (key.equals("cache_control") && value instanceof JqObject cc) {
-                    var unscoped = JqObject.builder(cc.size());
-                    cc.forEach((k, v) -> {
-                        if (!k.equals("scope")) unscoped.put(k, v);
-                    });
-                    builder.put(key, unscoped.build());
-                } else {
-                    builder.put(key, stripCacheControlScope(value));
-                }
-            });
-            return builder.build();
-        }
-        if (node instanceof JqArray array) {
-            var builder = JqArray.arrayBuilder();
-            array.asList().forEach(e -> builder.add(stripCacheControlScope(e)));
-            return builder.build();
-        }
-        return node;
     }
 
     // --- Header injection ---
