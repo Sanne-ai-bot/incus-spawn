@@ -715,6 +715,25 @@ class ChatGptRouteTest {
     }
 
     @Test
+    void aSignInAgainVoidsTheOldProofOnTheBackendAndTheWebSocket() throws Exception {
+        // The instance keeps its binding to the old session; the account signs in again
+        var oldProof = accessPlaceholder(proofs().access());
+        var renewed = store.create(ACCOUNT, mint(3600));
+
+        var reply = backend("POST", "/backend-api/codex/responses", oldProof);
+        assertEquals(401, reply.status(), reply.body());
+        assertFalse(reply.body().contains(renewed.tokens().accessToken()), reply.body());
+        // The proxy answers the handshake before it reads the session, then closes the socket when
+        // the session is not the binding's: wait for that close, then nothing may have been dialled
+        var closed = new CompletableFuture<Short>();
+        wsClient.webSocket(webSocket("/backend-api/codex/responses", "Bearer " + oldProof))
+                .onSuccess(ws -> ws.closeHandler(v -> closed.complete(ws.closeStatusCode())))
+                .onFailure(closed::completeExceptionally);
+        assertEquals((short) 1011, closed.get(15, TimeUnit.SECONDS), "closed by the proxy, not dialled");
+        assertTrue(seen.isEmpty(), "the new session's token went nowhere: " + seen);
+    }
+
+    @Test
     void aRemovalDuringARefreshIsNotUndone() throws Exception {
         sessionId = store.create(ACCOUNT, mint(60)).sessionId();
         bind(SECRET, sessionId);
