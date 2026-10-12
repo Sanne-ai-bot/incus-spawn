@@ -2433,7 +2433,7 @@ The strip then proves its result rather than trusting it: the store must be that
 A store with alternates or promisor packs, which no pack of its own makes whole, is refused; a refusal, a failing step or a failed check falls back to a network clone.
 The shallow path ends with the same strip.
 Writing the pack is the cost the old approach paid: it used `git clone --reference` and then ran `git repack -a -d` to make the clone self-contained before unmounting the reference.
-It reuses the copied deltas rather than recomputing them.
+It reuses the copied deltas rather than recomputing them, keeping them as offsets (`--delta-base-offset`, as `repack` does) rather than base ids, which would make the quarkus pack 18 MiB larger.
 On quarkus (580 MiB of packs, 2.4 million objects) it takes about 13 s and the check about 3 s more, against 1 s for the copy; a repack took about 12 s whether it had 4 threads or 32.
 A network clone of the same repo transfers about those 580 MiB.
 `clone --reference --dissociate` from origin would reach the same store through a repack, with no ref cleanup.
