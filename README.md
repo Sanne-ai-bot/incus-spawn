@@ -469,6 +469,7 @@ Repo entry fields:
 - `url` (required) -- git clone URL (HTTPS, for proxy compatibility)
 - `path` (required) -- target directory (`~` expands to agentuser's home)
 - `branch` (optional) -- branch or tag to check out; defaults to the repo's default branch
+- `depth` (optional) -- a positive number of commits to keep: the clone is shallow and follows only its branch, for repositories that store release binaries in their history. Omit it for development repositories, which get the full history. In the instance, `git fetch --unshallow && git remote set-branches origin '*' && git fetch` gets all of it.
 - `prime` (optional) -- shell command to run inside the repo directory after cloning, typically to pre-fetch dependencies (e.g. `mvn dependency:go-offline`, `gradle dependencies`)
 
 Declared repos are automatically pre-trusted in `.claude.json` so Claude Code doesn't prompt for trust on first use.

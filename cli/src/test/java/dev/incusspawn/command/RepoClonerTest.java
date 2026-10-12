@@ -118,7 +118,9 @@ class RepoClonerTest {
         // Local clone from mounted reference
         verify(incus).execInContainer("test", "agentuser",
                 RepoCloner.awaitMount("/mnt/ref/repo")
-                        + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'");
+                        + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'"
+                        + " && { [ \"$(git -C '/home/agentuser/repo' rev-parse --is-shallow-repository)\" != true ]"
+                        + " || { echo 'fatal: the host checkout is shallow' >&2; exit 1; }; }");
         // URL fixup + fetch + detect default branch
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
@@ -188,7 +190,9 @@ class RepoClonerTest {
         // Local clone (no --branch — handled after fetch)
         verify(incus).execInContainer("test", "agentuser",
                 RepoCloner.awaitMount("/mnt/ref/repo")
-                        + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'");
+                        + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'"
+                        + " && { [ \"$(git -C '/home/agentuser/repo' rev-parse --is-shallow-repository)\" != true ]"
+                        + " || { echo 'fatal: the host checkout is shallow' >&2; exit 1; }; }");
         // URL fixup + fetch + detect default branch
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"

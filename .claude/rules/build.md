@@ -122,6 +122,9 @@ Before building, `HostRepoRefresh` (`git/HostRepoRefresh.java`) fetches host-sid
 Optionally clones missing repos (persisted via `auto-clone-repos` config).
 `--skip-git-refresh` bypasses the refresh.
 `update-all` only fetches.
+A repo with a `depth` is cloned with `--depth` on the host and marked (`isx.depth` in its git config); only a marked checkout is fetched with `--depth`, or unshallowed once a template wants all of history.
+An unmarked one is the user's and only plainly fetched (#1344).
+The depth is `HostRepoRefresh.hostDepths(defs)` over every definition, never only the build's targets.
 
 # Parallel Repo Cloning
 
@@ -137,6 +140,10 @@ When a host-side checkout is available, the clone runs locally from the mounted 
 After the local clone, the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing, so only ref advertisements travel the network).
 If a specific branch was requested, it is checked out after the fetch supplies the ref.
 On any failure the local-clone path is discarded and a normal remote clone runs as fallback.
+A repo with a `depth` never takes the local fast path (it ignores `--depth`): it clones the reference with `--no-local --depth`, then fetches its branch at that depth from the real origin (`shallowFixupCommand`).
+From the network it is `--single-branch --depth`, and its refspec stays narrow (#1344).
+A repo without a `depth` refuses a shallow reference and clones in full from the network.
+The shallow fixup then drops the host checkout's own branch and origin/HEAD, leaving a network clone's refs.
 Clones and `prime` commands use captured (non-streamed) exec so parallel output doesn't garble; progress renders via `util/TerminalProgress.java`, the shared animated braille-spinner display also used by `HostRepoRefresh`'s parallel fetch and by `BuildCommand`'s dnf operations.
 Each repo's `prime` command runs in the same worker once that repo's clone finishes **and every host reference is detached** (Cloning -> Waiting to prime -> Priming within one progress line).
 A reference mount is the host checkout's whole working tree, so no prime may run next to one (#765).

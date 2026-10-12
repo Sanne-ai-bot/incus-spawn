@@ -386,7 +386,7 @@ public class BuildCommand extends BaseCommand {
         }
         var config = SpawnConfig.load();
         var allRepos = HostRepoRefresh.collectAllRepos(targets, defs);
-        hostRepoRefresh = HostRepoRefresh.refreshAsync(allRepos, config, true, executor);
+        hostRepoRefresh = HostRepoRefresh.refreshAsync(allRepos, HostRepoRefresh.hostDepths(defs), config, true, executor);
     }
 
     /**

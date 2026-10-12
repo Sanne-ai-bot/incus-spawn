@@ -168,7 +168,7 @@ class HostRepoRefreshTest {
 
     @Test
     void formatFetchLineShowsSpinnerWhenFetching() {
-        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin", null, null);
         var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FETCHING, null);
         var line = HostRepoRefresh.formatFetchLine(task, progress, 0);
         assertTrue(line.contains("Fetching"), "should contain 'Fetching'");
@@ -178,7 +178,7 @@ class HostRepoRefreshTest {
 
     @Test
     void formatFetchLineShowsCheckmarkWhenDone() {
-        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin", null, null);
         var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.DONE, null);
         var line = HostRepoRefresh.formatFetchLine(task, progress, 0);
         assertTrue(line.contains("Fetched"), "should contain 'Fetched'");
@@ -187,7 +187,7 @@ class HostRepoRefreshTest {
 
     @Test
     void formatFetchLineShowsErrorDetailWhenFailed() {
-        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin", null, null);
         var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FAILED, "fatal: could not read Username");
         var line = HostRepoRefresh.formatFetchLine(task, progress, 0);
         assertTrue(line.contains("Failed"), "should contain 'Failed'");
@@ -197,7 +197,7 @@ class HostRepoRefreshTest {
 
     @Test
     void formatFetchLineAlignsPrefixAcrossStates() {
-        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin", null, null);
         var fetching = HostRepoRefresh.formatFetchLine(task,
                 new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FETCHING, null), 0);
         var done = HostRepoRefresh.formatFetchLine(task,
@@ -214,7 +214,7 @@ class HostRepoRefreshTest {
 
     @Test
     void formatFetchLineCyclesSpinnerFrames() {
-        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin", null, null);
         var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FETCHING, null);
         var line0 = stripAnsi(HostRepoRefresh.formatFetchLine(task, progress, 0));
         var line3 = stripAnsi(HostRepoRefresh.formatFetchLine(task, progress, 3));
