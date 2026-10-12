@@ -2415,17 +2415,29 @@ When a repo subdirectory exists in more than one location, the build fails with 
 Matching uses URL normalization (strips scheme, `user@`, SSH colon separator, trailing `.git`, `www.`, then lowercases) and checks **all** git remotes, not just `origin`.
 This handles the common case where the user's fork is `origin` and the canonical upstream is `upstream`.
 If a match is found, the host directory is temporarily mounted into the container as a read-only Incus disk device (`readonly=true shift=true`) at a fixed path under `/var/lib/incus-spawn/repo-ref/` and cloned locally via `git clone --no-hardlinks`.
-This copies pack files directly — no network transfer and, critically, no `git repack` or dissociation step.
-The old approach used `git clone --reference` and then ran `git repack -a -d` to make the clone self-contained before unmounting the reference; for large repos this repack was the dominant cost (re-reading, re-deltifying, and rewriting every object).
-The local-clone approach avoids it entirely.
+This copies pack files directly, with no network transfer.
 Pack files are copied as-is, then the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing — `HostRepoRefresh` just ran — so only ref advertisements travel the network).
 If a specific branch was requested, it is checked out after the fetch supplies the ref.
 The local clone also takes over the host checkout's own branch (and its name, in a `[branch]` config section), its branches as `origin/*` and its tags, any of which may hold unpushed work (#1362).
-So the fetch runs with `--prune --prune-tags --force`, which leaves origin's branches and tags only (`--force` resets a tag the host has and origin has moved), every local branch but the one checked out is deleted with `branch -D` (which drops its config section), and the reflogs are expired: the refs and branch config a network clone has.
+So the fetch runs with `--prune --prune-tags --force`, which leaves origin's branches and tags only; `--force` resets a tag the host has and origin has moved.
+Every local branch but the one checked out is then deleted with `branch -D`, which drops its config section, and the reflogs are expired: the refs and branch config a network clone has.
 Each deletion lists the refs before deleting them, so a listing that fails fails the clone, which then falls back to the network, rather than leaving the host's refs in place.
-The clone copies every object in the host's store (pack files can't be efficiently subsetted), and they stay until a future `git gc`, reachable from no ref.
-That is not only committed history: it includes the host's unpushed commits, its stash entries, and the blobs of content that was once staged (`git add`) and never committed, all recoverable in the image with `git fsck` or `git cat-file`.
-Pruning them would cost the repack this path exists to avoid, so it is not done; whether that trade is acceptable is an open decision (#1362).
+The copy also takes everything in the host's object store, not only committed history.
+That is the host's unpushed commits, its stash entries, the blobs of content once staged (`git add`) and never committed, the commit-graph naming its commits, and any stray file there (a `tmp_pack_*` an interrupted fetch left).
+The ref store also keeps the host's values of the branches and tags the fetch moved (in `packed-refs`, or in a reftable's older tables), shadowed but naming its commits when it is ahead of origin.
+A template image must not carry any of those (#1362), so once the refs are a network clone's they are repacked (`pack-refs --all`) and the object store replaced (`stripUnreachableObjects`).
+`pack-objects --all --reflog --indexed-objects` writes one pack of what the refs, HEAD and index reach into a new directory, which takes the old store's place, so nothing copied survives.
+Automatic gc is off for the fetches before it (`-c gc.auto=0 -c maintenance.auto=false`), since a detached gc could write into the store behind the strip.
+A shallow repo is pruned first, which drops the shallow boundaries its refs no longer reach.
+The strip then proves its result rather than trusting it: the store must be that one pack, holding exactly as many objects as `rev-list --objects` reaches, and every shallow boundary must be in it.
+A store with alternates or promisor packs, which no pack of its own makes whole, is refused; a refusal, a failing step or a failed check falls back to a network clone.
+The shallow path ends with the same strip.
+Writing the pack is the cost the old approach paid: it used `git clone --reference` and then ran `git repack -a -d` to make the clone self-contained before unmounting the reference.
+It reuses the copied deltas rather than recomputing them.
+On quarkus (580 MiB of packs, 2.4 million objects) it takes about 13 s and the check about 3 s more, against 1 s for the copy; a repack took about 12 s whether it had 4 threads or 32.
+A network clone of the same repo transfers about those 580 MiB.
+`clone --reference --dissociate` from origin would reach the same store through a repack, with no ref cleanup.
+It would rebuild this path and the tag pins #1361 adds to it (#1350), though; the strip keeps both paths as they are and is one helper they share.
 Beyond the object store, the whole checkout (working tree, untracked files, `.git/config`) is *visible* inside the build container while the reference is mounted.
 That is why no prime command runs until every reference is detached (see above), and why project-local templates get no references at all.
 If the reference mount, clone, or fetch fails for any reason the build cleans up the partial checkout and falls back transparently to a plain remote clone.
@@ -2438,7 +2450,7 @@ So the clone goes through the transport (`--no-local --depth N`), which reads on
 Then origin is pointed at the real remote, and its refspec narrowed to the configured branch (else the remote's default, from `ls-remote --symref`), which is fetched at the same depth and checked out.
 Commits the reference already has do not travel again.
 The clone through the transport also takes over the host checkout's own branch (which may hold unpushed work) and its origin/HEAD, so those refs are deleted, and origin/HEAD set to the branch only when it is the remote's default: the refs a shallow network clone has.
-The commits only they reached are then pruned (`reflog expire` and `gc --prune=now`, cheap in a shallow repo), so a host branch's unpushed work does not ship in the image.
+The objects only they reached are then stripped as on the full path (`stripUnreachableObjects`, cheap in a shallow repo), so a host branch's unpushed work does not ship in the image.
 Its tags go the same way, before the depth fetch, which follows the remote's own tags as a network clone does.
 Guest updates do not pass `--depth`, so a shallow repo in a long-lived instance keeps the history fetched after its build; the old history stays out.
 The other way round, a repo without a depth never inherits a shallow host checkout (one another template's depth made, or the user's own).

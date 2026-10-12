@@ -141,11 +141,11 @@ A physical core is its `core_cpus_list` (`thread_siblings_list` before 5.3), nev
 Whatever leaves the tier in doubt (an unreadable capacity, a capacity on some CPUs only, a missing core list) makes it unknown, which the VM default treats as one tier.
 The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
-When a host-side checkout is available, the clone runs locally from the mounted reference (`git clone --no-hardlinks`) -- this copies pack files directly, avoiding the expensive `git repack` that the old `--reference`/dissociate approach required.
+When a host-side checkout is available, the clone runs locally from the mounted reference (`git clone --no-hardlinks`) -- this copies pack files directly, with no network transfer; the strip below then repacks them, the cost the old `--reference`/dissociate approach also paid (#1362).
 After the local clone, the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing, so only ref advertisements travel the network).
 If a specific branch was requested, it is checked out after the fetch supplies the ref.
 The fast path then keeps only a network clone's refs (`fetch --prune --prune-tags --force`, other local branches deleted with `branch -D` so their config sections go too, reflogs expired), so no ref reaches the host's unpushed work (#1362); each listing runs before its deletion, so a failure fails closed.
-The host's whole object store (unpushed commits, stash, once-staged blobs) still ships unreferenced.
+Both paths then strip the object store to what those refs reach and check it (`stripUnreachableObjects`, run last), so no unpushed commit, stash or once-staged blob ships; a strip that fails or cannot be checked falls back to a network clone.
 On any failure the local-clone path is discarded and a normal remote clone runs as fallback.
 A repo with a `depth` never takes the local fast path (it ignores `--depth`): it clones the reference with `--no-local --depth`, then fetches its branch at that depth from the real origin (`shallowFixupCommand`).
 From the network it is `--single-branch --depth`, and its refspec stays narrow (#1344).
