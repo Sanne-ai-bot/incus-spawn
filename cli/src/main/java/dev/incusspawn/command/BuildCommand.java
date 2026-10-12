@@ -1212,15 +1212,26 @@ public class BuildCommand extends BaseCommand {
 
     /**
      * Gives a child build the parent's trust set brought up to date. Unlike an instance's
-     * {@code fixContainerCaIfNeeded}, a failure fails the build: the child is stamped as holding
-     * the current set when it finishes, so a guest left without its anchors would read as current.
+     * {@code fixContainerCaIfNeeded}, a failure fails the build: a template left without its
+     * anchors must not be finished as one that holds them.
      */
     static boolean refreshTrustAnchors(IncusClient incus, String buildName) {
         var trust = CertificateAuthority.collectTrustAnchors();
         if (trust.stamp().equals(incus.configGet(buildName, Metadata.CA_FINGERPRINT))) return false;
+        installTrustAnchors(incus, buildName, trust);
+        return true;
+    }
+
+    /**
+     * Installs {@code trust} and stamps the build with it, from this one read: a stamp read
+     * again later, at the end of the build, could name a set the guest does not hold (the CA,
+     * a host anchor or propagation changed meanwhile), and the template would read as current.
+     */
+    private static void installTrustAnchors(IncusClient incus, String buildName,
+                                            CertificateAuthority.TrustAnchors trust) {
         CertificateAuthority.installTrustAnchors(incus, buildName, trust)
                 .assertSuccess("Failed to install trust anchors");
-        return true;
+        incus.configSet(buildName, Metadata.CA_FINGERPRINT, trust.stamp());
     }
 
     /**
@@ -1444,8 +1455,7 @@ public class BuildCommand extends BaseCommand {
         var container = new Container(incus, buildName);
 
         BuildOutput.stepStart("Installing trust anchors...");
-        CertificateAuthority.installTrustAnchors(incus, buildName, CertificateAuthority.collectTrustAnchors())
-                .assertSuccess("Failed to install trust anchors");
+        installTrustAnchors(incus, buildName, CertificateAuthority.collectTrustAnchors());
         BuildOutput.stepDone();
 
         // Container-only security tweaks: UID mapping, nesting, capability
@@ -2153,7 +2163,6 @@ public class BuildCommand extends BaseCommand {
         var info = BuildInfo.instance();
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
-        incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.collectTrustAnchors().stamp());
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader)));
         stampAccountIdentities(container, identityStamps);
