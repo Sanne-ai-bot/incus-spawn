@@ -1,5 +1,6 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.proxy.InheritedProof;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -60,6 +61,10 @@ public final class CredentialCheck {
         var owners = AccountSelection.byNamespace(served);
         var secretsOf = new LinkedHashSet<>(tools);
         var missing = new LinkedHashSet<String>();
+        var tree = config.tree();
+        // An inherited credential is the parent instance's, whatever this config holds: its
+        // tool's own check is not asked, and there must be a parent instead
+        var inherited = new LinkedHashSet<String>();
         try {
             for (var name : tools) {
                 var tool = allTools.get(name);
@@ -69,14 +74,19 @@ public final class CredentialCheck {
                 // An invalid value is the build's to report, so what did resolve is used.
                 var params = dev.incusspawn.tool.ParameterResolver.resolve(tool.parameters(),
                         ref == null ? Map.of() : ref.getParams()).resolvedValues();
-                for (var namespace : tool.credentialNamespaces(params)) {
+                var namespaces = tool.credentialNamespaces(params);
+                var own = 0;
+                for (var namespace : namespaces) {
                     var owner = owners.get(namespace);
                     if (owner != null) secretsOf.add(owner.name());
+                    if (AccountResolver.inherits(tree, namespace, selection.get(namespace))) inherited.add(namespace);
+                    else own++;
                 }
+                if (own == 0 && !namespaces.isEmpty()) continue;
                 var problem = tool.credentialProblem(config, params, selection);
                 if (!problem.isEmpty()) missing.add(problem);
             }
-            for (var secret : ToolProxyResolver.missingSecrets(config.tree(), served, secretsOf, selection)) {
+            for (var secret : ToolProxyResolver.missingSecrets(tree, served, secretsOf, selection)) {
                 missing.add(secret.description().isBlank() ? secret.path() : secret.description());
             }
         } catch (AccountResolver.UnknownAccountException e) {
@@ -84,6 +94,9 @@ public final class CredentialCheck {
             return e.getMessage();
         }
 
+        if (!inherited.isEmpty() && InheritedProof.parentSecret() == null) {
+            return InheritedProof.notNestedMessage(inherited.getFirst());
+        }
         if (missing.isEmpty()) return "";
         return "Missing credentials: " + String.join(", ", missing) + ". Run 'isx init' to configure.";
     }

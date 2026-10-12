@@ -107,6 +107,8 @@
                             <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
                             <maven.home>${maven.home}</maven.home>
                             <isx.test.localRepository>${settings.localRepository}</isx.test.localRepository>
+                            <!-- Tests run inside an isx instance must not find its secret: InheritedProof -->
+                            <isx.instance-secret-file>${project.build.directory}/no-instance-secret</isx.instance-secret-file>
                         </systemPropertyVariables>
                     </configuration>
                 </plugin>

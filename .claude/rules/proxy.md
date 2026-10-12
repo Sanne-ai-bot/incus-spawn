@@ -108,6 +108,30 @@ Key design:
   Instances an older isx started get proofs at the next shell.
   A VM's probe checks the proofs file with the secret (`GUEST_CHECK`), and a container's boot stamp carries a mark that its delivery had proofs (`InstanceLifecycle.secretBootStamp`), so an older stamp no longer matches.
   A new path that delivers a secret passes placeholders too.
+- **`<ns>=inherit` (#1110): a nested isx shares its parent instance's grant on purpose.**
+  `AccountResolver.INHERIT` is a reserved account, selected by a pin or as `<ns>.default`, that resolves to itself whatever is configured.
+  An `accounts:` entry of that name is never served, and `value()` gives nothing for it, not even the flat credential.
+  `ToolProxyResolver.resolveConfigValue` resolves no entry for it, and `ClaudeConfig.account()`/`accountNamed` give none.
+  `GhSetup.bakedAccountIdentity` gives `inherit`, so a move to or from it re-derives the git identity through the proxy.
+  It cannot see the parent's account: a parent that switches GitHub accounts leaves the inner identity on the old one until a re-pin or a new branch (#281's mismatch, documented in README).
+  `CredentialCheck` counts an inherited namespace as supplied (it skips the `credentialProblem` of a tool whose namespaces are all inherited, and `ToolProxyResolver.missingSecrets` skips inherited keys) and refuses the branch outside an instance, `default: inherit` included.
+  A Claude build for `inherit` takes the API-key form (`ClaudeSetup.envEntries` with no account).
+  `ProxyCredentials.inheritedNamespaces` carries the namespaces resolved to it.
+  `MitmProxy.contextFor` builds an `InheritedProof.Swap` for those a request's domain spends (`namespacesForDomain`), from the parent's secret in `/run/isx/instance-secret`.
+  The secret is read off the event loop: with every config read, every second by `refreshNesting()` on the config watcher's thread, and by `executeBlocking` when a request finds it more than a second old, so it does not depend on the watcher.
+  None there is a 502 through `UnknownAccountException`, as for a missing account.
+  `presentInheritedProofs` then replaces each whole `<prefix>isx_<32 hex>` of a declared prefix of that namespace with the parent's proof under the same prefix.
+  It runs on every request header, HTTP and WebSocket alike, after the normal injection, with a `Basic` credential decoded first.
+  The carrier stays the instance's own, so Claude's API-key, OAuth and Vertex forms all work without the inner isx knowing the parent's mode.
+  A prefix two swapped namespaces declare is left alone.
+  The swap does not verify the instance's own proof: that needs #1107's verifiers, whose check must run before it.
+  A static placeholder or a caller's own token is never swapped, and the Anthropic path does not strip an inherited `x-api-key`.
+  Inside an isx instance (`InheritedProof.nested()`: the secret file exists), `resolveAcrossAccounts` adds the domains of every tool declaring a placeholder, credential-free, since a pin is not known when the intercepted domains are decided.
+  `ConfigWatcher` asks `MitmProxy.refreshNesting()` every second and reloads when it turns true, as at boot, when the proxy starts before the parent's isx delivers its secret.
+  It stays true until a reload completes (`nestingReloadDue`), so the watcher retries every 30 s while reloads fail.
+  `AccountSelection.validate` refuses `inherit` outside an instance; `isx init` refuses it as an account name.
+  Tests never find the box's own secret: the parent pom points `isx.instance-secret-file` at a missing file, and a test that wants one sets that property.
+  Until #1107, the outer proxy injects whatever comes from the parent's address, so the swap changes nothing upstream yet; #1107's check applies to the swapped proof as to the parent's own.
   The proxy does not verify them yet (#1107).
   See DESIGN.md "Proof tokens".
 - **`mcp.isx.internal` is answered, not relayed (#915).**

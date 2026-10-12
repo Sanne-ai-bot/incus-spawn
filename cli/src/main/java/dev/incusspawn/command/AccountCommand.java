@@ -193,7 +193,8 @@ public class AccountCommand extends BaseCommand {
         var dangling = new LinkedHashMap<String, List<String>>();
         pins.forEach((instance, selection) -> {
             var account = selection.get(namespace);
-            if (account != null && !names.contains(account)) {
+            if (account != null && !names.contains(account)
+                    && !dev.incusspawn.config.AccountResolver.INHERIT.equals(account)) {
                 dangling.computeIfAbsent(account, k -> new ArrayList<>()).add(instance);
             }
         });

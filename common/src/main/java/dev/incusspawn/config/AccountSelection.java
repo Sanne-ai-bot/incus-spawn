@@ -108,8 +108,22 @@ public final class AccountSelection {
      */
     public static void validate(SpawnConfig config, Map<String, String> selection) {
         if (selection == null || selection.isEmpty()) return;
-        selection.forEach((namespace, account) ->
-                AccountResolver.effectiveAccount(config, namespace, account));
+        selection.forEach((namespace, account) -> {
+            AccountResolver.effectiveAccount(config, namespace, account);
+            requireNestedToInherit(namespace, account);
+        });
+    }
+
+    /**
+     * {@link AccountResolver#INHERIT} is refused outside an isx instance, as an account that is
+     * not configured is: there is no parent to inherit from. The proxy asks again on every
+     * request, since a start of the parent is what gives it a secret.
+     */
+    private static void requireNestedToInherit(String namespace, String account) {
+        if (AccountResolver.INHERIT.equals(account) && dev.incusspawn.proxy.InheritedProof.parentSecret() == null) {
+            throw new AccountResolver.UnknownAccountException(namespace, account,
+                    dev.incusspawn.proxy.InheritedProof.notNestedMessage(namespace));
+        }
     }
 
     /**
@@ -124,6 +138,7 @@ public final class AccountSelection {
             var setup = setups.get(namespace);
             var shape = setup != null ? setup.accountShape() : AccountResolver.shapeOf(config, namespace);
             AccountResolver.effectiveAccount(tree, namespace, shape, account);
+            requireNestedToInherit(namespace, account);
         });
     }
 

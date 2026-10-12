@@ -133,6 +133,7 @@ Which variables carry them is declared on the tool's `proxy:` entry (`placeholde
 They are written beside the secret in `/run/isx` by the same exec, and the raw secret never enters the environment.
 `isx doctor` inside an instance checks the exported ones against the secret file (`DoctorCommand.instanceCredentialFindings`, #1109); the proofs file's format is read back only by `ProofToken.delivered`, beside `profile`, so the two change together.
 A placeholder token in the guest is read when the tool runs, never fixed by a build (#1108): where a tool reads a file instead of its variable, a login script in `/etc/profile.d/isx-zz-*` rewrites the file from the variable.
+An isx running inside an instance shares that instance's grant for a namespace only when its account there is the reserved `inherit` (#1110): its proxy swaps the instance's proofs for the parent's, derived from `/run/isx/instance-secret` (`InheritedProof`).
 See `.claude/rules/proxy.md` and DESIGN.md.
 
 **`isx init` prompts read from `Prompts`, never a `Console`.**

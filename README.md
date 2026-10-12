@@ -100,6 +100,7 @@ The proxy also caches container image layers and build artifacts on the host —
 Each start also replaces the placeholders with **proof tokens** derived from that start's secret (e.g. `gho_isx_…` in `GH_TOKEN`), exported by the login profile.
 They reach exactly what runs in an instance's login environment.
 A nested container, a sandbox or anything started without that environment gets none, unless you pass one in deliberately, e.g. `podman run -e GH_TOKEN …`.
+This does not yet cover an isx running inside an instance: until the outer proxy checks these tokens ([#1107](https://github.com/Sanne/incus-spawn/issues/1107)), it still serves its credentials to anything that reaches it from the instance's address, the nested isx's instances included. Once it does, they get none of the outer credentials unless the nested isx's config says `inherit` (see [Inheriting the outer instance's account](#inheriting-the-outer-instances-account)).
 A shell opened before the last `isx start` or `isx shell` keeps the tokens it was opened with: `isx doctor` run inside the instance compares them with the secret file and says what to do (a new login shell, or `isx shell` again from the host).
 
 ### Git Configuration
@@ -1244,6 +1245,14 @@ In the TUI, **F3** on an instance shows its accounts and **a** changes them. The
 Changes take effect on the instance's next request, with no restart, and switching GitHub accounts also updates its git identity. The exception is switching between Claude auth modes (Pro/Max, API key, Vertex), which needs a template built for that mode ([#866](https://github.com/Sanne/incus-spawn/issues/866)).
 
 Changing a default moves every instance that follows it; `isx init` lists them first and lets you keep them where they are. Renaming an account in `isx init` updates the instances using it, and removing one tells you what still uses it. An instance left pointing at a missing account stops working rather than using another one; `isx doctor` and `isx account show` point these out.
+
+#### Inheriting the outer instance's account
+
+An isx running inside an isx instance serves its own instances from its own `config.yaml`. To let them use the outer instance's account for one credential instead, choose the reserved account `inherit` for it, like any other account: `isx branch inner-1 --account github=inherit`, `isx account set inner-1 github=inherit`, a template's `accounts:`, or `default: inherit` under `github:` in the inner `config.yaml`. The inner proxy then presents the outer instance's proof token in place of the inner instance's own, so the outer proxy serves the outer instance's account for that credential only. Outside an isx instance, `inherit` is refused when you branch, and so is any request that relies on it. `inherit` cannot be used as the name of an account of your own.
+
+What holds today: the inner proxy presents the outer instance's proof for an instance that inherits, and only for it. Until the outer proxy checks proof tokens ([#1107](https://github.com/Sanne/incus-spawn/issues/1107)), the outer proxy serves its credentials to everything from the outer instance's address anyway, so `inherit` makes no difference yet, and leaving it out does not keep the outer credentials from the nested instances.
+
+A template whose own `accounts:` says `claude: inherit` builds Claude for an API key, the form the outer proxy turns into whichever account it serves. The git identity of an instance that inherits GitHub is the outer account's when it starts inheriting; if the outer instance later switches GitHub accounts, branch again or run `isx account set` to pick up the new one.
 
 The `config.yaml` also supports git remote auto-management via `host-paths` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions. Tilde (`~`) expansion is supported for all path settings:
 

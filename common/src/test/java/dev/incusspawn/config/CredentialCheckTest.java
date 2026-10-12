@@ -2,7 +2,13 @@ package dev.incusspawn.config;
 
 import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.proxy.InheritedProof;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -232,5 +238,47 @@ class CredentialCheckTest {
                     - { domains: [d.example], type: bearer, token: "${key}" }
                 """);
         assertEquals("", check("{}", template("[unsettable]"), Map.of(), tool));
+    }
+
+    // --- inherit (#1110): the parent instance's credential, wherever this isx runs in one
+
+    @Test
+    void anInheritedCredentialNeedsNoneHereWhenNested(@TempDir Path dir) throws Throwable {
+        withSecretFile(dir, true, () -> {
+            assertEquals("", check("{}", template("[gh]"), Map.of("github", "inherit")));
+            assertEquals("", check("github:\n  token: \"ghp_flat\"\n  default: inherit\n", template("[gh]")));
+            assertEquals("", check("{}", template("[claude]"), Map.of("claude", "inherit")));
+            assertEquals("", check("claude:\n  default: inherit\n", template("[claude]")));
+        });
+    }
+
+    @Test
+    void anInheritedCredentialOutsideAnIsxInstanceIsMissing(@TempDir Path dir) throws Throwable {
+        withSecretFile(dir, false, () -> {
+            for (var result : List.of(check("{}", template("[gh]"), Map.of("github", "inherit")),
+                    check("claude:\n  default: inherit\n", template("[claude]")))) {
+                assertTrue(result.contains("not running in an isx instance"), result);
+            }
+        });
+    }
+
+    private static void withSecretFile(Path dir, boolean nested, Executable check) throws Throwable {
+        var property = InheritedProof.SECRET_FILE_PROPERTY;
+        var original = System.getProperty(property);
+        var file = dir.resolve("instance-secret");
+        if (nested) Files.writeString(file, "11".repeat(32) + "\n");
+        System.setProperty(property, file.toString());
+        try {
+            check.execute();
+        } finally {
+            if (original == null) System.clearProperty(property);
+            else System.setProperty(property, original);
+        }
+    }
+
+    @Test
+    void piOnVertexInheritingClaudeNeedsNoneHereWhenNested(@TempDir Path dir) throws Throwable {
+        withSecretFile(dir, true, () ->
+                assertEquals("", check("{}", piTemplate("vertex"), Map.of("claude", "inherit"))));
     }
 }

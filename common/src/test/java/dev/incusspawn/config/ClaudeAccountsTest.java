@@ -349,4 +349,21 @@ class ClaudeAccountsTest {
         var claude = Jjq.spawnConfig(yaml).getClaude();
         assertTrue(claude.effectiveAccounts().isEmpty());
     }
+
+    /** An isx told to inherit Claude (#1110) serves none of its own accounts, by default or pinned. */
+    @Test
+    void inheritingClaudeServesNoAccountOfItsOwn() throws Exception {
+        var claude = Jjq.spawnConfig("""
+                claude:
+                  accounts:
+                    work:
+                      type: api-key
+                      apiKey: "sk-ant-api03-work"
+                  default: inherit
+                """).getClaude();
+        assertNull(claude.account());
+        assertNull(claude.accountNamed(null));
+        assertNull(claude.accountNamed("inherit"));
+        assertNotNull(claude.accountNamed("work"));
+    }
 }
