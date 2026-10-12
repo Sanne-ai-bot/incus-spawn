@@ -3464,11 +3464,18 @@ Each name joins the intercepted set, so it gets bridge DNS and a leaf certificat
 A request to the name passes only when the caller's address and its per-start secret belong to one instance (`InstanceRegistry.identifyWithLineage`, one throttled refresh on a refusal, then 403) and the route admits the instance's leaf template; a project-local instance never passes.
 Nor does a build that has not succeeded, or anything copied from one: a build container is a copy of its parent and keeps the parent's `profile` and `build-source` stamps, which only a successful build replaces.
 So the request that copies or creates a build container already stamps `untrusted-lineage` (`Metadata.UNTRUSTED_LINEAGE`).
-Only `BuildCommand.trustBuilt` removes it, after the swap of a build that succeeded: a build killed, lost with its host, failing after `tagTemplateMetadata`, or promoted half-way stays untrusted, and every copy keeps the stamp.
+Only `BuildCommand.trustBuilt` removes it, after the swap of a build that succeeded and inside the swap's lock, so a branch or `isx mcp` delegate waiting on the rebuild copies the template only once it is trusted.
+A build killed, lost with its host, failing after `tagTemplateMetadata`, or promoted half-way stays untrusted, and every copy keeps the stamp.
+A template still carrying it counts as outdated, so the next `isx build` of it, or of a template built on it, rebuilds it.
 `isx project` builds keep it for good.
-One rule says whether a config is untrusted (`Metadata.untrustedReason`): the stamp, `type: failed-build`, or a `parent` ending in `-failed-build`.
-A branch's copy request stamps its answer for the source, over anything the caller passed, so a branch of an older failed build, or of an older branch of one, is covered from now on.
+One rule says whether a config is untrusted (`Metadata.untrustedReason`): the stamp, or `type: failed-build`.
+A branch's copy request stamps its answer for the source, over anything the caller passed, so a branch of an older failed build is covered from now on.
 The registry asks it of the instance and of each ancestor its `parent` names that the listing still has, so a branch of a branch, or of a renamed failed build, made before the stamp existed is caught too, and the refusal is logged with the reason.
+It also refuses an instance whose `parent`, or an ancestor's, ends in `-failed-build` (`Metadata.untrustedByName`), for a branch whose failed build has since been deleted.
+That name rule is never stamped on a copy by name alone, so a template a user named so on purpose costs the routes of everything built or branched from it only while it is named so, and the refusal says to rename it.
+A branch of a source with such a parent is stamped only when that parent is a failed build or is gone, which the copy request then asks (the one extra request, made only for such a name).
+Both walks go by name, never by the incarnation a copy came from, so a name reused since decides.
+That can refuse a trusted branch, or, for a branch made before the stamp existed whose failed ancestor is gone and whose name now belongs to a trusted instance, admit it; a branch made since from an untrusted source carries the stamp itself and is never admitted that way.
 The proxy then forwards it over plain HTTP to the target, with every client-sent `X-Isx-*` header removed, the secret included, and `X-Isx-Instance` and `X-Isx-Template` set, and streams the response back.
 So every identity header that reaches the controller through the route was written by the proxy after that check, and the controller never holds the instance's secret.
 The loopback hop is plain HTTP, though, which any process on the host can also send, so the proxy authenticates itself to the controller with a second, per-route secret (`HostRouteSecret`, `X-Isx-Route-Secret`), and the controller trusts the identity headers only once it matches in constant time.

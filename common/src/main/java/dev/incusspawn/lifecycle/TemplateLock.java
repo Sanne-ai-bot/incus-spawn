@@ -65,10 +65,22 @@ public final class TemplateLock {
      * @param log where to say that this waits for copies under way
      */
     public static void replace(IncusClient incus, String built, String template, Consumer<String> log) {
+        replace(incus, built, template, log, () -> {});
+    }
+
+    /**
+     * As above, then {@code afterSwap} while the lock is still held: whoever waited to copy the
+     * template copies it only once that has run too, so it sees the template as that step leaves it.
+     * It must not throw: the swap is done by then, and a caller would take an exception for a
+     * failed swap.
+     */
+    public static void replace(IncusClient incus, String built, String template, Consumer<String> log,
+                               Runnable afterSwap) {
         try (var lock = HostLock.acquireOrDegrade(lockFile(template), "copying from template '" + template + "'",
                 log, Warnings::warn, SWAP_TIMEOUT)) {
             incus.deleteIfExists(template);
             incus.rename(built, template);
+            afterSwap.run();
         }
     }
 }

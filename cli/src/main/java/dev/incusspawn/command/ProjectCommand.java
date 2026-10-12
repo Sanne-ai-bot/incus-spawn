@@ -16,6 +16,7 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -33,8 +34,7 @@ import static dev.incusspawn.incus.Container.shellQuote;
 public class ProjectCommand extends BaseCommand {
 
     /** What an {@code isx project} build carries from its copy on (#936). */
-    static final java.util.Map<String, String> PROJECT_BUILD =
-            java.util.Map.of(Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_PROJECT);
+    static final Map<String, String> PROJECT_BUILD = Map.of(Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_PROJECT);
 
     @Override
     protected CommandResult doExecute() throws Exception {

@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.baseimage.BaseImageReleases;
@@ -12,6 +13,7 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.TemplateLockProbe;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -22,12 +24,14 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -1697,12 +1701,32 @@ class BuildCommandTest {
             var imageDef = new ImageDef();
             imageDef.setName("tpl-minimal");
 
+            // A branch or isx mcp delegate waiting on this rebuild copies the template the moment the
+            // swap's lock frees: the taint must be gone by then, or the copy keeps it for good
+            var heldWhenTrusted = new AtomicBoolean();
+            doAnswer(inv -> {
+                heldWhenTrusted.set(TemplateLockProbe.held("tpl-minimal"));
+                return null;
+            }).when(incus).configUnset("tpl-minimal", Metadata.UNTRUSTED_LINEAGE);
+
             cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef));
 
             var order = inOrder(incus);
             order.verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
             order.verify(incus).configUnset("tpl-minimal", Metadata.UNTRUSTED_LINEAGE);
+            assertTrue(heldWhenTrusted.get(), "the taint is cleared inside the swap's lock");
         });
+    }
+
+    @Test
+    void aTemplateStillTaintedByItsBuildIsOutdated() {
+        // trustBuilt's write failed: the next isx build, of it or of a template on it, rebuilds it
+        var imageDef = def("tpl-test", null);
+        var current = Map.of(Metadata.BUILD_VERSION, BuildInfo.instance().version());
+        assertFalse(outdated(stamped("tpl-test", current), imageDef), "precondition: current otherwise");
+        var tainted = new HashMap<>(current);
+        tainted.put(Metadata.UNTRUSTED_LINEAGE, Metadata.UNTRUSTED_BUILDING);
+        assertTrue(outdated(stamped("tpl-test", tainted), imageDef));
     }
 
     @Test

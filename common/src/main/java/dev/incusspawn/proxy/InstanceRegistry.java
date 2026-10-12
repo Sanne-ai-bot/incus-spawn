@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 /**
  * Maps a request's source address to the instance that made it, and to the credential
@@ -127,10 +128,12 @@ public final class InstanceRegistry {
      * What an instance was built from.
      *
      * @param template     its leaf template ({@link Metadata#templateOf}), "" when none is recorded
-     * @param projectLocal whether a project-local definition went into it ({@code isx project},
-     *                     or a {@code .incus-spawn/} template anywhere in its chain), or it is
-     *                     otherwise untrusted: a failed build or a copy of one
-     *                     ({@link Metadata#UNTRUSTED_LINEAGE})
+     * @param untrusted    whether no host route may admit it, whatever its template: a
+     *                     project-local definition went into it ({@code isx project}, or a
+     *                     {@code .incus-spawn/} template anywhere in its chain), or it, or an
+     *                     ancestor, is an unfinished or failed build ({@link Metadata#untrustedReason})
+     *                     or has a parent named so ({@link Metadata#untrustedByName})
+     * @param why          the reason, for the refusal's log line; "" when trusted
      */
     public record Lineage(String template, boolean untrusted, String why) {
         public Lineage(String template, boolean projectLocal) {
@@ -481,19 +484,26 @@ public final class InstanceRegistry {
 
     /**
      * What an instance was built from. Untrusted when it, or any ancestor this listing still has,
-     * is untrusted by {@link Metadata#untrustedReason}: a failed or unfinished build carries its
-     * parent's template stamps, and so does everything branched from it, which before #936 got no
-     * stamp of its own; walking the {@code parent} names catches a renamed failed build, and a
-     * branch of a branch, as long as the instances between still exist.
+     * is untrusted by {@link Metadata#untrustedReason} or {@link Metadata#untrustedByName}: a failed
+     * or unfinished build carries its parent's template stamps, and so does everything branched
+     * from it, which before #936 got no stamp of its own; walking the {@code parent} names catches a
+     * renamed failed build, and a branch of a branch, as long as the instances between still exist.
      */
     private static Lineage lineageOf(JqValue config, Map<String, JqValue> configByName) {
         var current = config;
         for (int hop = 0; current != null && hop < MAX_ANCESTORS; hop++) {
             var ancestor = current;
-            var reason = Metadata.untrustedReason(key -> ancestor.pathText(key, ""));
+            Function<String, String> read = key -> ancestor.pathText(key, "");
+            var reason = Metadata.untrustedReason(read);
             if (!reason.isEmpty()) {
-                return Lineage.untrusted((hop == 0 ? "" : "descended from an instance ") + "stamped untrusted ("
+                return Lineage.untrusted((hop == 0 ? "untrusted (" : "descended from an untrusted instance (")
                         + reason + "): an unfinished, failed or project build, or a copy of one");
+            }
+            var byName = Metadata.untrustedByName(read);
+            if (!byName.isEmpty()) {
+                return Lineage.untrusted((hop == 0 ? "" : "descended from an instance ") + byName
+                        + ", as a branch of a failed build made before isx stamped them is (rename that instance"
+                        + " if it is no failed build)");
             }
             var parent = current.pathText(Metadata.PARENT, "");
             current = parent.isEmpty() ? null : configByName.get(parent);

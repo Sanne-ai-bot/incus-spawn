@@ -120,8 +120,9 @@ Key design:
   `HostRouteRelay` answers every request whose `Host` or SNI is a `host-routes:` name or under one, checked in `routeRequest` before `mcp.isx.internal` and everything else: both must equal the route's name (421), a name under it gets 404, and a WebSocket to either is refused.
   The caller passes by `InstanceRegistry.identifyWithLineage` (address + secret, one throttled refresh on a refusal) and `HostRoutes.Route.admits` (its leaf template), and is refused before its body is read.
   Never admitted: a project-local instance (its type, `project` stamp or build source), and one that `Metadata.untrustedReason` calls untrusted, it or any ancestor in the listing.
-  That is the inherited `untrusted-lineage` stamp, `type: failed-build`, or a `parent` ending in `-failed-build`.
-  A build container's copy or create request sets the stamp, only `BuildCommand.trustBuilt` removes it, after the swap, and a branch's copy request stamps an untrusted source's reason over anything its caller passed.
+  That is the inherited `untrusted-lineage` stamp or `type: failed-build`; the registry also refuses a `parent` ending in `-failed-build` (`Metadata.untrustedByName`, never stamped on a copy).
+  A build container's copy or create request sets the stamp, only `BuildCommand.trustBuilt` removes it, after the swap and inside its lock (`TemplateLock.replace`'s after-swap step), and a branch's copy request stamps an untrusted source's reason over anything its caller passed.
+  A template still carrying it is outdated (`BuildCommand.isImageOutdated`).
   The relay drops every client `X-Isx-*` header by `HostRouteRelay.headerKey` (every non-alphanumeric folded into `-`, as a CGI-style controller reads it), the hop-by-hop ones and those named in `Connection:`.
   It sets `X-Isx-Instance`/`X-Isx-Template` and the route's own secret (`HostRouteSecret`, `X-Isx-Route-Secret`), which the controller checks before trusting the rest.
   It forwards the path and query (never an absolute URI) over plain HTTP to the loopback target, stored canonical by `HostRoutes` so it is never looked up, with no credential.
