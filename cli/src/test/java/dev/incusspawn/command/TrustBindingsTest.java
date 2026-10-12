@@ -7,6 +7,8 @@ import dev.incusspawn.incus.IncusClient;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 import java.nio.file.Files;
@@ -25,6 +27,7 @@ class TrustBindingsTest {
     /** What {@code update-ca-trust} extracts; spelled out so the tests pin the paths themselves. */
     private static final String PEM = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem";
     private static final String HASH_DIR = "/etc/pki/ca-trust/extracted/pem/directory-hash";
+    private static final String JAVA_STORE = "/etc/pki/ca-trust/extracted/java/cacerts";
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
 
@@ -102,17 +105,26 @@ class TrustBindingsTest {
     }
 
     @Test
-    void buildFailsBeforeWritingTheVariablesWhenTheBaseImageLacksTheSystemStore() {
+    void theHelperBindsJdksToTheJavaStoreUpdateCaTrustExtracts(@TempDir Path tmp) throws Exception {
+        // /etc/pki/java/cacerts is a ca-certificates compat link, as /etc/pki/tls/certs/ca-bundle.crt
+        // was until 2026.2.90 dropped it (#713); the extracted file is what update-ca-trust writes.
+        var script = Files.readString(helper(tmp));
+        assertTrue(script.contains("store=${ISX_TRUST_JAVA_STORE:-" + JAVA_STORE + "}"), script);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {PEM, JAVA_STORE})
+    void buildFailsBeforeWritingTheVariablesWhenTheBaseImageLacksAStore(String store) {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenAnswer(inv ->
-                List.of(inv.getArguments()).contains("-s") ? new IncusClient.ExecResult(1, "", "") : OK);
+                List.of(inv.getArguments()).contains(store) ? new IncusClient.ExecResult(1, "", "") : OK);
         var container = new Container(incus, "test");
         var imageDef = new ImageDef();
         imageDef.setName("tpl-x");
 
         var e = assertThrows(RuntimeException.class, () ->
                 GuestProvisioning.writeEnvFile(container, imageDef, Map.of("tpl-x", imageDef), List.of(), "tpl-x"));
-        assertTrue(e.getMessage().contains(PEM), e.getMessage());
+        assertTrue(e.getMessage().contains(store), e.getMessage());
         var all = String.join("\n", writtenScripts(incus));
         assertFalse(all.contains("isx-env.sh"), all);
     }
