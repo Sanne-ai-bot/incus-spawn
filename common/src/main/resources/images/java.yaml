@@ -4,7 +4,7 @@ parent: tpl-dev
 deprecated: >-
   will be removed from isx; define your own template instead, in
   ~/.config/incus-spawn/images/ or a searchPaths directory. To start from a copy,
-  take images/java.yaml, and dev.yaml for its deprecated parent tpl-dev, from
+  take images/java.yaml, and images/dev.yaml for its parent tpl-dev, from
   https://github.com/Sanne/incus-spawn-templates
 packages:
   - java-25-openjdk-devel

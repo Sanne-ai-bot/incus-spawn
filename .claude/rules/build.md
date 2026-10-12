@@ -24,7 +24,7 @@ paths:
 # Image Hierarchy and Build System
 
 Templates are YAML definitions (`common/src/main/resources/images/`) with optional parent inheritance forming a chain: `tpl-minimal` -> `tpl-dev` -> `tpl-java`.
-A `deprecated:` definition (#1195) still builds, but `ImageDef.deprecationWarning` warns when the template itself is deprecated, or else when its direct parent is (#1353: not for deprecated templates further up, nor again for every descendant), which `BuildCommand` prints once per template per run; the TUI shows them in template details, and copies every `BuildOutput.warn` of a build it runs into its warning log (`BuildOutput.copyWarningsTo`), since it redraws over the released terminal.
+A `deprecated:` definition (#1195) still builds, but `ImageDef.deprecationWarning` gives one warning when the template itself is deprecated or its direct parent is, both in one line when both are (the parent named, its note left out), and none for deprecated templates further up (#1353), which `BuildCommand` prints once per template per run; the TUI shows it in template details, and copies every `BuildOutput.warn` of a build it runs into its warning log (`BuildOutput.copyWarningsTo`), since it redraws over the released terminal.
 `deprecated` is not fingerprinted.
 `tpl-dev` and `tpl-java` are deprecated, to be removed; their copies live in `incus-spawn-templates` under the same names.
 Building an image auto-builds missing parents.
