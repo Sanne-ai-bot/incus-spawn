@@ -1064,8 +1064,8 @@ class BuildCommandTest {
             var latest = new BaseImageReleases.Release("fedora-44-20261010", "2026-10-10", "sums");
             try {
                 when(releases.fetchReleases()).thenReturn(List.of(latest));
-                when(releases.fetchChecksums(latest)).thenReturn(new BaseImageReleases.Checksums(
-                        Map.of("x86_64", "tracked-sha"), Map.of()));
+                when(releases.fetchChecksums(eq(latest), anyString(), any())).thenReturn(new BaseImageReleases.Checksums(
+                        Map.of("x86_64", "tracked-sha", "aarch64", "tracked-sha"), Map.of()));
             } catch (java.io.IOException e) {
                 throw new AssertionError(e);
             }
@@ -1078,7 +1078,7 @@ class BuildCommandTest {
             var root = trackedRoot();
             var base = cmd.resolveTrackedBaseImage(root);
             assertEquals("fedora-44-20261010", base.tag(), "the build downloads the newest release");
-            assertEquals(Map.of("x86_64", "tracked-sha"), base.sha256());
+            assertEquals(Map.of("x86_64", "tracked-sha", "aarch64", "tracked-sha"), base.sha256());
             cmd.stampBuildVersion("tpl-minimal", root, Map.of());
 
             var stamp = ArgumentCaptor.forClass(String.class);
@@ -1091,6 +1091,58 @@ class BuildCommandTest {
                             Metadata.DEFINITION_SHA, stamp.getValue())),
                     reloaded), "--out-of-sync must not rebuild it again");
         });
+    }
+
+    /** An unpinned VM root as loaded from its YAML. */
+    private static ImageDef trackedVmRoot() {
+        var root = trackedRoot();
+        root.setVmImageUrl("https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}-vm-direct.tar.xz");
+        root.setVmImageSha256(Map.of("x86_64", "builtin-vm-sha", "aarch64", "builtin-vm-sha"));
+        return root;
+    }
+
+    private static BuildCommand trackingAgainst(BaseImageReleases.Release latest, BaseImageReleases.Checksums sums) {
+        var releases = mock(BaseImageReleases.class);
+        try {
+            when(releases.fetchReleases()).thenReturn(List.of(latest));
+            when(releases.fetchChecksums(eq(latest), anyString(), any())).thenReturn(sums);
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+        var cmd = spy(new BuildCommand());
+        doReturn(releases).when(cmd).baseImageReleases(anyString());
+        return cmd;
+    }
+
+    /**
+     * A newer release without the VM image the definition names (every release before #1255
+     * lacks -vm-direct) leaves the VM on the built-in release: its tag and its checksum together.
+     * Pairing the built-in checksum with the newer tag downloaded a file that could never match.
+     */
+    @Test
+    void aTrackedReleaseWithoutTheVmImageKeepsTheVmOnTheBuiltInRelease() {
+        var latest = new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums");
+        var cmd = trackingAgainst(latest, new BaseImageReleases.Checksums(
+                Map.of("x86_64", "tracked-sha", "aarch64", "tracked-sha"), Map.of()));
+
+        var base = cmd.resolveTrackedBaseImage(trackedVmRoot());
+
+        assertEquals("fedora-44-20261020", base.tag(), "the container image still tracks the newest release");
+        assertEquals("fedora-44-20261009", base.vmTag(), "the VM image is fetched from the release its checksum is of");
+        assertEquals(Map.of("x86_64", "builtin-vm-sha", "aarch64", "builtin-vm-sha"), base.vmSha256());
+    }
+
+    @Test
+    void aTrackedReleaseWithTheVmImageMovesTheVmToo() {
+        var latest = new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", "sums-v2");
+        var cmd = trackingAgainst(latest, new BaseImageReleases.Checksums(
+                Map.of("x86_64", "tracked-sha", "aarch64", "tracked-sha"),
+                Map.of("x86_64", "tracked-vm-sha", "aarch64", "tracked-vm-sha")));
+
+        var base = cmd.resolveTrackedBaseImage(trackedVmRoot());
+
+        assertEquals("fedora-44-20261020", base.vmTag());
+        assertEquals(Map.of("x86_64", "tracked-vm-sha", "aarch64", "tracked-vm-sha"), base.vmSha256());
     }
 
     /** Asking Incus failing is not "the parent is not built": it is thrown, never read as current. */

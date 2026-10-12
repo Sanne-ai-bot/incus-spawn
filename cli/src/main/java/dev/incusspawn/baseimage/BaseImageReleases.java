@@ -56,14 +56,24 @@ public final class BaseImageReleases {
         return new BaseImageReleases(m.group(1) + "/" + m.group(2));
     }
 
-    /** A published base-image release. */
-    public record Release(String tag, String date, String sha256sumsUrl) {}
+    /** The architectures base images are published for. */
+    static final List<String> ARCHES = List.of("x86_64", "aarch64");
 
     /**
-     * SHA256 checksums for a release, keyed by architecture ({@code x86_64},
-     * {@code aarch64}). {@code container} covers the {@code .tar.xz} rootfs
-     * images; {@code vm} covers the {@code -vm.tar.xz} disk images (may be
-     * empty for releases that ship no VM assets).
+     * A published base-image release, with the download URLs of its manifests: {@code SHA256SUMS},
+     * and {@code SHA256SUMS.v2} when it has one (null otherwise).
+     */
+    public record Release(String tag, String date, String sha256sumsUrl, String sha256sumsV2Url) {
+        public Release(String tag, String date, String sha256sumsUrl) {
+            this(tag, date, sha256sumsUrl, null);
+        }
+    }
+
+    /**
+     * SHA256 checksums of the assets a template downloads from a release, keyed by architecture
+     * ({@code x86_64}, {@code aarch64}): {@code container} for its {@code image_url},
+     * {@code vm} for its {@code vm_image_url}. An arch the release has no such asset for is
+     * absent, so either map may be empty.
      */
     public record Checksums(Map<String, String> container, Map<String, String> vm) {}
 
@@ -80,49 +90,98 @@ public final class BaseImageReleases {
             if (!tag.startsWith("fedora-")) continue;
             var date = node.pathText("published_at", "").split("T")[0];
             String sha256Url = null;
+            String sha256V2Url = null;
             for (var asset : node.getField("assets").asList()) {
-                if ("SHA256SUMS".equals(asset.pathText("name", ""))) {
-                    sha256Url = asset.pathText("browser_download_url", null);
-                    break;
-                }
+                var name = asset.pathText("name", "");
+                if ("SHA256SUMS".equals(name)) sha256Url = asset.pathText("browser_download_url", null);
+                else if ("SHA256SUMS.v2".equals(name)) sha256V2Url = asset.pathText("browser_download_url", null);
             }
-            releases.add(new Release(tag, date, sha256Url));
+            releases.add(new Release(tag, date, sha256Url, sha256V2Url));
         }
         return releases;
     }
 
-    public Checksums fetchChecksums(Release release) throws IOException {
-        if (release.sha256sumsUrl() == null) return null;
-        var response = sendString(HttpRequest.newBuilder(URI.create(release.sha256sumsUrl()))
+    /**
+     * The checksums of the assets {@code imageUrl} and {@code vmImageUrl} name in {@code release},
+     * or null when its manifest cannot be fetched or read. {@code SHA256SUMS.v2} is read when the
+     * release has one: it lists every asset, the VM image built from scratch
+     * ({@code -vm-direct.tar.xz}) included, while {@code SHA256SUMS} stays exactly what isx
+     * releases before it parse (#1255).
+     */
+    public Checksums fetchChecksums(Release release, String imageUrl, String vmImageUrl) throws IOException {
+        // A v2 that cannot be downloaded (an error status or a failed request) leaves SHA256SUMS,
+        // which still lists the older assets; one that downloads but does not parse is a broken
+        // release, and is not read around.
+        String body = null;
+        if (release.sha256sumsV2Url() != null) {
+            try {
+                body = fetchText(release.sha256sumsV2Url());
+            } catch (IOException e) {
+                body = null;
+            }
+        }
+        if (body == null && release.sha256sumsUrl() != null) body = fetchText(release.sha256sumsUrl());
+        if (body == null) return null;
+        try {
+            return checksumsFor(parseManifest(body), release.tag(), imageUrl, vmImageUrl);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("unreadable checksum manifest in " + release.tag() + ": " + e.getMessage(), e);
+        }
+    }
+
+    private String fetchText(String url) throws IOException {
+        var response = sendString(HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(15))
                 .GET().build());
-        if (response.statusCode() != 200) return null;
-        return parseSha256Sums(response.body());
+        return response.statusCode() == 200 ? response.body() : null;
     }
 
     /**
-     * Parse a {@code SHA256SUMS} manifest into per-arch container and VM
-     * checksums. Each line is {@code <sha256>  <filename>}; the arch is read
-     * from the filename and the {@code -vm} marker distinguishes the VM disk
-     * image from the container rootfs (e.g. {@code fedora-44-x86_64-vm.tar.xz}
-     * vs {@code fedora-44-x86_64.tar.xz}).
+     * A {@code SHA256SUMS}-style manifest, one {@code <sha256>  <filename>} per line, as filename
+     * to checksum. A line that is not that shape, or a file listed twice, makes the whole
+     * manifest unreadable: a checksum is what a base image is trusted by, so none is guessed.
      */
-    static Checksums parseSha256Sums(String body) {
+    static Map<String, String> parseManifest(String body) {
+        var sums = new HashMap<String, String>();
+        for (var line : body.split("\n")) {
+            if (line.isBlank()) continue;
+            var parts = line.strip().split("\\s+", 2);
+            if (parts.length < 2 || !parts[0].matches("[0-9a-fA-F]{64}")) {
+                throw new IllegalArgumentException("not '<sha256>  <file>': " + line.strip());
+            }
+            var name = parts[1].startsWith("*") ? parts[1].substring(1) : parts[1];
+            if (sums.putIfAbsent(name, parts[0].toLowerCase(java.util.Locale.ROOT)) != null) {
+                throw new IllegalArgumentException(name + " is listed twice");
+            }
+        }
+        return sums;
+    }
+
+    /**
+     * The checksums, per arch, of the files {@code imageUrl} and {@code vmImageUrl} download for
+     * {@code tag}: each URL's last path segment with {@code {arch}} and {@code {tag}} filled in,
+     * looked up by its exact name. Matching the names a template downloads, rather than guessing
+     * from markers in a file name, keeps a new asset from ever standing in for another.
+     */
+    static Checksums checksumsFor(Map<String, String> manifest, String tag, String imageUrl, String vmImageUrl) {
         var container = new HashMap<String, String>();
         var vm = new HashMap<String, String>();
-        for (var line : body.split("\n")) {
-            var parts = line.strip().split("\\s+", 2);
-            if (parts.length < 2) continue;
-            var sha = parts[0];
-            var name = parts[1];
-            String arch = null;
-            if (name.contains("x86_64")) arch = "x86_64";
-            else if (name.contains("aarch64")) arch = "aarch64";
-            if (arch == null) continue;
-            if (name.contains("-vm")) vm.put(arch, sha);
-            else container.put(arch, sha);
+        for (var arch : ARCHES) {
+            if (imageUrl != null) putIfListed(container, arch, manifest, assetName(imageUrl, tag, arch));
+            if (vmImageUrl != null) putIfListed(vm, arch, manifest, assetName(vmImageUrl, tag, arch));
         }
         return new Checksums(container, vm);
+    }
+
+    private static void putIfListed(Map<String, String> into, String arch, Map<String, String> manifest, String name) {
+        var sha = manifest.get(name);
+        if (sha != null) into.put(arch, sha);
+    }
+
+    /** The file name {@code urlTemplate} downloads for {@code tag} on {@code arch}. */
+    public static String assetName(String urlTemplate, String tag, String arch) {
+        var url = urlTemplate.replace("{arch}", arch).replace("{tag}", tag);
+        return url.substring(url.lastIndexOf('/') + 1);
     }
 
     private HttpResponse<String> sendString(HttpRequest request) throws IOException {
