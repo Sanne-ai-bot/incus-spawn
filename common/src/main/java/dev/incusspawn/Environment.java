@@ -176,6 +176,11 @@ public final class Environment {
         return systemdUserDir().resolve(PROXY_SERVICE_NAME + ".service");
     }
 
+    /** Where the proxy spills a request body it must hold (#1315); each file is unlinked once open. */
+    public static Path proxySpoolDir() {
+        return home().resolve(".local/state/incus-spawn/proxy-spool");
+    }
+
     public static Path apiDebugDir() {
         return home().resolve(".local/state/incus-spawn/api-debug");
     }
