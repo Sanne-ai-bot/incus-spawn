@@ -17,6 +17,7 @@
 # ChatGptProof does (checked against its pinned vector first), and only their SHA-256 verifiers go
 # into instance metadata.
 #
+# Its work directory, which holds a copy of the user's CA key, is removed on every exit unless KEEP=1.
 # None of the user's own isx state is touched: the test's proxy runs in a mount namespace that puts
 # a throwaway config and state directory under the work directory over the user's (a copy of
 # config.yaml and the CA, plus the ChatGPT account and its session),
@@ -78,6 +79,7 @@ cleanup() {
     CLEANED=1
     if [ "${KEEP:-0}" = 1 ]; then
         [ "$USER_PROXY_WAS_UP" = 1 ] && echo "KEEP=1: your own proxy stays stopped; run 'isx proxy start' when done" >&2
+        echo "KEEP=1: $WORK holds a copy of your isx CA key; remove it when done" >&2
         return
     fi
     # The test proxy by the pid it reports, and its wrapper and the stub by the work directory
@@ -95,10 +97,20 @@ cleanup() {
     sudo nft delete table inet isx_chatgpt_guest 2>/dev/null
     if [ "$USER_PROXY_WAS_UP" = 1 ]; then
         # The user's own proxy, with the user's own config, as it was before the test stopped it
-        setsid nohup isx proxy start > "$WORK/user-proxy.log" 2>&1 < /dev/null &
-        wait_healthy && [ "$(health_pid)" != "$REAL_PROXY_PID" ] && echo "Restarted the proxy that was running before" \
-            || echo "WARNING: could not restart the proxy that was running before; run 'isx proxy start'" >&2
+        # Its output outside $WORK, which goes below, and shown if it did not come back
+        local out
+        out=$(mktemp /tmp/isx-proxy-restart.XXXXXX)
+        setsid nohup isx proxy start > "$out" 2>&1 < /dev/null &
+        if wait_healthy && [ "$(health_pid)" != "$REAL_PROXY_PID" ]; then
+            echo "Restarted the proxy that was running before"
+            rm -f "$out"
+        else
+            echo "WARNING: could not restart the proxy that was running before; run 'isx proxy start'. Its output: $out" >&2
+            tail -20 "$out" >&2
+        fi
     fi
+    # The test home holds a copy of the user's CA key, which every instance trusts: never left behind
+    rm -rf "$WORK"
     return 0
 }
 trap cleanup EXIT
