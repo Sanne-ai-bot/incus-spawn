@@ -117,7 +117,7 @@ class InstanceLifecycleRequestBudgetTest {
         var incus = spy(daemon.client());
         doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
         var started = InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});
-        CertificateAuthority.fixContainerCaIfNeeded(incus, NAME, started);
+        CertificateAuthority.fixContainerCaIfNeeded(incus, NAME, started, msg -> {});
         var requests = daemon.requests();
         assertEquals(List.of("GET /1.0/instances/" + NAME, "PATCH /1.0/instances/" + NAME),
                 requests.subList(requests.size() - 2, requests.size()),

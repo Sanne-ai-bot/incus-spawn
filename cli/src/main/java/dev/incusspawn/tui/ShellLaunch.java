@@ -139,7 +139,7 @@ final class ShellLaunch {
             started = InstanceLifecycle.startForUse(tui.incus, containerName, machineType, tui.warningLog::add);
         }
         // The start's own read of the instance, when there was one: no need to read it again
-        CertificateAuthority.fixContainerCaIfNeeded(tui.incus, containerName, started);
+        CertificateAuthority.fixContainerCaIfNeeded(tui.incus, containerName, started, tui.warningLog::add);
     }
 
     void shellInto(ActionContext target) {

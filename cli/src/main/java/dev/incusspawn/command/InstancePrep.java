@@ -138,7 +138,7 @@ public class InstancePrep {
         }
 
         // The start's own read of the instance, when there was one: no need to read it again
-        if (CertificateAuthority.fixContainerCaIfNeeded(incus, container, started)) {
+        if (CertificateAuthority.fixContainerCaIfNeeded(incus, container, started, BuildOutput::warn)) {
             BuildOutput.warnBanner("CA certificate mismatch",
                     "Updated automatically.");
         }

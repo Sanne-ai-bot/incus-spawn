@@ -24,9 +24,9 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
 /**
- * A child build copies its parent's guest, trust anchors included, and is stamped as holding
- * the current set when it finishes: a reconcile that failed must fail the build, or the
- * template reads as current with no proxy CA in it and every branch inherits broken TLS.
+ * A child build copies its parent's guest, trust anchors included, and is stamped with the set
+ * it installs: a refresh that failed must fail the build, or the template could be finished
+ * with no proxy CA in it and every branch would inherit broken TLS.
  */
 @ExtendWith(IsolatedHome.class)
 class BuildCommandTrustAnchorsTest {

@@ -574,10 +574,9 @@ public final class InstanceLifecycle {
      * answers, so that {@link #ensureReady} can tell a later reboot from it at no cost
      * ({@link Metadata#INSTANCE_SECRET_BOOT}). Its boot is only known after the start, so this
      * reads the instance, and returns that read for the caller's next step to reuse rather than
-     * make again (the CA check, {@link CertificateAuthority#fixContainerCaIfNeeded(IncusClient,
-     * String, JsonNode)}): the write is the only request it adds. Best-effort: without it, the
-     * next shell gives the box another secret, which is the safe way for it to go wrong. A VM is
-     * never stamped.
+     * make again (the CA check, {@link CertificateAuthority#fixContainerCaIfNeeded}): the write
+     * is the only request it adds. Best-effort: without it, the next shell gives the box another
+     * secret, which is the safe way for it to go wrong. A VM is never stamped.
      *
      * @return the instance as read once the guest answered, or null for a VM or a failed read
      */
