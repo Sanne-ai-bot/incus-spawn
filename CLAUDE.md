@@ -140,7 +140,7 @@ When enabled, `CertificateAuthority.collectTrustAnchors()` collects the MITM CA 
 The stamp is the CA's fingerprint, plus `+<host anchors' fingerprint>` when there are any, so `CaTrust` still reads which CA built an image after the host anchors change.
 `fixContainerCaIfNeeded` reconciles the whole set in one exec: stamps `<ca>+pending`, removes old anchors, writes the current set via heredoc, and re-stamps.
 The pending stamp matches no set, so a failed install retries; an empty one would never be checked again.
-`buildFromScratch` writes each anchor via `Container.writeFile`.
+`buildFromScratch` installs the set through the same script (`installTrustAnchors`).
 See `.claude/rules/proxy.md`.
 
 **`isx init` prompts read from `Prompts`, never a `Console`.**
