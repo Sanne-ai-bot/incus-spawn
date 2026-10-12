@@ -257,7 +257,9 @@ public class CertificateAuthority {
      * {@link Container#heredoc} so content cannot escape the heredoc.
      */
     static String buildReconcileScript(SortedMap<String, String> anchors) {
-        var sb = new StringBuilder();
+        // set -e: the exit status is the first failure's, so a write that fails is not stamped
+        // as done because update-ca-trust, last, succeeded
+        var sb = new StringBuilder("set -e\n");
         sb.append("rm -f ").append(GUEST_ANCHORS_DIR).append("incus-spawn-mitm.crt ")
                 .append(GUEST_ANCHORS_DIR).append("isx-*.crt\n");
         for (var entry : anchors.entrySet()) {
