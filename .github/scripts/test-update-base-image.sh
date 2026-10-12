@@ -81,7 +81,24 @@ expect_direct() {
     echo "ok: $what"
 }
 
-BUILTIN="$REPO/common/src/main/resources/images/minimal.yaml"
+# A stock built-in of an older release, written here rather than taken from the repository's
+# minimal.yaml: the bump this checks moves that file to -vm-direct, and a fixture derived from
+# it would stop being the state the checks start from.
+BUILTIN="$WORK/stock-builtin.yaml"
+cat > "$BUILTIN" <<EOF
+name: tpl-minimal
+description: Base OS only
+image: fedora-44-base
+image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}.tar.xz
+vm_image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}-vm.tar.xz
+image_tag: fedora-44-20000101
+image_sha256:
+  x86_64: $(H 1)
+  aarch64: $(H 2)
+vm_image_sha256:
+  x86_64: $(H 3)
+  aarch64: $(H 4)
+EOF
 out="$(run "$BUILTIN")"
 expect_direct "$out" "stock built-in, older tag"
 grep -qx "title: Update base image to $TAG, VM image built from scratch" <<<"$out" || fail "the switch is not in the title: $(grep '^title:' <<<"$out")"
@@ -94,8 +111,8 @@ grep -qx "title: Update base image to $TAG, VM image built from scratch" <<<"$ou
     || fail "a switch after a stock-image bump of the same release is not a re-publish: $(grep '^title:' <<<"$out")"
 expect_direct "$(run "$BUILTIN" "bot/update-base-image-$TAG")" "stock-image bump of the same release still open"
 
-VM_URL="$(yq -r '.vm_image_url' "$BUILTIN" | sed -E 's#[^/]+$#fedora-44-{arch}-vm-direct.tar.xz#')"
-yq ".vm_image_url = \"$VM_URL\" | .vm_image_sha256.x86_64 = \"$(H 15)\" | .vm_image_sha256.aarch64 = \"$(H 16)\"" \
+yq ".vm_image_url |= sub(\"[^/]+\$\"; \"fedora-44-{arch}-vm-direct.tar.xz\")
+    | .vm_image_sha256.x86_64 = \"$(H 15)\" | .vm_image_sha256.aarch64 = \"$(H 16)\"" \
     "$WORK/stock-bump.yaml" > "$WORK/direct.yaml"
 [ "$(run "$WORK/direct.yaml")" = UNCHANGED ] || fail "a built-in already on this release's -vm-direct is bumped again"
 echo "ok: already current"
