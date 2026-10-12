@@ -1211,6 +1211,19 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
+     * Gives a child build the parent's trust set brought up to date. Unlike an instance's
+     * {@code fixContainerCaIfNeeded}, a failure fails the build: the child is stamped as holding
+     * the current set when it finishes, so a guest left without its anchors would read as current.
+     */
+    static boolean refreshTrustAnchors(IncusClient incus, String buildName) {
+        var trust = CertificateAuthority.collectTrustAnchors();
+        if (trust.stamp().equals(incus.configGet(buildName, Metadata.CA_FINGERPRINT))) return false;
+        CertificateAuthority.installTrustAnchors(incus, buildName, trust)
+                .assertSuccess("Failed to install trust anchors");
+        return true;
+    }
+
+    /**
      * Build an image by copying its parent and applying layers from the image definition.
      * @param buildName the Incus container name to create (temp name during atomic rebuild)
      * @param parentSource the parent container to copy from
@@ -1270,7 +1283,7 @@ public class BuildCommand extends BaseCommand {
                 "printf '%s' '" + ProxyConfig.resolvConfContent(incus) + "' > /etc/resolv.conf")
                 .assertSuccess("Failed to fix DNS after copy");
 
-        if (CertificateAuthority.fixContainerCaIfNeeded(incus, buildName)) {
+        if (refreshTrustAnchors(incus, buildName)) {
             BuildOutput.step("Refreshed trust anchors.");
         }
 
