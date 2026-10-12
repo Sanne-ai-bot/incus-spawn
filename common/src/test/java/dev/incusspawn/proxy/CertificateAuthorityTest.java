@@ -2,6 +2,9 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.DerEncoder;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,10 +22,15 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.TreeMap;
 
 import static dev.incusspawn.DerEncoder.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
 
 /**
  * Covers the upgrade of CA certificates generated before Subject Key Identifiers
@@ -245,6 +253,28 @@ class CertificateAuthorityTest {
         assertTrue(script.contains("isx-*.crt"));
         assertTrue(script.contains("isx-abc.crt"));
         assertTrue(script.contains("update-ca-trust"));
+    }
+
+    @Test
+    void aFailedReconcileIsRetriedEvenIfTheTrustSetChangesBack() {
+        // The guest's anchors were removed before the install failed: whatever the stamp says
+        // now, the next check must not take it for a guest that holds a trust set. Empty means
+        // "built before stamps" and is skipped, so it would never be repaired.
+        CertificateAuthority.loadOrCreate();
+        var daemon = new FakeIncusDaemon().container("dev-1", Map.of(Metadata.CA_FINGERPRINT, "deadbeef"));
+        var incus = spy(daemon.client());
+        doReturn(new IncusClient.ExecResult(1, "", "update-ca-trust: failed"))
+                .when(incus).shellExec(eq("dev-1"), any(String[].class));
+
+        assertFalse(CertificateAuthority.fixContainerCaIfNeeded(incus, "dev-1"));
+
+        var stamp = incus.configGet("dev-1", Metadata.CA_FINGERPRINT);
+        assertFalse(stamp.isEmpty(), "an empty stamp is never checked again");
+        assertNotEquals("deadbeef", stamp, "the old set's stamp would match it again");
+        assertNotEquals(CertificateAuthority.collectTrustAnchors().stamp(), stamp,
+                "the guest does not hold the current set");
+        assertEquals(CertificateAuthority.CaStatus.CURRENT, CertificateAuthority.CaTrust.snapshot().classify(stamp),
+                "the instance was being given this host's CA: branching from it is not refused");
     }
 
     // --- Helpers ---
