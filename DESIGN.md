@@ -249,7 +249,7 @@ An isx older than this compares tags only, so run after this one on the same hos
 An unchecked import by an isx before this recorded no URL, and is imported once more.
 If the request for `SHA256SUMS.v2` fails or returns an error status, `SHA256SUMS` is read instead; a v2 that downloads but does not parse is not read around.
 `update-base-image.yml` points `vm_image_url` at `-vm-direct` in the bump of the first release that has it for both arches, says so in the PR, and refuses a later release without it rather than move the built-in back to the stock image.
-`isx update-base` pins a VM image only with its checksums: pinning a release without the VM image the definition names leaves `vm_image_url` out of the pin, with a warning, so its VM templates start from the Incus image server.
+`isx update-base` pins only what the release lists a checksum for on every arch, since a pin is used wherever it is copied: a release without the container image for every arch is not pinned, and one without the VM image the definition names for every arch is pinned without `vm_image_url`, with a warning, so its VM templates start from the Incus image server.
 See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version) for the full release process.
 
 **Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`).
