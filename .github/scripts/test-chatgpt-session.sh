@@ -64,6 +64,8 @@ control() { curl -sf -m 10 "$@"; }
 # Packets an nftables named counter has seen: <table> <counter>
 counter() { sudo nft -j list counter inet "$1" "$2" | python3 -c "import json,sys; print([o['counter']['packets'] for o in json.load(sys.stdin)['nftables'] if 'counter' in o][0])"; }
 stub_requests() { control "http://127.0.0.1:$CONTROL_PORT/log" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"; }
+# Whether a log has a line matching <pattern> from line <from> on: <from> <file> <pattern>
+logged_since() { tail -n "+$1" "$2" | grep -q "$3"; }
 # Whether the stub has seen a request: <method> <path>
 stub_saw() { control "http://127.0.0.1:$CONTROL_PORT/log" | python3 -c "import json,sys; sys.exit(0 if any(e['method'] == sys.argv[1] and e['path'] == sys.argv[2] for e in json.load(sys.stdin)) else 1)" "$1" "$2"; }
 # Waits up to 30 s for a proxy to answer on the bridge
@@ -359,6 +361,9 @@ claims['exp'] = int(time.time()) + 240
 auth['tokens']['access_token'] = '.'.join([head, base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('='), sig])
 json.dump(auth, open(path, 'w'))
 PY"
+# Where the proxy's and the stub's logs stand before Codex's turns, so what they caused can be told apart
+TURNS_LOG_FROM=$(( $(wc -l < "$WORK/proxy.log") + 1 ))
+TURNS_STUB_FROM=$(stub_requests)
 gu "cd /tmp && timeout 120 codex exec --skip-git-repo-check 'say hi' </dev/null" > "$WORK/codex-ws.out" 2>&1
 echo "    codex exec exited $? ($(grep -c . "$WORK/codex-ws.out") lines of output)"
 REFRESHES=$(rotations)
@@ -379,18 +384,25 @@ echo "    codex exec exited $? ($(grep -c . "$WORK/codex-http.out") lines of out
 check "a turn completed over HTTP" grep -q "stub turn over http" "$WORK/codex-http.out"
 control -X POST "http://127.0.0.1:$CONTROL_PORT/fault?name=ws-unavailable&count=0" >/dev/null
 control "http://127.0.0.1:$CONTROL_PORT/log" > "$WORK/stub-log.json"
-check "Codex's other calls were refused by the proxy" grep -q "not an operation ChatGPT sessions allow" "$WORK/proxy.log"
-check "everything Codex's two turns sent the stub is on the allowlist" python3 - "$WORK/stub-log.json" <<'PY'
+check "the proxy refused some of Codex's other calls during its turns" \
+    logged_since "$TURNS_LOG_FROM" "$WORK/proxy.log" "not an operation ChatGPT sessions allow"
+# ChatGptRoute.Operation, kept apart on purpose so widening it fails here: a GET of codex/responses
+# only as the upgrade, client_version 1-64 (POST /oauth/revoke is answered by the proxy, never relayed)
+check "everything Codex's two turns sent the stub is on the allowlist" python3 - "$WORK/stub-log.json" "$WORK/off-allowlist.txt" "$TURNS_STUB_FROM" <<'PY'
 import json, re, sys
-allowed = [("POST", "auth.openai.com", r"/oauth/token"), ("POST", "chatgpt.com", r"/backend-api/codex/responses"),
-           ("GET", "chatgpt.com", r"/backend-api/codex/responses"), ("WS", "chatgpt.com", r"/backend-api/codex/responses"),
-           ("GET", "chatgpt.com", r"/backend-api/codex/models\?client_version=[0-9A-Za-z.+-]+"),
-           ("GET", "chatgpt.com", r"/backend-api/wham/accounts/check")]
-off = [(e["method"], e["host"], e["path"]) for e in json.load(open(sys.argv[1]))
-       if not any(m == e["method"] and h == e["host"] and re.fullmatch(p, e["path"]) for m, h, p in allowed)]
-print(off, file=sys.stderr)
+allowed = [("POST", "auth.openai.com", r"/oauth/token", False), ("POST", "chatgpt.com", r"/backend-api/codex/responses", False),
+           ("GET", "chatgpt.com", r"/backend-api/codex/responses", True), ("WS", "chatgpt.com", r"/backend-api/codex/responses", False),
+           ("GET", "chatgpt.com", r"/backend-api/codex/models(\?client_version=[0-9A-Za-z.+-]{1,64})?", False),
+           ("GET", "chatgpt.com", r"/backend-api/wham/accounts/check", False)]
+def on_list(e):
+    upgrade = e.get("upgrade", "").lower() == "websocket"
+    return any(m == e["method"] and h == e["host"] and re.fullmatch(p, e["path"]) and u == upgrade
+               for m, h, p, u in allowed)
+off = ["%s %s %s" % (e["method"], e["host"], e["path"]) for e in json.load(open(sys.argv[1]))[int(sys.argv[3]):] if not on_list(e)]
+open(sys.argv[2], "w").write("".join(line + "\n" for line in off))
 sys.exit(1 if off else 0)
 PY
+[ -s "$WORK/off-allowlist.txt" ] && sed 's/^/      off the allowlist: /' "$WORK/off-allowlist.txt"
 check "the stub saw Codex's model list request with a stub-minted bearer" python3 - "$WORK/stub-log.json" <<'PY'
 import json, sys
 log = json.load(open(sys.argv[1]))
