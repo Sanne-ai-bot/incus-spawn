@@ -591,7 +591,7 @@ class RepoCloner {
         return git + " remote set-url origin " + shellQuote(repo.getUrl())
                 // The clone copied the host branch's tags too; a tag on unpushed work would keep it.
                 // The fetch below follows the remote's own, as a network clone does.
-                + " && " + git + " for-each-ref --format='delete %(refname)' refs/tags | " + git + " update-ref --stdin"
+                + " && " + deleteRefs(git, "refs/tags", "")
                 + " && " + resolveBranch(repo, "$(" + git + " ls-remote --symref origin HEAD"
                         + " | sed -n 's|^ref: refs/heads/\\([^[:space:]]*\\)[[:space:]]*HEAD$|\\1|p')")
                 + " && [ -n \"$b\" ]"
@@ -602,9 +602,7 @@ class RepoCloner {
                 // hold unpushed work, and its origin/HEAD), leaving the refs a network clone has,
                 + " && { " + git + " remote set-head origin -d >/dev/null 2>&1; true; }"
                 + " && " + deleteOtherBranches(git)
-                + " && " + git + " for-each-ref --format='delete %(refname)' refs/remotes"
-                + " | grep -vxF \"delete refs/remotes/origin/$b\""
-                + " | " + git + " update-ref --stdin"
+                + " && " + deleteRefs(git, "refs/remotes", " | grep -vxF \"delete refs/remotes/origin/$b\"")
                 + (repo.hasBranch() ? "" : " && " + git + " remote set-head origin \"$b\"")
                 // and the commits only those refs reached, cheap to find in a shallow repo.
                 + " && " + git + " reflog expire --expire=now --all"
@@ -612,10 +610,20 @@ class RepoCloner {
     }
 
     /**
+     * Shell deleting the refs under {@code namespaces}, but those {@code keep} (a pipe stage, or
+     * empty) filters out of its {@code delete <ref>} lines. They are listed first, so a failing
+     * for-each-ref fails the command instead of leaving every ref in place; not pipefail, which
+     * would also fail on a {@code keep} grep that filtered out every line.
+     */
+    private static String deleteRefs(String git, String namespaces, String keep) {
+        return "d=$(" + git + " for-each-ref --format='delete %(refname)' " + namespaces + ")"
+                + " && { [ -z \"$d\" ] || printf '%s\\n' \"$d\"" + keep + " | " + git + " update-ref --stdin; }";
+    }
+
+    /**
      * Shell deleting every local branch but the one HEAD is on (all of them when it is detached)
      * with {@code branch -D}, which also drops their config sections: a host checkout's branch
-     * name can say what it was working on. They are listed first, so a failing for-each-ref
-     * fails the command instead of leaving every branch in place.
+     * name can say what it was working on. Listed first, as in {@link #deleteRefs}.
      */
     private static String deleteOtherBranches(String git) {
         return "l=$(" + git + " for-each-ref --format='%(if)%(HEAD)%(then)%(else)%(refname:strip=2)%(end)' refs/heads)"

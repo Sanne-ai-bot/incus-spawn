@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.function.UnaryOperator;
 
 import static dev.incusspawn.git.GitTestUtils.commitBinary;
 import static dev.incusspawn.git.GitTestUtils.git;
@@ -42,9 +43,12 @@ class RepoClonerShallowTest {
         // The guest is this machine; a reference is a plain directory here, so it needs no mount wait.
         when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenAnswer(inv -> {
             String cmd = inv.getArgument(2);
-            return sh(cmd.replaceAll("\\{ ! command -v mountpoint .*?; \\} && ", ""));
+            return sh(rewrite.apply(cmd.replaceAll("\\{ ! command -v mountpoint .*?; \\} && ", "")));
         });
     }
+
+    /** Applied to every guest command before it runs. */
+    private UnaryOperator<String> rewrite = UnaryOperator.identity();
 
     @Test
     void aShallowRepoClonesFromTheNetworkWithItsDepthAndStaysOnItsBranch() throws Exception {
@@ -163,6 +167,29 @@ class RepoClonerShallowTest {
     }
 
     @Test
+    void aRefListingThatFailsGivesUpTheHostReference() throws Exception {
+        // A for-each-ref listing refs to delete fails (say a corrupt packed-refs): the deletion must
+        // not go ahead with nothing, leaving the host's refs in the image.
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(host, "checkout", "-q", "-b", "wip");
+
+        var branches = " for-each-ref --format='%(if)";
+        var tags = " for-each-ref --format='delete %(refname)' refs/tags";
+        var remotes = " for-each-ref --format='delete %(refname)' refs/remotes";
+        for (var broken : new Object[][] {{null, branches}, {2, branches}, {2, tags}, {2, remotes}}) {
+            var listing = (String) broken[1];
+            // A listing the commands lack is no rewrite, and the reference would be used.
+            rewrite = cmd -> cmd.replace(listing, " for-each-ref --no-such-option" + listing.substring(" for-each-ref".length()));
+
+            var state = run(repo((Integer) broken[0], null), host);
+
+            assertEquals(StepState.DONE, state.state(), state.detail());
+            assertTrue(state.note().startsWith("could not use the host reference"), listing + ": " + state.note());
+        }
+    }
+
+    @Test
     void aRepoWithoutADepthDoesNotInheritAShallowHostCheckout() throws Exception {
         // Shallow because another template gave this URL a depth when the host cloned it.
         var host = tmp.resolve("host-releases");
@@ -192,12 +219,16 @@ class RepoClonerShallowTest {
         return repo;
     }
 
-    private Path prepare(ImageDef.RepoEntry repo, Path reference) {
+    private StepProgress run(ImageDef.RepoEntry repo, Path reference) {
         var ref = reference == null ? null
                 : new RepoCloner.RepoReference("ref", reference.toString(), reference.toString(), null);
         var states = new AtomicReferenceArray<StepProgress>(1);
         new RepoCloner(incus).prepareOne(container, repo, ref, states, 0, new AtomicBoolean());
-        var state = states.get(0);
+        return states.get(0);
+    }
+
+    private Path prepare(ImageDef.RepoEntry repo, Path reference) {
+        var state = run(repo, reference);
         assertEquals(StepState.DONE, state.state(), state.detail() + "\n" + state.log());
         if (reference != null) assertEquals("via host reference", state.note());
         return Path.of(repo.getPath());
