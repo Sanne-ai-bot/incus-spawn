@@ -34,6 +34,21 @@ class TemplateChangesTest {
     }
 
     @Test
+    void aChangedRepoDepthIsMarkedAsChanged() throws Exception {
+        var built = def("""
+                repos:
+                  - url: https://github.com/acme/releases.git
+                """);
+        var now = def("""
+                repos:
+                  - url: https://github.com/acme/releases.git
+                    depth: 1
+                """);
+        assertEquals(List.of("~ repo https://github.com/acme/releases.git → ~/releases (depth (full) → 1)"),
+                TemplateChanges.definitionChanges(built, now, java.util.Map.of()));
+    }
+
+    @Test
     void settingsOutsidePackagesToolsAndReposListNothing() throws Exception {
         assertEquals(List.of(), TemplateChanges.definitionChanges(def("packages: [git]\ngui: false"),
                 def("packages: [git]\ngui: true"), java.util.Map.of()));

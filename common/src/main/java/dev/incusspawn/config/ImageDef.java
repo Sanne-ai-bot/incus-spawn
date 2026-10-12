@@ -6,6 +6,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolRefListConverter;
 import dev.incusspawn.util.OutputFormat;
+import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
@@ -263,6 +264,8 @@ public class ImageDef {
         private String url;
         private String path;
         private String branch;
+        @JqConverter(IntegerConverter.class)
+        private Integer depth;
         private String prime;
 
         public String getUrl() { return url; }
@@ -276,6 +279,10 @@ public class ImageDef {
         public void setPath(String path) { this.path = path; }
         public String getBranch() { return branch; }
         public void setBranch(String branch) { this.branch = branch; }
+        public boolean hasBranch() { return branch != null && !branch.isBlank(); }
+        /** How many commits of history a clone keeps, or null for all of it (#1344). */
+        public Integer getDepth() { return depth; }
+        public void setDepth(Integer depth) { this.depth = depth; }
         public String getPrime() { return prime; }
         public void setPrime(String prime) { this.prime = prime; }
         public boolean hasPrime() { return prime != null && !prime.isBlank(); }
@@ -380,7 +387,9 @@ public class ImageDef {
                 .sorted(java.util.Comparator.<RepoEntry, String>comparing(r -> String.valueOf(r.getUrl()))
                         .thenComparing(r -> String.valueOf(r.getPath())))
                 .forEach(r -> sb.append("repo=").append(r.getUrl()).append(',').append(r.getPath())
-                        .append(',').append(r.getBranch()).append(',').append(r.getPrime()).append('\n'));
+                        .append(',').append(r.getBranch()).append(',').append(r.getPrime())
+                        // Only when set, so a template without one keeps the fingerprint it was built with.
+                        .append(r.getDepth() != null ? ",depth=" + r.getDepth() : "").append('\n'));
         if (skills.getRepo() != null) sb.append("skills-repo=").append(skills.getRepo()).append('\n');
         skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
         for (var hr : hostResources) {
@@ -714,6 +723,14 @@ public class ImageDef {
         if (invalidName != null) {
             warnings.accept(file + ": " + invalidName + LayeredDefinitions.REFUSED);
             return false;
+        }
+        for (var repo : def.getRepos()) {
+            if (repo != null && repo.getDepth() != null && repo.getDepth() < 1) {
+                warnings.accept(file + ": repo " + OutputFormat.oneLine(String.valueOf(repo.getUrl()))
+                        + ": 'depth' " + repo.getDepth() + " is not a positive number of commits"
+                        + LayeredDefinitions.REFUSED);
+                return false;
+            }
         }
         if (def.getDefaultAction() != null && def.getDefaultAction().isBlank()) {
             warnings.accept(file + ": 'default-action' is blank; remove it or set a valid tool reference");

@@ -466,6 +466,79 @@ class ImageDefTest {
     }
 
     @Test
+    void aRepoDepthIsParsed(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("apt.yaml"), """
+                name: tpl-apt
+                parent: tpl-minimal
+                repos:
+                  - url: https://github.com/Sanne/isx-apt-releases.git
+                    depth: 1
+                """);
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()));
+
+        assertEquals(1, defs.get("tpl-apt").getRepos().get(0).getDepth());
+    }
+
+    @Test
+    void anEmptyRepoItemDoesNotBreakLoadingTheOtherTemplates(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("empty.yaml"), """
+                name: tpl-empty
+                parent: tpl-minimal
+                repos:
+                  -
+                """);
+
+        var defs = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), w -> {}).defs();
+
+        assertNotNull(defs.get("tpl-java"));
+        assertNotNull(defs.get("tpl-empty"));
+    }
+
+    @Test
+    void aRepoDepthThatIsNotAWholeNumberFailsTheFile(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("apt.yaml"), """
+                name: tpl-apt
+                parent: tpl-minimal
+                repos:
+                  - url: https://github.com/Sanne/isx-apt-releases.git
+                    depth: .inf
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var defs = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), warnings::add).defs();
+
+        assertNull(defs.get("tpl-apt"));
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("depth") && w.contains("whole number")), warnings.toString());
+    }
+
+    @Test
+    void aRepoDepthThatIsNotPositiveIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("apt.yaml"), """
+                name: tpl-apt
+                parent: tpl-minimal
+                repos:
+                  - url: https://github.com/Sanne/isx-apt-releases.git
+                    depth: 0
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), warnings::add);
+
+        assertNull(result.defs().get("tpl-apt"));
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains("apt.yaml") && warnings.get(0).contains("'depth' 0"), warnings.get(0));
+    }
+
+    @Test
     void aNameThatCannotBeAnInstanceIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
         var imagesDir = tempDir.resolve("images");
         Files.createDirectories(imagesDir);
@@ -631,6 +704,17 @@ class ImageDefTest {
         a.setImageSha256(Map.of("x86_64", "aaa"));
         b.setImageSha256(Map.of("x86_64", "bbb"));
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenARepoDepthChanges() {
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/Sanne/isx-apt-releases.git");
+        var def = makeDef("images:fedora/44", null, List.of(), List.of());
+        def.setRepos(List.of(repo));
+        var full = def.contentFingerprint(Map.of());
+        repo.setDepth(1);
+        assertNotEquals(full, def.contentFingerprint(Map.of()));
     }
 
     // --- contentFingerprint tests ---

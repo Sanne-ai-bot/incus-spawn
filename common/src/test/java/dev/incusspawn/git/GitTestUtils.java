@@ -2,17 +2,18 @@ package dev.incusspawn.git;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-final class GitTestUtils {
+public final class GitTestUtils {
 
     private GitTestUtils() {}
 
-    static String runGit(Path dir, String... args) throws IOException, InterruptedException {
+    public static String runGit(Path dir, String... args) throws IOException, InterruptedException {
         var cmd = new ArrayList<String>();
         cmd.add("git");
         cmd.addAll(List.of(args));
@@ -33,5 +34,33 @@ final class GitTestUtils {
             }
             throw e;
         }
+    }
+
+    /** {@link #runGit}'s output, stripped. */
+    public static String git(Path dir, String... args) throws IOException, InterruptedException {
+        return runGit(dir, args).strip();
+    }
+
+    /**
+     * A repository that publishes binaries as commits, like a release repository: five commits on
+     * {@code main} each replacing {@code isx.deb}, and one more on a {@code stable} branch.
+     */
+    public static Path releasesFixture(Path parent) throws IOException, InterruptedException {
+        var repo = parent.resolve("releases");
+        runGit(parent, "init", "-q", "-b", "main", repo.toString());
+        for (int i = 1; i <= 5; i++) commitBinary(repo, "release " + i);
+        runGit(repo, "checkout", "-q", "-b", "stable");
+        commitBinary(repo, "stable release");
+        runGit(repo, "checkout", "-q", "main");
+        return repo;
+    }
+
+    /** Commit a new random {@code isx.deb}, seeded by {@code message}. */
+    public static void commitBinary(Path repo, String message) throws IOException, InterruptedException {
+        var bytes = new byte[64 * 1024];
+        new java.util.Random(message.hashCode()).nextBytes(bytes);
+        Files.write(repo.resolve("isx.deb"), bytes);
+        runGit(repo, "add", "isx.deb");
+        runGit(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message);
     }
 }

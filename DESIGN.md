@@ -348,6 +348,12 @@ This ensures the local-clone optimization uses current objects.
 Fetches run in parallel and are rendered with the shared `TerminalProgress` animated per-repo spinner display (same helper used for parallel repo cloning).
 Optionally, missing repos can be cloned — the first prompt accepts `y`/`n`/`always`/`never`, with `always` and `never` persisted to the `auto-clone-repos` config field.
 `--skip-git-refresh` bypasses the refresh entirely.
+A repo with a `depth` is cloned on the host with `--depth` (and its `branch`, if any), and marked with the depth in its git config (`isx.depth`).
+Only a checkout with that mark has its depth managed: each refresh fetches it with `--depth`, at whatever depth the templates ask for now.
+Once a template wants all of history it is unshallowed and its refspec widened, and only then is its mark removed, so it becomes the regular clone it would have been.
+A checkout without the mark is the user's, shallow or full, and is only ever plainly fetched: `--depth` shortens as well as deepens, so passing it would cut a deeper shallow clone down to the template's depth.
+Every template naming the URL shares the one host checkout, so it is shallow only when all of them give a depth, at the deepest one (`HostRepoRefresh.hostDepths`).
+That is computed over every loaded definition, not only those being built: otherwise building one template would make the checkout shallow, building another would deepen it, and the next build of the first would cut it down again.
 `update-all` only fetches (no clone prompts).
 
 ### Build Flow
@@ -2372,6 +2378,20 @@ Only committed history is copied, but the whole checkout (working tree, untracke
 That is why no prime command runs until every reference is detached (see above), and why project-local templates get no references at all.
 If the reference mount, clone, or fetch fails for any reason the build cleans up the partial checkout and falls back transparently to a plain remote clone.
 
+**Shallow repos** (#1344): a repo entry's `depth` keeps only that many commits, for repositories that publish binaries as commits (`isx-apt-releases` replaces its `.deb` files on every release, and every old one stays in its history).
+Full history stays the default, since development repositories need it.
+From the network the clone is `--single-branch --depth N`, and the refspec is *not* widened: a later `git fetch` of every branch would bring their history back.
+From a host reference the local fast path cannot be used: a local clone ignores `--depth` and would copy the reference's whole history, and the reference may itself be shallow.
+So the clone goes through the transport (`--no-local --depth N`), which reads only the last commits from the mounted checkout.
+Then origin is pointed at the real remote, and its refspec narrowed to the configured branch (else the remote's default, from `ls-remote --symref`), which is fetched at the same depth and checked out.
+Commits the reference already has do not travel again.
+The clone through the transport also takes over the host checkout's own branch (which may hold unpushed work) and its origin/HEAD, so those refs are deleted, and origin/HEAD set to the branch only when it is the remote's default: the refs a shallow network clone has.
+The commits only they reached are then pruned (`reflog expire` and `gc --prune=now`, cheap in a shallow repo), so a host branch's unpushed work does not ship in the image.
+Its tags go the same way, before the depth fetch, which follows the remote's own tags as a network clone does.
+Guest updates do not pass `--depth`, so a shallow repo in a long-lived instance keeps the history fetched after its build; the old history stays out.
+The other way round, a repo without a depth never inherits a shallow host checkout (one another template's depth made, or the user's own).
+A local clone of it would be shallow too, and no fetch deepens it, so that clone is refused and the repo clones in full from the network, its line saying why.
+
 **TUI visibility**: The F3 template detail view shows the host repo link status for each declared repo — the resolved host path when matched, or "No matching host checkout found" when not.
 This lets users verify their `host-paths`/`repo-paths` configuration without running a build.
 The view is full screen and shows the template's effective settings resolved across the inheritance chain (`TemplateDetails`), using the build's own resolvers so what it shows is what a build produces -- including the type a template was actually built as (its `instance-mode` stamp), flagged when the definition has since changed it.
@@ -3591,6 +3611,9 @@ The local-clone path (from a host reference) does not use `--single-branch` beca
 The alternative — a full remote clone — would download objects for hundreds of branches and thousands of tags that most container workflows never touch.
 Post-hoc pruning is not straightforward because git doesn't garbage-collect fetched objects unless explicitly told to.
 The single-branch + refspec-restore approach gets the performance benefit without any user-visible limitation.
+
+A repo with a `depth` is the exception, and the limitation is the point: its clone stays single-branch and shallow (see "Shallow repos" under Repo Cloning).
+`depth` is opt-in, per repo, rather than a default for some repos or a global setting: whether history is worth its download is a property of the repository, and only its template knows that.
 
 ### Auto-remote: opt-in via configuration
 Auto-remote management requires explicit `host-paths` or `repo-paths` configuration — we don't scan `~` or `/` to auto-discover repos.

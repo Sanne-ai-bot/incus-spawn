@@ -102,11 +102,14 @@ public final class TemplateChanges {
         });
     }
 
-    /** {@code url → path (branch main → next, prime)}, or null when branch and prime are unchanged. */
+    /** {@code url → path (branch main → next, depth, prime)}, or null when branch, depth and prime are unchanged. */
     private static String repoSettingsChange(ImageDef.RepoEntry built, ImageDef.RepoEntry now) {
         var what = new ArrayList<String>();
         if (!Objects.equals(built.getBranch(), now.getBranch())) {
             what.add("branch " + orElse(built.getBranch(), "(default)") + " → " + orElse(now.getBranch(), "(default)"));
+        }
+        if (!Objects.equals(built.getDepth(), now.getDepth())) {
+            what.add("depth " + orElse(built.getDepth(), "(full)") + " → " + orElse(now.getDepth(), "(full)"));
         }
         if (!Objects.equals(built.getPrime(), now.getPrime())) {
             what.add("prime " + orElse(built.getPrime(), "(none)") + " → " + orElse(now.getPrime(), "(none)"));
@@ -114,8 +117,8 @@ public final class TemplateChanges {
         return what.isEmpty() ? null : now.getUrl() + " → " + now.getPath() + " (" + String.join(", ", what) + ")";
     }
 
-    private static String orElse(String value, String fallback) {
-        return value != null ? value : fallback;
+    private static String orElse(Object value, String fallback) {
+        return value != null ? value.toString() : fallback;
     }
 
     /** {@code  (still inherited from tpl-dev)} when a parent of {@code now} names the tool, else empty. */

@@ -9,6 +9,8 @@ import dev.incusspawn.util.TerminalProgress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,12 +27,13 @@ public final class HostRepoRefresh {
     enum FetchState { FETCHING, DONE, FAILED }
     record TaskProgress(FetchState state, String detail) {}
 
-    public static void refresh(List<ImageDef.RepoEntry> repos, SpawnConfig config,
+    /** {@code depths} is {@link #hostDepths(Map)} of every definition, not only of those refreshed. */
+    public static void refresh(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths, SpawnConfig config,
                                boolean cloneMissing, Consumer<String> output) {
         if (repos.isEmpty()) return;
         if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
 
-        var classified = classify(repos, config, cloneMissing);
+        var classified = classify(repos, depths, config, cloneMissing);
         if (classified.toFetch.isEmpty() && classified.toClone.isEmpty()) return;
 
         if (!classified.toFetch.isEmpty()) {
@@ -48,12 +51,12 @@ public final class HostRepoRefresh {
      * fetch existing host repos in background on the provided executor. The returned
      * handle lets callers latch on the fetch when they actually need the repos.
      */
-    public static AsyncRefresh refreshAsync(List<ImageDef.RepoEntry> repos, SpawnConfig config,
-                                            boolean cloneMissing, ExecutorService executor) {
+    public static AsyncRefresh refreshAsync(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths,
+                                            SpawnConfig config, boolean cloneMissing, ExecutorService executor) {
         if (repos.isEmpty()) return AsyncRefresh.COMPLETE;
         if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return AsyncRefresh.COMPLETE;
 
-        var classified = classify(repos, config, cloneMissing);
+        var classified = classify(repos, depths, config, cloneMissing);
         if (classified.toFetch.isEmpty() && classified.toClone.isEmpty()) return AsyncRefresh.COMPLETE;
 
         if (!classified.toClone.isEmpty()) {
@@ -68,7 +71,7 @@ public final class HostRepoRefresh {
         var futures = classified.toFetch.stream()
                 .map(task -> CompletableFuture.runAsync(() -> {
                     try {
-                        var result = GitRemoteUtils.hostGitExecResult(task.hostPath(), "fetch", "--", task.remoteName());
+                        var result = task.fetch();
                         if (!result.success()) {
                             warnings.add("Fetch failed for " + task.repoName() + " at " + task.hostPath()
                                     + ": " + extractGitError(result.output()));
@@ -107,8 +110,8 @@ public final class HostRepoRefresh {
 
     private record ClassifiedRepos(List<FetchTask> toFetch, List<CloneTask> toClone) {}
 
-    private static ClassifiedRepos classify(List<ImageDef.RepoEntry> repos, SpawnConfig config,
-                                            boolean cloneMissing) {
+    private static ClassifiedRepos classify(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths,
+                                            SpawnConfig config, boolean cloneMissing) {
         var deduplicated = deduplicateByUrl(repos);
         var toFetch = new ArrayList<FetchTask>();
         var toClone = new ArrayList<CloneTask>();
@@ -116,6 +119,7 @@ public final class HostRepoRefresh {
         for (var repo : deduplicated) {
             var repoName = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
             if (repoName.isEmpty()) continue;
+            var depth = depths.get(GitRemoteUtils.normalizeGitUrl(repo.getUrl()));
 
             Path hostPath;
             try {
@@ -128,14 +132,15 @@ public final class HostRepoRefresh {
             if (hostPath != null && Files.isDirectory(hostPath) && GitRemoteUtils.isGitRepo(hostPath)) {
                 var remoteName = GitRemoteUtils.matchingRemoteName(hostPath, repo.getUrl());
                 if (remoteName != null) {
-                    toFetch.add(new FetchTask(repoName, hostPath, remoteName));
+                    toFetch.add(new FetchTask(repoName, hostPath, remoteName, managedDepth(hostPath), depth));
                 } else {
                     BuildOutput.note("Host repo " + hostPath + " has no remote matching " + repo.getUrl() + ", skipping.");
                 }
             } else if (cloneMissing) {
                 var targetDir = resolveCloneTarget(repoName, config);
                 if (targetDir != null) {
-                    toClone.add(new CloneTask(repoName, repo.getUrl(), targetDir));
+                    toClone.add(new CloneTask(repoName, repo.getUrl(), targetDir, depth,
+                            depth != null && repo.hasBranch() ? repo.getBranch() : null));
                 }
             }
         }
@@ -154,7 +159,7 @@ public final class HostRepoRefresh {
                 idx -> {
                     var task = tasks.get(idx);
                     try {
-                        var result = GitRemoteUtils.hostGitExecResult(task.hostPath(), "fetch", "--", task.remoteName());
+                        var result = task.fetch();
                         if (result.success()) {
                             states.set(idx, new TaskProgress(FetchState.DONE, null));
                         } else {
@@ -236,8 +241,7 @@ public final class HostRepoRefresh {
             }
 
             BuildOutput.stepStart("Cloning " + task.repoName + "...");
-            var result = GitRemoteUtils.hostGitExecResult(task.targetDir.getParent(),
-                    "clone", "--", task.url, task.targetDir.getFileName().toString());
+            var result = GitRemoteUtils.hostGitExecResult(task.targetDir.getParent(), task.cloneArgs());
             if (result.success()) {
                 BuildOutput.stepDone();
             } else {
@@ -315,6 +319,44 @@ public final class HostRepoRefresh {
         return repos;
     }
 
+    /**
+     * The depth a host checkout keeps, by normalized URL: the deepest any template asks for, and no
+     * entry (all of history) as soon as one template asks for all of it, since every template naming
+     * the URL clones from the same host checkout. Project-local definitions use none, so they do not count.
+     */
+    public static Map<String, Integer> hostDepths(Map<String, ImageDef> defs) {
+        return hostDepths(defs.values().stream().filter(d -> d.getProjectRoot() == null)
+                .flatMap(d -> d.getRepos().stream()).toList());
+    }
+
+    static Map<String, Integer> hostDepths(List<ImageDef.RepoEntry> repos) {
+        var depths = new HashMap<String, Integer>();
+        var full = new HashSet<String>();
+        for (var repo : repos) {
+            if (repo == null || repo.getUrl() == null) continue;
+            var url = GitRemoteUtils.normalizeGitUrl(repo.getUrl());
+            if (repo.getDepth() == null) full.add(url);
+            else depths.merge(url, repo.getDepth(), Math::max);
+        }
+        depths.keySet().removeAll(full);
+        return depths;
+    }
+
+    /**
+     * Marks a host checkout isx cloned shallow, with the depth it keeps. Only such a checkout has its
+     * depth managed: one without the mark is the user's, shallow or not, and only ever plainly fetched.
+     */
+    static final String DEPTH_KEY = "isx.depth";
+
+    private static Integer managedDepth(Path hostPath) {
+        try {
+            var value = GitRemoteUtils.hostGitExec(hostPath, "config", "--local", "--get", DEPTH_KEY);
+            return value == null ? null : Integer.valueOf(value.strip());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     static String extractGitError(String text) {
         if (text == null || text.isEmpty()) return "";
         for (var line : text.split("\n")) {
@@ -327,8 +369,45 @@ public final class HostRepoRefresh {
         return lines[lines.length - 1].strip();
     }
 
-    record FetchTask(String repoName, Path hostPath, String remoteName) {}
-    private record CloneTask(String repoName, String url, Path targetDir) {}
+    /**
+     * {@code managedDepth} is the depth isx cloned the checkout with ({@link #DEPTH_KEY}), null for a
+     * user's checkout; {@code depth} is the one the templates ask for now, null for all of history.
+     */
+    record FetchTask(String repoName, Path hostPath, String remoteName, Integer managedDepth, Integer depth) {
+        GitRemoteUtils.ExecResult fetch() {
+            if (managedDepth == null) return git("fetch", "--", remoteName);
+            if (depth != null) {
+                var result = git("fetch", "--depth", depth.toString(), "--", remoteName);
+                if (result.success() && !depth.equals(managedDepth)) git("config", DEPTH_KEY, depth.toString());
+                return result;
+            }
+            // A template now wants all of history: make it the regular clone it would have been.
+            // Unmarked last: a failure on the way leaves it marked, and the next refresh repeats
+            // these steps, which are safe to repeat.
+            var shallowState = GitRemoteUtils.hostGitExec(hostPath, "rev-parse", "--is-shallow-repository");
+            if (shallowState == null) return new GitRemoteUtils.ExecResult(false, "could not tell whether the checkout is shallow");
+            var shallow = "true".equals(shallowState);
+            var result = shallow ? git("fetch", "--unshallow", "--", remoteName) : git("fetch", "--", remoteName);
+            if (result.success()) result = git("remote", "set-branches", remoteName, "*");
+            if (result.success()) result = git("fetch", "--", remoteName);
+            if (result.success()) result = git("config", "--unset", DEPTH_KEY);
+            return result;
+        }
+
+        private GitRemoteUtils.ExecResult git(String... args) {
+            return GitRemoteUtils.hostGitExecResult(hostPath, args);
+        }
+    }
+
+    private record CloneTask(String repoName, String url, Path targetDir, Integer depth, String branch) {
+        String[] cloneArgs() {
+            var args = new ArrayList<>(List.of("clone"));
+            if (depth != null) args.addAll(List.of("--depth", depth.toString(), "-c", DEPTH_KEY + "=" + depth));
+            if (branch != null) args.addAll(List.of("--branch", branch));
+            args.addAll(List.of("--", url, targetDir.getFileName().toString()));
+            return args.toArray(String[]::new);
+        }
+    }
 
     private enum ClonePolicy { ASK, ALWAYS, NEVER }
     private enum CloneAnswer { YES, NO, ALWAYS, NEVER }

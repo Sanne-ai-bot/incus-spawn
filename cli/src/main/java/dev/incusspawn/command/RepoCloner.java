@@ -394,30 +394,26 @@ class RepoCloner {
                 var clone = container.shAsUser("agentuser",
                         awaitMount(ref.containerPath()) + " && " + buildCloneCommand(repo, ref.containerPath()));
                 var last = clone;
-                if (clone.success()) {
+                if (clone.success() && repo.getDepth() != null) {
+                    last = container.shAsUser("agentuser", shallowFixupCommand(repo));
+                    usedReference = last.success();
+                } else if (clone.success()) {
                     // Point origin at the real remote, fetch current refs, and
                     // detect the remote's default branch.  Objects are already
                     // local (copied from the reference's pack files), so only ref
                     // advertisements travel the network.  set-head --auto is needed
                     // because the local clone inherits HEAD from the host checkout,
                     // which may be on a different branch than the remote's default.
-                    var clonePath = shellQuote(expandedPath);
+                    var git = "git -C " + shellQuote(expandedPath);
                     var fixup = container.shAsUser("agentuser",
-                            "git -C " + clonePath + " remote set-url origin " + shellQuote(repo.getUrl())
-                                    + " && git -C " + clonePath + " fetch --quiet origin"
-                                    + " && git -C " + clonePath + " remote set-head origin --auto");
+                            git + " remote set-url origin " + shellQuote(repo.getUrl())
+                                    + " && " + git + " fetch --quiet origin"
+                                    + " && " + git + " remote set-head origin --auto");
                     last = fixup;
                     if (fixup.success()) {
-                        String resolveExpr;
-                        if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
-                            resolveExpr = "b=" + shellQuote(repo.getBranch());
-                        } else {
-                            resolveExpr = "b=$(git -C " + clonePath
-                                    + " for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)";
-                        }
-                        var checkout = container.shAsUser("agentuser",
-                                resolveExpr + " && git -C " + clonePath
-                                        + " checkout -B \"$b\" --track \"origin/$b\"");
+                        var checkout = container.shAsUser("agentuser", resolveBranch(repo,
+                                "$(" + git + " for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)")
+                                + " && " + git + CHECKOUT_TRACKING);
                         usedReference = checkout.success();
                         last = checkout;
                     }
@@ -439,13 +435,16 @@ class RepoCloner {
 
                 // Widen the fetch refspec that --single-branch narrowed, so the
                 // clone behaves like a regular one.  The local-clone path doesn't
-                // use --single-branch, so it skips this.
-                var repoPath = shellQuote(expandHome(repo.getPath()));
-                var restore = container.shAsUser("agentuser",
-                        "git -C " + repoPath + " remote set-branches origin '*'");
-                if (!restore.success()) {
-                    states.set(idx, StepProgress.failed(gitError(restore), combinedOutput(restore)));
-                    return CloneResult.FAILED;
+                // use --single-branch, so it skips this.  A shallow repo keeps it
+                // narrow: a fetch of every branch would bring their history back.
+                if (repo.getDepth() == null) {
+                    var repoPath = shellQuote(expandHome(repo.getPath()));
+                    var restore = container.shAsUser("agentuser",
+                            "git -C " + repoPath + " remote set-branches origin '*'");
+                    if (!restore.success()) {
+                        states.set(idx, StepProgress.failed(gitError(restore), combinedOutput(restore)));
+                        return CloneResult.FAILED;
+                    }
                 }
             }
 
@@ -553,17 +552,66 @@ class RepoCloner {
             // Local clone from mounted host reference — copies pack files
             // directly.  Branch checkout is handled separately after the
             // remote URL is fixed up and a fetch supplies current refs.
-            cmd.append(" --no-hardlinks");
+            // A shallow repo cannot: a local clone ignores --depth and would copy the
+            // reference's whole history, so it goes through the transport, which sends only
+            // the last commits (from a shallow host checkout too).
+            cmd.append(repo.getDepth() != null ? " --no-local --depth " + repo.getDepth() : " --no-hardlinks");
         } else {
             cmd.append(" --single-branch");
-            if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
+            if (repo.getDepth() != null) cmd.append(" --depth ").append(repo.getDepth());
+            if (repo.hasBranch()) {
                 cmd.append(" --branch ").append(shellQuote(repo.getBranch()));
             }
         }
         cmd.append(" -- ").append(shellQuote(referencePath != null ? referencePath : repo.getUrl()));
-        cmd.append(" ").append(shellQuote(expandHome(repo.getPath())));
+        var path = shellQuote(expandHome(repo.getPath()));
+        cmd.append(" ").append(path);
+        if (referencePath != null && repo.getDepth() == null) {
+            // A local clone of a shallow checkout (one a repo with a depth made on the host) is
+            // shallow too, and no fetch deepens it: this repo keeps its full history, from the network.
+            cmd.append(" && { [ \"$(git -C ").append(path).append(" rev-parse --is-shallow-repository)\" != true ]")
+                    .append(" || { echo 'fatal: the host checkout is shallow' >&2; exit 1; }; }");
+        }
         return cmd.toString();
     }
+
+    /**
+     * After a shallow clone from a host reference: point origin at the real remote, narrow its
+     * refspec to the configured branch (else the remote's default), fetch that branch at the
+     * repo's depth and check it out, then keep only the refs a shallow network clone would have.
+     * Commits the reference already has do not travel again.
+     */
+    private static String shallowFixupCommand(ImageDef.RepoEntry repo) {
+        var git = "git -C " + shellQuote(expandHome(repo.getPath()));
+        return git + " remote set-url origin " + shellQuote(repo.getUrl())
+                // The clone copied the host branch's tags too; a tag on unpushed work would keep it.
+                // The fetch below follows the remote's own, as a network clone does.
+                + " && " + git + " for-each-ref --format='delete %(refname)' refs/tags | " + git + " update-ref --stdin"
+                + " && " + resolveBranch(repo, "$(" + git + " ls-remote --symref origin HEAD"
+                        + " | sed -n 's|^ref: refs/heads/\\([^[:space:]]*\\)[[:space:]]*HEAD$|\\1|p')")
+                + " && [ -n \"$b\" ]"
+                + " && " + git + " remote set-branches origin \"$b\""
+                + " && " + git + " fetch --quiet --depth " + repo.getDepth() + " origin"
+                + " && " + git + CHECKOUT_TRACKING
+                // Drop what the clone took over from the host checkout (its own branch, which may
+                // hold unpushed work, and its origin/HEAD), leaving the refs a network clone has,
+                + " && { " + git + " remote set-head origin -d >/dev/null 2>&1; true; }"
+                + " && " + git + " for-each-ref --format='delete %(refname)' refs/heads refs/remotes"
+                + " | grep -vxF -e \"delete refs/heads/$b\" -e \"delete refs/remotes/origin/$b\""
+                + " | " + git + " update-ref --stdin"
+                + (repo.hasBranch() ? "" : " && " + git + " remote set-head origin \"$b\"")
+                // and the commits only those refs reached, cheap to find in a shallow repo.
+                + " && " + git + " reflog expire --expire=now --all"
+                + " && " + git + " gc --quiet --prune=now";
+    }
+
+    /** Shell setting {@code b} to the repo's configured branch, else to {@code remoteDefault}'s output. */
+    private static String resolveBranch(ImageDef.RepoEntry repo, String remoteDefault) {
+        return "b=" + (repo.hasBranch() ? shellQuote(repo.getBranch()) : remoteDefault);
+    }
+
+    /** Appended to {@code git -C <clone>}: check out branch {@code $b} tracking origin's. */
+    private static final String CHECKOUT_TRACKING = " checkout -B \"$b\" --track \"origin/$b\"";
 
     /** The host checkout {@code cloneUrl} can clone from, decided on the host alone: a planned
      *  reference, a skipped one saying why there is none, or null where none is configured. */
