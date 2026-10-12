@@ -503,9 +503,10 @@ final class ChatGptRoute {
                 // Rate limits and server errors say nothing about the token: Codex may retry
                 return Refreshed.refused(status == 429 ? 429 : 502, "server_error");
             }
-            if (code != null && (code.startsWith("refresh_token_") || code.equals("invalid_grant"))) {
-                proxy.setAuthError("The ChatGPT session of openai account '" + session.account()
-                        + "' can no longer be refreshed (" + code + ")"
+            if (code != null && (code.startsWith("refresh_token_") || code.equals("invalid_grant"))
+                    && isDefaultAccount(session.account())) {
+                proxy.setAuthError(authErrorPrefix(session.account())
+                        + "can no longer be refreshed (" + code + ")"
                         + (session.refreshing() != null ? ", after a refresh that was interrupted at "
                                 + session.refreshing() : "") + ". Sign in again.", "isx init");
             }
@@ -534,8 +535,28 @@ final class ChatGptRoute {
             revoke(refreshed.refreshToken());
             return current(session);
         }
-        proxy.clearAuthError();
+        // Only an error this account raised: a working ChatGPT session says nothing about Claude's
+        var standing = proxy.authError;
+        if (standing != null && standing.startsWith(authErrorPrefix(session.account()))) proxy.clearAuthError();
         return new Refreshed(refreshed, session.sessionId(), 200, null);
+    }
+
+    /** How an error about {@code account}'s session begins, so that only its own success clears it. */
+    private static String authErrorPrefix(String account) {
+        return "The ChatGPT session of openai account '" + account + "' ";
+    }
+
+    /**
+     * Whether {@code account} is the {@code openai} account the host itself is served: like
+     * {@code MitmProxy}'s {@code usesDefaultCredentials()}, only that one may raise the host-wide
+     * "sign in again". A pinned instance's broken session is reported to that instance.
+     */
+    private boolean isDefaultAccount(String account) {
+        try {
+            return account.equals(AccountResolver.effectiveAccount(configTree, NAMESPACE, shape, null));
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /** Best effort: the refresh token of a chain nobody holds any more. */

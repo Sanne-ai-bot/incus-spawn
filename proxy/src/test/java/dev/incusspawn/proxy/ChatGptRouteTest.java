@@ -87,9 +87,11 @@ class ChatGptRouteTest {
                   accounts:
                     sso:
                       type: chatgpt
+                    work:
+                      type: chatgpt
                     keyed:
                       apiKey: "sk-real-api-key"
-                  default: keyed
+                  default: sso
                 """);
         store = new ChatGptSessionStore();
 
@@ -173,7 +175,11 @@ class ChatGptRouteTest {
      * proofs were made with is what a copy, or a start that did not renew the binding, looks like.
      */
     static void bind(String secret, String session, String currentSecret) {
-        var proofs = ChatGptProof.derive(secret, ACCOUNT, session);
+        bind(secret, session, currentSecret, ACCOUNT);
+    }
+
+    static void bind(String secret, String session, String currentSecret, String account) {
+        var proofs = ChatGptProof.derive(secret, account, session);
         var listing = """
                 [{"name":"%s","created_at":"2026-10-01T00:00:00Z","config":{
                   "user.incus-spawn.static-ip":"127.0.0.1",
@@ -183,7 +189,7 @@ class ChatGptRouteTest {
                   "user.incus-spawn.chatgpt-refresh-proof-sha256":"%s",
                   "user.incus-spawn.chatgpt-proof-secret-sha256":"%s",
                   "user.incus-spawn.instance-secret-sha256":"%s"}}]
-                """.formatted(INSTANCE, ACCOUNT, ACCOUNT, session, ChatGptProof.verifier(proofs.access()),
+                """.formatted(INSTANCE, account, account, session, ChatGptProof.verifier(proofs.access()),
                 ChatGptProof.verifier(proofs.refresh()), InstanceSecret.sha256(secret), InstanceSecret.sha256(currentSecret));
         var registry = new InstanceRegistry(new IncusClient() {
             @Override
@@ -684,6 +690,24 @@ class ChatGptRouteTest {
         var body = "{\"refresh_token\":\"" + proofs().refreshToken() + "\",\"pad\":\"" + padding + "\"}";
         assertEquals(200, refreshWithBody(body).status());
         assertEquals(List.of(body), List.copyOf(refreshBodies), "untouched, and nothing injected");
+    }
+
+    @Test
+    void aPinnedAccountsRefreshNeitherRaisesNorClearsTheHostsAuthError() throws Exception {
+        // 'work' is pinned, 'sso' is the default: its broken session is no host-wide sign-in
+        var work = store.create("work", mint(60)).sessionId();
+        bind(SECRET, work, SECRET, "work");
+        refreshError = "refresh_token_reused";
+        assertEquals(400, refresh(ChatGptProof.derive(SECRET, "work", work).refreshToken()).status());
+        assertNull(proxy.authError);
+
+        // And its success does not clear an error something else raised
+        proxy.setAuthError("Claude OAuth token rejected (HTTP 401).", "isx init");
+        refreshError = null;
+        work = store.create("work", mint(60)).sessionId();
+        bind(SECRET, work, SECRET, "work");
+        assertEquals(200, refresh(ChatGptProof.derive(SECRET, "work", work).refreshToken()).status());
+        assertEquals("Claude OAuth token rejected (HTTP 401).", proxy.authError);
     }
 
     @Test
