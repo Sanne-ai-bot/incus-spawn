@@ -132,6 +132,17 @@ jobs:
           WANT_VM_FILE="fedora-44-{arch}-vm.tar.xz"
           [[ "$VM_KIND" == direct ]] && WANT_VM_FILE="fedora-44-{arch}-vm-direct.tar.xz"
           CURRENT_SUMS="$(yq -r '[.image_sha256.x86_64, .image_sha256.aarch64, .vm_image_sha256.x86_64, .vm_image_sha256.aarch64] | join(" ")' "$YAML")"
+          # Said in the PR, since the trust root changes with them: the same tag with other
+          # checksums is a release published again, and a new VM file is a switch of image.
+          # Published again: under the same tag, a file that was there before has another
+          # checksum; a VM file the built-in did not use yet is a switch, not that.
+          CURRENT_C="$(yq -r '[.image_sha256.x86_64, .image_sha256.aarch64] | join(" ")' "$YAML")"
+          CURRENT_V="$(yq -r '[.vm_image_sha256.x86_64, .vm_image_sha256.aarch64] | join(" ")' "$YAML")"
+          if [[ "$TAG" == "$CURRENT_TAG" ]] && { [[ "$CURRENT_C" != "$C_X86 $C_ARM" ]] \
+                || { [[ "$CURRENT_VM_FILE" == "$WANT_VM_FILE" ]] && [[ "$CURRENT_V" != "$V_X86 $V_ARM" ]]; }; }; then
+            echo "republished=true" >> "$GITHUB_OUTPUT"
+          fi
+          [[ "$CURRENT_VM_FILE" != "$WANT_VM_FILE" ]] && echo "vm_switch=true" >> "$GITHUB_OUTPUT"
           if [[ "$TAG" == "$CURRENT_TAG" && "$CURRENT_VM_FILE" == "$WANT_VM_FILE" \
                 && "$CURRENT_SUMS" == "$C_X86 $C_ARM $V_X86 $V_ARM" ]]; then
             echo "Already current; nothing to do."
@@ -173,12 +184,31 @@ jobs:
           TAG: ${{ steps.resolve.outputs.tag }}
           CURRENT_TAG: ${{ steps.resolve.outputs.current }}
           VM_KIND: ${{ steps.resolve.outputs.vm_kind }}
+          REPUBLISHED: ${{ steps.resolve.outputs.republished }}
+          VM_SWITCH: ${{ steps.resolve.outputs.vm_switch }}
+          C_X86: ${{ steps.resolve.outputs.c_x86 }}
+          C_ARM: ${{ steps.resolve.outputs.c_arm }}
+          V_X86: ${{ steps.resolve.outputs.v_x86 }}
+          V_ARM: ${{ steps.resolve.outputs.v_arm }}
         run: |
           set -euo pipefail
           # A -vm-direct bump has a branch of its own, so a stock-image bump of the same
-          # release, opened before this reader existed, does not stand in its way.
+          # release, opened before this reader existed, does not stand in its way; so has the
+          # bump of a release published again under its tag, named by all four new checksums,
+          # so a later re-publish that changes any one of them is not taken for this one.
           BRANCH="bot/update-base-image-$TAG"
           [[ "$VM_KIND" == direct ]] && BRANCH="$BRANCH-vm-direct"
+          if [[ "$REPUBLISHED" == true ]]; then
+            BRANCH="$BRANCH-$(printf '%s %s %s %s' "$C_X86" "$C_ARM" "$V_X86" "$V_ARM" | sha256sum | cut -c1-12)"
+          fi
+
+          TITLE="Update base image to $TAG"
+          SUMMARY="Bumps the built-in base-image fallback from \`$CURRENT_TAG\` to \`$TAG\` (newest release of Sanne/incus-spawn-images), refreshing the container and VM checksums."
+          if [[ "$REPUBLISHED" == true ]]; then
+            TITLE="Base image $TAG was published again: new checksums"
+            SUMMARY="**Same tag, checksums changed.** Release \`$TAG\` of Sanne/incus-spawn-images was published again under the tag the built-in already names, with different files. Check every checksum against the release before merging: they are what every base-image download is verified against."
+          fi
+          [[ "$VM_SWITCH" == true && "$VM_KIND" == direct ]] && TITLE="$TITLE, VM image built from scratch"
 
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             echo "Branch $BRANCH already exists; a PR is likely already open. Skipping."
@@ -189,12 +219,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
           git add common/src/main/resources/images/minimal.yaml
-          git commit -m "Update base image to $TAG"
+          git commit -m "$TITLE"
           git push -u origin "$BRANCH"
 
           gh pr create \
-            --title "Update base image to $TAG" \
-            --body "Bumps the built-in base-image fallback from \`$CURRENT_TAG\` to \`$TAG\` (newest release of Sanne/incus-spawn-images), refreshing the container and VM checksums.
+            --title "$TITLE" \
+            --body "$SUMMARY
 
           VM image: \`$VM_KIND\` (\`direct\` is the image built from scratch, \`-vm-direct.tar.xz\`, listed in SHA256SUMS.v2; \`stock\` is \`-vm.tar.xz\`).
 
