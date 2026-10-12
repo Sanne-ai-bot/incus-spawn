@@ -452,7 +452,13 @@ class VertexBodyRewriter {
         var s = new String(keyRaw, 0, n, StandardCharsets.UTF_8);
         if (s.startsWith("\"")) s = s.substring(1);
         if (s.endsWith("\"")) s = s.substring(0, s.length() - 1);
-        return keyRawOverflow || keyRawLen > LOGGED_NAME_BYTES ? s + "…" : s;
+        // An instance chose the name: nothing in it may start a line of the proxy's log, or style it
+        var shown = new StringBuilder();
+        s.codePoints().forEach(c -> {
+            if (Character.isISOControl(c)) shown.append(String.format("\\u%04x", c));
+            else shown.appendCodePoint(c);
+        });
+        return keyRawOverflow || keyRawLen > LOGGED_NAME_BYTES ? shown + "…" : shown.toString();
     }
 
     // --- Strings ---
