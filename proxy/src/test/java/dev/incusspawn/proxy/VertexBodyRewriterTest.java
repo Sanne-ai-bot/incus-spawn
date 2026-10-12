@@ -407,6 +407,16 @@ class VertexBodyRewriterTest {
         assertEquals("{\"messages\":[],\"anthropic_version\":\"vertex-2023-10-16\"}", out.toString(StandardCharsets.UTF_8));
     }
 
+    /** A dropped name is logged, and an instance chose it: it cannot start a line of the log, or style it. */
+    @Test
+    void droppedNamesCannotForgeLogLines() throws Exception {
+        var out = new ByteArrayOutputStream();
+        var rewriter = new VertexBodyRewriter(PATH, PROJECT, REGION, b -> out.writeBytes(b.getBytes()));
+        rewriter.accept(Buffer.buffer("{\"x\n2026-10-12 [WARN] FAKE \u001b[31m\":1,\"messages\":[]}"));
+        var name = rewriter.end().droppedFields().get(0);
+        assertEquals("x\\u000a2026-10-12 [WARN] FAKE \\u001b[31m", name);
+    }
+
     static byte[] bytes(Object... parts) {
         var out = new ByteArrayOutputStream();
         for (var part : parts) {
