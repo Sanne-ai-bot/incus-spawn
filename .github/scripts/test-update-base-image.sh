@@ -3,7 +3,8 @@
 # fake images release that carries -vm-direct and SHA256SUMS.v2 (#1255), with gh, curl and the
 # remote faked. Checks the switch to -vm-direct, with both arches' checksums, from a stock
 # built-in; after a stock-image bump of the same release was merged; and while that bump's
-# branch is still open. Needs bash, git, python3 with PyYAML, and mikefarah yq.
+# branch is still open; and that the PR names a switch of VM image and a release published again
+# under its tag. Needs bash, git and mikefarah yq.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="$(mktemp -d)"
@@ -11,12 +12,11 @@ trap 'rm -rf "$WORK"' EXIT
 TAG=fedora-44-20991231
 H() { printf '%064x' "$1"; }
 
-python3 - "$REPO/.github/workflows/update-base-image.yml" "$WORK" <<'PY'
-import sys, yaml
-steps = yaml.safe_load(open(sys.argv[1]))['jobs']['bump']['steps']
-for step, name in ((steps[1], 'resolve'), (steps[2], 'update'), (steps[3], 'pr')):
-    open(f"{sys.argv[2]}/{name}.sh", 'w').write(step['run'])
-PY
+WORKFLOW="$REPO/.github/workflows/update-base-image.yml"
+for pair in "resolve:Resolve release + checksums" "update:Update minimal.yaml" "pr:Open pull request"; do
+    STEP="${pair#*:}" yq -r '.jobs.bump.steps[] | select(.name == strenv(STEP)) | .run' "$WORKFLOW" > "$WORK/${pair%%:*}.sh"
+    [ -s "$WORK/${pair%%:*}.sh" ] || { echo "FAIL: no step named '${pair#*:}' in $WORKFLOW" >&2; exit 1; }
+done
 
 mkdir -p "$WORK/bin" "$WORK/release"
 { echo "$(H 11)  fedora-44-aarch64-vm.tar.xz"; echo "$(H 12)  fedora-44-aarch64.tar.xz"
@@ -29,7 +29,7 @@ case "\$*" in
   *"/releases --jq"*) echo $TAG ;;
   *"releases/tags/$TAG"*"SHA256SUMS.v2"*) echo https://example.invalid/SHA256SUMS.v2 ;;
   *"releases/tags/$TAG"*'SHA256SUMS")'*) echo https://example.invalid/SHA256SUMS ;;
-  "pr create"*) echo "PR \$*" >> "$WORK/prs" ;;
+  "pr create"*) printf '%s\n' "\$@" >> "$WORK/prs" ;;
   *) echo "unexpected: gh \$*" >&2; exit 2 ;;
 esac
 EOF
@@ -60,14 +60,18 @@ run() {
         [ "$changed" = true ] || { echo "UNCHANGED"; exit 0; }
         TAG=$tag C_X86=$c_x86 C_ARM=$c_arm V_X86=$v_x86 V_ARM=$v_arm VM_KIND=$vm_kind \
             bash -eo pipefail "$WORK/update.sh" >/dev/null
-        TAG=$tag CURRENT_TAG=$current VM_KIND=$vm_kind bash -eo pipefail "$WORK/pr.sh" >/dev/null 2>&1
+        TAG=$tag CURRENT_TAG=$current VM_KIND=$vm_kind REPUBLISHED=${republished:-} VM_SWITCH=${vm_switch:-} \
+            C_X86=$c_x86 C_ARM=$c_arm V_X86=$v_x86 V_ARM=$v_arm bash -eo pipefail "$WORK/pr.sh" >/dev/null 2>&1
         [ -f "$WORK/prs" ] || { echo "NO-PR"; exit 0; }
         cat common/src/main/resources/images/minimal.yaml
+        sed -n '/^--title$/{n;s/^/title: /;p}' "$WORK/prs"
+        echo "branch: $(git branch --show-current)"
     )
 }
 
 expect_direct() {
-    local out="$1" what="$2"
+    local out what="$2"
+    out="$(grep -v '^title: \|^branch: ' <<<"$1")"
     grep -q 'vm_image_url: .*/{tag}/fedora-44-{arch}-vm-direct.tar.xz$' <<<"$out" || fail "$what: vm_image_url not -vm-direct: $out"
     grep -q "image_tag: $TAG" <<<"$out" || fail "$what: tag not $TAG"
     [ "$(yq -r '.vm_image_sha256.x86_64' <<<"$out")" = "$(H 15)" ] || fail "$what: x86_64 VM checksum is not -vm-direct's"
@@ -78,11 +82,16 @@ expect_direct() {
 }
 
 BUILTIN="$REPO/common/src/main/resources/images/minimal.yaml"
-expect_direct "$(run "$BUILTIN")" "stock built-in, older tag"
+out="$(run "$BUILTIN")"
+expect_direct "$out" "stock built-in, older tag"
+grep -qx "title: Update base image to $TAG, VM image built from scratch" <<<"$out" || fail "the switch is not in the title: $(grep '^title:' <<<"$out")"
 
 yq ".image_tag = \"$TAG\" | .image_sha256.x86_64 = \"$(H 14)\" | .image_sha256.aarch64 = \"$(H 12)\"
     | .vm_image_sha256.x86_64 = \"$(H 13)\" | .vm_image_sha256.aarch64 = \"$(H 11)\"" "$BUILTIN" > "$WORK/stock-bump.yaml"
-expect_direct "$(run "$WORK/stock-bump.yaml")" "stock-image bump of the same release already merged"
+out="$(run "$WORK/stock-bump.yaml")"
+expect_direct "$out" "stock-image bump of the same release already merged"
+grep -qx "title: Update base image to $TAG, VM image built from scratch" <<<"$out" \
+    || fail "a switch after a stock-image bump of the same release is not a re-publish: $(grep '^title:' <<<"$out")"
 expect_direct "$(run "$BUILTIN" "bot/update-base-image-$TAG")" "stock-image bump of the same release still open"
 
 VM_URL="$(yq -r '.vm_image_url' "$BUILTIN" | sed -E 's#[^/]+$#fedora-44-{arch}-vm-direct.tar.xz#')"
@@ -90,3 +99,14 @@ yq ".vm_image_url = \"$VM_URL\" | .vm_image_sha256.x86_64 = \"$(H 15)\" | .vm_im
     "$WORK/stock-bump.yaml" > "$WORK/direct.yaml"
 [ "$(run "$WORK/direct.yaml")" = UNCHANGED ] || fail "a built-in already on this release's -vm-direct is bumped again"
 echo "ok: already current"
+
+# The release published again under its tag: a file the built-in already names has another checksum.
+yq ".image_sha256.aarch64 = \"$(H 99)\"" "$WORK/direct.yaml" > "$WORK/republished.yaml"
+out="$(run "$WORK/republished.yaml")"
+expect_direct "$out" "release published again under its tag"
+grep -qx "title: Base image $TAG was published again: new checksums" <<<"$out" \
+    || fail "a re-publish is not named in the title: $(grep '^title:' <<<"$out")"
+NAMED="$(printf '%s %s %s %s' "$(H 14)" "$(H 12)" "$(H 15)" "$(H 16)" | sha256sum | cut -c1-12)"
+grep -qx "branch: bot/update-base-image-$TAG-vm-direct-$NAMED" <<<"$out" \
+    || fail "a re-publish's branch is not named by all four checksums: $(grep '^branch:' <<<"$out")"
+echo "ok: re-publish named, branch by all four checksums"
