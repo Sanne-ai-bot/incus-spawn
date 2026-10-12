@@ -1360,7 +1360,7 @@ public class BuildCommand extends BaseCommand {
             var vmAlias = vmImageAlias(rootDef.getImage());
             ensureBaseImage(imageDef, ownBase);
             downloadAndAliasImage(vmAlias, rootDef.getVmImageUrl(),
-                    base.vmSha256(), base.tag(), rootDef);
+                    base.vmSha256(), base.vmTag(), rootDef);
             image = vmAlias;
             prebaked = true;
         } else {
@@ -1570,7 +1570,9 @@ public class BuildCommand extends BaseCommand {
         new GuestProvisioning(incus).cleanCaches(buildName);
 
         var parentCanonical = imageDef.isRoot() ? null : imageDef.getParent();
-        var trackedImageTag = Objects.equals(base.tag(), rootDef.getImageTag()) ? null : base.tag();
+        // The release the build started from: a VM's own when it came from vm_image_url
+        var startedFrom = machineType == MachineType.VM && rootDef.getVmImageUrl() != null ? base.vmTag() : base.tag();
+        var trackedImageTag = Objects.equals(startedFrom, rootDef.getImageTag()) ? null : startedFrom;
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
                 identityStamps, trackedImageTag);
 
@@ -1603,15 +1605,21 @@ public class BuildCommand extends BaseCommand {
             var latest = available.get(0);
             if (latest.tag().equals(builtin.tag())) return builtin; // already newest
 
-            var checksums = releases.fetchChecksums(latest);
-            if (checksums == null || checksums.container().isEmpty()) {
+            var checksums = releases.fetchChecksums(latest, rootDef.getImageUrl(), rootDef.getVmImageUrl());
+            var arch = normalizeHostArch();
+            if (checksums == null || !checksums.container().containsKey(arch)) {
                 BuildOutput.note("Could not fetch checksums for " + latest.tag() + fallback);
                 return builtin;
             }
             BuildOutput.step("Tracking latest base image: "
                     + (builtin.tag() != null ? builtin.tag() + " -> " : "") + latest.tag() + ".");
-            return new BaseImage(latest.tag(), checksums.container(),
-                    checksums.vm().isEmpty() ? builtin.vmSha256() : checksums.vm());
+            // A release need not carry the VM image this definition names (the one built from
+            // scratch is only in releases from #1255 on): the VM then stays on the built-in
+            // release, tag and checksum together, never the built-in checksum under the newer tag.
+            if (rootDef.getVmImageUrl() == null || !checksums.vm().containsKey(arch)) {
+                return new BaseImage(latest.tag(), checksums.container(), builtin.vmTag(), builtin.vmSha256());
+            }
+            return new BaseImage(latest.tag(), checksums.container(), latest.tag(), checksums.vm());
         } catch (IOException e) {
             BuildOutput.note("Could not reach base-image release list (" + e.getMessage() + ")" + fallback);
             return builtin;
@@ -1623,10 +1631,14 @@ public class BuildCommand extends BaseCommand {
         return BaseImageReleases.fromImageUrl(imageUrl);
     }
 
-    /** The base image release a build from scratch downloads: its tag and per-arch checksums. */
-    record BaseImage(String tag, Map<String, String> sha256, Map<String, String> vmSha256) {
+    /**
+     * The base image releases a build from scratch downloads from, with their per-arch checksums:
+     * {@code tag} for the container image, {@code vmTag} for the VM disk image. They differ only
+     * when the tracked release has no VM image the definition can use.
+     */
+    record BaseImage(String tag, Map<String, String> sha256, String vmTag, Map<String, String> vmSha256) {
         static BaseImage of(ImageDef def) {
-            return new BaseImage(def.getImageTag(), def.getImageSha256(), def.getVmImageSha256());
+            return new BaseImage(def.getImageTag(), def.getImageSha256(), def.getImageTag(), def.getVmImageSha256());
         }
     }
 

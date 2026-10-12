@@ -134,9 +134,14 @@ public class UpdateBaseCommand extends BaseCommand {
         }
 
         BuildOutput.stepStart("Fetching checksums for " + selected.tag() + "...");
-        var checksums = releases.fetchChecksums(selected);
-        if (checksums == null || checksums.container().isEmpty()) {
-            BuildOutput.stepFail("SHA256SUMS not found in release " + selected.tag() + ".");
+        var checksums = releases.fetchChecksums(selected, current.getImageUrl(), current.getVmImageUrl());
+        if (checksums == null) {
+            BuildOutput.stepFail("No readable SHA256SUMS in release " + selected.tag() + ".");
+            return CommandResult.valueOf(1);
+        }
+        if (checksums.container().isEmpty()) {
+            BuildOutput.stepFail("Release " + selected.tag() + " lists no checksum for "
+                    + BaseImageReleases.assetName(current.getImageUrl(), selected.tag(), "<arch>") + ".");
             return CommandResult.valueOf(1);
         }
         BuildOutput.stepDone();
@@ -190,7 +195,7 @@ public class UpdateBaseCommand extends BaseCommand {
         };
     }
 
-    private void writeUserOverride(ImageDef current, String tag, Checksums checksums) throws IOException {
+    void writeUserOverride(ImageDef current, String tag, Checksums checksums) throws IOException {
         var dir = ImageDef.userImagesDir();
         Files.createDirectories(dir);
         var overridePath = dir.resolve("minimal.yaml");
@@ -200,13 +205,18 @@ public class UpdateBaseCommand extends BaseCommand {
         yaml.append("description: ").append(current.getDescription()).append('\n');
         yaml.append("image: ").append(current.getImage()).append('\n');
         yaml.append("image_url: ").append(current.getImageUrl()).append('\n');
-        if (current.getVmImageUrl() != null) {
+        // A VM image is only pinned with its checksums: without them it would download unverified
+        var vm = current.getVmImageUrl() != null && !checksums.vm().isEmpty();
+        if (vm) {
             yaml.append("vm_image_url: ").append(current.getVmImageUrl()).append('\n');
+        } else if (current.getVmImageUrl() != null) {
+            BuildOutput.warn("Release " + tag + " has no VM image this isx can use;"
+                    + " VM templates built on this pin start from the Incus image server instead.");
         }
         yaml.append("image_tag: ").append(tag).append('\n');
         yaml.append("pinned: true\n");
         appendShaBlock(yaml, "image_sha256", checksums.container());
-        if (current.getVmImageUrl() != null && !checksums.vm().isEmpty()) {
+        if (vm) {
             appendShaBlock(yaml, "vm_image_sha256", checksums.vm());
         }
 
