@@ -12,7 +12,7 @@ import java.util.Map;
  *   propagate: true
  * }</pre>
  *
- * <p>Read from the raw YAML value rather than bound by Jackson: a mistyped section
+ * <p>Read from the raw YAML value rather than bound through jjq: a mistyped section
  * must not fail the whole config.yaml.
  */
 public record HostCaConfig(boolean propagate) {

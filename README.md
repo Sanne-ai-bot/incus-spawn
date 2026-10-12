@@ -341,6 +341,15 @@ An isx instance is a Fedora system with a few deliberate deviations. This is whe
 
 No verification is turned off anywhere: every runtime still verifies chains and hostnames, against the system store.
 
+*Host CAs (opt-in).* With
+
+```yaml
+host-ca:
+  propagate: true
+```
+
+in `~/.config/incus-spawn/config.yaml`, the certificates in the host's `/etc/pki/ca-trust/source/anchors/` (Fedora/RHEL; other hosts have none there to propagate) are installed beside the isx CA in every instance, of every template, as `isx-<sha256>.crt`. This is for a host behind TLS inspection, or an isx inside another isx: the outer proxy's CA must be trusted for the domains the inner one does not intercept. Only certificates cross, re-encoded from each file; a file holding anything else, such as a private key, is refused with a warning. Builds install the set; a branch, `isx shell` and the TUI bring each instance up to date on use (an `--airgap` instance keeps what its template was built with), which also removes a CA taken off the host or every host CA once propagation is turned off. It is off by default, and then instances trust only the isx CA beside Fedora's roots.
+
 ## Why full system containers?
 
 **Application containers**, the kind Docker and Podman run by default, are built for shipping applications: a minimal filesystem, one process, fast startup. isx is built for a different job, and the choice that follows from it is what a sandbox *is*. An isx sandbox is a workstation, a complete machine: a full [Incus](https://linuxcontainers.org/incus/) **system container**, or a KVM virtual machine (`--vm`), with its own init system, real networking (`ping`, `strace`, nested Podman/Docker), and GUI and audio passthrough (Linux only). Templates pre-install your baseline tools and repos, but what the agent gets is a real Linux system, where it can `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation.
