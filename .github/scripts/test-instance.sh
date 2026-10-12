@@ -195,6 +195,20 @@ assert "trusted MITM CA cert has Subject Key Identifier" \
         | grep -q 'Subject Key Identifier'"
 echo ""
 
+# --- 8b. Trust variables (#713) ---
+# The convention variables (SSL_CERT_FILE, CURL_CA_BUNDLE, ...) reach only login shells and
+# systemd user sessions, so the root checks above never read them. Each path must exist:
+# curl and Codex fail on a missing one instead of falling back to the system store.
+echo "[8b] Trust variables"
+TRUST_CONF=/etc/environment.d/00-isx-trust.conf
+assert "every path in $TRUST_CONF exists" \
+    sh -c "! grep '=/' $TRUST_CONF | while IFS== read -r n v; do [ -e \"\$v\" ] || echo \"\$n=\$v\"; done | grep ."
+assert "a login shell exports the same paths" \
+    su - agentuser -c "grep '=/' $TRUST_CONF | while IFS== read -r n v; do eval \"[ \\\"\\\$\$n\\\" = \\\"\$v\\\" ]\" || { echo \$n; exit 1; }; done"
+assert "curl in a login shell trusts the proxy" \
+    su - agentuser -c "curl -sSf -o /dev/null https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom"
+echo ""
+
 # --- 9. Tool-contributed proxy credential injection ---
 # An HTTPS echo server on the host echoes back request headers so we can
 # verify the proxy injects the right credentials for each auth type and
