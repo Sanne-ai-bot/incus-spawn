@@ -315,10 +315,20 @@ A program of your own on the host, such as a coordinator that agents report to, 
 host-routes:
   work.isx.internal:
     target: 127.0.0.1:7070       # on this host's loopback: localhost, 127.0.0.1 or [::1]
-    templates: [tpl-isx-agent]   # optional: only instances of these templates
+    templates: [tpl-isx-agent]   # required: only instances of these templates may call it
 ```
 
-An instance then calls `https://work.isx.internal/...`, sending the secret isx gave it at its last start as `X-Isx-Instance-Secret` (it is in the file `$ISX_INSTANCE_SECRET_FILE` names). The proxy checks the secret and the instance's address together, and forwards the request over plain HTTP to the target with `X-Isx-Instance` and `X-Isx-Template` set to who called; any `X-Isx-*` header the instance sent is removed, so the controller never sees the secret, and those two headers are the proxy's only if the proxy is the only way to reach the controller: listen on loopback only (`127.0.0.1`, never `0.0.0.0`, which instances that are not `--proxy-only` reach at the bridge gateway with any headers they like), and remember that any process on this host can still connect to it and send them. Anything else gets an error and never reaches the controller: a wrong or missing secret, a template the route does not list, an instance built from a project-local definition, a WebSocket. Names must end in `.internal`, and an entry that is wrong in any way is skipped with a warning in the proxy's log.
+An instance then calls `https://work.isx.internal/...`, sending the secret isx gave it at its last start as `X-Isx-Instance-Secret` (it is in the file `$ISX_INSTANCE_SECRET_FILE` names). The proxy checks the secret and the instance's address together, and the instance's template against `templates:`, and forwards the request over plain HTTP to the target with `X-Isx-Instance` and `X-Isx-Template` set to who called. Any `X-Isx-*` header the instance sent is removed first, so the controller never sees the instance's secret. Anything else gets an error and never reaches the controller: a wrong or missing secret, a template the route does not list, an instance built from a project-local definition, a WebSocket. Names must end in `.internal`, `templates:` must list at least one template, and an entry that is wrong in any way is skipped with a warning in the proxy's log.
+
+**The controller must check the route secret before it trusts those headers.** The proxy also sends `X-Isx-Route-Secret`, a secret of this route alone that only this host holds: it is in `~/.config/incus-spawn/host-routes/<name>.secret` (here `work.isx.internal.secret`), which the proxy creates readable by you only the first time it serves the route. No instance ever has it, and the proxy removes it from the controller's response headers. Compare it in constant time, and refuse the request when it does not match, for example in Python:
+
+```python
+expected = open(os.path.expanduser("~/.config/incus-spawn/host-routes/work.isx.internal.secret")).read().strip()
+if not hmac.compare_digest(request.headers.get("X-Isx-Route-Secret", ""), expected):
+    return 403
+```
+
+Anything that reaches the controller without it did not come through the proxy: another program on this host, say. Keep the controller listening on loopback only (`127.0.0.1`, never `0.0.0.0`, which instances that are not `--proxy-only` reach at the bridge gateway), and never echo the secret back, in a response body least of all: the proxy removes it from response headers, but relays the body as it is. To rotate the secret, delete the file; the proxy makes a new one at once. If the controller was down while something else held its port, whatever held it received the secret, so rotate it then too. The proxy refuses (503) every request to a route whose secret file anyone but you can read, or that is in a directory others can write to.
 
 ## What differs from a stock Fedora install
 

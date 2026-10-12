@@ -38,14 +38,16 @@ class HostRoutesTest {
                     templates: [tpl-isx-agent]
                   v6.isx.internal:
                     target: "[::1]:8080"
+                    templates: [tpl-a]
                   local.isx.internal:
                     target: localhost:1
+                    templates: [tpl-a]
                 """);
         assertEquals(List.of(), warnings);
         assertEquals(new HostRoutes.Route("work.isx.internal", "127.0.0.1", 7070, List.of("tpl-isx-agent")),
                 routes.get("work.isx.internal"));
-        assertEquals(new HostRoutes.Route("v6.isx.internal", "::1", 8080, List.of()), routes.get("v6.isx.internal"));
-        assertEquals(new HostRoutes.Route("local.isx.internal", "127.0.0.1", 1, List.of()), routes.get("local.isx.internal"),
+        assertEquals(new HostRoutes.Route("v6.isx.internal", "::1", 8080, List.of("tpl-a")), routes.get("v6.isx.internal"));
+        assertEquals(new HostRoutes.Route("local.isx.internal", "127.0.0.1", 1, List.of("tpl-a")), routes.get("local.isx.internal"),
                 "localhost is never looked up");
     }
 
@@ -54,10 +56,10 @@ class HostRoutesTest {
         // Netty reads neither 127.1 nor 2130706433 as an address, and would resolve them as names
         var routes = routes("""
                 host-routes:
-                  short.isx.internal: {target: 127.1:7070}
-                  number.isx.internal: {target: 2130706433:7070}
-                  long.isx.internal: {target: "[0:0:0:0:0:0:0:1]:7070"}
-                  scoped.isx.internal: {target: "[::1%lo]:7070"}
+                  short.isx.internal: {target: 127.1:7070, templates: [tpl-a]}
+                  number.isx.internal: {target: 2130706433:7070, templates: [tpl-a]}
+                  long.isx.internal: {target: "[0:0:0:0:0:0:0:1]:7070", templates: [tpl-a]}
+                  scoped.isx.internal: {target: "[::1%lo]:7070", templates: [tpl-a]}
                 """);
         assertEquals("::1", routes.get("long.isx.internal").host());
         assertNull(routes.get("scoped.isx.internal"), "a scoped literal is refused");
@@ -71,13 +73,13 @@ class HostRoutesTest {
     void aTargetOffThisHostsLoopbackIsDropped() throws Exception {
         var routes = routes("""
                 host-routes:
-                  lan.isx.internal: {target: 192.168.1.5:7070}
-                  name.isx.internal: {target: controller.lan:7070}
-                  any.isx.internal: {target: 0.0.0.0:7070}
-                  noport.isx.internal: {target: 127.0.0.1}
-                  zero.isx.internal: {target: 127.0.0.1:0}
-                  high.isx.internal: {target: 127.0.0.1:65536}
-                  ok.isx.internal: {target: 127.0.0.2:7070}
+                  lan.isx.internal: {target: 192.168.1.5:7070, templates: [tpl-a]}
+                  name.isx.internal: {target: controller.lan:7070, templates: [tpl-a]}
+                  any.isx.internal: {target: 0.0.0.0:7070, templates: [tpl-a]}
+                  noport.isx.internal: {target: 127.0.0.1, templates: [tpl-a]}
+                  zero.isx.internal: {target: 127.0.0.1:0, templates: [tpl-a]}
+                  high.isx.internal: {target: 127.0.0.1:65536, templates: [tpl-a]}
+                  ok.isx.internal: {target: 127.0.0.2:7070, templates: [tpl-a]}
                 """);
         assertEquals(Set.of("ok.isx.internal"), routes.keySet());
         assertEquals(6, warnings.size(), warnings.toString());
@@ -88,12 +90,12 @@ class HostRoutesTest {
     void aNameOutsideInternalOrOverlappingAnInterceptedDomainIsDropped() throws Exception {
         var routes = routes("""
                 host-routes:
-                  work.example.org: {target: 127.0.0.1:1}
-                  internal: {target: 127.0.0.1:1}
-                  mcp.isx.internal: {target: 127.0.0.1:1}
-                  isx.internal: {target: 127.0.0.1:1}
-                  x.example.com: {target: 127.0.0.1:1}
-                  ok.isx.internal: {target: 127.0.0.1:1}
+                  work.example.org: {target: 127.0.0.1:1, templates: [tpl-a]}
+                  internal: {target: 127.0.0.1:1, templates: [tpl-a]}
+                  mcp.isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
+                  isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
+                  x.example.com: {target: 127.0.0.1:1, templates: [tpl-a]}
+                  ok.isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
                 """);
         assertEquals(Set.of("ok.isx.internal"), routes.keySet());
         assertEquals(5, warnings.size(), warnings.toString());
@@ -104,8 +106,8 @@ class HostRoutesTest {
     void aRouteUnderAnotherIsDropped() throws Exception {
         var routes = routes("""
                 host-routes:
-                  deep.work.isx.internal: {target: 127.0.0.1:1}
-                  work.isx.internal: {target: 127.0.0.1:2}
+                  deep.work.isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
+                  work.isx.internal: {target: 127.0.0.1:2, templates: [tpl-a]}
                 """);
         assertEquals(Set.of("work.isx.internal"), routes.keySet());
         assertTrue(warnings.getFirst().contains("deep.work.isx.internal"), warnings.toString());
@@ -125,11 +127,27 @@ class HostRoutesTest {
     }
 
     @Test
+    void aRouteWithoutATemplatesAllowlistIsRefused() throws Exception {
+        // There is no route for every instance: its owner names the templates that may call it
+        var routes = routes("""
+                host-routes:
+                  missing.isx.internal: {target: 127.0.0.1:1}
+                  empty.isx.internal: {target: 127.0.0.1:1, templates: []}
+                  blank.isx.internal: {target: 127.0.0.1:1, templates: [" "]}
+                  ok.isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
+                """);
+        assertEquals(Set.of("ok.isx.internal"), routes.keySet());
+        assertEquals(3, warnings.size(), warnings.toString());
+        warnings.forEach(w -> assertTrue(w.contains("templates: is required"), w));
+        assertTrue(warnings.getFirst().contains("missing.isx.internal"), warnings.getFirst());
+    }
+
+    @Test
     void aNameWrittenTwiceIsDroppedBothTimes() throws Exception {
         var routes = routes("""
                 host-routes:
                   work.isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
-                  Work.isx.internal: {target: 127.0.0.1:1}
+                  Work.isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
                 """);
         assertEquals(java.util.Map.of(), routes);
         assertEquals(2, warnings.size(), warnings.toString());
@@ -147,6 +165,7 @@ class HostRoutesTest {
                 host-routes:
                   work.isx.internal:
                     target: 127.0.0.1:7070
+                    templates: [tpl-a]
                 """));
         assertEquals(Set.of("work.isx.internal"), Jjq.spawnConfig(yaml).hostRoutes()
                 .routes(Set.of(), warnings::add).keySet());
@@ -154,10 +173,9 @@ class HostRoutesTest {
 
     @Test
     void projectLocalNeverAndTheFilterOtherwise() {
-        var any = new HostRoutes.Route("a.isx.internal", "127.0.0.1", 1, List.of());
+        assertThrows(IllegalArgumentException.class,
+                () -> new HostRoutes.Route("a.isx.internal", "127.0.0.1", 1, List.of()), "no route admits every template");
         var listed = new HostRoutes.Route("b.isx.internal", "127.0.0.1", 1, List.of("tpl-a"));
-        assertTrue(any.admits("tpl-z", false));
-        assertFalse(any.admits("tpl-z", true));
         assertTrue(listed.admits("tpl-a", false));
         assertFalse(listed.admits("tpl-a", true));
         assertFalse(listed.admits("tpl-b", false));

@@ -194,7 +194,8 @@ public class MitmProxy {
      *                               auth mode) -- see {@code AccountSelection.servingMismatches}.
      *                               Keyed by the registry record, so a re-pinned or rebuilt
      *                               instance is looked up afresh
-     * @param hostRoutes             {@code host-routes:} as served (#936), by name; their names
+     * @param hostRoutes             {@code host-routes:} as served (#936), by name, each with the
+     *                               secret its controller checks; their names
      *                               are in the routing's intercepted domains, for certificates
      *                               and bridge DNS, and nowhere in its credential lookups
      */
@@ -208,14 +209,14 @@ public class MitmProxy {
             Map<String, java.util.Set<String>> namespacesByDomain,
             Map<Map<String, String>, AccountBundle> credentialsBySelection,
             Map<InstanceRegistry.InstanceAccounts, Map<String, String>> mismatchesByInstance,
-            Map<String, dev.incusspawn.config.HostRoutes.Route> hostRoutes) {
+            Map<String, HostRouteRelay.Served> hostRoutes) {
 
         ConfigState(dev.incusspawn.config.SpawnConfig config,
                     io.hyperfoil.tools.jjq.value.JqValue configTree,
                     Map<String, dev.incusspawn.tool.ToolSetup> toolSetups,
                     ProxyCredentials credentials,
                     List<ResolvedToolProxy> proxiesAcrossAccounts,
-                    Map<String, dev.incusspawn.config.HostRoutes.Route> hostRoutes) {
+                    Map<String, HostRouteRelay.Served> hostRoutes) {
             this(config, configTree, toolSetups, credentials,
                     withHostRoutes(buildRouting(credentials.toolProxies(), proxiesAcrossAccounts, true),
                             hostRoutes.keySet()),
@@ -447,7 +448,8 @@ public class MitmProxy {
         var credentials = ProxyCredentials.forAccounts(config, tree, Map.of(), setups);
         var acrossAccounts = ToolProxyResolver.resolveAcrossAccounts(tree, setups, credentials.toolProxies());
         configState = new ConfigState(config, tree, setups, credentials, acrossAccounts,
-                ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn));
+                HostRouteRelay.served(ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn),
+                        name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)));
         artifactCache.artifactCacheTiers = ArtifactCacheTiers.from(config);
         return previous;
     }
