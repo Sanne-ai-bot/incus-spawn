@@ -212,6 +212,12 @@ done)
 [ -z "$bad" ] || { echo "$bad"; exit 1; }'
 assert "every path in $TRUST_CONF exists" sh -c "$TRUST_CHECK"
 assert "a login shell exports the same paths" su - agentuser -c "ISX_TRUST_CHECK_LOGIN=1; $TRUST_CHECK"
+# A JDK unpacked by hand ships its own cacerts; isx-trust links it to the store update-ca-trust
+# extracts, which must exist (a link to a missing store leaves the JDK on its vendor roots).
+assert "isx-trust binds a JDK's cacerts to the extracted Java store" \
+    sh -c 'd=$(mktemp -d) && mkdir -p "$d/jdk/lib/security" && echo vendor > "$d/jdk/lib/security/cacerts" \
+        && isx-trust "$d" >/dev/null && test -s /etc/pki/ca-trust/extracted/java/cacerts \
+        && [ "$(readlink -f "$d/jdk/lib/security/cacerts")" = /etc/pki/ca-trust/extracted/java/cacerts ]'
 assert "curl in a login shell trusts the proxy" \
     su - agentuser -c "curl -sSf -o /dev/null https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom"
 echo ""
