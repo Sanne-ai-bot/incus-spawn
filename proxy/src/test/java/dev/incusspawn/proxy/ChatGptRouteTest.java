@@ -22,7 +22,10 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -30,6 +33,7 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
@@ -38,6 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -62,6 +67,7 @@ class ChatGptRouteTest {
     static HttpServer stub;
     static MitmProxy proxy;
     static int mitmPort;
+    static io.vertx.core.http.HttpClient wsClient;
     static ChatGptSessionStore store;
     static volatile String sessionId;
 
@@ -72,6 +78,7 @@ class ChatGptRouteTest {
     static final AtomicInteger refreshes = new AtomicInteger();
     static volatile String refreshError;
     static volatile int refreshErrorStatus = 400;
+    static volatile boolean refreshAnswersEmpty;
     static final ConcurrentLinkedQueue<String> refreshEncodings = new ConcurrentLinkedQueue<>();
     static volatile CompletableFuture<Void> holdRefresh = CompletableFuture.completedFuture(null);
     static volatile boolean backendRefuses;
@@ -117,6 +124,7 @@ class ChatGptRouteTest {
         proxy.overrideUpstream(ChatGptRoute.AUTH, "127.0.0.1", stubPort);
         ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
+        wsClient = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
     }
 
     @AfterAll
@@ -138,11 +146,13 @@ class ChatGptRouteTest {
         refreshes.set(0);
         refreshError = null;
         refreshErrorStatus = 400;
+        refreshAnswersEmpty = false;
         refreshEncodings.clear();
         holdRefresh = CompletableFuture.completedFuture(null);
         backendRefuses = false;
         mintedTtlSeconds = 3600;
         proxy.clearAuthError();
+        proxy.chatGpt.maxBackendBody = ChatGptRoute.MAX_BACKEND_BODY;
         sessionId = store.create(ACCOUNT, mint(3600)).sessionId();
         bind(SECRET, sessionId);
     }
@@ -228,7 +238,9 @@ class ChatGptRouteTest {
                     refreshBodies.add(body.toString());
                     refreshEncodings.add(String.valueOf(req.getHeader("Accept-Encoding")));
                     holdRefresh.whenComplete((v, e) -> vertx.runOnContext(x -> {
-                        if (refreshError != null) {
+                        if (refreshAnswersEmpty) {
+                            resp.end("{}");
+                        } else if (refreshError != null) {
                             resp.setStatusCode(refreshErrorStatus).end("{\"error\":{\"code\":\"" + refreshError + "\"}}");
                         } else {
                             var fresh = mint(mintedTtlSeconds);
@@ -267,7 +279,8 @@ class ChatGptRouteTest {
         try (var socket = (SSLSocket) tls.getSocketFactory().createSocket("127.0.0.1", mitmPort)) {
             socket.setSoTimeout(15_000);
             var params = socket.getSSLParameters();
-            params.setServerNames(List.of(new SNIHostName(sni)));
+            // None for a null sni: connecting to an address, the client sends no TLS name
+            params.setServerNames(sni == null ? List.of() : List.of(new SNIHostName(sni)));
             socket.setSSLParameters(params);
             var bytes = body.getBytes(StandardCharsets.UTF_8);
             var request = rawHead + (rawHead.contains("Content-Length") || rawHead.contains("Transfer-Encoding") || bytes.length == 0 ? "" : "Content-Length: " + bytes.length + "\r\n")
@@ -275,13 +288,7 @@ class ChatGptRouteTest {
             socket.getOutputStream().write(request.getBytes(StandardCharsets.UTF_8));
             socket.getOutputStream().write(bytes);
             socket.getOutputStream().flush();
-            var text = readResponse(socket.getInputStream());
-            var status = Integer.parseInt(text.substring(9, 12));
-            var split = text.indexOf("\r\n\r\n");
-            var head = text.substring(0, split);
-            var payload = text.substring(split + 4);
-            if (head.toLowerCase().contains("transfer-encoding: chunked")) payload = dechunk(payload);
-            return new Reply(status, payload);
+            return readResponse(new BufferedInputStream(socket.getInputStream()));
         }
     }
 
@@ -290,42 +297,31 @@ class ChatGptRouteTest {
      * its body was read is answered while the client could still be sending, and the connection
      * then stays open until it stops.
      */
-    static String readResponse(java.io.InputStream in) throws java.io.IOException {
-        var out = new ByteArrayOutputStream();
-        int headEnd = -1;
-        while (true) {
-            int b = in.read();
-            if (b < 0) return out.toString(StandardCharsets.UTF_8);
-            out.write(b);
-            var text = out.toString(StandardCharsets.ISO_8859_1);
-            if (headEnd < 0 && text.endsWith("\r\n\r\n")) {
-                headEnd = text.length();
-                var head = text.toLowerCase(java.util.Locale.ROOT);
-                var cl = java.util.regex.Pattern.compile("content-length: *(\\d+)").matcher(head);
-                if (cl.find()) {
-                    out.write(in.readNBytes(Integer.parseInt(cl.group(1))));
-                    return out.toString(StandardCharsets.UTF_8);
-                }
-                if (!head.contains("transfer-encoding: chunked")) {
-                    out.write(in.readAllBytes());
-                    return out.toString(StandardCharsets.UTF_8);
-                }
-            } else if (headEnd >= 0 && text.endsWith("\r\n0\r\n\r\n")) {
-                return out.toString(StandardCharsets.UTF_8);
-            }
+    static Reply readResponse(InputStream in) throws IOException {
+        var head = line(in).toLowerCase(Locale.ROOT);
+        var status = Integer.parseInt(head.substring(9, 12));
+        long length = -1;
+        var chunked = false;
+        for (var header = line(in); !header.isEmpty(); header = line(in)) {
+            var lower = header.toLowerCase(Locale.ROOT);
+            if (lower.startsWith("content-length:")) length = Long.parseLong(lower.substring(15).strip());
+            if (lower.startsWith("transfer-encoding:") && lower.contains("chunked")) chunked = true;
         }
+        var body = new ByteArrayOutputStream();
+        if (chunked) {
+            for (int size; (size = Integer.parseInt(line(in).split(";", 2)[0].strip(), 16)) > 0; line(in)) body.write(in.readNBytes(size));
+            line(in);
+        } else {
+            body.write(length >= 0 ? in.readNBytes((int) length) : in.readAllBytes());
+        }
+        return new Reply(status, body.toString(StandardCharsets.UTF_8));
     }
 
-    static String dechunk(String chunked) {
-        var out = new StringBuilder();
-        var rest = chunked;
-        while (true) {
-            var eol = rest.indexOf("\r\n");
-            var size = Integer.parseInt(rest.substring(0, eol).trim(), 16);
-            if (size == 0) return out.toString();
-            out.append(rest, eol + 2, eol + 2 + size);
-            rest = rest.substring(eol + 2 + size + 2);
-        }
+    /** One CRLF-terminated line, without its terminator. */
+    static String line(InputStream in) throws IOException {
+        var out = new ByteArrayOutputStream();
+        for (int b; (b = in.read()) >= 0 && b != '\n'; ) if (b != '\r') out.write(b);
+        return out.toString(StandardCharsets.ISO_8859_1);
     }
 
     static Reply backend(String method, String target, String bearer) throws Exception {
@@ -765,15 +761,8 @@ class ChatGptRouteTest {
 
     @Test
     void aWebSocketWithAWrongProofIsRejectedBeforeAnythingIsDialled() throws Exception {
-        var client = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
         for (var bearer : wrongAccessProofs()) {
-            var options = new WebSocketConnectOptions().setHost(ChatGptRoute.CHATGPT).setPort(mitmPort).setSsl(true)
-                    .setURI("/backend-api/codex/responses").putHeader("Host", ChatGptRoute.CHATGPT)
-                    .addHeader("Authorization", "Bearer " + bearer);
-            var result = client.webSocket(options).toCompletionStage().toCompletableFuture();
-            var failed = new CompletableFuture<Boolean>();
-            result.whenComplete((ws, e) -> failed.complete(e != null));
-            assertTrue(failed.get(15, TimeUnit.SECONDS), bearer);
+            assertEquals(401, upgrade(webSocket("/backend-api/codex/responses", "Bearer " + bearer)), bearer);
         }
         assertTrue(seen.isEmpty(), seen.toString());
     }
@@ -787,9 +776,8 @@ class ChatGptRouteTest {
 
     /** The status a WebSocket upgrade was refused with, or 101 if it was accepted. */
     static int upgrade(WebSocketConnectOptions options) throws Exception {
-        var client = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
         var status = new CompletableFuture<Integer>();
-        client.webSocket(options).onSuccess(ws -> { status.complete(101); ws.close(); })
+        wsClient.webSocket(options).onSuccess(ws -> { status.complete(101); ws.close(); })
                 .onFailure(e -> status.complete(e instanceof io.vertx.core.http.UpgradeRejectedException rejected
                         ? rejected.getStatus() : -1));
         return status.get(15, TimeUnit.SECONDS);
@@ -813,6 +801,70 @@ class ChatGptRouteTest {
         assertEquals(400, upgrade(webSocket("/backend-api/codex/responses", bearer, "Bearer other")));
         assertEquals(400, upgrade(webSocket("/backend-api/codex/responses", bearer, bearer)));
         assertTrue(seen.isEmpty(), "nothing dialled: " + seen);
+    }
+
+    // --- The TLS name ---
+
+    @Test
+    void aClaimedRequestWithNoTlsNameIsRefused() throws Exception {
+        // The server may refuse the handshake itself; either way nothing is relayed
+        try {
+            var reply = send(ChatGptRoute.CHATGPT, null, "POST /backend-api/codex/responses HTTP/1.1\r\nHost: chatgpt.com\r\n"
+                    + "Authorization: Bearer " + accessPlaceholder(proofs().access()) + "\r\n", "{}");
+            assertEquals(400, reply.status(), reply.body());
+        } catch (java.io.IOException refusedAtHandshake) {
+            // also a refusal
+        }
+        assertTrue(seen.isEmpty(), seen.toString());
+    }
+
+    @Test
+    void theShapeCheckFailsClosedWithoutATlsName() {
+        // The MITM server already refuses a handshake with no TLS name, so no request reaches this
+        // case today; the check must not depend on that
+        var headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap().add("Host", ChatGptRoute.CHATGPT);
+        assertNull(ChatGptRoute.shapeProblem(headers, ChatGptRoute.CHATGPT, "/backend-api/codex/responses", ChatGptRoute.CHATGPT));
+        assertNotNull(ChatGptRoute.shapeProblem(headers, ChatGptRoute.CHATGPT, "/backend-api/codex/responses", null));
+        assertNotNull(ChatGptRoute.shapeProblem(headers, ChatGptRoute.CHATGPT, "/backend-api/codex/responses", ""));
+        assertNotNull(ChatGptRoute.shapeProblem(headers, ChatGptRoute.CHATGPT, "/backend-api/codex/responses", ChatGptRoute.AUTH));
+    }
+
+    @Test
+    void aWebSocketWhoseTlsNameIsNotItsHostIsRefused() throws Exception {
+        var options = webSocket("/backend-api/codex/responses", "Bearer " + accessPlaceholder(proofs().access()))
+                .setHost(ChatGptRoute.AUTH);
+        assertEquals(400, upgrade(options));
+        assertTrue(seen.isEmpty(), "nothing dialled: " + seen);
+    }
+
+    @Test
+    void aWebSocketWithNoTlsNameIsRefused() throws Exception {
+        var options = webSocket("/backend-api/codex/responses", "Bearer " + accessPlaceholder(proofs().access()))
+                .setHost("127.0.0.1");
+        assertNotEquals(101, upgrade(options));
+        assertTrue(seen.isEmpty(), "nothing dialled: " + seen);
+    }
+
+    // --- What a refresh answers when something is off ---
+
+    @Test
+    void aRefreshAnswerWithoutTokensKeepsTheRecordOfTheAttempt() throws Exception {
+        sessionId = store.create(ACCOUNT, mint(60)).sessionId();
+        bind(SECRET, sessionId);
+        refreshAnswersEmpty = true;
+
+        assertEquals(502, refresh(proofs().refreshToken()).status());
+        assertNotNull(store.read(ACCOUNT).refreshing(), "OpenAI said yes, so it may have rotated the token");
+    }
+
+    @Test
+    void aSessionTokenThatIsNoJwtAnswers502RatherThanHang() throws Exception {
+        var real = mint(3600);
+        sessionId = store.create(ACCOUNT, new ChatGptSessionStore.Tokens("not-a-jwt", real.accessToken(),
+                real.refreshToken(), real.accountId())).sessionId();
+        bind(SECRET, sessionId);
+
+        assertEquals(502, refresh(proofs().refreshToken()).status());
     }
 
     // --- Bodies: read only after the proof, and only so much ---
@@ -839,15 +891,11 @@ class ChatGptRouteTest {
 
         // A chunked body has no length to refuse up front: it is counted as it arrives
         proxy.chatGpt.maxBackendBody = 1024;
-        try {
-            var chunk = "x".repeat(4096);
-            var chunked = send(ChatGptRoute.CHATGPT, ChatGptRoute.CHATGPT, "POST /backend-api/codex/responses HTTP/1.1\r\n"
-                    + "Host: chatgpt.com\r\nAuthorization: Bearer " + bearer + "\r\nTransfer-Encoding: chunked\r\n",
-                    Integer.toHexString(chunk.length()) + "\r\n" + chunk + "\r\n0\r\n\r\n");
-            assertEquals(413, chunked.status());
-        } finally {
-            proxy.chatGpt.maxBackendBody = ChatGptRoute.MAX_BACKEND_BODY;
-        }
+        var chunk = "x".repeat(4096);
+        var chunked = send(ChatGptRoute.CHATGPT, ChatGptRoute.CHATGPT, "POST /backend-api/codex/responses HTTP/1.1\r\n"
+                + "Host: chatgpt.com\r\nAuthorization: Bearer " + bearer + "\r\nTransfer-Encoding: chunked\r\n",
+                Integer.toHexString(chunk.length()) + "\r\n" + chunk + "\r\n0\r\n\r\n");
+        assertEquals(413, chunked.status());
         assertTrue(seen.isEmpty(), seen.toString());
     }
 

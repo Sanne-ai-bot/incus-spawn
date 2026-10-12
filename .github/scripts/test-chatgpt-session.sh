@@ -199,8 +199,10 @@ sudo nft -f - <<EOF || die "could not install the guest egress table"
 table inet isx_chatgpt_guest {
   chain from_guests {
     type filter hook forward priority -10; policy accept;
-    # Everything the bridge would route off the host, whatever address guest root gives itself
-    iifname "incusbr0" counter name guest_dropped drop
+    # The control counts the instance under test; the second rule drops everything else the
+    # bridge would route off the host, whatever address guest root gives itself
+    iifname "incusbr0" ip saddr $GUEST_IP counter name guest_dropped drop
+    iifname "incusbr0" drop
   }
   counter guest_dropped {}
 }

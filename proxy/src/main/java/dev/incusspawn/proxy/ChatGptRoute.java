@@ -18,6 +18,8 @@ import io.vertx.core.http.RequestOptions;
 import io.vertx.core.http.ServerWebSocket;
 import io.vertx.core.http.WebSocketConnectOptions;
 
+import javax.net.ssl.ExtendedSSLSession;
+import javax.net.ssl.SNIHostName;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -153,7 +155,7 @@ final class ChatGptRoute {
     private final Set<String> loggedRefusals = ConcurrentHashMap.newKeySet();
 
     /** {@link #MAX_BACKEND_BODY}; lowered by tests that check the bound by sending past it. */
-    long maxBackendBody = MAX_BACKEND_BODY;
+    volatile long maxBackendBody = MAX_BACKEND_BODY;
 
     private volatile JqValue configTree = JqValues.parse("{}");
     private volatile AccountShape shape = AccountShape.UNDECLARED;
@@ -208,7 +210,7 @@ final class ChatGptRoute {
                     proxy.upstream.relayBuffered(req, domain, body, upReq -> {}, upResp -> {});
                     return;
                 }
-                var gate = gate(req, domain, sourceAddress);
+                var gate = gate(req, domain, sourceAddress, false);
                 if (gate == null) return;
                 if (gate.op() == Operation.REFRESH) {
                     refresh(req, gate.binding(), body, sourceAddress);
@@ -227,17 +229,11 @@ final class ChatGptRoute {
         }
         // Everything a claimed backend request is judged on is in its head: the body is read only
         // once the caller has proved it may send one, so no instance can make the proxy hold it
-        // A refusal here leaves the body unread. Unread, it is not held: nothing reads it, and
-        // Vert.x drops what no handler takes. The connection is not reused after it.
-        req.response().putHeader("Connection", "close");
-        var gate = gate(req, domain, sourceAddress);
-        if (gate == null) return;
-        var digest = ChatGptProof.accessDigestOf(bearer(req.getHeader("Authorization")));
-        if (!ChatGptProof.matches(digest, gate.binding().accessSha256())) {
-            refuseProof(req.response(), gate.op(), sourceAddress, "the access proof is not this instance's current one");
+        var gate = gate(req, domain, sourceAddress, true);
+        if (gate == null) {
+            stopReading(req);
             return;
         }
-        req.response().headers().remove("Connection");
         readBounded(req, maxBackendBody).onSuccess(body -> currentSession(gate.binding()).onComplete(ar -> {
             if (ar.failed() || ar.result() == null) {
                 refuseProof(req.response(), gate.op(), sourceAddress, SESSION_CHANGED);
@@ -246,7 +242,6 @@ final class ChatGptRoute {
             forwardBackend(req, ar.result(), body);
         }));
     }
-
 
     private static long declaredLength(HttpServerRequest req) {
         try {
@@ -285,7 +280,17 @@ final class ChatGptRoute {
         var resp = req.response();
         if (resp.ended() || resp.closed()) return;
         resp.setStatusCode(413).putHeader("Connection", "close").end();
-        req.connection().close();
+        stopReading(req);
+    }
+
+    /**
+     * After an answer that leaves the rest of the body unread: stop reading it. Paused, the
+     * connection pushes back on the sender rather than have the proxy drain it, and it is not
+     * reused; the client or the idle timeout ends it. Closing it at once instead could reset it
+     * before the answer was read, while the client still sends.
+     */
+    private static void stopReading(HttpServerRequest req) {
+        if (!req.isEnded()) req.pause();
     }
 
     /** Whether a request's headers claim an isx access placeholder. */
@@ -296,15 +301,21 @@ final class ChatGptRoute {
         return false;
     }
 
-    /** A claimed request that passed its shape, the allowlist and the caller check. */
+    /** A claimed request whose head passed every check: its caller may send it a body. */
     private record Gate(Operation op, InstanceRegistry.ChatGptBinding binding) {}
 
     /**
-     * Checks a claimed request's head: its shape (400), the allowlist (403), and that its caller
-     * is bound to the account it is served (401). Returns null after answering a refusal.
+     * Checks a claimed request's head: its shape (400), the allowlist (403), that its caller is
+     * bound to the account it is served (401) and, when {@code proofInHead}, the access proof its
+     * {@code Authorization} carries (401). A token request's proof is in its body, which the
+     * caller checks once read. Returns null after answering a refusal.
      */
-    private Gate gate(HttpServerRequest req, String domain, String sourceAddress) {
+    private Gate gate(HttpServerRequest req, String domain, String sourceAddress, boolean proofInHead) {
         var resp = req.response();
+        if (!req.isEnded()) {
+            // A refusal leaves the body unread (see stopReading): the connection is not reused
+            resp.putHeader("Connection", "close");
+        }
         var shapeProblem = shapeProblem(req.headers(), domain, req.uri(), sni(req));
         if (shapeProblem != null) {
             refuse(resp, 400, "invalid_request", shapeProblem);
@@ -323,6 +334,12 @@ final class ChatGptRoute {
             refuseProof(resp, op, sourceAddress, "no ChatGPT session is bound to this instance");
             return null;
         }
+        if (proofInHead
+                && !ChatGptProof.matches(ChatGptProof.accessDigestOf(bearer(req.getHeader("Authorization"))), binding.accessSha256())) {
+            refuseProof(resp, op, sourceAddress, "the access proof is not this instance's current one");
+            return null;
+        }
+        resp.headers().remove("Connection");
         return new Gate(op, binding);
     }
 
@@ -343,7 +360,8 @@ final class ChatGptRoute {
         }
         var host = headers.get("Host");
         if (host == null || !(host.equals(domain) || host.equals(domain + ":443"))) return "a Host that is not " + domain;
-        if (sni != null && !sni.isEmpty() && !sni.equals(domain)) return "a TLS name that is not " + domain;
+        // Fails closed: a claimed request with no TLS name is one this check cannot judge
+        if (sni == null || !sni.equals(domain)) return "a TLS name that is not " + domain;
         if (!safeTarget(target)) return "a request target isx does not relay with a credential";
         return null;
     }
@@ -355,11 +373,11 @@ final class ChatGptRoute {
 
     /** The TLS name a WebSocket's handshake asked for, or null when it sent none. */
     private static String sni(ServerWebSocket ws) {
-        if (!(ws.sslSession() instanceof javax.net.ssl.ExtendedSSLSession session)) return null;
-        return session.getRequestedServerNames().stream()
-                .filter(name -> name instanceof javax.net.ssl.SNIHostName)
-                .map(name -> ((javax.net.ssl.SNIHostName) name).getAsciiName())
-                .findFirst().orElse(null);
+        if (!(ws.sslSession() instanceof ExtendedSSLSession session)) return null;
+        for (var name : session.getRequestedServerNames()) {
+            if (name instanceof SNIHostName host) return host.getAsciiName();
+        }
+        return null;
     }
 
     // --- Backend ---
@@ -536,8 +554,7 @@ final class ChatGptRoute {
             return current(session);
         }
         // Only an error this account raised: a working ChatGPT session says nothing about Claude's
-        var standing = proxy.authError;
-        if (standing != null && standing.startsWith(authErrorPrefix(session.account()))) proxy.clearAuthError();
+        proxy.clearAuthErrorIf(standing -> standing.startsWith(authErrorPrefix(session.account())));
         return new Refreshed(refreshed, session.sessionId(), 200, null);
     }
 
@@ -552,10 +569,15 @@ final class ChatGptRoute {
      * "sign in again". A pinned instance's broken session is reported to that instance.
      */
     private boolean isDefaultAccount(String account) {
+        return account.equals(effectiveAccount(null));
+    }
+
+    /** The {@code openai} account served for {@code pinned} (null: none), or null when none can be. */
+    private String effectiveAccount(String pinned) {
         try {
-            return account.equals(AccountResolver.effectiveAccount(configTree, NAMESPACE, shape, null));
+            return AccountResolver.effectiveAccount(configTree, NAMESPACE, shape, pinned);
         } catch (RuntimeException e) {
-            return false;
+            return null;
         }
     }
 
@@ -633,14 +655,8 @@ final class ChatGptRoute {
         if (binding == null) return null;
         var caller = registry.lookup(sourceAddress);
         if (caller == null || !caller.instanceName().equals(binding.instanceName())) return null;
-        String account;
-        try {
-            account = AccountResolver.effectiveAccount(configTree, NAMESPACE, shape,
-                    caller.accountsByNamespace().get(NAMESPACE));
-        } catch (RuntimeException e) {
-            return null;
-        }
-        if (!account.equals(binding.account())
+        var account = effectiveAccount(caller.accountsByNamespace().get(NAMESPACE));
+        if (account == null || !account.equals(binding.account())
                 || !isChatGpt(configTree.path(NAMESPACE).path("accounts").path(account))) return null;
         return binding;
     }
@@ -694,8 +710,6 @@ final class ChatGptRoute {
                         .put("code", JqString.of(code))
                         .put("message", JqString.of(message + HINT)).build()).build().toJsonString());
     }
-
-
 
     private String describe(String sourceAddress) {
         var registry = proxy.instanceRegistry();

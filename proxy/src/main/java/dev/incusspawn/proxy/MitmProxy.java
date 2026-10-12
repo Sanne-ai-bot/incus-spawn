@@ -1972,6 +1972,18 @@ public class MitmProxy {
         }
     }
 
+    /** Clears the standing error only if {@code ours} says it is the caller's, deciding under the lock. */
+    void clearAuthErrorIf(java.util.function.Predicate<String> ours) {
+        if (authError == null) return;
+        synchronized (authLock) {
+            if (authError != null && ours.test(authError)) {
+                authError = null;
+                authErrorHint = null;
+                authNotificationSentMs = 0;
+            }
+        }
+    }
+
     /**
      * Record a failure found by the health-endpoint re-check.
      * <p>

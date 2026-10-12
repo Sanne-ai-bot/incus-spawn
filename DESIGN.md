@@ -1888,7 +1888,8 @@ The real id token never reaches a guest: it is signed, and can be exchanged for 
 Interception is decided per host, not per instance, because bridge DNS is: while any `openai` account is `type: chatgpt`, both hosts are intercepted for every instance, and an instance with no ChatGPT binding only ever gets the relay.
 The relay is not quite untouched on the two token paths: `POST /oauth/token` and `/oauth/revoke` bodies are read (64 KiB at most, a longer chunked one gets 413) to look for a placeholder, and one that contains `isx_` counts as claimed.
 A claimed request is refused here, never relayed, unless each of these holds, all judged on its head: a backend request's body is read only once they do, so a caller without the proof cannot make the shared proxy hold one.
-1. Its shape: one `Authorization`, `ChatGPT-Account-Id`, `Host`, `Content-Length` and `Transfer-Encoding` at most, a `Host` that is the TLS name, and a target with no percent-encoding, dot or empty segments (400).
+A refusal pauses the request instead of draining its body, and the connection is not reused.
+1. Its shape: one `Authorization`, `ChatGPT-Account-Id`, `Host`, `Content-Length` and `Transfer-Encoding` at most, a TLS name that is the `Host` (none at all is refused too), and a target with no percent-encoding, dot or empty segments (400).
    Bodies are read only up to a bound (64 KiB for token requests, 64 MiB for the backend; 413 past it), since the proxy is shared.
    Anything a server could read as another path is refused rather than normalised.
 2. The allowlist: method and exact path, below; nothing is pre-authorized (403, logged once per operation).
