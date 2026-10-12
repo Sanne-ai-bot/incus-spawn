@@ -128,7 +128,9 @@ public final class InstanceRegistry {
      *
      * @param template     its leaf template ({@link Metadata#templateOf}), "" when none is recorded
      * @param projectLocal whether a project-local definition went into it ({@code isx project},
-     *                     or a {@code .incus-spawn/} template anywhere in its chain)
+     *                     or a {@code .incus-spawn/} template anywhere in its chain), or it is
+     *                     otherwise untrusted: a failed build or a copy of one
+     *                     ({@link Metadata#UNTRUSTED_LINEAGE})
      */
     public record Lineage(String template, boolean projectLocal) {
         /** For an instance whose lineage is not known: admitted by nothing. */
@@ -455,6 +457,12 @@ public final class InstanceRegistry {
                             String createdAt, JqValue config) {}
 
     private static Lineage lineageOf(JqValue config) {
+        // A failed build, or a copy of one, still carries its parent's template stamps: what ran in
+        // it was never what they say, so it is nobody's template (#936)
+        if (Metadata.TYPE_FAILED_BUILD.equals(config.pathText(Metadata.TYPE, ""))
+                || !config.pathText(Metadata.UNTRUSTED_LINEAGE, "").isBlank()) {
+            return Lineage.UNKNOWN;
+        }
         var template = java.util.Objects.requireNonNullElse(Metadata.templateOf(Map.of(
                 Metadata.PROFILE, config.pathText(Metadata.PROFILE, ""),
                 Metadata.PARENT, config.pathText(Metadata.PARENT, ""))), "");

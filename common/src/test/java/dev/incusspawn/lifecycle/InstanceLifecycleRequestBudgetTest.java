@@ -576,6 +576,17 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void aCopyOfAFailedBuildStaysUntrusted() {
+        // #936: a branch of foo-failed-build is no less what that build left, so unlike a grant the
+        // taint is carried: no host route admits it on the parent's template stamps
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_FAILED_BUILD, Metadata.PROFILE, "tpl-isx-agent"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertEquals(Metadata.TYPE_FAILED_BUILD,
+                daemon.instance(NAME).path("config").path(Metadata.UNTRUSTED_LINEAGE).asText());
+    }
+
+    @Test
     void anEmptyAccountSelectionKeepsTheCopiedPins() {
         // A caller passing no selection must not wipe what the copy carried.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.accountKey("github"), "work"));

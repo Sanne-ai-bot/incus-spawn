@@ -178,6 +178,14 @@ public final class Metadata {
     public static final String TYPE_PROJECT = "project";
     public static final String TYPE_CLONE = "clone";
     public static final String TYPE_FAILED_BUILD = "failed-build";
+    /**
+     * Set on a build promoted to {@code <name>-failed-build}: what ran in it is not what any template
+     * says, yet it still carries its parent's {@link #PROFILE} and {@link #BUILD_SOURCE}, which
+     * {@code tagTemplateMetadata} would only have replaced at the end of a build that succeeded.
+     * Unlike a grant, every copy keeps it (a branch of a failed build is no less what that build
+     * left), and an instance carrying it is admitted by no host route (#936). The value says why.
+     */
+    public static final String UNTRUSTED_LINEAGE = PREFIX + "untrusted-lineage";
 
     public static final String OP_STOPPING = "stopping";
     public static final String OP_RESTARTING = "restarting";

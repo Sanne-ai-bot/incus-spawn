@@ -155,7 +155,7 @@ final class HostRouteRelay {
         var lineage = caller.lineage();
         if (!route.admits(lineage.template(), lineage.projectLocal())) {
             ProxyLog.warn("Refusing host route " + route.name() + " to instance '" + caller.instanceName() + "'"
-                    + (lineage.projectLocal() ? ", built from a project-local definition"
+                    + (lineage.projectLocal() ? ", built from a project-local definition or by a build that failed"
                             : ", whose template '" + lineage.template() + "' the route does not list"));
             CallerCheck.refuse(req, 403, "instance '" + caller.instanceName() + "' may not call " + route.name());
             return;
