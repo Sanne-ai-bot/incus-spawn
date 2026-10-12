@@ -1489,9 +1489,7 @@ public class MitmProxy {
                                    byte[] sentBody, boolean bodyRewritten,
                                    String originalDump, byte[] originalBody, ApiActivity.Exchange exchange) {
         var clientResp = clientReq.response();
-        clientResp.setStatusCode(upResp.statusCode());
-        clientResp.setStatusMessage(upResp.statusMessage());
-        copyResponseHeaders(upResp, clientResp);
+        upstream.copyResponseHead(upResp, clientResp);
         if (exchange != null) {
             exchange.respond(upResp.statusCode(), upResp.getHeader("Content-Type"), upResp.getHeader("Content-Encoding"));
         }
@@ -1529,10 +1527,6 @@ public class MitmProxy {
     private void copyRequestHeaders(HttpServerRequest clientReq, HttpClientRequest upReq,
                                     String domain) {
         upstream.copyRequestHeaders(clientReq, upReq, domain);
-    }
-
-    private void copyResponseHeaders(HttpClientResponse upResp, HttpServerResponse clientResp) {
-        upstream.copyResponseHeaders(upResp, clientResp);
     }
 
     private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp,
