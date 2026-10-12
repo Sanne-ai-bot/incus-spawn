@@ -30,9 +30,10 @@ import static org.junit.jupiter.api.Assertions.*;
  * SIGKILL looked the same as a clean one. That was every stop on a Mac until the guest's agent
  * could be asked to shut it down (#881), and still is for an appliance from before that.
  *
- * <p>A {@code sleep} named like qemu stands in for the hypervisor: a copy on Linux, where a process
- * is known by the file it runs, and a link on macOS, where a copied system binary is killed on
- * exec and a process is known by the path it was started as.
+ * <p>A process named like qemu stands in for the hypervisor: a copy of the shell on Linux, where a
+ * process is known by the file it runs (not of {@code sleep}, which may be one multi-call binary),
+ * and a link to {@code sleep} on macOS, where a copied system binary is killed on exec and a
+ * process is known by the path it was started as.
  */
 class VmStopTest {
 
@@ -57,10 +58,14 @@ class VmStopTest {
         if (OS.MAC.isCurrentOs()) {
             Files.createSymbolicLink(qemu, Path.of("/bin/sleep"));
         } else {
-            Files.copy(Path.of("/bin/sleep").toRealPath(), qemu);
+            // A shell, not sleep: Ubuntu 26.04's sleep is uutils coreutils, one multi-call binary
+            // that exits at once when copied under another name.
+            Files.copy(Path.of("/bin/sh").toRealPath(), qemu);
             qemu.toFile().setExecutable(true);
         }
-        vm = new ProcessBuilder(qemu.toString(), "60").start();
+        vm = (OS.MAC.isCurrentOs()
+                ? new ProcessBuilder(qemu.toString(), "60")
+                : new ProcessBuilder(qemu.toString(), "-c", "read x")).start();
         Files.createDirectories(Environment.vmStateDir());
         Files.writeString(Environment.vmPidFile(), Long.toString(vm.pid()));
         assertTrue(VmManager.isRunning(), "the stand-in must pass for a VM");
