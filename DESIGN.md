@@ -438,7 +438,7 @@ Additional differences:
   The agent is probed through a caught exec, since Incus refuses the exec outright when the agent is down.
   If this boot's console log holds a `VmAgentFailure` line that systemd has not since followed with `Started incus-agent` (`VmAgentFailure.unrecoveredLines`, which `waitForReady` uses too, so a failure the agent recovered from never cuts a wait short), the agent gets `waitForReady`'s restart grace and then those lines are reported instead of restarting (the log is rotated at every start, so they belong to this boot; systemd prints unit status there only during boot, so the two kinds of line are ordered comparably).
   Otherwise it restarts and stamps the new boot's QEMU pid (`IncusClient.pid`, from `GET /state`, fresh at every start) as `user.incus-spawn.agent-restart-boot`, before the wait so a boot whose agent never comes up is recorded however the wait ends.
-  An agent unresponsive on the stamped boot is reported, pointing at the saved console log and `incus restart --force`.
+  An agent unresponsive on the stamped boot is reported, pointing at the saved console log and the restart-anyway hint (`incus restart --force` on Linux, the TUI's Shift+F7 on macOS, which has no incus CLI).
   Any other boot, one the user started or a guest reboot, gets its one restart, so no stamp ever needs clearing, not even on a copy.
   Both callers reach it through `InstanceLifecycle.ensureReady`, the one "start it, or recover its agent" step before a shell.
   The guest is asked to shut down first (ACPI, which needs no agent, 15s) and powered off only if it ignores that.
