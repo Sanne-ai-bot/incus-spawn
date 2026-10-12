@@ -66,8 +66,19 @@ public class AccountCommand extends BaseCommand {
         @Option(name = "format", description = "Output format: table (default), plain or json")
         String format;
 
+        // Used by the generated shell completion scripts; see completionLines.
+        @Option(name = "completion", hasValue = false,
+                description = "Print <namespace>=<account> candidates for shell completion")
+        boolean completion;
+
         @Override
         protected CommandResult doExecute() throws Exception {
+            if (completion) {
+                // Names only, and no Incus: this runs on every TAB.
+                var config = SpawnConfig.load();
+                completionLines(config, AccountSelection.namespaceSetups(config)).forEach(System.out::println);
+                return CommandResult.SUCCESS;
+            }
             var outputFormat = OutputFormat.parse(format);
             var config = SpawnConfig.load();
             var setups = AccountSelection.namespaceSetups(config);
@@ -101,6 +112,31 @@ public class AccountCommand extends BaseCommand {
             renderList(namespaces, pinsUnavailable).forEach(System.out::println);
             return CommandResult.SUCCESS;
         }
+    }
+
+    /**
+     * Candidates for {@code --account} and {@code isx account set}, one per line: {@code ns=} for
+     * each namespace with configured accounts, then {@code ns=account}, the default one followed by a TAB
+     * and {@code default} (the description fish and zsh show). Only usable accounts are offered,
+     * the ones {@code --account} and {@code account set} accept. Only names are printed, never an
+     * account's values, so nothing secret can reach a completion script.
+     */
+    static List<String> completionLines(SpawnConfig config, Map<String, ToolSetup> setups) {
+        var tree = config.tree();
+        var out = new ArrayList<String>();
+        for (var entry : setups.entrySet()) {
+            var ns = entry.getKey();
+            var shape = entry.getValue().accountShape();
+            // The namespace even when none of its accounts is usable: 'account unset' repairs that.
+            if (AccountResolver.accountNames(tree, ns, shape).isEmpty()) continue;
+            out.add(ns + "=");
+            var names = AccountResolver.usableAccountNames(tree, ns, shape);
+            var defaultName = AccountResolver.effectiveAccount(tree, ns, shape, null);
+            for (var name : names) {
+                out.add(ns + "=" + name + (name.equals(defaultName) ? "\tdefault" : ""));
+            }
+        }
+        return out;
     }
 
     /** One configured account, as {@code isx account list} shows it. */
