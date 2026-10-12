@@ -1866,7 +1866,9 @@ Vertex AI users must have `gcloud` installed on the host and `gcloud auth login`
 A user who cannot create an OpenAI API key, for example under organization SSO, signs Codex in with ChatGPT.
 That session must stay on the host like every other credential, so an `openai` account of `type: chatgpt` holds it there and the proxy turns the guest's look-alikes into it.
 This is an **experimental compatibility mechanism**.
-It is built from OpenAI's documentation and the open-source Codex client (codex-rs, `rust-v0.162.1`), and verified against a local stub of OpenAI's token endpoint and the Codex backend with Codex 0.162.1.
+It is built from OpenAI's documentation and the open-source Codex client (codex-rs, `rust-v0.162.1`), and verified against a local stub of OpenAI's token endpoint and the Codex backend, with Codex 0.162.1 when it was written.
+No Codex version is pinned: CI's `tpl-test-codex` installs whatever `@openai/codex` npm serves when it is built (`CodexSetup`), and the test logs `codex --version`.
+So a Codex release that changes what this relies on fails CI's next run rather than waiting for a deliberate upgrade, and a user's own template may run a Codex no run has tried.
 It is not yet tested against a real ChatGPT account, and passing these tests does not establish that OpenAI supports the integration; feedback is welcome on #1332.
 
 So far only the first milestone exists: the proxy side and its end-to-end test.
@@ -1935,7 +1937,7 @@ After a sign-in again it is discarded, its new refresh token revoked, and the re
 So a proxy that died in between, or an answer lost on the way, leaves the record behind, and when the next refresh is then refused the host is told to sign in again because a refresh was interrupted.
 
 **Testing:** `ChatGptRouteTest` covers the proof matrix (missing, static, another instance's, a previous session's, the wrong kind, one keyed with the metadata hash, the verifier itself) on both placeholders and both transports, the allowlist and refused shapes on both transports, the body bound and that no body is read before the proof, redirects (handed back, never followed), the refresh rules, and the sign-in-again and removal races.
-`.github/scripts/test-chatgpt-session.sh` runs real Codex in an instance through the real `isx-proxy` against `.github/scripts/chatgpt-stub.py`.
+`.github/scripts/test-chatgpt-session.sh` runs real Codex (CI: the npm release current when `tpl-test-codex` is built) in an instance through the real `isx-proxy` against `.github/scripts/chatgpt-stub.py`.
 It passes only when Codex completes a turn over WebSocket and one over HTTP (the stub refusing the upgrade), with Codex's own refresh relayed once and committed, and the guest holding no real token.
 Nothing in it may leave the machine, and that is checked, not assumed.
 The host side runs with a group an nftables table lets reach only the stub and the bridge, and a negative control proves the drop first.
