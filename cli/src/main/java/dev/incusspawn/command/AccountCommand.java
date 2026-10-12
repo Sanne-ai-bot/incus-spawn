@@ -115,28 +115,38 @@ public class AccountCommand extends BaseCommand {
     }
 
     /**
-     * Candidates for {@code --account} and {@code isx account set}, one per line: {@code ns=} for
-     * each namespace with configured accounts, then {@code ns=account}, the default one followed by a TAB
-     * and {@code default} (the description fish and zsh show). Only usable accounts are offered,
-     * the ones {@code --account} and {@code account set} accept. Only names are printed, never an
-     * account's values, so nothing secret can reach a completion script.
+     * Candidates for shell completion, one per line. First every namespace on its own, for
+     * {@code isx account unset}: it repairs a pin whatever the namespace's accounts look like now.
+     * Then, for {@code --account} and {@code isx account set}, {@code ns=} for each namespace
+     * with a usable account and {@code ns=account} for each usable one, the default followed by a
+     * TAB and {@code default} (the description fish and zsh show). Only names are printed, never
+     * an account's values, so nothing secret can reach a completion script; a name holding a
+     * control character is skipped, as it could not be typed and would break the line format.
      */
     static List<String> completionLines(SpawnConfig config, Map<String, ToolSetup> setups) {
         var tree = config.tree();
-        var out = new ArrayList<String>();
+        var namespaces = new ArrayList<String>();
+        var accounts = new ArrayList<String>();
         for (var entry : setups.entrySet()) {
             var ns = entry.getKey();
+            if (!typable(ns)) continue;
+            namespaces.add(ns);
             var shape = entry.getValue().accountShape();
-            // The namespace even when none of its accounts is usable: 'account unset' repairs that.
-            if (AccountResolver.accountNames(tree, ns, shape).isEmpty()) continue;
-            out.add(ns + "=");
-            var names = AccountResolver.usableAccountNames(tree, ns, shape);
+            var names = AccountResolver.usableAccountNames(tree, ns, shape).stream()
+                    .filter(AccountCommand::typable).toList();
+            if (names.isEmpty()) continue;
             var defaultName = AccountResolver.effectiveAccount(tree, ns, shape, null);
+            accounts.add(ns + "=");
             for (var name : names) {
-                out.add(ns + "=" + name + (name.equals(defaultName) ? "\tdefault" : ""));
+                accounts.add(ns + "=" + name + (name.equals(defaultName) ? "\tdefault" : ""));
             }
         }
-        return out;
+        namespaces.addAll(accounts);
+        return namespaces;
+    }
+
+    private static boolean typable(String name) {
+        return !name.isEmpty() && name.chars().noneMatch(Character::isISOControl);
     }
 
     /** One configured account, as {@code isx account list} shows it. */

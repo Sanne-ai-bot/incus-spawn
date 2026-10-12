@@ -19,7 +19,8 @@ The result: on Linux `isx vm` is an unknown command and never appears in `isx --
 When adding a *shared* command, add it to **both** command lists -- `IncusSpawnCommandTreeTest` fails if they drift (the two lists must be identical except for `vm`).
 When adding another macOS-only command, add it to `IncusSpawnCommand` only and extend the completion strip.
 
-Account values: `isx account list --completion` (names only, never credentials; one `ns=` / `ns=account` line each, default marked after a TAB) feeds `--account`, `account set` and `account unset` in all three scripts.
+Account values: `isx account list --completion` (names only, never credentials) prints every namespace on its own line for `account unset`, then `ns=` / `ns=account` lines for the usable accounts (default marked after a TAB) for `--account` and `account set`, in all three scripts.
+Names holding a control character are skipped.
 Keep it free of Incus and secrets: it runs on every TAB.
 
 **`isx mcp`** is a normal (visible) command, but it is started by an agent, not typed: it serves MCP on stdin/stdout until end of input.

@@ -10,6 +10,15 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(IsolatedHome.class)
 class AccountCompletionTest {
 
+    private static java.util.List<String> lines(dev.incusspawn.config.SpawnConfig config) {
+        return AccountCommand.completionLines(config, AccountSelection.namespaceSetups(config));
+    }
+
+    /** The {@code --account} / {@code account set} candidates: the lines holding an "=". */
+    private static java.util.List<String> selections(dev.incusspawn.config.SpawnConfig config) {
+        return lines(config).stream().filter(l -> l.contains("=")).toList();
+    }
+
     @Test
     void offersNamespacesAndAccountNamesButNeverCredentials() throws Exception {
         var config = IsolatedHome.seed("""
@@ -20,7 +29,7 @@ class AccountCompletionTest {
                     acme:
                       token: "yyyyyyyyyyyy"
                 """);
-        var lines = AccountCommand.completionLines(config, AccountSelection.namespaceSetups(config));
+        var lines = lines(config);
         assertTrue(lines.contains("github="), lines.toString());
         assertTrue(lines.stream().anyMatch(l -> l.startsWith("github=personal")), lines.toString());
         assertTrue(lines.stream().anyMatch(l -> l.startsWith("github=acme")), lines.toString());
@@ -44,22 +53,38 @@ class AccountCompletionTest {
                       vertexProjectId: acme-prod
                     broken: {}
                 """);
-        var lines = AccountCommand.completionLines(config, AccountSelection.namespaceSetups(config));
-        assertEquals(java.util.List.of("claude=", "claude=acme\tdefault"), lines);
+        assertEquals(java.util.List.of("claude=", "claude=acme\tdefault"), selections(config));
 
+        // No usable account: nothing to select, not even a bare "claude=" that could not be completed.
         config = IsolatedHome.seed("""
                 claude:
                   accounts:
                     broken: {}
                 """);
-        assertEquals(java.util.List.of("claude="),
-                AccountCommand.completionLines(config, AccountSelection.namespaceSetups(config)));
+        assertEquals(java.util.List.of(), selections(config));
+        assertTrue(lines(config).contains("claude"), "unset can still name it: " + lines(config));
+    }
+
+    /** Every namespace is offered to unset, even one with no accounts left that an instance may still pin. */
+    @Test
+    void unsetCandidatesAreEveryNamespace() throws Exception {
+        var config = IsolatedHome.seed("claude: {}\n");
+        assertEquals(java.util.List.of(), selections(config));
+        var namespaces = lines(config);
+        assertTrue(namespaces.contains("claude") && namespaces.contains("github"), namespaces.toString());
     }
 
     @Test
-    void skipsNamespacesWithoutAccounts() throws Exception {
-        var config = IsolatedHome.seed("claude: {}\n");
-        assertEquals(java.util.List.of(),
-                AccountCommand.completionLines(config, AccountSelection.namespaceSetups(config)));
+    void skipsNamesThatHoldAControlCharacter() throws Exception {
+        var config = IsolatedHome.seed("""
+                github:
+                  accounts:
+                    "bad\\tname":
+                      token: "xxxxxxxxxxxx"
+                    good:
+                      token: "yyyyyyyyyyyy"
+                """);
+        // The skipped one is the default here, so no line carries the marker.
+        assertEquals(java.util.List.of("github=", "github=good"), selections(config));
     }
 }

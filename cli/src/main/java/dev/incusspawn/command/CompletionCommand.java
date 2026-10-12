@@ -115,7 +115,9 @@ public class CompletionCommand extends BaseCommand {
               local -a namespaces accounts
               local line
               for line in ${(f)"$(isx account list --completion 2>/dev/null)"}; do
-                if [[ $line == *= ]]; then
+                if [[ $line != *=* ]]; then
+                  continue
+                elif [[ $line == *= ]]; then
                   namespaces+=("${line//:/\\:}")
                 elif [[ $line == *$'\\t'* ]]; then
                   accounts+=("${${line%%$'\\t'*}//:/\\:}:${line#*$'\\t'}")
@@ -132,7 +134,7 @@ public class CompletionCommand extends BaseCommand {
 
             _isx_account_namespaces() {
               local -a namespaces
-              namespaces=(${(u)${(f)"$(isx account list --completion 2>/dev/null)"}%%=*})
+              namespaces=(${${(f)"$(isx account list --completion 2>/dev/null)"}:#*=*})
               _describe -t namespaces 'namespace' namespaces
             }
 
@@ -496,11 +498,11 @@ public class CompletionCommand extends BaseCommand {
             }
 
             _isx_list_accounts() {
-              isx account list --completion 2>/dev/null | cut -f1
+              isx account list --completion 2>/dev/null | cut -f1 | grep =
             }
 
             _isx_list_account_namespaces() {
-              isx account list --completion 2>/dev/null | cut -f1 | sed -n 's/=$//p'
+              isx account list --completion 2>/dev/null | grep -v =
             }
 
             # Offer <namespace>= then <namespace>=<account>.
@@ -803,12 +805,12 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: <namespace>= and <namespace>=<account> candidates (default marked); names only
             function __isx_accounts
-              isx account list --completion 2>/dev/null
+              isx account list --completion 2>/dev/null | string match -- '*=*'
             end
 
-            # Helper: namespaces that have accounts
+            # Helper: every credential namespace, for `account unset`
             function __isx_account_namespaces
-              isx account list --completion 2>/dev/null | string replace -rf '^([^=\\t]+)=$' '$1'
+              isx account list --completion 2>/dev/null | string match -v -- '*=*'
             end
 
             # Helper: true when the line is `isx account $argv[1]` followed by exactly $argv[2]
