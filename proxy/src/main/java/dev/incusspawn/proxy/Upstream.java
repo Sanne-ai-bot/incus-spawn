@@ -617,6 +617,33 @@ class Upstream {
         upReq.putHeader("Host", domain);
     }
 
+    /**
+     * Relays a request whose body has already been read: {@code adjust} may change the upstream
+     * request's headers, and {@code onResponse} sees upstream's answer before it is piped back.
+     */
+    void relayBuffered(HttpServerRequest clientReq, String domain, Buffer body,
+                       java.util.function.Consumer<HttpClientRequest> adjust,
+                       java.util.function.Consumer<HttpClientResponse> onResponse) {
+        var options = new RequestOptions().setMethod(clientReq.method()).setHost(domain).setPort(443)
+                .setURI(clientReq.uri());
+        requestWithAsyncDns(options).onSuccess(upReq -> {
+            copyRequestHeaders(clientReq, upReq, domain);
+            adjust.accept(upReq);
+            upReq.putHeader("Content-Length", String.valueOf(body.length()));
+            upReq.send(body).onSuccess(upResp -> {
+                onResponse.accept(upResp);
+                copyResponseHead(upResp, clientReq.response());
+                pipeResponse(upResp, clientReq.response(), null);
+            }).onFailure(e -> {
+                ProxyLog.warn("Upstream send error (" + domain + "): " + e.getMessage());
+                sendError(clientReq.response(), 502, "Upstream error");
+            });
+        }).onFailure(e -> {
+            ProxyLog.warn("Upstream connect error (" + domain + "): " + e.getMessage());
+            sendError(clientReq.response(), 502, "Upstream connection failed");
+        });
+    }
+
     /** Upstream's status and headers, for a response relayed as it is. */
     void copyResponseHead(HttpClientResponse upResp, HttpServerResponse clientResp) {
         clientResp.setStatusCode(upResp.statusCode());

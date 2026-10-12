@@ -1861,6 +1861,75 @@ The AI Help answer view shows the provider-reported token split (`51.2k tokens i
 CA key and certificate at `~/.config/incus-spawn/ca.key` and `~/.config/incus-spawn/ca.crt`.
 Vertex AI users must have `gcloud` installed on the host and `gcloud auth login` completed — the proxy and `isx init` both shell out to `gcloud auth print-access-token`, which reads the gcloud user credential, not application-default credentials.
 
+#### Codex ChatGPT sessions stay on the host (#1332, experimental)
+
+A user who cannot create an OpenAI API key, for example under organization SSO, signs Codex in with ChatGPT.
+That session must stay on the host like every other credential, so an `openai` account of `type: chatgpt` holds it there and the proxy turns the guest's look-alikes into it.
+This is an **experimental compatibility mechanism**.
+It is built from OpenAI's documentation and the open-source Codex client (codex-rs, `rust-v0.162.1`), and verified against a local stub of OpenAI's token endpoint and the Codex backend with Codex 0.162.1.
+It is not yet tested against a real ChatGPT account, and passing these tests does not establish that OpenAI supports the integration; feedback is welcome on #1332.
+
+So far only the first milestone exists: the proxy side and its end-to-end test.
+There is no sign-in or delivery yet; the test's fixture writes the session, the guest's files and the instance's verifiers.
+Sign-in through the official `codex login`, delivery on every start, and clearing inherited verifiers on a copy come next, with the user-facing docs.
+
+**The session:** `~/.config/incus-spawn/openai/<account>/session.json` (owner-only) holds the tokens, a `session_id` minted at sign-in, a `generation`, and `refreshing` while a refresh is out (`ChatGptSessionStore`).
+`config.yaml` only names the account and its type.
+OpenAI rotates the refresh token on every use and refuses a reused one, so exactly one party may refresh: the proxy, relaying the guest Codex's own refresh request.
+
+**Proofs (#1107):** Every proof is an HMAC keyed with the raw per-start secret, never with its SHA-256, which the guest can read through `/dev/incus` (`ChatGptProof`).
+The refresh proof binds the account and the session id; the access proof is derived from the refresh proof, so a refresh can be answered with the caller's own access proof without the proxy holding the secret.
+The host records only SHA-256 verifiers of both, with `<account>:<session id>` and the hash of the secret they were made with, in instance metadata.
+The verifiers count only while that is still the instance's secret, so a copy, which gets its own, never inherits its source's ChatGPT access along with its files and metadata.
+The guest's access token is an unsigned JWT with the real token's expiry and account claims and the access proof as its signature; its refresh token is `rt.isx_<refresh proof>` (`ChatGptPlaceholders`).
+The real id token never reaches a guest: it is signed, and can be exchanged for an API key.
+
+**Which requests:** Only a request that claims to be isx's (an isx access placeholder as its bearer, or an isx refresh placeholder in its body) is handled; anything else to `chatgpt.com` or `auth.openai.com` is relayed (`ChatGptRoute`).
+Interception is decided per host, not per instance, because bridge DNS is: while any `openai` account is `type: chatgpt`, both hosts are intercepted for every instance, and an instance with no ChatGPT binding only ever gets the relay.
+The relay is not quite untouched on the two token paths: `POST /oauth/token` and `/oauth/revoke` bodies are read (64 KiB at most, a longer chunked one gets 413) to look for a placeholder, and one that contains `isx_` counts as claimed.
+A claimed request is refused here, never relayed, unless each of these holds, all judged on its head: a backend request's body is read only once they do, so a caller without the proof cannot make the shared proxy hold one.
+1. Its shape: one `Authorization`, `ChatGPT-Account-Id`, `Host`, `Content-Length` and `Transfer-Encoding` at most, a `Host` that is the TLS name, and a target with no percent-encoding, dot or empty segments (400).
+   Bodies are read only up to a bound (64 KiB for token requests, 64 MiB for the backend; 413 past it), since the proxy is shared.
+   Anything a server could read as another path is refused rather than normalised.
+2. The allowlist: method and exact path, below; nothing is pre-authorized (403, logged once per operation).
+3. The caller: the instance at the source address, served the account its binding names, presenting the proof its verifier matches (401).
+4. The session: still the one the binding was made for, so a sign-in again invalidates every proof made before it (401).
+
+| Host | Method | Path | What the proxy does |
+|---|---|---|---|
+| chatgpt.com | POST | `/backend-api/codex/responses` | injects the real bearer and `ChatGPT-Account-Id` |
+| chatgpt.com | GET, WebSocket upgrade | `/backend-api/codex/responses` | the same, on the upgrade |
+| chatgpt.com | GET | `/backend-api/codex/models`, query `client_version` only | injects |
+| auth.openai.com | POST | `/oauth/token`, Codex's refresh request only | relays with the real refresh token (below) |
+| auth.openai.com | POST | `/oauth/revoke` with a placeholder | answers 200 itself: a guest's `codex logout` never ends the host session |
+
+Codex 0.162.1 cannot complete a turn with this list: it first asks `GET /backend-api/wham/accounts/check` for the workspace's routing, and fails with "workspace routing discovery failed" when that is refused.
+Widening the list is a deliberate decision on #1332, not a fix.
+Measured with that one operation added: real Codex completed a turn over WebSocket and one over HTTP through the proxy.
+Its other calls (plugins, plugin MCP, analytics, user settings) fail without stopping a turn.
+
+**Refresh:** Codex refreshes when its token is within 5 minutes of expiry, or after a 401.
+The proxy accepts only the body the tested Codex sends (`client_id`, `grant_type=refresh_token`, `refresh_token`, with Codex's client id), checks the refresh proof, and relays it with the real refresh token only when the real token needs it: within the same 5 minutes, or after the backend refused it.
+Otherwise it answers with the current session's placeholders.
+Concurrent refreshes of one session share one upstream call, and at most one goes upstream per 30 seconds: with tokens that stayed inside the window, real Codex otherwise refreshed nearly 6000 times in 5 minutes.
+Within that interval an expired token is answered 503, not handed back as if refreshed, which would only loop Codex between refreshes and 401s.
+A rate limit or server error from OpenAI reaches the guest as one too (429, 502), so Codex retries rather than treating its session as dead.
+The answer is committed only if the file still holds the session and generation the refresh started from.
+A refresh overtaken by another write of the same session is answered from that write.
+After a sign-in again it is discarded, its new refresh token revoked, and the request fails with no new-session proof; after removal it is discarded too, and the proxy never creates a session file.
+
+**The window atomic replacement cannot close:** Between OpenAI's answer and the commit's `fsync` the new tokens exist only in that answer.
+`refreshing` is written before the request goes out and cleared only when OpenAI answered, or the request provably never left; upstream Codex has the same window.
+So a proxy that died in between, or an answer lost on the way, leaves the record behind, and when the next refresh is then refused the host is told to sign in again because a refresh was interrupted.
+
+**Testing:** `ChatGptRouteTest` covers the proof matrix (missing, static, another instance's, a previous session's, the wrong kind, one keyed with the metadata hash, the verifier itself) on both placeholders and both transports, the allowlist and refused shapes on both transports, the body bound and that no body is read before the proof, redirects (handed back, never followed), the refresh rules, and the sign-in-again and removal races.
+`.github/scripts/test-chatgpt-session.sh` runs real Codex in an instance through the real `isx-proxy` against `.github/scripts/chatgpt-stub.py`.
+Nothing in it may leave the machine, and that is checked, not assumed.
+The host side runs with a group an nftables table lets reach only the stub and the bridge, and a negative control proves the drop first.
+A systemd `IPAddressDeny=` was the first plan; in a nested instance it was accepted and blocked nothing.
+The guest's own `--proxy-only` rules can be removed by guest root (#1137), so a host table drops everything the bridge would route off the host, whatever address guest root takes, proven with the guest's rules flushed as root.
+Every token is stub-minted and searched for afterwards in the guest's files, journal and environment and in the proxy's log.
+
 ### Host Resources
 
 Template images can declare host files and directories to share with containers via the `host-resources` YAML key.
