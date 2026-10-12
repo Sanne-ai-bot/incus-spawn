@@ -69,7 +69,9 @@ When the root def is unpinned (`pinned: false`), `BuildCommand.resolveTrackedBas
 It never rewrites the definition: `definition-sha` and `build-source` fingerprint it as loaded, the tracked tag goes in `build-source`'s `trackedImageTag`, and a newer release being published does not mark the root as changed (#1244).
 Any network/API failure falls back to the built-in tag with a `note()`.
 `isx update-base` only manages the *pin* -- pinning writes a `pinned: true` user override (`~/.config/incus-spawn/images/minimal.yaml`) with the selected tag and both `image_sha256`+`vm_image_sha256`; `--latest`/menu option 1 just deletes that override to resume build-time tracking (it downloads nothing).
-`BaseImageReleases.parseSha256Sums()` keys checksums by arch and distinguishes `-vm.tar.xz` from `.tar.xz`.
+`BaseImageReleases.fetchChecksums()` reads `SHA256SUMS.v2` when the release has one (else `SHA256SUMS`) and looks checksums up by the exact file names the definition's URLs download (`checksumsFor`), never by markers in a name: `SHA256SUMS` must stay what isx releases before #1255 parse, and they file any name containing `-vm` as the VM image.
+A tracked release without the definition's VM image keeps the VM on the built-in release (`BaseImage.vmTag`), tag and checksum together.
+`downloadAndAliasImage` reuses an alias only when its fingerprint is the expected checksum (Incus fingerprints a one-tarball import by its sha256), or with none expected when it recorded the same URL (`IMAGE_SOURCE_PROPERTY`), since a release's two VM images share its tag.
 An event-driven CI job (`.github/workflows/update-base-image.yml`) opens a PR to bump the built-in fallback when the images repo publishes a newer release.
 The images repo (`Sanne/incus-spawn-images`) fires a `base-image-released` `repository_dispatch` carrying the tag + container/VM checksums, so the consumer neither polls nor re-derives them (a manual `workflow_dispatch` backstop re-derives from the release list if a dispatch is missed).
 This tracking behavior is unrelated to `INIT_VERSION`.

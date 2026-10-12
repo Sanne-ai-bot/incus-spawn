@@ -10,6 +10,12 @@ name: Update base image
 # in the payload — so there is nothing to poll or re-derive. The manual
 # `workflow_dispatch` path is a backstop that re-derives the newest release from
 # the images repo's release list (used if a dispatch is ever missed).
+#
+# A release carries two VM images (#1255): the stock-based -vm.tar.xz, listed in
+# SHA256SUMS for isx releases before this reader, and the one built from scratch,
+# -vm-direct.tar.xz, listed only in SHA256SUMS.v2. When a release has the direct
+# one for both arches, the bump points vm_image_url at it; otherwise it keeps the
+# stock image. The PR says which.
 
 on:
   repository_dispatch:
@@ -50,6 +56,8 @@ jobs:
             C_ARM="$(jq -r '.sha256.container.aarch64' <<<"$PAYLOAD")"
             V_X86="$(jq -r '.sha256.vm.x86_64' <<<"$PAYLOAD")"
             V_ARM="$(jq -r '.sha256.vm.aarch64' <<<"$PAYLOAD")"
+            D_X86="$(jq -r '.sha256.vm_direct.x86_64 // empty' <<<"$PAYLOAD")"
+            D_ARM="$(jq -r '.sha256.vm_direct.aarch64 // empty' <<<"$PAYLOAD")"
           else
             # Manual backstop: derive from the images repo's newest release.
             # Single source of truth: derive the owning repo from the image_url.
@@ -64,13 +72,36 @@ jobs:
               exit 1
             fi
             curl -fsSL "$SUMS_URL" -o SHA256SUMS
-            # <sha>  <filename>; -vm distinguishes the VM disk image from the container rootfs.
-            sha_for() { awk -v f="$1" '$2 == f { print $1 }' SHA256SUMS; }
-            C_X86="$(sha_for "fedora-44-x86_64.tar.xz")"
-            C_ARM="$(sha_for "fedora-44-aarch64.tar.xz")"
-            V_X86="$(sha_for "fedora-44-x86_64-vm.tar.xz")"
-            V_ARM="$(sha_for "fedora-44-aarch64-vm.tar.xz")"
-            rm -f SHA256SUMS
+            # <sha>  <filename>, looked up by exact name.
+            sha_for() { awk -v f="$1" '$2 == f { print $1 }' "$2"; }
+            C_X86="$(sha_for "fedora-44-x86_64.tar.xz" SHA256SUMS)"
+            C_ARM="$(sha_for "fedora-44-aarch64.tar.xz" SHA256SUMS)"
+            V_X86="$(sha_for "fedora-44-x86_64-vm.tar.xz" SHA256SUMS)"
+            V_ARM="$(sha_for "fedora-44-aarch64-vm.tar.xz" SHA256SUMS)"
+            D_X86=""
+            D_ARM=""
+            V2_URL="$(gh api "repos/$IMAGES_REPO/releases/tags/$TAG" \
+              --jq '.assets[] | select(.name == "SHA256SUMS.v2") | .browser_download_url')"
+            if [[ -n "$V2_URL" ]]; then
+              curl -fsSL "$V2_URL" -o SHA256SUMS.v2
+              D_X86="$(sha_for "fedora-44-x86_64-vm-direct.tar.xz" SHA256SUMS.v2)"
+              D_ARM="$(sha_for "fedora-44-aarch64-vm-direct.tar.xz" SHA256SUMS.v2)"
+            fi
+            rm -f SHA256SUMS SHA256SUMS.v2
+          fi
+
+          # The direct image for both arches, or not at all: one arch's would leave the
+          # other with a URL and no checksum.
+          VM_KIND=stock
+          if [[ "$D_X86" =~ ^[0-9a-f]{64}$ && "$D_ARM" =~ ^[0-9a-f]{64}$ ]]; then
+            VM_KIND=direct
+            V_X86="$D_X86"
+            V_ARM="$D_ARM"
+          elif [[ "$(yq -r '.vm_image_url' "$YAML")" == *-vm-direct.tar.xz ]]; then
+            # Never back to the stock image unasked: a release missing the direct one is a
+            # broken release, not a reason to move every user's VMs.
+            echo "Release $TAG lacks -vm-direct for both arches, and the built-in already uses it; aborting." >&2
+            exit 1
           fi
 
           for pair in "tag:$TAG" \
@@ -90,6 +121,7 @@ jobs:
             echo "c_arm=$C_ARM"
             echo "v_x86=$V_X86"
             echo "v_arm=$V_ARM"
+            echo "vm_kind=$VM_KIND"
           } >> "$GITHUB_OUTPUT"
 
           echo "Current built-in tag: $CURRENT_TAG"
@@ -109,10 +141,15 @@ jobs:
           C_ARM: ${{ steps.resolve.outputs.c_arm }}
           V_X86: ${{ steps.resolve.outputs.v_x86 }}
           V_ARM: ${{ steps.resolve.outputs.v_arm }}
+          VM_KIND: ${{ steps.resolve.outputs.vm_kind }}
         run: |
           set -euo pipefail
           YAML="common/src/main/resources/images/minimal.yaml"
+          VM_FILE="fedora-44-{arch}-vm.tar.xz"
+          [[ "$VM_KIND" == direct ]] && VM_FILE="fedora-44-{arch}-vm-direct.tar.xz"
+          VM_URL="$(yq -r '.vm_image_url' "$YAML" | sed -E "s#[^/]+\$#$VM_FILE#")"
           yq -i "
+            .vm_image_url = \"$VM_URL\" |
             .image_tag = \"$TAG\" |
             .image_sha256.x86_64 = \"$C_X86\" |
             .image_sha256.aarch64 = \"$C_ARM\" |
@@ -128,6 +165,7 @@ jobs:
           GH_TOKEN: ${{ secrets.BOT_TOKEN }}
           TAG: ${{ steps.resolve.outputs.tag }}
           CURRENT_TAG: ${{ steps.resolve.outputs.current }}
+          VM_KIND: ${{ steps.resolve.outputs.vm_kind }}
         run: |
           set -euo pipefail
           BRANCH="bot/update-base-image-$TAG"
@@ -147,6 +185,8 @@ jobs:
           gh pr create \
             --title "Update base image to $TAG" \
             --body "Bumps the built-in base-image fallback from \`$CURRENT_TAG\` to \`$TAG\` (newest release of Sanne/incus-spawn-images), refreshing the container and VM checksums.
+
+          VM image: \`$VM_KIND\` (\`direct\` is the image built from scratch, \`-vm-direct.tar.xz\`, listed in SHA256SUMS.v2; \`stock\` is \`-vm.tar.xz\`).
 
           Builds already track the latest release at build time when unpinned; this keeps the offline fallback current." \
             --base main \
