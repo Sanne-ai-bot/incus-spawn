@@ -1,14 +1,45 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.Environment;
+import dev.incusspawn.lifecycle.TempHome;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.nio.file.Files;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@ExtendWith(TempHome.class)
 class VmAgentFailureTest {
+
+    @Test
+    void aSavedConsoleLogIsTheUsersAloneAndReplacesAnOpenOne() throws Exception {
+        // An older, world-readable file is replaced by a new one, not written through and narrowed
+        var file = Environment.consoleLogFile("vm1");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, "old");
+        Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-r--r--"));
+        Files.setPosixFilePermissions(file.getParent(), PosixFilePermissions.fromString("rwxr-xr-x"));
+        var saved = VmAgentFailure.save("vm1", "boot log\n");
+
+        assertEquals(file, saved);
+        assertEquals("boot log\n", Files.readString(file));
+        assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
+
+        // And again, over its own earlier copy: a second failure of the same VM is still saved
+        assertEquals(file, VmAgentFailure.save("vm1", "second\n"));
+        assertEquals("second\n", Files.readString(file));
+    }
+
+    @Test
+    void aNewConsoleLogDirectoryIsCreatedPrivate() throws Exception {
+        var saved = VmAgentFailure.save("vm2", "x");
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(saved.getParent())));
+    }
 
     @Test
     void matchesTheSelinuxDenialAndTheFailedUnitFrom842() {
