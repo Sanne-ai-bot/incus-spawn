@@ -224,6 +224,12 @@ class TemplateDetailViewTest {
         defs.get("tpl-root").setDeprecated("use tpl-base instead");
         var screen = text(view(defs, Set.of(), Map.of(), Map.of()), NOT_BUILT, 120, 50);
         assertTrue(screen.contains("⚠ tpl-kvm derives from tpl-root, which is deprecated: use tpl-base instead"), screen);
+
+        // Deprecated itself too: one line, still naming the deprecated parent (#1353)
+        defs.get("tpl-kvm").setDeprecated("use tpl-vm instead");
+        screen = text(view(defs, Set.of(), Map.of(), Map.of()), NOT_BUILT, 120, 50);
+        assertTrue(screen.contains("⚠ tpl-kvm is deprecated, and so is its parent tpl-root: use tpl-vm instead"), screen);
+        assertEquals(1, screen.split("⚠", -1).length - 1, screen);
     }
 
     /** The build stamp of tpl-kvm from before its definition and its parent's changed. */

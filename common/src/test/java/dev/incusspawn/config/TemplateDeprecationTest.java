@@ -42,8 +42,13 @@ class TemplateDeprecationTest {
                 ImageDef.deprecationWarning(mine, defs));
         // Further down, the template that names the deprecated one already said so
         assertEquals(Optional.empty(), ImageDef.deprecationWarning(grandchild, defs));
-        // A deprecated template says only that it is, not also that its parent is
-        assertEquals(Optional.of("tpl-older is deprecated."), ImageDef.deprecationWarning(older, defs));
+        // A deprecated template names its deprecated parent too, on the same line, without the
+        // parent's note
+        assertEquals(Optional.of("tpl-older is deprecated, and so is its parent tpl-old."),
+                ImageDef.deprecationWarning(older, defs));
+        var newer = def("name: tpl-newer\nparent: tpl-old\ndeprecated: use tpl-y\n");
+        assertEquals(Optional.of("tpl-newer is deprecated, and so is its parent tpl-old: use tpl-y"),
+                ImageDef.deprecationWarning(newer, Map.of("tpl-old", old, "tpl-root", root)));
         assertEquals(Optional.of("tpl-old is deprecated: use tpl-new instead"),
                 ImageDef.deprecationWarning(old, defs));
         assertEquals(Optional.empty(), ImageDef.deprecationWarning(root, defs));
@@ -61,6 +66,9 @@ class TemplateDeprecationTest {
         assertTrue(ImageDef.loadBuiltinByName("tpl-dev").isDeprecated());
         assertTrue(ImageDef.loadBuiltinByName("tpl-java").isDeprecated());
         assertFalse(ImageDef.loadBuiltinByName("tpl-minimal").isDeprecated());
+        var java = ImageDef.loadBuiltinByName("tpl-java");
+        var warning = ImageDef.deprecationWarning(java, Map.of("tpl-dev", ImageDef.loadBuiltinByName("tpl-dev")));
+        assertTrue(warning.orElseThrow().startsWith("tpl-java is deprecated, and so is its parent tpl-dev: "), warning.orElseThrow());
         for (var name : List.of("tpl-dev", "tpl-java")) {
             var note = ImageDef.loadBuiltinByName(name).getDeprecated();
             // #1353: your own template first, the maintained copy as a starting point

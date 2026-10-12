@@ -508,16 +508,23 @@ public class ImageDef {
 
     /**
      * The warning for building {@code start}: that it is deprecated itself, or else that the
-     * parent it names is. A template further down the chain is not warned about (#1353): the
-     * one that names the deprecated template is where it gets replaced, and repeating the
-     * warning for every descendant, one per deprecated ancestor, buried which one that was.
+     * parent it names is; one deprecated in a deprecated parent says both, in one line. A
+     * template further down the chain is not warned about (#1353): the one that names the
+     * deprecated template is where it gets replaced, and repeating the warning for every
+     * descendant, one per deprecated ancestor, buried which one that was.
      */
     public static Optional<String> deprecationWarning(ImageDef start, Map<String, ImageDef> defs) {
-        var deprecated = start.isDeprecated() ? start : start.isRoot() ? null : defs.get(start.getParent());
-        if (deprecated == null || !deprecated.isDeprecated()) return Optional.empty();
-        var what = deprecated == start
-                ? start.getName() + " is deprecated"
-                : start.getName() + " derives from " + deprecated.getName() + ", which is deprecated";
+        var parent = start.isRoot() ? null : defs.get(start.getParent());
+        var parentDeprecated = parent != null && parent.isDeprecated();
+        var deprecated = start.isDeprecated() ? start : parentDeprecated ? parent : null;
+        if (deprecated == null) return Optional.empty();
+        // A deprecated parent of a deprecated template is named, but its note is left to its own
+        // build: one long note per line is enough
+        var what = deprecated != start
+                ? start.getName() + " derives from " + deprecated.getName() + ", which is deprecated"
+                : parentDeprecated
+                ? start.getName() + " is deprecated, and so is its parent " + parent.getName()
+                : start.getName() + " is deprecated";
         var note = deprecated.getDeprecated().strip();
         return Optional.of("true".equalsIgnoreCase(note) ? what + "." : what + ": " + note);
     }
