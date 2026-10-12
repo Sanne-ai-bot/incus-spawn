@@ -88,14 +88,17 @@ class TemplateBuildIT {
 
         startAndWait(TEST_MINIMAL);
         try {
-            // CA cert should be installed in Fedora's trust anchors
-            var result = incus.shellExec(TEST_MINIMAL,
-                    "test", "-f", "/etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt");
+            // CA cert should be installed in Fedora's trust anchors, named by the fingerprint of
+            // the CA the image was built against: its stamp, before any "+<host anchors>"
+            var stamp = incus.configGet(TEST_MINIMAL, Metadata.CA_FINGERPRINT);
+            assertFalse(stamp.isEmpty(), "the image should be stamped with its CA's fingerprint");
+            var anchor = "/etc/pki/ca-trust/source/anchors/isx-" + stamp.split("\\+")[0] + ".crt";
+            var result = incus.shellExec(TEST_MINIMAL, "test", "-f", anchor);
             assertTrue(result.success(), "MITM CA certificate should be installed");
 
             // Verify it's a PEM certificate
             var content = incus.shellExec(TEST_MINIMAL,
-                    "head", "-1", "/etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt");
+                    "head", "-1", anchor);
             assertTrue(content.stdout().contains("BEGIN CERTIFICATE"),
                     "CA cert should be a PEM certificate");
         } finally {

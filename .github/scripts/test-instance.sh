@@ -188,11 +188,23 @@ assert "leaf cert has Subject Key Identifier" \
     bash -c "echo | openssl s_client -connect repo1.maven.org:443 2>/dev/null \
         | openssl x509 -noout -text | grep -q 'Subject Key Identifier'"
 # The trust anchor is checked too: strict validation rejects a CA cert without an
-# SKI, so a leaf-only fix leaves every pre-existing install broken.
-assert "trusted MITM CA cert has Subject Key Identifier" \
-    bash -c "openssl x509 -noout -text \
-        -in /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt \
-        | grep -q 'Subject Key Identifier'"
+# SKI, so a leaf-only fix leaves every pre-existing install broken. Anchors are named
+# isx-<sha256>.crt, and under host-ca propagation an outer isx's CA sits beside this
+# instance's own: the one checked is the anchor whose SKI is the served leaf's AKI.
+own_mitm_ca_has_ski() {
+    local aki f
+    aki=$(echo | openssl s_client -connect repo1.maven.org:443 2>/dev/null \
+        | openssl x509 -noout -ext authorityKeyIdentifier | tail -n +2 | tr -d ' ' | sed 's/^keyid://')
+    [ -n "$aki" ] || { echo "the proxy's leaf has no Authority Key Identifier"; return 1; }
+    for f in /etc/pki/ca-trust/source/anchors/isx-*.crt; do
+        [ "$(openssl x509 -noout -ext subjectKeyIdentifier -in "$f" 2>/dev/null | tail -n +2 | tr -d ' ')" = "$aki" ] \
+            && return 0
+    done
+    echo "no isx-*.crt anchor has the SKI $aki that the proxy's leaf names"
+    ls /etc/pki/ca-trust/source/anchors/
+    return 1
+}
+assert "trusted MITM CA cert has Subject Key Identifier" own_mitm_ca_has_ski
 echo ""
 
 # --- 8b. Trust variables (#713) ---
