@@ -136,6 +136,13 @@ A placeholder token in the guest is read when the tool runs, never fixed by a bu
 An isx running inside an instance shares that instance's grant for a namespace only when its account there is the reserved `inherit` (#1110): its proxy swaps the instance's proofs for the parent's, derived from `/run/isx/instance-secret` (`InheritedProof`).
 See `.claude/rules/proxy.md` and DESIGN.md.
 
+**Host CA propagation** is opt-in via `host-ca: { propagate: true }` in `config.yaml`.
+When enabled, `CertificateAuthority.collectTrustAnchors()` collects the MITM CA and host anchors from `/etc/pki/ca-trust/source/anchors/` into one trust set, each keyed by SHA-256 fingerprint (`isx-<fp>.crt`).
+`fixContainerCaIfNeeded` reconciles the whole set in one exec: clears the stamp, removes old anchors, writes the current set via heredoc, and re-stamps.
+The stamp is cleared before cleanup so a failed install retries.
+`buildFromScratch` writes each anchor via `Container.writeFile`.
+See `.claude/rules/proxy.md`.
+
 **`isx init` prompts read from `Prompts`, never a `Console`.**
 `java.io.Console` is final, so code taking one cannot be driven by a test, and CI's `isx init </dev/null` skips every credential prompt (#772).
 Each credential step has a thin entry that gets `Prompts.console()` and a package-private `(SpawnConfig, Prompts)` overload holding the logic; network and host calls (token verification, `gh`, the browser, env vars) are overridable methods on `CredentialSetup`.

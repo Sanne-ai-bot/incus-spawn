@@ -80,6 +80,9 @@ public class SpawnConfig {
     private Object hostRoutes;
     // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
     // never written back.
+    @JqName("host-ca")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object hostCa;
     @JqName("mcp")
     @JqInclude(JqInclude.Include.NON_NULL)
     private McpConfig mcp;
@@ -637,6 +640,9 @@ public class SpawnConfig {
     /** The {@code host-routes:} section; it has no routes when there is none. */
     public HostRoutes hostRoutes() { return HostRoutes.of(hostRoutes); }
 
+    /** The {@code host-ca:} section, or its defaults (disabled) when absent. */
+    public HostCaConfig hostCa() { return HostCaConfig.of(hostCa); }
+
     /** The {@code mcp:} section, or its defaults (no templates approved) when absent. */
     public McpConfig mcp() { return mcp != null ? mcp : new McpConfig(); }
     public void setMcp(McpConfig mcp) { this.mcp = mcp; }
@@ -784,6 +790,7 @@ public class SpawnConfig {
         this.artifactCache = other.artifactCache;
         this.readyTimeouts = other.readyTimeouts;
         this.hostRoutes = other.hostRoutes;
+        this.hostCa = other.hostCa;
         this.mcp = other.mcp;
         this.extras = other.extras;
     }
