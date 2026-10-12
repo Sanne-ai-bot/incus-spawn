@@ -130,6 +130,8 @@ class RepoClonerShallowTest {
         assertEquals("refs/heads/main\nrefs/remotes/origin/HEAD refs/remotes/origin/main\nrefs/remotes/origin/main",
                 git(guest, "for-each-ref", "--format=%(refname) %(symref)", "refs/heads", "refs/remotes")
                         .replaceAll(" +\n", "\n"));
+        assertEquals("branch.main.remote origin\nbranch.main.merge refs/heads/main",
+                git(guest, "config", "--get-regexp", "^branch\\."), "no host branch name stays in the config");
         assertEquals("release 5", git(guest, "log", "-1", "--format=%s"));
     }
 

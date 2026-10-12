@@ -601,8 +601,9 @@ class RepoCloner {
                 // Drop what the clone took over from the host checkout (its own branch, which may
                 // hold unpushed work, and its origin/HEAD), leaving the refs a network clone has,
                 + " && { " + git + " remote set-head origin -d >/dev/null 2>&1; true; }"
-                + " && " + git + " for-each-ref --format='delete %(refname)' refs/heads refs/remotes"
-                + " | grep -vxF -e \"delete refs/heads/$b\" -e \"delete refs/remotes/origin/$b\""
+                + " && " + deleteOtherBranches(git)
+                + " && " + git + " for-each-ref --format='delete %(refname)' refs/remotes"
+                + " | grep -vxF \"delete refs/remotes/origin/$b\""
                 + " | " + git + " update-ref --stdin"
                 + (repo.hasBranch() ? "" : " && " + git + " remote set-head origin \"$b\"")
                 // and the commits only those refs reached, cheap to find in a shallow repo.
