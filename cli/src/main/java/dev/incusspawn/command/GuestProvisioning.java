@@ -259,6 +259,8 @@ public class GuestProvisioning {
 
     static void writeEnvFile(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
                                List<ResolvedTool> allTools, String canonicalName) {
+        // Before anything a login shell runs reads TRUST_ENV: verify commands, primes.
+        assertSystemStoreExists(container);
         var resolver = new EnvResolver();
 
         resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");
@@ -327,6 +329,14 @@ public class GuestProvisioning {
     static final String TRUST_HELPER_PATH = "/usr/local/bin/isx-trust";
 
     /**
+     * The system store as {@code update-ca-trust} extracts it, which every Fedora ships. Not
+     * the {@code /etc/pki/tls/certs/ca-bundle.crt} compat link: ca-certificates dropped it, and a
+     * variable naming a missing file fails every TLS call it touches (#713).
+     */
+    static final String SYSTEM_PEM_BUNDLE = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem";
+    static final String SYSTEM_CERT_DIR = "/etc/pki/ca-trust/extracted/pem/directory-hash";
+
+    /**
      * Runtimes that read a variable for their root bundle, pointed at the system store that
      * {@code update-ca-trust} keeps the isx CA in. Read at process start, so they cover a
      * runtime installed at any time in any directory. None of them prints a "Picked up" line
@@ -335,20 +345,30 @@ public class GuestProvisioning {
     static final Map<String, String> TRUST_ENV = trustEnv();
 
     private static Map<String, String> trustEnv() {
-        var bundle = "/etc/pki/tls/certs/ca-bundle.crt";
         var env = new LinkedHashMap<String, String>();
-        env.put("SSL_CERT_FILE", bundle);
-        env.put("SSL_CERT_DIR", "/etc/pki/tls/certs");
-        env.put("REQUESTS_CA_BUNDLE", bundle);
-        env.put("CURL_CA_BUNDLE", bundle);
-        env.put("PIP_CERT", bundle);
-        env.put("NODE_EXTRA_CA_CERTS", bundle);
-        env.put("CARGO_HTTP_CAINFO", bundle);
-        env.put("AWS_CA_BUNDLE", bundle);
-        env.put("NIX_SSL_CERT_FILE", bundle);
+        env.put("SSL_CERT_FILE", SYSTEM_PEM_BUNDLE);
+        env.put("SSL_CERT_DIR", SYSTEM_CERT_DIR);
+        env.put("REQUESTS_CA_BUNDLE", SYSTEM_PEM_BUNDLE);
+        env.put("CURL_CA_BUNDLE", SYSTEM_PEM_BUNDLE);
+        env.put("PIP_CERT", SYSTEM_PEM_BUNDLE);
+        env.put("NODE_EXTRA_CA_CERTS", SYSTEM_PEM_BUNDLE);
+        env.put("CARGO_HTTP_CAINFO", SYSTEM_PEM_BUNDLE);
+        env.put("AWS_CA_BUNDLE", SYSTEM_PEM_BUNDLE);
+        env.put("NIX_SSL_CERT_FILE", SYSTEM_PEM_BUNDLE);
         env.put("DENO_TLS_CA_STORE", "system");
         env.put("UV_NATIVE_TLS", "1");
         return Collections.unmodifiableMap(env);
+    }
+
+    /**
+     * Fails the build when the base image lacks the bundle {@link #TRUST_ENV} points at, instead
+     * of baking variables that make every TLS call in the box fail (#713). A missing
+     * {@link #SYSTEM_CERT_DIR} is only skipped by OpenSSL, so it is not checked.
+     */
+    static void assertSystemStoreExists(Container container) {
+        container.exec("test", "-s", SYSTEM_PEM_BUNDLE)
+                .assertSuccess("The base image has no system CA bundle at " + SYSTEM_PEM_BUNDLE
+                        + " (what ca-certificates' update-ca-trust extracts)");
     }
 
     /**
@@ -410,6 +430,7 @@ public class GuestProvisioning {
         installTrustPathUnits(container);
         runTrustHelper(container);
     }
+
 
     /**
      * Installs the helper and binds what is on disk now, nothing else. A child build runs it

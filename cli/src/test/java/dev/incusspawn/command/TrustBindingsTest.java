@@ -22,6 +22,10 @@ import static org.mockito.Mockito.*;
 /** #713: runtimes that carry their own root bundle trust the system store, and so the isx CA. */
 class TrustBindingsTest {
 
+    /** What {@code update-ca-trust} extracts; spelled out so the tests pin the paths themselves. */
+    private static final String PEM = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem";
+    private static final String HASH_DIR = "/etc/pki/ca-trust/extracted/pem/directory-hash";
+
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
 
     private static Container recordingContainer(IncusClient incus) {
@@ -45,7 +49,7 @@ class TrustBindingsTest {
         GuestProvisioning.writeEnvFile(container, imageDef, Map.of("tpl-x", imageDef), List.of(), "tpl-x");
 
         var all = String.join("\n", writtenScripts(incus));
-        assertTrue(all.contains("export SSL_CERT_FILE=\"${SSL_CERT_FILE:-/etc/pki/tls/certs/ca-bundle.crt}\""), all);
+        assertTrue(all.contains("export SSL_CERT_FILE=\"${SSL_CERT_FILE:-" + PEM + "}\""), all);
         assertTrue(all.contains("export REQUESTS_CA_BUNDLE=\"${REQUESTS_CA_BUNDLE:-"), all);
         assertTrue(all.contains("export NODE_EXTRA_CA_CERTS=\"${NODE_EXTRA_CA_CERTS:-"), all);
         assertTrue(all.contains("export DENO_TLS_CA_STORE=\"${DENO_TLS_CA_STORE:-system}\""), all);
@@ -77,8 +81,40 @@ class TrustBindingsTest {
         // First in filename order, so a user's own file wins; plain values, because the
         // ${NAME:-value} form broke rootless podman's registry pulls in CI.
         assertTrue(all.contains("cat > '/etc/environment.d/00-isx-trust.conf'"), all);
-        assertTrue(all.contains("\nSSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt\n"), all);
+        assertTrue(all.contains("\nSSL_CERT_FILE=" + PEM + "\n"), all);
         assertFalse(all.contains("${"), all);
+    }
+
+    @Test
+    void theTrustVariablesNameTheStoreUpdateCaTrustExtracts() {
+        // ca-certificates 2026.2.90 (Fedora 44) no longer ships /etc/pki/tls/certs/ca-bundle.crt;
+        // curl then fails with "(77) error adding trust anchors" in every login shell (#713).
+        GuestProvisioning.TRUST_ENV.forEach((name, value) -> {
+            if (value.startsWith("/") && !name.equals("SSL_CERT_DIR")) assertEquals(PEM, value, name);
+        });
+        assertEquals(HASH_DIR, GuestProvisioning.TRUST_ENV.get("SSL_CERT_DIR"));
+    }
+
+    @Test
+    void theHelperBindsCertifiToTheSameBundleAsTheVariables(@TempDir Path tmp) throws Exception {
+        var script = Files.readString(helper(tmp));
+        assertTrue(script.contains("bundle=${ISX_TRUST_PEM_BUNDLE:-" + PEM + "}"), script);
+    }
+
+    @Test
+    void buildFailsBeforeWritingTheVariablesWhenTheBaseImageLacksTheSystemStore() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenAnswer(inv ->
+                List.of(inv.getArguments()).contains("-s") ? new IncusClient.ExecResult(1, "", "") : OK);
+        var container = new Container(incus, "test");
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-x");
+
+        var e = assertThrows(RuntimeException.class, () ->
+                GuestProvisioning.writeEnvFile(container, imageDef, Map.of("tpl-x", imageDef), List.of(), "tpl-x"));
+        assertTrue(e.getMessage().contains(PEM), e.getMessage());
+        var all = String.join("\n", writtenScripts(incus));
+        assertFalse(all.contains("isx-env.sh"), all);
     }
 
     @Test
@@ -99,7 +135,7 @@ class TrustBindingsTest {
         var all = String.join("\n", writtenScripts(incus));
         assertTrue(all.contains("cat > '/usr/local/bin/isx-trust'"), all);
         assertTrue(all.contains("cat > '/etc/environment.d/00-isx-trust.conf'"), all);
-        assertTrue(all.contains("SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt"), all);
+        assertTrue(all.contains("SSL_CERT_FILE=" + PEM), all);
         assertTrue(all.contains("/usr/local/bin/isx-trust /usr/lib/jvm /opt"), all);
     }
 
@@ -298,6 +334,21 @@ class TrustBindingsTest {
         assertFalse(Files.isSymbolicLink(other));
         assertFalse(Files.isSymbolicLink(checkout));
         assertFalse(Files.isSymbolicLink(lookalike));
+    }
+
+    @Test
+    void helperLeavesCertifiAloneWhenTheSystemBundleIsMissing(@TempDir Path tmp) throws Exception {
+        // A link to a missing bundle would leave Python trusting nothing at all (#713).
+        var store = Files.writeString(tmp.resolve("system-cacerts"), "system");
+        var cacert = Files.writeString(Files.createDirectories(
+                tmp.resolve("v/lib/python3.14/site-packages/certifi")).resolve("cacert.pem"), "vendor");
+
+        var out = run(helper(tmp), Map.of("ISX_TRUST_JAVA_STORE", store.toString(),
+                "ISX_TRUST_PEM_BUNDLE", tmp.resolve("ca-bundle.crt").toString()), "v");
+
+        assertFalse(Files.isSymbolicLink(cacert), out);
+        assertEquals("vendor", Files.readString(cacert));
+        assertTrue(out.contains("ca-bundle.crt is missing or empty"), out);
     }
 
     @Test

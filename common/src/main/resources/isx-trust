@@ -6,7 +6,7 @@
 # PKIX path building failed, CERTIFICATE_VERIFY_FAILED). File bindings fix that by replacing
 # the bundled file with a symlink to the system store:
 #   Java     <jdk>/lib/security/cacerts  -> /etc/pki/java/cacerts
-#   certifi  site-packages/.../certifi/cacert.pem -> /etc/pki/tls/certs/ca-bundle.crt
+#   certifi  site-packages/.../certifi/cacert.pem -> /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 #            (installed packages only, pip's vendored copy included; never a source checkout)
 # Environment bindings need no file; `isx build` exports them from /etc/profile.d/isx-env.sh.
 # Installed by `isx build` beside the CA.
@@ -20,7 +20,7 @@
 # in seconds) override the defaults (tests only).
 
 store=${ISX_TRUST_JAVA_STORE:-/etc/pki/java/cacerts}
-bundle=${ISX_TRUST_PEM_BUNDLE:-/etc/pki/tls/certs/ca-bundle.crt}
+bundle=${ISX_TRUST_PEM_BUNDLE:-/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem}
 
 pauses=
 if [ "$1" = --settle ]; then
@@ -49,6 +49,11 @@ bind() {
                 *) target=$bundle; target_real=$bundle_real ;;
             esac
             [ "$(readlink -f "$f" 2>/dev/null)" = "$target_real" ] && continue
+            # A link to a missing store would leave the runtime trusting nothing at all.
+            if [ ! -s "$target" ]; then
+                echo "isx-trust: $target is missing or empty; left $f as it is" >&2
+                continue
+            fi
             if ln -sfn "$target" "$f" 2>/dev/null || sudo -n ln -sfn "$target" "$f" 2>/dev/null; then
                 echo "isx-trust: $f now trusts the system store (and the isx CA)"
             else
