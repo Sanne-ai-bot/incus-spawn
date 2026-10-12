@@ -47,8 +47,16 @@ class VmAgentRecoveryTest {
         assertTrue(msg.startsWith("The incus-agent in VM vm1 failed to start"), msg);
         assertTrue(msg.contains(FAILED), msg);
         assertTrue(msg.contains("Not restarting vm1"), msg);
-        assertTrue(msg.contains("incus restart --force vm1"), msg);
+        assertTrue(msg.contains(VmAgentRecovery.restartAnywayHint("vm1", dev.incusspawn.Platform.isMacOS())), msg);
         assertEquals(List.of(), daemon.stateActions(), "nothing may stop or start the VM");
+    }
+
+    @Test
+    void theRestartAnywayHintNamesNoIncusCliOnMacOS() {
+        var mac = VmAgentRecovery.restartAnywayHint("vm1", true);
+        assertFalse(mac.contains("incus restart"), mac);
+        assertTrue(mac.contains("Shift+F7") && mac.contains("vm1"), mac);
+        assertEquals("To restart it anyway: incus restart --force vm1", VmAgentRecovery.restartAnywayHint("vm1", false));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
@@ -85,6 +86,13 @@ public final class VmAgentRecovery {
     }
 
     private static IncusException refusal(String name, String why) {
-        return new IncusException(why + "\nTo restart it anyway: incus restart --force " + name);
+        return new IncusException(why + "\n" + restartAnywayHint(name, Platform.isMacOS()));
+    }
+
+    /** The macOS host has no {@code incus} CLI (#986), so it is pointed at the TUI's restart instead. */
+    public static String restartAnywayHint(String name, boolean macOS) {
+        return macOS
+                ? "To restart it anyway: select " + name + " in the isx TUI and press Shift+F7."
+                : "To restart it anyway: incus restart --force " + name;
     }
 }
