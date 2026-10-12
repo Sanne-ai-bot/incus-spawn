@@ -519,7 +519,7 @@ final class ChatGptRoute {
             var body = Buffer.buffer(substituted.build().toJsonString());
             var options = new RequestOptions().setMethod(HttpMethod.POST).setHost(AUTH).setPort(443).setURI("/oauth/token");
             return proxy.upstream.requestWithAsyncDns(options).compose(upReq -> {
-                proxy.upstream.copyRequestHeaders(req, upReq, AUTH);
+                proxy.upstream.copyBufferedRequestHeaders(req, upReq, AUTH);
                 upReq.headers().remove("Authorization");
                 // The answer is parsed here, and the upstream client does not decompress
                 upReq.putHeader("Accept-Encoding", "identity");
@@ -740,12 +740,21 @@ final class ChatGptRoute {
     }
 
     private static String sessionKey(ChatGptSessionStore.Session session) {
-        return session.account() + ":" + session.sessionId();
+        return sessionKey(session.account(), session.sessionId());
+    }
+
+    private static String sessionKey(String account, String sessionId) {
+        return account + ":" + sessionId;
     }
 
     /** One token of a session: the session at one generation. */
     private static String tokenKey(ChatGptSessionStore.Session session) {
         return sessionKey(session) + "@" + session.generation();
+    }
+
+    /** Tests only: whether any token of the account's session {@code sessionId} is recorded as refused. */
+    boolean refuses(String account, String sessionId) {
+        return refused.containsKey(sessionKey(account, sessionId));
     }
 
     /**

@@ -622,9 +622,7 @@ class Upstream {
         var options = new RequestOptions().setMethod(clientReq.method()).setHost(domain).setPort(443)
                 .setURI(clientReq.uri());
         requestWithAsyncDns(options).onSuccess(upReq -> {
-            copyRequestHeaders(clientReq, upReq, domain);
-            // Already answered here, and the body goes at once: upstream must not wait to send a 100
-            upReq.headers().remove("Expect");
+            copyBufferedRequestHeaders(clientReq, upReq, domain);
             upReq.putHeader("Content-Length", String.valueOf(body.length()));
             upReq.send(body).onSuccess(upResp -> {
                 copyResponseHead(upResp, clientReq.response());
@@ -637,6 +635,15 @@ class Upstream {
             ProxyLog.warn("Upstream connect error (" + domain + "): " + e.getMessage());
             sendError(clientReq.response(), 502, "Upstream connection failed");
         });
+    }
+
+    /**
+     * {@link #copyRequestHeaders}, for a request whose body was read here and goes upstream at
+     * once: its {@code Expect} was answered here, and upstream must not wait to send a 100.
+     */
+    void copyBufferedRequestHeaders(HttpServerRequest clientReq, HttpClientRequest upReq, String domain) {
+        copyRequestHeaders(clientReq, upReq, domain);
+        upReq.headers().remove("Expect");
     }
 
     /** Upstream's status and headers, for a response relayed as it is. */

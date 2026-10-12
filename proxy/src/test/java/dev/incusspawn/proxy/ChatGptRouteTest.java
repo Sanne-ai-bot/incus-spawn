@@ -83,7 +83,8 @@ class ChatGptRouteTest {
     record Received(int bodyLength, io.vertx.core.MultiMap headers) {}
     static volatile Received lastBackend;
     static volatile CompletableFuture<Void> holdBackend = CompletableFuture.completedFuture(null);
-    static final ConcurrentLinkedQueue<String> refreshEncodings = new ConcurrentLinkedQueue<>();
+    /** Each relayed refresh's Accept-Encoding and Expect, as "encoding|expect". */
+    static final ConcurrentLinkedQueue<String> refreshHeads = new ConcurrentLinkedQueue<>();
     static volatile CompletableFuture<Void> holdRefresh = CompletableFuture.completedFuture(null);
     static volatile boolean backendRefuses;
     static volatile long mintedTtlSeconds = 3600;
@@ -158,7 +159,7 @@ class ChatGptRouteTest {
         refreshErrorStatus = 400;
         refreshAnswersEmpty = false;
         holdBackend = CompletableFuture.completedFuture(null);
-        refreshEncodings.clear();
+        refreshHeads.clear();
         holdRefresh = CompletableFuture.completedFuture(null);
         backendRefuses = false;
         mintedTtlSeconds = 3600;
@@ -259,7 +260,7 @@ class ChatGptRouteTest {
                 case "/oauth/token" -> {
                     refreshes.incrementAndGet();
                     refreshBodies.add(body.toString());
-                    refreshEncodings.add(String.valueOf(req.getHeader("Accept-Encoding")));
+                    refreshHeads.add(req.getHeader("Accept-Encoding") + "|" + req.getHeader("Expect"));
                     holdRefresh.whenComplete((v, e) -> vertx.runOnContext(x -> {
                         if (refreshAnswersEmpty) {
                             resp.end("{}");
@@ -325,8 +326,12 @@ class ChatGptRouteTest {
      * then stays open until it stops.
      */
     static Reply readResponse(InputStream in) throws IOException {
-        var head = line(in).toLowerCase(Locale.ROOT);
-        var status = Integer.parseInt(head.substring(9, 12));
+        int status;
+        // An interim answer (100 Continue) comes first and says nothing of the request's fate
+        // Not 101: a test that upgrades reads the socket, not another response
+        while ((status = Integer.parseInt(line(in).substring(9, 12))) < 200 && status != 101) {
+            while (!line(in).isEmpty()) { /* its headers */ }
+        }
         long length = -1;
         var chunked = false;
         for (var header = line(in); !header.isEmpty(); header = line(in)) {
@@ -363,7 +368,8 @@ class ChatGptRouteTest {
 
     static Reply refreshWithBody(String body) throws Exception {
         return send(ChatGptRoute.AUTH, ChatGptRoute.AUTH, "POST /oauth/token HTTP/1.1\r\nHost: auth.openai.com\r\n"
-                + "Content-Type: application/json\r\nOriginator: codex_cli_rs\r\nAccept-Encoding: gzip, br\r\n", body);
+                + "Content-Type: application/json\r\nOriginator: codex_cli_rs\r\nAccept-Encoding: gzip, br\r\n"
+                + "Expect: 100-continue\r\n", body);
     }
 
     static List<String> seenOn(String path) {
@@ -595,7 +601,8 @@ class ChatGptRouteTest {
         assertNull(after.refreshing(), "the journal entry is cleared on commit");
         assertNoRealToken(reply.body(), after.tokens());
         assertTrue(seenOn("/oauth/token").getFirst().contains("| null |"), "no Authorization upstream: " + seen);
-        assertEquals(List.of("identity"), List.copyOf(refreshEncodings), "an answer the proxy can parse");
+        // An answer the proxy can parse, and no Expect for a body sent at once
+        assertEquals(List.of("identity|null"), List.copyOf(refreshHeads));
     }
 
     @Test
@@ -705,8 +712,10 @@ class ChatGptRouteTest {
         assertEquals(401, backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access())).status());
         backendRefuses = false;
 
+        assertTrue(proxy.chatGpt.refuses(ACCOUNT, sessionId));
         assertEquals(200, refresh(proofs().refreshToken()).status());
         assertEquals(1, refreshes.get(), "the real token was refreshed although it was not near expiry");
+        assertFalse(proxy.chatGpt.refuses(ACCOUNT, sessionId), "a committed refresh clears the session's refusals");
         assertEquals(200, refresh(proofs().refreshToken()).status());
         assertEquals(1, refreshes.get(), "and only once");
     }
