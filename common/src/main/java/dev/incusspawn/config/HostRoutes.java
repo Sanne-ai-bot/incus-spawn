@@ -47,10 +47,11 @@ public final class HostRoutes {
 
         /**
          * Whether an instance of {@code template} may call this route: one of the listed
-         * templates, and never a project-local instance, whatever the list says.
+         * templates, and never an untrusted one (project-local, or a failed, unfinished or project
+         * build, or a copy of one), whatever the list says.
          */
-        public boolean admits(String template, boolean projectLocal) {
-            return !projectLocal && templates.contains(template);
+        public boolean admits(String template, boolean untrusted) {
+            return !untrusted && templates.contains(template);
         }
     }
 

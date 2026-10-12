@@ -200,7 +200,7 @@ class ProjectCommandTest {
         verify(incus, never()).delete(eq(NAME), anyBoolean());
         verify(incus, never()).deleteIfExists(NAME);
         verify(incus, never()).rename(anyString(), anyString());
-        verify(incus).copy(PARENT, BUILD);
+        verify(incus).copy(PARENT, BUILD, ProjectCommand.PROJECT_BUILD);
         verify(incus).delete(BUILD, true);
     }
 
@@ -221,7 +221,7 @@ class ProjectCommandTest {
         assertEquals(0, create(incus, config("make")));
 
         var order = inOrder(incus);
-        order.verify(incus).copy(PARENT, BUILD);
+        order.verify(incus).copy(PARENT, BUILD, ProjectCommand.PROJECT_BUILD);
         order.verify(incus).execInContainer(BUILD, "agentuser", "make");
         order.verify(incus).stop(BUILD);
         order.verify(incus).deleteIfExists(NAME);
@@ -246,7 +246,7 @@ class ProjectCommandTest {
             heldAt.put("lookup", TemplateLockProbe.held(PARENT));
             return true;
         });
-        doAnswer(inv -> heldAt.put("copy", TemplateLockProbe.held(PARENT))).when(incus).copy(PARENT, BUILD);
+        doAnswer(inv -> heldAt.put("copy", TemplateLockProbe.held(PARENT))).when(incus).copy(PARENT, BUILD, ProjectCommand.PROJECT_BUILD);
         doAnswer(inv -> heldAt.put("start", TemplateLockProbe.held(PARENT))).when(incus).start(BUILD);
 
         assertEquals(0, create(incus, config(null)));

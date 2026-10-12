@@ -813,6 +813,7 @@ public class BuildCommand extends BaseCommand {
             // must go through the same report-and-promote path as any other failure.
             TemplateLock.replace(incus, tempName, canonicalName, BuildOutput::note);
             activeBuild = null;
+            trustBuilt(canonicalName);
             buildDone(canonicalName);
         } catch (Exception e) {
             BuildOutput.abandonStep();
@@ -1080,6 +1081,33 @@ public class BuildCommand extends BaseCommand {
         return null;
     }
 
+    /**
+     * The build container, copied from its parent and untrusted from that very request on: a build
+     * that never reaches {@link #tagTemplateMetadata}, however it stops, must not pass for the
+     * parent it copied (#936).
+     */
+    void copyFromParent(String parentSource, String buildName, IncusClient.CopyPlan copyPlan) {
+        incus.copy(parentSource, buildName, copyPlan, BUILDING);
+    }
+
+    /**
+     * The last step of a build that succeeded, after its swap: only now is the template what its
+     * definition says, so only now does it lose {@link Metadata#UNTRUSTED_LINEAGE} (#936). Anything
+     * that stops a build before this, a failure after tagTemplateMetadata or in the swap included,
+     * leaves it set. Should this write fail, the template stays untrusted until it is rebuilt.
+     */
+    void trustBuilt(String template) {
+        try {
+            incus.configUnset(template, Metadata.UNTRUSTED_LINEAGE);
+        } catch (RuntimeException e) {
+            BuildOutput.warn("'" + shown(template) + "' was built, but stays untrusted for host routes until it is "
+                    + "rebuilt: " + shown(e.getMessage()));
+        }
+    }
+
+    /** What a build container carries from its first request until its build has succeeded (#936). */
+    static final Map<String, String> BUILDING = Map.of(Metadata.UNTRUSTED_LINEAGE, Metadata.UNTRUSTED_BUILDING);
+
     private void promoteToFailedInstance(String buildName, String canonicalName, MachineType machineType) {
         var promotedName = canonicalName + "-failed-build";
         try {
@@ -1089,7 +1117,8 @@ public class BuildCommand extends BaseCommand {
                 incus.forceStop(buildName);
             }
             incus.rename(buildName, promotedName);
-            // In the same write as the type: the rename above left the parent's template stamps on it
+            // Untrusted since its first request, until trustBuilt after a swap this build never
+            // reached; this only says why. Should this write fail, it still is
             incus.configSetAll(promotedName, Map.of(
                     Metadata.TYPE, Metadata.TYPE_FAILED_BUILD,
                     Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_FAILED_BUILD,
@@ -1192,7 +1221,7 @@ public class BuildCommand extends BaseCommand {
                         + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
             }
             BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'...");
-            incus.copy(parentSource, buildName, copyPlan);
+            copyFromParent(parentSource, buildName, copyPlan);
         }
         if (machineType == MachineType.CONTAINER) {
             incus.configSet(buildName, "security.idmap.size", "165536");
@@ -1841,7 +1870,7 @@ public class BuildCommand extends BaseCommand {
         for (int attempt = 1; ; attempt++) {
             BuildOutput.stepStart(launching);
             try {
-                incus.create(image, buildName, machineType);
+                incus.create(image, buildName, machineType, BUILDING);
                 return prepareAndStart.get();
             } catch (IncusException e) {
                 BuildOutput.stepBreak();
@@ -2192,7 +2221,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private void tagTemplateMetadata(String buildName, String canonicalName, ImageDef imageDef,
+    void tagTemplateMetadata(String buildName, String canonicalName, ImageDef imageDef,
                                     String parentCanonicalName,
                                     List<ImageDef.HostResource> hostResources,
                                     Map<String, ImageDef> defs,
