@@ -577,10 +577,17 @@ public class MitmProxy {
         return configState.routing().allInterceptedDomains();
     }
 
+    /**
+     * Whether a request to {@code domain} is served as a credential domain: every domain the
+     * proxy intercepts, as bridge DNS and certificates have it, not only those the default
+     * account has a credential for -- an instance pinned to an account whose entry the default
+     * lacks would otherwise be relayed as a stray subdomain, with nothing injected. What is
+     * injected still comes from the caller's own routing.
+     */
     private boolean isInterceptedDomain(String domain) {
         var routing = configState.routing();
         return ProxyConfig.isInterceptedDomain(domain,
-                routing.exactDomain().keySet(), routing.suffixes());
+                routing.allInterceptedDomains(), routing.suffixes());
     }
 
     // --- Lifecycle ---

@@ -82,10 +82,14 @@ public final class ProxyConfig {
         return Set.copyOf(all);
     }
 
-    public static boolean isInterceptedDomain(String domain, Set<String> toolProxyDomains,
+    /**
+     * Whether {@code domain} is intercepted: built in, one of {@code domains} (exact names, the
+     * built-in ones may be among them), or under one of {@code wildcardSuffixes}.
+     */
+    public static boolean isInterceptedDomain(String domain, Set<String> domains,
                                                List<String> wildcardSuffixes) {
         if (BUILTIN_INTERCEPTED_DOMAINS.contains(domain)) return true;
-        if (toolProxyDomains.contains(domain)) return true;
+        if (domains.contains(domain)) return true;
         for (var suffix : wildcardSuffixes) {
             if (domain.endsWith(suffix)) return true;
         }
