@@ -72,6 +72,9 @@ Any network/API failure falls back to the built-in tag with a `note()`.
 `BaseImageReleases.fetchChecksums()` reads `SHA256SUMS.v2` when the release has one (else `SHA256SUMS`) and looks checksums up by the exact file names the definition's URLs download (`checksumsFor`), never by markers in a name: `SHA256SUMS` must stay what isx releases before #1255 parse, and they file any name containing `-vm` as the VM image.
 A tracked release without the definition's VM image keeps the VM on the built-in release (`BaseImage.vmTag`), tag and checksum together.
 `downloadAndAliasImage` reuses an alias only when its fingerprint is the expected checksum (Incus fingerprints a one-tarball import by its sha256), or with none expected when it recorded the same URL (`IMAGE_SOURCE_PROPERTY`), since a release's two VM images share its tag.
+`BuildCommand.vmImageAlias` picks the VM alias by file: the stock `-vm.tar.xz` under `<image>-vm`, which isx releases before #1255 share, and `-vm-direct.tar.xz` under `<image>-vm-direct`, which they never read.
+Before downloading, an image whose fingerprint is the expected checksum, imported by the same project, is aliased as it is, since Incus keeps one image per fingerprint.
+Incus resolves a fingerprint by prefix, so `downloadAndAliasImage` refuses a checksum that is not 64 hex digits before it looks anything up.
 An event-driven CI job (`.github/workflows/update-base-image.yml`) opens a PR to bump the built-in fallback when the images repo publishes a newer release.
 The images repo (`Sanne/incus-spawn-images`) fires a `base-image-released` `repository_dispatch` carrying the tag + container/VM checksums, so the consumer neither polls nor re-derives them (a manual `workflow_dispatch` backstop re-derives from the release list if a dispatch is missed).
 This tracking behavior is unrelated to `INIT_VERSION`.

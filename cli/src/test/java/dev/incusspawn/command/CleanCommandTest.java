@@ -107,18 +107,20 @@ class CleanCommandTest {
                 image("container", "fedora-44-base"),
                 // The VM image lives under a derived alias, which once read as unused, so a
                 // clean deleted it and the next VM build downloaded gigabytes again.
-                image("vm", "fedora-44-base-vm"),
+                image("vm", "fedora-44-base-vm-direct"),
+                // The stock VM image, which an older isx on the same host also uses (#1255): a base image, not unused.
+                image("legacy-vm", "fedora-44-base-vm"),
                 image("manual", "hand-made"),
                 image("orphan", "something-else"),
                 image("unaliased")), defs);
 
         assertEquals(List.of("orphan", "unaliased"), fingerprints(scan.unused()));
-        assertEquals(List.of("container", "vm"), fingerprints(scan.base()));
+        assertEquals(List.of("container", "vm", "legacy-vm"), fingerprints(scan.base()));
     }
 
     @Test
     void vmAliasWithoutAVmImageUrlIsUnused() {
-        var scan = CleanCommand.classifyImages(List.of(image("vm", "fedora-44-base-vm")),
+        var scan = CleanCommand.classifyImages(List.of(image("vm", "fedora-44-base-vm-direct")),
                 List.of(def("fedora-44-base", "https://example.com/fedora.tar.xz", null)));
 
         assertEquals(List.of("vm"), fingerprints(scan.unused()));

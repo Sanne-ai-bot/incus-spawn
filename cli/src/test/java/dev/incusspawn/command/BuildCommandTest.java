@@ -1628,10 +1628,87 @@ class BuildCommandTest {
         order.verify(incus).createImageAlias("fedora-44-base", "genuine");
     }
 
+    /**
+     * isx v0.3.9 to v0.3.11 import their stock VM image under "<image>-vm" and reuse it whenever
+     * the tag matches. The stock file goes there from this isx too, so both share one image of it;
+     * the -vm-direct file never does, or their VM builds, with Secure Boot on and the root on
+     * virtio-scsi, would start from it and not boot.
+     */
+    @Test
+    void theVmImageAliasFollowsTheFileSoReleasedIsxNeverReadsTheDirectOne() {
+        var url = "https://example.com/{tag}/fedora-44-{arch}";
+        assertEquals("fedora-44-base-vm", BuildCommand.vmImageAlias("fedora-44-base", url + "-vm.tar.xz"));
+        assertEquals("fedora-44-base-vm-direct", BuildCommand.vmImageAlias("fedora-44-base", url + "-vm-direct.tar.xz"));
+    }
+
+    /**
+     * Incus keeps one image per fingerprint, so the expected file already imported under another
+     * alias (a released isx's "<image>-vm", or none) cannot be imported again: it is aliased as it
+     * is, without a download and without touching the properties the other alias's owner reads.
+     */
+    @Test
+    void theExpectedFileImportedUnderAnotherAliasIsAliasedNotImportedAgain() {
+        var expected = "e".repeat(64);
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow("fedora-44-base-vm-direct")).thenReturn(null);
+        when(incus.imageExistsOrThrow(expected)).thenReturn(true);
+        when(incus.imagePropertyOrThrow(expected, BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn(null);
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+
+        cmd.downloadAndAliasImage("fedora-44-base-vm-direct", DIRECT_URL,
+                Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261020", trusted("tpl-minimal"));
+
+        verify(incus).createImageAlias("fedora-44-base-vm-direct", expected);
+        verify(cmd, never()).newDownloadCache();
+        verify(incus, never()).importImage(any());
+        verify(incus, never()).setImageProperties(any(), any());
+        verify(incus, never()).setImageProperty(any(), any(), any());
+    }
+
+    /**
+     * Incus resolves an image by fingerprint prefix, so a short or malformed checksum would name
+     * any image starting with it, and so would its comparison: a checksum that is not a full
+     * SHA-256 fails the build before anything is matched, aliased or downloaded.
+     */
+    @Test
+    void aChecksumThatIsNotAFullSha256FailsClosed() {
+        for (var bad : List.of("4273", "4273ce55" + "z".repeat(56), "e".repeat(63), "e".repeat(65))) {
+            var incus = mock(IncusClient.class);
+            when(incus.imageExistsOrThrow(anyString())).thenReturn(true);
+            when(incus.imagePropertyOrThrow(anyString(), eq(BuildCommand.IMAGE_PROJECT_PROPERTY))).thenReturn(null);
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+
+            var e = assertThrows(IllegalStateException.class, () -> cmd.downloadAndAliasImage(VM_ALIAS, DIRECT_URL,
+                    Map.of("x86_64", bad, "aarch64", bad), "fedora-44-20261020", trusted("tpl-minimal")), bad);
+            assertTrue(e.getMessage().contains("SHA-256"), e.getMessage());
+            verify(incus, never()).createImageAlias(any(), any());
+            verify(cmd, never()).newDownloadCache();
+        }
+    }
+
+    /** A project's import of the same file is not taken over by a trusted definition (#765). */
+    @Test
+    void aProjectsImportOfTheExpectedFileIsNotAliasedForATrustedDefinition(@TempDir Path tmp) throws Exception {
+        var expected = "e".repeat(64);
+        var incus = mock(IncusClient.class);
+        when(incus.imageExistsOrThrow(expected)).thenReturn(true);
+        when(incus.imagePropertyOrThrow(expected, BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("/work/repo");
+        var cmd = importing(incus, Files.writeString(tmp.resolve("d.tar.xz"), "d"), "fp",
+                BuildCommand.resolveImageUrl(DIRECT_URL, "fedora-44-20261020"));
+
+        cmd.downloadAndAliasImage("fedora-44-base-vm-direct", DIRECT_URL,
+                Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261020", trusted("tpl-minimal"));
+
+        verify(incus, never()).createImageAlias("fedora-44-base-vm-direct", expected);
+        verify(incus).importImage(any());
+    }
+
     /** An alias whose image Incus fingerprinted as {@code fingerprint}, with no stamps but the tag. */
     private static IncusClient importedVmImage(String tag, String fingerprint) {
         var incus = mock(IncusClient.class);
-        when(incus.imageAliasTargetOrThrow("fedora-44-base-vm")).thenReturn(fingerprint);
+        when(incus.imageAliasTargetOrThrow(VM_ALIAS)).thenReturn(fingerprint);
         when(incus.imagePropertyOrThrow(fingerprint, BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("");
         when(incus.getImageProperty(fingerprint, "incus-spawn.tag")).thenReturn(tag);
         return incus;
@@ -1651,6 +1728,7 @@ class BuildCommandTest {
     }
 
     private static final String DIRECT_URL = "https://example.com/{tag}/fedora-44-{arch}-vm-direct.tar.xz";
+    private static final String VM_ALIAS = "fedora-44-base-vm-direct";
 
     /**
      * One release carries two VM images (#1255), so its tag does not say which one an alias
@@ -1664,14 +1742,14 @@ class BuildCommandTest {
         var source = BuildCommand.resolveImageUrl(DIRECT_URL, "fedora-44-20261020");
         var cmd = importing(incus, Files.writeString(tmp.resolve("direct.tar.xz"), "direct"), expected, source);
 
-        cmd.downloadAndAliasImage("fedora-44-base-vm", DIRECT_URL,
+        cmd.downloadAndAliasImage(VM_ALIAS, DIRECT_URL,
                 Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261020", trusted("tpl-minimal"));
 
         verify(incus).deleteImage("c".repeat(64));
         var order = inOrder(incus);
         order.verify(incus).setImageProperties(expected, Map.of("incus-spawn.tag", "fedora-44-20261020",
                 BuildCommand.IMAGE_SOURCE_PROPERTY, source));
-        order.verify(incus).createImageAlias("fedora-44-base-vm", expected);
+        order.verify(incus).createImageAlias(VM_ALIAS, expected);
     }
 
     /** Imports by an isx before #1255 carry no stamp of their own, and are still reused: the fingerprint is enough. */
@@ -1682,7 +1760,7 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
 
-        cmd.downloadAndAliasImage("fedora-44-base-vm", DIRECT_URL,
+        cmd.downloadAndAliasImage(VM_ALIAS, DIRECT_URL,
                 Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261020", trusted("tpl-minimal"));
 
         verify(incus, never()).deleteImage(any());
@@ -1697,7 +1775,7 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
 
-        cmd.downloadAndAliasImage("fedora-44-base-vm", DIRECT_URL,
+        cmd.downloadAndAliasImage(VM_ALIAS, DIRECT_URL,
                 Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261009", trusted("tpl-minimal"));
 
         verify(incus, never()).deleteImage(any());
@@ -1712,12 +1790,12 @@ class BuildCommandTest {
         var cmd = importing(incus, Files.writeString(tmp.resolve("direct.tar.xz"), "direct"), "new",
                 "https://example.com/v1/direct.tar.xz");
 
-        cmd.downloadAndAliasImage("fedora-44-base-vm", "https://example.com/{tag}/stock.tar.xz", null, "v1", trusted("tpl-mine"));
+        cmd.downloadAndAliasImage(VM_ALIAS, "https://example.com/{tag}/stock.tar.xz", null, "v1", trusted("tpl-mine"));
         verify(incus, never()).deleteImage(any());
 
-        cmd.downloadAndAliasImage("fedora-44-base-vm", "https://example.com/{tag}/direct.tar.xz", null, "v1", trusted("tpl-mine"));
+        cmd.downloadAndAliasImage(VM_ALIAS, "https://example.com/{tag}/direct.tar.xz", null, "v1", trusted("tpl-mine"));
         verify(incus).deleteImage("old");
-        verify(incus).createImageAlias("fedora-44-base-vm", "new");
+        verify(incus).createImageAlias(VM_ALIAS, "new");
     }
 
     @Test

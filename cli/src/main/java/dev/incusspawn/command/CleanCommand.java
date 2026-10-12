@@ -432,8 +432,12 @@ public class CleanCommand extends BaseCommand {
             knownAliases.add(img);
             if (def.getImageUrl() != null) downloadedAliases.add(img);
             if (def.getVmImageUrl() != null) {
-                knownAliases.add(BuildCommand.vmImageAlias(img));
-                downloadedAliases.add(BuildCommand.vmImageAlias(img));
+                // Both, whichever file this definition names now: an older isx on the same host
+                // keeps the stock image under <image>-vm
+                for (var alias : BuildCommand.vmImageAliases(img)) {
+                    knownAliases.add(alias);
+                    downloadedAliases.add(alias);
+                }
             }
         }
         var unused = new ArrayList<IncusClient.ImageInfo>();
