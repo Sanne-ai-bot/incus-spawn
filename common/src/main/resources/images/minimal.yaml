@@ -5,8 +5,8 @@ image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/f
 vm_image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}-vm.tar.xz
 image_tag: fedora-44-20261012
 image_sha256:
-  x86_64: b868326c1c22cd829bc49033977afcd8f7f15678394d7357294851010f296786
-  aarch64: 55db258bb54684d12cfa298bba1b0bf2a02c692263dd8c54fa7ce945acea535a
+  x86_64: cdc2a50c41d2303a306712e8ec30296bec6b6f6c39ae71be73a617ca78948158
+  aarch64: 75ac8823e1c6e539cc1f5c362c2f0cdaca7a323df21240db718e8cba6f1611db
 vm_image_sha256:
-  x86_64: 8010484697357939165a8f33491b48b78999d9ac37477b6d13c799a7804a5bb8
-  aarch64: 801e194122c70d95ff0456346da9777b4cee32033e69742db9823ee725d26dfe
+  x86_64: 4273ce552d94b9a223e501097dedcd70bb934b71299d2efdef91a327370412bf
+  aarch64: b67055549e32c12f61d836b51df7faf32ad8887072f05e899aea66b3adad9f58
