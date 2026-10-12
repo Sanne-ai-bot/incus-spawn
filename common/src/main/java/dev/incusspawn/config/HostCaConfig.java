@@ -4,7 +4,8 @@ import java.util.Map;
 
 /**
  * {@code host-ca:} in config.yaml: whether to propagate host CA anchors into
- * containers. Scans the platform's default anchor directory.
+ * containers. Scans {@code /etc/pki/ca-trust/source/anchors}, the Fedora/RHEL anchor
+ * directory; on a host without it (Debian, macOS) there is nothing to propagate.
  *
  * <pre>{@code
  * host-ca:

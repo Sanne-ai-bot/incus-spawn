@@ -253,6 +253,7 @@ class CertificateAuthorityTest {
         assertTrue(script.contains("isx-*.crt"));
         assertTrue(script.contains("isx-abc.crt"));
         assertTrue(script.contains("update-ca-trust"));
+        assertTrue(script.startsWith("set -e\n"), "a failed write must fail the script");
     }
 
     @Test
