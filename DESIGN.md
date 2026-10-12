@@ -1918,6 +1918,7 @@ Otherwise it answers with the current session's placeholders.
 Concurrent refreshes of one session share one upstream call, and at most one goes upstream per 30 seconds: with tokens that stayed inside the window, real Codex otherwise refreshed nearly 6000 times in 5 minutes.
 A caller whose token no longer works waits for a refresh already upstream for it, whatever the throttle says; one whose token still works is answered with it, and never shares a failed refresh.
 Within that interval a token that has expired, or that the backend has just refused, is answered 503, not handed back as if refreshed, which would only loop Codex between refreshes and 401s with a bearer known to be bad.
+Such a caller is handed a generation committed since it read the session only when that generation's token works too, and is answered 401 once the account's session is another one or gone.
 A refusal is a 401 to a backend request or to a WebSocket handshake, and is kept per token (the session at one generation), so a late 401 for a token a refresh has already replaced marks nothing current; a refresh that succeeds clears the session's earlier ones.
 A rate limit or server error from OpenAI reaches the guest as one too (429, 502), so Codex retries rather than treating its session as dead.
 The answer is committed only if the file still holds the session and generation the refresh started from.

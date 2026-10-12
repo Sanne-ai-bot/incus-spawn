@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import javax.net.ssl.SNIHostName;
@@ -633,6 +634,45 @@ class ChatGptRouteTest {
         assertEquals(1, refreshes.get());
     }
 
+    /**
+     * A throttled caller that read the session before a refresh committed: it is handed the newer
+     * token only if that one works. The interleaving cannot be forced over HTTP, so the caller's
+     * stale read is passed in directly.
+     */
+    @ParameterizedTest
+    @CsvSource({"works, 200", "refused, 503", "expired, 503"})
+    void aThrottledCallerGetsANewerTokenOnlyIfItWorks(String newer, int status) throws Exception {
+        // Expired, as a token is when a throttled refresh gets this far
+        sessionId = store.create(ACCOUNT, mint(-10)).sessionId();
+        bind(SECRET, sessionId);
+        var stale = store.read(ACCOUNT);
+        if (newer.equals("expired")) mintedTtlSeconds = -10;
+        assertEquals(200, refresh(proofs().refreshToken()).status(), "commits the next generation");
+        if (newer.equals("refused")) {
+            refuseTheCurrentToken();
+        }
+
+        var outcome = proxy.chatGpt.newerOrLater(stale);
+        assertEquals(status, outcome.status());
+        assertEquals(status == 200 ? store.read(ACCOUNT).tokens() : null, outcome.tokens());
+        assertEquals(1, refreshes.get());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void aThrottledCallerOfASessionThatIsGoneIsRefusedAndItsRecordsDropped(boolean signedInAgain) throws Exception {
+        var stale = store.read(ACCOUNT);
+        refuseTheCurrentToken();
+        assertTrue(proxy.chatGpt.refuses(ACCOUNT, sessionId));
+        if (signedInAgain) store.create(ACCOUNT, mint(3600));
+        else store.remove(ACCOUNT);
+
+        var outcome = proxy.chatGpt.newerOrLater(stale);
+        assertEquals(401, outcome.status(), "not a retryable 503: the proofs will never work again");
+        assertNull(outcome.tokens());
+        assertFalse(proxy.chatGpt.refuses(ACCOUNT, sessionId), "nothing kept about a session that is gone");
+    }
+
     @Test
     void aLate401ForAReplacedTokenDoesNotMarkTheNewOne() throws Exception {
         sessionId = store.create(ACCOUNT, mint(60)).sessionId();
@@ -676,7 +716,7 @@ class ChatGptRouteTest {
      * throttle's 503; with one still working, they are answered with it and wait for nothing.
      */
     @ParameterizedTest
-    @org.junit.jupiter.params.provider.CsvSource({"-10, 19", "60, 0"})
+    @CsvSource({"-10, 19", "60, 0"})
     void concurrentRefreshesOfOneSessionShareOneUpstreamCall(long ttlSeconds, int joins) throws Exception {
         sessionId = store.create(ACCOUNT, mint(ttlSeconds)).sessionId();
         bind(SECRET, sessionId);
@@ -708,8 +748,7 @@ class ChatGptRouteTest {
 
     @Test
     void aBackend401LetsTheNextRefreshThrough() throws Exception {
-        backendRefuses = true;
-        assertEquals(401, backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access())).status());
+        refuseTheCurrentToken();
         backendRefuses = false;
 
         assertTrue(proxy.chatGpt.refuses(ACCOUNT, sessionId));
@@ -1058,6 +1097,12 @@ class ChatGptRouteTest {
         for (var part : List.of(real.accessToken(), real.idToken())) {
             assertFalse(text.contains(part.substring(part.lastIndexOf('.') + 1)), "a real signature handed out");
         }
+    }
+
+    /** The backend refuses from now on, and has just refused the current access proof's token. */
+    static void refuseTheCurrentToken() throws Exception {
+        backendRefuses = true;
+        assertEquals(401, backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access())).status());
     }
 
     static void awaitRefreshes(int n) throws InterruptedException {

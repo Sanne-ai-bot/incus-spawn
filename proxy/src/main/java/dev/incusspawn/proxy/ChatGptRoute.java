@@ -403,7 +403,7 @@ final class ChatGptRoute {
     // --- Refresh ---
 
     /** A refresh's outcome: the session's tokens after it, or why the caller gets none. */
-    private record Refreshed(ChatGptSessionStore.Tokens tokens, String sessionId, int status, String code,
+    record Refreshed(ChatGptSessionStore.Tokens tokens, String sessionId, int status, String code,
                              String message) {
         static final String NOT_THIS_SESSION =
                 "the ChatGPT session is not the one this instance's proofs were made for, or the refresh was refused";
@@ -451,11 +451,11 @@ final class ChatGptRoute {
         currentSession(binding).compose(session -> {
             if (session == null) return Future.succeededFuture(Refreshed.refused(401, "invalid_grant"));
             var key = sessionKey(session);
-            var expiresIn = ChatGptPlaceholders.expiry(session.tokens().accessToken()) - System.currentTimeMillis() / 1000;
-            var tokenRefused = refused.getOrDefault(key, Set.of()).contains(session.generation());
+            var expiresIn = secondsLeft(session);
+            var tokenRefused = isRefused(session);
             var due = expiresIn <= REFRESH_WINDOW_SECONDS || tokenRefused;
             if (!due) return Future.succeededFuture(Refreshed.ok(session));
-            var usable = expiresIn > 0 && !tokenRefused;
+            var usable = works(expiresIn, tokenRefused);
             // A token that no longer works waits for a refresh already upstream for it, whatever
             // the throttle would say; one that still works is never made to share its failure
             var inFlight = usable ? null : refreshes.get(tokenKey(session));
@@ -715,14 +715,18 @@ final class ChatGptRoute {
 
     /**
      * What a throttled refresh of {@code session}, whose token no longer works, answers with: a
-     * generation of the same session committed since the caller read it, else a 503. Blocks.
+     * generation of the same session committed since the caller read it, if its token works, else
+     * a 503; a 401 once the account's session is another. Blocks; package-private for tests.
      */
-    private Refreshed newerOrLater(ChatGptSessionStore.Session session) {
+    Refreshed newerOrLater(ChatGptSessionStore.Session session) {
         var now = store.read(session.account());
-        if (now != null && now.sessionId().equals(session.sessionId()) && now.generation() > session.generation()) {
+        if (now == null || !now.sessionId().equals(session.sessionId())) return forget(session);
+        // A newer token the backend has refused, or that has expired, is no better than the caller's
+        if (now.generation() > session.generation() && works(now)) {
             return Refreshed.ok(now);
         }
-        return Refreshed.refused(503, "temporarily_unavailable", "the session was refreshed moments ago; try again shortly");
+        return Refreshed.refused(503, "temporarily_unavailable",
+                "a refresh of the session went upstream moments ago and left no token that works yet; try again shortly");
     }
 
     /**
@@ -733,10 +737,33 @@ final class ChatGptRoute {
     private Refreshed current(ChatGptSessionStore.Session session) {
         var now = store.read(session.account());
         if (now != null && now.sessionId().equals(session.sessionId())) return Refreshed.ok(now);
-        // No longer the account's session: drop what is kept about it
+        return forget(session);
+    }
+
+    /** {@code session} is no longer the account's: drop what is kept about it, and refuse. */
+    private Refreshed forget(ChatGptSessionStore.Session session) {
         refused.remove(sessionKey(session));
         lastUpstream.remove(sessionKey(session));
         return Refreshed.refused(401, "invalid_grant");
+    }
+
+    /** Seconds until {@code session}'s access token expires; negative once it has. */
+    private static long secondsLeft(ChatGptSessionStore.Session session) {
+        return ChatGptPlaceholders.expiry(session.tokens().accessToken()) - System.currentTimeMillis() / 1000;
+    }
+
+    /** Whether {@code session}'s token can still be used: the backend has not refused it, and it has not expired. */
+    private boolean works(ChatGptSessionStore.Session session) {
+        return works(secondsLeft(session), isRefused(session));
+    }
+
+    private static boolean works(long secondsLeft, boolean refused) {
+        return secondsLeft > 0 && !refused;
+    }
+
+    /** Whether the backend has refused {@code session}'s token at its generation. */
+    private boolean isRefused(ChatGptSessionStore.Session session) {
+        return refused.getOrDefault(sessionKey(session), Set.of()).contains(session.generation());
     }
 
     private static String sessionKey(ChatGptSessionStore.Session session) {
