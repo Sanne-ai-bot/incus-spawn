@@ -346,9 +346,9 @@ public class CertificateAuthority {
 
     /**
      * Reconcile a container's trust anchors (MITM CA + host CAs) against the current
-     * trust set. If mismatched: clears the stamp, removes all isx-managed anchors,
+     * trust set. If mismatched: marks the stamp pending, removes all isx-managed anchors,
      * writes the current set via heredoc, and re-stamps on success. The stamp is
-     * cleared before cleanup so a failed install retries next time.
+     * marked before cleanup so a failed install retries next time.
      * <p>
      * Containers without a stored fingerprint (pre-versioning) are skipped.
      * Returns true if a fix was applied, false if no action was needed.
@@ -371,7 +371,10 @@ public class CertificateAuthority {
         var stamp = trust.stamp();
         if (stamp.equals(storedFp)) return false;
 
-        incus.configSet(container, Metadata.CA_FINGERPRINT, "");
+        // Until the guest holds the new set its stamp matches no set: a reconcile that fails
+        // after removing the old anchors is retried, even once the set changes back. Not
+        // empty, which would read as "built before stamps" and never be checked again.
+        incus.configSet(container, Metadata.CA_FINGERPRINT, trust.caFingerprint() + "+pending");
         if (incus.shellExec(container, "sh", "-c", buildReconcileScript(trust.files())).exitCode() != 0) {
             return false;
         }
