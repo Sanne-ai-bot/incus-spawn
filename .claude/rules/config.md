@@ -67,6 +67,7 @@ The skipped file's name is unknown or unusable, so building would silently fall 
 
 Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (DESIGN.md "jjq rather than Jackson"):
 - A new DTO is `@JqMapped`; `jjq-mapper-processor` generates its mapping and `Jjq` registers it, so the native image needs no registration for it.
+  That holds only while `Jjq` and the generated `*_JqMapping` classes are initialized at build time: their static initializers look up private `Field`s, which the image heap keeps; keep them off the `--initialize-at-run-time` lists in both `application.properties`.
   An enum a DTO binds is the exception: jjq reads its `@JqEnum`/`@JqName` by reflection, so it carries `@RegisterForReflection` (`ClaudeAccountType`), or the native image binds every value to null.
   `JjqGeneratedMappingTest` fails for a reachable DTO without a registered mapping, and for a reachable enum without the annotation (#1316).
 - A converter that reads scalars from the tree uses `Jjq.text`, so `0022` stays `0022`; `asText()` gives the resolved `18`.
