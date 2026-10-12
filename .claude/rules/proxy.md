@@ -126,7 +126,7 @@ Key design:
   A route without a usable one stays claimed and answers 503, never a relay.
   It is stripped from response headers (by name and by value) and from a reason phrase, redacted from `HostRouteRelay.Served.toString()`, and never logged; nothing may hand it to a guest.
   `ConfigWatcher` reloads on any change to a secret file, so deleting one rotates it, and on a `chmod` of one or of the directory on Linux only (macOS's polling watcher sees mtimes, not modes).
-  Every check is made before the file is opened (a FIFO would block `reload()` for good): its type, and that it, `host-routes/` and the config directory belong to the proxy's uid (of a file it created, never a name lookup) with nobody else able to write them (group write only by the proxy's own gid, for a umask of 002).
+  Every check is made before the file is opened (a FIFO would block `reload()` for good): its type, and that it, `host-routes/` and the config directory belong to the proxy's uid (of a file it created, never a name lookup) with nobody else able to write them: no group write on `host-routes/`, and on the config directory only by a user-private group (its gid equals the proxy's uid; never a gid read off a file made inside it, which takes a setgid directory's group).
   A refused caller's retry is `InstanceRegistry.refreshAfterNow`: one listing started after the call answers every waiter, so a burst of wrong secrets costs one listing.
   The routes live in `ConfigState` (replaced whole on reload) and their names in the routing's intercepted domains, from `ToolProxyResolver.hostRoutes`, which `resolvedDomains` includes for the CLI's DNS writers.
   See DESIGN.md "Host routes".
