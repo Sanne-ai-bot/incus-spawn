@@ -1191,9 +1191,10 @@ This prevents TLS failures in branches where the container's trusted CA doesn't 
 Corporate environments often install custom CA certificates on the host for TLS inspection or internal services.
 When `host-ca: { propagate: true }` is set in `config.yaml`, `CertificateAuthority.collectTrustAnchors()` builds one trust set: the MITM proxy CA plus host CA anchors from `/etc/pki/ca-trust/source/anchors/`, each parsed as X.509 and keyed by SHA-256 fingerprint (`isx-<sha256>.crt`).
 Content-addressable naming eliminates filename collisions and shell injection via filenames, and naturally deduplicates the MITM CA if it also sits in the host anchor directory.
-One combined fingerprint over the whole trust set is stamped as `user.incus-spawn.ca-fingerprint` (the same key as the MITM-only fingerprint was, so there is one stamp, not two).
+One stamp covers the whole set, in `user.incus-spawn.ca-fingerprint` (the key the MITM-only fingerprint used, so there is one stamp, not two): the CA's fingerprint, then `+` and a fingerprint over the host anchors when there are any.
+Without host anchors it is the CA's fingerprint alone, so images built before this stay current and nothing is reconciled on upgrade.
 `fixContainerCaIfNeeded` reconciles the entire set in one guest exec (`buildReconcileScript`): it clears the stamp before cleanup so a failed install is retried, removes both old `incus-spawn-mitm.crt` and `isx-*.crt`, writes the current set via `Container.heredoc` (safe against content escaping the heredoc), runs `update-ca-trust`, and re-stamps on success.
-`CaTrust.snapshot()` carries the combined fingerprint as `current` and the old MITM-only fingerprints (current cert DER hash and superseded) as `compatible`, so templates built before the combined stamp are classified as `REPAIRABLE` rather than `FOREIGN`.
+`CaTrust.classify` compares only the stamp's CA part, which says which CA an image was built against: a host anchor added or removed since is reconciled on first use like a superseded CA, and does not make a template `FOREIGN` (which blocks `isx branch`).
 `buildFromScratch` writes each anchor via `Container.writeFile` and stamps the combined fingerprint; `buildFromParent`, `BranchFlow`, `InstancePrep` and the TUI shell prep reconcile through `fixContainerCaIfNeeded`.
 The config follows the same raw-YAML pattern as `artifact-cache:` and `ready-timeouts:` (`HostCaConfig.of(raw)`): a mistyped section is ignored, not a fatal config error.
 

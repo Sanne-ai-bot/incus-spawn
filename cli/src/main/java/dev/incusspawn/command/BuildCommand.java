@@ -1431,8 +1431,7 @@ public class BuildCommand extends BaseCommand {
         var container = new Container(incus, buildName);
 
         BuildOutput.stepStart("Installing trust anchors...");
-        var trustAnchors = CertificateAuthority.collectTrustAnchors();
-        for (var entry : trustAnchors.entrySet()) {
+        for (var entry : CertificateAuthority.collectTrustAnchors().files().entrySet()) {
             container.writeFile(
                     "/etc/pki/ca-trust/source/anchors/" + entry.getKey(),
                     entry.getValue());
@@ -2146,8 +2145,7 @@ public class BuildCommand extends BaseCommand {
         var info = BuildInfo.instance();
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
-        incus.configSet(container, Metadata.CA_FINGERPRINT,
-                CertificateAuthority.trustFingerprint(CertificateAuthority.collectTrustAnchors()));
+        incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.collectTrustAnchors().stamp());
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader)));
         stampAccountIdentities(container, identityStamps);

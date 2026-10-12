@@ -138,6 +138,7 @@ See `.claude/rules/proxy.md` and DESIGN.md.
 
 **Host CA propagation** is opt-in via `host-ca: { propagate: true }` in `config.yaml`.
 When enabled, `CertificateAuthority.collectTrustAnchors()` collects the MITM CA and host anchors from `/etc/pki/ca-trust/source/anchors/` into one trust set, each keyed by SHA-256 fingerprint (`isx-<fp>.crt`).
+The stamp is the CA's fingerprint, plus `+<host anchors' fingerprint>` when there are any, so `CaTrust` still reads which CA built an image after the host anchors change.
 `fixContainerCaIfNeeded` reconciles the whole set in one exec: clears the stamp, removes old anchors, writes the current set via heredoc, and re-stamps.
 The stamp is cleared before cleanup so a failed install retries.
 `buildFromScratch` writes each anchor via `Container.writeFile`.
