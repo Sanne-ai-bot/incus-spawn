@@ -132,9 +132,17 @@ public final class InstanceRegistry {
      *                     otherwise untrusted: a failed build or a copy of one
      *                     ({@link Metadata#UNTRUSTED_LINEAGE})
      */
-    public record Lineage(String template, boolean projectLocal) {
+    public record Lineage(String template, boolean untrusted, String why) {
+        public Lineage(String template, boolean projectLocal) {
+            this(template, projectLocal, projectLocal ? "built from a project-local definition" : "");
+        }
+
         /** For an instance whose lineage is not known: admitted by nothing. */
-        static final Lineage UNKNOWN = new Lineage("", true);
+        static final Lineage UNKNOWN = new Lineage("", true, "of no known lineage");
+        /** A failed or unfinished build, or a copy of one: admitted by nothing. */
+        static Lineage untrusted(String why) {
+            return new Lineage("", true, why);
+        }
     }
 
     /** An instance that proved who it is ({@link #identify}), with what it was built from. */
@@ -439,6 +447,7 @@ public final class InstanceRegistry {
         var mcpCallers = new java.util.HashSet<String>();
         var incarnationByName = new java.util.HashMap<String, String>();
         var lineageByName = new java.util.HashMap<String, Lineage>();
+        var configByName = configsByName(root);
         claimants.forEach((address, all) -> {
             var owner = owner(address, all);
             if (owner == null) return;
@@ -447,7 +456,7 @@ public final class InstanceRegistry {
             if (owner.mcpCaller()) mcpCallers.add(owner.accounts().instanceName());
             incarnationByName.put(owner.accounts().instanceName(), owner.createdAt());
             // Only for owners: a build stamp is parsed for no address nobody serves
-            lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config()));
+            lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config(), configByName));
         });
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
                 Map.copyOf(incarnationByName), Map.copyOf(lineageByName));
@@ -456,12 +465,38 @@ public final class InstanceRegistry {
     private record Claimant(InstanceAccounts accounts, boolean running, String secretSha256, boolean mcpCaller,
                             String createdAt, JqValue config) {}
 
-    private static Lineage lineageOf(JqValue config) {
-        // A failed build, or a copy of one, still carries its parent's template stamps: what ran in
-        // it was never what they say, so it is nobody's template (#936)
-        if (Metadata.TYPE_FAILED_BUILD.equals(config.pathText(Metadata.TYPE, ""))
-                || !config.pathText(Metadata.UNTRUSTED_LINEAGE, "").isBlank()) {
-            return Lineage.UNKNOWN;
+    /** How many ancestors {@link #lineageOf} asks, against a cycle in hand-edited parents. */
+    private static final int MAX_ANCESTORS = 32;
+
+    private static Map<String, JqValue> configsByName(JqValue root) {
+        var byName = new java.util.HashMap<String, JqValue>();
+        if (!root.isArray()) return byName;
+        for (var instance : root.asList()) {
+            var name = instance.pathText("name", "");
+            var config = instance.getField("config");
+            if (!name.isEmpty() && config instanceof JqObject) byName.put(name, config);
+        }
+        return byName;
+    }
+
+    /**
+     * What an instance was built from. Untrusted when it, or any ancestor this listing still has,
+     * is untrusted by {@link Metadata#untrustedReason}: a failed or unfinished build carries its
+     * parent's template stamps, and so does everything branched from it, which before #936 got no
+     * stamp of its own; walking the {@code parent} names catches a renamed failed build, and a
+     * branch of a branch, as long as the instances between still exist.
+     */
+    private static Lineage lineageOf(JqValue config, Map<String, JqValue> configByName) {
+        var current = config;
+        for (int hop = 0; current != null && hop < MAX_ANCESTORS; hop++) {
+            var ancestor = current;
+            var reason = Metadata.untrustedReason(key -> ancestor.pathText(key, ""));
+            if (!reason.isEmpty()) {
+                return Lineage.untrusted((hop == 0 ? "" : "descended from an instance ") + "stamped untrusted ("
+                        + reason + "): an unfinished, failed or project build, or a copy of one");
+            }
+            var parent = current.pathText(Metadata.PARENT, "");
+            current = parent.isEmpty() ? null : configByName.get(parent);
         }
         var template = java.util.Objects.requireNonNullElse(Metadata.templateOf(Map.of(
                 Metadata.PROFILE, config.pathText(Metadata.PROFILE, ""),

@@ -62,4 +62,40 @@ class InterruptedBranchTest {
         assertEquals("2-2", config.path(Metadata.MCP_SESSION).asText(), "what the caller stamps, it keeps");
         assertEquals("k1", daemon.instance("mcp-src").path("config").path(Metadata.MCP_IDEMPOTENCY_KEY).asText());
     }
+
+    @Test
+    void aBranchOfAFailedBuildIsUntrustedFromItsCopyEvenIfTheBuildPredatesTheStamp() {
+        // #936: a failed build promoted by an older isx carries no taint, and its copy request is the
+        // one moment a branch of it must get one, before anything could give it a secret
+        var daemon = new FakeIncusDaemon()
+                .container("foo-failed-build", Map.of(Metadata.TYPE, Metadata.TYPE_FAILED_BUILD,
+                        Metadata.PROFILE, "tpl-isx-agent"))
+                .refuseWritesContaining("limits.memory");
+        var request = new BranchFlow.Request("foo-failed-build", "dev-1", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of());
+
+        assertThrows(RuntimeException.class,
+                () -> BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of())));
+
+        assertEquals(Metadata.TYPE_FAILED_BUILD,
+                daemon.instance("dev-1").path("config").path(Metadata.UNTRUSTED_LINEAGE).asText());
+    }
+
+    @Test
+    void aBranchOfAnOldBranchOfAFailedBuildIsUntrustedAndNoCallerCanUnsetIt() {
+        // dev-1 was branched from a failed build before #936: no taint, only its parent's name. A
+        // branch of it is stamped by its own copy request, over anything the caller passed
+        var daemon = new FakeIncusDaemon()
+                .container("dev-1", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "foo-failed-build",
+                        Metadata.PROFILE, "tpl-isx-agent"))
+                .refuseWritesContaining("limits.memory");
+        var request = new BranchFlow.Request("dev-1", "dev-2", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of(Metadata.UNTRUSTED_LINEAGE, ""));
+
+        assertThrows(RuntimeException.class,
+                () -> BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of())));
+
+        assertEquals("branched from a failed-build",
+                daemon.instance("dev-2").path("config").path(Metadata.UNTRUSTED_LINEAGE).asText());
+    }
 }

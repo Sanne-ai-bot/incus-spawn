@@ -152,6 +152,34 @@ class HostRouteSecretTest {
     }
 
     @Test
+    void aSharedGroupIsRefusedThroughTheProductionWiringSetgidIncluded() throws Exception {
+        // Through loadOrCreate(configDir, name, warn), as the proxy calls it: the private group it
+        // allows must be the uid's, never a gid read off a file made inside the directory, which in
+        // a setgid directory takes the directory's own group and would let a shared one through
+        var groups = new String(new ProcessBuilder("id", "-G").start().getInputStream().readAllBytes()).strip().split("\\s+");
+        var uid = HostRouteSecret.ownUidForTest(config);
+        var shared = java.util.Arrays.stream(groups).map(Integer::valueOf).filter(g -> !g.equals(uid)).findFirst();
+        org.junit.jupiter.api.Assumptions.assumeTrue(shared.isPresent(), "the test user is in no second group");
+        assertEquals(0, new ProcessBuilder("chgrp", String.valueOf(shared.get()), config.toString()).start().waitFor());
+        Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rwxrwxr-x"));
+        assertEquals(0, new ProcessBuilder("chmod", "g+s", config.toString()).start().waitFor());
+        try {
+            assertNull(HostRouteSecret.loadOrCreate(config, "work.isx.internal", warnings::add));
+            assertTrue(warnings.getFirst().contains("others can write to"), warnings.toString());
+        } finally {
+            new ProcessBuilder("chmod", "g-s", config.toString()).start().waitFor();
+            Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rwx------"));
+        }
+    }
+
+    @Test
+    void aConfigDirectoryThatIsADanglingLinkIsNamedToo() throws Exception {
+        var link = Files.createSymbolicLink(config.resolve("dangling"), config.resolve("nowhere"));
+        assertNull(HostRouteSecret.loadOrCreate(link, "work.isx.internal", warnings::add));
+        assertTrue(warnings.getFirst().contains("which is a link (to "), warnings.toString());
+    }
+
+    @Test
     void aHostRoutesDirectoryAnyGroupCanWriteToIsRefused() throws Exception {
         // The proxy makes it 0700 itself, so no umask is a reason to accept group write there
         var dir = Files.createDirectories(config.resolve("host-routes"));
@@ -166,7 +194,7 @@ class HostRouteSecretTest {
         var real = Files.createDirectories(config.resolve("real"));
         var link = Files.createSymbolicLink(config.resolve("linked"), real);
         assertNull(HostRouteSecret.loadOrCreate(link, "work.isx.internal", warnings::add));
-        assertTrue(warnings.getFirst().contains("which is a link"), warnings.toString());
+        assertTrue(warnings.getFirst().contains("which is a link (to "), warnings.toString());
     }
 
     @Test

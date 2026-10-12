@@ -264,6 +264,11 @@ class InstanceRegistryTest {
                         SECRET_KEY, hash, dev.incusspawn.incus.Metadata.PROFILE, "tpl-isx-agent",
                         dev.incusspawn.incus.Metadata.TYPE, dev.incusspawn.incus.Metadata.TYPE_CLONE,
                         dev.incusspawn.incus.Metadata.UNTRUSTED_LINEAGE, "failed-build"))
+                .instance("old-branch", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.8",
+                        SECRET_KEY, hash, dev.incusspawn.incus.Metadata.PROFILE, "tpl-isx-agent",
+                        dev.incusspawn.incus.Metadata.TYPE, dev.incusspawn.incus.Metadata.TYPE_CLONE,
+                        // branched before #936 from foo-failed-build: no taint, only its parent's name
+                        dev.incusspawn.incus.Metadata.PARENT, "foo-failed-build"))
                 .instance("agent", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.7",
                         SECRET_KEY, hash, dev.incusspawn.incus.Metadata.PROFILE, "tpl-isx-agent",
                         dev.incusspawn.incus.Metadata.TYPE, dev.incusspawn.incus.Metadata.TYPE_CLONE));
@@ -271,12 +276,46 @@ class InstanceRegistryTest {
         registry.refresh();
 
         var route = new dev.incusspawn.config.HostRoutes.Route("work.isx.internal", "127.0.0.1", 1, java.util.List.of("tpl-isx-agent"));
-        for (var address : java.util.List.of("10.0.0.5", "10.0.0.6")) {
+        for (var address : java.util.List.of("10.0.0.5", "10.0.0.6", "10.0.0.8")) {
             var lineage = registry.identifyWithLineage(address, secret).lineage();
-            assertFalse(route.admits(lineage.template(), lineage.projectLocal()), address + " is admitted: " + lineage);
+            assertFalse(route.admits(lineage.template(), lineage.untrusted()), address + " is admitted: " + lineage);
         }
         var agent = registry.identifyWithLineage("10.0.0.7", secret).lineage();
-        assertTrue(route.admits(agent.template(), agent.projectLocal()), "an ordinary branch still is");
+        assertTrue(route.admits(agent.template(), agent.untrusted()), "an ordinary branch still is");
+    }
+
+    @Test
+    void anInstanceDescendedFromAFailedBuildIsNobodysTemplateAtAnyDepth() {
+        // Before #936 nothing was stamped: a branch of a branch of a failed build, and a branch of a
+        // failed build renamed in the TUI, name no -failed-build parent, but their ancestry does
+        var secret = InstanceSecret.generate();
+        var hash = InstanceSecret.sha256(secret);
+        var tpl = dev.incusspawn.incus.Metadata.PROFILE;
+        var type = dev.incusspawn.incus.Metadata.TYPE;
+        var parent = dev.incusspawn.incus.Metadata.PARENT;
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("foo-failed-build", "container", "Stopped", java.util.Map.of(tpl, "tpl-isx-agent",
+                        type, dev.incusspawn.incus.Metadata.TYPE_FAILED_BUILD, parent, "foo"))
+                .instance("dev-1", "container", "Stopped", java.util.Map.of(tpl, "tpl-isx-agent",
+                        type, dev.incusspawn.incus.Metadata.TYPE_CLONE, parent, "foo-failed-build"))
+                .instance("dev-2", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5", SECRET_KEY, hash,
+                        tpl, "tpl-isx-agent", type, dev.incusspawn.incus.Metadata.TYPE_CLONE, parent, "dev-1"))
+                .instance("foo-debug", "container", "Stopped", java.util.Map.of(tpl, "tpl-isx-agent",
+                        type, dev.incusspawn.incus.Metadata.TYPE_FAILED_BUILD, parent, "foo"))
+                .instance("dev-3", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.6", SECRET_KEY, hash,
+                        tpl, "tpl-isx-agent", type, dev.incusspawn.incus.Metadata.TYPE_CLONE, parent, "foo-debug"))
+                .instance("tpl-isx-agent", "container", "Stopped", java.util.Map.of(tpl, "tpl-isx-agent",
+                        type, dev.incusspawn.incus.Metadata.TYPE_BASE, parent, "tpl-isx"))
+                .instance("dev-4", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.7", SECRET_KEY, hash,
+                        tpl, "tpl-isx-agent", type, dev.incusspawn.incus.Metadata.TYPE_CLONE, parent, "tpl-isx-agent"));
+        var registry = new InstanceRegistry(daemon.client());
+        registry.refresh();
+
+        assertTrue(registry.identifyWithLineage("10.0.0.5", secret).lineage().untrusted(), "a branch of a branch");
+        assertTrue(registry.identifyWithLineage("10.0.0.6", secret).lineage().untrusted(), "of a renamed failed build");
+        var trusted = registry.identifyWithLineage("10.0.0.7", secret).lineage();
+        assertFalse(trusted.untrusted(), "an ordinary branch, whose ancestors are templates: " + trusted);
+        assertEquals("tpl-isx-agent", trusted.template());
     }
 
     @Test
@@ -393,9 +432,9 @@ class InstanceRegistryTest {
 
         assertEquals(new InstanceRegistry.Identified("agent", new InstanceRegistry.Lineage("tpl-agent", false)),
                 registry.identifyWithLineage("10.0.0.5", secret));
-        assertTrue(registry.identifyWithLineage("10.0.0.6", secret).lineage().projectLocal());
-        assertTrue(registry.identifyWithLineage("10.0.0.7", secret).lineage().projectLocal());
-        assertTrue(registry.identifyWithLineage("10.0.0.8", secret).lineage().projectLocal(),
+        assertTrue(registry.identifyWithLineage("10.0.0.6", secret).lineage().untrusted());
+        assertTrue(registry.identifyWithLineage("10.0.0.7", secret).lineage().untrusted());
+        assertTrue(registry.identifyWithLineage("10.0.0.8", secret).lineage().untrusted(),
                 "a build stamp that cannot be read cannot show it was not");
         assertNull(registry.identifyWithLineage("10.0.0.5", InstanceSecret.generate()));
     }

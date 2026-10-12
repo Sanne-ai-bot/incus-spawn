@@ -65,6 +65,11 @@ public final class HostRouteSecret {
     }
 
     static String loadOrCreate(Path configDir, String name, Consumer<String> warn) {
+        // Before the uid probe, which would make its file through the link
+        if (Files.isSymbolicLink(configDir)) {
+            warn.accept(refusing(name) + "its config directory " + isALink(configDir));
+            return null;
+        }
         Integer uid;
         try {
             uid = ownUid(configDir);
@@ -138,7 +143,6 @@ public final class HostRouteSecret {
         return (Integer) Files.getAttribute(path, "unix:uid", LinkOption.NOFOLLOW_LINKS);
     }
 
-    /** That {@code path} is a directory of {@code uid}'s that nobody else can write to. */
     /**
      * That {@code path} is a directory of {@code uid}'s that nobody else can write to. Group write
      * is accepted only when the directory's group is {@code privateGroup}, by number; null accepts
@@ -146,8 +150,7 @@ public final class HostRouteSecret {
      */
     private static void requireOwnDirectory(Path path, Integer uid, Integer privateGroup) throws IOException {
         if (Files.isSymbolicLink(path)) {
-            throw new Unusable("is under " + path + ", which is a link: the proxy checks the real directory only "
-                    + "(point the link's users at " + path.toRealPath() + ", or make " + path + " a directory)");
+            throw new Unusable("is under " + isALink(path));
         }
         if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
             throw new Unusable("is not in a directory: " + path + " is something else");
@@ -164,6 +167,18 @@ public final class HostRouteSecret {
                 throw new Unusable("is in " + path + ", which others can write to (chmod go-w it)");
             }
         }
+    }
+
+    /** That {@code link} is one, and what to do. Never toRealPath: a dangling link gets this too. */
+    private static String isALink(Path link) {
+        String target;
+        try {
+            target = String.valueOf(Files.readSymbolicLink(link));
+        } catch (IOException e) {
+            target = "an unreadable target";
+        }
+        return link + ", which is a link (to " + target + "): the proxy checks the real directory only, so make "
+                + link + " that directory";
     }
 
     private static int gidOf(Path path) throws IOException {

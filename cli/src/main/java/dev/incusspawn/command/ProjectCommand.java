@@ -32,6 +32,10 @@ import static dev.incusspawn.incus.Container.shellQuote;
 )
 public class ProjectCommand extends BaseCommand {
 
+    /** What an {@code isx project} build carries from its copy on (#936). */
+    static final java.util.Map<String, String> PROJECT_BUILD =
+            java.util.Map.of(Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_PROJECT);
+
     @Override
     protected CommandResult doExecute() throws Exception {
         System.out.println(commandInvocation.getHelpInfo());
@@ -118,7 +122,9 @@ public class ProjectCommand extends BaseCommand {
                 try {
                     var machineType = incus.machineType(parent);
                     BuildOutput.stepStart("Cloning from " + parent + "...");
-                    incus.copy(parent, buildName);
+                    // Untrusted from the copy on, and for good: what a project's setup ran is never
+                    // its parent template, done or not (#936)
+                    incus.copy(parent, buildName, PROJECT_BUILD);
                     // Copied: another isx's rebuild of the parent may go ahead
                     parentHeld.close();
                     // The parent's own settings are the project template's, but not its Secure Boot

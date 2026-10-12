@@ -1185,10 +1185,16 @@ public class IncusClient {
      * before first boot.
      */
     public void create(String image, String name, MachineType type) {
+        create(image, name, type, Map.of());
+    }
+
+    /** As above, with {@code config} set by the create request itself. */
+    public void create(String image, String name, MachineType type, Map<String, String> config) {
         var http = http();
         var body = new LinkedHashMap<String, Object>();
         body.put("name", name);
         body.put("type", type.incusApiType());
+        if (!config.isEmpty()) body.put("config", config);
         body.put("source", resolveImageSource(image));
         body.put("storage", requireCowPool());
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
@@ -1336,6 +1342,11 @@ public class IncusClient {
 
     public void copy(String source, String target, CopyPlan plan) {
         copy(source, target, plan, Map.of());
+    }
+
+    /** {@link #copy(String, String)} with {@code configOverrides} set by the copy request itself. */
+    public void copy(String source, String target, Map<String, String> configOverrides) {
+        copy(source, target, planCopy(source), configOverrides);
     }
 
     /**

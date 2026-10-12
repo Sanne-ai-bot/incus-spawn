@@ -776,7 +776,11 @@ public final class FakeIncusDaemon implements IncusTransport {
             if (fingerprint == null || !images.contains(fingerprint)) return notFound();
         }
         var name = request.path("name").asText();
-        instance(name, "container", "Stopped", Map.of("volatile.base_image", fingerprint));
+        // Config given in the create request is set on the instance, as Incus does
+        var config = new java.util.LinkedHashMap<String, String>();
+        request.path("config").properties().forEach(e -> config.put(e.getKey(), e.getValue().asText()));
+        config.put("volatile.base_image", fingerprint);
+        instance(name, "container", "Stopped", config);
         return async();
     }
 

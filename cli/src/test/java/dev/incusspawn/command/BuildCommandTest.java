@@ -122,6 +122,7 @@ class BuildCommandTest {
                     () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
 
             verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal-failed-build");
+            verify(incus, never()).configUnset(anyString(), eq(Metadata.UNTRUSTED_LINEAGE));
             verify(incus).configSetAll(eq("tpl-minimal-failed-build"), argThat(config ->
                     Metadata.TYPE_FAILED_BUILD.equals(config.get(Metadata.UNTRUSTED_LINEAGE))
                             && Metadata.TYPE_FAILED_BUILD.equals(config.get(Metadata.TYPE))));
@@ -1663,6 +1664,58 @@ class BuildCommandTest {
         var def = trusted("tpl-x");
         return cmd.launchBuildInstance(image, "tpl-x-rebuilding", MachineType.CONTAINER, "tpl-x", reimportable,
                 () -> new BuildCommand.Launched(cmd.startBuild("tpl-x-rebuilding", def, Map.of("tpl-x", def)), null));
+    }
+
+    @Test
+    void aBuildContainerIsUntrustedFromItsCreateUntilItsBuildSucceeds(@TempDir Path tmp) {
+        // #936: whatever stops a build (a kill, a lost host, a failed promotion) leaves it untrusted
+        InitCommandTest.withHome(tmp, () -> {
+            var daemon = new FakeIncusDaemon().containerSubvolumes("tpl-x-rebuilding");
+            launch(daemon, "images:fedora/44", false);
+            var config = daemon.instance("tpl-x-rebuilding").path("config");
+            assertEquals(Metadata.UNTRUSTED_BUILDING, config.path(Metadata.UNTRUSTED_LINEAGE).asText(),
+                    "a build from scratch is untrusted from its create request on");
+
+            var cmd = new BuildCommand();
+            cmd.incus = daemon.client();
+            var def = trusted("tpl-x");
+            cmd.tagTemplateMetadata("tpl-x-rebuilding", "tpl-x", def, null, List.of(), Map.of("tpl-x", def), Map.of(), null);
+            assertEquals(Metadata.UNTRUSTED_BUILDING,
+                    daemon.instance("tpl-x-rebuilding").path("config").path(Metadata.UNTRUSTED_LINEAGE).asText(),
+                    "stamping the template's metadata is not the end of the build: what follows can still fail");
+        });
+    }
+
+    @Test
+    void onlyASwappedBuildLosesItsTaintAndOnlyAfterTheSwap(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doNothing().when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+
+            cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef));
+
+            var order = inOrder(incus);
+            order.verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
+            order.verify(incus).configUnset("tpl-minimal", Metadata.UNTRUSTED_LINEAGE);
+        });
+    }
+
+    @Test
+    void aBuildFromAParentIsUntrustedFromItsCopy() {
+        var daemon = new FakeIncusDaemon().container("tpl-parent", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.PROFILE, "tpl-parent"));
+        var cmd = new BuildCommand();
+        cmd.incus = daemon.client();
+        cmd.copyFromParent("tpl-parent", "tpl-x-rebuilding", daemon.client().planCopy("tpl-parent"));
+        var config = daemon.instance("tpl-x-rebuilding").path("config");
+        assertEquals(Metadata.UNTRUSTED_BUILDING, config.path(Metadata.UNTRUSTED_LINEAGE).asText(),
+                "the copy carries its parent's profile, so it must be untrusted from that request on");
+        assertEquals("tpl-parent", config.path(Metadata.PROFILE).asText());
     }
 
     @Test

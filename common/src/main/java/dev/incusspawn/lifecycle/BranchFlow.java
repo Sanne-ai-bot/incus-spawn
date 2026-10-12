@@ -293,6 +293,10 @@ public final class BranchFlow {
         // stamp, but the copy is listed before that, and an agent's idempotency key would make it
         // answer for its source's create meanwhile (#1011). An empty value unsets.
         var sourceConfig = sourceInstance.path("config");
+        // An untrusted source makes an untrusted copy (#936), whatever the caller asked to stamp: a
+        // failed build, or a branch of one, from before the taint existed gets it here
+        var untrusted = Metadata.untrustedReason(key -> sourceConfig.path(key).asText(""));
+        if (!untrusted.isEmpty()) copyConfig.put(Metadata.UNTRUSTED_LINEAGE, untrusted);
         if (sourceConfig instanceof io.hyperfoil.tools.jjq.value.JqObject sourceObj) {
             sourceObj.keys().forEach(key -> {
                 if (Metadata.isMcpKey(key)) copyConfig.putIfAbsent(key, "");

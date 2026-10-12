@@ -179,13 +179,35 @@ public final class Metadata {
     public static final String TYPE_CLONE = "clone";
     public static final String TYPE_FAILED_BUILD = "failed-build";
     /**
-     * Set on a build promoted to {@code <name>-failed-build}: what ran in it is not what any template
-     * says, yet it still carries its parent's {@link #PROFILE} and {@link #BUILD_SOURCE}, which
-     * {@code tagTemplateMetadata} would only have replaced at the end of a build that succeeded.
+     * Set on a build container by the very request that copies or creates it, and removed only by
+     * {@code tagTemplateMetadata} once its build has succeeded: until then what runs in it is not
+     * what any template says, yet a copy carries its parent's {@link #PROFILE} and
+     * {@link #BUILD_SOURCE}. So whatever stops a build (a failure, a kill, a lost host, a promotion
+     * that fails half-way) leaves it set: fail closed. {@code isx project} builds keep it, as do
+     * branches of a {@code failed-build} instance, which get it in their copy request too.
      * Unlike a grant, every copy keeps it (a branch of a failed build is no less what that build
      * left), and an instance carrying it is admitted by no host route (#936). The value says why.
      */
     public static final String UNTRUSTED_LINEAGE = PREFIX + "untrusted-lineage";
+    /** {@link #UNTRUSTED_LINEAGE}'s value on a build container while its build runs. */
+    public static final String UNTRUSTED_BUILDING = "building";
+
+    /**
+     * Why an instance with this config is nobody's template (#936), "" when nothing says so: the
+     * {@link #UNTRUSTED_LINEAGE} stamp, a {@code failed-build} type (promoted before the stamp
+     * existed), or a parent named {@code *-failed-build} (branched from one before then). One rule
+     * for the registry, which also asks it of each ancestor, and for a branch's copy request,
+     * which stamps the answer, so a signal added here reaches both.
+     */
+    public static String untrustedReason(java.util.function.Function<String, String> config) {
+        var stamped = java.util.Objects.requireNonNullElse(config.apply(UNTRUSTED_LINEAGE), "").strip();
+        if (!stamped.isEmpty()) return stamped;
+        if (TYPE_FAILED_BUILD.equals(config.apply(TYPE))) return TYPE_FAILED_BUILD;
+        if (java.util.Objects.requireNonNullElse(config.apply(PARENT), "").endsWith("-" + TYPE_FAILED_BUILD)) {
+            return "branched from a " + TYPE_FAILED_BUILD;
+        }
+        return "";
+    }
 
     public static final String OP_STOPPING = "stopping";
     public static final String OP_RESTARTING = "restarting";
