@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.AccountUsage;
 import dev.incusspawn.config.HostResourceSetup;
@@ -503,6 +504,10 @@ class CredentialSetup {
             }
             if (!name.matches("[A-Za-z0-9._-]+")) {
                 System.out.println("  Use letters, digits, '.', '_' or '-' only.");
+                continue;
+            }
+            if (AccountResolver.INHERIT.equals(name)) {
+                System.out.println("  '" + name + "' is reserved: it takes the credential of the isx instance isx runs in.");
                 continue;
             }
             return name;

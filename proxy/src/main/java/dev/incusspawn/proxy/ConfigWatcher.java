@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -36,6 +37,9 @@ import java.util.function.Supplier;
  * once on Linux (inotify reports attribute changes); macOS's polling watcher compares modification
  * times only, so there one takes effect at the next reload. The proxy creating a secret is a change
  * too, which costs one more reload, after which nothing is created.
+ * <p>
+ * Last, a reload is due whenever {@code stale} says so, asked once a second: the proxy's own test of
+ * state it read with the config, such as whether this machine is an isx instance (#1110).
  */
 public class ConfigWatcher {
 
@@ -50,12 +54,25 @@ public class ConfigWatcher {
     private final Path configDir;
     private final Supplier<List<Path>> toolDirs;
     private final Runnable onReload;
+    private final BooleanSupplier stale;
     private volatile boolean running = true;
+    /**
+     * {@code stale} when last asked, and when it last called for a reload: it calls for one when
+     * it turns true, and again every {@link #STALE_RETRY_NANOS} while reloads fail, never one a second.
+     */
+    private boolean wasStale;
+    private long staleReloadAt;
+    private static final long STALE_RETRY_NANOS = TimeUnit.SECONDS.toNanos(30);
 
     public ConfigWatcher(Path configDir, Supplier<List<Path>> toolDirs, Runnable onReload) {
+        this(configDir, toolDirs, onReload, () -> false);
+    }
+
+    public ConfigWatcher(Path configDir, Supplier<List<Path>> toolDirs, Runnable onReload, BooleanSupplier stale) {
         this.configDir = configDir;
         this.toolDirs = toolDirs;
         this.onReload = onReload;
+        this.stale = stale;
     }
 
     public void start() {
@@ -82,9 +99,14 @@ public class ConfigWatcher {
                     Thread.currentThread().interrupt();
                     return;
                 }
-                if (key == null) continue;
-
-                boolean relevant = false;
+                boolean nowStale = stale.getAsBoolean();
+                boolean relevant = nowStale && (!wasStale || System.nanoTime() - staleReloadAt >= STALE_RETRY_NANOS);
+                if (relevant) staleReloadAt = System.nanoTime();
+                wasStale = nowStale;
+                if (key == null) {
+                    if (relevant) reload();
+                    continue;
+                }
                 for (var event : key.pollEvents()) {
                     if (event.kind() == StandardWatchEventKinds.OVERFLOW) continue;
                     var path = (Path) event.context();
@@ -109,12 +131,7 @@ public class ConfigWatcher {
                         drainKey.pollEvents();
                         drainKey.reset();
                     }
-                    try {
-                        onReload.run();
-                    } catch (Exception e) {
-                        System.err.println("Config reload failed: " + e.getMessage());
-                        ProxyLog.error("Config reload failed: " + e.getMessage());
-                    }
+                    reload();
                 }
             }
         } catch (InterruptedException e) {
@@ -124,6 +141,15 @@ public class ConfigWatcher {
                 System.err.println("Config watcher failed: " + e.getMessage());
                 ProxyLog.error("Config watcher failed: " + e.getMessage());
             }
+        }
+    }
+
+    private void reload() {
+        try {
+            onReload.run();
+        } catch (Exception e) {
+            System.err.println("Config reload failed: " + e.getMessage());
+            ProxyLog.error("Config reload failed: " + e.getMessage());
         }
     }
 

@@ -192,6 +192,11 @@ public class MitmProxy {
      *                               secret its controller checks; their names
      *                               are in the routing's intercepted domains, for certificates
      *                               and bridge DNS, and nowhere in its credential lookups
+     * @param placeholders           each namespace's placeholders, one per prefix: the proofs
+     *                               an instance inheriting it has swapped (#1110)
+     * @param nested                 whether this machine was an isx instance when the domains
+     *                               were decided: inside one, they include every domain whose
+     *                               credential can be inherited ({@link #refreshNesting})
      */
     private record ConfigState(
             dev.incusspawn.config.SpawnConfig config,
@@ -203,20 +208,25 @@ public class MitmProxy {
             Map<String, java.util.Set<String>> namespacesByDomain,
             Map<Map<String, String>, AccountBundle> credentialsBySelection,
             Map<InstanceRegistry.InstanceAccounts, Map<String, String>> mismatchesByInstance,
-            Map<String, HostRouteRelay.Served> hostRoutes) {
+            Map<String, HostRouteRelay.Served> hostRoutes,
+            Map<String, List<ProofToken.Placeholder>> placeholders,
+            boolean nested) {
 
         ConfigState(dev.incusspawn.config.SpawnConfig config,
                     io.hyperfoil.tools.jjq.value.JqValue configTree,
                     Map<String, dev.incusspawn.tool.ToolSetup> toolSetups,
                     ProxyCredentials credentials,
                     List<ResolvedToolProxy> proxiesAcrossAccounts,
-                    Map<String, HostRouteRelay.Served> hostRoutes) {
+                    Map<String, HostRouteRelay.Served> hostRoutes,
+                    boolean nested) {
             this(config, configTree, toolSetups, credentials,
                     withHostRoutes(buildRouting(credentials.toolProxies(), proxiesAcrossAccounts, true),
                             hostRoutes.keySet()),
                     dev.incusspawn.config.AccountSelection.byNamespace(toolSetups),
                     dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups),
-                    new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), hostRoutes);
+                    new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), hostRoutes,
+                    InheritedProof.byNamespace(ProofToken.declaredBy(toolSetups.values())),
+                    nested);
         }
     }
 
@@ -244,7 +254,8 @@ public class MitmProxy {
      */
     record RequestContext(String domain, InstanceRegistry.Caller caller,
                           ProxyCredentials creds, ToolProxyRouting routing,
-                          boolean usesDefaultCredentials, ApiActivity.Flow flow) {}
+                          boolean usesDefaultCredentials, ApiActivity.Flow flow,
+                          InheritedProof.Swap inherited) {}
 
     /**
      * Credentials plus the routing that indexes them, cached together per selection; or, for
@@ -297,7 +308,7 @@ public class MitmProxy {
                      String healthBindAddress, ProxyCredentials credentials) {
         this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress, ConfigFingerprint.capture());
         this.configState = new ConfigState(NO_CONFIG, NO_CONFIG.tree(), Map.of(), credentials,
-                credentials.toolProxies(), Map.of());
+                credentials.toolProxies(), Map.of(), false);
     }
 
     /** The config of a proxy built from credentials alone: empty, and never compared on reload. */
@@ -386,7 +397,8 @@ public class MitmProxy {
             refuseIfUnservable(state, instance, domain);
         }
         if (instance == null || instance.usesDefaults()) {
-            return new RequestContext(domain, caller, state.credentials(), state.routing(), true, flow);
+            return new RequestContext(domain, caller, state.credentials(), state.routing(), true, flow,
+                    inheritedProofs(state, state.credentials(), domain));
         }
         var selection = instance.accountsByNamespace();
         // Plain get() first: this runs on the event loop for every intercepted request, and
@@ -403,7 +415,85 @@ public class MitmProxy {
             state.credentialsBySelection().putIfAbsent(selection, bundle);
         }
         if (bundle.unknown() != null) throw bundle.unknown();
-        return new RequestContext(domain, caller, bundle.creds(), bundle.routing(), false, flow);
+        return new RequestContext(domain, caller, bundle.creds(), bundle.routing(), false, flow,
+                inheritedProofs(state, bundle.creds(), domain));
+    }
+
+    /**
+     * The swap that presents the parent instance's proofs for the namespaces {@code creds}
+     * inherit and a request to {@code domain} spends (#1110), or null for none. The parent's
+     * secret is the one read last, off the event loop ({@link #parentSecret}). Without one this
+     * isx is not running nested, and the request is refused as for a missing account.
+     */
+    private InheritedProof.Swap inheritedProofs(ConfigState state, ProxyCredentials creds, String domain) {
+        var inherited = creds.inheritedNamespaces();
+        if (inherited.isEmpty()) return null;
+        var namespaces = dev.incusspawn.config.AccountSelection.namespacesForDomain(state.namespacesByDomain(), domain)
+                .stream().filter(inherited::contains).toList();
+        if (namespaces.isEmpty()) return null;
+        var secret = parentSecret();
+        if (secret == null) {
+            throw new dev.incusspawn.config.AccountResolver.UnknownAccountException(namespaces.getFirst(),
+                    dev.incusspawn.config.AccountResolver.INHERIT, InheritedProof.notNestedMessage(namespaces.getFirst()));
+        }
+        // Unverified until #1107: a nested process presenting any proof-shaped token gets the
+        // parent's, as it gets an inner account's injected today. #1107's check of the instance's
+        // own proof has to come before the swap, as before any injection.
+        return InheritedProof.Swap.of(secret, namespaces, state.placeholders());
+    }
+
+    /** Why a request was refused for {@code e}, for the log: inheriting is never a missing account. */
+    private static String refusal(dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
+        return dev.incusspawn.config.AccountResolver.INHERIT.equals(e.accountName())
+                ? ": " + e.getMessage()
+                : ", pinned to missing " + e.namespace() + " account '" + e.accountName() + "'";
+    }
+
+    /**
+     * The parent instance's secret as last read: with every config read, by the config watcher
+     * every second, and by a request that finds it older than {@link #PARENT_SECRET_MAX_AGE_NANOS}
+     * -- never on the event loop. It changes on every start of the parent, which restarts this
+     * proxy too, and when {@code isx shell} gives a running VM a new one (#1024).
+     */
+    private volatile String parentSecret;
+    private volatile long parentSecretReadAt;
+    private final java.util.concurrent.atomic.AtomicBoolean parentSecretReadInFlight =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private static final long PARENT_SECRET_MAX_AGE_NANOS = TimeUnit.SECONDS.toNanos(1);
+    /** Set when the nesting changed, cleared once a reload has completed: what the watcher retries. */
+    private volatile boolean nestingReloadDue;
+
+    /** Blocking: the parent's secret, read again. */
+    private void readParentSecret() {
+        parentSecret = InheritedProof.parentSecret();
+        parentSecretReadAt = System.nanoTime();
+    }
+
+    /**
+     * {@link #parentSecret}, reading it again in the background when it is old: the request that
+     * finds it so uses it as it is, the next ones the new one. Not the watcher's alone, which a
+     * proxy started some other way, or a watcher that ended, would leave never refreshed.
+     */
+    private String parentSecret() {
+        if (System.nanoTime() - parentSecretReadAt > PARENT_SECRET_MAX_AGE_NANOS
+                && vertx != null && parentSecretReadInFlight.compareAndSet(false, true)) {
+            vertx.executeBlocking(() -> { readParentSecret(); return null; })
+                    .onComplete(ar -> parentSecretReadInFlight.set(false));
+        }
+        return parentSecret;
+    }
+
+    /**
+     * Reads the parent instance's secret again, and says whether a reload is due because this
+     * machine became, or stopped being, an isx instance since the domains were decided -- until
+     * one completes, so a reload that fails is retried. A proxy started at boot, before the
+     * parent's isx delivered its secret, would otherwise never intercept what an instance can
+     * inherit. Blocking: the config watcher calls it.
+     */
+    boolean refreshNesting() {
+        readParentSecret();
+        if (configState.nested() != InheritedProof.nested()) nestingReloadDue = true;
+        return nestingReloadDue;
     }
 
     /**
@@ -438,12 +528,14 @@ public class MitmProxy {
         var setups = ToolProxyResolver.proxyToolSetups(config);
         var tree = config.tree();
         var previous = configState;
+        var nested = InheritedProof.nested();
+        readParentSecret();
         // The default selection is resolved once, and seeds the across-accounts set.
         var credentials = ProxyCredentials.forAccounts(config, tree, Map.of(), setups);
-        var acrossAccounts = ToolProxyResolver.resolveAcrossAccounts(tree, setups, credentials.toolProxies());
+        var acrossAccounts = ToolProxyResolver.resolveAcrossAccounts(tree, setups, credentials.toolProxies(), nested);
         configState = new ConfigState(config, tree, setups, credentials, acrossAccounts,
                 HostRouteRelay.served(ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn),
-                        name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)));
+                        name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)), nested);
         artifactCache.artifactCacheTiers = ArtifactCacheTiers.from(config);
         return previous;
     }
@@ -683,6 +775,7 @@ public class MitmProxy {
             // Last, not in useConfig(): a reload that fails part-way keeps the old fingerprint,
             // so /health reports drift and the next command restarts the proxy.
             configFingerprint = loaded.fingerprint();
+            nestingReloadDue = false;
             System.out.println("Configuration reloaded successfully.");
             ProxyLog.info("Configuration reloaded (CA fingerprint: " + caFingerprint + ")");
         } catch (Exception e) {
@@ -1040,9 +1133,7 @@ public class MitmProxy {
                 } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
                     // Fail closed: this instance is pinned to an account that is gone.
                     // Falling back to the default would quietly spend another account.
-                    ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq)
-                            + ", pinned to missing " + e.namespace()
-                            + " account '" + e.accountName() + "'");
+                    ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + refusal(e));
                     sendError(clientReq.response(), 502, e.getMessage());
                     return;
                 } catch (dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
@@ -1166,8 +1257,7 @@ public class MitmProxy {
             // Same fail-closed rule as the HTTP path: an instance pinned to an account
             // that is gone gets an error, never someone else's credential.
             ProxyLog.warn("Refusing WebSocket to " + domain + " for "
-                    + describeCaller(sourceAddressOf(clientWs)) + ", pinned to missing "
-                    + e.namespace() + " account '" + e.accountName() + "'");
+                    + describeCaller(sourceAddressOf(clientWs)) + refusal(e));
             clientWs.reject(502);
             return false;
         } catch (dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
@@ -1243,6 +1333,7 @@ public class MitmProxy {
         }
 
         injectWebSocketAuth(wsOptions, ctx);
+        presentInheritedProofs(wsOptions.getHeaders(), ctx);
 
         // Let Vert.x resolve DNS via its built-in resolver (configured on the
         // Vertx instance).  Unlike HTTP requests, WebSocket ignores setServer(),
@@ -1414,7 +1505,9 @@ public class MitmProxy {
         // A compressed answer would hide its token usage from apiActivity
         if (exchange != null) upReq.putHeader("Accept-Encoding", "identity");
         return injectHeaders(upReq, ctx, upstreamHost, isVertexRequest).map(ok -> {
-            if (!ok) {
+            if (ok) {
+                presentInheritedProofs(upReq.headers(), ctx);
+            } else {
                 var err = authError;
                 sendError(clientReq.response(), 502, err != null ? err : "Failed to obtain upstream credentials");
             }
@@ -1806,7 +1899,8 @@ public class MitmProxy {
                 upReq.headers().remove("x-api-key");
             } else if (!credentials.anthropicApiKey().isBlank()) {
                 upReq.putHeader("x-api-key", credentials.anthropicApiKey());
-            } else {
+            } else if (!credentials.inheritedNamespaces().contains(dev.incusspawn.config.SpawnConfig.ClaudeConfig.NAMESPACE)) {
+                // Inherited, it carries the proof presentInheritedProofs swaps
                 upReq.headers().remove("x-api-key");
             }
         } else {
@@ -1820,6 +1914,22 @@ public class MitmProxy {
             }
         }
         return Future.succeededFuture(true);
+    }
+
+    /**
+     * Every proof the request carries for a namespace it inherits, swapped for the parent
+     * instance's (#1110), in place: the same header and prefix, so it reaches the outer proxy as
+     * the parent's own tool would send it. Anything else -- a static placeholder, a caller's own
+     * token -- is left as it is.
+     */
+    private static void presentInheritedProofs(io.vertx.core.MultiMap headers, RequestContext ctx) {
+        var swap = ctx.inherited();
+        if (swap == null || headers == null) return;
+        for (var name : Set.copyOf(headers.names())) {
+            var values = headers.getAll(name);
+            var swapped = values.stream().map(swap::apply).toList();
+            if (!swapped.equals(values)) headers.set(name, swapped);
+        }
     }
 
     // --- GCP access token ---

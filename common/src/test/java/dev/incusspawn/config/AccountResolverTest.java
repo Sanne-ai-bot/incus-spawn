@@ -161,4 +161,33 @@ class AccountResolverTest {
         assertTrue(e.getMessage().contains("incomplete") && e.getMessage().contains("it has no token"),
                 e.getMessage());
     }
+
+    /**
+     * {@code inherit} (#1110) is reserved: it resolves to itself, pinned or as the default, and
+     * never to an account this isx holds -- not the first usable one, not the flat credential,
+     * not an {@code accounts:} entry of that name.
+     */
+    @Test
+    void inheritIsReservedAndHoldsNothingHere() throws Exception {
+        var t = tree("""
+                github:
+                  token: "ghp_flat"
+                  accounts:
+                    inherit:
+                      token: "ghp_shadowed"
+                    personal:
+                      token: "ghp_personal"
+                  default: inherit
+                """);
+        assertEquals("inherit", AccountResolver.effectiveAccount(t, "github", GITHUB, null));
+        assertEquals("inherit", AccountResolver.effectiveAccount(t, "github", GITHUB, "inherit"));
+        assertEquals("personal", AccountResolver.effectiveAccount(t, "github", GITHUB, "personal"));
+        assertEquals(java.util.List.of("personal"), AccountResolver.accountNames(t, "github", GITHUB));
+        assertEquals("", AccountResolver.value(t, "github", "inherit", "token"));
+        assertTrue(AccountResolver.inherits(t, "github", null));
+        assertTrue(AccountResolver.inherits(t, "github", "inherit"));
+        assertFalse(AccountResolver.inherits(t, "github", "personal"));
+        // Pinned to inherit with no account configured at all: still not a missing account
+        assertEquals("inherit", AccountResolver.effectiveAccount(tree("{}"), "github", GITHUB, "inherit"));
+    }
 }

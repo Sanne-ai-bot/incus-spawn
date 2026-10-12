@@ -55,6 +55,14 @@ public final class AccountResolver {
     /** Name a flat, pre-accounts credential presents as, and the account a fresh one is saved to. */
     public static final String FLAT_ACCOUNT_NAME = "default";
 
+    /**
+     * The reserved account that takes a namespace's credential from the isx instance this isx
+     * runs in (#1110, {@link dev.incusspawn.proxy.InheritedProof}). Selected like any account,
+     * by a pin or as {@code default}; it holds no values here, and an {@code accounts:} entry of
+     * that name is never served.
+     */
+    public static final String INHERIT = "inherit";
+
     private AccountResolver() {}
 
     /** Thrown when an instance names an account that is not configured, or cannot be used. */
@@ -83,10 +91,14 @@ public final class AccountResolver {
      * <p>With nothing selected, the namespace's {@code default} applies when it names a usable
      * account, and otherwise the first usable account in file order.
      *
+     * <p>{@link #INHERIT}, selected or as the default, resolves to itself whatever is configured:
+     * whether this isx runs nested is the proxy's question, asked on every request.
+     *
      * @param selected the name chosen by instance or template, or null/blank for none
      */
     public static String effectiveAccount(JqValue configTree, String namespace,
                                           AccountShape shape, String selected) {
+        if (inherits(configTree, namespace, selected)) return INHERIT;
         var ns = namespaceNode(configTree, namespace);
         var accounts = accounts(ns, shape);
         if (selected != null && !selected.isBlank()) {
@@ -114,6 +126,17 @@ public final class AccountResolver {
             if (accountProblem(shape, entry.getValue(), ns).isEmpty()) return entry.getKey();
         }
         return "";
+    }
+
+    /**
+     * Whether {@code namespace} resolves to {@link #INHERIT} for {@code selected}, as
+     * {@link #effectiveAccount} would decide it -- without resolving anything else, so it never
+     * raises.
+     */
+    public static boolean inherits(JqValue configTree, String namespace, String selected) {
+        return selected == null || selected.isBlank()
+                ? INHERIT.equals(defaultName(configTree, namespace))
+                : INHERIT.equals(selected);
     }
 
     // Config-taking forms. Every caller outside the proxy's resolution loop has a SpawnConfig
@@ -188,6 +211,8 @@ public final class AccountResolver {
     public static String value(JqValue configTree, String namespace,
                                String accountName, String key) {
         if (namespace.isBlank() || key.isBlank()) return "";
+        // Not even the flat credential: the parent instance's isx holds this one
+        if (INHERIT.equals(accountName)) return "";
         if (accountName != null && !accountName.isBlank()) {
             var fromAccount = navigate(configTree,
                     namespace + "." + ACCOUNTS_KEY + "." + accountName + "." + key);
@@ -274,7 +299,9 @@ public final class AccountResolver {
         var result = new LinkedHashMap<String, Account>();
         var block = accountsNode(namespace);
         if (block != null) {
-            block.asMap().forEach((name, node) -> result.put(name, new Account(node, false)));
+            block.asMap().forEach((name, node) -> {
+                if (!INHERIT.equals(name)) result.put(name, new Account(node, false));
+            });
         } else if (shape.hasFlatCredential(namespace)) {
             result.put(FLAT_ACCOUNT_NAME, new Account(FLAT_ACCOUNT, true));
         }

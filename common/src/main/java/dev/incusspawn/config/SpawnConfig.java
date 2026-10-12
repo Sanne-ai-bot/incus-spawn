@@ -354,9 +354,13 @@ public class SpawnConfig {
             return null;
         }
 
-        /** The account to use when nothing narrower applies: no instance or template selection. */
+        /**
+         * The account to use when nothing narrower applies: no instance or template selection.
+         * None when the default is {@link AccountResolver#INHERIT}: the credential is the parent
+         * instance's, never one of these.
+         */
         public ClaudeAccount account() {
-            return accountFor(a -> true);
+            return AccountResolver.INHERIT.equals(defaultAccount) ? null : accountFor(a -> true);
         }
 
         /**
@@ -372,10 +376,14 @@ public class SpawnConfig {
         public ClaudeAccount accountNamed(String name) {
             if (name == null || name.isBlank()) return account();
             var resolved = AccountResolver.effectiveAccount(asConfigTree(), NAMESPACE, ACCOUNT_SHAPE, name);
-            return typedAccount(resolved);
+            return AccountResolver.INHERIT.equals(resolved) ? null : typedAccount(resolved);
         }
 
-        /** Name of the account {@link #account()} resolves to, or "" when none is configured. */
+        /**
+         * Name of the account {@link #account()} resolves to, or "" when none is configured. With
+         * the default {@link AccountResolver#INHERIT}, which {@code account()} gives none for, the
+         * account {@code isx init} offers to edit: the first configured.
+         */
         public String accountName() {
             return accountNameFor(a -> true);
         }

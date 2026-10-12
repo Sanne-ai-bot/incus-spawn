@@ -92,6 +92,8 @@ public class GhSetup implements ToolSetup {
     public String bakedAccountIdentity(SpawnConfig config, String accountName) {
         var account = AccountResolver.effectiveAccount(config, NAMESPACE, accountName);
         if (account.isEmpty()) return "";
+        // Whoever the parent instance's account is: a move to or from it re-derives the identity
+        if (AccountResolver.INHERIT.equals(account)) return account;
         var token = AccountResolver.value(config, NAMESPACE, account, "token");
         // Nothing to derive an identity from, so nothing is baked: an account with no token --
         // a flat config holding only an email presents as one -- leaves a build without a

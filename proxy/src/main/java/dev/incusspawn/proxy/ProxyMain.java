@@ -160,7 +160,7 @@ public class ProxyMain implements QuarkusApplication {
         }
 
         var configWatcher = new ConfigWatcher(
-                SpawnConfig.configDir(), proxy::toolDirs, proxy::reload);
+                SpawnConfig.configDir(), proxy::toolDirs, proxy::reload, proxy::refreshNesting);
         configWatcher.start();
         ProxyLog.info("Config watcher started");
 

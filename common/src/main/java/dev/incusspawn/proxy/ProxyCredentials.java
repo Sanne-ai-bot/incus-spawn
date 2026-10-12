@@ -1,8 +1,10 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.SpawnConfig;
 
 import java.util.List;
+import java.util.Set;
 
 public record ProxyCredentials(
         String anthropicApiKey,
@@ -10,14 +12,27 @@ public record ProxyCredentials(
         boolean useVertex,
         String vertexRegion,
         String vertexProjectId,
-        List<ResolvedToolProxy> toolProxies
+        List<ResolvedToolProxy> toolProxies,
+        Set<String> inheritedNamespaces
 ) {
+    /**
+     * @param inheritedNamespaces the namespaces resolved to {@link AccountResolver#INHERIT}: none
+     *                            of their credentials is here, and the proxy presents the parent
+     *                            instance's proof for them instead ({@link InheritedProof})
+     */
     public ProxyCredentials {
         anthropicApiKey = anthropicApiKey != null ? anthropicApiKey : "";
         oauthToken = oauthToken != null ? oauthToken : "";
         vertexRegion = vertexRegion != null ? vertexRegion : "";
         vertexProjectId = vertexProjectId != null ? vertexProjectId : "";
         toolProxies = toolProxies != null ? toolProxies : List.of();
+        inheritedNamespaces = inheritedNamespaces != null ? Set.copyOf(inheritedNamespaces) : Set.of();
+    }
+
+    /** Credentials inheriting nothing. */
+    public ProxyCredentials(String anthropicApiKey, String oauthToken, boolean useVertex, String vertexRegion,
+                            String vertexProjectId, List<ResolvedToolProxy> toolProxies) {
+        this(anthropicApiKey, oauthToken, useVertex, vertexRegion, vertexProjectId, toolProxies, Set.of());
     }
 
     /** Credentials for the configured defaults -- used for host-side work and template builds. */
@@ -78,8 +93,23 @@ public record ProxyCredentials(
                 vertex,
                 account == null ? "" : account.getCloudMlRegion(),
                 account == null ? "" : account.getVertexProjectId(),
-                resolved
+                resolved,
+                inherited(configTree, accountsByNamespace, toolSetups)
         );
+    }
+
+    private static Set<String> inherited(io.hyperfoil.tools.jjq.value.JqValue configTree,
+                                         java.util.Map<String, String> accountsByNamespace,
+                                         java.util.Map<String, dev.incusspawn.tool.ToolSetup> toolSetups) {
+        var inherited = new java.util.HashSet<String>();
+        for (var tool : toolSetups.values()) {
+            for (var namespace : tool.credentialNamespaces()) {
+                if (AccountResolver.inherits(configTree, namespace, accountsByNamespace.get(namespace))) {
+                    inherited.add(namespace);
+                }
+            }
+        }
+        return inherited;
     }
 
     public List<String> toolProxyNames() {

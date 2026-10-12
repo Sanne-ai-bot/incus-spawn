@@ -8,9 +8,28 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfigWatcherTest {
+
+    /** #1110: a reload a stale state calls for is one, not one a second while it stays stale. */
+    @Test
+    void aStaleStateReloadsOnceWhenItTurnsStale(@TempDir Path dir) throws Exception {
+        var configDir = Files.createDirectories(dir.resolve("config"));
+        var reloads = new java.util.concurrent.Semaphore(0);
+        var stale = new java.util.concurrent.atomic.AtomicBoolean();
+        // A reload that fails leaves the state stale
+        var watcher = new ConfigWatcher(configDir, List::of, reloads::release, stale::get);
+        watcher.start();
+        try {
+            stale.set(true);
+            assertTrue(reloads.tryAcquire(5, TimeUnit.SECONDS), "turning stale should reload");
+            assertFalse(reloads.tryAcquire(2, TimeUnit.SECONDS), "staying stale should not reload every second");
+        } finally {
+            watcher.stop();
+        }
+    }
 
     @Test
     void anEditToAToolUnderASearchPathReloads(@TempDir Path dir) throws Exception {

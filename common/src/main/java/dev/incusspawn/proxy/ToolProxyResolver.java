@@ -168,15 +168,20 @@ public final class ToolProxyResolver {
     public static List<ResolvedToolProxy> resolveAcrossAccounts(
             SpawnConfig config, Map<String, ToolSetup> toolSetups) {
         var configTree = config.tree();
-        return resolveAcrossAccounts(configTree, toolSetups, resolve(configTree, toolSetups, Map.of()));
+        return resolveAcrossAccounts(configTree, toolSetups, resolve(configTree, toolSetups, Map.of()),
+                InheritedProof.nested());
     }
 
     /**
      * As above, against a config tree the caller already serialized and the default
      * selection's entries the caller already resolved from it, so neither is done twice.
+     *
+     * @param nested whether this machine is an isx instance ({@link InheritedProof#nested}): then
+     *               the domains whose credential an instance can inherit are added
      */
     public static List<ResolvedToolProxy> resolveAcrossAccounts(
-            JqValue configTree, Map<String, ToolSetup> toolSetups, List<ResolvedToolProxy> defaults) {
+            JqValue configTree, Map<String, ToolSetup> toolSetups, List<ResolvedToolProxy> defaults,
+            boolean nested) {
         var seen = new LinkedHashMap<String, ResolvedToolProxy>();
         for (var resolved : defaults) {
             seen.putIfAbsent(resolved.toolName() + "\t" + resolved.domain(), resolved);
@@ -204,7 +209,35 @@ public final class ToolProxyResolver {
                 seen.putIfAbsent(resolved.toolName() + "\t" + resolved.domain(), resolved);
             }
         }
+        if (nested) {
+            for (var resolved : inheritable(toolSetups)) {
+                seen.putIfAbsent(resolved.toolName() + "\t" + resolved.domain(), resolved);
+            }
+        }
         return List.copyOf(seen.values());
+    }
+
+    /**
+     * Inside an isx instance, the domains of every tool whose credential can be inherited from it
+     * -- one that declares a placeholder, so the parent holds a proof for it -- with no credential:
+     * an instance pinned to {@link AccountResolver#INHERIT} has its proofs swapped only on a
+     * domain the proxy intercepts, and a pin is not known when the domains are decided.
+     */
+    private static List<ResolvedToolProxy> inheritable(Map<String, ToolSetup> toolSetups) {
+        var result = new ArrayList<ResolvedToolProxy>();
+        toolSetups.forEach((toolName, tool) -> {
+            var proxyDef = tool.proxy();
+            if (proxyDef == null || tool.placeholders().isEmpty()) return;
+            for (var auth : proxyDef.getAuth()) {
+                if (auth.getDomains() == null || auth.getType() == null) continue;
+                for (var domain : auth.getDomains()) {
+                    if (domain != null && !domain.isBlank()) {
+                        result.add(new ResolvedToolProxy(toolName, domain, auth, Map.of()));
+                    }
+                }
+            }
+        });
+        return result;
     }
 
     public record UnresolvedToolProxy(String toolName, String configKey) {}
@@ -265,7 +298,9 @@ public final class ToolProxyResolver {
      * may share one (Copilot borrows {@code github.token}). An entry whose config path is
      * malformed ({@link dev.incusspawn.config.SecretRegistry#isNavigable}) is not asked for:
      * nobody could supply it. Tools absent from {@code toolSetups}, and those served only by
-     * {@code type: anthropic}, are skipped: Claude's credential is a typed account.
+     * {@code type: anthropic}, are skipped: Claude's credential is a typed account. Neither is a
+     * key whose namespace is {@link AccountResolver#INHERIT inherited}: it is the parent
+     * instance's, and whether there is one is the caller's question.
      *
      * @param toolSetups the tools the proxy serves ({@link #proxyToolSetups})
      */
@@ -285,7 +320,8 @@ public final class ToolProxyResolver {
                 if (auth.getDomains() == null || auth.getDomains().isEmpty()) continue;
                 if (auth.getType() == null || "anthropic".equals(auth.getType())) continue;
                 var missing = extractReferencedKeys(auth).stream()
-                        .filter(key -> !resolved.containsKey(key) && suppliable(proxyDef, key))
+                        .filter(key -> !resolved.containsKey(key) && suppliable(proxyDef, key)
+                                && !inherited(proxyDef, key, configTree, accountsByNamespace))
                         .toList();
                 if (missing.isEmpty()) {
                     anyServed = true;
@@ -301,6 +337,13 @@ public final class ToolProxyResolver {
             }
         }
         return List.copyOf(result.values());
+    }
+
+    private static boolean inherited(ToolDef.ProxyDef proxyDef, String key, JqValue configTree,
+                                     Map<String, String> accountsByNamespace) {
+        var namespace = proxyDef.namespaceOf(proxyDef.getConfiguration().get(key));
+        return !namespace.isBlank()
+                && AccountResolver.inherits(configTree, namespace, accountsByNamespace.get(namespace));
     }
 
     /** Whether a user could set the entry a key names: it exists, and has somewhere to live. */
@@ -421,6 +464,9 @@ public final class ToolProxyResolver {
             return configDef.getValue();
         }
         var accountName = accountFor(proxyDef, configDef, configTree, toolSetups, accountsByNamespace);
+        // Neither an entry of that name nor the flat credential: the parent instance holds it,
+        // and the proxy presents its proof instead (InheritedProof)
+        if (AccountResolver.INHERIT.equals(accountName)) return "";
         if (!accountName.isBlank()) {
             var accountPath = proxyDef.accountConfigPath(configDef, accountName);
             if (!accountPath.isBlank()) {

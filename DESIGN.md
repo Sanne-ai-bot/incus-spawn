@@ -1681,6 +1681,39 @@ The host records only the secret's SHA-256, which a guest can read from `/dev/in
 Keyed with the secret, nothing the host holds lets anyone derive one.
 The proxy therefore cannot recompute a proof from what it has today: #1107 decides between recording a hash of each namespace's proof at the start (option 1) and re-keying with the hash (option 2, which gives that property up).
 
+**Nested isx: nothing is inherited unless its isx says `inherit` (#1110).**
+An isx running inside an isx instance has its own proxy, and its instances present their own proofs, derived from secrets the inner isx gave them.
+The outer proxy cannot verify those, so once it checks proofs (#1107) a nested machine gets none of the outer credentials.
+That is the rule: a nested machine gets nothing unless its isx says `inherit`, or the user passes a token in by hand (`podman run -e GH_TOKEN …`).
+`inherit` is a reserved account in every namespace of the inner `config.yaml`, chosen like any other: `isx branch --account github=inherit`, a template's `accounts:`, or `github.default: inherit`.
+For an instance resolved to it, the inner proxy injects nothing of its own for that namespace.
+It replaces each proof the request carries for the namespace with the parent instance's: `ProofToken.derive` over the secret the outer isx gave the parent, under the same prefix and in the same header (`InheritedProof`).
+The outer proxy then sees the parent's proof from the parent's address and serves the parent's account, for that namespace only.
+Nothing changes on the outer side: no registration of nested instances, no special mode.
+Keeping the instance's own carrier, rather than writing the credential the way a configured account would, is what lets Claude work in all three auth modes.
+The inner isx does not know which mode the parent uses, and #1107 requires the outer proxy to accept a proof in any of Claude's carriers.
+Only a whole proof of a declared prefix is swapped.
+A static placeholder proves nothing, and a token the caller supplied stays theirs, so `inherit` never fabricates a credential the instance did not present.
+The swap does not yet check that a proof is the instance's own: that needs the verifiers #1107 records, and #1107's check must run before the swap, as before any injection.
+Until then a process nested in an inheriting instance that sends any proof-shaped token gets the parent's, as it gets an inner account's injected today.
+That reaches one level further down: an isx inside an inheriting instance that does not inherit itself still has its own instances' proofs swapped on their way through, since they come from the inheriting instance's address.
+The secret is read from `/run/isx/instance-secret` off the event loop: with every config read, every second by the config watcher, and in the background by a request that finds it more than a second old.
+The parent's rotates on every start, which restarts the machine and the inner proxy with it, and when `isx shell` gives a running VM a new one (#1024), so a request may present the previous proof for up to a second.
+Without that file the inner isx is not running nested, and the request fails closed with a 502, as a pin to a missing account does.
+`isx branch` refuses `inherit` there up front, a pin or `default: inherit` alike (`CredentialCheck`), and so does `isx account set`.
+Nested, an inherited namespace needs no credential in the inner config.
+A Claude build for `inherit` takes the API-key form, which the outer proxy turns into whichever account it serves.
+The git identity is re-derived through the proxy when a pin moves to or from `inherit`, but nothing here sees the parent switch GitHub accounts: the inner identity then stays the old one until a re-pin or a new branch.
+Never falling back matters here as everywhere: the inner default might be anyone's.
+The proxy intercepts a domain only if it was told to when the config was read, while a pin to `inherit` can name a namespace the inner config never mentions.
+So inside an instance the inner proxy intercepts the domains of every tool declaring a placeholder, with nothing to inject for them.
+An instance that does not inherit sends its own token through it unchanged.
+Whether the machine is an instance can change while the proxy runs: one started at boot, before the parent's isx delivered its secret, sees none.
+The config watcher therefore asks every second whether that changed and reloads when it did.
+The alternatives were rejected.
+Intercepting those domains everywhere would MITM traffic on every host for tools nobody configured.
+Intercepting them only when `default: inherit` names them would leave a per-instance pin silently uncovered.
+
 **Fail closed.**
 An instance pinned to an account that has since been renamed or deleted gets an error naming it — never a quiet fall back to the default.
 In the case this feature exists for (#351, a subcontractor whose subscription depends on the client), the default belongs to someone else, so falling back is the specific harm to avoid.
