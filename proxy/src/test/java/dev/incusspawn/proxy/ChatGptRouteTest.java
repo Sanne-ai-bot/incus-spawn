@@ -663,18 +663,38 @@ class ChatGptRouteTest {
         assertEquals(1, refreshes.get(), "refreshed upstream although the token was not near expiry");
     }
 
-    @Test
-    void concurrentRefreshesOfOneSessionShareOneUpstreamCall() throws Exception {
-        sessionId = store.create(ACCOUNT, mint(60)).sessionId();
+    /**
+     * When several Codex processes refresh together: one upstream call serves them all. With an
+     * expired token, the ones arriving while the first is upstream wait for it rather than get the
+     * throttle's 503; with one still working, they are answered with it and wait for nothing.
+     */
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"-10, 19", "60, 0"})
+    void concurrentRefreshesOfOneSessionShareOneUpstreamCall(long ttlSeconds, int joins) throws Exception {
+        sessionId = store.create(ACCOUNT, mint(ttlSeconds)).sessionId();
         bind(SECRET, sessionId);
         holdRefresh = new CompletableFuture<>();
         var token = proofs().refreshToken();
+        var joinedBefore = proxy.chatGpt.joined.get();
         try (var pool = Executors.newFixedThreadPool(20)) {
             var replies = new ArrayList<java.util.concurrent.Future<Reply>>();
-            for (int i = 0; i < 20; i++) replies.add(pool.submit(() -> refresh(token)));
+            replies.add(pool.submit(() -> refresh(token)));
             awaitRefreshes(1);
+            for (int i = 0; i < 19; i++) replies.add(pool.submit(() -> refresh(token)));
+            if (joins > 0) {
+                for (int i = 0; i < 400 && proxy.chatGpt.joined.get() - joinedBefore < joins; i++) Thread.sleep(25);
+            } else {
+                // Answered at once, while the first still waits upstream
+                for (var reply : replies.subList(1, replies.size())) {
+                    assertEquals(200, reply.get(20, TimeUnit.SECONDS).status());
+                }
+            }
+            assertEquals(joins, proxy.chatGpt.joined.get() - joinedBefore);
             holdRefresh.complete(null);
-            for (var reply : replies) assertEquals(200, reply.get(20, TimeUnit.SECONDS).status());
+            for (var reply : replies) {
+                var answered = reply.get(20, TimeUnit.SECONDS);
+                assertEquals(200, answered.status(), answered.body());
+            }
         }
         assertEquals(1, refreshes.get());
     }

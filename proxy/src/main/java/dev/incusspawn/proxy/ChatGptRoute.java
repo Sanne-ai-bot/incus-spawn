@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
@@ -141,6 +142,8 @@ final class ChatGptRoute {
     private final MitmProxy proxy;
     private final Vertx vertx;
     private final ChatGptSessionStore store;
+    /** How many refreshes joined one already in flight; read by tests. */
+    final AtomicInteger joined = new AtomicInteger();
     /** One upstream refresh per session and generation at a time. */
     private final Map<String, Future<Refreshed>> refreshes = new ConcurrentHashMap<>();
     /**
@@ -400,13 +403,21 @@ final class ChatGptRoute {
     // --- Refresh ---
 
     /** A refresh's outcome: the session's tokens after it, or why the caller gets none. */
-    private record Refreshed(ChatGptSessionStore.Tokens tokens, String sessionId, int status, String code) {
+    private record Refreshed(ChatGptSessionStore.Tokens tokens, String sessionId, int status, String code,
+                             String message) {
+        static final String NOT_THIS_SESSION =
+                "the ChatGPT session is not the one this instance's proofs were made for, or the refresh was refused";
+
         static Refreshed ok(ChatGptSessionStore.Session session) {
-            return new Refreshed(session.tokens(), session.sessionId(), 200, null);
+            return new Refreshed(session.tokens(), session.sessionId(), 200, null, null);
         }
 
         static Refreshed refused(int status, String code) {
-            return new Refreshed(null, null, status, code);
+            return refused(status, code, NOT_THIS_SESSION);
+        }
+
+        static Refreshed refused(int status, String code, String message) {
+            return new Refreshed(null, null, status, code, message);
         }
     }
 
@@ -443,14 +454,23 @@ final class ChatGptRoute {
             var expiresIn = ChatGptPlaceholders.expiry(session.tokens().accessToken()) - System.currentTimeMillis() / 1000;
             var tokenRefused = refused.getOrDefault(key, Set.of()).contains(session.generation());
             var due = expiresIn <= REFRESH_WINDOW_SECONDS || tokenRefused;
-            var last = lastUpstream.get(key);
             if (!due) return Future.succeededFuture(Refreshed.ok(session));
+            var usable = expiresIn > 0 && !tokenRefused;
+            // A token that no longer works waits for a refresh already upstream for it, whatever
+            // the throttle would say; one that still works is never made to share its failure
+            var inFlight = usable ? null : refreshes.get(tokenKey(session));
+            if (inFlight != null) {
+                joined.incrementAndGet();
+                return inFlight;
+            }
+            var last = lastUpstream.get(key);
             if (last != null && System.currentTimeMillis() - last < MIN_UPSTREAM_INTERVAL_MILLIS) {
                 // Throttled: a token that still works is answered with. One that has expired, or
                 // that the backend has just refused, would only send Codex round a refresh-and-401
-                // loop with a bearer known to be bad, so it is told to try again later
-                return Future.succeededFuture(expiresIn > 0 && !tokenRefused ? Refreshed.ok(session)
-                        : Refreshed.refused(503, "temporarily_unavailable"));
+                // loop with a bearer known to be bad: it gets a refresh that committed since this
+                // caller read the session, if there is one, and otherwise is told to try again later
+                return usable ? Future.succeededFuture(Refreshed.ok(session))
+                        : vertx.executeBlocking(() -> newerOrLater(session), false);
             }
             return refreshes.computeIfAbsent(tokenKey(session), k -> {
                 var started = upstreamRefresh(req, session, request);
@@ -468,7 +488,7 @@ final class ChatGptRoute {
             if (outcome.status() != 200 || !binding.sessionId().equals(outcome.sessionId())) {
                 refuse(resp, outcome.status() == 200 ? 401 : outcome.status(),
                         outcome.code() == null ? "invalid_grant" : outcome.code(),
-                        "the ChatGPT session is not the one this instance's proofs were made for, or the refresh was refused");
+                        outcome.message() == null ? Refreshed.NOT_THIS_SESSION : outcome.message());
                 return;
             }
             String answer;
@@ -531,7 +551,7 @@ final class ChatGptRoute {
                     + status + (code == null ? "" : " " + code));
             if (status != 400 && status != 401) {
                 // Rate limits and server errors say nothing about the token: Codex may retry
-                return Refreshed.refused(status == 429 ? 429 : 502, "server_error");
+                return Refreshed.refused(status == 429 ? 429 : 502, "server_error", NOT_NOW);
             }
             if (code != null && (code.startsWith("refresh_token_") || code.equals("invalid_grant"))
                     && isDefaultAccount(session.account())) {
@@ -556,7 +576,7 @@ final class ChatGptRoute {
         if (refreshed.accessToken().isEmpty() || refreshed.refreshToken().isEmpty()) {
             // OpenAI said yes, so it may have rotated the token: the record of the attempt stays
             ProxyLog.warn("ChatGPT refresh for account '" + session.account() + "' answered without tokens");
-            return Refreshed.refused(502, "server_error");
+            return Refreshed.refused(502, "server_error", NOT_NOW);
         }
         var commit = store.commit(session, refreshed);
         if (commit != ChatGptSessionStore.Commit.COMMITTED) {
@@ -570,7 +590,7 @@ final class ChatGptRoute {
         refused.remove(sessionKey(session));
         // Only an error this account raised: a working ChatGPT session says nothing about Claude's
         proxy.clearAuthErrorIf(standing -> standing.startsWith(authErrorPrefix(session.account())));
-        return new Refreshed(refreshed, session.sessionId(), 200, null);
+        return new Refreshed(refreshed, session.sessionId(), 200, null, null);
     }
 
     /** How an error about {@code account}'s session begins, so that only its own success clears it. */
@@ -690,6 +710,20 @@ final class ChatGptRoute {
 
     private static final String SESSION_CHANGED =
             "the ChatGPT session changed or is gone; start a new login shell once isx has delivered new credentials";
+
+    private static final String NOT_NOW = "OpenAI could not refresh the session just now; try again shortly";
+
+    /**
+     * What a throttled refresh of {@code session}, whose token no longer works, answers with: a
+     * generation of the same session committed since the caller read it, else a 503. Blocks.
+     */
+    private Refreshed newerOrLater(ChatGptSessionStore.Session session) {
+        var now = store.read(session.account());
+        if (now != null && now.sessionId().equals(session.sessionId()) && now.generation() > session.generation()) {
+            return Refreshed.ok(now);
+        }
+        return Refreshed.refused(503, "temporarily_unavailable", "the session was refreshed moments ago; try again shortly");
+    }
 
     /**
      * What a refresh of {@code session} that another write overtook answers with: the account's
