@@ -17,6 +17,12 @@ import static org.mockito.Mockito.*;
 
 class RepoClonerTest {
 
+    /** What the local-clone path appends to its checkout to leave a network clone's refs (#1362). */
+    private static final String DROP_HOST_REFS =
+            " && l=$(git -C '/home/agentuser/repo' for-each-ref --format='%(if)%(HEAD)%(then)%(else)%(refname:strip=2)%(end)' refs/heads)"
+                    + " && { [ -z \"$l\" ] || git -C '/home/agentuser/repo' branch -q -D -- $l; }"
+                    + " && git -C '/home/agentuser/repo' reflog expire --expire=now --all";
+
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final IncusClient.ExecResult FAIL = new IncusClient.ExecResult(1, "", "");
 
@@ -124,12 +130,13 @@ class RepoClonerTest {
         // URL fixup + fetch + detect default branch
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
-                        + " && git -C '/home/agentuser/repo' fetch --quiet origin"
+                        + " && git -C '/home/agentuser/repo' fetch --quiet --prune --prune-tags --force origin"
                         + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
         // Checkout remote's default branch (host ref may have a different HEAD)
         verify(incus).execInContainer("test", "agentuser",
                 "b=$(git -C '/home/agentuser/repo' for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)"
-                        + " && git -C '/home/agentuser/repo' checkout -B \"$b\" --track \"origin/$b\"");
+                        + " && git -C '/home/agentuser/repo' checkout -B \"$b\" --track \"origin/$b\""
+                        + DROP_HOST_REFS);
         // Reference device cleaned up
         verify(incus).deviceRemove("test", "ref-repo");
     }
@@ -196,11 +203,12 @@ class RepoClonerTest {
         // URL fixup + fetch + detect default branch
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
-                        + " && git -C '/home/agentuser/repo' fetch --quiet origin"
+                        + " && git -C '/home/agentuser/repo' fetch --quiet --prune --prune-tags --force origin"
                         + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
         // Branch checkout (explicit branch overrides detected default)
         verify(incus).execInContainer("test", "agentuser",
-                "b='feature/x' && git -C '/home/agentuser/repo' checkout -B \"$b\" --track \"origin/$b\"");
+                "b='feature/x' && git -C '/home/agentuser/repo' checkout -B \"$b\" --track \"origin/$b\""
+                        + DROP_HOST_REFS);
     }
 
     @Test
