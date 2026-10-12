@@ -72,14 +72,18 @@ public final class HostRouteSecret {
             warn.accept(refusing(name) + "the proxy cannot tell which uid it runs as: " + e.getMessage());
             return null;
         }
-        return loadOrCreate(configDir, name, warn, uid);
+        return loadOrCreate(configDir, name, warn, uid, uid);
     }
 
-    /** As above, with the files required to belong to {@code uid}: tests name another. */
-    static String loadOrCreate(Path configDir, String name, Consumer<String> warn, Integer uid) {
+    /**
+     * As above, with the files required to belong to {@code uid}, and the config directory allowed
+     * group write only by {@code privateGroup} (the proxy's uid, as a user-private group's gid is):
+     * tests name others.
+     */
+    static String loadOrCreate(Path configDir, String name, Consumer<String> warn, Integer uid, Integer privateGroup) {
         var file = file(configDir, name);
         try {
-            var dir = ownerOnlyDirectory(configDir, file.getParent(), uid);
+            var dir = ownerOnlyDirectory(configDir, file.getParent(), uid, privateGroup);
             if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) create(dir, file);
             return read(file, uid);
         } catch (Unusable e) {
@@ -104,7 +108,6 @@ public final class HostRouteSecret {
     }
 
     private static volatile Integer ownUid;
-    private static volatile Integer ownGid;
 
     /**
      * The uid this process creates files as: of a file it has just made, so neither its user name
@@ -118,7 +121,6 @@ public final class HostRouteSecret {
             Files.createDirectories(configDir);
             var probe = Files.createTempFile(configDir, ".uid-", ".tmp");
             try {
-                ownGid = (Integer) Files.getAttribute(probe, "unix:gid", LinkOption.NOFOLLOW_LINKS);
                 uid = uidOf(probe);
             } finally {
                 Files.deleteIfExists(probe);
@@ -137,7 +139,16 @@ public final class HostRouteSecret {
     }
 
     /** That {@code path} is a directory of {@code uid}'s that nobody else can write to. */
-    private static void requireOwnDirectory(Path path, Integer uid) throws IOException {
+    /**
+     * That {@code path} is a directory of {@code uid}'s that nobody else can write to. Group write
+     * is accepted only when the directory's group is {@code privateGroup}, by number; null accepts
+     * none.
+     */
+    private static void requireOwnDirectory(Path path, Integer uid, Integer privateGroup) throws IOException {
+        if (Files.isSymbolicLink(path)) {
+            throw new Unusable("is under " + path + ", which is a link: the proxy checks the real directory only "
+                    + "(point the link's users at " + path.toRealPath() + ", or make " + path + " a directory)");
+        }
         if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
             throw new Unusable("is not in a directory: " + path + " is something else");
         }
@@ -147,14 +158,16 @@ public final class HostRouteSecret {
         }
         if (isPosix(path)) {
             var permissions = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
-            // Group write only by the proxy's own group: with a umask of 002 (Fedora's default) a
-            // user's directories are group-writable, by the group that is that user alone
             var groupWrite = permissions.contains(PosixFilePermission.GROUP_WRITE)
-                    && (uid == null || ownGid == null || !ownGid.equals(Files.getAttribute(path, "unix:gid", LinkOption.NOFOLLOW_LINKS)));
+                    && (privateGroup == null || !privateGroup.equals(gidOf(path)));
             if (groupWrite || permissions.contains(PosixFilePermission.OTHERS_WRITE)) {
                 throw new Unusable("is in " + path + ", which others can write to (chmod go-w it)");
             }
         }
+    }
+
+    private static int gidOf(Path path) throws IOException {
+        return (Integer) Files.getAttribute(path, "unix:gid", LinkOption.NOFOLLOW_LINKS);
     }
 
     /**
@@ -162,7 +175,7 @@ public final class HostRouteSecret {
      * must be the proxy's user's alone to write, or anyone could swap a secret, or the directory,
      * for a link, a FIFO or their own between the checks and the open.
      */
-    private static Path ownerOnlyDirectory(Path configDir, Path dir, Integer uid) throws IOException {
+    private static Path ownerOnlyDirectory(Path configDir, Path dir, Integer uid, Integer privateGroup) throws IOException {
         if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
             Files.createDirectories(dir.getParent());
             try {
@@ -175,8 +188,11 @@ public final class HostRouteSecret {
                 // another proxy made it: checked below like any existing one
             }
         }
-        requireOwnDirectory(configDir, uid);
-        requireOwnDirectory(dir, uid);
+        // The config directory may be writable by the user's private group (gid == uid, as useradd
+        // makes it), which a umask of 002, Fedora's default, gives every directory the user makes.
+        // Never a shared group, and never on host-routes/, which the proxy makes 0700 itself
+        requireOwnDirectory(configDir, uid, privateGroup);
+        requireOwnDirectory(dir, uid, null);
         return dir;
     }
 

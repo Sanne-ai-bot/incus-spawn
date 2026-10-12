@@ -87,7 +87,7 @@ class HostRouteSecretTest {
     void aDirectorySomeoneElseOwnsIsRefused() throws Exception {
         // A host-routes/ left by a sudo isx is root's: its mode alone would pass it
         var other = HostRouteSecret.ownUidForTest(config) + 1;
-        assertNull(HostRouteSecret.loadOrCreate(config, "work.isx.internal", warnings::add, other));
+        assertNull(HostRouteSecret.loadOrCreate(config, "work.isx.internal", warnings::add, other, other));
         assertTrue(warnings.getFirst().contains("belongs to uid") && warnings.getFirst().contains("chown"), warnings.toString());
         assertFalse(Files.exists(HostRouteSecret.file(config, "work.isx.internal")), "nothing is created there");
     }
@@ -102,17 +102,71 @@ class HostRouteSecretTest {
         assertTrue(refused.getMessage().startsWith("belongs to uid"), refused.getMessage());
     }
 
+    /** The secret as a proxy whose user's private group is {@code privateGroup} would read it. */
+    private String secretWithPrivateGroup(int privateGroup) throws Exception {
+        return HostRouteSecret.loadOrCreate(config, "work.isx.internal", warnings::add,
+                HostRouteSecret.ownUidForTest(config), privateGroup);
+    }
+
+    private int gidOf(Path path) throws Exception {
+        return (Integer) Files.getAttribute(path, "unix:gid");
+    }
+
     @Test
-    void aDirectoryOnlyItsOwnersGroupCanWriteToIsAccepted() throws Exception {
-        // A umask of 002, Fedora's default, makes a user's directories writable by that user's own group
+    void aConfigDirectoryWritableByTheUsersPrivateGroupIsAccepted() throws Exception {
+        // A umask of 002, Fedora's default, makes a user's directories writable by the group that is them alone
         Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rwxrwxr-x"));
-        var dir = Files.createDirectories(config.resolve("host-routes"));
-        Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxrwx---"));
         try {
-            assertNotNull(secret("work.isx.internal"), warnings.toString());
+            assertNotNull(secretWithPrivateGroup(gidOf(config)), warnings.toString());
         } finally {
             Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rwx------"));
         }
+    }
+
+    @Test
+    void aConfigDirectoryWritableByASharedGroupIsRefused() throws Exception {
+        // Its group is not the user's private one, so its other members could swap host-routes/
+        Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rwxrwxr-x"));
+        try {
+            assertNull(secretWithPrivateGroup(gidOf(config) + 1));
+            assertTrue(warnings.getFirst().contains("others can write to"), warnings.toString());
+        } finally {
+            Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rwx------"));
+        }
+    }
+
+    @Test
+    void aSetgidSharedConfigDirectoryIsRefusedToo() throws Exception {
+        // The reviewer's case: in a setgid directory (and on macOS) a new file takes the directory's
+        // group, so comparing with a file made there compared the directory with itself
+        Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rwxrwxr-x"));
+        var setgid = new ProcessBuilder("chmod", "g+s", config.toString()).start().waitFor();
+        org.junit.jupiter.api.Assumptions.assumeTrue(setgid == 0, "chmod g+s is not allowed here");
+        try {
+            assertNull(secretWithPrivateGroup(gidOf(config) + 1));
+            assertTrue(warnings.getFirst().contains("others can write to"), warnings.toString());
+        } finally {
+            new ProcessBuilder("chmod", "g-s", config.toString()).start().waitFor();
+            Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rwx------"));
+        }
+    }
+
+    @Test
+    void aHostRoutesDirectoryAnyGroupCanWriteToIsRefused() throws Exception {
+        // The proxy makes it 0700 itself, so no umask is a reason to accept group write there
+        var dir = Files.createDirectories(config.resolve("host-routes"));
+        Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxrwx---"));
+        assertNull(secretWithPrivateGroup(gidOf(dir)), "not even the user's own group");
+        assertTrue(warnings.getFirst().contains("others can write to"), warnings.toString());
+    }
+
+    @Test
+    void aConfigDirectoryThatIsALinkIsNamed() throws Exception {
+        // A dotfiles setup: refused, since only the real directory is checked, and the message says so
+        var real = Files.createDirectories(config.resolve("real"));
+        var link = Files.createSymbolicLink(config.resolve("linked"), real);
+        assertNull(HostRouteSecret.loadOrCreate(link, "work.isx.internal", warnings::add));
+        assertTrue(warnings.getFirst().contains("which is a link"), warnings.toString());
     }
 
     @Test
