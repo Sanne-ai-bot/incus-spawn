@@ -84,6 +84,24 @@ class HostRouteSecretTest {
     }
 
     @Test
+    void aFifoIsRefusedWithoutBeingOpened() throws Exception {
+        // Opening one blocks until a writer comes, which would hang startup or reload() for good
+        var dir = Files.createDirectories(config.resolve("host-routes"));
+        var fifo = dir.resolve("fifo.isx.internal.secret");
+        Process mkfifo;
+        try {
+            mkfifo = new ProcessBuilder("mkfifo", fifo.toString()).start();
+        } catch (java.io.IOException e) {
+            org.junit.jupiter.api.Assumptions.abort("no mkfifo here: " + e.getMessage());
+            return;
+        }
+        assertEquals(0, mkfifo.waitFor());
+        var secret = assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> secret("fifo.isx.internal"));
+        assertNull(secret);
+        assertTrue(warnings.getFirst().contains("is not a regular file"), warnings.toString());
+    }
+
+    @Test
     void anUnsafeOrUnusableSecretIsRefusedWithoutSayingIt() throws Exception {
         var dir = Files.createDirectories(config.resolve("host-routes"));
         var readable = dir.resolve("readable.isx.internal.secret");

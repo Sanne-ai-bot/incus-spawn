@@ -150,8 +150,13 @@ public final class HostRouteSecret {
     }
 
     private static String read(Path file) throws IOException {
-        // Opened without following a link, then judged by what was opened's path attributes: the
-        // directory is the owner's alone, so the file cannot be swapped in between
+        // Judged before it is opened: opening a FIFO blocks until something writes to it, and this
+        // runs at startup and inside reload(), which would then never return. Java cannot open
+        // with O_NONBLOCK; the directory is the owner's alone, so nobody else can swap the file
+        // for one between this check and the open
+        if (Files.isSymbolicLink(file)) throw new Unusable("is a link, not a regular file");
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new Unusable("is not a regular file");
+        // Opened without following a link, then judged again by the path's attributes
         String secret;
         try (var channel = Files.newByteChannel(file, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))) {
             if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new Unusable("is not a regular file");
