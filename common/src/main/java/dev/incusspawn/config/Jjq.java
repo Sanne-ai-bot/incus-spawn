@@ -13,8 +13,8 @@ import java.io.InputStream;
  * Shared jjq entry points for YAML definitions (Phase 1 of
  * incus-spawn-jjq-migration).
  *
- * <p>One process-wide {@link JqMapper} (thread-safe; construction does
- * {@code ServiceLoader} discovery, so it is not built per parse). All
+ * <p>One process-wide {@link JqMapper} (thread-safe, with the generated
+ * mappings registered once, so it is not built per parse). All
  * methods take {@link YamlOptions#STRICT} (duplicate-key detection, matching
  * the old Jackson {@code STRICT_DUPLICATE_DETECTION}) and translate jjq's
  * unchecked failures to {@link IOException}, preserving every caller's
