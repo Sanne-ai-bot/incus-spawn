@@ -1826,6 +1826,8 @@ Print a shell completion script.
 
 Supported shells: `bash` (default), `zsh`, `fish`.
 
+The scripts also complete `<namespace>=<account>` for `isx branch --account` and `isx account set`, and the namespaces for `isx account unset`. They read account names from `isx account list --completion`, which prints names only, never credentials.
+
 | Option | Description |
 |--------|-------------|
 | `--install` | Print installation instructions instead of the script |
