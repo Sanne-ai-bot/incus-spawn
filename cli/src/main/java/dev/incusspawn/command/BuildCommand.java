@@ -1354,8 +1354,9 @@ public class BuildCommand extends BaseCommand {
         var image = rootDef.getImage();
         var machineType = activeBuild.machineType();
         var prebaked = false;
+        var vmFromUrl = machineType == MachineType.VM && rootDef.getVmImageUrl() != null;
 
-        if (machineType == MachineType.VM && rootDef.getVmImageUrl() != null) {
+        if (vmFromUrl) {
             // Prebaked VM disk image available — use it directly
             var vmAlias = vmImageAlias(rootDef.getImage());
             ensureBaseImage(imageDef, ownBase);
@@ -1571,7 +1572,7 @@ public class BuildCommand extends BaseCommand {
 
         var parentCanonical = imageDef.isRoot() ? null : imageDef.getParent();
         // The release the build started from: a VM's own when it came from vm_image_url
-        var startedFrom = machineType == MachineType.VM && rootDef.getVmImageUrl() != null ? base.vmTag() : base.tag();
+        var startedFrom = vmFromUrl ? base.vmTag() : base.tag();
         var trackedImageTag = Objects.equals(startedFrom, rootDef.getImageTag()) ? null : startedFrom;
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
                 identityStamps, trackedImageTag);
@@ -1617,6 +1618,10 @@ public class BuildCommand extends BaseCommand {
             // scratch is only in releases from #1255 on): the VM then stays on the built-in
             // release, tag and checksum together, never the built-in checksum under the newer tag.
             if (rootDef.getVmImageUrl() == null || !checksums.vm().containsKey(arch)) {
+                if (rootDef.getVmImageUrl() != null) {
+                    BuildOutput.note(latest.tag() + " has no VM image for this definition; a VM build stays on "
+                            + builtin.vmTag() + ".");
+                }
                 return new BaseImage(latest.tag(), checksums.container(), builtin.vmTag(), builtin.vmSha256());
             }
             return new BaseImage(latest.tag(), checksums.container(), latest.tag(), checksums.vm());
@@ -1740,10 +1745,13 @@ public class BuildCommand extends BaseCommand {
             // so with a checksum to expect the fingerprint says which file it is, for imports by
             // any isx. With none to expect, the import must have recorded the same URL; one that
             // recorded none (isx before #1255) is imported again, once.
+            // A fingerprint that is the expected checksum is that file whatever tag it was
+            // imported under (a release can carry an unchanged asset), so it is reused as it is.
             var sameFile = expectedSha256 != null
                     ? expectedSha256.equalsIgnoreCase(existingFingerprint)
                     : resolveImageUrl(imageUrl, tag).equals(incus.getImageProperty(existingFingerprint, IMAGE_SOURCE_PROPERTY));
-            if (tag != null && tag.equals(installedTag) && sameFile && ownerProject.equals(importedBy)) {
+            var sameRelease = expectedSha256 != null || (tag != null && tag.equals(installedTag));
+            if (sameRelease && sameFile && ownerProject.equals(importedBy)) {
                 BuildOutput.step("Base image '" + localAlias + "' is up to date (" + tag + ").");
                 return;
             }
