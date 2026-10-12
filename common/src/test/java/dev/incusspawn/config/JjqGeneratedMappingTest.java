@@ -4,6 +4,7 @@ import dev.incusspawn.tool.ToolDef;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 import io.hyperfoil.tools.jjq.mapper.JqMapper;
+import io.quarkus.runtime.annotations.RegisterForReflection;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.GenericArrayType;
@@ -21,9 +22,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * Every DTO {@link Jjq} binds has a generated {@code _JqMapping} that Jjq registers (#1316). A
  * type without one falls back to jjq's reflective {@code ClassMapping}, which in the native image
- * only works for classes registered for reflection; with a mapping for each, none needs
- * {@code @RegisterForReflection}. Walks the field types reachable from the root DTOs, so a new
- * nested DTO that forgets {@code @JqMapped}, or a registry {@code Jjq} stops registering, fails
+ * only works for classes registered for reflection; with a mapping for each, no DTO needs
+ * {@code @RegisterForReflection}. An enum still does, since jjq reads its wire names by reflection.
+ * Walks the field types reachable from the root DTOs, so a new nested DTO that forgets
+ * {@code @JqMapped}, a registry {@code Jjq} stops registering, or an enum left unregistered fails
  * here instead of in a native binary.
  */
 class JjqGeneratedMappingTest {
@@ -32,14 +34,34 @@ class JjqGeneratedMappingTest {
             ImageDef.class, ToolDef.class, SpawnConfig.class, ProjectConfig.class,
             BuildSource.class, McpConfig.class);
 
+    private static final Set<Class<?>> REACHABLE = reachableTypes();
+
     @Test
     void everyReachableDtoHasARegisteredGeneratedMapping() throws Exception {
         var registered = registeredTypes();
-        var missing = reachableDtos().stream()
+        var missing = REACHABLE.stream()
+                .filter(type -> !type.isEnum())
                 .filter(dto -> !registered.contains(dto))
                 .map(Class::getName)
                 .toList();
         assertEquals(List.of(), missing, "DTOs bound by jjq without a generated mapping Jjq registers");
+    }
+
+    /**
+     * jjq reads an enum's wire names ({@code @JqName} on its constants, {@code @JqEnum}) by
+     * reflection, generated mappings or not; without registration the native image drops an
+     * unknown-to-it value to null, so {@code type: api-key} silently stops reaching the account.
+     */
+    @Test
+    void everyReachableEnumIsRegisteredForReflection() {
+        var missing = REACHABLE.stream()
+                .filter(Class::isEnum)
+                // The constants' @JqName is read from their fields.
+                .filter(e -> !e.isAnnotationPresent(RegisterForReflection.class)
+                        || !e.getAnnotation(RegisterForReflection.class).fields())
+                .map(Class::getName)
+                .toList();
+        assertEquals(List.of(), missing, "enums bound by jjq without @RegisterForReflection");
     }
 
     /**
@@ -54,12 +76,13 @@ class JjqGeneratedMappingTest {
         return Set.copyOf(((Map<Class<?>, ?>) cache.get(Jjq.buildMapper())).keySet());
     }
 
-    private static Set<Class<?>> reachableDtos() {
+    private static Set<Class<?>> reachableTypes() {
         var seen = new LinkedHashSet<Class<?>>();
         var queue = new ArrayDeque<Class<?>>(ROOTS);
         while (!queue.isEmpty()) {
             var type = queue.poll();
-            if (!seen.add(type)) continue;
+            // jjq binds an enum by name, never through its fields.
+            if (!seen.add(type) || type.isEnum()) continue;
             for (var c = type; c != null && c.getName().startsWith("dev.incusspawn."); c = c.getSuperclass()) {
                 for (var field : c.getDeclaredFields()) {
                     if (Modifier.isStatic(field.getModifiers()) || Modifier.isTransient(field.getModifiers())) continue;
@@ -81,7 +104,7 @@ class JjqGeneratedMappingTest {
         } else if (type instanceof Class<?> c) {
             if (c.isArray()) {
                 collect(c.getComponentType(), queue);
-            } else if (c.getName().startsWith("dev.incusspawn.") && !c.isEnum() && !c.isInterface()) {
+            } else if (c.getName().startsWith("dev.incusspawn.") && !c.isInterface()) {
                 queue.add(c);
             }
         }
