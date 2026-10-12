@@ -45,7 +45,7 @@ class UpdateBaseCommandTest {
     /** The same for the container image, which every template starts from: the pin is refused. */
     @Test
     void aReleaseWithTheContainerImageForOneArchIsNotPinned(@TempDir Path home) throws Exception {
-        var release = new dev.incusspawn.baseimage.BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums");
+        var release = new dev.incusspawn.baseimage.BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
         var releases = org.mockito.Mockito.mock(dev.incusspawn.baseimage.BaseImageReleases.class);
         org.mockito.Mockito.when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(release),
                         org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))

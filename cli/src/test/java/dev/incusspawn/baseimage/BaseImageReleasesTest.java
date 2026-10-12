@@ -107,6 +107,13 @@ class BaseImageReleasesTest {
         }
     }
 
+    /** A malformed asset URL from the release list is a failed request, not an exception that escapes the fallback. */
+    @Test
+    void aMalformedManifestUrlIsAFailedRequest() throws Exception {
+        var release = new BaseImageReleases.Release(TAG, "2026-10-20", null, "https://example.com/bad url");
+        assertNull(BaseImageReleases.fromImageUrl(CONTAINER).fetchChecksums(release, CONTAINER, STOCK_VM));
+    }
+
     @Test
     void fromImageUrlOnlyMatchesGitHubReleaseUrls() {
         assertNotNull(BaseImageReleases.fromImageUrl(
