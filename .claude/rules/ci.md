@@ -54,9 +54,9 @@ Both arches boot under QEMU; this is worth stating precisely, because the runner
 
 | where | what it does with the appliance |
 |---|---|
-| `test-integration.yml` → `integration-tests (x86_64)` (`ubuntu-latest`) | boots it under `qemu-system-x86_64` with KVM and vsock; full tunnel checks, backstop, native `isx` |
+| `test-integration.yml` → `integration-tests (x86_64)` (`ubuntu-26.04`) | boots it under `qemu-system-x86_64` with KVM and vsock; full tunnel checks, backstop, native `isx` |
 | `test-integration.yml` → `integration-tests (aarch64)` (`ubuntu-24.04-arm`) | boots it under `qemu-system-aarch64` with **TCG** (the arm64 runners expose no `/dev/kvm`) and vsock; smoke test and tunnel checks, but not the backstop (a fixed 3-minute wait that is arch-independent) or native `isx` (CI builds no arm64 CLI). vhost-vsock works under TCG, and the appliance reaches `ISX READY` in about 20s |
-| `build-appliance.yml` → `build_x86_64`, `build_aarch64` (`ubuntu-24.04-arm`) | builds, checks size and embedded version, caches, uploads. Never boots it |
+| `build-appliance.yml` → `build_x86_64`, `build_aarch64` (`ubuntu-26.04`, `ubuntu-24.04-arm`) | builds, checks size and embedded version, caches, uploads. Never boots it |
 | `test-integration.yml` → `unit-tests-macos` (`macos-15`) | nothing: runs `mvn test` on the host, the macOS half of the Java code only |
 | `release.yml` native matrix (`macos-15`, `macos-15-intel`) | builds the native CLI/proxy for macOS 15 (Intel is best effort: shipped, but this smoke test is all it gets; no Intel Mac verifies it, #1086) and smoke-tests the *binaries* -- `--version`, `--help`, completions, `templates list`; the release job then checks each one's recorded minimum macOS. Never starts a VM, and runs on `v*` tags only |
 

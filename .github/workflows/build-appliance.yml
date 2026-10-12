@@ -25,7 +25,7 @@ on:
 
 jobs:
   build_x86_64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       cache_key: ${{ steps.cache_key.outputs.key }}
     steps:

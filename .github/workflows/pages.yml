@@ -33,7 +33,7 @@ jobs:
       # the domain (it expired on 2026-09-30 and the site went down with a 526).
       # A branch named after the project's production branch deploys to production.
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
