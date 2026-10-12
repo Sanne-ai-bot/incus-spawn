@@ -126,7 +126,7 @@ assert_eq "the copy's first start removed it" \
     "agentuser mcp remove --scope user isx|agentuser mcp add-json --scope user isx|agentuser mcp remove --scope user isx" \
     call_summary "$COPY"
 assert "the entry is gone" in_guest "$COPY" '! test -e /home/agentuser/.claude-stub-isx.json'
-assert "and not in its Claude Code config" in_guest "$COPY" '! grep -qF "mcp.isx.internal/mcp" /home/agentuser/.claude.json'
+assert "and not in its Claude Code config" in_guest "$COPY" 'test -r /home/agentuser/.claude.json && ! grep -qF "mcp.isx.internal/mcp" /home/agentuser/.claude.json'
 assert_eq "and so is the marker" "none" marker "$COPY"
 
 echo ""
