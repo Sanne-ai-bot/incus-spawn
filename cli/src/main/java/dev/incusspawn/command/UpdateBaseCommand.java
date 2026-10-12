@@ -133,6 +133,17 @@ public class UpdateBaseCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
+        // A pin of a release without a usable VM image leaves vm_image_url out; the next pin
+        // takes it from the built-in definition again, so that loss does not carry over. Only
+        // for a definition on the built-in's images: one of the user's own, which may leave the
+        // VM image out on purpose or name another repository, is pinned as it is.
+        if (current.getVmImageUrl() == null) {
+            var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
+            if (builtin != null && builtin.getVmImageUrl() != null
+                    && java.util.Objects.equals(builtin.getImageUrl(), current.getImageUrl())) {
+                current.setVmImageUrl(builtin.getVmImageUrl()); // this command's own copy, loaded for it
+            }
+        }
         BuildOutput.stepStart("Fetching checksums for " + selected.tag() + "...");
         var checksums = releases.fetchChecksums(selected, current.getImageUrl(), current.getVmImageUrl());
         if (checksums == null) {
