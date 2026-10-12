@@ -308,6 +308,22 @@ class DelegationToolsTest {
     }
 
     @Test
+    void aFreshInstanceTakesItsNameHint() throws Exception {
+        var plain = instanceOf(delegateFresh());
+        assertTrue(plain.matches("mcp-agent-task-[a-z0-9]{5}"), plain);
+
+        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"name_hint\":\"870-impl\"}");
+        var hinted = instanceOf(structured(r).path("task_id").asText());
+        assertTrue(hinted.matches("mcp-agent-870-impl-[a-z0-9]{5}"), hinted);
+
+        var before = instancesMade();
+        var bad = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"name_hint\":\"#870 impl\"}");
+        assertTrue(bad.path("isError").asBoolean(false));
+        assertTrue(text(bad).contains("name_hint"), text(bad));
+        assertEquals(before, instancesMade(), "no instance for a refused hint");
+    }
+
+    @Test
     void aSecondAgentInTheSameInstanceIsRefused() throws Exception {
         var task = delegateFresh();
         var instance = backend.instances.keySet().stream().filter(n -> n.startsWith("mcp-")).findFirst().orElseThrow();
