@@ -514,7 +514,7 @@ public class CompletionCommand extends BaseCommand {
               COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
               # _init_completion -s keeps the "=" in $cur, but readline replaces only what follows
               # the last "=" (COMP_WORDBREAKS): drop the typed <namespace>= from each candidate.
-              if [[ "$cur" == *=* ]]; then
+              if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
                 local i
                 for i in "${!COMPREPLY[@]}"; do COMPREPLY[i]=${COMPREPLY[i]#"${cur%"${cur##*=}"}"}; done
               fi
