@@ -29,8 +29,6 @@
 #   test-chatgpt-session.sh <instance>
 # Environment:
 #   PLAIN_CONTAINER=1   the instance is no isx branch: give it a secret and a static-ip stamp
-#   EXPECT_TURN=1       the proxy's allowlist includes GET /backend-api/wham/accounts/check, so
-#                       real Codex can complete turns (a measurement build, never main)
 #   KEEP=1              leave the stub, the proxy and the firewall up afterwards
 
 set -uo pipefail
@@ -66,6 +64,8 @@ control() { curl -sf -m 10 "$@"; }
 # Packets an nftables named counter has seen: <table> <counter>
 counter() { sudo nft -j list counter inet "$1" "$2" | python3 -c "import json,sys; print([o['counter']['packets'] for o in json.load(sys.stdin)['nftables'] if 'counter' in o][0])"; }
 stub_requests() { control "http://127.0.0.1:$CONTROL_PORT/log" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"; }
+# Whether the stub has seen a request: <method> <path>
+stub_saw() { control "http://127.0.0.1:$CONTROL_PORT/log" | python3 -c "import json,sys; sys.exit(0 if any(e['method'] == sys.argv[1] and e['path'] == sys.argv[2] for e in json.load(sys.stdin)) else 1)" "$1" "$2"; }
 # Waits up to 30 s for a proxy to answer on the bridge
 wait_healthy() { for _ in $(seq 1 60); do curl -sf -m 2 "http://$GATEWAY:18080/health" >/dev/null && return 0; sleep 0.5; done; return 1; }
 health_pid() { curl -sf -m 2 "http://$GATEWAY:18080/health" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',''))"; }
@@ -370,19 +370,27 @@ session, before = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
 sys.exit(0 if session["session_id"] == sys.argv[3] and session["tokens"]["refresh_token"] != before["refresh_token"]
          and session["generation"] == 2 and "refreshing" not in session else 1)
 PY
+check "a turn completed over WebSocket" grep -q "stub turn over websocket" "$WORK/codex-ws.out"
+check "workspace discovery reached the stub" stub_saw GET /backend-api/wham/accounts/check
+# The stub refuses WebSocket upgrades, so Codex falls back to HTTP, as it does when a network blocks them
+control -X POST "http://127.0.0.1:$CONTROL_PORT/fault?name=ws-unavailable&count=100" >/dev/null
+gu "cd /tmp && timeout 180 codex exec --skip-git-repo-check 'say hi again' </dev/null" > "$WORK/codex-http.out" 2>&1
+echo "    codex exec exited $? ($(grep -c . "$WORK/codex-http.out") lines of output)"
+check "a turn completed over HTTP" grep -q "stub turn over http" "$WORK/codex-http.out"
+control -X POST "http://127.0.0.1:$CONTROL_PORT/fault?name=ws-unavailable&count=0" >/dev/null
 control "http://127.0.0.1:$CONTROL_PORT/log" > "$WORK/stub-log.json"
-if [ "${EXPECT_TURN:-0}" = 1 ]; then
-    check "a turn completed over WebSocket" grep -q "stub turn over websocket" "$WORK/codex-ws.out"
-    control -X POST "http://127.0.0.1:$CONTROL_PORT/fault?name=ws-unavailable&count=100" >/dev/null
-    gu "cd /tmp && timeout 180 codex exec --skip-git-repo-check 'say hi again' </dev/null" > "$WORK/codex-http.out" 2>&1
-    check "a turn completed over HTTP" grep -q "stub turn over http" "$WORK/codex-http.out"
-    control -X POST "http://127.0.0.1:$CONTROL_PORT/fault?name=ws-unavailable&count=0" >/dev/null
-else
-    check "the turn stops at workspace discovery, which the allowlist denies" grep -q "workspace routing discovery" "$WORK/codex-ws.out"
-    check "the proxy refused GET /backend-api/wham/accounts/check" grep -q "GET /backend-api/wham/accounts/check" "$WORK/proxy.log"
-    check_not "the stub never saw it" grep -q "accounts/check" "$WORK/stub-log.json"
-fi
-control "http://127.0.0.1:$CONTROL_PORT/log" > "$WORK/stub-log.json"
+check "Codex's other calls were refused by the proxy" grep -q "not an operation ChatGPT sessions allow" "$WORK/proxy.log"
+check "everything Codex's two turns sent the stub is on the allowlist" python3 - "$WORK/stub-log.json" <<'PY'
+import json, re, sys
+allowed = [("POST", "auth.openai.com", r"/oauth/token"), ("POST", "chatgpt.com", r"/backend-api/codex/responses"),
+           ("GET", "chatgpt.com", r"/backend-api/codex/responses"), ("WS", "chatgpt.com", r"/backend-api/codex/responses"),
+           ("GET", "chatgpt.com", r"/backend-api/codex/models\?client_version=[0-9A-Za-z.+-]+"),
+           ("GET", "chatgpt.com", r"/backend-api/wham/accounts/check")]
+off = [(e["method"], e["host"], e["path"]) for e in json.load(open(sys.argv[1]))
+       if not any(m == e["method"] and h == e["host"] and re.fullmatch(p, e["path"]) for m, h, p in allowed)]
+print(off, file=sys.stderr)
+sys.exit(1 if off else 0)
+PY
 check "the stub saw Codex's model list request with a stub-minted bearer" python3 - "$WORK/stub-log.json" <<'PY'
 import json, sys
 log = json.load(open(sys.argv[1]))

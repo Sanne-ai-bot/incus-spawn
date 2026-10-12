@@ -85,6 +85,8 @@ final class ChatGptRoute {
         RESPONSES(CHATGPT, HttpMethod.POST, "/backend-api/codex/responses", null),
         RESPONSES_WEBSOCKET(CHATGPT, HttpMethod.GET, "/backend-api/codex/responses", null),
         MODELS(CHATGPT, HttpMethod.GET, "/backend-api/codex/models", Pattern.compile("client_version=[0-9A-Za-z.+-]{1,64}")),
+        /** Workspace discovery, which Codex needs before a turn: allowed on #1332, no query. */
+        ACCOUNTS_CHECK(CHATGPT, HttpMethod.GET, "/backend-api/wham/accounts/check", null),
         REFRESH(AUTH, HttpMethod.POST, "/oauth/token", null),
         REVOKE(AUTH, HttpMethod.POST, "/oauth/revoke", null);
 
@@ -396,7 +398,11 @@ final class ChatGptRoute {
                 upReq.putHeader("Authorization", "Bearer " + session.tokens().accessToken());
                 upReq.putHeader("ChatGPT-Account-Id", session.tokens().accountId());
                 return Future.succeededFuture(true);
-            }, upResp -> { if (upResp.statusCode() == 401) markRefused(session); }, null, null));
+            }, upResp -> {
+                // Only Codex's own calls say the token is bad; discovery may refuse for its own
+                // reasons, and must not let a guest force a rotation of the real refresh token
+                if (upResp.statusCode() == 401 && op != Operation.ACCOUNTS_CHECK) markRefused(session);
+            }, null, null));
         });
     }
 

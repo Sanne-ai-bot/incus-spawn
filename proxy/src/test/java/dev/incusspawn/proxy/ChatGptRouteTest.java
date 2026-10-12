@@ -280,7 +280,7 @@ class ChatGptRouteTest {
                 }
                 case "/backend-api/codex/models" -> {
                     if ("client_version=redirect".equals(req.query())) {
-                        resp.setStatusCode(302).putHeader("Location", "https://chatgpt.com/backend-api/wham/accounts/check").end();
+                        resp.setStatusCode(302).putHeader("Location", "https://chatgpt.com/backend-api/conversations").end();
                     } else {
                         resp.setStatusCode(backendRefuses ? 401 : 200).end("{\"models\":[]}");
                     }
@@ -379,12 +379,14 @@ class ChatGptRouteTest {
 
     // --- Injection ---
 
-    @Test
-    void anAllowedRequestWithTheCurrentProofCarriesTheRealTokenAndNothingOfTheGuests() throws Exception {
-        var reply = backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs().access()));
+    @ParameterizedTest
+    @ValueSource(strings = {"POST /backend-api/codex/responses", "GET /backend-api/wham/accounts/check"})
+    void anAllowedRequestWithTheCurrentProofCarriesTheRealTokenAndNothingOfTheGuests(String request) throws Exception {
+        var parts = request.split(" ");
+        var reply = backend(parts[0], parts[1], accessPlaceholder(proofs().access()));
 
         assertEquals(200, reply.status(), reply.body());
-        var upstream = seenOn("/backend-api/codex/responses");
+        var upstream = seenOn(parts[1]);
         assertEquals(1, upstream.size(), seen.toString());
         assertTrue(upstream.getFirst().contains("Bearer " + store.read(ACCOUNT).tokens().accessToken()), upstream.toString());
         assertTrue(upstream.getFirst().endsWith("| " + ACCOUNT_ID), "the account id is the session's, not the guest's: " + upstream);
@@ -425,7 +427,28 @@ class ChatGptRouteTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"GET /backend-api/wham/accounts/check", "POST /backend-api/codex/analytics-events/events",
+    @ValueSource(strings = {"?account_id=other", "?"})
+    void workspaceDiscoveryTakesNoQuery(String query) throws Exception {
+        var reply = backend("GET", "/backend-api/wham/accounts/check" + query, accessPlaceholder(proofs().access()));
+
+        assertEquals(403, reply.status(), reply.body());
+        assertTrue(seen.isEmpty(), "never relayed: " + seen);
+    }
+
+    @Test
+    void aWorkspaceDiscovery401DoesNotLetARefreshThrough() throws Exception {
+        backendRefuses = true;
+        assertEquals(401, backend("GET", "/backend-api/wham/accounts/check", accessPlaceholder(proofs().access())).status());
+        backendRefuses = false;
+
+        assertFalse(proxy.chatGpt.refuses(ACCOUNT, sessionId), "not the token's refusal");
+        assertEquals(200, refresh(proofs().refreshToken()).status());
+        assertEquals(0, refreshes.get(), "answered here: the real refresh token was not rotated");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"POST /backend-api/wham/accounts/check", "GET /backend-api/wham/accounts",
+            "POST /backend-api/codex/analytics-events/events",
             "GET /backend-api/wham/usage", "GET /backend-api/conversations", "POST /backend-api/ps/mcp",
             "GET /backend-api/codex/responses", "DELETE /backend-api/codex/responses"})
     void anythingOffTheAllowlistIsRefusedHereWithAValidProof(String request) throws Exception {
@@ -439,10 +462,10 @@ class ChatGptRouteTest {
 
     @Test
     void aRequestThatClaimsNothingIsRelayedAsItCame() throws Exception {
-        var reply = backend("GET", "/backend-api/wham/accounts/check", "a-users-own-token");
+        var reply = backend("GET", "/backend-api/conversations", "a-users-own-token");
 
         assertEquals(200, reply.status());
-        assertEquals(List.of("GET chatgpt.com /backend-api/wham/accounts/check | Bearer a-users-own-token | guest-says"),
+        assertEquals(List.of("GET chatgpt.com /backend-api/conversations | Bearer a-users-own-token | guest-says"),
                 List.copyOf(seen));
     }
 
@@ -471,10 +494,12 @@ class ChatGptRouteTest {
                 accessPlaceholder(ChatGptProof.verifier(current.access())));
     }
 
-    @Test
-    void noAccessPlaceholderButTheCurrentOneIsServed() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"POST /backend-api/codex/responses", "GET /backend-api/wham/accounts/check"})
+    void noAccessPlaceholderButTheCurrentOneIsServed(String request) throws Exception {
+        var parts = request.split(" ");
         for (var bearer : wrongAccessProofs()) {
-            var reply = backend("POST", "/backend-api/codex/responses", bearer);
+            var reply = backend(parts[0], parts[1], bearer);
             assertEquals(401, reply.status(), bearer + ": " + reply.body());
         }
         assertTrue(seen.isEmpty(), "never relayed: " + seen);

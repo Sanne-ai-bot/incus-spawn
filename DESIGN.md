@@ -1904,13 +1904,17 @@ A refusal pauses the request instead of draining its body, and the connection is
 | chatgpt.com | POST | `/backend-api/codex/responses` | injects the real bearer and `ChatGPT-Account-Id` |
 | chatgpt.com | GET, WebSocket upgrade | `/backend-api/codex/responses` | the same, on the upgrade |
 | chatgpt.com | GET | `/backend-api/codex/models`, query `client_version` only | injects |
+| chatgpt.com | GET | `/backend-api/wham/accounts/check`, no query | injects; the answer is relayed as it came |
 | auth.openai.com | POST | `/oauth/token`, Codex's refresh request only | relays with the real refresh token (below) |
 | auth.openai.com | POST | `/oauth/revoke` with a placeholder | answers 200 itself: a guest's `codex logout` never ends the host session |
 
-Codex 0.162.1 cannot complete a turn with this list: it first asks `GET /backend-api/wham/accounts/check` for the workspace's routing, and fails with "workspace routing discovery failed" when that is refused.
-Widening the list is a deliberate decision on #1332, not a fix.
-Measured with that one operation added: real Codex completed a turn over WebSocket and one over HTTP through the proxy.
-Its other calls (plugins, plugin MCP, analytics, user settings) fail without stopping a turn.
+Workspace discovery is on the list by a decision on #1332: before its first turn, Codex 0.162.1 asks `GET /backend-api/wham/accounts/check` where the workspace's requests must go, and without an answer it fails with "workspace routing discovery failed".
+Its answer, relayed as it comes, describes every ChatGPT account and workspace the signed-in user belongs to, not only the session's.
+For each one it gives the id, plan type, name, profile picture URL, structure (personal or workspace) and routing constraints; it also gives their order and the default (codex-rs `AccountsCheckResponse`).
+A 401 to it does not mark the session's token refused, so a guest cannot use it to force a refresh upstream.
+Those are identifiers, not credentials, and the guest already holds the session's own ones in its id token; but a user in several workspaces shows them all to every instance that holds a proof.
+Widening the list further is a deliberate decision on #1332, not a fix.
+Codex's other calls (plugins, plugin MCP, analytics, user settings, usage) stay refused, and fail without stopping a turn.
 
 **Refresh:** Codex refreshes when its token is within 5 minutes of expiry, or after a 401.
 The proxy accepts only the body the tested Codex sends (`client_id`, `grant_type=refresh_token`, `refresh_token`, with Codex's client id), checks the refresh proof, and relays it with the real refresh token only when the real token needs it: within the same 5 minutes, or after the backend refused it.
@@ -1931,6 +1935,7 @@ So a proxy that died in between, or an answer lost on the way, leaves the record
 
 **Testing:** `ChatGptRouteTest` covers the proof matrix (missing, static, another instance's, a previous session's, the wrong kind, one keyed with the metadata hash, the verifier itself) on both placeholders and both transports, the allowlist and refused shapes on both transports, the body bound and that no body is read before the proof, redirects (handed back, never followed), the refresh rules, and the sign-in-again and removal races.
 `.github/scripts/test-chatgpt-session.sh` runs real Codex in an instance through the real `isx-proxy` against `.github/scripts/chatgpt-stub.py`.
+It passes only when Codex completes a turn over WebSocket and one over HTTP (the stub refusing the upgrade), with Codex's own refresh relayed once and committed, and the guest holding no real token.
 Nothing in it may leave the machine, and that is checked, not assumed.
 The host side runs with a group an nftables table lets reach only the stub and the bridge, and a negative control proves the drop first.
 A systemd `IPAddressDeny=` was the first plan; in a nested instance it was accepted and blocked nothing.
