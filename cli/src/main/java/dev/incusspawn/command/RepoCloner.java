@@ -414,10 +414,15 @@ class RepoCloner {
                     last = fixup;
                     if (fixup.success()) {
                         // Then its checked-out branch, leaving a network clone's refs, and every
-                        // object only the host had.
+                        // object only the host had. A configured name origin has no branch of is a
+                        // tag (#1350), which the fetch brought with the remote's others.
                         var checkout = container.shAsUser("agentuser", resolveBranch(repo,
                                 "$(" + git + " for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)")
-                                + " && " + git + CHECKOUT_TRACKING
+                                + " && { [ -n \"$b\" ] || { echo 'fatal: origin has no default branch' >&2; false; }; }"
+                                + " && " + (repo.hasBranch()
+                                        ? checkoutBranchOrTag(git, git + " show-ref --verify -q \"refs/remotes/origin/$b\"",
+                                                "{ " + git + " show-ref --verify -q \"refs/tags/$b\" || { echo \"" + NO_BRANCH_OR_TAG + "\" >&2; false; }; }")
+                                        : checkoutTracking(git))
                                 + " && " + deleteOtherBranches(git)
                                 + " && " + stripUnreachableObjects(git));
                         usedReference = checkout.success();
@@ -596,14 +601,25 @@ class RepoCloner {
                 + " && " + resolveBranch(repo, "$(" + git + " ls-remote --symref origin HEAD"
                         + " | sed -n 's|^ref: refs/heads/\\([^[:space:]]*\\)[[:space:]]*HEAD$|\\1|p')")
                 + " && [ -n \"$b\" ]"
-                + " && " + git + " remote set-branches origin \"$b\""
-                + " && " + git + NO_AUTO_GC + " fetch --quiet --depth " + repo.getDepth() + " origin"
-                + " && " + git + CHECKOUT_TRACKING
+                // k is the branch, else empty for a tag (#1350): a configured name origin has no branch
+                // of (ls-remote exit 2; any other failure is the remote's), which keeps only its own refspec.
+                + (repo.hasBranch()
+                        ? " && { k=\"$b\"; " + git + " ls-remote --quiet --exit-code origin \"refs/heads/$b\" >/dev/null"
+                                + " || { [ $? = 2 ] && k=; }; }"
+                        : " && k=\"$b\"")
+                + " && if [ -n \"$k\" ]; then " + git + " remote set-branches origin \"$b\";"
+                + " else " + git + " config remote.origin.fetch " + TAG_REFSPEC + "; fi"
+                + (repo.hasBranch()
+                        ? " && " + namingBranchOrTag(git + NO_AUTO_GC + " fetch --quiet --depth " + repo.getDepth() + " origin")
+                                + " && " + checkoutBranchOrTag(git, "[ -n \"$k\" ]", null)
+                        : " && " + git + NO_AUTO_GC + " fetch --quiet --depth " + repo.getDepth() + " origin"
+                                + " && " + checkoutTracking(git))
                 // Drop what the clone took over from the host checkout (its own branch, which may
-                // hold unpushed work, and its origin/HEAD), leaving the refs a network clone has,
+                // hold unpushed work, and its origin/HEAD), leaving the refs a network clone has
+                // (for a tag, no branch at all: an empty k matches no ref),
                 + " && { " + git + " remote set-head origin -d >/dev/null 2>&1; true; }"
                 + " && " + deleteOtherBranches(git)
-                + " && " + deleteRefs(git, "refs/remotes", " | grep -vxF \"delete refs/remotes/origin/$b\"")
+                + " && " + deleteRefs(git, "refs/remotes", " | grep -vxF \"delete refs/remotes/origin/$k\"")
                 + (repo.hasBranch() ? "" : " && " + git + " remote set-head origin \"$b\"")
                 // and the objects only those refs reached.
                 + " && " + stripUnreachableObjects(git);
@@ -668,8 +684,36 @@ class RepoCloner {
         return "b=" + (repo.hasBranch() ? shellQuote(repo.getBranch()) : remoteDefault);
     }
 
-    /** Appended to {@code git -C <clone>}: check out branch {@code $b} tracking origin's. */
-    private static final String CHECKOUT_TRACKING = " checkout -B \"$b\" --track \"origin/$b\"";
+    /** The refspec of tag {@code $b} alone, as {@code clone --single-branch --branch <tag>} sets it. */
+    private static final String TAG_REFSPEC = "\"+refs/tags/$b:refs/tags/$b\"";
+
+    /** The error for a configured name that is neither a branch nor a tag of origin's. */
+    private static final String NO_BRANCH_OR_TAG = "fatal: origin has no branch or tag '$b'";
+
+    /** Check out branch {@code $b} tracking origin's. */
+    private static String checkoutTracking(String git) {
+        return git + " checkout -B \"$b\" --track \"origin/$b\"";
+    }
+
+    /**
+     * Check out a configured {@code $b} as {@code clone --branch} does: a branch tracking origin's
+     * when {@code isBranch} succeeds, else the tag detached, once {@code isTag} (or null) has.
+     */
+    private static String checkoutBranchOrTag(String git, String isBranch, String isTag) {
+        return "if " + isBranch + "; then " + checkoutTracking(git) + ";"
+                + " else " + (isTag == null ? "" : isTag + " && ") + git + " checkout -q --detach \"refs/tags/$b\"; fi";
+    }
+
+    /**
+     * Runs {@code fetch}, a fetch of {@code $b} as a branch or a tag; when the remote has no such ref
+     * its error names both, rather than only the tag a misspelt branch was last tried as (git's
+     * message is matched in the C locale).
+     */
+    private static String namingBranchOrTag(String fetch) {
+        return "{ e=$(LC_ALL=C " + fetch + " 2>&1) || { case \"$e\" in"
+                + " *\"couldn't find remote ref\"*) echo \"" + NO_BRANCH_OR_TAG + "\" >&2 ;;"
+                + " *) printf '%s\\n' \"$e\" >&2 ;; esac; false; }; }";
+    }
 
     /** The host checkout {@code cloneUrl} can clone from, decided on the host alone: a planned
      *  reference, a skipped one saying why there is none, or null where none is configured. */

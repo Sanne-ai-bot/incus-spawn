@@ -135,6 +135,7 @@ class RepoClonerTest {
         // Checkout remote's default branch (host ref may have a different HEAD)
         verify(incus).execInContainer("test", "agentuser",
                 "b=$(git -C '/home/agentuser/repo' for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)"
+                        + " && { [ -n \"$b\" ] || { echo 'fatal: origin has no default branch' >&2; false; }; }"
                         + " && git -C '/home/agentuser/repo' checkout -B \"$b\" --track \"origin/$b\""
                         + DROP_HOST_REFS);
         // Reference device cleaned up
@@ -207,8 +208,7 @@ class RepoClonerTest {
                         + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
         // Branch checkout (explicit branch overrides detected default)
         verify(incus).execInContainer("test", "agentuser",
-                "b='feature/x' && git -C '/home/agentuser/repo' checkout -B \"$b\" --track \"origin/$b\""
-                        + DROP_HOST_REFS);
+                checkout("b='feature/x'") + DROP_HOST_REFS);
     }
 
     @Test
@@ -430,6 +430,17 @@ class RepoClonerTest {
     void firstGitErrorEmptyForBlank() {
         assertEquals("", RepoCloner.firstGitError(""));
         assertEquals("", RepoCloner.firstGitError(null));
+    }
+
+    /** The reference path's checkout of a configured {@code $b}, as set by {@code setB}: a branch tracking origin's, else the tag. */
+    private static String checkout(String setB) {
+        var git = "git -C '/home/agentuser/repo'";
+        return setB + " && { [ -n \"$b\" ] || { echo 'fatal: origin has no default branch' >&2; false; }; }"
+                + " && if " + git + " show-ref --verify -q \"refs/remotes/origin/$b\";"
+                + " then " + git + " checkout -B \"$b\" --track \"origin/$b\";"
+                + " else { " + git + " show-ref --verify -q \"refs/tags/$b\""
+                + " || { echo \"fatal: origin has no branch or tag '$b'\" >&2; false; }; }"
+                + " && " + git + " checkout -q --detach \"refs/tags/$b\"; fi";
     }
 
     private static ImageDef projectLocal(String name, Path root) {

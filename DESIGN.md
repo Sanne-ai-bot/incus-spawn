@@ -2418,9 +2418,13 @@ If a match is found, the host directory is temporarily mounted into the containe
 This copies pack files directly, with no network transfer.
 Pack files are copied as-is, then the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing — `HostRepoRefresh` just ran — so only ref advertisements travel the network).
 If a specific branch was requested, it is checked out after the fetch supplies the ref.
+A tag (`branch:` accepts one, as `git clone --branch` does) has no `origin/<tag>` to track (#1350).
+So a configured name origin has no branch of is looked up among the tags the fetch brought (`--prune-tags` fetches all of origin's), and HEAD is detached at it, as `clone --branch <tag>` leaves it.
+A branch wins over a tag of the same name, as it does for `clone --branch`; with neither, the fallback reason says `origin has no branch or tag '<name>'`.
+The clone keeps origin's branches and tags as a branch pin's does, where a network clone of the tag has only that tag until its first fetch.
 The local clone also takes over the host checkout's own branch (and its name, in a `[branch]` config section), its branches as `origin/*` and its tags, any of which may hold unpushed work (#1362).
 So the fetch runs with `--prune --prune-tags --force`, which leaves origin's branches and tags only; `--force` resets a tag the host has and origin has moved.
-Every local branch but the one checked out is then deleted with `branch -D`, which drops its config section, and the reflogs are expired: the refs and branch config a network clone has.
+Every local branch but the one checked out (all of them, for a tag) is then deleted with `branch -D`, which drops its config section, and the reflogs are expired: the refs and branch config a network clone has.
 Each deletion lists the refs before deleting them, so a listing that fails fails the clone, which then falls back to the network, rather than leaving the host's refs in place.
 The copy also takes everything in the host's object store, not only committed history.
 That is the host's unpushed commits, its stash entries, the blobs of content once staged (`git add`) and never committed, the commit-graph naming its commits, and any stray file there (a `tmp_pack_*` an interrupted fetch left).
@@ -2448,6 +2452,8 @@ From the network the clone is `--single-branch --depth N`, and the refspec is *n
 From a host reference the local fast path cannot be used: a local clone ignores `--depth` and would copy the reference's whole history, and the reference may itself be shallow.
 So the clone goes through the transport (`--no-local --depth N`), which reads only the last commits from the mounted checkout.
 Then origin is pointed at the real remote, and its refspec narrowed to the configured branch (else the remote's default, from `ls-remote --symref`), which is fetched at the same depth and checked out.
+A configured name `ls-remote` finds no branch for is a tag (exit code 2; any other failure is the remote's, and falls back to the network).
+Its refspec becomes the tag's (`+refs/tags/<tag>:refs/tags/<tag>`, what `clone --single-branch --branch <tag>` sets), HEAD is detached at it, and no branch is kept.
 Commits the reference already has do not travel again.
 The clone through the transport also takes over the host checkout's own branch (which may hold unpushed work) and its origin/HEAD, so those refs are deleted, and origin/HEAD set to the branch only when it is the remote's default: the refs a shallow network clone has.
 The objects only they reached are then stripped as on the full path (`stripUnreachableObjects`, cheap in a shallow repo), so a host branch's unpushed work does not ship in the image.
