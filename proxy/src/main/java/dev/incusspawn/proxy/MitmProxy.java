@@ -1473,7 +1473,17 @@ public class MitmProxy {
                                    ApiActivity.Exchange exchange, DebugExchange debug) {
         var domain = ctx.domain();
         requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
-            prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, exchange).onSuccess(ok -> {
+            Future<Boolean> head;
+            try {
+                head = prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, exchange);
+            } catch (RuntimeException e) {
+                // A header Vert.x refuses: answer now, as the relay does, not at the idle timeout
+                upReq.exceptionHandler(ignored -> {}).reset();
+                System.err.println("Vertex request error (" + domain + "): " + e.getMessage());
+                sendError(clientReq.response(), 502, "Proxy error");
+                return;
+            }
+            head.onSuccess(ok -> {
                 if (!ok) return;
                 upReq.putHeader("Content-Length", String.valueOf(bodyBytes.length));
 
