@@ -126,7 +126,14 @@ jobs:
 
           echo "Current built-in tag: $CURRENT_TAG"
           echo "Incoming release tag: $TAG"
-          if [[ "$TAG" == "$CURRENT_TAG" ]]; then
+          # Current means the same tag, VM image and checksums: a stock-image bump of this
+          # very release, already merged, still leaves the switch to -vm-direct to make.
+          CURRENT_VM_FILE="$(yq -r '.vm_image_url' "$YAML" | sed -E 's#.*/##')"
+          WANT_VM_FILE="fedora-44-{arch}-vm.tar.xz"
+          [[ "$VM_KIND" == direct ]] && WANT_VM_FILE="fedora-44-{arch}-vm-direct.tar.xz"
+          CURRENT_SUMS="$(yq -r '[.image_sha256.x86_64, .image_sha256.aarch64, .vm_image_sha256.x86_64, .vm_image_sha256.aarch64] | join(" ")' "$YAML")"
+          if [[ "$TAG" == "$CURRENT_TAG" && "$CURRENT_VM_FILE" == "$WANT_VM_FILE" \
+                && "$CURRENT_SUMS" == "$C_X86 $C_ARM $V_X86 $V_ARM" ]]; then
             echo "Already current; nothing to do."
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -168,7 +175,10 @@ jobs:
           VM_KIND: ${{ steps.resolve.outputs.vm_kind }}
         run: |
           set -euo pipefail
+          # A -vm-direct bump has a branch of its own, so a stock-image bump of the same
+          # release, opened before this reader existed, does not stand in its way.
           BRANCH="bot/update-base-image-$TAG"
+          [[ "$VM_KIND" == direct ]] && BRANCH="$BRANCH-vm-direct"
 
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             echo "Branch $BRANCH already exists; a PR is likely already open. Skipping."
