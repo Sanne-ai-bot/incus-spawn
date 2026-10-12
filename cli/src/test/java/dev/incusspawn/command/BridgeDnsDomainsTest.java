@@ -38,8 +38,10 @@ class BridgeDnsDomainsTest {
                 host-routes:
                   work.isx.internal:
                     target: 127.0.0.1:7070
+                    templates: [tpl-a]
                   mcp.isx.internal:
                     target: 127.0.0.1:7071
+                    templates: [tpl-a]
                 """);
         var domains = ProxyConfig.interceptedDomains(ToolProxyResolver.resolvedDomains(config));
         // A rewrite without it would stop instances resolving the route (#936)

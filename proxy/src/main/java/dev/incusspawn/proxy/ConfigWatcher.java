@@ -30,6 +30,10 @@ import java.util.function.Supplier;
  * Which directories those are follows the config loaded last, re-read on every poll, so a
  * reload that adds a search path starts watching it. A directory that does not exist yet is
  * picked up once it does; an edit made before that still shows as drift on {@code /health}.
+ * <p>
+ * So are the host routes' secrets in {@code host-routes/} (#936): deleting one rotates it and a
+ * {@code chmod} lets a refused one be served, both at once. The proxy creating one is a change
+ * too, which costs one more reload, after which nothing is created.
  */
 public class ConfigWatcher {
 
@@ -83,7 +87,9 @@ public class ConfigWatcher {
                     if (event.kind() == StandardWatchEventKinds.OVERFLOW) continue;
                     var path = (Path) event.context();
                     if (path == null) continue;
-                    if (key == configKey ? WATCHED_FILES.contains(path.toString()) : ToolDefLoader.isToolFile(path)) {
+                    if (key == configKey ? WATCHED_FILES.contains(path.toString())
+                            : key == toolDirKeys.get(hostRoutesDir()) ? path.toString().endsWith(HostRouteSecret.SUFFIX)
+                            : ToolDefLoader.isToolFile(path)) {
                         relevant = true;
                     }
                 }
@@ -116,13 +122,18 @@ public class ConfigWatcher {
         }
     }
 
+    private Path hostRoutesDir() {
+        return configDir.resolve(HostRouteSecret.DIR);
+    }
+
     /**
-     * Watch exactly the tool directories of the config loaded last. A key that is no longer
+     * Watch exactly the tool directories of the config loaded last, and the host routes' secrets. A key that is no longer
      * valid (its directory was deleted, possibly while events were drained) is dropped, so the
      * directory is registered again once it exists.
      */
     private void watchToolDirs(WatchService watchService, Map<Path, WatchKey> keys) {
-        var wanted = Set.copyOf(toolDirs.get());
+        var wanted = new java.util.HashSet<>(toolDirs.get());
+        wanted.add(hostRoutesDir());
         for (var it = keys.entrySet().iterator(); it.hasNext(); ) {
             var entry = it.next();
             if (wanted.contains(entry.getKey()) && entry.getValue().isValid()) continue;

@@ -123,7 +123,7 @@ What differs between namespaces is declared as an `AccountShape` (`ToolSetup.acc
 The proxy holds no configuration of its own (#935): what it routes and injects is derived from host config and these stamps, so a restart or reload rebuilds it, and a new per-instance capability is a no-inherit stamp `isx` writes, never proxy memory (DESIGN.md "The proxy holds no configuration of its own").
 The proxy identifies the caller by source address (static IP + `security.ipv4_filtering`, which is load-bearing, not optional hardening).
 A per-start secret (`InstanceSecret`, #934) adds a second check for host-side services: `InstanceRegistry.identify()` wants address *and* secret.
-Its consumers are `isx mcp` for a coordinator in an instance and the host routes of `config.yaml` (`host-routes:`, #936), which forward a name to a loopback controller with the caller's identity stamped by the proxy (DESIGN.md "Host routes").
+Its consumers are `isx mcp` for a coordinator in an instance and the host routes of `config.yaml` (`host-routes:`, #936), which forward a name to a loopback controller with the caller's identity stamped by the proxy and a per-route secret the controller checks, which no guest ever holds (`HostRouteSecret`, DESIGN.md "Host routes").
 Only its hash is recorded on the host, and every isx start rotates it, for one PATCH on a stopped start and none on a branch (`InstanceLifecycle.startForUse`).
 A container start, a branch's included, then records its boot (`last_used_at`, read once the guest answers and handed on to the CA check, so the stamp's write is the one request it adds), so `ensureReady` replaces a secret lost to a reboot isx did not do at no cost on the shell path.
 A VM's agent probe asks the guest instead (#1024).

@@ -26,9 +26,12 @@ import java.util.function.Supplier;
  * is refused before its body is read, and the controller sees nothing of it.
  *
  * <p><b>What the controller sees.</b> The request as sent, minus every {@code X-Isx-*} header the
- * client sent, the secret included, plus {@link #INSTANCE_HEADER} and {@link #TEMPLATE_HEADER}
- * written here: every identity header it reads was set by the proxy after that check, and it
- * never holds the secret. No credential is ever injected on a route.
+ * client sent, the instance's secret included, plus {@link #INSTANCE_HEADER} and
+ * {@link #TEMPLATE_HEADER} written here, and the route's own secret ({@link HostRouteSecret}),
+ * which no guest ever holds. The controller trusts the identity headers only once that secret
+ * matches, so a request that reached it some other way (another local process, a listener not on
+ * loopback alone) cannot pass as an instance. The secret is stripped from the response's headers,
+ * and never logged. No credential is ever injected on a route.
  *
  * <p><b>One name per connection.</b> A request is routed only when its SNI and its {@code Host}
  * are both the route's name (421 otherwise), so a connection opened for a credential domain
@@ -40,6 +43,7 @@ final class HostRouteRelay {
     static final String INSTANCE_HEADER = "X-Isx-Instance";
     static final String TEMPLATE_HEADER = "X-Isx-Template";
     private static final String IDENTITY_PREFIX = "x-isx-";
+    private static final String ROUTE_SECRET_KEY = headerKey(HostRouteSecret.HEADER);
     /** Hop-by-hop headers (RFC 9110 7.6.1), and what this side of the relay sets itself. */
     private static final Set<String> NOT_FORWARDED = Set.of("connection", "keep-alive", "proxy-connection",
             "te", "trailer", "transfer-encoding", "upgrade", "expect", "host");
@@ -52,6 +56,28 @@ final class HostRouteRelay {
     /** Made on the first routed request, so a proxy with no routes holds none. */
     private volatile HttpClient client;
 
+    /**
+     * A route as served: the route and the secret its controller checks ({@link HostRouteSecret}),
+     * null when that cannot be used, and then every request to it is refused (503). Still claimed,
+     * so its name keeps its certificate and bridge DNS entry, which the CLI writes regardless, and a
+     * request to it is never relayed out as ordinary traffic. The secret never appears in
+     * {@link #toString}, which a log line or an exception may print.
+     */
+    record Served(HostRoutes.Route route, String secret) {
+        @Override
+        public String toString() {
+            return "Served[" + route + ", secret=<redacted>]";
+        }
+    }
+
+    /** {@code routes}, each with its secret from {@code secretOf} (null when it cannot be used). */
+    static Map<String, Served> served(Map<String, HostRoutes.Route> routes,
+                                      java.util.function.Function<String, String> secretOf) {
+        var served = new java.util.LinkedHashMap<String, Served>();
+        routes.forEach((name, route) -> served.put(name, new Served(route, secretOf.apply(name))));
+        return java.util.Collections.unmodifiableMap(served);
+    }
+
     HostRouteRelay(Vertx vertx, Supplier<InstanceRegistry> registry, Upstream upstream) {
         this.vertx = vertx;
         this.registry = registry;
@@ -62,7 +88,7 @@ final class HostRouteRelay {
      * Whether this request is the relay's to answer: its {@code Host} or its SNI is a route's
      * name or a name under one. Such a request never reaches credential injection or a relay.
      */
-    static boolean claims(Map<String, HostRoutes.Route> routes, HttpServerRequest req) {
+    static boolean claims(Map<String, Served> routes, HttpServerRequest req) {
         return !routes.isEmpty() && (isRouted(routes, hostOf(req)) || isRouted(routes, sniOf(req)));
     }
 
@@ -70,7 +96,7 @@ final class HostRouteRelay {
      * As above, for a WebSocket, which a route refuses in this version: a controller streams
      * with long-poll or server-sent events, which the plain request path carries.
      */
-    static boolean claims(Map<String, HostRoutes.Route> routes, io.vertx.core.http.ServerWebSocket ws) {
+    static boolean claims(Map<String, Served> routes, io.vertx.core.http.ServerWebSocket ws) {
         if (routes.isEmpty()) return false;
         String sni = null;
         if (ws.sslSession() instanceof javax.net.ssl.ExtendedSSLSession session) {
@@ -82,13 +108,13 @@ final class HostRouteRelay {
                 || isRouted(routes, lower(sni));
     }
 
-    private static boolean isRouted(Map<String, HostRoutes.Route> routes, String name) {
+    private static boolean isRouted(Map<String, Served> routes, String name) {
         return name != null && routes.keySet().stream()
                 .anyMatch(route -> name.equals(route) || HostRoutes.isUnder(name, route));
     }
 
     /** Answer one request {@link #claims} says is the relay's. */
-    void handle(HttpServerRequest req, String address, Map<String, HostRoutes.Route> routes) {
+    void handle(HttpServerRequest req, String address, Map<String, Served> routes) {
         // Nothing may read the body before the caller is known, and Vert.x drops a body nobody reads
         req.pause();
         var host = hostOf(req);
@@ -100,6 +126,11 @@ final class HostRouteRelay {
         var route = routes.get(host);
         if (route == null) {
             CallerCheck.refuse(req, 404, "nothing is routed at " + host);
+            return;
+        }
+        if (route.secret() == null) {
+            // Fail closed: without its secret the controller could not tell the proxy from anyone
+            CallerCheck.refuse(req, 503, host + " is not served: its route secret cannot be used (see the proxy log)");
             return;
         }
         var current = registry.get();
@@ -119,7 +150,8 @@ final class HostRouteRelay {
         return "send this start's secret as " + InstanceSecret.HEADER + " (from $" + InstanceSecret.FILE_ENV_VAR + ")";
     }
 
-    private void admit(HttpServerRequest req, HostRoutes.Route route, InstanceRegistry.Identified caller) {
+    private void admit(HttpServerRequest req, Served served, InstanceRegistry.Identified caller) {
+        var route = served.route();
         var lineage = caller.lineage();
         if (!route.admits(lineage.template(), lineage.projectLocal())) {
             ProxyLog.warn("Refusing host route " + route.name() + " to instance '" + caller.instanceName() + "'"
@@ -128,10 +160,11 @@ final class HostRouteRelay {
             CallerCheck.refuse(req, 403, "instance '" + caller.instanceName() + "' may not call " + route.name());
             return;
         }
-        forward(req, route, caller);
+        forward(req, served, caller);
     }
 
-    private void forward(HttpServerRequest req, HostRoutes.Route route, InstanceRegistry.Identified caller) {
+    private void forward(HttpServerRequest req, Served served, InstanceRegistry.Identified caller) {
+        var route = served.route();
         // Gone while its caller was being identified: nothing to forward
         if (req.response().closed()) return;
         // Origin form only: an absolute-form target (GET http://other/x) would name another host
@@ -145,9 +178,11 @@ final class HostRouteRelay {
                 options.addHeader(name, value);
             }
         });
+        // The route secret last, over anything of that name: what tells the controller it is the proxy
         options.putHeader("Host", route.name())
                 .putHeader(INSTANCE_HEADER, caller.instanceName())
-                .putHeader(TEMPLATE_HEADER, caller.lineage().template());
+                .putHeader(TEMPLATE_HEADER, caller.lineage().template())
+                .putHeader(HostRouteSecret.HEADER, served.secret());
         // A client gone before the controller answers takes its request with it, even one still connecting
         var upstreamRequest = new java.util.concurrent.atomic.AtomicReference<io.vertx.core.http.HttpClientRequest>();
         var gone = new java.util.concurrent.atomic.AtomicBoolean();
@@ -174,12 +209,24 @@ final class HostRouteRelay {
             answered.onSuccess(upResp -> {
                 var clientResp = req.response();
                 upstream.copyResponseHead(upResp, clientResp);
+                // A reason phrase is the controller's text too, which may quote the request
+                var reason = upResp.statusMessage();
+                if (reason != null && reason.contains(served.secret())) {
+                    clientResp.setStatusMessage(io.netty.handler.codec.http.HttpResponseStatus.valueOf(upResp.statusCode())
+                            .reasonPhrase());
+                }
                 // Hop-by-hop on the way back too: the controller's are for the loopback hop
                 var hopOnly = connectionOptions(upResp.headers());
-                clientResp.headers().names().stream().filter(name -> {
-                    var key = headerKey(name);
-                    return NOT_FORWARDED.contains(key) || hopOnly.contains(key);
-                }).toList().forEach(clientResp.headers()::remove);
+                var dropped = new java.util.HashSet<String>();
+                for (var header : clientResp.headers()) {
+                    var key = headerKey(header.getKey());
+                    if (NOT_FORWARDED.contains(key) || hopOnly.contains(key) || key.equals(ROUTE_SECRET_KEY)
+                            // A controller that echoes request headers must not hand the guest the secret
+                            || header.getValue().contains(served.secret())) {
+                        dropped.add(header.getKey());
+                    }
+                }
+                dropped.forEach(clientResp.headers()::remove);
                 upstream.pipeResponse(upResp, clientResp, null);
             }).onFailure(err -> {
                 ProxyLog.warn("Host route " + route.name() + " failed: " + err.getMessage());

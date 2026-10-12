@@ -42,8 +42,12 @@ class HostRouteProxyTest {
     private static final String WORK = "work.isx.internal";
     /** Admits only another template. */
     private static final String OTHER = "other.isx.internal";
-    /** Admits any instance that is not project-local. */
+    /** Admits {@link #TEMPLATE} among others. */
     private static final String OPEN = "open.isx.internal";
+    /** Lists no templates: refused when the config is read, so never served. */
+    private static final String UNFILTERED = "unfiltered.isx.internal";
+    /** Its secret file is readable by others: claimed, and every request refused (503). */
+    private static final String LEAKY = "leaky.isx.internal";
 
     @TempDir
     static Path home;
@@ -73,11 +77,18 @@ class HostRouteProxyTest {
         controller = vertx.createHttpServer().requestHandler(req -> req.body().onSuccess(body -> {
             seen.add(new Seen(req.method(), req.uri(), MultiMap.caseInsensitiveMultiMap().addAll(req.headers()),
                     body.toString()));
-            req.response().putHeader("X-Controller", "yes").putHeader("Proxy-Connection", "x")
+            // A careless controller that echoes the request's headers back, in its reason phrase too
+            if (req.path().equals("/reason")) req.response().setStatusMessage("Bad " + req.getHeader(HostRouteSecret.HEADER));
+            req.response().putHeader("X-Echo", "route secret " + req.getHeader(HostRouteSecret.HEADER))
+                    .putHeader(HostRouteSecret.HEADER, String.valueOf(req.getHeader(HostRouteSecret.HEADER)))
+                    .putHeader("X-Controller", "yes").putHeader("Proxy-Connection", "x")
                     .putHeader("Connection", "X-Loopback").putHeader("X-Loopback", "for the loopback hop").end("hello " + req.getHeader("X-Isx-Instance"));
         })).listen(0, "127.0.0.1").toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
         var target = "127.0.0.1:" + controller.actualPort();
 
+        var leaky = Files.createDirectories(configDir.resolve("host-routes")).resolve(LEAKY + ".secret");
+        Files.writeString(leaky, "l".repeat(64) + "\n");
+        Files.setPosixFilePermissions(leaky, java.nio.file.attribute.PosixFilePermissions.fromString("rw-r--r--"));
         Files.writeString(configDir.resolve("config.yaml"), """
                 host-routes:
                   %s:
@@ -88,7 +99,14 @@ class HostRouteProxyTest {
                     templates: [tpl-elsewhere]
                   %s:
                     target: %s
-                """.formatted(WORK, target, TEMPLATE, OTHER, target, OPEN, target));
+                    templates: [tpl-elsewhere, %s]
+                  %s:
+                    target: %s
+                  %s:
+                    target: %s
+                    templates: [%s]
+                """.formatted(WORK, target, TEMPLATE, OTHER, target, OPEN, target, TEMPLATE,
+                UNFILTERED, target, LEAKY, target, TEMPLATE));
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1", ConfigFingerprint.load());
         registry = new InstanceRegistry(new IncusClient() {
             @Override
@@ -134,6 +152,21 @@ class HostRouteProxyTest {
     }
 
     record Reply(int status, MultiMap headers, String body) {}
+
+    record FullReply(int status, String reason) {}
+
+    /** A GET to {@code name} with this start's secret, keeping the reason phrase. */
+    private static FullReply sendFull(String name, String path) throws Exception {
+        var options = new RequestOptions().setMethod(HttpMethod.GET)
+                .setServer(SocketAddress.inetSocketAddress(port, "127.0.0.1"))
+                .setHost(name).setPort(443).setURI(path).addHeader(InstanceSecret.HEADER, SECRET);
+        var result = Promise.<FullReply>promise();
+        clientContext.runOnContext(v -> client.request(options)
+                .compose(req -> req.send())
+                .compose(resp -> resp.body().map(b -> new FullReply(resp.statusCode(), resp.statusMessage())))
+                .onComplete(result));
+        return result.future().toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
+    }
 
     /** A request whose SNI is {@code sni} and whose Host header is {@code host}. */
     private static Reply send(String sni, String host, String path, MultiMap headers, String body) throws Exception {
@@ -188,10 +221,73 @@ class HostRouteProxyTest {
         assertNull(got.headers().get("X-Isx-Anything"), "no client-sent X-Isx-* header crosses");
         // As a CGI-style controller reads a name: every non-alphanumeric character as one
         got.headers().names().forEach(name -> assertFalse(name.toUpperCase().replaceAll("[^A-Z0-9]", "_").startsWith("X_ISX_")
-                && !List.of("X-Isx-Instance", "X-Isx-Template").contains(name), "a variant of an identity header crossed: " + name));
+                && !List.of("X-Isx-Instance", "X-Isx-Template", HostRouteSecret.HEADER).contains(name),
+                "a variant of an identity header crossed: " + name));
         assertNull(got.headers().get("X-Hop"), "a header the client named in Connection: is hop-by-hop");
-        assertNull(got.headers().get(InstanceSecret.HEADER), "the controller never sees the secret");
+        assertNull(got.headers().get(InstanceSecret.HEADER), "the controller never sees the instance's secret");
+        assertEquals(List.of(routeSecret(WORK)), got.headers().getAll(HostRouteSecret.HEADER),
+                "the route's own secret, which the controller checks before trusting the rest");
+        assertNull(reply.headers().get(HostRouteSecret.HEADER), "never handed back to the guest");
+        assertNull(reply.headers().get("X-Echo"), "not in any header the controller echoes either");
         assertEquals("kept", got.headers().get("X-Other"));
+    }
+
+    /** What the controller reads to check the proxy: the route's secret file. */
+    private static String routeSecret(String route) throws Exception {
+        return Files.readString(HostRouteSecret.file(route)).strip();
+    }
+
+    @Test
+    void eachRouteHasItsOwnOwnerOnlySecretAndAForgedOneIsReplaced() throws Exception {
+        var file = HostRouteSecret.file(WORK);
+        assertEquals(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"),
+                Files.getPosixFilePermissions(file));
+        assertEquals(64, routeSecret(WORK).length());
+        assertNotEquals(routeSecret(WORK), routeSecret(OPEN), "a controller of one route cannot pass as another's");
+
+        var reply = send(WORK, withSecret().add(HostRouteSecret.HEADER, "forged-by-the-guest"));
+        assertEquals(200, reply.status(), reply.body());
+        assertEquals(List.of(routeSecret(WORK)), seen.getFirst().headers().getAll(HostRouteSecret.HEADER));
+    }
+
+    @Test
+    void aRouteWithoutTemplatesIsNeverServed() throws Exception {
+        // Not intercepted at all: no certificate, so not even a handshake
+        assertFalse(proxy.allInterceptedDomains().contains(UNFILTERED));
+        assertThrows(Exception.class, () -> send(UNFILTERED, withSecret()));
+        assertEquals(List.of(), seen);
+        var log = Files.readString(dev.incusspawn.Environment.proxyLifecycleLogFile());
+        assertTrue(log.contains("Ignoring host route '" + UNFILTERED + "'") && log.contains("templates: is required"), log);
+    }
+
+    @Test
+    void aRouteWhoseSecretIsUnsafeIsRefusedNotRelayedOut() throws Exception {
+        // Still claimed, as the CLI's bridge DNS still names it: never relayed out as ordinary traffic
+        assertTrue(proxy.allInterceptedDomains().contains(LEAKY));
+        var reply = send(LEAKY, withSecret());
+        assertEquals(503, reply.status(), reply.body());
+        assertEquals(List.of(), seen);
+        var log = Files.readString(dev.incusspawn.Environment.proxyLifecycleLogFile());
+        assertTrue(log.contains("Ignoring host route '" + LEAKY + "'") && log.contains("owner only"), log);
+    }
+
+    @Test
+    void aReasonPhraseQuotingTheSecretIsNotHandedOn() throws Exception {
+        var reply = sendFull(WORK, "/reason");
+        assertEquals(200, reply.status());
+        assertFalse(reply.reason().contains(routeSecret(WORK)), reply.reason());
+    }
+
+    @Test
+    void noRouteSecretIsEverLogged() throws Exception {
+        send(WORK, withSecret());
+        send(OTHER, withSecret());
+        send(WORK, MultiMap.caseInsensitiveMultiMap());
+        var log = Files.readString(dev.incusspawn.Environment.proxyLifecycleLogFile());
+        for (var route : List.of(WORK, OTHER, OPEN)) {
+            assertFalse(log.contains(routeSecret(route)), "the secret of " + route + " is in the proxy log");
+        }
+        assertFalse(log.contains("l".repeat(64)), "nor the unusable one's");
     }
 
     @Test
@@ -258,7 +354,7 @@ class HostRouteProxyTest {
     @Test
     void aTemplateTheRouteDoesNotListIsRefused() throws Exception {
         assertEquals(403, send(OTHER, withSecret()).status());
-        assertEquals(200, send(OPEN, withSecret()).status(), "a route listing no templates admits any");
+        assertEquals(200, send(OPEN, withSecret()).status(), "a route listing the template among others admits it");
         assertEquals(1, seen.size());
     }
 

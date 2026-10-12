@@ -119,7 +119,13 @@ Key design:
 - **Host routes are forwarded, never relayed (#936).**
   `HostRouteRelay` answers every request whose `Host` or SNI is a `host-routes:` name or under one, checked in `routeRequest` before `mcp.isx.internal` and everything else: both must equal the route's name (421), a name under it gets 404, and a WebSocket to either is refused.
   The caller passes by `InstanceRegistry.identifyWithLineage` (address + secret, one throttled refresh on a refusal) and `HostRoutes.Route.admits` (its leaf template; never a project-local instance, by its type, `project` stamp or build source), and is refused before its body is read.
-  The relay drops every client `X-Isx-*` header by `HostRouteRelay.headerKey` (`_` folded into `-`, as a CGI-style controller reads it), the hop-by-hop ones and those named in `Connection:`, sets `X-Isx-Instance`/`X-Isx-Template`, and forwards the path and query (never an absolute URI) over plain HTTP to the loopback target, stored canonical by `HostRoutes` so it is never looked up, with no credential.
+  The relay drops every client `X-Isx-*` header by `HostRouteRelay.headerKey` (every non-alphanumeric folded into `-`, as a CGI-style controller reads it), the hop-by-hop ones and those named in `Connection:`.
+  It sets `X-Isx-Instance`/`X-Isx-Template` and the route's own secret (`HostRouteSecret`, `X-Isx-Route-Secret`), which the controller checks before trusting the rest.
+  It forwards the path and query (never an absolute URI) over plain HTTP to the loopback target, stored canonical by `HostRoutes` so it is never looked up, with no credential.
+  The route secret is host-only: an owner-only file under `~/.config/incus-spawn/host-routes/`, loaded or created in `useConfig`.
+  A route without a usable one stays claimed and answers 503, never a relay.
+  It is stripped from response headers (by name and by value) and from a reason phrase, redacted from `HostRouteRelay.Served.toString()`, and never logged; nothing may hand it to a guest.
+  `ConfigWatcher` reloads on any change to a secret file, so deleting one rotates it.
   A refused caller's retry is `InstanceRegistry.refreshAfterNow`: one listing started after the call answers every waiter, so a burst of wrong secrets costs one listing.
   The routes live in `ConfigState` (replaced whole on reload) and their names in the routing's intercepted domains, from `ToolProxyResolver.hostRoutes`, which `resolvedDomains` includes for the CLI's DNS writers.
   See DESIGN.md "Host routes".

@@ -59,6 +59,31 @@ class ConfigWatcherTest {
      * Edits a tool until a reload is seen: the watcher registers directories on its own thread,
      * and an edit made before that is not an event. 30s covers a polling WatchService.
      */
+    @Test
+    void aHostRouteSecretDeletedOrChangedReloads(@TempDir Path dir) throws Exception {
+        // #936: deleting a secret is how it is rotated, and a chmod how a refused one is served
+        var configDir = Files.createDirectories(dir.resolve("config"));
+        var secrets = Files.createDirectories(configDir.resolve(HostRouteSecret.DIR));
+        var secret = Files.writeString(secrets.resolve("work.isx.internal" + HostRouteSecret.SUFFIX), "a".repeat(64));
+        var reloads = new java.util.concurrent.Semaphore(0);
+        var watcher = new ConfigWatcher(configDir, List::of, reloads::release);
+        watcher.start();
+        try {
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            var reloaded = false;
+            while (!reloaded && System.nanoTime() < deadline) {
+                Files.deleteIfExists(secret);
+                Files.writeString(secret, "b".repeat(64));
+                reloaded = reloads.tryAcquire(500, TimeUnit.MILLISECONDS);
+            }
+            // Not asserted that other files there are ignored: macOS's polling watcher reports
+            // earlier writes late, and an extra reload costs nothing
+            assertTrue(reloaded, "a changed route secret should reload the proxy");
+        } finally {
+            watcher.stop();
+        }
+    }
+
     private static boolean reloadsOnEdit(Path toolsDir, java.util.concurrent.Semaphore reloads) throws Exception {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         for (int i = 0; System.nanoTime() < deadline; i++) {

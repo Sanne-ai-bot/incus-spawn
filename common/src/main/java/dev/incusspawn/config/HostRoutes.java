@@ -18,7 +18,7 @@ import java.util.function.Consumer;
  * host-routes:
  *   work.isx.internal:
  *     target: 127.0.0.1:7070       # localhost, 127.0.0.0/8 or [::1], with a port
- *     templates: [tpl-isx-agent]   # optional: only instances of these leaf templates
+ *     templates: [tpl-isx-agent]   # required: only instances of these leaf templates
  * </pre>
  *
  * <p>Opt-in only here: a route reaches host state outside any project, so a template, least of
@@ -36,20 +36,21 @@ public final class HostRoutes {
     /**
      * One route.
      *
-     * @param templates the leaf templates whose instances may call it; empty for any
+     * @param templates the leaf templates whose instances may call it, never empty: there is no
+     *                  route for every instance
      */
     public record Route(String name, String host, int port, List<String> templates) {
         public Route {
             templates = List.copyOf(templates);
+            if (templates.isEmpty()) throw new IllegalArgumentException("host route " + name + " lists no templates");
         }
 
         /**
-         * Whether an instance of {@code template} may call this route. A project-local instance
-         * never may, whatever the filter says.
+         * Whether an instance of {@code template} may call this route: one of the listed
+         * templates, and never a project-local instance, whatever the list says.
          */
         public boolean admits(String template, boolean projectLocal) {
-            if (projectLocal) return false;
-            return templates.isEmpty() || templates.contains(template);
+            return !projectLocal && templates.contains(template);
         }
     }
 
@@ -130,17 +131,15 @@ public final class HostRoutes {
                     + " (localhost, 127.0.0.1 or [::1]), with a port from 1 to 65535");
             return null;
         }
-        List<String> templates;
+        // Required and non-empty: a route admits only the templates its owner named (#936)
         var listed = fields.get("templates");
-        if (listed == null) {
-            templates = List.of();
-        } else if (listed instanceof List<?> list && !list.isEmpty()
-                && list.stream().allMatch(t -> t instanceof String s && !s.isBlank())) {
-            templates = list.stream().map(t -> ((String) t).strip()).toList();
-        } else {
-            warn.accept(ignoring(key) + ": templates: must list template names (leave it out to admit every template)");
+        if (!(listed instanceof List<?> list) || list.isEmpty()
+                || !list.stream().allMatch(t -> t instanceof String s && !s.isBlank())) {
+            warn.accept(ignoring(key) + ": templates: is required, listing the templates whose instances may call it"
+                    + " (for example templates: [tpl-isx-agent])");
             return null;
         }
+        var templates = list.stream().map(t -> ((String) t).strip()).toList();
         return new Route(name, hostPort.host(), hostPort.port(), templates);
     }
 
