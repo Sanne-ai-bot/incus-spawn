@@ -94,14 +94,17 @@ class UninstallScriptTest {
     /** A process whose name says qemu stands in for the running VM. */
     private Process startVm() throws IOException {
         var qemu = stubs.resolve("qemu-system-aarch64");
+        var mac = System.getProperty("os.name").startsWith("Mac");
         if (!Files.exists(qemu)) {
             // A link on macOS: newer releases kill a copy of a system binary on exec, and ps
-            // names the process after the link all the same. A copy elsewhere, where sleep may
-            // be one multi-call binary that goes by the name it is run under.
-            if (System.getProperty("os.name").startsWith("Mac")) Files.createSymbolicLink(qemu, Path.of("/bin/sleep"));
-            else Files.copy(Path.of("/bin/sleep"), qemu);
+            // names the process after the link all the same. A copy of the shell elsewhere:
+            // sleep may be one multi-call binary (uutils on Ubuntu 26.04) that exits at once
+            // when run under another name.
+            if (mac) Files.createSymbolicLink(qemu, Path.of("/bin/sleep"));
+            else Files.copy(Path.of("/bin/sh").toRealPath(), qemu);
         }
-        var vm = new ProcessBuilder(qemu.toString(), "60").start();
+        var vm = (mac ? new ProcessBuilder(qemu.toString(), "60")
+                : new ProcessBuilder(qemu.toString(), "-c", "read x")).start();
         Files.writeString(state.resolve("vm.pid"), Long.toString(vm.pid()));
         return vm;
     }
