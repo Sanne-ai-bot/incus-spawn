@@ -182,6 +182,7 @@ Key design:
   `ToolProxyResolver.resolve(SpawnConfig)` resolves configuration from `value`/`config-path`, uses `${configKey}` template substitution in auth fields, and produces a per-domain `ResolvedToolProxy` list.
   `MitmProxy` stores these in `toolProxyByExactDomain` (exact matches) and `toolProxyWildcardSuffixes` (wildcard suffix matches); `findToolProxy()` does exact-then-wildcard lookup.
   `isInterceptedDomain()` is an instance method (not static) to include tool proxy domains alongside built-in ones.
+  It answers from `allInterceptedDomains` (every account's domains, as bridge DNS and certificates have them), never the default account's entries alone: an instance pinned to an account whose entry the default lacks would be relayed with nothing injected.
   `ProxyCredentials` only has Anthropic-specific fields (`anthropicApiKey`, `oauthToken`, Vertex settings) -- `ghToken`/`bobApiKey`/`openaiApiKey` have been removed
 - WebSocket passthrough: handles Upgrade requests by establishing an upstream WebSocket connection (with credential injection via both Anthropic auth and tool proxy lookup), then relaying frames bidirectionally with keepalive pings and close-code propagation.
   `routeWebSocket` completes the client's handshake (`completeHandshake`, the deprecated `ServerWebSocket.accept()` on purpose) before injecting anything or dialling, because the handler runs before Netty validates the handshake (#972); keep any new rejection (e.g. `reject(502)`) before it.
