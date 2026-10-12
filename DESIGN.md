@@ -1189,7 +1189,8 @@ This prevents TLS failures in branches where the container's trusted CA doesn't 
 
 **Host CA propagation (opt-in).**
 Corporate environments often install custom CA certificates on the host for TLS inspection or internal services.
-When `host-ca: { propagate: true }` is set in `config.yaml`, `CertificateAuthority.collectTrustAnchors()` builds one trust set: the MITM proxy CA plus host CA anchors from `/etc/pki/ca-trust/source/anchors/`, each parsed as X.509 and keyed by SHA-256 fingerprint (`isx-<sha256>.crt`).
+When `host-ca: { propagate: true }` is set in `config.yaml`, `CertificateAuthority.collectTrustAnchors()` builds one trust set: the MITM proxy CA plus host CA anchors from `/etc/pki/ca-trust/source/anchors/`, every certificate in each `.crt`/`.pem` file (PEM bundles and DER alike) re-encoded as PEM from its DER and keyed by its SHA-256 fingerprint (`isx-<sha256>.crt`).
+Nothing but re-encoded certificates reaches a guest or the stamp: a file holding anything that does not parse as certificates, such as a private key saved beside a cert, is refused whole with a warning, and comments, bag attributes or line endings change neither the files nor the stamp.
 Content-addressable naming eliminates filename collisions and shell injection via filenames, and naturally deduplicates the MITM CA if it also sits in the host anchor directory.
 One stamp covers the whole set, in `user.incus-spawn.ca-fingerprint` (the key the MITM-only fingerprint used, so there is one stamp, not two): the CA's fingerprint, then `+` and a fingerprint over the host anchors when there are any.
 Without host anchors it is the CA's fingerprint alone, so images built before this stay current and nothing is reconciled on upgrade.

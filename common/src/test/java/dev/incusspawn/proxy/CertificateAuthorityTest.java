@@ -229,6 +229,46 @@ class CertificateAuthorityTest {
     }
 
     @Test
+    void onlyReEncodedCertificatesReachTheGuest() throws Exception {
+        // The guest gets what the host's files hold as certificates, never the files: a key
+        // saved beside a cert would otherwise be world-readable in every instance
+        propagateHostAnchors();
+        var ca = CertificateAuthority.loadOrCreate();
+        var corp = selfSigned("corp root");
+        // Generated, not a literal: a PEM key block in the source is what secret scanners flag
+        var keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        var key = toPem("PRIVATE KEY", keyGen.generateKeyPair().getPrivate().getEncoded());
+        writeHostAnchor("with-key.pem", corp + key);
+        var a = selfSigned("bundle root a");
+        var b = selfSigned("bundle root b");
+        writeHostAnchor("bundle.pem", "Bag Attributes\r\n    friendlyName: corp\r\n" + a.replace("\n", "\r\n") + b);
+
+        var files = CertificateAuthority.collectTrustAnchors().files();
+        for (var content : files.values()) {
+            assertFalse(content.contains("PRIVATE KEY"), content);
+            assertFalse(content.contains("Bag Attributes"), content);
+            assertFalse(content.contains("\r"), "re-encoded, not copied");
+        }
+        assertEquals(java.util.Set.of("isx-" + ca.caFingerprint() + ".crt",
+                        "isx-" + fingerprint(parse(a)) + ".crt", "isx-" + fingerprint(parse(b)) + ".crt"),
+                files.keySet(), "each certificate of a bundle is an anchor; a file holding a key is refused");
+        assertEquals(DerEncoder.toPem("CERTIFICATE", parse(b).getEncoded()).strip(),
+                files.get("isx-" + fingerprint(parse(b)) + ".crt").strip());
+    }
+
+    @Test
+    void theStampChangesOnlyWithTheCertificates() throws Exception {
+        propagateHostAnchors();
+        var corp = selfSigned("corp root");
+        writeHostAnchor("corp.pem", corp);
+        var before = CertificateAuthority.collectTrustAnchors().stamp();
+        writeHostAnchor("corp.pem", "# corporate root\r\n" + corp.replace("\n", "\r\n"));
+        assertEquals(before, CertificateAuthority.collectTrustAnchors().stamp(),
+                "comments and line endings are not a different trust set");
+    }
+
+    @Test
     void hostAnchorsAreIgnoredUnlessPropagationIsOn() throws Exception {
         CertificateAuthority.loadOrCreate();
         writeHostAnchor("corp.crt", selfSigned("corp root"));

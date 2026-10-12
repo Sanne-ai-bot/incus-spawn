@@ -213,8 +213,11 @@ public class CertificateAuthority {
     }
 
     /**
-     * Adds the host's anchors, keyed by fingerprint: a host copy of the local CA lands on the
-     * CA's own entry and is skipped.
+     * Adds the certificates in the host's anchor files, each keyed by its own fingerprint and
+     * re-encoded as PEM from its DER: nothing else in a file (a private key, comments, bag
+     * attributes, its line endings) reaches a guest or the stamp. A file that does not parse as
+     * certificates throws, so it is refused whole. A host copy of the local CA lands on the CA's
+     * own entry and is skipped.
      */
     private static void addHostAnchors(SortedMap<String, String> anchors) {
         if (!Files.isDirectory(hostAnchorsDir)) return;
@@ -223,10 +226,11 @@ public class CertificateAuthority {
                 var name = path.getFileName().toString();
                 if (!name.endsWith(".crt") && !name.endsWith(".pem")) continue;
                 if (!Files.isRegularFile(path)) continue;
-                try {
-                    var pem = Files.readString(path).strip();
-                    if (pem.isEmpty()) continue;
-                    anchors.putIfAbsent(anchorFile(fingerprintOf(parseCertificate(pem.getBytes(StandardCharsets.UTF_8)))), pem);
+                try (var in = Files.newInputStream(path)) {
+                    for (var cert : CertificateFactory.getInstance("X.509").generateCertificates(in)) {
+                        var x509 = (X509Certificate) cert;
+                        anchors.putIfAbsent(anchorFile(fingerprintOf(x509)), toPem("CERTIFICATE", x509.getEncoded()).strip());
+                    }
                 } catch (Exception e) {
                     Warnings.warn("host-ca: " + name + " is not a readable X.509 certificate: " + e.getMessage());
                 }
@@ -571,12 +575,10 @@ public class CertificateAuthority {
     }
 
     private static X509Certificate loadCertificate(Path path) throws Exception {
-        return parseCertificate(Files.readAllBytes(path));
-    }
-
-    private static X509Certificate parseCertificate(byte[] pem) throws Exception {
-        return (X509Certificate) CertificateFactory.getInstance("X.509")
-                .generateCertificate(new ByteArrayInputStream(pem));
+        var certPem = Files.readAllBytes(path);
+        var certFactory = CertificateFactory.getInstance("X.509");
+        return (X509Certificate) certFactory.generateCertificate(
+                new ByteArrayInputStream(certPem));
     }
 
     /**
