@@ -1061,7 +1061,7 @@ class BuildCommandTest {
     void aRootBuiltOnANewerTrackedBaseImageIsCurrentAfterwards(@TempDir Path tmp) {
         InitCommandTest.withHome(tmp, () -> {
             var releases = mock(BaseImageReleases.class);
-            var latest = new BaseImageReleases.Release("fedora-44-20261010", "2026-10-10", "sums");
+            var latest = new BaseImageReleases.Release("fedora-44-20261010", "2026-10-10", "sums", null);
             try {
                 when(releases.fetchReleases()).thenReturn(List.of(latest));
                 when(releases.fetchChecksums(eq(latest), anyString(), any())).thenReturn(new BaseImageReleases.Checksums(
@@ -1121,7 +1121,7 @@ class BuildCommandTest {
      */
     @Test
     void aTrackedReleaseWithoutTheVmImageKeepsTheVmOnTheBuiltInRelease() {
-        var latest = new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums");
+        var latest = new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
         var cmd = trackingAgainst(latest, new BaseImageReleases.Checksums(
                 Map.of("x86_64", "tracked-sha", "aarch64", "tracked-sha"), Map.of()));
 
@@ -1684,6 +1684,21 @@ class BuildCommandTest {
 
         cmd.downloadAndAliasImage("fedora-44-base-vm", DIRECT_URL,
                 Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261020", trusted("tpl-minimal"));
+
+        verify(incus, never()).deleteImage(any());
+        verify(cmd, never()).newDownloadCache();
+    }
+
+    /** The expected file under another tag (an unchanged asset, or the VM held on the built-in release) is not imported again. */
+    @Test
+    void anImportOfTheExpectedFileIsReusedUnderAnyTag() {
+        var expected = "d".repeat(64);
+        var incus = importedVmImage("fedora-44-20261020", expected);
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+
+        cmd.downloadAndAliasImage("fedora-44-base-vm", DIRECT_URL,
+                Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261009", trusted("tpl-minimal"));
 
         verify(incus, never()).deleteImage(any());
         verify(cmd, never()).newDownloadCache();
