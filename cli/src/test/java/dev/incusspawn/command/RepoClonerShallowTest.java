@@ -134,6 +134,33 @@ class RepoClonerShallowTest {
     }
 
     @Test
+    void aFullRepoKeepsNoRefOfTheHostCheckoutsOwnWork() throws Exception {
+        git(upstream, "tag", "v1", "HEAD~4");
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(host, "checkout", "-q", "-b", "wip");
+        commitBinary(host, "unpushed work");
+        var unpushed = git(host, "rev-parse", "HEAD");
+        git(host, "tag", "private-wip");
+        git(host, "tag", "-f", "v1"); // moved on the host, so a fetch of origin's would clobber it
+        git(host, "branch", "older-wip", unpushed); // not checked out: the clone takes it as origin/older-wip
+
+        var guest = prepare(repo(null, null), host);
+
+        // The objects stay (the full path copies the whole pack by design); no ref reaches them.
+        assertEquals("", git(guest, "for-each-ref", "--contains", unpushed));
+        assertFalse(git(guest, "reflog", "--all").contains(unpushed.substring(0, 7)));
+        assertEquals("v1", git(guest, "tag", "-l"), "the remote's tags stay, the host's own go");
+        assertEquals(git(upstream, "rev-parse", "v1"), git(guest, "rev-parse", "v1"));
+        assertEquals("refs/heads/main\nrefs/remotes/origin/HEAD\nrefs/remotes/origin/main\nrefs/remotes/origin/stable",
+                git(guest, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"));
+        assertEquals("main", git(guest, "branch", "--show-current"));
+        assertEquals("branch.main.remote origin\nbranch.main.merge refs/heads/main",
+                git(guest, "config", "--get-regexp", "^branch\\."), "no host branch name stays in the config");
+        assertEquals("5", git(guest, "rev-list", "--count", "HEAD"));
+    }
+
+    @Test
     void aRepoWithoutADepthDoesNotInheritAShallowHostCheckout() throws Exception {
         // Shallow because another template gave this URL a depth when the host cloned it.
         var host = tmp.resolve("host-releases");

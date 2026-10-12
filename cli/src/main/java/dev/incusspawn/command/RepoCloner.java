@@ -404,16 +404,21 @@ class RepoCloner {
                     // advertisements travel the network.  set-head --auto is needed
                     // because the local clone inherits HEAD from the host checkout,
                     // which may be on a different branch than the remote's default.
+                    // The host's own tags and branches go (#1362): --prune --prune-tags drops those
+                    // origin lacks, --force resets a tag origin has moved.
                     var git = "git -C " + shellQuote(expandedPath);
                     var fixup = container.shAsUser("agentuser",
                             git + " remote set-url origin " + shellQuote(repo.getUrl())
-                                    + " && " + git + " fetch --quiet origin"
+                                    + " && " + git + " fetch --quiet --prune --prune-tags --force origin"
                                     + " && " + git + " remote set-head origin --auto");
                     last = fixup;
                     if (fixup.success()) {
+                        // Then its checked-out branch and the reflogs: a network clone's refs remain.
                         var checkout = container.shAsUser("agentuser", resolveBranch(repo,
                                 "$(" + git + " for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)")
-                                + " && " + git + CHECKOUT_TRACKING);
+                                + " && " + git + CHECKOUT_TRACKING
+                                + " && " + deleteOtherBranches(git)
+                                + " && " + git + " reflog expire --expire=now --all");
                         usedReference = checkout.success();
                         last = checkout;
                     }
@@ -603,6 +608,17 @@ class RepoCloner {
                 // and the commits only those refs reached, cheap to find in a shallow repo.
                 + " && " + git + " reflog expire --expire=now --all"
                 + " && " + git + " gc --quiet --prune=now";
+    }
+
+    /**
+     * Shell deleting every local branch but the one HEAD is on (all of them when it is detached)
+     * with {@code branch -D}, which also drops their config sections: a host checkout's branch
+     * name can say what it was working on. They are listed first, so a failing for-each-ref
+     * fails the command instead of leaving every branch in place.
+     */
+    private static String deleteOtherBranches(String git) {
+        return "l=$(" + git + " for-each-ref --format='%(if)%(HEAD)%(then)%(else)%(refname:strip=2)%(end)' refs/heads)"
+                + " && { [ -z \"$l\" ] || " + git + " branch -q -D -- $l; }";
     }
 
     /** Shell setting {@code b} to the repo's configured branch, else to {@code remoteDefault}'s output. */

@@ -2420,8 +2420,13 @@ The old approach used `git clone --reference` and then ran `git repack -a -d` to
 The local-clone approach avoids it entirely.
 Pack files are copied as-is, then the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing — `HostRepoRefresh` just ran — so only ref advertisements travel the network).
 If a specific branch was requested, it is checked out after the fetch supplies the ref.
-The clone includes objects reachable from all branches in the reference (pack files can't be efficiently subsetted), but only the needed refs are set up; extra objects are harmless dead weight cleaned by a future `git gc`.
-Only committed history is copied, but the whole checkout (working tree, untracked files, `.git/config`) is *visible* inside the build container while the reference is mounted.
+The local clone also takes over the host checkout's own branch (and its name, in a `[branch]` config section), its branches as `origin/*` and its tags, any of which may hold unpushed work (#1362).
+So the fetch runs with `--prune --prune-tags --force`, which leaves origin's branches and tags only (`--force` resets a tag the host has and origin has moved), every local branch but the one checked out is deleted with `branch -D` (which drops its config section), and the reflogs are expired: the refs and branch config a network clone has.
+Each deletion lists the refs before deleting them, so a listing that fails fails the clone, which then falls back to the network, rather than leaving the host's refs in place.
+The clone copies every object in the host's store (pack files can't be efficiently subsetted), and they stay until a future `git gc`, reachable from no ref.
+That is not only committed history: it includes the host's unpushed commits, its stash entries, and the blobs of content that was once staged (`git add`) and never committed, all recoverable in the image with `git fsck` or `git cat-file`.
+Pruning them would cost the repack this path exists to avoid, so it is not done; whether that trade is acceptable is an open decision (#1362).
+Beyond the object store, the whole checkout (working tree, untracked files, `.git/config`) is *visible* inside the build container while the reference is mounted.
 That is why no prime command runs until every reference is detached (see above), and why project-local templates get no references at all.
 If the reference mount, clone, or fetch fails for any reason the build cleans up the partial checkout and falls back transparently to a plain remote clone.
 

@@ -144,6 +144,8 @@ The scan of the real sysfs is made once per process.
 When a host-side checkout is available, the clone runs locally from the mounted reference (`git clone --no-hardlinks`) -- this copies pack files directly, avoiding the expensive `git repack` that the old `--reference`/dissociate approach required.
 After the local clone, the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing, so only ref advertisements travel the network).
 If a specific branch was requested, it is checked out after the fetch supplies the ref.
+The fast path then keeps only a network clone's refs (`fetch --prune --prune-tags --force`, other local branches deleted with `branch -D` so their config sections go too, reflogs expired), so no ref reaches the host's unpushed work (#1362); each listing runs before its deletion, so a failure fails closed.
+The host's whole object store (unpushed commits, stash, once-staged blobs) still ships unreferenced.
 On any failure the local-clone path is discarded and a normal remote clone runs as fallback.
 A repo with a `depth` never takes the local fast path (it ignores `--depth`): it clones the reference with `--no-local --depth`, then fetches its branch at that depth from the real origin (`shallowFixupCommand`).
 From the network it is `--single-branch --depth`, and its refspec stays narrow (#1344).
