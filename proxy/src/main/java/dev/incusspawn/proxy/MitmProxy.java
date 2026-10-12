@@ -220,7 +220,7 @@ public class MitmProxy {
                     Set<String> alsoIntercepted) {
             this(config, configTree, toolSetups, credentials,
                     alsoIntercepting(buildRouting(credentials.toolProxies(), proxiesAcrossAccounts, true),
-                            union(hostRoutes.keySet(), alsoIntercepted)),
+                            hostRoutes.keySet(), alsoIntercepted),
                     dev.incusspawn.config.AccountSelection.byNamespace(toolSetups),
                     dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups),
                     new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), hostRoutes);
@@ -231,19 +231,14 @@ public class MitmProxy {
      * {@code routing}, intercepting {@code names} as well: the host routes' names, and the domains
      * a built-in handler such as ChatGPT's serves without a tool proxy.
      */
-    private static ToolProxyRouting alsoIntercepting(ToolProxyRouting routing, Set<String> names) {
-        if (names.isEmpty()) return routing;
+    private static ToolProxyRouting alsoIntercepting(ToolProxyRouting routing, Set<String> routeNames,
+                                                     Set<String> handlerDomains) {
+        if (routeNames.isEmpty() && handlerDomains.isEmpty()) return routing;
         var all = new HashSet<>(routing.allInterceptedDomains());
-        all.addAll(names);
+        all.addAll(routeNames);
+        all.addAll(handlerDomains);
         return new ToolProxyRouting(routing.exactDomain(), routing.wildcardSuffixes(), Set.copyOf(all),
                 routing.suffixes());
-    }
-
-    private static Set<String> union(Set<String> a, Set<String> b) {
-        if (b.isEmpty()) return a;
-        var all = new HashSet<>(a);
-        all.addAll(b);
-        return all;
     }
 
     private volatile ConfigState configState;
@@ -464,12 +459,12 @@ public class MitmProxy {
         // The default selection is resolved once, and seeds the across-accounts set.
         var credentials = ProxyCredentials.forAccounts(config, tree, Map.of(), setups);
         var acrossAccounts = ToolProxyResolver.resolveAcrossAccounts(tree, setups, credentials.toolProxies());
-        var openai = dev.incusspawn.config.AccountSelection.byNamespace(setups).get(ChatGptRoute.NAMESPACE);
+        var openai = dev.incusspawn.config.AccountSelection.byNamespace(setups).get(ChatGptAccounts.NAMESPACE);
         chatGpt.useConfig(tree, openai == null ? null : openai.accountShape());
         configState = new ConfigState(config, tree, setups, credentials, acrossAccounts,
                 HostRouteRelay.served(ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn),
                         name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)),
-                chatGpt.enabled() ? ChatGptRoute.DOMAINS : Set.of());
+                ToolProxyResolver.handlerDomains(tree));
         artifactCache.artifactCacheTiers = ArtifactCacheTiers.from(config);
         return previous;
     }

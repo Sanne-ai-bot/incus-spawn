@@ -79,6 +79,9 @@ class ChatGptRouteTest {
     static volatile String refreshError;
     static volatile int refreshErrorStatus = 400;
     static volatile boolean refreshAnswersEmpty;
+    /** The last backend request the stub answered: its body's length and its headers. */
+    record Received(int bodyLength, io.vertx.core.MultiMap headers) {}
+    static volatile Received lastBackend;
     static volatile CompletableFuture<Void> holdBackend = CompletableFuture.completedFuture(null);
     static final ConcurrentLinkedQueue<String> refreshEncodings = new ConcurrentLinkedQueue<>();
     static volatile CompletableFuture<Void> holdRefresh = CompletableFuture.completedFuture(null);
@@ -160,7 +163,7 @@ class ChatGptRouteTest {
         backendRefuses = false;
         mintedTtlSeconds = 3600;
         proxy.clearAuthError();
-        proxy.chatGpt.maxBackendBody = ChatGptRoute.MAX_BACKEND_BODY;
+        lastBackend = null;
         sessionId = store.create(ACCOUNT, mint(3600)).sessionId();
         bind(SECRET, sessionId);
     }
@@ -197,8 +200,28 @@ class ChatGptRouteTest {
     }
 
     static void bind(String secret, String session, String currentSecret, String account) {
+        useListing(listing(secret, session, currentSecret, account));
+    }
+
+    /** Serves {@code listed} as what Incus lists, read once now. */
+    static void useListing(String listed) {
+        listing = listed;
+        var registry = new InstanceRegistry(new IncusClient() {
+            @Override
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                return JqValues.parse(listing);
+            }
+        });
+        registry.refresh();
+        proxy.useInstanceRegistry(registry);
+    }
+
+    /** What Incus lists for the worker; a test may change it without the registry knowing. */
+    static volatile String listing;
+
+    static String listing(String secret, String session, String currentSecret, String account) {
         var proofs = ChatGptProof.derive(secret, account, session);
-        var listing = """
+        return """
                 [{"name":"%s","created_at":"2026-10-01T00:00:00Z","config":{
                   "user.incus-spawn.static-ip":"127.0.0.1",
                   "user.incus-spawn.account.openai":"%s",
@@ -209,14 +232,6 @@ class ChatGptRouteTest {
                   "user.incus-spawn.instance-secret-sha256":"%s"}}]
                 """.formatted(INSTANCE, account, account, session, ChatGptProof.verifier(proofs.access()),
                 ChatGptProof.verifier(proofs.refresh()), InstanceSecret.sha256(secret), InstanceSecret.sha256(currentSecret));
-        var registry = new InstanceRegistry(new IncusClient() {
-            @Override
-            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
-                return JqValues.parse(listing);
-            }
-        });
-        registry.refresh();
-        proxy.useInstanceRegistry(registry);
     }
 
     static ChatGptProof.Proofs proofs() {
@@ -269,6 +284,7 @@ class ChatGptRouteTest {
                     }
                 }
                 default -> {
+                    lastBackend = new Received(body.length(), io.vertx.core.MultiMap.caseInsensitiveMultiMap().addAll(req.headers()));
                     var status = backendRefuses ? 401 : 200;
                     holdBackend.whenComplete((v, e) -> vertx.runOnContext(x -> resp.setStatusCode(status).end("{\"ok\":true}")));
                 }
@@ -369,6 +385,31 @@ class ChatGptRouteTest {
     }
 
     @Test
+    void theGuestsOwnHeadersReachUpstreamBesideTheRealToken() throws Exception {
+        var reply = send(ChatGptRoute.CHATGPT, ChatGptRoute.CHATGPT, "POST /backend-api/codex/responses HTTP/1.1\r\n"
+                + "Host: chatgpt.com\r\nAuthorization: Bearer " + accessPlaceholder(proofs().access()) + "\r\n"
+                + "Content-Type: application/json\r\nOpenAI-Beta: responses=experimental\r\nOriginator: codex_cli_rs\r\n", "{}");
+
+        assertEquals(200, reply.status(), reply.body());
+        assertEquals("application/json", lastBackend.headers().get("Content-Type"));
+        assertEquals("responses=experimental", lastBackend.headers().get("OpenAI-Beta"));
+        assertEquals("codex_cli_rs", lastBackend.headers().get("Originator"));
+    }
+
+    @Test
+    void aCallerRefusedOnAListingFromBeforeItsStartIsCheckedAgainOnAFreshOne() throws Exception {
+        // The instance restarted: a new secret, new proofs, which Incus lists but the registry
+        // has not read yet (a start does not signal the proxy)
+        listing = listing(OTHER_SECRET, sessionId, OTHER_SECRET, ACCOUNT);
+        Thread.sleep(InstanceRegistry.MISS_REFRESH_INTERVAL_MS + 100);
+        var proofs = ChatGptProof.derive(OTHER_SECRET, ACCOUNT, sessionId);
+
+        var reply = backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs.access()));
+        assertEquals(200, reply.status(), "refused only until the registry listed again: " + reply.body());
+        assertEquals(200, refresh(proofs.refreshToken()).status());
+    }
+
+    @Test
     void theModelsListTakesOnlyTheClientVersionQuery() throws Exception {
         var bearer = accessPlaceholder(proofs().access());
         assertEquals(200, backend("GET", "/backend-api/codex/models?client_version=0.162.1", bearer).status());
@@ -464,17 +505,12 @@ class ChatGptRouteTest {
     @Test
     void anInstanceWithoutABindingGetsNothing() throws Exception {
         var proofs = proofs();
-        var registry = new InstanceRegistry(new IncusClient() {
-            @Override
-            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
-                return JqValues.parse("[{\"name\":\"other\",\"config\":{\"user.incus-spawn.static-ip\":\"127.0.0.1\"}}]");
-            }
-        });
-        registry.refresh();
-        proxy.useInstanceRegistry(registry);
+        useListing("[{\"name\":\"other\",\"config\":{\"user.incus-spawn.static-ip\":\"127.0.0.1\"}}]");
 
         assertEquals(401, backend("POST", "/backend-api/codex/responses", accessPlaceholder(proofs.access())).status());
         assertEquals(401, refresh(proofs.refreshToken()).status());
+        assertEquals(401, send(ChatGptRoute.AUTH, ChatGptRoute.AUTH, "POST /oauth/revoke HTTP/1.1\r\nHost: auth.openai.com\r\n",
+                "{\"token\":\"" + proofs.refreshToken() + "\"}").status());
         assertTrue(seen.isEmpty(), seen.toString());
     }
 
@@ -935,7 +971,7 @@ class ChatGptRouteTest {
         assertEquals(502, refresh(proofs().refreshToken()).status());
     }
 
-    // --- Bodies: read only after the proof, and only so much ---
+    // --- Bodies: read only after the proof, and then streamed ---
 
     @Test
     void aBodyIsNeverReadForACallerWithoutTheProof() throws Exception {
@@ -950,21 +986,19 @@ class ChatGptRouteTest {
     }
 
     @Test
-    void aBodyPastTheBoundIsRefused() throws Exception {
-        var bearer = accessPlaceholder(proofs().access());
-        var declared = send(ChatGptRoute.CHATGPT, ChatGptRoute.CHATGPT, "POST /backend-api/codex/responses HTTP/1.1\r\n"
-                + "Host: chatgpt.com\r\nAuthorization: Bearer " + bearer + "\r\nContent-Length: "
-                + (ChatGptRoute.MAX_BACKEND_BODY + 1) + "\r\n", "");
-        assertEquals(413, declared.status());
+    void aProvenRequestsBodyStreamsThroughWhole() throws Exception {
+        // Never held whole in the shared proxy (#1315): it streams once the head is proven
+        var chunk = "x".repeat(64 * 1024);
+        var body = new StringBuilder();
+        for (int i = 0; i < 64; i++) body.append(Integer.toHexString(chunk.length())).append("\r\n").append(chunk).append("\r\n");
+        body.append("0\r\n\r\n");
+        var reply = send(ChatGptRoute.CHATGPT, ChatGptRoute.CHATGPT, "POST /backend-api/codex/responses HTTP/1.1\r\n"
+                + "Host: chatgpt.com\r\nAuthorization: Bearer " + accessPlaceholder(proofs().access())
+                + "\r\nTransfer-Encoding: chunked\r\n", body.toString());
 
-        // A chunked body has no length to refuse up front: it is counted as it arrives
-        proxy.chatGpt.maxBackendBody = 1024;
-        var chunk = "x".repeat(4096);
-        var chunked = send(ChatGptRoute.CHATGPT, ChatGptRoute.CHATGPT, "POST /backend-api/codex/responses HTTP/1.1\r\n"
-                + "Host: chatgpt.com\r\nAuthorization: Bearer " + bearer + "\r\nTransfer-Encoding: chunked\r\n",
-                Integer.toHexString(chunk.length()) + "\r\n" + chunk + "\r\n0\r\n\r\n");
-        assertEquals(413, chunked.status());
-        assertTrue(seen.isEmpty(), seen.toString());
+        assertEquals(200, reply.status(), reply.body());
+        assertEquals(64 * chunk.length(), lastBackend.bodyLength());
+        assertTrue(seenOn("/backend-api/codex/responses").getFirst().contains("Bearer " + store.read(ACCOUNT).tokens().accessToken()));
     }
 
     // --- Helpers ---

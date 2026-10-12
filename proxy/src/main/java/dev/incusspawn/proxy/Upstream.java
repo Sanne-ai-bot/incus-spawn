@@ -617,21 +617,16 @@ class Upstream {
         upReq.putHeader("Host", domain);
     }
 
-    /**
-     * Relays a request whose body has already been read: {@code adjust} may change the upstream
-     * request's headers, and {@code onResponse} sees upstream's answer before it is piped back.
-     */
-    void relayBuffered(HttpServerRequest clientReq, String domain, Buffer body,
-                       java.util.function.Consumer<HttpClientRequest> adjust,
-                       java.util.function.Consumer<HttpClientResponse> onResponse) {
+    /** Relays a request whose body has already been read, as it came. */
+    void relayBuffered(HttpServerRequest clientReq, String domain, Buffer body) {
         var options = new RequestOptions().setMethod(clientReq.method()).setHost(domain).setPort(443)
                 .setURI(clientReq.uri());
         requestWithAsyncDns(options).onSuccess(upReq -> {
             copyRequestHeaders(clientReq, upReq, domain);
-            adjust.accept(upReq);
+            // Already answered here, and the body goes at once: upstream must not wait to send a 100
+            upReq.headers().remove("Expect");
             upReq.putHeader("Content-Length", String.valueOf(body.length()));
             upReq.send(body).onSuccess(upResp -> {
-                onResponse.accept(upResp);
                 copyResponseHead(upResp, clientReq.response());
                 pipeResponse(upResp, clientReq.response(), null);
             }).onFailure(e -> {

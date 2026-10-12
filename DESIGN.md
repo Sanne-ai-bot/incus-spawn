@@ -1886,14 +1886,17 @@ The real id token never reaches a guest: it is signed, and can be exchanged for 
 
 **Which requests:** Only a request that claims to be isx's (an isx access placeholder as its bearer, or an isx refresh placeholder in its body) is handled; anything else to `chatgpt.com` or `auth.openai.com` is relayed (`ChatGptRoute`).
 Interception is decided per host, not per instance, because bridge DNS is: while any `openai` account is `type: chatgpt`, both hosts are intercepted for every instance, and an instance with no ChatGPT binding only ever gets the relay.
+`ChatGptAccounts` decides it for everything that has to agree: the proxy, and the DNS block the CLI rewrites (`ToolProxyResolver.resolvedDomains`).
+A host route cannot take these hosts: its name must lie under `.internal`.
 The relay is not quite untouched on the two token paths: `POST /oauth/token` and `/oauth/revoke` bodies are read (64 KiB at most, a longer chunked one gets 413) to look for a placeholder, and one that contains `isx_` counts as claimed.
-A claimed request is refused here, never relayed, unless each of these holds, all judged on its head: a backend request's body is read only once they do, so a caller without the proof cannot make the shared proxy hold one.
+A claimed request is refused here, never relayed, unless each of these holds, all judged on its head: a backend request's body is not read until they do, and then it streams through the same relay as every other credential-injecting domain (#1315), never held whole.
 A refusal pauses the request instead of draining its body, and the connection is not reused.
 1. Its shape: one `Authorization`, `ChatGPT-Account-Id`, `Host`, `Content-Length` and `Transfer-Encoding` at most, a TLS name that is the `Host` (none at all is refused too), and a target with no percent-encoding, dot or empty segments (400).
-   Bodies are read only up to a bound (64 KiB for token requests, 64 MiB for the backend; 413 past it), since the proxy is shared.
+   A token request's body is read to find its claim, 64 KiB at most (413 past it); a backend request's is never held.
    Anything a server could read as another path is refused rather than normalised.
 2. The allowlist: method and exact path, below; nothing is pre-authorized (403, logged once per operation).
 3. The caller: the instance at the source address, served the account its binding names, presenting the proof its verifier matches (401).
+   A refusal right after a start may come from a registry listing that predates it, so it gets `CallerCheck`'s one throttled refresh and one more try, as `isx mcp` and host routes do; a WebSocket is judged on the listing at hand.
 4. The session: still the one the binding was made for, so a sign-in again invalidates every proof made before it (401).
 
 | Host | Method | Path | What the proxy does |
