@@ -1930,6 +1930,9 @@ The host side runs with a group an nftables table lets reach only the stub and t
 A systemd `IPAddressDeny=` was the first plan; in a nested instance it was accepted and blocked nothing.
 The guest's own `--proxy-only` rules can be removed by guest root (#1137), so a host table drops everything the bridge would route off the host, whatever address guest root takes, proven with the guest's rules flushed as root.
 Every token is stub-minted and searched for afterwards in the guest's files, journal and environment and in the proxy's log.
+It leaves the developer's own isx state alone: its proxy runs in a mount namespace with throwaway config and state directories bind-mounted over the real ones (a copy of `config.yaml` and the CA, plus the ChatGPT account and session).
+Neither `$HOME` nor `-Duser.home` would do: Java reads its home from the password database, and a native image ignores the property.
+The real directories are checked unchanged, and a proxy that was running is started again on exit, an interrupted run included.
 
 ### Host Resources
 

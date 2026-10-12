@@ -17,6 +17,12 @@
 # ChatGptProof does (checked against its pinned vector first), and only their SHA-256 verifiers go
 # into instance metadata.
 #
+# None of the user's own isx state is touched: the test's proxy runs in a mount namespace that puts
+# a throwaway config and state directory under the work directory over the user's (a copy of
+# config.yaml and the CA, plus the ChatGPT account and its session),
+# the user's config is checked unchanged at the end, and a proxy that was running before is
+# started again on exit, failures included.
+#
 # Usage (as a user in incus-admin, with passwordless sudo, isx-proxy on PATH and the instance
 # running with codex installed):
 #   test-chatgpt-session.sh <instance>
@@ -35,7 +41,10 @@ STUB_PORT=18943
 CONTROL_PORT=18944
 ACCOUNT=sso
 TEST_GROUP=isx-chatgpt-test
-CONFIG_DIR="$HOME/.config/incus-spawn"
+REAL_CONFIG_DIR="$HOME/.config/incus-spawn"
+# The test's own home: everything the test proxy reads and writes is under it
+TEST_HOME="$WORK/home"
+CONFIG_DIR="$TEST_HOME/.config/incus-spawn"
 CODEX_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
 
 PASS=0
@@ -56,19 +65,45 @@ control() { curl -sf -m 10 "$@"; }
 # Packets an nftables named counter has seen: <table> <counter>
 counter() { sudo nft -j list counter inet "$1" "$2" | python3 -c "import json,sys; print([o['counter']['packets'] for o in json.load(sys.stdin)['nftables'] if 'counter' in o][0])"; }
 stub_requests() { control "http://127.0.0.1:$CONTROL_PORT/log" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"; }
+# Waits up to 30 s for a proxy to answer on the bridge
+wait_healthy() { for _ in $(seq 1 60); do curl -sf -m 2 "http://$GATEWAY:18080/health" >/dev/null && return 0; sleep 0.5; done; return 1; }
+health_pid() { curl -sf -m 2 "http://$GATEWAY:18080/health" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',''))"; }
 rotations() { control "http://127.0.0.1:$CONTROL_PORT/state" | python3 -c "import json,sys; print(json.load(sys.stdin)['rotations'])"; }
 
 REAL_PROXY_PID=
+USER_PROXY_WAS_UP=0
+CLEANED=0
 cleanup() {
-    [ "${KEEP:-0}" = 1 ] && return
-    # The proxy by the pid it reports, and its wrapper and the stub by the work directory in their arguments
-    [ -n "$REAL_PROXY_PID" ] && sudo kill "$REAL_PROXY_PID" 2>/dev/null
+    [ "$CLEANED" = 1 ] && return
+    CLEANED=1
+    if [ "${KEEP:-0}" = 1 ]; then
+        [ "$USER_PROXY_WAS_UP" = 1 ] && echo "KEEP=1: your own proxy stays stopped; run 'isx proxy start' when done" >&2
+        return
+    fi
+    # The test proxy by the pid it reports, and its wrapper and the stub by the work directory
+    # in their arguments
+    # Read again: a pidfile written after the main path stopped waiting still names the proxy
+    [ -n "$REAL_PROXY_PID" ] || REAL_PROXY_PID=$(cat "$WORK/proxy.pid" 2>/dev/null)
+    if [ -n "$REAL_PROXY_PID" ]; then
+        sudo kill "$REAL_PROXY_PID" 2>/dev/null
+        # Gone, not just quiet: the user's proxy needs its ports
+        for _ in $(seq 1 60); do sudo kill -0 "$REAL_PROXY_PID" 2>/dev/null || break; sleep 0.25; done
+        sudo kill -9 "$REAL_PROXY_PID" 2>/dev/null
+    fi
     for p in $(pgrep -f -- "$WORK"); do sudo kill "$p" 2>/dev/null; done
     sudo nft delete table inet isx_chatgpt_host 2>/dev/null
     sudo nft delete table inet isx_chatgpt_guest 2>/dev/null
+    if [ "$USER_PROXY_WAS_UP" = 1 ]; then
+        # The user's own proxy, with the user's own config, as it was before the test stopped it
+        setsid nohup isx proxy start > "$WORK/user-proxy.log" 2>&1 < /dev/null &
+        wait_healthy && [ "$(health_pid)" != "$REAL_PROXY_PID" ] && echo "Restarted the proxy that was running before" \
+            || echo "WARNING: could not restart the proxy that was running before; run 'isx proxy start'" >&2
+    fi
     return 0
 }
 trap cleanup EXIT
+# An interrupted run restores too: the EXIT trap runs only on an exit
+trap 'exit 130' INT TERM HUP
 
 echo "========================================"
 echo " ChatGPT session (#1332, M1) end to end"
@@ -127,7 +162,21 @@ check "the stub answers on loopback, from inside the test group too (positive co
 # --- 3. The host session and the proxy ---
 echo ""
 echo "[3] The host's session, and the proxy pointed at the stub"
-python3 - "$CONFIG_DIR/config.yaml" "$ACCOUNT" <<'PY' || die "could not add the chatgpt account to config.yaml"
+# Never the user's own: a copy of what the proxy needs (config and CA), in the test's home
+[ "$(realpath -m "$CONFIG_DIR")" != "$(realpath -m "$REAL_CONFIG_DIR")" ] || die "refusing to run against the real config"
+mkdir -p -m 700 "$CONFIG_DIR"
+for f in config.yaml ca.crt ca.key .init-complete; do
+    [ -e "$REAL_CONFIG_DIR/$f" ] && cp -p "$REAL_CONFIG_DIR/$f" "$CONFIG_DIR/$f"
+done
+[ -e "$CONFIG_DIR/ca.key" ] || die "no isx CA in $REAL_CONFIG_DIR: run 'isx init' first"
+# Everything under the user's config and state but what other isx processes rewrite as they run:
+# the lock file 'isx proxy' takes, and the CLI's own log and API debug captures (a TUI or 'isx mcp'
+# left running writes them). The proxy's logs stay in: a test proxy that escaped its mount
+# namespace would write them.
+real_state() { find "$REAL_CONFIG_DIR" "$HOME/.local/state/incus-spawn" -name api-debug -prune \
+    -o -type f ! -name proxy.lock ! -name client.log -print0 \
+    | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1; }
+python3 - "$CONFIG_DIR/config.yaml" "$ACCOUNT" <<'PY' || die "could not add the chatgpt account to the test config"
 import sys, yaml
 path, account = sys.argv[1:3]
 try:
@@ -150,14 +199,35 @@ os.write(fd, json.dumps(session).encode()); os.close(fd)
 PY
 ACCOUNT_ID=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['account_id'])" "$WORK/minted.json")
 
+# Only one proxy can serve the bridge: the user's stops for the test, and starts again on exit
+curl -sf -m 2 "http://$GATEWAY:18080/health" >/dev/null && USER_PROXY_WAS_UP=1
 isx proxy stop >/dev/null 2>&1 || true
 sleep 1
-as_test env ISX_BENCH_UPSTREAM="chatgpt.com=127.0.0.1:$STUB_PORT,auth.openai.com=127.0.0.1:$STUB_PORT" \
+# After the user's proxy stopped: whatever it wrote on the way out is not the test's doing
+REAL_STATE_BEFORE=$(real_state)
+# The test proxy sees the test's directories where the user's are: in a mount namespace of its
+# own, they are bind-mounted over ~/.config/incus-spawn and ~/.local/state/incus-spawn. Java takes
+# its home from the password database, and a native image ignores -Duser.home, so neither $HOME
+# nor a property can move it; a mount does, for any build, and only for this one process.
+REAL_STATE_DIR="$HOME/.local/state/incus-spawn"
+mkdir -p -m 700 "$TEST_HOME/.local/state/incus-spawn" "$REAL_STATE_DIR"
+# Once both mounts are in place, the shell records its pid and execs, and every step after it execs
+# too: that pid is the proxy's, for cleanup to stop even a proxy that never answered /health
+sudo unshare --mount --propagation private sh -c '
+    mount --bind "$1" "$2" && mount --bind "$3" "$4" || exit 1
+    echo $$ > "$5"
+    shift 5
+    exec "$@"' sh "$CONFIG_DIR" "$REAL_CONFIG_DIR" "$TEST_HOME/.local/state/incus-spawn" "$REAL_STATE_DIR" "$WORK/proxy.pid" \
+    setpriv --reuid="$(id -u)" --regid="$TEST_GROUP" --init-groups env HOME="$HOME" PATH="$PATH" \
+    ISX_BENCH_UPSTREAM="chatgpt.com=127.0.0.1:$STUB_PORT,auth.openai.com=127.0.0.1:$STUB_PORT" \
     ISX_BENCH_UPSTREAM_CERT="$WORK/ca.pem" isx-proxy --gateway-ip "$GATEWAY" > "$WORK/proxy.log" 2>&1 &
-for _ in $(seq 1 60); do curl -sf -m 2 "http://$GATEWAY:18080/health" >/dev/null && break; sleep 0.5; done
-check "the proxy is healthy under the egress table" curl -sf -m 5 "http://$GATEWAY:18080/health"
+for _ in $(seq 1 20); do [ -s "$WORK/proxy.pid" ] && break; sleep 0.1; done
+REAL_PROXY_PID=$(cat "$WORK/proxy.pid" 2>/dev/null)
+check "the proxy is healthy under the egress table" wait_healthy
 check "it intercepts chatgpt.com" grep -q "chatgpt.com" "$WORK/proxy.log"
-REAL_PROXY_PID=$(curl -sf "http://$GATEWAY:18080/health" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',''))")
+check "it works in the test's home, not the user's (it minted auth.openai.com's certificate there)" \
+    test -e "$CONFIG_DIR/certs/auth.openai.com.crt"
+check "the proxy answering /health is the test's ($REAL_PROXY_PID)" test -n "$REAL_PROXY_PID" -a "$(health_pid)" = "$REAL_PROXY_PID"
 
 # --- 4. The instance: its secret, its proofs, its verifiers ---
 echo ""
@@ -188,8 +258,14 @@ incus config set "$INSTANCE" user.incus-spawn.account.openai="$ACCOUNT" \
     user.incus-spawn.chatgpt-access-proof-sha256="$(sha "$ACCESS_PROOF")" \
     user.incus-spawn.chatgpt-refresh-proof-sha256="$(sha "$REFRESH_PROOF")" \
     user.incus-spawn.chatgpt-proof-secret-sha256="$(sha "$SECRET")"
-kill -USR1 "$REAL_PROXY_PID"
-sleep 1
+# Until the proxy says it re-read the registry: it answers /health before it handles signals, and a
+# lost signal would leave it serving the verifiers it had before this binding
+for _ in $(seq 1 40); do
+    kill -USR1 "$REAL_PROXY_PID"
+    sleep 0.25
+    grep -q "Received SIGUSR1" "$WORK/proxy.log" && break
+done
+sleep 0.5
 check_not "no proof is in the instance's metadata" sh -c "incus config show '$INSTANCE' | grep -qE '$REFRESH_PROOF|$ACCESS_PROOF|$SECRET'"
 
 # --- 5. Guest-side egress: host-enforced, whatever guest root does ---
@@ -216,7 +292,7 @@ check_not "guest root: chatgpt.com by a public address cannot be reached" \
 GUEST_AFTER=$(counter isx_chatgpt_guest guest_dropped)
 check "the host table dropped them (counter $GUEST_BEFORE -> $GUEST_AFTER)" test "$GUEST_AFTER" -gt "$GUEST_BEFORE"
 check "the guest still reaches the proxy (positive control)" gx curl -sf -m 5 -o /dev/null "http://$GATEWAY:18080/health"
-check "chatgpt.com resolves to the proxy in the guest" sh -c "incus exec '$INSTANCE' -- getent hosts chatgpt.com | grep -q '$GATEWAY'"
+check "chatgpt.com resolves to the proxy in the guest" sh -c "incus exec '$INSTANCE' -- getent ahostsv4 chatgpt.com | grep -q '$GATEWAY'"
 
 # --- 6. Guest files: bootstrapped through the proxy's own refresh answer ---
 echo ""
@@ -358,9 +434,15 @@ check "none in agentuser's environment" sh -c "! incus exec '$INSTANCE' -- su - 
 check "none in the proxy's log" sh -c "! grep -qFf '$WORK/minted.txt' '$WORK/proxy.log'"
 gx rm -f /root/isx-minted.txt
 
-# --- 10. Nothing left the machine ---
+# --- 10. The user's own state ---
 echo ""
-echo "[10] Nothing tried to leave"
+echo "[10] The user's own isx config is untouched"
+check "nothing in $REAL_CONFIG_DIR changed" test "$(real_state)" = "$REAL_STATE_BEFORE"
+check_not "no ChatGPT session was written there" test -e "$REAL_CONFIG_DIR/openai/$ACCOUNT/session.json"
+
+# --- 11. Nothing left the machine ---
+echo ""
+echo "[11] Nothing tried to leave"
 check_not "the proxy logged no upstream connect or DNS failure" grep -qiE "Upstream connect error|UnknownHost|resolve" "$WORK/proxy.log"
 
 echo ""
