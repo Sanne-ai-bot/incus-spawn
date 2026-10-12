@@ -128,6 +128,7 @@ make -s ARCH="$KARCH" olddefconfig
 echo "==> Validating config fragment..."
 APPLIED=0
 SKIPPED=0
+SKIPPED_KEYS=()
 while IFS= read -r line; do
     key="${line%%=*}"
     value="${line#*=}"
@@ -136,7 +137,7 @@ while IFS= read -r line; do
         if grep -q "^${key}=" .config 2>/dev/null; then
             actual=$(grep "^${key}=" .config)
             echo "  WARN: $key=n requested but .config has $actual"
-            SKIPPED=$((SKIPPED + 1))
+            SKIPPED=$((SKIPPED + 1)); SKIPPED_KEYS+=("$key")
         else
             APPLIED=$((APPLIED + 1))
         fi
@@ -145,7 +146,7 @@ while IFS= read -r line; do
             APPLIED=$((APPLIED + 1))
         else
             echo "  WARN: $key=y not in .config (arch-specific or unmet dependency)"
-            SKIPPED=$((SKIPPED + 1))
+            SKIPPED=$((SKIPPED + 1)); SKIPPED_KEYS+=("$key")
         fi
     else
         # Numeric or string value
@@ -154,16 +155,27 @@ while IFS= read -r line; do
             APPLIED=$((APPLIED + 1))
         elif [ -n "$actual" ]; then
             echo "  WARN: expected $line but got $actual"
-            SKIPPED=$((SKIPPED + 1))
+            SKIPPED=$((SKIPPED + 1)); SKIPPED_KEYS+=("$key")
         else
             echo "  WARN: $line not in .config"
-            SKIPPED=$((SKIPPED + 1))
+            SKIPPED=$((SKIPPED + 1)); SKIPPED_KEYS+=("$key")
         fi
     fi
 # A key set twice is checked at its last value, the one kconfig applied.
 done < <(grep '^CONFIG_' "$CONFIG_FRAGMENT" \
     | awk -F= '!($1 in last) { order[++n] = $1 } { last[$1] = $0 } END { for (i = 1; i <= n; i++) print last[order[i]] }')
 echo "  $APPLIED applied, $SKIPPED skipped"
+# The appliance's fragments tolerate an option its arch cannot take, but each
+# vm option was added because a guest failed without it: one that no longer
+# applies fails the build rather than the guest.
+if [ "$ROLE" = vm ]; then
+    for key in ${SKIPPED_KEYS[@]+"${SKIPPED_KEYS[@]}"}; do
+        if grep -q "^${key}=" "$SCRIPT_DIR/vm.config" "$SCRIPT_DIR/vm-${BUILD_ARCH}.config"; then
+            echo "ERROR: $key from a vm fragment did not apply" >&2
+            exit 1
+        fi
+    done
+fi
 
 echo "==> Building ($TARGET)..."
 make -j"$(nproc)" ARCH="$KARCH" "$TARGET"
@@ -175,6 +187,16 @@ fi
 
 cp "$IMAGE" "$OUTPUT_DIR/vmlinuz"
 chmod 644 "$OUTPUT_DIR/vmlinuz"
+
+# The vm kernel loads no modules, but software asks modprobe for drivers it
+# needs, and modprobe answers for a built-in one only from the index of them:
+# Incus will not run VMs until `modprobe vhost_vsock` succeeds, and a built-in
+# vhost_vsock has no /sys/module entry to find instead. The image build installs
+# these in /usr/lib/modules/<kernelrelease>/ and runs depmod there.
+if [ "$ROLE" = vm ]; then
+    cp modules.builtin modules.builtin.modinfo "$OUTPUT_DIR/"
+    cp include/config/kernel.release "$OUTPUT_DIR/kernelrelease"
+fi
 
 echo
 echo "Kernel built successfully:"

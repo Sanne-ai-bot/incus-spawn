@@ -3112,12 +3112,12 @@ What was decided (Sanne, 2026-10-10, on #1240):
 The plan on #1255 removes the initrd, the boot loader and the modules from the VM base image: the kernel is built from the appliance's source pin, and OVMF starts it straight from the ESP.
 Its first step is in isx: `appliance/kernel/build-kernel.sh vm` builds that kernel, and `appliance/test-vm-kernel.sh` boots it.
 The `vm` role layers `vm.config` and `vm-<arch>.config` over the appliance fragments.
-They add an ext4 root on virtio-blk, the EFI stub, autofs, nested KVM with vhost-net and vhost-vsock, and 9p for the agent's config share.
+They add an ext4 root on virtio-blk, the EFI stub, autofs, MSI, nested KVM with vhost-net and vhost-vsock, and 9p for the agent's config share.
 The command line is built in, since nothing passes one: the root is found by its GPT partition name, `isx-root`, which the kernel resolves itself, with no udev.
 A feature goes in when a template asks for it, and what is deliberately absent is listed in the fragment's header.
 
 `test-vm-kernel.sh` boots a copy of a VM image's disk under QEMU with the kernel as the ESP's only file, OVMF or AAVMF with Secure Boot off, 8 vCPUs and 4 GiB.
-It asserts the guest reaches `basic.target`, and prints firmware, kernel, userspace and ready times, `critical-chain`, `blame` and on request the plot.
+It asserts the guest reaches `basic.target` with no virtio device on a legacy interrupt line, and prints firmware, kernel, userspace and ready times, `critical-chain`, `blame` and on request the plot.
 It prepares the copy with `sgdisk`, `mtools` and `debugfs`, so it needs neither root nor a loop device, and the firmware is a parameter, so a trimmed OVMF build is measured by the same harness.
 Until the from-scratch image exists, it boots the stock image `minimal.yaml` pins; `test-vm-kernel.yml` runs it in CI, x86_64 under KVM and aarch64 under TCG.
 
@@ -3133,6 +3133,10 @@ The host side is step 4.
 VM builds put the root disk on virtio-blk (see "VM behavior" above), and grow the root wherever it is attached.
 Before any image release, it is exercised with the from-scratch image built locally (incus-spawn-images `fedora/build-vm-scratch.sh`) and named by a project-local template, `image_url` and `vm_image_url` pointing at the tarballs with `file://`.
 A template built and branched that way found the three kernel options `appliance/DESIGN.md` lists for it: online `resize2fs`, PCI hotplug, the power button.
+The CI integration step for VMs (`test-instance.sh`, `test-accounts.sh`) then passed on the image of incus-spawn-images `4bc90f5`, and three more gaps showed, in the kernel and in what the image carries for it.
+Without `PCI_MSI` all virtio devices share one legacy interrupt line, and under nested KVM the agent's setup took 5.5 s, its 9p copy alone 5.1 s against 0.9 s on Fedora's kernel: `isx branch` took 18 s on that image, 12.6 s once its kernel had MSI, and 22 s on the stock image.
+A nested Incus refused VMs twice: `modprobe vhost_vsock` failed, since the image had no index of built-in drivers, and QEMU could not create an irqchip without `KVM_IOAPIC`; `KVM_SMM` came in with it, for Secure Boot guests.
+With those, a nested Incus ran a container, a VM with Secure Boot off and a Fedora VM with it on.
 `bench/vm-boot.sh --isx` times `isx branch` itself: under nested KVM, about 2 s pass between the agent going active and `isx branch` returning, on the stock image and the new one alike.
 `InstanceLifecycleRequestBudgetTest` counts that part of a VM branch: 15 requests, two of them execs (the secret's guest script and the `resolv.conf` check), with the `.network` push, one instance read and one bridge read.
 Counted first, it was 17: the CA and `resolv.conf` checks each read again what the push had just read.
