@@ -237,7 +237,19 @@ A manual `workflow_dispatch` re-derives the newest release from the images repo'
 
 `isx update-base` manages the pin: it fetches the release list from the GitHub API, retrieves per-architecture container **and VM** SHA256 checksums, and writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml` (`pinned: true`) when pinning a specific version.
 `--latest` (or menu option 1) simply removes that override, restoring build-time latest tracking — it does not itself download anything.
-`BaseImageReleases.parseSha256Sums()` keys checksums by arch and separates the `-vm.tar.xz` disk image from the `.tar.xz` container rootfs, so a pin records the correct digest for each.
+`BaseImageReleases` looks checksums up by the exact file names the definition's `image_url` and `vm_image_url` download, per arch, so a pin records the correct digest for each.
+A release carries two VM images from #1255 on, and only the old ones are in `SHA256SUMS`, byte for byte what earlier isx releases parse: `-vm.tar.xz`, built from the stock Incus image, and `-vm-direct.tar.xz`, built from scratch around isx's own kernel, listed with everything else in `SHA256SUMS.v2`.
+isx reads `SHA256SUMS.v2` when a release has one.
+Earlier releases told the VM disk from the container rootfs by `-vm` anywhere in the name, so one more line in `SHA256SUMS` would have overwritten a checksum they use; matching exact names keeps any new asset from standing in for another.
+A manifest with a malformed line or a file listed twice is not read at all.
+When the tracked release has no VM image the definition names (no release before #1255 has `-vm-direct`), the VM stays on the built-in release, tag and checksum together; it used to pair the built-in checksum with the newer tag, a download that could never verify.
+A local base image is reused only when it is the file now expected, not only of the same tag: both VM images of a release share one, and the bump that moves the built-in definition from one to the other keeps it.
+Incus fingerprints an image imported from one tarball by that tarball's sha256, so with a checksum to expect the fingerprint must be it, which holds for imports by any isx; with none to expect, the import must have recorded the same URL (`incus-spawn.source`, written in one request with the tag and read back like `incus-spawn.project`).
+An isx older than this compares tags only, so run after this one on the same host it would take a `-vm-direct` import for its `-vm.tar.xz` of the same tag; mixed versions on one host are not supported for that reason.
+An unchecked import by an isx before this recorded no URL, and is imported once more.
+If the request for `SHA256SUMS.v2` fails or returns an error status, `SHA256SUMS` is read instead; a v2 that downloads but does not parse is not read around.
+`update-base-image.yml` points `vm_image_url` at `-vm-direct` in the bump of the first release that has it for both arches, says so in the PR, and refuses a later release without it rather than move the built-in back to the stock image.
+`isx update-base` pins a VM image only with its checksums: pinning a release without the VM image the definition names leaves `vm_image_url` out of the pin, with a warning, so its VM templates start from the Incus image server.
 See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version) for the full release process.
 
 **Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`).
