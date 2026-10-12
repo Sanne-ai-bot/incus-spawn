@@ -403,7 +403,7 @@ Image schema fields (all optional except `name`):
 - `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders; `file://` works for testing a locally built image)
 - `image_tag` -- release tag identifying the base image version
 - `image_sha256` -- per-architecture SHA256 checksums for integrity verification
-- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. `kvm` is a container with the host's `/dev/kvm` passed through, so it can run VMs of its own (skip it per branch with `--no-kvm`). Inherits from parent -- a child without `type` inherits its parent's type
+- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. With the built-in base image that is isx's own kernel, which the firmware starts directly (no boot loader, no initrd, no loadable modules). It is pinned: image rebuilds bring Fedora's userspace updates, not kernel updates, which arrive only when isx's kernel pin is bumped. By default dnf in the VM excludes Fedora's kernel packages (`/etc/dnf/libdnf5.conf.d/isx-kernel.conf`); kernel work belongs in a nested VM inside a `--kvm` branch. `kvm` is a container with the host's `/dev/kvm` passed through, so it can run VMs of its own (skip it per branch with `--no-kvm`). Inherits from parent -- a child without `type` inherits its parent's type
 - `vm_image_url` -- download URL for the VM base image (qcow2 tarball). Only used when `type` is `vm`. Supports `{arch}` and `{tag}` placeholders
 - `vm_image_sha256` -- per-architecture SHA256 checksums for the VM base image
 - `parent` -- parent image name (omit for root images)
