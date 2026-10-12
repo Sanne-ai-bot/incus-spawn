@@ -36,16 +36,22 @@ assert() {
 
 assert_eq() {
     local desc="$1" expected="$2"; shift 2
-    local actual
-    actual=$("$@" 2>/dev/null)
+    local actual err
+    err=$(mktemp -p "$LOG")
+    local rc=0
+    actual=$("$@" 2>"$err") || rc=$?
     TESTS=$((TESTS + 1))
-    if [ "$actual" = "$expected" ]; then
+    # A failed read is not an empty one: "no calls" must not pass on a dead container
+    if [ "$rc" -eq 0 ] && [ "$actual" = "$expected" ]; then
         printf '  \033[32mPASS\033[0m  %s\n' "$desc"
+        # stderr on a pass means a read was retried: keep it in the log
+        [ -s "$err" ] && head -10 "$err" | sed 's/^/         stderr: /'
         PASS=$((PASS + 1))
     else
-        printf '  \033[31mFAIL\033[0m  %s  (expected: %s, got: %s)\n' "$desc" "$expected" "$actual"
+        printf '  \033[31mFAIL\033[0m  %s  (expected: %s, got: %s, exit %d)\n' "$desc" "$expected" "$actual" "$rc"
+        [ -s "$err" ] && head -5 "$err" | sed 's/^/         stderr: /'
         FAIL=$((FAIL + 1))
-        ERRORS="${ERRORS}  - ${desc} (expected '${expected}', got '${actual}')\n"
+        ERRORS="${ERRORS}  - ${desc} (expected '${expected}', got '${actual}', exit ${rc})\n"
     fi
 }
 
@@ -56,10 +62,30 @@ cleanup() {
 trap cleanup EXIT
 
 in_guest() { incus exec "$1" -- sh -c "$2"; }
-calls() { in_guest "$1" 'cat /home/agentuser/claude-calls.log 2>/dev/null'; }
+# Run a read in the guest, retrying a failed `incus exec` a few times (#1336): a read that
+# fails once must not look like an empty one. Bounded; the last stderr is kept and shown
+# when it never succeeds. An instance that does not exist is not retried.
+read_guest() {
+    local err out i
+    err=$(mktemp -p "$LOG")
+    for i in $(seq 1 "${READ_TRIES:-10}"); do
+        # Output of a failed try is dropped: a partial read must not precede the good one
+        if out=$(in_guest "$1" "$2" 2> "$err"); then
+            [ -z "$out" ] || printf '%s\n' "$out"
+            return 0
+        fi
+        # Each failed try is logged, so a retry that absorbs the race is visible (#1336)
+        echo "$1: read failed, try $i: $(head -c 300 "$err")" >&2
+        grep -q 'Instance not found' "$err" && break
+        sleep "${READ_SLEEP:-1}"
+    done
+    echo "$1: reading in the guest failed after $i tries" >&2
+    return 1
+}
+calls() { read_guest "$1" 'f=/home/agentuser/claude-calls.log; [ -e "$f" ] || exit 0; cat "$f"'; }
 # Each call's user and command, without the entry it added
-call_summary() { calls "$1" | cut -d' ' -f1-6 | paste -sd'|'; }
-marker() { in_guest "$1" 'stat -c %U /var/lib/isx/mcp-client-registered 2>/dev/null || echo none'; }
+call_summary() { local out; out=$(calls "$1") || return 1; printf '%s\n' "$out" | cut -d' ' -f1-6 | paste -sd'|'; }
+marker() { read_guest "$1" 'f=/var/lib/isx/mcp-client-registered; [ -e "$f" ] || { echo none; exit 0; }; stat -c %U "$f"'; }
 
 echo "========================================"
 echo " --mcp-client registration (#1182)"
