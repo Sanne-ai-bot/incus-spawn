@@ -178,6 +178,11 @@ public final class BaseImageReleases {
         if (sha != null) into.put(arch, sha);
     }
 
+    /** Whether {@code sums} has a checksum for every arch base images are published for. */
+    public static boolean coversEveryArch(Map<String, String> sums) {
+        return sums.keySet().containsAll(ARCHES);
+    }
+
     /** The file name {@code urlTemplate} downloads for {@code tag} on {@code arch}. */
     public static String assetName(String urlTemplate, String tag, String arch) {
         var url = urlTemplate.replace("{arch}", arch).replace("{tag}", tag);

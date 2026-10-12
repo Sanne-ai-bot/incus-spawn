@@ -25,7 +25,7 @@ import java.util.Map;
 )
 public class UpdateBaseCommand extends BaseCommand {
 
-    private BaseImageReleases releases;
+    BaseImageReleases releases;
 
     @Argument(required = false, description = "Release tag to pin (e.g. fedora-44-v2)")
     String targetTag;
@@ -122,7 +122,7 @@ public class UpdateBaseCommand extends BaseCommand {
         return CommandResult.SUCCESS;
     }
 
-    private CommandResult pinToTag(String tag, List<Release> available, ImageDef current) throws IOException {
+    CommandResult pinToTag(String tag, List<Release> available, ImageDef current) throws IOException {
         var selected = available.stream()
                 .filter(r -> r.tag().equals(tag))
                 .findFirst()
@@ -139,9 +139,12 @@ public class UpdateBaseCommand extends BaseCommand {
             BuildOutput.stepFail("No readable SHA256SUMS in release " + selected.tag() + ".");
             return CommandResult.valueOf(1);
         }
-        if (checksums.container().isEmpty()) {
-            BuildOutput.stepFail("Release " + selected.tag() + " lists no checksum for "
-                    + BaseImageReleases.assetName(current.getImageUrl(), selected.tag(), "<arch>") + ".");
+        // A pin is used on any host it is copied to: an arch it has no checksum for would
+        // download unverified there.
+        if (!BaseImageReleases.coversEveryArch(checksums.container())) {
+            BuildOutput.stepFail("Release " + selected.tag() + " does not list a checksum for "
+                    + BaseImageReleases.assetName(current.getImageUrl(), selected.tag(), "<arch>")
+                    + " on every architecture.");
             return CommandResult.valueOf(1);
         }
         BuildOutput.stepDone();
@@ -205,8 +208,9 @@ public class UpdateBaseCommand extends BaseCommand {
         yaml.append("description: ").append(current.getDescription()).append('\n');
         yaml.append("image: ").append(current.getImage()).append('\n');
         yaml.append("image_url: ").append(current.getImageUrl()).append('\n');
-        // A VM image is only pinned with its checksums: without them it would download unverified
-        var vm = current.getVmImageUrl() != null && !checksums.vm().isEmpty();
+        // A VM image is only pinned with its checksums for every arch: without them it would
+        // download unverified on the arch that has none.
+        var vm = current.getVmImageUrl() != null && BaseImageReleases.coversEveryArch(checksums.vm());
         if (vm) {
             yaml.append("vm_image_url: ").append(current.getVmImageUrl()).append('\n');
         } else if (current.getVmImageUrl() != null) {

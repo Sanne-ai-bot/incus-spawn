@@ -34,6 +34,36 @@ class UpdateBaseCommandTest {
         assertTrue(yaml.contains("vm_image_sha256:\n  aarch64: v2\n  x86_64: v1\n"), yaml);
     }
 
+    /** One arch's VM checksum is not a pin: the other arch would download the image unverified. */
+    @Test
+    void aPinWithTheVmImageForOneArchLeavesTheVmImageOut(@TempDir Path home) {
+        var yaml = pin(home, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1")));
+        assertFalse(yaml.contains("vm_image_url"), yaml);
+        assertFalse(yaml.contains("vm_image_sha256"), yaml);
+    }
+
+    /** The same for the container image, which every template starts from: the pin is refused. */
+    @Test
+    void aReleaseWithTheContainerImageForOneArchIsNotPinned(@TempDir Path home) throws Exception {
+        var release = new dev.incusspawn.baseimage.BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums");
+        var releases = org.mockito.Mockito.mock(dev.incusspawn.baseimage.BaseImageReleases.class);
+        org.mockito.Mockito.when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(release),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new Checksums(Map.of("x86_64", "c1"), Map.of("x86_64", "v1", "aarch64", "v2")));
+        InitCommandTest.withHome(home, () -> {
+            try {
+                var cmd = new UpdateBaseCommand();
+                cmd.releases = releases;
+                var result = cmd.pinToTag("fedora-44-20261020", java.util.List.of(release),
+                        ImageDef.loadBuiltinByName("tpl-minimal"));
+                assertNotEquals(org.aesh.command.CommandResult.SUCCESS, result);
+                assertFalse(Files.exists(ImageDef.userImagesDir().resolve("minimal.yaml")));
+            } catch (java.io.IOException e) {
+                throw new AssertionError(e);
+            }
+        });
+    }
+
     /** A release without the VM image the built-in names: pinning its URL with no checksum would download it unverified. */
     @Test
     void aPinWithoutVmChecksumsLeavesTheVmImageOut(@TempDir Path home) {
