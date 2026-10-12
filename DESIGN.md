@@ -3490,9 +3490,12 @@ It never reaches a guest:
 - it is removed from the response's headers, by name and wherever its value appears, and from a reason phrase that quotes it, for a controller that echoes its request;
 - it is never logged, and `Served.toString()` redacts it.
 
-A route whose file is not usable (not a regular file, readable by anyone but its owner, in a directory others can write, or not 32 to 256 header-safe characters) is still claimed, and every request to it gets 503.
+A route whose file is not usable is still claimed, and every request to it gets 503.
+Unusable means: a link or anything but a regular file (judged before it is opened, since opening a FIFO would block startup or a reload for good), a file or directory not owned by the proxy's uid, a file readable by anyone else, a directory or config directory others can write (group write is accepted only for the proxy's own group, which a umask of 002 gives a user's directories), or content not 32 to 256 header-safe characters.
+The uid is that of a file the proxy has just created, once per process: never its user name, which may not resolve, and no directory-service lookup on the reload path.
 That is failing closed without dropping the name: the CLI's bridge DNS still lists it, and a name the proxy no longer claimed would be relayed out as ordinary traffic.
-The watcher reloads on any change to a secret file, so deleting one rotates it at once, and fixing a refused one serves the route again.
+The watcher reloads on any change to a secret file, so deleting one rotates it at once, and rewriting a refused one serves the route again, on every platform.
+A `chmod` or `chown` of a secret or of `host-routes/` reloads at once on Linux, where inotify reports attribute changes; macOS's polling watcher compares modification times only, so there it takes effect at the next reload (`isx proxy restart`).
 The controller must still listen on loopback alone.
 One bound to `0.0.0.0` is reached directly at the bridge gateway by any instance that is not proxy-only; the route secret keeps such a request from passing as an instance, but the controller would be answering it at all.
 

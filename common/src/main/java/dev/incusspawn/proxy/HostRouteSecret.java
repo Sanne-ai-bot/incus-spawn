@@ -26,10 +26,12 @@ import java.util.regex.Pattern;
  * never logged. It is one per route, so a controller for one route cannot pass as another's.
  *
  * <p>Created by the proxy the first time it serves the route, and kept: the controller and the
- * proxy read the same file, and deleting it gives the route a new secret at once (the proxy's
- * watcher reloads on it). A file that is not the owner's alone, sits in a directory others can
- * write, is a link, or does not hold a usable secret is refused, and every request to the route
- * with it (503): fail closed, never a route without a secret.
+ * proxy read the same file, and deleting or rewriting it takes effect at once (the proxy's
+ * watcher reloads on it; on a {@code chmod} only on Linux). Refused, and every request to the
+ * route with it (503), fail closed: a secret that is a link or anything but a regular file, is
+ * not owned by the proxy's own user or is readable by anyone else, sits in a directory (or a
+ * config directory) not owned by that user or writable by others, or does not hold a usable
+ * secret. Never a route without a secret.
  */
 public final class HostRouteSecret {
 
@@ -63,32 +65,104 @@ public final class HostRouteSecret {
     }
 
     static String loadOrCreate(Path configDir, String name, Consumer<String> warn) {
+        Integer uid;
+        try {
+            uid = ownUid(configDir);
+        } catch (IOException | RuntimeException e) {
+            warn.accept(refusing(name) + "the proxy cannot tell which uid it runs as: " + e.getMessage());
+            return null;
+        }
+        return loadOrCreate(configDir, name, warn, uid);
+    }
+
+    /** As above, with the files required to belong to {@code uid}: tests name another. */
+    static String loadOrCreate(Path configDir, String name, Consumer<String> warn, Integer uid) {
         var file = file(configDir, name);
         try {
-            var dir = ownerOnlyDirectory(file.getParent());
+            var dir = ownerOnlyDirectory(configDir, file.getParent(), uid);
             if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) create(dir, file);
-            return read(file);
+            return read(file, uid);
         } catch (Unusable e) {
-            warn.accept("Ignoring host route '" + name + "': its secret " + file + " " + e.getMessage());
+            warn.accept(refusing(name) + "its secret " + file + " " + e.getMessage());
             return null;
         } catch (IOException | RuntimeException e) {
-            warn.accept("Ignoring host route '" + name + "': its secret " + file + " cannot be used: " + e.getMessage());
+            warn.accept(refusing(name) + "its secret " + file + " cannot be used: " + e.getMessage());
             return null;
         }
     }
 
+    /** The route is kept and answers 503, never relayed: what the log says must say so too. */
+    private static String refusing(String name) {
+        return "Refusing every request to host route '" + name + "' (503): ";
+    }
+
     /** Why a secret file is refused, in words that never include its content. */
-    private static final class Unusable extends IOException {
+    static final class Unusable extends IOException {
         Unusable(String reason) {
             super(reason);
         }
     }
 
+    private static volatile Integer ownUid;
+    private static volatile Integer ownGid;
+
     /**
-     * The directory, made owner-only when it is made here; one that is already there must be a real
-     * directory nobody else can write to, or anyone could swap a secret for a link or their own.
+     * The uid this process creates files as: of a file it has just made, so neither its user name
+     * (which may not resolve, or name someone else) nor a directory service is asked. Once per
+     * process, so no reload pays for it again. Null where the file system has no uids.
      */
-    private static Path ownerOnlyDirectory(Path dir) throws IOException {
+    private static Integer ownUid(Path configDir) throws IOException {
+        if (!hasUids(configDir)) return null;
+        var uid = ownUid;
+        if (uid == null) {
+            Files.createDirectories(configDir);
+            var probe = Files.createTempFile(configDir, ".uid-", ".tmp");
+            try {
+                ownGid = (Integer) Files.getAttribute(probe, "unix:gid", LinkOption.NOFOLLOW_LINKS);
+                uid = uidOf(probe);
+            } finally {
+                Files.deleteIfExists(probe);
+            }
+            ownUid = uid;
+        }
+        return uid;
+    }
+
+    private static boolean hasUids(Path path) {
+        return path.getFileSystem().supportedFileAttributeViews().contains("unix");
+    }
+
+    private static int uidOf(Path path) throws IOException {
+        return (Integer) Files.getAttribute(path, "unix:uid", LinkOption.NOFOLLOW_LINKS);
+    }
+
+    /** That {@code path} is a directory of {@code uid}'s that nobody else can write to. */
+    private static void requireOwnDirectory(Path path, Integer uid) throws IOException {
+        if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw new Unusable("is not in a directory: " + path + " is something else");
+        }
+        if (uid != null && uidOf(path) != uid) {
+            throw new Unusable("is in " + path + ", which belongs to uid " + uidOf(path) + ", not to uid " + uid
+                    + ", whom the proxy runs as (chown it)");
+        }
+        if (isPosix(path)) {
+            var permissions = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
+            // Group write only by the proxy's own group: with a umask of 002 (Fedora's default) a
+            // user's directories are group-writable, by the group that is that user alone
+            var groupWrite = permissions.contains(PosixFilePermission.GROUP_WRITE)
+                    && (uid == null || ownGid == null || !ownGid.equals(Files.getAttribute(path, "unix:gid", LinkOption.NOFOLLOW_LINKS)));
+            if (groupWrite || permissions.contains(PosixFilePermission.OTHERS_WRITE)) {
+                throw new Unusable("is in " + path + ", which others can write to (chmod go-w it)");
+            }
+        }
+    }
+
+    /**
+     * The directory, made owner-only when it is made here. It and the config directory around it
+     * must be the proxy's user's alone to write, or anyone could swap a secret, or the directory,
+     * for a link, a FIFO or their own between the checks and the open.
+     */
+    private static Path ownerOnlyDirectory(Path configDir, Path dir, Integer uid) throws IOException {
         if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
             Files.createDirectories(dir.getParent());
             try {
@@ -101,15 +175,8 @@ public final class HostRouteSecret {
                 // another proxy made it: checked below like any existing one
             }
         }
-        if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
-            throw new Unusable("is not in a directory: " + dir + " is something else");
-        }
-        if (isPosix(dir)) {
-            var permissions = Files.getPosixFilePermissions(dir, LinkOption.NOFOLLOW_LINKS);
-            if (permissions.contains(PosixFilePermission.GROUP_WRITE) || permissions.contains(PosixFilePermission.OTHERS_WRITE)) {
-                throw new Unusable("is in " + dir + ", which others can write to (chmod 700 it)");
-            }
-        }
+        requireOwnDirectory(configDir, uid);
+        requireOwnDirectory(dir, uid);
         return dir;
     }
 
@@ -149,42 +216,44 @@ public final class HostRouteSecret {
         }
     }
 
-    private static String read(Path file) throws IOException {
-        // Judged before it is opened: opening a FIFO blocks until something writes to it, and this
-        // runs at startup and inside reload(), which would then never return. Java cannot open
-        // with O_NONBLOCK; the directory is the owner's alone, so nobody else can swap the file
-        // for one between this check and the open
+    /**
+     * The secret in {@code file}, judged entirely before it is opened: opening a FIFO blocks until
+     * something writes to it, and this runs at startup and inside {@code reload()}, which would then
+     * never return. Java cannot open with O_NONBLOCK or judge the open descriptor, so the checks are
+     * on the path; the directories are the proxy's user's alone, so nobody else can swap the file
+     * in between. The open does not follow a link either way.
+     */
+    static String read(Path file, Integer uid) throws IOException {
         if (Files.isSymbolicLink(file)) throw new Unusable("is a link, not a regular file");
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new Unusable("is not a regular file");
-        // Opened without following a link, then judged again by the path's attributes
+        if (uid != null && uidOf(file) != uid) {
+            throw new Unusable("belongs to uid " + uidOf(file) + ", not to uid " + uid + ", whom the proxy runs as (chown it)");
+        }
+        if (isPosix(file)) {
+            var permissions = Files.getPosixFilePermissions(file, LinkOption.NOFOLLOW_LINKS);
+            if (!permissions.contains(PosixFilePermission.OWNER_READ)
+                    || permissions.stream().anyMatch(p -> !OWNER_ONLY.contains(p))) {
+                throw new Unusable("must be readable by its owner only (chmod 600 it)");
+            }
+        }
         String secret;
         try (var channel = Files.newByteChannel(file, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))) {
-            if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new Unusable("is not a regular file");
-            if (isPosix(file)) {
-                var permissions = Files.getPosixFilePermissions(file, LinkOption.NOFOLLOW_LINKS);
-                if (!permissions.contains(PosixFilePermission.OWNER_READ)
-                        || permissions.stream().anyMatch(p -> !OWNER_ONLY.contains(p))) {
-                    throw new Unusable("must be readable by its owner only (chmod 600 it)");
-                }
-            }
             if (channel.size() > MAX_BYTES) throw new Unusable("is too large to be a secret");
             var bytes = java.nio.ByteBuffer.allocate((int) channel.size());
             while (bytes.hasRemaining() && channel.read(bytes) >= 0) {
                 // read it all
             }
             secret = new String(bytes.array(), 0, bytes.position(), StandardCharsets.US_ASCII).strip();
-        } catch (java.nio.file.FileSystemLoopException e) {
-            throw new Unusable("is a link, not a regular file");
-        } catch (IOException e) {
-            if (e instanceof Unusable) throw e;
-            // ELOOP from O_NOFOLLOW reads as a plain IOException on some platforms
-            if (Files.isSymbolicLink(file)) throw new Unusable("is a link, not a regular file");
-            throw e;
         }
         if (!USABLE.matcher(secret).matches()) {
             throw new Unusable("must hold 32 to 256 characters of [A-Za-z0-9._~+/=-] (delete it for a new one)");
         }
         return secret;
+    }
+
+    /** The uid this process runs as, for tests that name another. */
+    static Integer ownUidForTest(Path configDir) throws IOException {
+        return ownUid(configDir);
     }
 
     private static boolean isPosix(Path file) {
