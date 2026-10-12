@@ -32,6 +32,7 @@ import java.util.Date;
 import java.util.HexFormat;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 
 import static dev.incusspawn.DerEncoder.*;
 
@@ -196,6 +197,8 @@ public class CertificateAuthority {
     /**
      * The trust set for this host. Creates the CA if there is none yet: every caller is about
      * to install the set into an instance, and an instance must trust the CA its proxy signs with.
+     * A host anchor file that cannot be read as certificates goes to {@link Warnings}, once per
+     * channel: the set is read again on every use, and the same file would be reported each time.
      */
     public static TrustAnchors collectTrustAnchors() {
         var ca = loadOrCreate();
@@ -221,18 +224,25 @@ public class CertificateAuthority {
      */
     private static void addHostAnchors(SortedMap<String, String> anchors) {
         if (!Files.isDirectory(hostAnchorsDir)) return;
+        CertificateFactory factory;
+        try {
+            factory = CertificateFactory.getInstance("X.509");
+        } catch (java.security.cert.CertificateException e) {
+            throw new IllegalStateException("X.509 unavailable", e);
+        }
         try (var stream = Files.list(hostAnchorsDir)) {
             for (var path : stream.toList()) {
                 var name = path.getFileName().toString();
                 if (!name.endsWith(".crt") && !name.endsWith(".pem")) continue;
                 if (!Files.isRegularFile(path)) continue;
                 try (var in = Files.newInputStream(path)) {
-                    for (var cert : CertificateFactory.getInstance("X.509").generateCertificates(in)) {
+                    for (var cert : factory.generateCertificates(in)) {
                         var x509 = (X509Certificate) cert;
                         anchors.putIfAbsent(anchorFile(fingerprintOf(x509)), toPem("CERTIFICATE", x509.getEncoded()).strip());
                     }
                 } catch (Exception e) {
-                    Warnings.warn("host-ca: " + name + " is not a readable X.509 certificate: " + e.getMessage());
+                    Warnings.warn("host-ca: skipped " + name + ", which must hold only X.509 certificates"
+                            + " (a private key or anything else in it refuses the whole file): " + e.getMessage());
                 }
             }
         } catch (IOException e) {
@@ -349,18 +359,11 @@ public class CertificateAuthority {
      * marked before cleanup so a failed install retries next time.
      * <p>
      * Containers without a stored fingerprint (pre-versioning) are skipped.
-     * Returns true if a fix was applied, false if no action was needed.
+     * Returns true if a fix was applied, false if none was needed or it failed; a failure is
+     * reported to {@code warn}, since anchors it was to revoke may still be trusted.
      */
-    public static boolean fixContainerCaIfNeeded(IncusClient incus, String container) {
-        return fixContainerCaIfNeeded(incus, container, null);
-    }
-
-    /**
-     * As above, reading the stored fingerprint from {@code instance} when the caller has just
-     * read it -- as a start does ({@code InstanceLifecycle.startForUse}) -- rather than reading
-     * the instance again; null reads it.
-     */
-    public static boolean fixContainerCaIfNeeded(IncusClient incus, String container, JqValue instance) {
+    public static boolean fixContainerCaIfNeeded(IncusClient incus, String container, JqValue instance,
+                                                 Consumer<String> warn) {
         var storedFp = instance != null
                 ? instance.getField("config").pathText(Metadata.CA_FINGERPRINT, "")
                 : incus.configGet(container, Metadata.CA_FINGERPRINT);
@@ -373,7 +376,11 @@ public class CertificateAuthority {
         // after removing the old anchors is retried, even once the set changes back. Not
         // empty, which would read as "built before stamps" and never be checked again.
         incus.configSet(container, Metadata.CA_FINGERPRINT, trust.caFingerprint() + "+pending");
-        if (installTrustAnchors(incus, container, trust).exitCode() != 0) {
+        var result = installTrustAnchors(incus, container, trust);
+        if (result.exitCode() != 0) {
+            var why = result.stderr().strip().lines().reduce((first, last) -> last).orElse("exit " + result.exitCode());
+            warn.accept("could not update the trusted CAs in " + container + " (retried on next use): "
+                    + (why.length() > 200 ? why.substring(0, 200) + "..." : why));
             return false;
         }
         incus.configSet(container, Metadata.CA_FINGERPRINT, stamp);

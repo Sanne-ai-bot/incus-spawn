@@ -383,7 +383,7 @@ public final class BranchFlow {
         if (booted == null) booted = started;
 
         if (networkMode != NetworkMode.AIRGAP) {
-            CertificateAuthority.fixContainerCaIfNeeded(incus, name, booted);
+            CertificateAuthority.fixContainerCaIfNeeded(incus, name, booted, BuildOutput::warn);
             ProxyConfig.fixResolvConfIfNeeded(incus, name, booted);
             // The template baked its own account's identity; a branch pinned to a different one
             // must not commit under it. Re-derived here rather than only on the next

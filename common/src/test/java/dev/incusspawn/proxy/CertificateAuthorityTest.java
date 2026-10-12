@@ -253,7 +253,7 @@ class CertificateAuthorityTest {
         assertEquals(java.util.Set.of("isx-" + ca.caFingerprint() + ".crt",
                         "isx-" + fingerprint(parse(a)) + ".crt", "isx-" + fingerprint(parse(b)) + ".crt"),
                 files.keySet(), "each certificate of a bundle is an anchor; a file holding a key is refused");
-        assertEquals(DerEncoder.toPem("CERTIFICATE", parse(b).getEncoded()).strip(),
+        assertEquals(toPem("CERTIFICATE", parse(b).getEncoded()).strip(),
                 files.get("isx-" + fingerprint(parse(b)) + ".crt").strip());
     }
 
@@ -307,7 +307,10 @@ class CertificateAuthorityTest {
         doReturn(new IncusClient.ExecResult(1, "", "update-ca-trust: failed"))
                 .when(incus).shellExec(eq("dev-1"), any(String[].class));
 
-        assertFalse(CertificateAuthority.fixContainerCaIfNeeded(incus, "dev-1"));
+        var warnings = new java.util.ArrayList<String>();
+        assertFalse(CertificateAuthority.fixContainerCaIfNeeded(incus, "dev-1", null, warnings::add));
+        assertEquals(1, warnings.size(), "a failed revocation leaves old anchors trusted: say so");
+        assertTrue(warnings.get(0).contains("update-ca-trust: failed"), warnings.get(0));
 
         var stamp = incus.configGet("dev-1", Metadata.CA_FINGERPRINT);
         assertFalse(stamp.isEmpty(), "an empty stamp is never checked again");
