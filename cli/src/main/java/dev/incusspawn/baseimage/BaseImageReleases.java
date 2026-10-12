@@ -63,11 +63,7 @@ public final class BaseImageReleases {
      * A published base-image release, with the download URLs of its manifests: {@code SHA256SUMS},
      * and {@code SHA256SUMS.v2} when it has one (null otherwise).
      */
-    public record Release(String tag, String date, String sha256sumsUrl, String sha256sumsV2Url) {
-        public Release(String tag, String date, String sha256sumsUrl) {
-            this(tag, date, sha256sumsUrl, null);
-        }
-    }
+    public record Release(String tag, String date, String sha256sumsUrl, String sha256sumsV2Url) {}
 
     /**
      * SHA256 checksums of the assets a template downloads from a release, keyed by architecture
@@ -130,7 +126,13 @@ public final class BaseImageReleases {
     }
 
     private String fetchText(String url) throws IOException {
-        var response = sendString(HttpRequest.newBuilder(URI.create(url))
+        URI uri;
+        try {
+            uri = URI.create(url);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("not a URL: " + url, e);
+        }
+        var response = sendString(HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(15))
                 .GET().build());
         return response.statusCode() == 200 ? response.body() : null;

@@ -427,8 +427,8 @@ class QueryCommandFormatTest {
 
     @Test
     void updateBaseListIsNewestFirstWithLatestAndCurrent() {
-        var releases = List.of(new Release("fedora-44-20261001", "2026-10-01", "u1"),
-                new Release("fedora-44-20260901", "", "u2"));
+        var releases = List.of(new Release("fedora-44-20261001", "2026-10-01", "u1", null),
+                new Release("fedora-44-20260901", "", "u2", null));
         assertEquals("""
                 [ {
                   "tag" : "fedora-44-20261001",
@@ -450,7 +450,7 @@ class QueryCommandFormatTest {
 
     @Test
     void aCurrentBaseOlderThanEveryFetchedReleaseStillHasARecord() {
-        var releases = List.of(new Release("fedora-44-20261001", "2026-10-01", "u1"));
+        var releases = List.of(new Release("fedora-44-20261001", "2026-10-01", "u1", null));
         assertEquals("""
                 fedora-44-20261001\t2026-10-01\ttrue\tfalse\tfalse\ttrue
                 fedora-44-20250101\t-\tfalse\ttrue\ttrue\tfalse
