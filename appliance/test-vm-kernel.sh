@@ -9,7 +9,8 @@ set -euo pipefail
 # raw GPT disk that way under QEMU (OVMF on x86_64, AAVMF on aarch64, Secure Boot
 # off, 8 vCPUs, 4 GiB, the root on virtio-blk and a virtio NIC, since the
 # image waits for the network to finish booting), asserts that the guest reaches
-# basic.target, and prints where the time went.
+# basic.target with every virtio interrupt delivered by MSI, and prints where
+# the time went.
 #
 # Usage:  ./test-vm-kernel.sh <vmlinuz> <disk.raw> [arch]
 #
@@ -46,7 +47,8 @@ set -euo pipefail
 #   userspace  PID 1 to basic.target
 #   ready      QEMU launch to basic.target
 #
-# Exits non-zero if any boot did not reach basic.target.
+# Exits non-zero if any boot did not reach basic.target, or had a virtio
+# device on a legacy interrupt line.
 
 KERNEL="${1:?usage: test-vm-kernel.sh <vmlinuz> <disk.raw> [arch]}"
 DISK="${2:?usage: test-vm-kernel.sh <vmlinuz> <disk.raw> [arch]}"
@@ -155,6 +157,10 @@ cat > "$WORK/report.sh" <<EOF
 exec >/dev/console 2>&1
 read -r up _ </proc/uptime
 echo "ISX-VM-BASIC uptime=\$up kernel_us=\$(systemctl show -P UserspaceTimestampMonotonic) basic_us=\$(systemctl show -P ActiveEnterTimestampMonotonic basic.target)"
+# Interrupt lines of virtio devices not delivered by MSI: a kernel without
+# PCI_MSI puts every virtio device on one shared legacy line.
+echo "ISX-VM-IRQ virtio=\$(grep -c virtio /proc/interrupts) legacy_virtio=\$(grep virtio /proc/interrupts | grep -vc MSI)"
+grep virtio /proc/interrupts | sed 's/^/ISX-VM-IRQ-LINE /'
 # critical-chain and plot need the boot finished; this unit is Type=simple, so
 # its own start does not hold that up.
 until systemd-analyze time >/dev/null 2>&1; do sleep 0.1; done
@@ -219,7 +225,7 @@ for run in $(seq 1 "$RUNS"); do
         -drive if=pflash,format=raw,unit=1,file="$WORK/vars.fd" \
         -drive if=none,id=root,format=raw,snapshot=on,file="$IMG" \
         -device virtio-blk-pci,drive=root \
-        -nic user,model=virtio-net-pci \
+        -netdev user,id=net -device virtio-net-pci,netdev=net \
         </dev/null 2>&1 \
         | while IFS= read -r line; do printf '%s %s\n' "$EPOCHREALTIME" "${line%$'\r'}"; done > "$LOG"
     QEMU_RC=${PIPESTATUS[0]}
@@ -242,6 +248,14 @@ for run in $(seq 1 "$RUNS"); do
         tail -n 40 "$LOG" | cut -d' ' -f2- | sed 's/^/    /'
         FAILED=1
         continue
+    fi
+    # Fail closed: a boot that did not report its interrupts, or reported no
+    # virtio line at all, counts as legacy.
+    read -r VIRTIO LEGACY < <(sed -n 's/.* ISX-VM-IRQ virtio=\([0-9]*\) legacy_virtio=\([0-9]*\).*/\1 \2/p' "$LOG" | head -n 1) || true
+    if [ "${VIRTIO:-0}" = 0 ] || [ "${LEGACY:-1}" != 0 ]; then
+        echo "FAIL: boot $run has virtio devices on legacy interrupts, not MSI (${VIRTIO:-no} virtio lines, ${LEGACY:-no} legacy); the guest's /proc/interrupts lines:"
+        sed -n 's/.* ISX-VM-IRQ-LINE /    /p' "$LOG"
+        FAILED=1
     fi
     echo "$TIMES" >> "$RESULTS"
     read -r FW K U READY <<<"$TIMES"
