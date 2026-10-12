@@ -184,12 +184,11 @@ final class TemplateDetailView {
             lines.add(Line.styled("", lineStyle));
         }
         // What a build of it would warn about (#1195), so the choice is made before building
-        var deprecations = ImageDef.deprecationWarnings(current, source.imageDefs());
-        var warnStyle = warnStyle();
-        for (var warning : deprecations) {
+        ImageDef.deprecationWarning(current, source.imageDefs()).ifPresent(warning -> {
+            var warnStyle = warnStyle();
             for (var text : wrap("⚠ " + OutputFormat.oneLine(warning), width)) lines.add(Line.styled(text, warnStyle));
-        }
-        if (!deprecations.isEmpty()) lines.add(Line.styled("", lineStyle));
+            lines.add(Line.styled("", lineStyle));
+        });
 
         // Runtime: always shown, defaults spelled out
         lines.add(row("Type:", TemplateDetails.typeLabel(details.type()), lineStyle));

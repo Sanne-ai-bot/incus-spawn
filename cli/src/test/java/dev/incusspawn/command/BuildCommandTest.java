@@ -136,7 +136,8 @@ class BuildCommandTest {
     /**
      * A deprecated template still builds, and so does what derives from it, but each build says
      * so, naming the template built (the deprecated parent's own build, then the user's), and
-     * once per template however many times it is built in the run (#1195).
+     * once per template however many times it is built in the run (#1195). A template further
+     * down, built on the user's, does not repeat it (#1353).
      */
     @Test
     void everyTemplateBuiltOnADeprecatedOneIsNamedOnce(@TempDir Path tmp) throws Exception {
@@ -154,19 +155,24 @@ class BuildCommandTest {
             var mine = new ImageDef();
             mine.setName("tpl-mine");
             mine.setParent("tpl-old");
-            var defs = Map.of("tpl-root", root, "tpl-old", old, "tpl-mine", mine);
+            var below = new ImageDef();
+            below.setName("tpl-below");
+            below.setParent("tpl-mine");
+            var defs = Map.of("tpl-root", root, "tpl-old", old, "tpl-mine", mine, "tpl-below", below);
 
             var out = bothStreams(() -> {
                 cmd.buildSingleImage(root, defs);
                 cmd.buildSingleImage(old, defs);
                 cmd.buildSingleImage(mine, defs);
                 cmd.buildSingleImage(mine, defs);
+                cmd.buildSingleImage(below, defs);
             });
 
             assertEquals(2, out.split("deprecated", -1).length - 1, out);
             assertTrue(out.contains("tpl-old is deprecated: use tpl-new instead"), out);
             assertTrue(out.contains("tpl-mine derives from tpl-old, which is deprecated: use tpl-new instead"), out);
             verify(cmd.incus, times(2)).rename("tpl-mine-rebuilding", "tpl-mine");
+            verify(cmd.incus).rename("tpl-below-rebuilding", "tpl-below");
         });
     }
 

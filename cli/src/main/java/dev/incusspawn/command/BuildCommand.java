@@ -935,11 +935,13 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    /** Warn about each deprecated template {@code imageDef} is built on, itself included (#1195). */
+    /**
+     * Warn if {@code imageDef}, or the parent it names, is deprecated (#1195, #1353), once per
+     * template however many times a run builds it.
+     */
     private void warnDeprecated(ImageDef imageDef, Map<String, ImageDef> defs) {
-        for (var warning : ImageDef.deprecationWarnings(imageDef, defs, warnedDeprecated)) {
-            BuildOutput.warn(shown(warning));
-        }
+        ImageDef.deprecationWarning(imageDef, defs).filter(warnedDeprecated::add)
+                .ifPresent(w -> BuildOutput.warn(shown(w)));
     }
 
     private void warnDroppedTools(String existingImage, ImageDef imageDef, Map<String, ImageDef> defs) {
