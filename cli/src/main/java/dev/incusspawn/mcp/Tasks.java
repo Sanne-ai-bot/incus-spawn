@@ -138,6 +138,12 @@ final class Tasks {
         }
     }
 
+    /** {@link #all()}, after asking each instance with a task believed running which have finished. */
+    List<Task> allRefreshed() {
+        refreshStates();
+        return all();
+    }
+
     /**
      * Forget the tasks of instances this session no longer holds -- another session adopted
      * them, or they are gone -- so they neither count against the limit nor get watched.

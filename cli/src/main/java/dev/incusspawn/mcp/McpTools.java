@@ -664,9 +664,11 @@ final class McpTools {
     private ToolResult listInstances() {
         var list = JqArray.arrayBuilder();
         var templates = new java.util.HashMap<String, java.util.Optional<InstanceBackend.TemplateInfo>>();
+        // One exec per instance with a running task, as task_status would: a state shown is not a stale one.
+        var known = tasks.allRefreshed();
         for (var o : session.instances()) {
             var owned = JqArray.arrayBuilder();
-            tasks.all().stream().filter(t -> t.instance().equals(o.name())).forEach(t -> {
+            known.stream().filter(t -> t.instance().equals(o.name())).forEach(t -> {
                 var tn = JqObject.builder(4).put("task_id", t.id()).put("kind", t.kind());
                 if (t.agent() != null) tn.put("agent", t.agent().id);
                 owned.add(tn.put("state", t.state()).build());

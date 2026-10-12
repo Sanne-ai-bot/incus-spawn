@@ -248,6 +248,15 @@ class DelegationToolsTest {
     }
 
     @Test
+    void listInstancesShowsATaskThatFinishedSinceTheLastLookAsFinished() throws Exception {
+        var task = delegateFresh();
+        assertEquals(Map.of(task, "running"), taskStates(structured(call("list_instances", "{}")).path("instances")));
+        // Nobody asked task_status or wait_any: the session's last look still says running.
+        taskState = "finished";
+        assertEquals(Map.of(task, "finished"), taskStates(structured(call("list_instances", "{}")).path("instances")));
+    }
+
+    @Test
     void aFinishedTaskWhoseStatusCannotBeReadIsUnknownNotLost() throws Exception {
         var task = delegateFresh();
         taskState = "finished";
