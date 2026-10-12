@@ -36,15 +36,19 @@ class CertificateAuthorityTest {
 
     private String savedHome;
 
+    private final Path savedAnchorsDir = CertificateAuthority.hostAnchorsDir;
+
     @BeforeEach
     void redirectHome() {
         savedHome = System.getProperty("user.home");
         System.setProperty("user.home", tempHome.toString());
+        CertificateAuthority.hostAnchorsDir = tempHome.resolve("host-anchors");
     }
 
     @AfterEach
     void restoreHome() {
         if (savedHome != null) System.setProperty("user.home", savedHome);
+        CertificateAuthority.hostAnchorsDir = savedAnchorsDir;
     }
 
     @Test
@@ -109,19 +113,46 @@ class CertificateAuthorityTest {
     @Test
     void trustSnapshotClassifiesStoredFingerprints() throws Exception {
         var legacyFp = fingerprint(writeLegacyCa());
-        var mitmFp = CertificateAuthority.loadOrCreate().caFingerprint();
-        var combinedFp = CertificateAuthority.trustFingerprint(CertificateAuthority.collectTrustAnchors());
+        var stamp = CertificateAuthority.collectTrustAnchors().stamp();
 
         var trust = CertificateAuthority.CaTrust.snapshot();
-        assertEquals(CertificateAuthority.CaStatus.CURRENT, trust.classify(combinedFp),
-                "a template stamped with the combined trust-set fingerprint is current");
-        assertEquals(CertificateAuthority.CaStatus.REPAIRABLE, trust.classify(mitmFp),
-                "a template stamped with the old MITM-only fingerprint is repairable");
+        assertEquals(CertificateAuthority.CaStatus.CURRENT, trust.classify(stamp));
         assertEquals(CertificateAuthority.CaStatus.REPAIRABLE, trust.classify(legacyFp),
                 "an image built against the cert we re-issued is repairable, not foreign");
         assertEquals(CertificateAuthority.CaStatus.FOREIGN, trust.classify("deadbeef"));
         assertEquals(CertificateAuthority.CaStatus.UNKNOWN, trust.classify(""));
         assertEquals(CertificateAuthority.CaStatus.UNKNOWN, trust.classify(null));
+    }
+
+    @Test
+    void withoutHostAnchorsTheStampIsTheCasFingerprint() {
+        // As every image was stamped before host anchors: those images stay current, and none
+        // is reconciled on its first use after the upgrade
+        var ca = CertificateAuthority.loadOrCreate();
+        assertEquals(ca.caFingerprint(), CertificateAuthority.collectTrustAnchors().stamp());
+    }
+
+    @Test
+    void changedHostAnchorsLeaveAnImageBuiltAgainstThisCaBranchable() throws Exception {
+        propagateHostAnchors();
+        var ca = CertificateAuthority.loadOrCreate();
+        writeHostAnchor("corp-a.crt", selfSigned("corp root a"));
+        var built = CertificateAuthority.collectTrustAnchors().stamp();
+
+        writeHostAnchor("corp-b.crt", selfSigned("corp root b"));
+        var now = CertificateAuthority.collectTrustAnchors().stamp();
+
+        assertNotEquals(built, now, "the instance must be reconciled to the new set");
+        assertTrue(built.startsWith(ca.caFingerprint() + "+"), built);
+        assertEquals(CertificateAuthority.CaStatus.CURRENT, CertificateAuthority.CaTrust.snapshot().classify(built),
+                "a template built against this CA is not foreign because a host anchor was added");
+    }
+
+    @Test
+    void anImageBuiltWithHostAnchorsAgainstTheSupersededCaIsRepairable() throws Exception {
+        var legacyFp = fingerprint(writeLegacyCa());
+        assertEquals(CertificateAuthority.CaStatus.REPAIRABLE,
+                CertificateAuthority.CaTrust.snapshot().classify(legacyFp + "+0123abcd"));
     }
 
     @Test
@@ -157,7 +188,7 @@ class CertificateAuthorityTest {
     @Test
     void collectTrustAnchorsIncludesMitmCa() {
         var ca = CertificateAuthority.loadOrCreate();
-        var anchors = CertificateAuthority.collectTrustAnchors();
+        var anchors = CertificateAuthority.collectTrustAnchors().files();
         var expectedKey = "isx-" + ca.caFingerprint() + ".crt";
         assertTrue(anchors.containsKey(expectedKey),
                 "trust anchors must include the MITM CA keyed by its DER fingerprint");
@@ -165,38 +196,43 @@ class CertificateAuthorityTest {
     }
 
     @Test
-    void collectTrustAnchorsKeysAreSha256Filenames() {
+    void collectTrustAnchorsCreatesTheCaWhenThereIsNone() {
+        // A build installs the set into a fresh image: it must hold the CA the proxy will sign with
+        assertFalse(CertificateAuthority.exists());
+        var trust = CertificateAuthority.collectTrustAnchors();
+        assertTrue(CertificateAuthority.exists());
+        assertEquals(CertificateAuthority.currentCaFingerprint(), trust.caFingerprint());
+    }
+
+    @Test
+    void hostAnchorsAreKeyedBySha256AndInvalidOnesSkipped() throws Exception {
+        propagateHostAnchors();
+        var ca = CertificateAuthority.loadOrCreate();
+        var corp = selfSigned("corp root");
+        writeHostAnchor("Corp Root CA.crt", corp);
+        writeHostAnchor("x;touch pwned;.pem", corp);
+        writeHostAnchor("garbage.crt", "not a certificate");
+        writeHostAnchor("readme.txt", corp);
+        writeHostAnchor("local.crt", ca.caCertPem());
+
+        var files = CertificateAuthority.collectTrustAnchors().files();
+        assertEquals(java.util.Set.of("isx-" + ca.caFingerprint() + ".crt", "isx-" + fingerprint(parse(corp)) + ".crt"),
+                files.keySet(), "the host's file names never reach the guest");
+    }
+
+    @Test
+    void hostAnchorsAreIgnoredUnlessPropagationIsOn() throws Exception {
         CertificateAuthority.loadOrCreate();
-        var anchors = CertificateAuthority.collectTrustAnchors();
-        for (var key : anchors.keySet()) {
-            assertTrue(key.matches("isx-[0-9a-f]{64}\\.crt"),
-                    "anchor key must be isx-<sha256>.crt, got: " + key);
-        }
+        writeHostAnchor("corp.crt", selfSigned("corp root"));
+        assertEquals(1, CertificateAuthority.collectTrustAnchors().files().size());
     }
 
     @Test
-    void trustFingerprintEmptyForNoAnchors() {
-        assertEquals("", CertificateAuthority.trustFingerprint(new TreeMap<>()));
-    }
-
-    @Test
-    void trustFingerprintChangesWithContent() {
-        var a = new TreeMap<String, String>();
-        a.put("isx-aaa.crt", "ONE");
-        var fp1 = CertificateAuthority.trustFingerprint(a);
-        assertFalse(fp1.isEmpty());
-
-        a.put("isx-bbb.crt", "TWO");
-        var fp2 = CertificateAuthority.trustFingerprint(a);
-        assertNotEquals(fp1, fp2);
-    }
-
-    @Test
-    void trustFingerprintIsDeterministic() {
-        CertificateAuthority.loadOrCreate();
-        var fp1 = CertificateAuthority.trustFingerprint(CertificateAuthority.collectTrustAnchors());
-        var fp2 = CertificateAuthority.trustFingerprint(CertificateAuthority.collectTrustAnchors());
-        assertEquals(fp1, fp2);
+    void theStampIsDeterministic() throws Exception {
+        propagateHostAnchors();
+        writeHostAnchor("corp.crt", selfSigned("corp root"));
+        assertEquals(CertificateAuthority.collectTrustAnchors().stamp(),
+                CertificateAuthority.collectTrustAnchors().stamp());
     }
 
     @Test
@@ -254,6 +290,47 @@ class CertificateAuthorityTest {
         assertNull(cert.getExtensionValue(DerEncoder.SKI_OID),
                 "sanity: the handcrafted legacy CA must have no SKI");
         return cert;
+    }
+
+    private static void propagateHostAnchors() throws Exception {
+        Files.createDirectories(SpawnConfig.configDir());
+        Files.writeString(SpawnConfig.configDir().resolve("config.yaml"), "host-ca:\n  propagate: true\n");
+    }
+
+    private static void writeHostAnchor(String name, String content) throws Exception {
+        Files.createDirectories(CertificateAuthority.hostAnchorsDir);
+        Files.writeString(CertificateAuthority.hostAnchorsDir.resolve(name), content);
+    }
+
+    /** A self-signed CA certificate, PEM-encoded, standing in for a corporate root. */
+    private static String selfSigned(String cn) throws Exception {
+        var keyGen = KeyPairGenerator.getInstance("RSA");
+        keyGen.initialize(2048);
+        var keyPair = keyGen.generateKeyPair();
+        var notBefore = new Date(System.currentTimeMillis() - 86400_000L);
+        var expiry = new Date(notBefore.getTime() + 3650L * 24 * 60 * 60 * 1000);
+        var algId = sha256WithRsaAid();
+        var subject = derDistinguishedName(cn);
+        var tbsCert = derSequence(concat(
+                derExplicit(0, derInteger(BigInteger.valueOf(2))),
+                derInteger(new BigInteger(128, new SecureRandom())),
+                algId,
+                subject,
+                derSequence(concat(derUtcTime(notBefore), derUtcTime(expiry))),
+                subject,
+                keyPair.getPublic().getEncoded(),
+                derExplicit(3, derSequence(derExtension(oidBasicConstraints(), true,
+                        derSequence(new byte[]{0x01, 0x01, (byte) 0xff}))))
+        ));
+        var sig = Signature.getInstance("SHA256withRSA");
+        sig.initSign(keyPair.getPrivate());
+        sig.update(tbsCert);
+        return toPem("CERTIFICATE", derSequence(concat(tbsCert, algId, derBitString(sig.sign()))));
+    }
+
+    private static X509Certificate parse(String pem) throws Exception {
+        return (X509Certificate) CertificateFactory.getInstance("X.509")
+                .generateCertificate(new ByteArrayInputStream(pem.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
 
     private static String fingerprint(X509Certificate cert) throws Exception {

@@ -166,32 +166,55 @@ public class CertificateAuthority {
         return loadOrCreate().caFingerprint();
     }
 
-    private static final Path DEFAULT_ANCHORS_DIR = Path.of("/etc/pki/ca-trust/source/anchors");
+    /** Where {@code host-ca.propagate} reads the host's anchors from. Tests point it elsewhere. */
+    static Path hostAnchorsDir = Path.of("/etc/pki/ca-trust/source/anchors");
     private static final String GUEST_ANCHORS_DIR = "/etc/pki/ca-trust/source/anchors/";
 
     /**
-     * The full set of trust anchors that should be installed in containers:
-     * the MITM proxy CA, plus host CA anchors when {@code host-ca.propagate} is enabled.
-     * Each entry is keyed by {@code isx-<sha256>.crt} (the SHA-256 of the X.509 DER),
-     * with PEM content as the value. Content-addressable naming eliminates filename
-     * collisions and shell-injection via filenames.
+     * The trust anchors an instance should hold: the MITM proxy CA, plus host CA anchors when
+     * {@code host-ca.propagate} is enabled. {@code files} is keyed by {@code isx-<sha256>.crt}
+     * (the SHA-256 of the X.509 DER), with PEM content as the value. Content-addressable naming
+     * eliminates filename collisions and shell-injection via filenames.
      */
-    public static SortedMap<String, String> collectTrustAnchors() {
-        var anchors = new TreeMap<String, String>();
-        CertificateAuthority ca = exists() ? loadOrCreate() : null;
-        if (ca != null) {
-            anchors.put("isx-" + ca.caFingerprint() + ".crt", ca.caCertPem().strip());
+    public record TrustAnchors(String caFingerprint, SortedMap<String, String> files) {
+
+        /**
+         * What an instance holding this set is stamped with: the CA's fingerprint, then
+         * {@code +} and a fingerprint over the host anchors when there are any. The CA's part
+         * stays readable on its own, so a stamp still says which CA an image was built against
+         * after the host anchors change ({@link CaTrust}); without host anchors it is the CA's
+         * fingerprint alone, as every image was stamped before host anchors existed.
+         */
+        public String stamp() {
+            var hostFiles = new TreeMap<>(files);
+            hostFiles.remove(anchorFile(caFingerprint));
+            return hostFiles.isEmpty() ? caFingerprint : caFingerprint + "+" + digest(hostFiles);
         }
+    }
+
+    /**
+     * The trust set for this host. Creates the CA if there is none yet: every caller is about
+     * to install the set into an instance, and an instance must trust the CA its proxy signs with.
+     */
+    public static TrustAnchors collectTrustAnchors() {
+        var ca = loadOrCreate();
+        var caFingerprint = ca.caFingerprint();
+        var files = new TreeMap<String, String>();
+        files.put(anchorFile(caFingerprint), ca.caCertPem().strip());
         if (SpawnConfig.load().hostCa().propagate()) {
-            addHostAnchors(anchors, ca);
+            addHostAnchors(files, ca);
         }
-        return anchors;
+        return new TrustAnchors(caFingerprint, files);
+    }
+
+    private static String anchorFile(String fingerprint) {
+        return "isx-" + fingerprint + ".crt";
     }
 
     private static void addHostAnchors(SortedMap<String, String> anchors, CertificateAuthority ca) {
-        if (!Files.isDirectory(DEFAULT_ANCHORS_DIR)) return;
-        String localPem = ca != null ? ca.caCertPem().strip() : null;
-        try (var stream = Files.list(DEFAULT_ANCHORS_DIR)) {
+        if (!Files.isDirectory(hostAnchorsDir)) return;
+        var localPem = ca.caCertPem().strip();
+        try (var stream = Files.list(hostAnchorsDir)) {
             for (var path : stream.toList()) {
                 var name = path.getFileName().toString();
                 if (!name.endsWith(".crt") && !name.endsWith(".pem")) continue;
@@ -199,21 +222,21 @@ public class CertificateAuthority {
                 try {
                     var pem = Files.readString(path).strip();
                     if (pem.isEmpty()) continue;
-                    if (localPem != null && pem.equals(localPem)) continue;
+                    if (pem.equals(localPem)) continue;
                     var cert = parseCertificate(pem);
                     if (cert == null) {
                         dev.incusspawn.Warnings.warn("host-ca: " + name + " is not a valid X.509 certificate");
                         continue;
                     }
                     try {
-                        anchors.put("isx-" + fingerprintOf(cert) + ".crt", pem);
+                        anchors.put(anchorFile(fingerprintOf(cert)), pem);
                     } catch (Exception e) {
                         dev.incusspawn.Warnings.warn("host-ca: " + name + ": " + e.getMessage());
                     }
                 } catch (IOException ignored) {}
             }
         } catch (IOException e) {
-            dev.incusspawn.Warnings.warn("host-ca: cannot list " + DEFAULT_ANCHORS_DIR + ": " + e.getMessage());
+            dev.incusspawn.Warnings.warn("host-ca: cannot list " + hostAnchorsDir + ": " + e.getMessage());
         }
     }
 
@@ -226,12 +249,8 @@ public class CertificateAuthority {
         }
     }
 
-    /**
-     * A fingerprint over the complete trust set. Changes when any anchor is
-     * added, removed, or modified.
-     */
-    public static String trustFingerprint(SortedMap<String, String> anchors) {
-        if (anchors.isEmpty()) return "";
+    /** A fingerprint over a set of anchors: changes when any is added, removed or modified. */
+    private static String digest(SortedMap<String, String> anchors) {
         try {
             var digest = MessageDigest.getInstance("SHA-256");
             for (var entry : anchors.entrySet()) {
@@ -240,7 +259,7 @@ public class CertificateAuthority {
             }
             return HexFormat.of().formatHex(digest.digest());
         } catch (Exception e) {
-            return "";
+            throw new IllegalStateException("SHA-256 unavailable", e);
         }
     }
 
@@ -280,29 +299,24 @@ public class CertificateAuthority {
      * The fingerprints an image can be compared against, read once so callers that
      * classify many images do not re-read and re-hash the CA per image.
      * <p>
-     * {@code current} is the combined trust-set fingerprint (MITM CA + host anchors).
-     * {@code compatible} carries the old MITM-only fingerprints (current and superseded
-     * cert DER hashes) so templates built before the combined stamp are recognised
-     * as repairable rather than foreign.
+     * Only a stamp's CA part ({@link TrustAnchors#stamp}) is compared: it says which CA an image
+     * was built against. Host anchors that changed since are reconciled on first use, as
+     * a superseded CA is, and do not make an image foreign.
      */
-    public record CaTrust(String current, java.util.Set<String> compatible) {
+    public record CaTrust(String current, String superseded) {
 
         public static CaTrust snapshot() {
-            var fp = trustFingerprint(collectTrustAnchors());
-            var compat = new java.util.HashSet<String>();
-            var mitmFp = currentCaFingerprint();
-            if (!mitmFp.isEmpty()) compat.add(mitmFp);
-            var superseded = supersededCaFingerprint();
-            if (!superseded.isEmpty()) compat.add(superseded);
-            return new CaTrust(fp, compat);
+            return new CaTrust(currentCaFingerprint(), supersededCaFingerprint());
         }
 
         public CaStatus classify(String storedFingerprint) {
             if (storedFingerprint == null || storedFingerprint.isEmpty() || current.isEmpty()) {
                 return CaStatus.UNKNOWN;
             }
-            if (storedFingerprint.equals(current)) return CaStatus.CURRENT;
-            if (compatible.contains(storedFingerprint)) return CaStatus.REPAIRABLE;
+            var plus = storedFingerprint.indexOf('+');
+            var ca = plus < 0 ? storedFingerprint : storedFingerprint.substring(0, plus);
+            if (ca.equals(current)) return CaStatus.CURRENT;
+            if (ca.equals(superseded)) return CaStatus.REPAIRABLE;
             return CaStatus.FOREIGN;
         }
     }
@@ -349,21 +363,19 @@ public class CertificateAuthority {
      * the instance again; null reads it.
      */
     public static boolean fixContainerCaIfNeeded(IncusClient incus, String container, JqValue instance) {
-        var anchors = collectTrustAnchors();
-        var fp = trustFingerprint(anchors);
-        if (fp.isEmpty()) return false;
-
         var storedFp = instance != null
                 ? instance.getField("config").pathText(Metadata.CA_FINGERPRINT, "")
                 : incus.configGet(container, Metadata.CA_FINGERPRINT);
         if (storedFp.isEmpty()) return false;
-        if (fp.equals(storedFp)) return false;
+        var trust = collectTrustAnchors();
+        var stamp = trust.stamp();
+        if (stamp.equals(storedFp)) return false;
 
         incus.configSet(container, Metadata.CA_FINGERPRINT, "");
-        if (incus.shellExec(container, "sh", "-c", buildReconcileScript(anchors)).exitCode() != 0) {
+        if (incus.shellExec(container, "sh", "-c", buildReconcileScript(trust.files())).exitCode() != 0) {
             return false;
         }
-        incus.configSet(container, Metadata.CA_FINGERPRINT, fp);
+        incus.configSet(container, Metadata.CA_FINGERPRINT, stamp);
         return true;
     }
 

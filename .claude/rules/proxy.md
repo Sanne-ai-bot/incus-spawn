@@ -40,10 +40,10 @@ Key design:
   Images stamped with that superseded fingerprint carry a stale-but-not-foreign anchor: `BranchCommand` lets them branch (the new cert is pushed into the instance by `InstancePrep`/`fixContainerCaIfNeeded` on first use) instead of demanding a rebuild the way a real CA rotation does.
 - **Host CA propagation** (opt-in, `host-ca: { propagate: true }` in config.yaml): `CertificateAuthority.collectTrustAnchors()` builds one trust set -- the MITM CA plus host anchors from `/etc/pki/ca-trust/source/anchors/`, each parsed as X.509 and keyed by SHA-256 fingerprint (`isx-<fp>.crt`).
   Content-addressable naming eliminates filename collisions and shell injection.
-  One combined fingerprint (`trustFingerprint()`) is stamped as `Metadata.CA_FINGERPRINT`.
+  One stamp (`TrustAnchors.stamp()`) goes in `Metadata.CA_FINGERPRINT`: the CA's fingerprint, then `+` and a fingerprint over the host anchors when there are any; without host anchors it is the CA's fingerprint alone, as before.
   `fixContainerCaIfNeeded` reconciles the whole set in one guest exec (`buildReconcileScript`): it clears the stamp before cleanup so a failed install retries, removes old `incus-spawn-mitm.crt` and `isx-*.crt`, writes the current set via `Container.heredoc`, runs `update-ca-trust`, and re-stamps on success.
-  `CaTrust.snapshot()` carries the combined fingerprint as `current` and the old MITM-only fingerprints (current cert DER hash, superseded) as `compatible`, so templates built before the combined stamp are classified as `REPAIRABLE`, not `FOREIGN`.
-  `buildFromScratch` writes each anchor via `Container.writeFile` and stamps the combined fingerprint; `buildFromParent`, `BranchFlow`, `InstancePrep` and the TUI shell prep reconcile through `fixContainerCaIfNeeded`.
+  `CaTrust.classify` compares only the stamp's CA part: changed host anchors are reconciled on first use and never make a template `FOREIGN` (which would block `isx branch`).
+  `collectTrustAnchors()` creates the CA when there is none, as the build's install always did; `buildFromScratch` writes each anchor via `Container.writeFile` and stamps the set; `buildFromParent`, `BranchFlow`, `InstancePrep` and the TUI shell prep reconcile through `fixContainerCaIfNeeded`.
   The config is structured (`HostCaConfig.of(raw)`, same raw-YAML pattern as `ArtifactCacheTiers` and `ReadyTimeoutsConfig`) so a mistyped section does not fail config.yaml.
 - Claude credentials live in `claude.accounts`, a named map (`ClaudeAccount`, `type: api-key|oauth|vertex`) so several accounts can be configured at once; `claude.default` names the one instances use.
   `ClaudeConfig.accountFor(Predicate)` picks the default when it qualifies, else the first that does.
