@@ -34,7 +34,7 @@ jobs:
       # rather than the default GITHUB_TOKEN — this both avoids needing the org
       # "Actions may create pull requests" setting and lets the resulting PR run CI
       # (PRs opened by GITHUB_TOKEN are deliberately blocked from triggering workflows).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           token: ${{ secrets.BOT_TOKEN }}
 
