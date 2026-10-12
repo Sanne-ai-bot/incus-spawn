@@ -35,7 +35,8 @@ Key jobs:
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
 The **`update-base-image-steps`** job in `test-integration.yml` runs `.github/scripts/test-update-base-image.sh`: `update-base-image.yml`'s three steps, as its `workflow_dispatch` backstop runs them, against a fake images release with `-vm-direct` and `SHA256SUMS.v2`, `gh`, `curl` and the remote faked (#1255).
-It checks the switch to `-vm-direct` with both arches' checksums, also after a stock-image bump of the same release was merged or while its branch is open, and that the PR title names the switch and a release published again under its tag; it finds the steps by name, so renaming one fails it too.
+It checks the switch to `-vm-direct` with both arches' checksums, also after a stock-image bump of the same release was merged or while its branch is open; a routine bump of a built-in already on `-vm-direct` (plain title, `-vm-direct` branch); the refusal to move such a built-in back to stock when a release lacks `-vm-direct`; and that the PR title names the switch and a release published again under its tag.
+It starts from a stock built-in written in the script, whose keys, nested ones included, must match `minimal.yaml`'s, and finds the workflow's steps by name, so renaming a key or a step fails it too.
 `.github/workflows/test-vm-kernel.yml` (**`boot (x86_64)`**, **`boot (aarch64)`**) runs when `appliance/kernel/**`, `appliance/test-vm-kernel.sh` or `minimal.yaml` change (#1255).
 It builds the VM base image's kernel with `build-kernel.sh vm` and boots it with `appliance/test-vm-kernel.sh` on the VM image `minimal.yaml` pins, downloaded and checked against `vm_image_sha256`.
 x86_64 boots under KVM, aarch64 under TCG; the console logs and `systemd-analyze plot`s are uploaded.

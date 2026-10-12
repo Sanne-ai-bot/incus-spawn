@@ -3,13 +3,16 @@
 # fake images release that carries -vm-direct and SHA256SUMS.v2 (#1255), with gh, curl and the
 # remote faked. Checks the switch to -vm-direct, with both arches' checksums, from a stock
 # built-in; after a stock-image bump of the same release was merged; and while that bump's
-# branch is still open; and that the PR names a switch of VM image and a release published again
-# under its tag. Needs bash, git and mikefarah yq.
+# branch is still open; a routine bump of a built-in already on -vm-direct; the refusal to move
+# such a built-in back to the stock image when a release lacks -vm-direct; and that the PR names
+# a switch of VM image and a release published again under its tag. The built-in it starts from is
+# written here, held to minimal.yaml's keys. Needs bash, git and mikefarah yq.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 TAG=fedora-44-20991231
+OLD_TAG=fedora-44-20000101
 H() { printf '%064x' "$1"; }
 
 WORKFLOW="$REPO/.github/workflows/update-base-image.yml"
@@ -27,7 +30,7 @@ cat > "$WORK/bin/gh" <<EOF
 #!/bin/bash
 case "\$*" in
   *"/releases --jq"*) echo $TAG ;;
-  *"releases/tags/$TAG"*"SHA256SUMS.v2"*) echo https://example.invalid/SHA256SUMS.v2 ;;
+  *"releases/tags/$TAG"*"SHA256SUMS.v2"*) [ -n "\${NO_V2:-}" ] || echo https://example.invalid/SHA256SUMS.v2 ;;
   *"releases/tags/$TAG"*'SHA256SUMS")'*) echo https://example.invalid/SHA256SUMS ;;
   "pr create"*) printf '%s\n' "\$@" >> "$WORK/prs" ;;
   *) echo "unexpected: gh \$*" >&2; exit 2 ;;
@@ -91,7 +94,7 @@ description: Base OS only
 image: fedora-44-base
 image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}.tar.xz
 vm_image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}-vm.tar.xz
-image_tag: fedora-44-20000101
+image_tag: $OLD_TAG
 image_sha256:
   x86_64: $(H 1)
   aarch64: $(H 2)
@@ -99,6 +102,12 @@ vm_image_sha256:
   x86_64: $(H 3)
   aarch64: $(H 4)
 EOF
+# Written by hand, so it is held to the real file's shape, nested keys included: a key renamed
+# there must be renamed here.
+shape() { yq -o=json -I=0 '[.. | path | join(".")] | sort' "$1"; }
+WANT_SHAPE="$(shape "$REPO/common/src/main/resources/images/minimal.yaml")"
+[ "$(shape "$BUILTIN")" = "$WANT_SHAPE" ] \
+    || fail "the fixture's keys differ from minimal.yaml's: fixture $(shape "$BUILTIN"), minimal.yaml $WANT_SHAPE"
 out="$(run "$BUILTIN")"
 expect_direct "$out" "stock built-in, older tag"
 grep -qx "title: Update base image to $TAG, VM image built from scratch" <<<"$out" || fail "the switch is not in the title: $(grep '^title:' <<<"$out")"
@@ -116,6 +125,23 @@ yq ".vm_image_url |= sub(\"[^/]+\$\"; \"fedora-44-{arch}-vm-direct.tar.xz\")
     "$WORK/stock-bump.yaml" > "$WORK/direct.yaml"
 [ "$(run "$WORK/direct.yaml")" = UNCHANGED ] || fail "a built-in already on this release's -vm-direct is bumped again"
 echo "ok: already current"
+
+# main once the first -vm-direct bump has merged: a built-in already on -vm-direct, of an older
+# release. A routine bump must not be called a switch of image, nor a re-publish.
+yq ".image_tag = \"$OLD_TAG\" | .image_sha256.x86_64 = \"$(H 5)\" | .image_sha256.aarch64 = \"$(H 6)\"
+    | .vm_image_sha256.x86_64 = \"$(H 7)\" | .vm_image_sha256.aarch64 = \"$(H 8)\"" "$WORK/direct.yaml" > "$WORK/direct-older.yaml"
+out="$(run "$WORK/direct-older.yaml")"
+expect_direct "$out" "built-in already on -vm-direct, older tag"
+grep -qx "title: Update base image to $TAG" <<<"$out" \
+    || fail "a routine bump is titled as more than one: $(grep '^title:' <<<"$out")"
+grep -qx "branch: bot/update-base-image-$TAG-vm-direct" <<<"$out" \
+    || fail "a routine -vm-direct bump's branch: $(grep '^branch:' <<<"$out")"
+echo "ok: routine bump of a built-in already on -vm-direct"
+
+# The same built-in, and a release without -vm-direct: the bump stops rather than move every
+# user's VMs back to the stock image.
+NO_V2=1 run "$WORK/direct-older.yaml" >/dev/null 2>&1 && fail "a release without -vm-direct moved a -vm-direct built-in back to stock"
+echo "ok: no move back to the stock image"
 
 # The release published again under its tag: a file the built-in already names has another checksum.
 yq ".image_sha256.aarch64 = \"$(H 99)\"" "$WORK/direct.yaml" > "$WORK/republished.yaml"
