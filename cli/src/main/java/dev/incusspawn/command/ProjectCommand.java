@@ -18,7 +18,7 @@ import org.aesh.command.option.Option;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.Optional;
 
 import static dev.incusspawn.incus.Container.shellQuote;
 
@@ -70,12 +70,12 @@ public class ProjectCommand extends BaseCommand {
             return CommandResult.valueOf(create(RuntimeServices.incus(), loadConfig()));
         }
 
-        /** A project template built on a deprecated one says so, as {@code isx build} does (#1195). */
-        private static List<String> deprecationWarnings(String imageName, String parent) {
+        /** A project template whose parent is deprecated says so, as {@code isx build} does (#1195, #1353). */
+        private static Optional<String> deprecationWarning(String imageName, String parent) {
             var project = new ImageDef();
             project.setName(imageName);
             project.setParent(parent);
-            return ImageDef.deprecationWarnings(project, ImageDef.loadLayers(w -> { }).defs());
+            return ImageDef.deprecationWarning(project, ImageDef.loadLayers(w -> { }).defs());
         }
 
         /**
@@ -95,7 +95,7 @@ public class ProjectCommand extends BaseCommand {
 
             var parent = projectConfig.getParent();
             // Read before the parent is locked: loading definitions is I/O the lock need not wait for
-            var deprecations = deprecationWarnings(imageName, parent);
+            var deprecation = deprecationWarning(imageName, parent);
             boolean exists;
             boolean built;
             var buildName = imageName + BuildCommand.REBUILDING_SUFFIX;
@@ -109,7 +109,7 @@ public class ProjectCommand extends BaseCommand {
 
                 BuildOutput.header("Creating project template " + imageName);
                 BuildOutput.note("Parent: " + parent);
-                deprecations.forEach(w -> BuildOutput.warn(OutputFormat.oneLine(w)));
+                deprecation.ifPresent(w -> BuildOutput.warn(OutputFormat.oneLine(w)));
 
                 exists = incus.exists(imageName);
                 if (exists) {

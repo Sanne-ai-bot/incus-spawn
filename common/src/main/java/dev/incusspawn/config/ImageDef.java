@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -131,8 +132,8 @@ public class ImageDef {
     private Map<String, String> accounts = Map.of();
     /**
      * Set when the template is on its way out: {@code true}, or what to use instead. It still
-     * builds, but every build of it or of a template deriving from it warns
-     * ({@link #deprecationWarnings}). Left out of {@link #contentFingerprint}: marking a template
+     * builds, but every build of it or of a template naming it as parent warns
+     * ({@link #deprecationWarning}). Left out of {@link #contentFingerprint}: marking a template
      * deprecated, or moving to an identical copy that is not, must not rebuild anything.
      */
     @JqInclude(JqInclude.Include.NON_NULL)
@@ -515,30 +516,19 @@ public class ImageDef {
     }
 
     /**
-     * One warning for each deprecated template in {@code start}'s chain, root first: building
-     * {@code start} still works, but it is built on something that is going away.
+     * The warning for building {@code start}: that it is deprecated itself, or else that the
+     * parent it names is. A template further down the chain is not warned about (#1353): the
+     * one that names the deprecated template is where it gets replaced, and repeating the
+     * warning for every descendant, one per deprecated ancestor, buried which one that was.
      */
-    public static List<String> deprecationWarnings(ImageDef start, Map<String, ImageDef> defs) {
-        return deprecationWarnings(start, defs, new java.util.HashSet<>());
-    }
-
-    /**
-     * Like {@link #deprecationWarnings(ImageDef, Map)}, leaving out the deprecated templates named
-     * in {@code warned} and adding the rest to it: a run names each template built on a deprecated
-     * one once, however many times it is built.
-     */
-    public static List<String> deprecationWarnings(ImageDef start, Map<String, ImageDef> defs,
-                                                   java.util.Set<String> warned) {
-        var warnings = new ArrayList<String>();
-        for (var layer : chain(start, defs)) {
-            if (!layer.isDeprecated() || !warned.add(start.getName() + " on " + layer.getName())) continue;
-            var what = layer == start
-                    ? layer.getName() + " is deprecated"
-                    : start.getName() + " derives from " + layer.getName() + ", which is deprecated";
-            var note = layer.getDeprecated().strip();
-            warnings.add("true".equalsIgnoreCase(note) ? what + "." : what + ": " + note);
-        }
-        return warnings;
+    public static Optional<String> deprecationWarning(ImageDef start, Map<String, ImageDef> defs) {
+        var deprecated = start.isDeprecated() ? start : start.isRoot() ? null : defs.get(start.getParent());
+        if (deprecated == null || !deprecated.isDeprecated()) return Optional.empty();
+        var what = deprecated == start
+                ? start.getName() + " is deprecated"
+                : start.getName() + " derives from " + deprecated.getName() + ", which is deprecated";
+        var note = deprecated.getDeprecated().strip();
+        return Optional.of("true".equalsIgnoreCase(note) ? what + "." : what + ": " + note);
     }
 
     /** Whether this image is built from scratch (no parent). */
