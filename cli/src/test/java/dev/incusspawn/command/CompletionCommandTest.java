@@ -124,4 +124,19 @@ class CompletionCommandTest {
             assertFalse(script.contains("no-op"), shell + " must not describe --plain as a no-op");
         }
     }
+
+    // --- account values ---
+
+    @Test
+    void everyShellCompletesAccountValuesFromTheNamesOnlyHelper() {
+        for (var shell : CompletionCommand.Shell.values()) {
+            String script = linux(shell);
+            assertTrue(script.contains("isx account list --completion"), shell + " must call the helper");
+            assertFalse(script.contains("--format=json"), shell + " must not parse the full listing");
+        }
+        assertTrue(linux(CompletionCommand.Shell.zsh).contains("*--account=[Credential account as <namespace>=<account>]:selection:_isx_accounts"));
+        assertTrue(linux(CompletionCommand.Shell.bash).contains("--account)"));
+        assertTrue(linux(CompletionCommand.Shell.fish).contains("-l account"));
+        assertTrue(linux(CompletionCommand.Shell.fish).contains("'(__isx_accounts)'"));
+    }
 }

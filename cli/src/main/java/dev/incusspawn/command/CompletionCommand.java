@@ -111,6 +111,31 @@ public class CompletionCommand extends BaseCommand {
               _describe -t instances 'instance' instances
             }
 
+            _isx_accounts() {
+              local -a namespaces accounts
+              local line
+              for line in ${(f)"$(isx account list --completion 2>/dev/null)"}; do
+                if [[ $line == *= ]]; then
+                  namespaces+=("${line//:/\\:}")
+                elif [[ $line == *$'\\t'* ]]; then
+                  accounts+=("${${line%%$'\\t'*}//:/\\:}:${line#*$'\\t'}")
+                else
+                  accounts+=("${line//:/\\:}")
+                fi
+              done
+              # Once a namespace is typed, offer only its accounts, as bash does.
+              [[ $PREFIX == *=* ]] && namespaces=()
+              # No space after a bare <namespace>=, so the account can follow it.
+              _describe -t namespaces 'namespace' namespaces -S ''
+              _describe -t accounts '<namespace>=<account>' accounts
+            }
+
+            _isx_account_namespaces() {
+              local -a namespaces
+              namespaces=(${(u)${(f)"$(isx account list --completion 2>/dev/null)"}%%=*})
+              _describe -t namespaces 'namespace' namespaces
+            }
+
             _isx_template_names() {
               local -a templates
               templates=(${(f)"$(isx templates 2>/dev/null)"})
@@ -165,7 +190,7 @@ public class CompletionCommand extends BaseCommand {
                 '--memory=[Memory limit, e.g. 8GB]:size' \\
                 '--disk=[Disk size limit]:size' \\
                 '--no-start[Don'"'"'t start the instance after creation]' \\
-                '*--account=[Credential account as <namespace>=<account>]:selection' \\
+                '*--account=[Credential account as <namespace>=<account>]:selection:_isx_accounts' \\
                 '1:new instance name'
             }
 
@@ -365,7 +390,9 @@ public class CompletionCommand extends BaseCommand {
                 'unset:make an instance follow the default account again'
               )
               case $words[1] in
-                show|set|unset) _isx_instances ;;
+                show) _isx_instances ;;
+                set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts' ;;
+                unset) _arguments '1:instance:_isx_instances' '*:namespace:_isx_account_namespaces' ;;
                 *) _describe -t subcmds 'account subcommand' _account_subcmds ;;
               esac
             }
@@ -468,6 +495,31 @@ public class CompletionCommand extends BaseCommand {
               isx list -q 2>/dev/null
             }
 
+            _isx_list_accounts() {
+              isx account list --completion 2>/dev/null | cut -f1
+            }
+
+            _isx_list_account_namespaces() {
+              isx account list --completion 2>/dev/null | cut -f1 | sed -n 's/=$//p'
+            }
+
+            # Offer <namespace>= then <namespace>=<account>.
+            _isx_complete_accounts() {
+              local candidates
+              candidates=$(_isx_list_accounts)
+              if [[ "$cur" == *=* ]]; then
+                # A namespace is typed: offer only its accounts, not the bare <namespace>= again.
+                candidates=$(grep -v '=$' <<< "$candidates")
+              fi
+              COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
+              # _init_completion -s keeps the "=" in $cur, but readline replaces only what follows
+              # the last "=" (COMP_WORDBREAKS): drop the typed <namespace>= from each candidate.
+              if [[ "$cur" == *=* ]]; then
+                local i
+                for i in "${!COMPREPLY[@]}"; do COMPREPLY[i]=${COMPREPLY[i]#"${cur%"${cur##*=}"}"}; done
+              fi
+            }
+
             _isx_list_templates() {
               isx templates 2>/dev/null
             }
@@ -518,6 +570,9 @@ public class CompletionCommand extends BaseCommand {
                       _filedir -d
                       return ;;
                     --cpu|--memory|--disk) return ;;
+                    --account)
+                      _isx_complete_accounts
+                      return ;;
                   esac
                   COMPREPLY=( $(compgen -W "--help --from --gui --no-gui --kvm --no-kvm --airgap --proxy-only --inbox --cpu --memory --disk --no-start --account" -- "$cur") )
                   ;;
@@ -599,6 +654,10 @@ public class CompletionCommand extends BaseCommand {
                     show|set|unset)
                       if [[ "$prev" == "$acct_cmd" ]]; then
                         COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
+                      elif [[ "$acct_cmd" == set ]]; then
+                        _isx_complete_accounts
+                      elif [[ "$acct_cmd" == unset ]]; then
+                        COMPREPLY=( $(compgen -W "$(_isx_list_account_namespaces)" -- "$cur") )
                       fi
                       ;;
                     *) COMPREPLY=( $(compgen -W "--help" -- "$cur") ) ;;
@@ -742,6 +801,29 @@ public class CompletionCommand extends BaseCommand {
               isx list -q 2>/dev/null
             end
 
+            # Helper: <namespace>= and <namespace>=<account> candidates (default marked); names only
+            function __isx_accounts
+              isx account list --completion 2>/dev/null
+            end
+
+            # Helper: namespaces that have accounts
+            function __isx_account_namespaces
+              isx account list --completion 2>/dev/null | string replace -rf '^([^=\\t]+)=$' '$1'
+            end
+
+            # Helper: true when the line is `isx account $argv[1]` followed by exactly $argv[2]
+            # non-option arguments so far, or by at least one when $argv[2] is "+"
+            function __isx_account_args
+              set -l tokens (commandline -opc)
+              test (count $tokens) -ge 3; and test "$tokens[2]" = account; and test "$tokens[3]" = "$argv[1]"; or return 1
+              set -l n (count (string match -v -- '-*' $tokens[4..-1]))
+              if test "$argv[2]" = +
+                test $n -ge 1
+              else
+                test $n -eq $argv[2]
+              end
+            end
+
             # Helper: list available template definitions
             function __isx_templates
               isx templates 2>/dev/null
@@ -803,7 +885,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand branch' -l memory      -d 'Memory limit, e.g. 8GB'
             complete -c isx -f -n '__isx_using_subcommand branch' -l disk        -d 'Disk size limit'
             complete -c isx -f -n '__isx_using_subcommand branch' -l no-start    -d "Don't start the instance after creation"
-            complete -c isx -f -n '__isx_using_subcommand branch' -l account     -d 'Credential account as <namespace>=<account>'
+            complete -c isx -f -n '__isx_using_subcommand branch' -l account     -d 'Credential account as <namespace>=<account>' -x -a '(__isx_accounts)'
 
             # ── build ────────────────────────────────────────────────────────────────────
 
@@ -882,8 +964,10 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset)\\b" (commandline -opc)' -a unset -d 'Make an instance follow the default account again'
 
             complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand show' -a '(__isx_instances)' -d 'Instance name'
-            complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand set'  -a '(__isx_instances)' -d 'Instance name'
-            complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand unset' -a '(__isx_instances)' -d 'Instance name'
+            complete -c isx -f -n '__isx_account_args set 0'   -a '(__isx_instances)' -d 'Instance name'
+            complete -c isx -f -n '__isx_account_args set +'   -a '(__isx_accounts)'
+            complete -c isx -f -n '__isx_account_args unset 0' -a '(__isx_instances)' -d 'Instance name'
+            complete -c isx -f -n '__isx_account_args unset +' -a '(__isx_account_namespaces)' -d 'Namespace'
 
             # ── tools ────────────────────────────────────────────────────────────────────
 
