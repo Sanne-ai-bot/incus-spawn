@@ -222,7 +222,8 @@ One named target behaves as it always did.
 
 **Base image**: The root image (`tpl-minimal`) uses a custom Fedora base image from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images) instead of linuxcontainers.org.
 This image is a pre-baked systemd rootfs with agentuser, systemd-networkd, a connectivity watchdog, container-specific service masking, and a tmpfiles override for device node permissions — all the static setup that `buildFromScratch` would otherwise perform on every build.
-A separate VM base image (`vm_image_url`) is also available — a stock Incus Fedora VM image customized with the same base configuration via `virt-customize`.
+A separate VM base image (`vm_image_url`) is also available: the same root, built from scratch around isx's own kernel, which the firmware starts with no boot loader and no initrd (`-vm-direct.tar.xz`, see "The VM image's boot chain").
+Releases still carry the older one, the stock Incus Fedora VM image customized with the same base configuration (`-vm.tar.xz`), for isx releases that read only `SHA256SUMS`.
 A base image tag and SHA256 checksums are baked into `src/main/resources/images/minimal.yaml`, but they are only an **offline fallback**.
 When the base image is unpinned, `BuildCommand.resolveTrackedBaseImage()` fetches the newest release from the GitHub API at build time (via the shared `baseimage/BaseImageReleases`, whose owning repo is parsed from the definition's `image_url` — the YAML is the single source of truth, and a non-GitHub URL is simply not tracked) and downloads that release, with its per-arch container/VM checksums, in place of the built-in one.
 The definition itself is left as loaded, so `definition-sha` and `build-source` fingerprint the same definition the staleness checks read, and `build-source` records the release used as `trackedImageTag`.
@@ -3120,10 +3121,46 @@ What was decided (Sanne, 2026-10-10, on #1240):
   The LVM units have a user in a nested Incus with an LVM pool, and `upower` and `rtkit-daemon` come from templates, rtkit for GUI audio.
 - **Resuming a VM from a stateful snapshot is deferred**; it would need its own design.
 
+#### The VM image's boot chain (#1255)
+
+The VM base image isx uses (`-vm-direct.tar.xz`, from the first incus-spawn-images release that has it and the `minimal.yaml` bump that follows) boots in three steps: OVMF (AAVMF on aarch64), the kernel, systemd.
+- **No boot loader.**
+  The disk is a GPT with an ESP holding one file, the kernel, as `EFI/BOOT/BOOTX64.EFI` (`BOOTAA64.EFI`), which the firmware starts by the removable-media path with no NVRAM entry.
+  Its command line is built in, so nothing has to pass one: `root=PARTLABEL=isx-root rootfstype=ext4 rootwait ro console=ttyS0 loglevel=5 TERM=dumb` on x86_64 (`CMDLINE_OVERRIDE`), the same with `console=ttyAMA0` on aarch64 (`CMDLINE_FORCE`).
+  GRUB and shim exist to choose among kernels and to carry a Secure Boot chain; this image has one kernel, and Secure Boot is off for every VM (#1240, above), so they would only add their time.
+  That kernel is not signed: with Secure Boot on, OVMF would refuse it.
+  isx turns Secure Boot off on every VM build (`prepareVmBuild`), every branch (`configureBranch`) and every start for use (`startForUse`); a template built before #1240 that keeps it on through a template update or an agent recovery still has its stock-based disk, built before this image existed.
+  isx releases that turn none of it off are never given this image (below).
+- **No initrd.**
+  An initrd is needed when the root's drivers are modules: Fedora's kernel has virtio-scsi, Incus's default root bus, as one.
+  This kernel has no modules at all; virtio-blk and ext4 are built in, and the kernel finds the root by its GPT partition name.
+  isx puts every VM build's root disk on virtio-blk (`InstanceLifecycle.prepareVmBuild`), and branches copy that device.
+  Dropping the initrd removes systemd running twice and `switch-root`: 2.1 s of the 6.0 s to `basic.target` measured at one level of virtualization on #1255.
+- **One pinned kernel.**
+  The kernel is built from kernel.org source, checksummed, by `appliance/kernel/build-kernel.sh vm` at the incus-spawn commit the images repo pins (`fedora/build-vm-kernel.sh`), so its config has one home and reaches the image only through a bump of that pin.
+  The image carries no kernel package, no `/boot`, and no module files: `/usr/lib/modules/<release>/` holds only the index of built-in drivers, so `modprobe` of one succeeds (a nested Incus needs `modprobe vhost_vsock`).
+  dnf in the image refuses kernel packages (`/etc/dnf/libdnf5.conf.d/isx-kernel.conf`), since a Fedora kernel would land in a `/boot` nothing boots.
+  **Kernel fixes do not arrive with the ten-day rebuild.**
+  The image is rebuilt every ten days, which brings Fedora's userspace updates, but its kernel is the version `KERNEL_VERSION` and `KERNEL_SHA256` in `appliance/kernel/build-kernel.sh` name, at the incus-spawn commit `ISX_REF` pins in the images repo, and the images CI caches the built kernel by that pin: every rebuild ships the same kernel until both are bumped.
+  Nothing bumps either automatically.
+  A kernel security fix reaches VMs only when someone bumps `KERNEL_VERSION` (and its checksum, from kernel.org's signed `sha256sums.asc`) here, then `ISX_REF` in the images repo, and an images release follows; the stock-based image got Fedora's kernel updates with every rebuild, so this is a step back that has to be done by hand.
+  The same pin builds the macOS appliance's kernel, which already works this way.
+  Kernel development happens in a nested VM inside a `--kvm` branch, never by replacing the box's own kernel.
+  What a template needs from the kernel goes into `vm.config` when a template asks for it, and the `vm` build fails when an option there stops applying.
+- **How it ships.**
+  Every isx release before the reader of `SHA256SUMS.v2` tracks the newest release's `-vm.tar.xz` and starts it with Secure Boot on and the root on virtio-scsi, which this image cannot boot.
+  So a release keeps that stock-based image and `SHA256SUMS` exactly as they were and adds this one as `-vm-direct.tar.xz`, listed only in `SHA256SUMS.v2` (see "Base image" above).
+  The images repo's release job publishes it only when the boot test (`appliance/test-vm-kernel.sh`) passed on it, and checks every line of `SHA256SUMS.v2` against the file published under its name.
+
+Measured under nested KVM in an isx VM (the same host as above, Incus 6.23, 8 vCPUs, 4 GiB), three runs each, from the start request until an exec answers: 21.8 s on the stock-based image, 11.9 s on this one; through `isx branch` (`bench/vm-boot.sh --isx`), 22 s and 12.6 s.
+In plain QEMU with the boot test, firmware to `basic.target` took 4.2 s under the same nesting (median of three, on the image incus-spawn-images#22 built, reported there); at one level of virtualization #1255 measured 2.4 s, against 6.0 s for the stock-based image with Secure Boot off.
+The firmware, about 1 s at one level of virtualization, is what remains; a trimmed OVMF measured 0.26 s less under nested KVM, which suggests about 0.1 s at one level, and is not shipped (below).
+
 #### The VM base image's own kernel (#1255)
 
-The plan on #1255 removes the initrd, the boot loader and the modules from the VM base image: the kernel is built from the appliance's source pin, and OVMF starts it straight from the ESP.
-Its first step is in isx: `appliance/kernel/build-kernel.sh vm` builds that kernel, and `appliance/test-vm-kernel.sh` boots it.
+How the image's kernel came about, in the order #1255 built it; "The VM image's boot chain" above is what ships.
+The kernel is built from the appliance's source pin, and OVMF starts it straight from the ESP.
+`appliance/kernel/build-kernel.sh vm` builds that kernel, and `appliance/test-vm-kernel.sh` boots it.
 The `vm` role layers `vm.config` and `vm-<arch>.config` over the appliance fragments.
 They add an ext4 root on virtio-blk, the EFI stub, autofs, MSI, nested KVM with vhost-net and vhost-vsock, and 9p for the agent's config share.
 The command line is built in, since nothing passes one: the root is found by its GPT partition name, `isx-root`, which the kernel resolves itself, with no udev.
@@ -3132,7 +3169,7 @@ A feature goes in when a template asks for it, and what is deliberately absent i
 `test-vm-kernel.sh` boots a copy of a VM image's disk under QEMU with the kernel as the ESP's only file, OVMF or AAVMF with Secure Boot off, 8 vCPUs and 4 GiB.
 It asserts the guest reaches `basic.target` with no virtio device on a legacy interrupt line, and prints firmware, kernel, userspace and ready times, `critical-chain`, `blame` and on request the plot.
 It prepares the copy with `sgdisk`, `mtools` and `debugfs`, so it needs neither root nor a loop device, and the firmware is a parameter, so a trimmed OVMF build is measured by the same harness.
-Until the from-scratch image exists, it boots the stock image `minimal.yaml` pins; `test-vm-kernel.yml` runs it in CI, x86_64 under KVM and aarch64 under TCG.
+`test-vm-kernel.yml` runs it in CI, x86_64 under KVM and aarch64 under TCG, on the VM image `minimal.yaml` pins: the stock-based one until the base-image bump moves the built-in to `-vm-direct`, then the image built from scratch, which the images repo's own CI also boots before every release.
 
 Measured on 2026-10-11 under nested KVM (the same host as above, inside an isx VM), on `fedora-44-20261011`, median of five boots: firmware 2.6 s, kernel 0.76 s, userspace to `basic.target` 1.24 s, ready 4.6 s.
 Firmware here includes QEMU's own start.
