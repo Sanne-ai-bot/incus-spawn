@@ -409,16 +409,17 @@ class RepoCloner {
                     var git = "git -C " + shellQuote(expandedPath);
                     var fixup = container.shAsUser("agentuser",
                             git + " remote set-url origin " + shellQuote(repo.getUrl())
-                                    + " && " + git + " fetch --quiet --prune --prune-tags --force origin"
+                                    + " && " + git + NO_AUTO_GC + " fetch --quiet --prune --prune-tags --force origin"
                                     + " && " + git + " remote set-head origin --auto");
                     last = fixup;
                     if (fixup.success()) {
-                        // Then its checked-out branch and the reflogs: a network clone's refs remain.
+                        // Then its checked-out branch, leaving a network clone's refs, and every
+                        // object only the host had.
                         var checkout = container.shAsUser("agentuser", resolveBranch(repo,
                                 "$(" + git + " for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)")
                                 + " && " + git + CHECKOUT_TRACKING
                                 + " && " + deleteOtherBranches(git)
-                                + " && " + git + " reflog expire --expire=now --all");
+                                + " && " + stripUnreachableObjects(git));
                         usedReference = checkout.success();
                         last = checkout;
                     }
@@ -596,7 +597,7 @@ class RepoCloner {
                         + " | sed -n 's|^ref: refs/heads/\\([^[:space:]]*\\)[[:space:]]*HEAD$|\\1|p')")
                 + " && [ -n \"$b\" ]"
                 + " && " + git + " remote set-branches origin \"$b\""
-                + " && " + git + " fetch --quiet --depth " + repo.getDepth() + " origin"
+                + " && " + git + NO_AUTO_GC + " fetch --quiet --depth " + repo.getDepth() + " origin"
                 + " && " + git + CHECKOUT_TRACKING
                 // Drop what the clone took over from the host checkout (its own branch, which may
                 // hold unpushed work, and its origin/HEAD), leaving the refs a network clone has,
@@ -604,9 +605,8 @@ class RepoCloner {
                 + " && " + deleteOtherBranches(git)
                 + " && " + deleteRefs(git, "refs/remotes", " | grep -vxF \"delete refs/remotes/origin/$b\"")
                 + (repo.hasBranch() ? "" : " && " + git + " remote set-head origin \"$b\"")
-                // and the commits only those refs reached, cheap to find in a shallow repo.
-                + " && " + git + " reflog expire --expire=now --all"
-                + " && " + git + " gc --quiet --prune=now";
+                // and the objects only those refs reached.
+                + " && " + stripUnreachableObjects(git);
     }
 
     /**
@@ -629,6 +629,39 @@ class RepoCloner {
         return "l=$(" + git + " for-each-ref --format='%(if)%(HEAD)%(then)%(else)%(refname:strip=2)%(end)' refs/heads)"
                 + " && { [ -z \"$l\" ] || " + git + " branch -q -D -- $l; }";
     }
+
+    /**
+     * Shell leaving in a clone's object store only what its refs reach, as a network clone has
+     * (#1362). A clone from a host checkout copies the host's whole store: its unpushed commits,
+     * stash and once-staged blobs, its commit-graph naming them, and any stray file there (a
+     * {@code tmp_pack_*} an interrupted fetch left), and its branches' values in packed-refs,
+     * shadowed by origin's but still naming its commits. Run it last, once the refs are a network
+     * clone's: it keeps whatever they reach. It writes one pack of those objects into a new
+     * store and swaps it in, so nothing copied survives, then fails unless that store is the one
+     * pack, holding exactly as many objects as the refs reach, and every shallow boundary is in
+     * it; the caller then falls back to a network clone. A store with alternates or promisor
+     * packs, which no pack of its own makes whole, is refused.
+     */
+    static String stripUnreachableObjects(String git) {
+        return "g=$(" + git + " rev-parse --absolute-git-dir) && o=\"$g/objects\" && n=\"$g/objects.strip\""
+                + " && [ ! -e \"$o/info/alternates\" ] && ! { ls -d \"$o\"/pack/*.promisor 2>/dev/null | grep -q .; }"
+                + " && " + git + " reflog expire --expire=now --all"
+                // packed-refs keeps what a loose ref shadows: the host's main, ahead of origin's.
+                + " && " + git + " pack-refs --all"
+                // prune drops the shallow boundaries the refs no longer reach, the host's among them.
+                + " && { [ ! -e \"$g/shallow\" ] || " + git + " prune --expire=now; }"
+                + " && rm -rf \"$n\" && mkdir -p \"$n/pack\""
+                + " && " + git + " pack-objects --all --reflog --indexed-objects -q \"$n/pack/pack\" </dev/null >/dev/null"
+                + " && rm -rf \"$o\" && mv \"$n\" \"$o\""
+                + " && [ \"$(ls -A \"$o\")\" = pack ] && [ \"$(ls -A \"$o/pack\" | sed 's/\\.[a-z]*$//' | sort -u | sed -n '$=')\" = 1 ]"
+                + " && c=$(" + git + " count-objects -v) && r=$(" + git + " rev-list --objects --all --reflog --indexed-objects --count)"
+                + " && [ \"$(printf '%s\\n' \"$c\" | sed -n 's/^in-pack: //p')\" = \"$r\" ]"
+                + " && { [ ! -e \"$g/shallow\" ] || { s=$(" + git + " cat-file --batch-check < \"$g/shallow\")"
+                + " && ! printf '%s\\n' \"$s\" | grep -q ' missing$'; }; }";
+    }
+
+    /** Between {@code git} and its command: no automatic gc, which would write objects behind the strip. */
+    private static final String NO_AUTO_GC = " -c gc.auto=0 -c maintenance.auto=false";
 
     /** Shell setting {@code b} to the repo's configured branch, else to {@code remoteDefault}'s output. */
     private static String resolveBranch(ImageDef.RepoEntry repo, String remoteDefault) {

@@ -10,8 +10,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HexFormat;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.UnaryOperator;
@@ -140,6 +145,108 @@ class RepoClonerShallowTest {
     }
 
     @Test
+    void noObjectOfTheHostCheckoutsOwnWorkReachesTheClone() throws Exception {
+        git(upstream, "tag", "v1", "HEAD~4");
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        commitBinary(host, "unpushed on main"); // the clone takes the host's main as origin/main
+        var aheadOfOrigin = git(host, "rev-parse", "HEAD");
+        git(host, "checkout", "-q", "--detach");
+        commitBinary(host, "unpushed, tagged only");
+        var taggedOnly = git(host, "rev-parse", "HEAD");
+        git(host, "tag", "-f", "v1"); // origin's v1 is elsewhere: the fetch's --force shadows this one
+        git(host, "checkout", "-q", "main");
+        git(host, "checkout", "-q", "-b", "wip");
+        commitBinary(host, "unpushed work");
+        var unpushed = git(host, "rev-parse", "HEAD");
+        Files.writeString(host.resolve("stashed.txt"), "stashed secret\n");
+        git(host, "add", "stashed.txt");
+        var stashedBlob = git(host, "rev-parse", ":stashed.txt");
+        git(host, "-c", "user.name=t", "-c", "user.email=t@t", "stash", "-q");
+        var stash = git(host, "rev-parse", "refs/stash");
+        Files.writeString(host.resolve("staged.txt"), "staged, then unstaged\n");
+        git(host, "add", "staged.txt");
+        var stagedBlob = git(host, "rev-parse", ":staged.txt");
+        git(host, "reset", "-q");
+        git(host, "commit-graph", "write", "--reachable"); // lists the unpushed commit's id
+        // Stray copies of a pack holding it, as an interrupted fetch leaves: git loads neither.
+        git(host, "repack", "-a", "-d", "-q");
+        try (var packs = Files.list(host.resolve(".git/objects/pack"))) {
+            for (var file : packs.toList()) {
+                var name = file.getFileName().toString();
+                if (name.endsWith(".pack") || name.endsWith(".idx")) {
+                    Files.copy(file, file.resolveSibling("tmp_" + name.substring(name.lastIndexOf('.') + 1) + "_garbage"));
+                }
+            }
+        }
+
+        // The ref store keeps the values a fetch shadows: in packed-refs, or in a reftable's older tables.
+        for (var refFormat : List.of("files", "reftable")) {
+            rewrite = cmd -> "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=init.defaultRefFormat GIT_CONFIG_VALUE_0="
+                    + refFormat + "; " + cmd;
+            for (var depth : new Integer[] {null, 2}) {
+                var guest = prepare(repo(depth, null), host);
+                var what = refFormat + ", depth " + depth;
+                assertEquals(refFormat, git(guest, "rev-parse", "--show-ref-format"), what);
+
+                for (var id : List.of(aheadOfOrigin, taggedOnly, unpushed, stash, stashedBlob, stagedBlob)) {
+                    var p = new ProcessBuilder("git", "-C", guest.toString(), "cat-file", "-e", id).start();
+                    assertNotEquals(0, p.waitFor(), id + " is still in the guest's objects (" + what + ")");
+                    assertEquals(List.of(), filesContaining(guest.resolve(".git"), id),
+                            id + " is still named in the guest's .git (" + what + ")");
+                }
+                assertEquals("", git(guest, "fsck", "--lost-found", "--no-progress"), what);
+                assertEquals(depth == null ? "5" : "2", git(guest, "rev-list", "--count", "HEAD"), what);
+            }
+        }
+    }
+
+    @Test
+    void aStripThatFailsOrCannotBeCheckedGivesUpTheHostReference() throws Exception {
+        var host = tmp.resolve("host-releases");
+        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(host, "checkout", "-q", "-b", "wip");
+        commitBinary(host, "unpushed work");
+
+        rewrite = cmd -> cmd.replace(" pack-objects --all", " pack-objects --no-such-option --all");
+        for (var depth : new Integer[] {null, 2}) {
+            assertGivesUpTheReference(run(repo(depth, null), host), "a failing pack-objects, depth " + depth);
+        }
+
+        // The check is what catches a strip that left the copied store in place.
+        rewrite = cmd -> cmd.replace(" && rm -rf \"$o\" && mv \"$n\" \"$o\"", " && rm -rf \"$n\"");
+        for (var depth : new Integer[] {null, 2}) {
+            assertGivesUpTheReference(run(repo(depth, null), host), "the store not swapped, depth " + depth);
+        }
+
+        // A host checkout borrowing objects through alternates: the clone takes them over.
+        rewrite = UnaryOperator.identity();
+        var borrowing = tmp.resolve("host-borrowing");
+        git(tmp, "clone", "-q", "--reference", upstream.toString(), "--", upstream.toUri().toString(), borrowing.toString());
+        assertGivesUpTheReference(run(repo(null, null), borrowing), "alternates");
+    }
+
+    private static void assertGivesUpTheReference(StepProgress state, String what) {
+        assertEquals(StepState.DONE, state.state(), state.detail());
+        assertTrue(state.note().startsWith("could not use the host reference"), what + ": " + state.note());
+    }
+
+    /** The files under {@code dir} holding {@code id}, in hex or as the raw bytes packs and indexes use. */
+    private static List<Path> filesContaining(Path dir, String id) throws IOException {
+        var raw = new String(HexFormat.of().parseHex(id), StandardCharsets.ISO_8859_1);
+        try (var files = Files.walk(dir)) {
+            return files.filter(Files::isRegularFile).filter(f -> {
+                try {
+                    var text = new String(Files.readAllBytes(f), StandardCharsets.ISO_8859_1);
+                    return text.contains(id) || text.contains(raw);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }).toList();
+        }
+    }
+
+    @Test
     void aFullRepoKeepsNoRefOfTheHostCheckoutsOwnWork() throws Exception {
         git(upstream, "tag", "v1", "HEAD~4");
         var host = tmp.resolve("host-releases");
@@ -153,9 +260,6 @@ class RepoClonerShallowTest {
 
         var guest = prepare(repo(null, null), host);
 
-        // The objects stay (the full path copies the whole pack by design); no ref reaches them.
-        assertEquals("", git(guest, "for-each-ref", "--contains", unpushed));
-        assertFalse(git(guest, "reflog", "--all").contains(unpushed.substring(0, 7)));
         assertEquals("v1", git(guest, "tag", "-l"), "the remote's tags stay, the host's own go");
         assertEquals(git(upstream, "rev-parse", "v1"), git(guest, "rev-parse", "v1"));
         assertEquals("refs/heads/main\nrefs/remotes/origin/HEAD\nrefs/remotes/origin/main\nrefs/remotes/origin/stable",

@@ -21,7 +21,7 @@ class RepoClonerTest {
     private static final String DROP_HOST_REFS =
             " && l=$(git -C '/home/agentuser/repo' for-each-ref --format='%(if)%(HEAD)%(then)%(else)%(refname:strip=2)%(end)' refs/heads)"
                     + " && { [ -z \"$l\" ] || git -C '/home/agentuser/repo' branch -q -D -- $l; }"
-                    + " && git -C '/home/agentuser/repo' reflog expire --expire=now --all";
+                    + " && " + RepoCloner.stripUnreachableObjects("git -C '/home/agentuser/repo'");
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final IncusClient.ExecResult FAIL = new IncusClient.ExecResult(1, "", "");
@@ -130,7 +130,7 @@ class RepoClonerTest {
         // URL fixup + fetch + detect default branch
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
-                        + " && git -C '/home/agentuser/repo' fetch --quiet --prune --prune-tags --force origin"
+                        + " && git -C '/home/agentuser/repo' -c gc.auto=0 -c maintenance.auto=false fetch --quiet --prune --prune-tags --force origin"
                         + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
         // Checkout remote's default branch (host ref may have a different HEAD)
         verify(incus).execInContainer("test", "agentuser",
@@ -203,7 +203,7 @@ class RepoClonerTest {
         // URL fixup + fetch + detect default branch
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
-                        + " && git -C '/home/agentuser/repo' fetch --quiet --prune --prune-tags --force origin"
+                        + " && git -C '/home/agentuser/repo' -c gc.auto=0 -c maintenance.auto=false fetch --quiet --prune --prune-tags --force origin"
                         + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
         // Branch checkout (explicit branch overrides detected default)
         verify(incus).execInContainer("test", "agentuser",
