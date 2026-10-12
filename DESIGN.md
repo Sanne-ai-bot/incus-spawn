@@ -1414,6 +1414,9 @@ Connections are pooled per resolved address, so reuse also ends when the DNS cac
 Hashing a large artifact happens outside the lock, re-checked under it against the file's identity, so it does not stall other artifacts in the same stripe.
 The benchmark (`bench/run.sh --load=maven`) points Central at a loopback stub through `ISX_BENCH_UPSTREAM`, since a confirmed hit makes a `HEAD` (with the default tiers, the benchmark's warm hits are fresh and make none).
 The end-to-end tests use the same hook.
+It covers WebSockets too, which Vert.x 4 dials to their host and port, ignoring `setServer()`.
+So an overridden WebSocket is dialled to the override's address, with `Host` still naming the real host but no SNI, and the stub's certificate must cover that address.
+Before that, a WebSocket to an overridden host went to the real one (found in #1332's review).
 Accepted residual risk: an artifact corrupted on disk while its sidecar is intact is served until the client's own checksum check fails.
 Caches written before this (`~/.cache/incus-spawn/maven`, `gradle`) were stored unverified; the roots moved to `maven-verified`/`gradle-verified` and the proxy deletes the old ones on start.
 

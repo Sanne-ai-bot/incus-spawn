@@ -206,6 +206,21 @@ class Upstream {
         });
     }
 
+    /**
+     * Opens an upstream WebSocket, to its override when its host has one. Vert.x 4 dials a
+     * WebSocket to its host and port and ignores setServer(), so the override is dialled by
+     * address: the Host header still names the real host, but there is no SNI, and the stub's
+     * certificate must cover the address. Without this, the socket went to the real host.
+     */
+    Future<io.vertx.core.http.WebSocket> connectWebSocket(io.vertx.core.http.WebSocketConnectOptions options) {
+        var host = options.getHost();
+        var override = upstreamOverrides.get(host);
+        if (override != null) {
+            options.putHeader("Host", host).setHost(override.host()).setPort(override.port());
+        }
+        return wsUpstreamClient.webSocket(options);
+    }
+
     Future<HttpClientRequest> requestWithAsyncDns(RequestOptions options) {
         return requestWithAsyncDns(upstreamClient, options);
     }
