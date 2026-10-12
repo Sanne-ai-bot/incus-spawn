@@ -1621,7 +1621,7 @@ public class BuildCommand extends BaseCommand {
             }
             return new BaseImage(latest.tag(), checksums.container(), latest.tag(), checksums.vm());
         } catch (IOException e) {
-            BuildOutput.note("Could not reach base-image release list (" + e.getMessage() + ")" + fallback);
+            BuildOutput.note("Could not read the base-image releases (" + e.getMessage() + ")" + fallback);
             return builtin;
         }
     }
@@ -1697,6 +1697,9 @@ public class BuildCommand extends BaseCommand {
      */
     static final String IMAGE_PROJECT_PROPERTY = "incus-spawn.project";
 
+    /** Image property recording the URL a base image was imported from, {@code {arch}} and {@code {tag}} filled in. */
+    static final String IMAGE_SOURCE_PROPERTY = "incus-spawn.source";
+
     /**
      * Local image aliases are shared by every template on the host, so a project-local template
      * that could replace one would swap the base image of the user's own templates (#765). It
@@ -1731,7 +1734,16 @@ public class BuildCommand extends BaseCommand {
                         + ImageDef.userImagesDir() + " or a configured search path.");
             }
             var installedTag = incus.getImageProperty(existingFingerprint, "incus-spawn.tag");
-            if (tag != null && tag.equals(installedTag) && ownerProject.equals(importedBy)) {
+            // The tag alone does not say which file of a release was imported: one release carries
+            // two VM images (#1255), and an alias imported from one must not pass for the other.
+            // A base image is imported from one tarball, whose sha256 Incus makes its fingerprint,
+            // so with a checksum to expect the fingerprint says which file it is, for imports by
+            // any isx. With none to expect, the import must have recorded the same URL; one that
+            // recorded none (isx before #1255) is imported again, once.
+            var sameFile = expectedSha256 != null
+                    ? expectedSha256.equalsIgnoreCase(existingFingerprint)
+                    : resolveImageUrl(imageUrl, tag).equals(incus.getImageProperty(existingFingerprint, IMAGE_SOURCE_PROPERTY));
+            if (tag != null && tag.equals(installedTag) && sameFile && ownerProject.equals(importedBy)) {
                 BuildOutput.step("Base image '" + localAlias + "' is up to date (" + tag + ").");
                 return;
             }
@@ -1740,7 +1752,9 @@ public class BuildCommand extends BaseCommand {
                         + importedBy + "), replacing...");
             } else {
                 BuildOutput.step("Base image '" + localAlias + "' is outdated"
-                        + (installedTag != null ? " (" + installedTag + " -> " + tag + ")" : "")
+                        + (installedTag == null ? ""
+                                : installedTag.equals(tag) ? " (another file of " + tag + ")"
+                                : " (" + installedTag + " -> " + tag + ")")
                         + ", replacing...");
             }
             incus.deleteImageAlias(localAlias);
@@ -1767,8 +1781,17 @@ public class BuildCommand extends BaseCommand {
             throw new IllegalStateException("Could not record which project imported base image '"
                     + shown(localAlias) + "'; the imported image was deleted.");
         }
-        if (tag != null) {
-            incus.setImageProperty(fingerprint, "incus-spawn.tag", tag);
+        // One write, and the source read back like the project: a value the tarball's own
+        // metadata carried must not survive a write that did not land, or it could vouch for a
+        // file this import is not.
+        var stamps = new HashMap<String, String>();
+        if (tag != null) stamps.put("incus-spawn.tag", tag);
+        stamps.put(IMAGE_SOURCE_PROPERTY, resolvedUrl);
+        incus.setImageProperties(fingerprint, stamps);
+        if (!resolvedUrl.equals(incus.getImageProperty(fingerprint, IMAGE_SOURCE_PROPERTY))) {
+            incus.deleteImage(fingerprint);
+            throw new IllegalStateException("Could not record where base image '"
+                    + shown(localAlias) + "' came from; the imported image was deleted.");
         }
         incus.createImageAlias(localAlias, fingerprint);
     }

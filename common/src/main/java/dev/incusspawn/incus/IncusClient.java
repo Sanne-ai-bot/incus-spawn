@@ -2215,6 +2215,11 @@ public class IncusClient {
     }
 
     public void setImageProperty(String fingerprint, String key, String value) {
+        setImageProperties(fingerprint, Map.of(key, value));
+    }
+
+    /** Sets several image properties in one write, keeping the others. Fails silently, like {@link #setImageProperty}. */
+    public void setImageProperties(String fingerprint, Map<String, String> values) {
         var resp = http().get("/1.0/images/" + fingerprint);
         if (!resp.isSuccess()) return;
         var props = resp.body().getField("metadata").getField("properties");
@@ -2222,7 +2227,7 @@ public class IncusClient {
         if (props instanceof JqObject propsObj) {
             propsObj.forEach((name, prop) -> updated.put(name, prop.asDisplayText("")));
         }
-        updated.put(key, value);
+        updated.putAll(values);
         http().patch("/1.0/images/" + fingerprint, Map.of("properties", updated));
     }
 

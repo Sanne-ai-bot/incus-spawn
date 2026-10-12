@@ -1591,6 +1591,7 @@ class BuildCommandTest {
         var incus = mock(IncusClient.class);
         when(incus.imageAliasTargetOrThrow("proj-base")).thenReturn("abc");
         when(incus.getImageProperty("abc", "incus-spawn.tag")).thenReturn("v1");
+        when(incus.getImageProperty("abc", BuildCommand.IMAGE_SOURCE_PROPERTY)).thenReturn("https://example.com/img.tar.xz");
         when(incus.imagePropertyOrThrow("abc", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("/work/repo");
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
@@ -1610,6 +1611,7 @@ class BuildCommandTest {
         var tarball = Files.writeString(tmp.resolve("genuine.tar.xz"), "genuine");
         when(incus.importImage(tarball)).thenReturn("genuine");
         when(incus.imagePropertyOrThrow("genuine", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("");
+        when(incus.getImageProperty("genuine", BuildCommand.IMAGE_SOURCE_PROPERTY)).thenReturn("https://example.com/fedora.tar.xz");
         var cache = mock(dev.incusspawn.tool.DownloadCache.class);
         when(cache.downloadAllowingLocalFile(anyString(), any(), any())).thenReturn(tarball);
         var cmd = spy(new BuildCommand());
@@ -1624,6 +1626,96 @@ class BuildCommandTest {
         var order = inOrder(incus);
         order.verify(incus).setImageProperty("genuine", BuildCommand.IMAGE_PROJECT_PROPERTY, "");
         order.verify(incus).createImageAlias("fedora-44-base", "genuine");
+    }
+
+    /** An alias whose image Incus fingerprinted as {@code fingerprint}, with no stamps but the tag. */
+    private static IncusClient importedVmImage(String tag, String fingerprint) {
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow("fedora-44-base-vm")).thenReturn(fingerprint);
+        when(incus.imagePropertyOrThrow(fingerprint, BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("");
+        when(incus.getImageProperty(fingerprint, "incus-spawn.tag")).thenReturn(tag);
+        return incus;
+    }
+
+    /** {@code incus} imports {@code tarball} as {@code fingerprint}, and its source stamp reads back as {@code source}. */
+    private static BuildCommand importing(IncusClient incus, Path tarball, String fingerprint, String source) throws Exception {
+        when(incus.importImage(tarball)).thenReturn(fingerprint);
+        when(incus.imagePropertyOrThrow(fingerprint, BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("");
+        when(incus.getImageProperty(fingerprint, BuildCommand.IMAGE_SOURCE_PROPERTY)).thenReturn(source);
+        var cache = mock(dev.incusspawn.tool.DownloadCache.class);
+        when(cache.downloadAllowingLocalFile(anyString(), any(), any())).thenReturn(tarball);
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(cache).when(cmd).newDownloadCache();
+        return cmd;
+    }
+
+    private static final String DIRECT_URL = "https://example.com/{tag}/fedora-44-{arch}-vm-direct.tar.xz";
+
+    /**
+     * One release carries two VM images (#1255), so its tag does not say which one an alias
+     * holds. Incus fingerprints an image imported from one tarball by that tarball's sha256, so
+     * an alias is reused only when its fingerprint is the checksum now expected.
+     */
+    @Test
+    void anImportOfAnotherFileOfTheSameReleaseIsReplaced(@TempDir Path tmp) throws Exception {
+        var expected = "d".repeat(64);
+        var incus = importedVmImage("fedora-44-20261020", "c".repeat(64)); // the stock image, same tag
+        var source = BuildCommand.resolveImageUrl(DIRECT_URL, "fedora-44-20261020");
+        var cmd = importing(incus, Files.writeString(tmp.resolve("direct.tar.xz"), "direct"), expected, source);
+
+        cmd.downloadAndAliasImage("fedora-44-base-vm", DIRECT_URL,
+                Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261020", trusted("tpl-minimal"));
+
+        verify(incus).deleteImage("c".repeat(64));
+        var order = inOrder(incus);
+        order.verify(incus).setImageProperties(expected, Map.of("incus-spawn.tag", "fedora-44-20261020",
+                BuildCommand.IMAGE_SOURCE_PROPERTY, source));
+        order.verify(incus).createImageAlias("fedora-44-base-vm", expected);
+    }
+
+    /** Imports by an isx before #1255 carry no stamp of their own, and are still reused: the fingerprint is enough. */
+    @Test
+    void anImportOfTheExpectedFileIsReused() {
+        var expected = "d".repeat(64);
+        var incus = importedVmImage("fedora-44-20261020", expected);
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+
+        cmd.downloadAndAliasImage("fedora-44-base-vm", DIRECT_URL,
+                Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261020", trusted("tpl-minimal"));
+
+        verify(incus, never()).deleteImage(any());
+        verify(cmd, never()).newDownloadCache();
+    }
+
+    /** Without a checksum to expect, the URL the import came from is what says which file it is. */
+    @Test
+    void anUncheckedImportIsReusedOnlyForTheSameUrl(@TempDir Path tmp) throws Exception {
+        var incus = importedVmImage("v1", "old");
+        when(incus.getImageProperty("old", BuildCommand.IMAGE_SOURCE_PROPERTY)).thenReturn("https://example.com/v1/stock.tar.xz");
+        var cmd = importing(incus, Files.writeString(tmp.resolve("direct.tar.xz"), "direct"), "new",
+                "https://example.com/v1/direct.tar.xz");
+
+        cmd.downloadAndAliasImage("fedora-44-base-vm", "https://example.com/{tag}/stock.tar.xz", null, "v1", trusted("tpl-mine"));
+        verify(incus, never()).deleteImage(any());
+
+        cmd.downloadAndAliasImage("fedora-44-base-vm", "https://example.com/{tag}/direct.tar.xz", null, "v1", trusted("tpl-mine"));
+        verify(incus).deleteImage("old");
+        verify(incus).createImageAlias("fedora-44-base-vm", "new");
+    }
+
+    @Test
+    void importWhoseSourceStampDidNotStickIsDeleted(@TempDir Path tmp) throws Exception {
+        var incus = mock(IncusClient.class);
+        // The tarball's own metadata named another source, and the write did not land.
+        var cmd = importing(incus, Files.writeString(tmp.resolve("img.tar.xz"), "img"), "fp",
+                "https://example.com/v1/other.tar.xz");
+
+        assertThrows(IllegalStateException.class, () -> cmd.downloadAndAliasImage("fedora-44-base",
+                "https://example.com/{tag}/img.tar.xz", null, "v1", trusted("tpl-minimal")));
+        verify(incus).deleteImage("fp");
+        verify(incus, never()).createImageAlias(any(), any());
     }
 
     @Test
