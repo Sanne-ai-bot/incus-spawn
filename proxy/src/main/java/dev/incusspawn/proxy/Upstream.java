@@ -304,7 +304,7 @@ class Upstream {
 
     /** Relay a non-cacheable request transparently to upstream. */
     void relayRequest(HttpServerRequest clientReq, String domain) {
-        relayRequest(clientReq, domain, null);
+        relayRequest(clientReq, domain, plainHooks(clientReq, domain, null));
     }
 
     /**
@@ -317,6 +317,30 @@ class Upstream {
      */
     void relayRequest(HttpServerRequest clientReq, String domain,
                                java.util.function.Consumer<HttpClientResponse> responseCallback) {
+        relayRequest(clientReq, domain, plainHooks(clientReq, domain, responseCallback));
+    }
+
+    /** A plain relay's: the client's head as it is, and no taps. */
+    private RelayHooks plainHooks(HttpServerRequest clientReq, String domain,
+                                  java.util.function.Consumer<HttpClientResponse> responseCallback) {
+        return new RelayHooks(upReq -> {
+            copyRequestHeaders(clientReq, upReq, domain);
+            return Future.succeededFuture(true);
+        }, responseCallback, null, null);
+    }
+
+    /**
+     * What a relay leaves to its caller. {@code prepare} sets the upstream request's head, before any
+     * of it leaves, and completes false when it has answered the client itself. The taps see each
+     * chunk of the request and of the response as it passes; any of the last three may be null.
+     */
+    record RelayHooks(java.util.function.Function<HttpClientRequest, Future<Boolean>> prepare,
+                      java.util.function.Consumer<HttpClientResponse> responseCallback,
+                      java.util.function.Consumer<Buffer> requestTap,
+                      java.util.function.Consumer<Buffer> responseTap) {}
+
+    /** As above, with the head and the taps left to {@code hooks}: the credential-injecting relay (#1315). */
+    void relayRequest(HttpServerRequest clientReq, String domain, RelayHooks hooks) {
         var streaming = hasBody(clientReq);
         // At once, before anything waits: Vert.x queues a paused body, but drops one that arrives
         // with nothing reading it, and then refuses to read the request at all (#1164)
@@ -335,32 +359,54 @@ class Upstream {
                 return;
             }
             watchdog.upReq = upReq;
-            copyRequestHeaders(clientReq, upReq, domain);
-
-            upReq.response().onSuccess(upResp -> {
-                if (watchdog.cut) return;
-                if (responseCallback != null) {
-                    responseCallback.accept(upResp);
+            Future<Boolean> head;
+            try {
+                head = hooks.prepare().apply(upReq);
+            } catch (RuntimeException e) {
+                // A header Vert.x refuses (a credential with a line break): fail now, not at the budget
+                head = Future.failedFuture(e);
+            }
+            head.onComplete(prepared -> {
+                if (prepared.succeeded() && prepared.result() && !watchdog.gone()) {
+                    send(clientReq, domain, upReq, streaming, watchdog, hooks);
+                    return;
                 }
-                var clientResp = clientReq.response();
-                copyResponseHead(upResp, clientResp);
-                // Upstream answered before the upload ended: the rest of it is never read (RelayWatchdog)
-                if (watchdog.uploadUnread()) clientResp.putHeader("Connection", "close");
-                watchdog.upResp = upResp;
-                pipeResponse(upResp, clientResp, watchdog);
-            }).onFailure(err -> {
-                // A client that left mid-upload resets the request itself
-                if (watchdog.gone()) return;
-                System.err.println("Relay upstream error (" + domain + "): " + err.getMessage());
-                sendError(clientReq.response(), 502, "Upstream error");
+                // Nothing of the request has left: let the connection go back to the pool
+                upReq.exceptionHandler(ignored -> {}).reset();
+                if (prepared.failed() && !watchdog.gone()) {
+                    System.err.println("Relay error (" + domain + "): " + prepared.cause().getMessage());
+                    sendError(clientReq.response(), 502, "Proxy error");
+                }
             });
-            if (streaming) pipeRequest(clientReq, upReq, watchdog);
-            else upReq.end();
         }).onFailure(err -> {
             if (watchdog.cut) return;
             System.err.println("Relay connect error (" + domain + "): " + err.getMessage());
             sendError(clientReq.response(), 502, "Upstream connection failed");
         });
+    }
+
+    /** Sends the request whose head {@code hooks} has set, and relays its answer. */
+    private void send(HttpServerRequest clientReq, String domain, HttpClientRequest upReq, boolean streaming,
+                      RelayWatchdog watchdog, RelayHooks hooks) {
+        upReq.response().onSuccess(upResp -> {
+            if (watchdog.cut) return;
+            if (hooks.responseCallback() != null) {
+                hooks.responseCallback().accept(upResp);
+            }
+            var clientResp = clientReq.response();
+            copyResponseHead(upResp, clientResp);
+            // Upstream answered before the upload ended: the rest of it is never read (RelayWatchdog)
+            if (watchdog.uploadUnread()) clientResp.putHeader("Connection", "close");
+            watchdog.upResp = upResp;
+            pipeResponse(upResp, clientResp, watchdog, hooks.responseTap());
+        }).onFailure(err -> {
+            // A client that left mid-upload resets the request itself
+            if (watchdog.gone()) return;
+            System.err.println("Relay upstream error (" + domain + "): " + err.getMessage());
+            sendError(clientReq.response(), 502, "Upstream error");
+        });
+        if (streaming) pipeRequest(clientReq, upReq, watchdog, hooks.requestTap());
+        else upReq.end();
     }
 
     /**
@@ -369,12 +415,14 @@ class Upstream {
      * holds the body back, that is upstream's time. A client that leaves mid-upload resets the
      * request, which gives its connection back to the pool instead of holding it for good.
      */
-    private static void pipeRequest(HttpServerRequest clientReq, HttpClientRequest upReq, RelayWatchdog watchdog) {
+    private static void pipeRequest(HttpServerRequest clientReq, HttpClientRequest upReq, RelayWatchdog watchdog,
+                                    java.util.function.Consumer<Buffer> tap) {
         if (clientReq.getHeader("Content-Length") == null) upReq.setChunked(true);
         // An upstream that drops mid-upload fails the response, which logs it and answers: without a
         // handler of its own, Vert.x would log the same failure again, unprefixed
         upReq.exceptionHandler(ignored -> {});
         io.vertx.core.Handler<Buffer> pump = chunk -> {
+            if (tap != null) tap.accept(chunk);
             upReq.write(chunk);
             watchdog.touch();
             if (upReq.writeQueueFull()) {

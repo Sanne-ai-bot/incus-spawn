@@ -15,7 +15,60 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class ApiTrafficLog {
 
-    private static final int MAX_BODY_CAPTURE = 65536;
+    /** The most of one body a log holds: a body is never held whole to be logged (#1315). */
+    static final int MAX_BODY_CAPTURE = 65536;
+    /** How much of a body that is not JSON, or was cut, the log shows. */
+    private static final int DISPLAYED_RAW_BYTES = 4096;
+
+    /**
+     * The first {@link #MAX_BODY_CAPTURE} bytes of a body, taken as it passes, and how long it was.
+     * Fed and read on the exchange's own event loop.
+     */
+    public static final class Capture {
+        /** Copies {@code [start, end)} of a chunk into {@code dst} at {@code dstIndex}, as Vert.x's {@code Buffer.getBytes} does. */
+        @FunctionalInterface
+        public interface Chunk {
+            void copyTo(int start, int end, byte[] dst, int dstIndex);
+        }
+
+        private byte[] prefix;
+        private int size;
+        private long total;
+
+        /** All of {@code body}, uncut: for a caller that holds it whole anyway, as {@code isx proxy dump} does. */
+        public static Capture whole(byte[] body) {
+            var capture = new Capture();
+            capture.prefix = body;
+            capture.size = body.length;
+            capture.total = body.length;
+            return capture;
+        }
+
+        /** The first {@link #MAX_BODY_CAPTURE} bytes of {@code body}. */
+        public static Capture of(byte[] body) {
+            var capture = new Capture();
+            capture.accept(body.length, (start, end, dst, dstIndex) -> System.arraycopy(body, start, dst, dstIndex, end - start));
+            return capture;
+        }
+
+        /** A chunk of {@code length} bytes passed: its start is kept while there is room. */
+        public void accept(int length, Chunk chunk) {
+            total += length;
+            var take = Math.min(length, (prefix == null ? MAX_BODY_CAPTURE : prefix.length) - size);
+            if (take <= 0) return;
+            if (prefix == null) prefix = new byte[MAX_BODY_CAPTURE];
+            chunk.copyTo(0, take, prefix, size);
+            size += take;
+        }
+
+        byte[] prefix() {
+            return prefix == null ? new byte[0] : java.util.Arrays.copyOf(prefix, size);
+        }
+
+        long total() {
+            return total;
+        }
+    }
 
     private final Path logDir;
     private final AtomicInteger counter = new AtomicInteger();
@@ -42,6 +95,18 @@ public class ApiTrafficLog {
     public void logExchange(String originalRequest, byte[] originalBody,
                             String forwardedRequest, byte[] forwardedBody,
                             String responseDump, byte[] responseBody) {
+        logExchange(originalRequest, captured(originalBody), forwardedRequest, captured(forwardedBody),
+                responseDump, captured(responseBody));
+    }
+
+    private static Capture captured(byte[] body) {
+        return body == null ? null : Capture.whole(body);
+    }
+
+    /** As above, with bodies captured as they passed; a body cut at the capture says so. */
+    public void logExchange(String originalRequest, Capture originalBody,
+                            String forwardedRequest, Capture forwardedBody,
+                            String responseDump, Capture responseBody) {
         try {
             var index = counter.incrementAndGet();
             var firstLine = originalRequest.lines().findFirst().orElse("UNKNOWN");
@@ -56,9 +121,9 @@ public class ApiTrafficLog {
             sb.append(originalRequest);
             appendBody(sb, originalBody);
 
-            if (forwardedRequest != null) {
+            if (forwardedRequest != null || forwardedBody != null) {
                 sb.append("\n>>> FORWARDED AS\n");
-                sb.append(forwardedRequest);
+                if (forwardedRequest != null) sb.append(forwardedRequest);
                 appendBody(sb, forwardedBody);
             }
 
@@ -98,10 +163,17 @@ public class ApiTrafficLog {
         return body;
     }
 
-    private void appendBody(StringBuilder sb, byte[] body) {
-        if (body == null || body.length == 0) return;
+    private void appendBody(StringBuilder sb, Capture body) {
+        if (body == null || body.total() == 0) return;
+        var prefix = body.prefix();
         sb.append('\n');
-        sb.append(formatBody(body));
+        if (prefix.length < body.total()) {
+            sb.append("[captured ").append(prefix.length).append(" of ").append(body.total()).append(" bytes]\n");
+            // As much as an uncut body that is not JSON shows
+            sb.append(new String(prefix, 0, Math.min(prefix.length, DISPLAYED_RAW_BYTES)));
+        } else {
+            sb.append(formatBody(prefix));
+        }
         sb.append('\n');
     }
 
@@ -109,7 +181,7 @@ public class ApiTrafficLog {
         try {
             return JqValues.toPrettyJsonString(JqValues.parseStrict(body));
         } catch (Exception e) {
-            return new String(body, 0, Math.min(body.length, 4096));
+            return new String(body, 0, Math.min(body.length, DISPLAYED_RAW_BYTES));
         }
     }
 
