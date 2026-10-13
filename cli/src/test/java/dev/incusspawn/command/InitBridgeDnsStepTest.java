@@ -1,13 +1,16 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.proxy.ProxyConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 
+import static dev.incusspawn.incus.FakeIncusDaemon.DNSMASQ_EXITED;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -55,5 +58,47 @@ class InitBridgeDnsStepTest {
 
         var status = ProxyConfig.bridgeDnsStatus(init.incus, Set.of("github.com", "githubusercontent.com"));
         assertTrue(status.complete(), status.describe());
+    }
+
+    @Test
+    void theStepWritesAgainWhenIncusRevertsTheUpdate() throws Exception {
+        IsolatedHome.seed(GITHUB_TOKEN);
+        var daemon = new FakeIncusDaemon().network("incusbr0", Map.of("ipv4.address", GATEWAY + "/24"))
+                .refuseNetworkWrites(DNSMASQ_EXITED);
+        var init = new CountingPauses();
+        init.incus = daemon.client();
+
+        init.setupBridgeDns();
+
+        var status = ProxyConfig.bridgeDnsStatus(init.incus, Set.of("github.com", "githubusercontent.com"));
+        assertTrue(status.complete(), status.describe());
+        // Writing straight away would land in the same dnsmasq restart that refused the first one
+        assertEquals(1, init.pauses);
+    }
+
+    @Test
+    void theStepFailsWithIncussReasonWhenEveryWriteIsRefused() throws Exception {
+        IsolatedHome.seed(GITHUB_TOKEN);
+        var refusals = Collections.nCopies(InitCommand.BRIDGE_DNS_ATTEMPTS, DNSMASQ_EXITED);
+        var daemon = new FakeIncusDaemon().network("incusbr0", Map.of("ipv4.address", GATEWAY + "/24"))
+                .refuseNetworkWrites(refusals.toArray(String[]::new));
+        var init = new CountingPauses();
+        init.incus = daemon.client();
+
+        var e = assertThrows(IncusException.class, init::setupBridgeDns);
+
+        assertTrue(e.getMessage().contains(DNSMASQ_EXITED), e.getMessage());
+        assertEquals("", init.incus.networkConfigGet("incusbr0", "raw.dnsmasq"));
+        assertEquals(InitCommand.BRIDGE_DNS_ATTEMPTS - 1, init.pauses, "a pause between tries, none after the last");
+    }
+
+    /** Counts the pauses between tries instead of waiting them out. */
+    static class CountingPauses extends InitCommand {
+        int pauses;
+
+        @Override
+        void pauseBeforeBridgeDnsRetry() {
+            pauses++;
+        }
     }
 }

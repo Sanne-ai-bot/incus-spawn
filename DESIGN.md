@@ -3569,6 +3569,7 @@ An override for a gateway the bridge has since given up counts as wrong, not as 
 Overrides that all point there fail doctor like having none; both values come from one read of the bridge (`ProxyConfig.bridgeDnsStatus()`).
 Having no overrides at all is not complete: instances then resolve intercepted domains to their real addresses and bypass the proxy, so while the proxy is up `isx doctor` fails that case (#839).
 A failed read of `raw.dnsmasq` is reported as "could not check", never as complete (`readDnsOverrides()` throws; only `getDnsOverrides()`, for callers looking for overrides to act on, turns it into `""`).
+Incus applies a new `raw.dnsmasq` by restarting the bridge's dnsmasq, and a dnsmasq that does not stay up makes it refuse the update and revert the network; `isx init`'s DNS step writes again up to three times, 2s apart, before failing, and a refused read or write of a network's config carries Incus's reason (#1376).
 Doctor offers to write the overrides only while the proxy is listening.
 With it down, they would send every intercepted domain to a gateway where nothing answers (`STALE_DNS`), which is worse than bypassing it, so doctor leaves the "Proxy running" finding to carry the problem.
 A proxy that outlived a change of the bridge's address is still running, bound to the old gateway, and its block still points there.

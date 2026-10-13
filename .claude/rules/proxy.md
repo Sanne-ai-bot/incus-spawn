@@ -314,6 +314,7 @@ Key design:
   Never infer ownership from line shapes: an orphaned `local=/<d>/` answers NXDOMAIN for the whole domain.
   The pre-block layout is detected by its `::` lines and migrated.
   Anything that rewrites the block takes its domains from `ToolProxyResolver.resolvedDomains()` (all accounts, as the proxy does), never the default account alone.
+  Writing `raw.dnsmasq` restarts the bridge's dnsmasq; Incus refuses and reverts the update when the new one does not stay up, so `isx init`'s DNS step tries three times, on both platforms, and on Linux the proxy retries in the background (on macOS it tries once and keeps the install-time block) (#1376).
   A CLI writer gets them, built-ins included, from `ProxyConfig.bridgeDnsDomains(config)` or `configureBridgeDns(incus, config)`.
   Never add a writer that takes no domains: `isx init` once rewrote the block with the built-in ones alone after the proxy's reload, and builds got 401 from GitHub until the proxy restarted (#1354).
   `writeBridgeDns` refuses an empty set; `clearBridgeDns()` is the only way to remove the block.
