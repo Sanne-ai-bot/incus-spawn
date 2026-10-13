@@ -859,6 +859,10 @@ jobs:
             echo "No proxy log found at $LOG"
           fi
 
+      - name: Dump Incus logs on failure
+        if: failure()
+        run: bash .github/scripts/dump-incus-logs.sh
+
       - name: Cleanup
         if: always()
         run: |
@@ -962,6 +966,10 @@ jobs:
           # the job then fails on image resolution rather than on what it means to test.
           sg incus-admin -c "incus launch images:alpine/edge fresh-daemon-smoketest"
           sg incus-admin -c "incus list fresh-daemon-smoketest"
+
+      - name: Dump Incus logs on failure
+        if: failure()
+        run: bash .github/scripts/dump-incus-logs.sh
 
       - name: Cleanup
         if: always()
