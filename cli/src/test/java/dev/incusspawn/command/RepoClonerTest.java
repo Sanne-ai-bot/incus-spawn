@@ -44,7 +44,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = new RepoCloner(incus);
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/quarkusio/quarkus.git' '/home/agentuser/quarkus'");
@@ -70,7 +70,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = new RepoCloner(incus);
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch --branch 'feature/my branch' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
@@ -95,7 +95,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = new RepoCloner(incus);
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Clone call + refspec restore, but no prime
         verify(incus, times(2)).execInContainer(eq("test"), anyString(), anyString());
@@ -119,7 +119,7 @@ class RepoClonerTest {
         var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Local clone from mounted reference
         verify(incus).execInContainer("test", "agentuser",
@@ -165,7 +165,7 @@ class RepoClonerTest {
         var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Should fall back to normal clone
         verify(incus).execInContainer("test", "agentuser",
@@ -193,7 +193,7 @@ class RepoClonerTest {
         var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Local clone (no --branch — handled after fetch)
         verify(incus).execInContainer("test", "agentuser",
@@ -236,7 +236,7 @@ class RepoClonerTest {
         var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Should fall back to normal clone after checkout failure
         verify(incus).execInContainer("test", "agentuser",
@@ -263,7 +263,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(a, b));
 
         var cmd = new RepoCloner(incus);
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/owner/alpha.git' '/home/agentuser/alpha'");
@@ -295,7 +295,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(a, b));
 
         var cmd = new RepoCloner(incus);
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Each repo's prime runs (pipelined with the other repo's clone), scoped to
         // its own working directory.
@@ -384,7 +384,7 @@ class RepoClonerTest {
         doReturn(new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
                 .when(cmd).planReference(eq(repo.getUrl()), any());
 
-        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
+        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
         verify(incus, never()).execInContainer("test", "agentuser", "rm -rf '/home/agentuser/repo'");
 
         // The guard itself, under sh: an existing destination fails with its own status, untouched.
@@ -400,6 +400,40 @@ class RepoClonerTest {
         } finally {
             java.nio.file.Files.delete(dir);
         }
+    }
+
+    @Test
+    void cloneReposSkipsADestinationAnAncestorDeclared() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(List.of(repo("https://github.com/owner/shared.git", "~/shared", "prime-it")));
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        // The inherited one again, with an explicit path that is the same destination, and a new one
+        // declared twice in the same template.
+        child.setRepos(List.of(repo("https://github.com/owner/shared", "/home/agentuser/shared", "prime-it"),
+                repo("https://github.com/owner/own.git", null, null),
+                repo("https://github.com/owner/own.git", "~/own", null)));
+
+        new RepoCloner(incus).cloneRepos(container, child,
+                java.util.Map.of("tpl-parent", parent, "tpl-child", child), MachineType.CONTAINER);
+
+        verify(incus, never()).execInContainer(eq("test"), eq("agentuser"), contains("shared"));
+        verify(incus, times(1)).execInContainer("test", "agentuser",
+                "git clone --single-branch -- 'https://github.com/owner/own.git' '/home/agentuser/own'");
+    }
+
+    private static ImageDef.RepoEntry repo(String url, String path, String prime) {
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl(url);
+        repo.setPath(path);
+        repo.setPrime(prime);
+        return repo;
     }
 
     private static int runSh(String script) throws Exception {
@@ -448,7 +482,7 @@ class RepoClonerTest {
 
         var cmd = new RepoCloner(incus);
         var ex = assertThrows(dev.incusspawn.incus.IncusException.class,
-                () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
+                () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
         assertTrue(ex.getMessage().contains("fatal: repository not found"),
                 "error message should carry the git failure detail");
     }
@@ -510,7 +544,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = spy(new RepoCloner(incus));
-        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
+        cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(cmd, never()).planReference(any(), any());
         verify(incus, never()).deviceAdd(any(), any(), any(), any(String[].class));
@@ -561,7 +595,7 @@ class RepoClonerTest {
                 .when(incus).deviceAdd(eq("test"), anyString(), eq("disk"), any(String[].class));
 
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
-                () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
+                () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
         assertEquals(12, primes.get());
         assertEquals(0, primesWhileMounted.get());
         assertEquals(0, mounted.get());
@@ -584,7 +618,7 @@ class RepoClonerTest {
         doReturn(new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
                 .when(cmd).planReference(eq(repo.getUrl()), any());
 
-        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
+        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
         verify(incus, never()).execInContainer(eq("test"), eq("agentuser"), contains("echo primed"));
     }
 
@@ -616,6 +650,6 @@ class RepoClonerTest {
 
         // The device that would not detach still holds its slot: repo1 runs out, and must give up, not wait.
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
-                () -> assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, MachineType.VM)));
+                () -> assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.VM)));
     }
 }

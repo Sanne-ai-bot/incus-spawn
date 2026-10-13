@@ -254,10 +254,12 @@ final class InstanceActions {
         var templateName = resolveTemplateName(instance);
         if (templateName == null) return repos;
         var chain = getInheritanceChain(templateName);
+        // One per destination, as the build clones them (#1394).
+        var seen = new java.util.HashSet<String>();
         for (var def : chain) {
             for (var repo : def.getRepos()) {
                 var path = repo.getPath();
-                if (path == null) continue;
+                if (path == null || !seen.add(dev.incusspawn.config.ImageDef.repoDestination(repo))) continue;
                 var repoPath = path.startsWith("~/")
                         ? "/home/agentuser" + path.substring(1) : path;
                 var name = repoPath.substring(repoPath.lastIndexOf('/') + 1);

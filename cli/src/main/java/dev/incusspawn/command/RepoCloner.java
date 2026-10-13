@@ -201,8 +201,20 @@ class RepoCloner {
      * the local clone, the remote URL is fixed to the real origin and a
      * {@code git fetch} picks up any commits added since the last host refresh.
      */
-    void cloneRepos(Container container, ImageDef imageDef, MachineType machineType) {
-        var repos = imageDef.getRepos();
+    void cloneRepos(Container container, ImageDef imageDef, java.util.Map<String, ImageDef> defs,
+                    MachineType machineType) {
+        // Only the destinations this layer declares first in its chain (#1394): one an ancestor
+        // declared is already in the copy, or was cloned by that ancestor's layer in a build from
+        // scratch, and a repeat within the template is the same clone.
+        var declared = imageDef.getRepos().stream().map(ImageDef::repoDestination).collect(java.util.stream.Collectors.toSet());
+        var repos = new ArrayList<ImageDef.RepoEntry>();
+        for (var resolved : ImageDef.chainRepos(imageDef, defs)) {
+            if (java.util.Objects.equals(resolved.template(), imageDef.getName())) {
+                repos.add(resolved.repo());
+            } else if (declared.contains(ImageDef.repoDestination(resolved.repo()))) {
+                BuildOutput.ok("Inherited " + repoDisplayName(resolved.repo()) + " (from " + resolved.template() + ")");
+            }
+        }
         if (repos.isEmpty()) return;
 
         try (var reposGroup = BuildOutput.group("Repositories", repos.size() + " to prepare")) {

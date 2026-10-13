@@ -1116,4 +1116,66 @@ class ImageDefTest {
         def.setTools(tools.stream().map(ToolDef.ToolRef::new).toList());
         return def;
     }
+
+    private static ImageDef.RepoEntry repoEntry(String url, String path, String branch, Integer depth, String prime) {
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl(url);
+        repo.setPath(path);
+        repo.setBranch(branch);
+        repo.setDepth(depth);
+        repo.setPrime(prime);
+        return repo;
+    }
+
+    private static Map<String, ImageDef> parentAndChild(List<ImageDef.RepoEntry> parentRepos,
+                                                        List<ImageDef.RepoEntry> childRepos) {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(parentRepos);
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setRepos(childRepos);
+        return Map.of("tpl-parent", parent, "tpl-child", child);
+    }
+
+    @Test
+    void identicalRedeclarationsResolveToTheFirstDeclaration() {
+        var defs = parentAndChild(
+                List.of(repoEntry("https://github.com/o/quarkus.git", null, "main", null, "mvn -q")),
+                List.of(repoEntry("git@github.com:o/quarkus", "/home/agentuser/quarkus/", "main", null, "mvn -q"),
+                        repoEntry("https://github.com/o/quarkus.git", "~/quarkus-2", null, null, null),
+                        repoEntry("https://github.com/o/quarkus.git", "~/quarkus-2", null, null, null)));
+        var child = defs.get("tpl-child");
+
+        assertNull(ImageDef.repoConflict(child, defs));
+        var repos = ImageDef.chainRepos(child, defs);
+        assertEquals(List.of("tpl-parent", "tpl-child"), repos.stream().map(ImageDef.ChainRepo::template).toList());
+        assertEquals(List.of("~/quarkus", "~/quarkus-2"), repos.stream().map(r -> r.repo().getPath()).toList());
+    }
+
+    @Test
+    void conflictingRedeclarationNamesBothTemplatesAndTheField() {
+        var defs = parentAndChild(
+                List.of(repoEntry("https://github.com/o/quarkus.git", "~/quarkus", "main", null, null)),
+                List.of(repoEntry("https://github.com/o/quarkus.git", "~/quarkus", "dev", 1, null)));
+
+        assertEquals("repo ~/quarkus: template 'tpl-child' redeclares it from 'tpl-parent' with a different"
+                        + " branch (main vs dev), depth (none vs 1); remove one declaration or make them identical"
+                        + " (an inherited repo cannot be overridden)",
+                ImageDef.repoConflict(defs.get("tpl-child"), defs));
+        assertNull(ImageDef.repoConflict(defs.get("tpl-parent"), defs));
+    }
+
+    @Test
+    void conflictingUrlOrPrimeAtOneDestinationWithinATemplate() {
+        var defs = parentAndChild(List.of(), List.of(
+                repoEntry("https://github.com/o/a.git", "~/x", null, null, "make"),
+                repoEntry("https://github.com/p/b.git", "/home/agentuser/x", null, null, "make all")));
+
+        assertEquals("repo /home/agentuser/x: template 'tpl-child' declares it twice with a different"
+                        + " url (https://github.com/o/a.git vs https://github.com/p/b.git), prime (make vs make all);"
+                        + " remove one declaration or make them identical (an inherited repo cannot be overridden)",
+                ImageDef.repoConflict(defs.get("tpl-child"), defs));
+    }
 }

@@ -475,6 +475,88 @@ public class ImageDef {
         return chain;
     }
 
+    /** A repo the chain clones, with the template whose declaration of its destination came first. */
+    public record ChainRepo(RepoEntry repo, String template) {}
+
+    /**
+     * The repos the chain of {@code start} clones, root-first, one per destination (#1394): a
+     * redeclaration of a destination, in a descendant or in the same template, reuses the first
+     * checkout. Entries with no path are skipped: nothing is cloned for them.
+     */
+    public static List<ChainRepo> chainRepos(ImageDef start, Map<String, ImageDef> defs) {
+        var seen = new java.util.HashSet<String>();
+        var result = new ArrayList<ChainRepo>();
+        for (var layer : chain(start, defs)) {
+            for (var repo : layer.getRepos()) {
+                var destination = repoDestination(repo);
+                if (destination != null && seen.add(destination)) result.add(new ChainRepo(repo, layer.getName()));
+            }
+        }
+        return result;
+    }
+
+    /**
+     * The first redeclaration in the chain of {@code start} that disagrees with the first
+     * declaration of its destination, as a message naming the destination, both templates and the
+     * differing fields; null when every redeclaration is identical. Overriding an inherited
+     * repo is not supported, so such a chain cannot be built.
+     */
+    public static String repoConflict(ImageDef start, Map<String, ImageDef> defs) {
+        var first = new java.util.HashMap<String, ChainRepo>();
+        for (var layer : chain(start, defs)) {
+            for (var repo : layer.getRepos()) {
+                var destination = repoDestination(repo);
+                if (destination == null) continue;
+                var earlier = first.putIfAbsent(destination, new ChainRepo(repo, layer.getName()));
+                if (earlier == null) continue;
+                var differences = repoDifferences(earlier.repo(), repo);
+                if (differences.isEmpty()) continue;
+                var where = earlier.template().equals(layer.getName())
+                        ? "template '" + layer.getName() + "' declares it twice"
+                        : "template '" + layer.getName() + "' redeclares it from '" + earlier.template() + "'";
+                return "repo " + shown(repo.getPath()) + ": " + where + " with a different "
+                        + String.join(", ", differences)
+                        + "; remove one declaration or make them identical (an inherited repo cannot be overridden)";
+            }
+        }
+        return null;
+    }
+
+    /** Where a repo is cloned to: {@code ~/x} and {@code /home/agentuser/x} are one destination. */
+    public static String repoDestination(RepoEntry repo) {
+        var path = repo.getPath();
+        if (path == null || path.isBlank()) return null;
+        path = path.strip();
+        if (path.equals("~") || path.startsWith("~/")) path = "/home/agentuser" + path.substring(1);
+        while (path.length() > 1 && path.endsWith("/")) path = path.substring(0, path.length() - 1);
+        return path;
+    }
+
+    private static List<String> repoDifferences(RepoEntry a, RepoEntry b) {
+        var differences = new ArrayList<String>();
+        if (!dev.incusspawn.git.GitRemoteUtils.urlsMatch(a.getUrl(), b.getUrl())) {
+            differences.add("url (" + shown(a.getUrl()) + " vs " + shown(b.getUrl()) + ")");
+        }
+        if (!java.util.Objects.equals(blankToNull(a.getBranch()), blankToNull(b.getBranch()))) {
+            differences.add("branch (" + shown(a.getBranch()) + " vs " + shown(b.getBranch()) + ")");
+        }
+        if (!java.util.Objects.equals(a.getDepth(), b.getDepth())) {
+            differences.add("depth (" + shown(a.getDepth()) + " vs " + shown(b.getDepth()) + ")");
+        }
+        if (!java.util.Objects.equals(blankToNull(a.getPrime()), blankToNull(b.getPrime()))) {
+            differences.add("prime (" + shown(a.getPrime()) + " vs " + shown(b.getPrime()) + ")");
+        }
+        return differences;
+    }
+
+    private static String shown(Object value) {
+        return value == null ? "none" : OutputFormat.oneLine(String.valueOf(value));
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.strip();
+    }
+
     /**
      * Resolve the instance type by walking up the parent chain.
      * Returns the first non-null {@code type} found, or null if none is set.
