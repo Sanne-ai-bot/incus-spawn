@@ -1,5 +1,7 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.Platform;
+
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.incus.FakeIncusDaemon;
@@ -44,6 +46,9 @@ class InstanceLifecycleRequestBudgetTest {
     private static final String NAME = "dev-1";
     /** A key a caller stamps on its branch; any key works. */
     private static final String OWNER = Metadata.PREFIX + "owner";
+
+    // The bridge subnet conflict diagnostic reads the bridge on Linux only (#1202).
+    private static final int BRIDGE_LOOKUP = Platform.isLinux() ? 1 : 0;
 
     private static void assertBudget(int expected, FakeIncusDaemon daemon, String flow) {
         var requests = daemon.requests();
@@ -214,7 +219,7 @@ class InstanceLifecycleRequestBudgetTest {
                 "user.incus-spawn.ssh-setup", "done",
                 Metadata.STATIC_IP, "10.166.11.20"));
         var config = RuntimeSetup.prefetchRuntimeConfig(daemon.client(), NAME);
-        assertBudget(2, daemon, "prefetchRuntimeConfig");
+        assertBudget(1 + BRIDGE_LOOKUP, daemon, "prefetchRuntimeConfig");
 
         assertEquals("/home/agentuser/project", config.workdir());
         // isx mcp answers create_instance from this, rather than reading the instance again.
@@ -305,7 +310,7 @@ class InstanceLifecycleRequestBudgetTest {
                 Metadata.PARENT, "dev-0",
                 Metadata.PROFILE, "tpl-dev"));
         var prep = IncusClient.ShellPrep.from(daemon.client(), NAME);
-        assertBudget(2, daemon, "ShellPrep.from");
+        assertBudget(1 + BRIDGE_LOOKUP, daemon, "ShellPrep.from");
 
         assertEquals("/home/agentuser/project", prep.workdir());
         assertEquals("zsh", prep.shellCommand());
@@ -326,7 +331,7 @@ class InstanceLifecycleRequestBudgetTest {
         // the start wait a full second. The config read, the bridge lookup, then the start.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
         RuntimeSetup.prefetchAndStart(daemon.client(), NAME, dev.incusspawn.incus.MachineType.CONTAINER);
-        assertBudget(4, daemon, "prefetchAndStart");
+        assertBudget(3 + BRIDGE_LOOKUP, daemon, "prefetchAndStart");
 
         var requests = daemon.requests();
         assertTrue(requests.stream().noneMatch(r -> r.contains("/files")),

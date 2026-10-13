@@ -131,7 +131,12 @@ public final class BridgeSubnetCheck {
         }
     }
 
+    /**
+     * Linux only: elsewhere the host's routes are not the VM's and nothing offers to move the
+     * bridge, so a warning there would be a dead end (#1202).
+     */
     public static String detectConflictDiagnostic(IncusClient incus) {
+        if (!Platform.isLinux()) return null;
         try {
             var result = detect(incus);
             if (!result.conflictDetected()) return null;
@@ -139,9 +144,7 @@ public final class BridgeSubnetCheck {
                     + ") overlaps with a host route:\n  " + result.conflictingRoute()
                     + "\n\nDNS queries to the bridge gateway are likely being routed"
                     + " through the VPN instead of reaching the bridge."
-                    + "\n\nFix: run " + (Platform.isLinux()
-                            ? "'isx doctor', which offers to move the bridge to a free subnet."
-                            : "'isx init' to auto-detect and reconfigure the bridge subnet.");
+                    + "\n\nFix: run 'isx doctor', which offers to move the bridge to a free subnet.";
         } catch (Exception e) {
             return null;
         }
