@@ -123,7 +123,7 @@ class RepoClonerTest {
 
         // Local clone from mounted reference
         verify(incus).execInContainer("test", "agentuser",
-                RepoCloner.awaitMount("/mnt/ref/repo")
+                RepoCloner.freshDestination("/home/agentuser/repo") + " && " + RepoCloner.awaitMount("/mnt/ref/repo")
                         + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'"
                         + " && { [ \"$(git -C '/home/agentuser/repo' rev-parse --is-shallow-repository)\" != true ]"
                         + " || { echo 'fatal: the host checkout is shallow' >&2; exit 1; }; }");
@@ -197,7 +197,7 @@ class RepoClonerTest {
 
         // Local clone (no --branch — handled after fetch)
         verify(incus).execInContainer("test", "agentuser",
-                RepoCloner.awaitMount("/mnt/ref/repo")
+                RepoCloner.freshDestination("/home/agentuser/repo") + " && " + RepoCloner.awaitMount("/mnt/ref/repo")
                         + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'"
                         + " && { [ \"$(git -C '/home/agentuser/repo' rev-parse --is-shallow-repository)\" != true ]"
                         + " || { echo 'fatal: the host checkout is shallow' >&2; exit 1; }; }");
@@ -358,6 +358,47 @@ class RepoClonerTest {
             assertEquals(0, runSh("PATH='" + empty + "'; " + RepoCloner.awaitMount("/nowhere", 1)));
         } finally {
             java.nio.file.Files.delete(empty);
+        }
+    }
+
+    @Test
+    void failedCloneOverAnExistingDestinationLeavesItInPlace() throws Exception {
+        // #1394: a checkout already at the destination (inherited from a parent, primed there) was
+        // removed by the fallback's cleanup when the reference clone refused to write over it.
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(new IncusClient.ExecResult(RepoCloner.DESTINATION_EXISTS_EXIT, "",
+                        "fatal: destination path '/home/agentuser/repo' already exists"))
+                .thenReturn(new IncusClient.ExecResult(128, "",
+                        "fatal: destination path '/home/agentuser/repo' already exists and is not an empty directory."));
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = spy(new RepoCloner(incus));
+        doReturn(new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
+                .when(cmd).planReference(eq(repo.getUrl()), any());
+
+        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
+        verify(incus, never()).execInContainer("test", "agentuser", "rm -rf '/home/agentuser/repo'");
+
+        // The guard itself, under sh: an existing destination fails with its own status, untouched.
+        // An empty directory is one git clones into, so it does not count.
+        var dir = java.nio.file.Files.createTempDirectory("existing-checkout");
+        try {
+            assertEquals(0, runSh(RepoCloner.freshDestination(dir.toString())));
+            assertEquals(0, runSh(RepoCloner.freshDestination(dir.resolve("absent").toString())));
+            var head = java.nio.file.Files.createFile(dir.resolve("HEAD"));
+            assertEquals(RepoCloner.DESTINATION_EXISTS_EXIT, runSh(RepoCloner.freshDestination(dir.toString())));
+            assertTrue(java.nio.file.Files.exists(head));
+            java.nio.file.Files.delete(head);
+        } finally {
+            java.nio.file.Files.delete(dir);
         }
     }
 

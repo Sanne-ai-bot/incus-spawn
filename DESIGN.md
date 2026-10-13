@@ -2456,6 +2456,7 @@ A container's disk is mounted by the add itself, so there the loop ends at its f
 A guest without `mountpoint` is not waited on: the clone runs at once, as it did before.
 A reference that does not appear in time fails that exec with a status of its own, so its line says it was not mounted rather than quoting git.
 Every way a repo ends up on the network clone instead of its reference says why on its line: no slot, no mount, or the git error of a failed clone from the reference.
+Before the fallback the failed attempt's destination is removed, but only one it created: the clone from the reference first checks that its destination does not exist or is an empty directory (`freshDestination`, exiting 3), and a destination already there is left alone, so the network clone then fails on it rather than a checkout another layer made being deleted (#1394).
 The latch the primes wait on counts *planned* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached.
 So a failed or re-queued attach can neither hang the primes nor land after them.
 Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every reference has been detached**, so priming still pipelines with the network clones in flight.
