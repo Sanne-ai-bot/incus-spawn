@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.Platform;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -228,6 +229,21 @@ class BridgeSubnetCheckTest {
             var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
             assertTrue(diagnostic.contains("'isx doctor'"), diagnostic);
             assertFalse(diagnostic.contains("isx init"), diagnostic);
+        }
+    }
+
+    // Off Linux, isx init never reconfigures the bridge and the host's routes are not the VM's (#1202).
+    @Test
+    void noDiagnosticOffLinux() {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.166.11.1/24");
+
+        try (var routes = mockStatic(BridgeSubnetCheck.class, CALLS_REAL_METHODS);
+             var platform = mockStatic(Platform.class)) {
+            routes.when(BridgeSubnetCheck::getHostRoutes).thenReturn(VPN_ROUTES);
+            platform.when(Platform::isLinux).thenReturn(false);
+            platform.when(Platform::isMacOS).thenReturn(true);
+            assertNull(BridgeSubnetCheck.detectConflictDiagnostic(incus));
         }
     }
 
