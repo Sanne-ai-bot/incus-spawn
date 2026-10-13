@@ -23,12 +23,18 @@ import java.security.cert.X509Certificate;
 import java.util.Date;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 import java.util.TreeMap;
 
 import static dev.incusspawn.DerEncoder.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 
@@ -319,6 +325,65 @@ class CertificateAuthorityTest {
                 "the guest does not hold the current set");
         assertEquals(CertificateAuthority.CaStatus.CURRENT, CertificateAuthority.CaTrust.snapshot().classify(stamp),
                 "the instance was being given this host's CA: branching from it is not refused");
+    }
+
+    @Test
+    void concurrentReconcilesCannotKeepARemovedAnchor() throws Exception {
+        // #1381: A reconciles to a set with X, B (after X is removed) to one without. Unserialized,
+        // both clean before either writes, so A's X survives B's set and B stamps its set as held:
+        // every later use skips the repair. A's guest exec waits up to 300 ms for B to clean,
+        // which B can only do if nothing holds it off.
+        propagateHostAnchors();
+        var ca = CertificateAuthority.loadOrCreate();
+        var x = selfSigned("corp root x");
+        var xFile = "isx-" + fingerprint(parse(x)) + ".crt";
+        writeHostAnchor("x.crt", x);
+        var daemon = new FakeIncusDaemon().container("dev-1", Map.of(Metadata.CA_FINGERPRINT, "deadbeef"));
+        var incus = spy(daemon.client());
+
+        var guest = ConcurrentHashMap.<String>newKeySet();
+        var aCleaned = new CountDownLatch(1);
+        var bCleaned = new CountDownLatch(1);
+        var aDone = new CountDownLatch(1);
+        var a = new Thread[1];
+        doAnswer(inv -> {
+            var script = (String) inv.getArguments()[inv.getArguments().length - 1];
+            guest.clear();
+            if (Thread.currentThread() == a[0]) {
+                aCleaned.countDown();
+                bCleaned.await(300, TimeUnit.MILLISECONDS);
+            } else {
+                bCleaned.countDown();
+                aDone.await(5, TimeUnit.SECONDS);
+            }
+            var written = Pattern.compile("cat > \\S*/(isx-[0-9a-f]{64}\\.crt)").matcher(script);
+            while (written.find()) guest.add(written.group(1));
+            return new IncusClient.ExecResult(0, "", "");
+        }).when(incus).shellExec(eq("dev-1"), any(String[].class));
+
+        var failure = new AtomicReference<Throwable>();
+        a[0] = new Thread(() -> {
+            try {
+                CertificateAuthority.fixContainerCaIfNeeded(incus, "dev-1", null, msg -> {});
+            } catch (Throwable t) {
+                failure.set(t);
+            } finally {
+                aDone.countDown();
+            }
+        });
+        a[0].start();
+        assertTrue(aCleaned.await(5, TimeUnit.SECONDS), "A reached its guest exec");
+        Files.delete(CertificateAuthority.hostAnchorsDir.resolve("x.crt"));
+        CertificateAuthority.fixContainerCaIfNeeded(incus, "dev-1", null, msg -> {});
+        a[0].join(10_000);
+        assertNull(failure.get());
+
+        // B went last, so the instance is stamped with B's set, and holds exactly that
+        var current = CertificateAuthority.collectTrustAnchors();
+        assertEquals(current.stamp(), incus.configGet("dev-1", Metadata.CA_FINGERPRINT));
+        assertEquals(java.util.Set.of("isx-" + ca.caFingerprint() + ".crt"), current.files().keySet());
+        assertEquals(current.files().keySet(), guest,
+                "an instance stamped with the current set must hold exactly it, without the removed " + xFile);
     }
 
     // --- Helpers ---

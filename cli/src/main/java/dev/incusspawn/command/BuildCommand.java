@@ -1216,14 +1216,17 @@ public class BuildCommand extends BaseCommand {
      * anchors must not be finished as one that holds them.
      */
     static boolean refreshTrustAnchors(IncusClient incus, String buildName) {
-        var trust = CertificateAuthority.collectTrustAnchors();
-        if (trust.stamp().equals(incus.configGet(buildName, Metadata.CA_FINGERPRINT))) return false;
-        installTrustAnchors(incus, buildName, trust);
-        return true;
+        try (var lock = CertificateAuthority.lockTrust(buildName)) {
+            var trust = CertificateAuthority.collectTrustAnchors();
+            if (trust.stamp().equals(incus.configGet(buildName, Metadata.CA_FINGERPRINT))) return false;
+            installTrustAnchors(incus, buildName, trust);
+            return true;
+        }
     }
 
     /**
-     * Installs {@code trust} and stamps the build with it, from this one read: a stamp read
+     * Installs {@code trust} and stamps the build with it, under {@link CertificateAuthority#lockTrust}
+     * as an instance's reconcile is, and from this one read: a stamp read
      * again later, at the end of the build, could name a set the guest does not hold (the CA,
      * a host anchor or propagation changed meanwhile), and the template would read as current.
      */
@@ -1455,7 +1458,9 @@ public class BuildCommand extends BaseCommand {
         var container = new Container(incus, buildName);
 
         BuildOutput.stepStart("Installing trust anchors...");
-        installTrustAnchors(incus, buildName, CertificateAuthority.collectTrustAnchors());
+        try (var lock = CertificateAuthority.lockTrust(buildName)) {
+            installTrustAnchors(incus, buildName, CertificateAuthority.collectTrustAnchors());
+        }
         BuildOutput.stepDone();
 
         // Container-only security tweaks: UID mapping, nesting, capability

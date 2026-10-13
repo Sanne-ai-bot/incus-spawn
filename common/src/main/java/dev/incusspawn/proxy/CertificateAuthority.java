@@ -2,11 +2,14 @@ package dev.incusspawn.proxy;
 
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.ClientLog;
+import dev.incusspawn.Environment;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.HostLock;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -358,33 +361,82 @@ public class CertificateAuthority {
      * writes the current set via heredoc, and re-stamps on success. The stamp is
      * marked before cleanup so a failed install retries next time.
      * <p>
+     * Serialized per instance across isx processes on this host ({@link #lockTrust}): two
+     * reconciles that overlap, each from its own snapshot of the set, would both clean before
+     * either writes, so a CA one snapshot had and the other dropped survives under the newer
+     * stamp, and every later use skips the repair (#1381). Under the lock the stamp is read again
+     * and the set collected afresh, so whoever goes last installs, and stamps, what it saw.
+     * <p>
      * Containers without a stored fingerprint (pre-versioning) are skipped.
      * Returns true if a fix was applied, false if none was needed or it failed; a failure is
      * reported to {@code warn}, since anchors it was to revoke may still be trusted.
      */
     public static boolean fixContainerCaIfNeeded(IncusClient incus, String container, JqValue instance,
                                                  Consumer<String> warn) {
+        // Unlocked, and from the caller's read when it has one: a stamp is written only once the
+        // guest holds its set, and marked pending before anything there changes, so a match means
+        // the guest holds the current set and costs nothing more
         var storedFp = instance != null
                 ? instance.getField("config").pathText(Metadata.CA_FINGERPRINT, "")
                 : incus.configGet(container, Metadata.CA_FINGERPRINT);
         if (storedFp.isEmpty()) return false;
-        var trust = collectTrustAnchors();
-        var stamp = trust.stamp();
-        if (stamp.equals(storedFp)) return false;
+        if (collectTrustAnchors().stamp().equals(storedFp)) return false;
 
-        // Until the guest holds the new set its stamp matches no set: a reconcile that fails
-        // after removing the old anchors is retried, even once the set changes back. Not
-        // empty, which would read as "built before stamps" and never be checked again.
-        incus.configSet(container, Metadata.CA_FINGERPRINT, trust.caFingerprint() + "+pending");
-        var result = installTrustAnchors(incus, container, trust);
-        if (result.exitCode() != 0) {
-            var why = result.stderr().strip().lines().reduce((first, last) -> last).orElse("exit " + result.exitCode());
-            warn.accept("could not update the trusted CAs in " + container + " (retried on next use): "
-                    + (why.length() > 200 ? why.substring(0, 200) + "..." : why));
+        try (var lock = lockTrust(container)) {
+            // The read above may predate another process's reconcile: read the stamp again
+            storedFp = incus.configGet(container, Metadata.CA_FINGERPRINT);
+            if (storedFp.isEmpty()) return false;
+            var trust = collectTrustAnchors();
+            var stamp = trust.stamp();
+            if (stamp.equals(storedFp)) return false;
+
+            // Until the guest holds the new set its stamp matches no set: a reconcile that fails
+            // after removing the old anchors is retried, even once the set changes back. Not
+            // empty, which would read as "built before stamps" and never be checked again.
+            incus.configSet(container, Metadata.CA_FINGERPRINT, trust.caFingerprint() + "+pending");
+            var result = installTrustAnchors(incus, container, trust);
+            if (result.exitCode() != 0) {
+                var why = result.stderr().strip().lines().reduce((first, last) -> last).orElse("exit " + result.exitCode());
+                warn.accept(notUpdated(container, why.length() > 200 ? why.substring(0, 200) + "..." : why));
+                return false;
+            }
+            incus.configSet(container, Metadata.CA_FINGERPRINT, stamp);
+            return true;
+        } catch (HostLock.HostLockException e) {
+            // Nothing changed: the stamp still differs, so the next use tries again
+            warn.accept(notUpdated(container, e.getMessage()));
             return false;
         }
-        incus.configSet(container, Metadata.CA_FINGERPRINT, stamp);
-        return true;
+    }
+
+    private static String notUpdated(String container, String why) {
+        return "could not update the trusted CAs in " + container + " (retried on next use): " + why;
+    }
+
+    /** A {@link #lockTrust} hold, released by closing it. */
+    public interface TrustLock extends AutoCloseable {
+        @Override
+        void close();
+    }
+
+    /**
+     * Hold the right to change {@code container}'s trust anchors and their stamp, against every
+     * isx process on this host: whatever installs a set and stamps it takes this first. Waits at
+     * most {@link HostLock#TIMEOUT}; a lock file that cannot be used at all (a home on NFS without
+     * lockd) degrades, with a warning once, to the in-process lock rather than to no repair. A name
+     * no instance can have is held by nothing.
+     *
+     * @throws HostLock.HostLockException if another process holds it past the timeout
+     */
+    public static TrustLock lockTrust(String container) {
+        if (!InstanceNames.isValid(container)) return () -> {};
+        return HostLock.acquireOrDegrade(trustLockFile(container), "updating the trusted CAs in " + container,
+                ClientLog::debug, Warnings::warn)::close;
+    }
+
+    /** One file per instance name, kept: deleting it would let two processes lock different files. */
+    static Path trustLockFile(String container) {
+        return Environment.lockDir().resolve("trust").resolve(container + ".lock");
     }
 
     public PrivateKey caKey() {
