@@ -648,6 +648,30 @@ public class IncusClient {
         return false;
     }
 
+    /**
+     * Whether this daemon can run virtual machines: {@code false} when it has no QEMU driver,
+     * as on the macOS appliance, whose hypervisor exposes no {@code /dev/kvm} (#1391).
+     * Empty when the daemon answers without saying. A daemon that cannot be reached is not
+     * answered for here: that throws {@link IncusException}, as any other request to it would.
+     */
+    public Optional<Boolean> supportsVirtualMachines() {
+        var resp = http().get("/1.0");
+        if (!resp.isSuccess()) return Optional.empty();
+        return supportsVirtualMachines(resp.body().path("metadata").path("environment"));
+    }
+
+    /** {@link #supportsVirtualMachines()} from {@code /1.0}'s {@code environment}: its instance types, else its drivers. */
+    static Optional<Boolean> supportsVirtualMachines(JqValue environment) {
+        if (environment == null) return Optional.empty();
+        var types = environment.path("instance_types");
+        if (types.isArray()) {
+            return Optional.of(types.asList().stream().anyMatch(t -> "virtual-machine".equals(t.asText())));
+        }
+        var driver = environment.path("driver").asText("");
+        if (driver.isBlank()) return Optional.empty();
+        return Optional.of(java.util.Arrays.stream(driver.split("\\|")).anyMatch(d -> d.strip().equals("qemu")));
+    }
+
     public CowPoolProbe probeCowPool() {
         var resp = http().get("/1.0/storage-pools?recursion=1");
         if (!resp.isSuccess()) return new CowPoolProbe(false, null, null);

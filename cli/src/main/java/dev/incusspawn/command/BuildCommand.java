@@ -782,6 +782,10 @@ public class BuildCommand extends BaseCommand {
         }
 
         if (reportStrandedStorage(incus, canonicalName, tempName)) throw new BuildFailedException(canonicalName);
+        boolean vmByOption = imageDef.machineType() != MachineType.VM;
+        if (reportNoVmSupport(incus, canonicalName, effectiveMachineType(imageDef), vmByOption)) {
+            throw new BuildFailedException(canonicalName);
+        }
 
         if (!batchConfirmed && incus.exists(canonicalName)) {
             if (!yes) {
@@ -861,6 +865,32 @@ public class BuildCommand extends BaseCommand {
         System.err.println("Cannot build " + shown(canonicalName) + ":");
         problems.forEach(p -> System.err.println("  - " + shown(p)));
         System.err.println("Run 'isx doctor' to inspect the storage pool.");
+        return true;
+    }
+
+    /**
+     * Refuses a VM build on a daemon that cannot run VMs, before its base image is downloaded
+     * and a build instance is asked for: Incus would refuse that only at the instance record, with
+     * a KVM message that does not say what to build instead (#1391). A daemon that does not say
+     * is let through, and Incus decides. {@code vmByOption} is a container template that
+     * {@code --type vm} turned into a VM build: the way out is then the option, not the template.
+     */
+    static boolean reportNoVmSupport(IncusClient incus, String canonicalName, MachineType machineType,
+                                     boolean vmByOption) {
+        if (machineType != MachineType.VM) return false;
+        if (incus.supportsVirtualMachines().orElse(true)) return false;
+        // The macOS client only ever talks to its own appliance; elsewhere Incus may be remote,
+        // so the hint names the machine Incus runs on, not this one.
+        var why = Platform.isMacOS()
+                ? " (the isx VM on macOS has no nested virtualization)."
+                : " (no KVM where Incus runs: check that /dev/kvm exists there and virtualization is enabled).";
+        if (vmByOption) {
+            System.err.println("Cannot build " + shown(canonicalName) + " as a VM (--type vm): this Incus cannot run VMs" + why);
+            System.err.println("Leave out --type vm to build it as a container.");
+        } else {
+            System.err.println("Cannot build " + shown(canonicalName) + ": it is a VM template, and this Incus cannot run VMs" + why);
+            System.err.println("Use a container template instead.");
+        }
         return true;
     }
 

@@ -2407,4 +2407,67 @@ class BuildCommandTest {
         assertTrue(out.contains("Cannot build tpl- ]0;pwned"), out);
         assertSafe(out);
     }
+
+    /** #1391: a VM template on a daemon without VMs is refused before anything is downloaded or created. */
+    @Test
+    void aVmTemplateIsRefusedWhereIncusCannotRunVms(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.scanSubvolumes()).thenReturn(Optional.empty());
+            when(incus.supportsVirtualMachines()).thenReturn(Optional.of(false));
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-isx-vm");
+            imageDef.setType("vm");
+
+            var out = bothStreams(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-isx-vm", imageDef))));
+
+            assertTrue(out.contains("Cannot build tpl-isx-vm: it is a VM template, and this Incus cannot run VMs"), out);
+            assertTrue(out.contains("Use a container template instead."), out);
+            verify(cmd, never()).buildInto(any(), any(), anyString());
+            verify(incus, never()).deleteIfExists(anyString());
+        });
+    }
+
+    /** {@code --type vm} on a container template: the message names the option, not the template. */
+    @Test
+    void aContainerTemplateForcedToVmIsRefusedNamingTheOption(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.scanSubvolumes()).thenReturn(Optional.empty());
+            when(incus.supportsVirtualMachines()).thenReturn(Optional.of(false));
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            cmd.type = BuildCommand.InstanceType.vm;
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-isx");
+
+            var out = bothStreams(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-isx", imageDef))));
+
+            assertTrue(out.contains("Cannot build tpl-isx as a VM (--type vm): this Incus cannot run VMs"), out);
+            assertTrue(out.contains("Leave out --type vm to build it as a container."), out);
+            assertFalse(out.contains("it is a VM template"), out);
+            verify(cmd, never()).buildInto(any(), any(), anyString());
+        });
+    }
+
+    @Test
+    void aVmTemplateGoesAheadWhereIncusRunsVmsOrDoesNotSay() {
+        var incus = mock(IncusClient.class);
+        when(incus.supportsVirtualMachines()).thenReturn(Optional.of(true), Optional.empty());
+        assertFalse(BuildCommand.reportNoVmSupport(incus, "tpl-isx-vm", MachineType.VM, false));
+        assertFalse(BuildCommand.reportNoVmSupport(incus, "tpl-isx-vm", MachineType.VM, false));
+    }
+
+    @Test
+    void aContainerTemplateNeverAsksWhetherIncusRunsVms() {
+        var incus = mock(IncusClient.class);
+        assertFalse(BuildCommand.reportNoVmSupport(incus, "tpl-isx", MachineType.CONTAINER, false));
+        verify(incus, never()).supportsVirtualMachines();
+    }
 }

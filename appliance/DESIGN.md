@@ -129,7 +129,7 @@ The cmdline also passes `rootfstype=btrfs`. Without it the kernel probes `fusebl
 These appear during boot and are **expected** — deliberate tradeoffs, not faults:
 
 - **`AppArmor support has been disabled because of lack of kernel support`** — the minimal kernel omits `CONFIG_SECURITY_APPARMOR`. Container isolation relies on the VM boundary, user namespaces, and seccomp; we do not ship AppArmor (it would also require the `apparmor` userspace). A deliberate choice for this single-tenant dev appliance.
-- **`Instance type not operational … KVM support is missing (no /dev/kvm)`** — there is no nested virtualization (the host hypervisor, e.g. Apple Virtualization.framework, does not expose it). `isx` launches **containers**, not nested VMs, so this is irrelevant. Not fixable in the guest kernel.
+- **`Instance type not operational … KVM support is missing (no /dev/kvm)`** — there is no nested virtualization (the host hypervisor, e.g. Apple Virtualization.framework, does not expose it). Not fixable in the guest kernel: on macOS isx runs **containers** only, and `isx build` refuses a VM build (a `type: vm` template, or `--type vm`) up front when Incus says it cannot run VMs: `/1.0` lists no `virtual-machine` instance type or, where it does not list them (Incus 6.21 in the appliance), its `driver` has no `qemu` (#1391).
 - **`Couldn't find the CGroup memory swap accounting, swap limits will be ignored`** — **misleading**. The kernel has `CONFIG_MEMCG` + `CONFIG_SWAP`, and `memory.swap.*` files are present in cgroup v2 (verified), so swap limits do work. This is a conservative false-negative in the incus/LXC probe.
 
 ## Init System
