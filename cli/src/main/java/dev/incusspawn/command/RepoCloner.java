@@ -391,8 +391,8 @@ class RepoCloner {
 
             if (ref != null && ref.hasDevice()) {
                 var expandedPath = expandHome(repo.getPath());
-                var clone = container.shAsUser("agentuser",
-                        awaitMount(ref.containerPath()) + " && " + buildCloneCommand(repo, ref.containerPath()));
+                var clone = container.shAsUser("agentuser", freshDestination(expandedPath) + " && "
+                        + awaitMount(ref.containerPath()) + " && " + buildCloneCommand(repo, ref.containerPath()));
                 var last = clone;
                 if (clone.success() && repo.getDepth() != null) {
                     last = container.shAsUser("agentuser", shallowFixupCommand(repo));
@@ -433,7 +433,10 @@ class RepoCloner {
                     var error = last.exitCode() == MOUNT_TIMEOUT_EXIT && last == clone
                             ? "not mounted in the guest within " + MOUNT_WAIT_SECONDS + "s" : gitError(last);
                     fallbackReason = "could not use the host reference" + (error.isEmpty() ? "" : ": " + error);
-                    container.shAsUser("agentuser", "rm -rf " + shellQuote(expandedPath));
+                    // Only what this attempt cloned: a checkout that was already there is not ours to remove.
+                    if (!(last == clone && last.exitCode() == DESTINATION_EXISTS_EXIT)) {
+                        container.shAsUser("agentuser", "rm -rf " + shellQuote(expandedPath));
+                    }
                 }
             }
 
@@ -555,6 +558,18 @@ class RepoCloner {
     static String awaitMount(String path, int seconds) {
         return "{ ! command -v mountpoint >/dev/null 2>&1 || timeout " + seconds
                 + " sh -c 'until mountpoint -q \"$1\"; do sleep 0.1; done' sh " + shellQuote(path) + "; }";
+    }
+
+    /** Exit status of {@link #freshDestination} when the clone's destination already exists. */
+    static final int DESTINATION_EXISTS_EXIT = 3;
+
+    /** Fails with {@link #DESTINATION_EXISTS_EXIT} when {@code path} exists and is not an empty
+     *  directory (which git clones into), so a failed clone's cleanup never removes a checkout it
+     *  did not create. */
+    static String freshDestination(String path) {
+        var p = shellQuote(path);
+        return "{ [ ! -e " + p + " ] || { [ -d " + p + " ] && [ -z \"$(ls -A " + p + ")\" ]; } || { echo " + shellQuote("fatal: destination path '" + path
+                + "' already exists") + " >&2; exit " + DESTINATION_EXISTS_EXIT + "; }; }";
     }
 
     private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {
