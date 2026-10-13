@@ -289,7 +289,8 @@ elif [ "$(uname -s)" = "Darwin" ] && launchctl print "gui/$(id -u)/dev.incusspaw
         || echo "Warning: could not restart the proxy service; run '$BINARY_NAME proxy install' by hand." >&2
 fi
 
-# On macOS, warn if the running VM has a stale appliance (never fatal).
+# On macOS, warn if the running VM has a stale appliance (never fatal). --quiet: an install
+# says nothing about the appliance unless a restart would change it.
 if [ "$(uname -s)" = "Darwin" ]; then
-    "$INSTALL_DIR/$BINARY_NAME" vm check-version 2>/dev/null || true
+    "$INSTALL_DIR/$BINARY_NAME" vm check-version --quiet 2>/dev/null || true
 fi

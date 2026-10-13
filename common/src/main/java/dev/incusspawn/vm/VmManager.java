@@ -765,7 +765,14 @@ public final class VmManager {
      * is none a restart would clear. Every "restart the VM" hint goes through here.
      */
     public static ApplianceSkew applianceSkew() {
-        var running = runningApplianceVersion();
+        return applianceSkew(runningApplianceVersion());
+    }
+
+    /**
+     * {@link #applianceSkew()} for a caller that already read {@link #runningApplianceVersion()}
+     * and also shows it: asking the agent twice costs a round trip, and the two answers can differ.
+     */
+    public static ApplianceSkew applianceSkew(String running) {
         if (running == null) return null;
         var installed = applianceVersion();
         if (running.equals(installed)) return null;
