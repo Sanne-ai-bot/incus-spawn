@@ -268,8 +268,17 @@ public class CertificateAuthority {
     }
 
     /**
+     * Matches exactly the names {@link #anchorFile} writes: {@code isx-}, 64 lowercase hex digits
+     * (spelled out rather than a range, which a locale's collation can widen), {@code .crt}.
+     * Anything else in the guest's anchors directory, such as {@code isx-company.crt}, is not
+     * isx's to remove. A {@code case} pattern, never a path: matching nothing, a glob reaches
+     * {@code rm} as itself, longer than a file name may be, and fails the script.
+     */
+    private static final String MANAGED_ANCHOR_PATTERN = anchorFile("[0123456789abcdef]".repeat(64));
+
+    /**
      * Build a shell script that removes all isx-managed anchors (both the old
-     * {@code incus-spawn-mitm.crt} and the current {@code isx-*.crt}), writes
+     * {@code incus-spawn-mitm.crt} and the current {@code isx-<sha256>.crt}), writes
      * the given trust set, and runs {@code update-ca-trust}. Uses
      * {@link Container#heredoc} so content cannot escape the heredoc.
      */
@@ -277,8 +286,10 @@ public class CertificateAuthority {
         // set -e: the exit status is the first failure's, so a write that fails is not stamped
         // as done because update-ca-trust, last, succeeded
         var sb = new StringBuilder("set -e\n");
-        sb.append("rm -f ").append(GUEST_ANCHORS_DIR).append("incus-spawn-mitm.crt ")
-                .append(GUEST_ANCHORS_DIR).append("isx-*.crt\n");
+        sb.append("rm -f ").append(GUEST_ANCHORS_DIR).append("incus-spawn-mitm.crt\n");
+        sb.append("for f in ").append(GUEST_ANCHORS_DIR).append(anchorFile("*")).append("; do\n")
+                .append("  case \"${f##*/}\" in ").append(MANAGED_ANCHOR_PATTERN).append(") rm -f \"$f\" ;; esac\n")
+                .append("done\n");
         for (var entry : anchors.entrySet()) {
             sb.append(Container.heredoc(
                     "cat > " + GUEST_ANCHORS_DIR + entry.getKey(),
