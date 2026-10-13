@@ -34,6 +34,14 @@ class VmManagerTest {
         System.setProperty("user.home", originalHome);
     }
 
+    @Test
+    void aDataDiskResetIsRememberedWithItsDate() {
+        // #1393: 'isx list' names the reset when the list is empty because of it.
+        assertNull(VmManager.dataDiskResetOn(), "never reset");
+        VmManager.markDataDiskReset(java.time.LocalDate.of(2026, 10, 12));
+        assertEquals(java.time.LocalDate.of(2026, 10, 12), VmManager.dataDiskResetOn());
+    }
+
     /**
      * A TCP port would have to be chosen before vfkit binds it, and vfkit exits when another
      * process took it in between; a socket in the state directory is nobody else's (#1189).

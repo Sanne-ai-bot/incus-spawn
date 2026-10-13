@@ -1553,7 +1553,7 @@ Destroy an instance, or bulk-destroy all templates or instances.
 
 ### `isx list`
 
-List the instances isx created, without opening the TUI. Templates are not listed: `isx templates` lists those. See [Scripting isx](#scripting-isx) for the `plain` and `json` formats.
+List the instances isx created, without opening the TUI. Templates are not listed: `isx templates` lists those. On macOS it starts the VM if it is stopped, except with `-q`, which shell completion runs. See [Scripting isx](#scripting-isx) for the `plain` and `json` formats.
 
     isx list [options]
 

@@ -759,8 +759,10 @@ Only descriptive detail (a tool's parameter types, the system diagnostics under 
 `QueryCommandFormatTest` pins the JSON of each, and `ExitCodeTest` that each rejects `--format=yaml` alike.
 
 **`isx list` from the CLI is cheap.**
-Outside the TUI it reads the instance listing once (`GET /1.0/instances?recursion=2`) and nothing else: no definition reload, tool loader, pool or btrfs probes, which the TUI's `reloadData()` runs and a script polling `isx list` should not pay for.
+Outside the TUI it reads the instance listing once (`GET /1.0/instances?recursion=2`) and, against Incus, nothing else: no definition reload, tool loader, pool or btrfs probes, which the TUI's `reloadData()` runs and a script polling `isx list` should not pay for.
 `-q` reads at `recursion=1`: names and states need no live state, and shell completion runs it on every TAB.
+On macOS a VM that is set up but stopped is started first (`VmManager.ensureRunning`, its progress on stderr), so the list is not an error; one never set up is left to `isx init`, and `-q` never starts it, because a TAB must not boot a VM (#1393).
+An empty table after `isx vm reset` says the data disk was reset and when (`VmManager.dataDiskResetOn`, a date `resetDataDisk` writes next to the disk and the first non-empty listing forgets), not the first-run hint.
 `ListCommandOutputTest` pins both requests.
 The `created` time comes from `Metadata.createdIso`, next to `Metadata.now()` which writes the stamp, so every command that prints one prints the same instant.
 It tells templates apart by the `base` type every build stamps on them, so it needs no definitions, and never by the `tpl-` name prefix: a branch may be called `tpl-anything`.

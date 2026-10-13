@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.Environment;
+import dev.incusspawn.Platform;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.command.InstanceListing.InstanceInfo;
 import dev.incusspawn.incus.IncusClient;
@@ -7,10 +9,12 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.mcp.McpStanding;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
 
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -37,10 +41,21 @@ public class ListCommand extends BaseCommand {
     @Option(name = "status", description = "Only instances in this state: running or stopped")
     String status;
 
+    /** On macOS, starts a stopped VM so Incus can answer (#1393); on Linux, nothing to do. */
+    java.util.function.BooleanSupplier incusHost = ListCommand::startStoppedVm;
+
+    /** When {@code isx vm reset} last wiped the data disk, or null. */
+    java.util.function.Supplier<java.time.LocalDate> dataDiskResetOn = VmManager::dataDiskResetOn;
+
     @Override
-    protected CommandResult doExecute() {
+    protected CommandResult doExecute() throws Exception {
+        checkOptions();
+        if (!incusHostReady()) return CommandResult.FAILURE;
         try {
-            printListing(RuntimeServices.incus(), System.out, java.time.ZoneId.systemDefault());
+            // Anything listed means the disk has been used since a reset: the reset no longer explains an empty list.
+            if (printListing(RuntimeServices.incus(), System.out, java.time.ZoneId.systemDefault())) {
+                VmManager.forgetDataDiskReset();
+            }
         } catch (IncusException e) {
             System.err.println("Error: " + e.getMessage());
             return CommandResult.FAILURE;
@@ -49,15 +64,41 @@ public class ListCommand extends BaseCommand {
     }
 
     /**
-     * {@code isx list} outside the TUI: one instance listing from Incus, in the format asked for.
-     * Templates are told apart by the type every build stamps on them, never by a name prefix,
-     * so this needs no definitions; Incus instances isx did not create are not listed.
+     * A stopped VM cannot list anything, so it is started, except for {@code --quiet}: shell
+     * completion runs that on every TAB, and a TAB must never boot a VM. The boot's progress goes
+     * to stderr, so stdout holds only the listing a script reads.
      */
-    void printListing(IncusClient incus, java.io.PrintStream out, java.time.ZoneId zone) {
-        var outputFormat = OutputFormat.resolve(format, plain);
+    boolean incusHostReady() throws Exception {
+        return quiet || withStdoutOnStderr(incusHost::getAsBoolean);
+    }
+
+    /**
+     * Starts a set-up VM that is stopped. A VM never set up (no data disk) is left alone: that
+     * would download the appliance and first-boot it, which is 'isx init''s job, not a listing's.
+     */
+    private static boolean startStoppedVm() {
+        if (!Platform.isMacOS() || VmManager.isRunning() || !Files.exists(Environment.vmDataImage())) return true;
+        return VmManager.ensureRunning();
+    }
+
+    private void checkOptions() {
+        OutputFormat.resolve(format, plain);
         if (quiet && (plain || format != null)) {
             throw new IllegalArgumentException("--quiet prints names only; it cannot be combined with --format or --plain");
         }
+        statusFilter(status);
+    }
+
+    /**
+     * {@code isx list} outside the TUI: one instance listing from Incus, in the format asked for.
+     * Templates are told apart by the type every build stamps on them, never by a name prefix,
+     * so this needs no definitions; Incus instances isx did not create are not listed.
+     *
+     * @return whether Incus holds any instance isx created, listed or filtered out
+     */
+    boolean printListing(IncusClient incus, java.io.PrintStream out, java.time.ZoneId zone) {
+        checkOptions();
+        var outputFormat = OutputFormat.resolve(format, plain);
         var wanted = statusFilter(status);
 
         // Names and states need no live state: recursion=1 spares Incus gathering network and
@@ -69,19 +110,26 @@ public class ListCommand extends BaseCommand {
                 .toList();
         if (quiet) {
             instances.forEach(i -> out.println(i.name()));
-            return;
+            return !all.isEmpty();
         }
         switch (outputFormat) {
             case PLAIN, JSON -> outputFormat.print(out, listingRecords(instances, zone));
             case TABLE -> {
                 if (all.isEmpty()) {
-                    out.println("No incus-spawn environments found.");
-                    out.println("Run 'isx build tpl-minimal' to create your first template.");
+                    var resetOn = dataDiskResetOn.get();
+                    if (resetOn != null) {
+                        out.println("The VM's data disk was reset on " + resetOn + "; it holds no instances or templates.");
+                        out.println("Recreate your templates with: isx build --all");
+                    } else {
+                        out.println("No incus-spawn environments found.");
+                        out.println("Run 'isx build tpl-minimal' to create your first template.");
+                    }
                 } else {
                     printTable(instances, out);
                 }
             }
         }
+        return !all.isEmpty();
     }
 
     private static String statusFilter(String status) {
