@@ -140,6 +140,7 @@ See `.claude/rules/proxy.md` and DESIGN.md.
 When enabled, `CertificateAuthority.collectTrustAnchors()` collects the MITM CA and host anchors from `/etc/pki/ca-trust/source/anchors/` into one trust set, each keyed by SHA-256 fingerprint (`isx-<fp>.crt`).
 The stamp is the CA's fingerprint, plus `+<host anchors' fingerprint>` when there are any, so `CaTrust` still reads which CA built an image after the host anchors change.
 `fixContainerCaIfNeeded` reconciles the whole set in one exec: stamps `<ca>+pending`, removes old anchors, writes the current set via heredoc, and re-stamps.
+It holds a per-instance `HostLock` (`~/.cache/incus-spawn/locks/trust/<instance>.lock`) from re-reading the stamp to the final stamp, and collects the set under it, so two overlapping reconciles cannot leave a removed CA trusted under the newer stamp (#1381).
 The pending stamp matches no set, so a failed install retries; an empty one would never be checked again.
 Builds install the set through the same script (`installTrustAnchors`) and stamp the set they installed, not one read again at the end.
 See `.claude/rules/proxy.md`.
