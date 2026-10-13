@@ -459,13 +459,32 @@ public class VmCommand extends BaseCommand {
             generateHelp = true
     )
     public static class CheckVersion extends BaseCommand {
+        @Option(name = "quiet", shortName = 'q', hasValue = false,
+                description = "Print only when a restart would change the appliance (what install.sh asks)")
+        boolean quiet;
+
         @Override
         protected CommandResult doExecute() throws Exception {
-            if (!VmManager.isRunning()) return CommandResult.SUCCESS;
-            var skew = VmManager.applianceSkew();
-            if (skew == null) return CommandResult.SUCCESS;
-            System.out.println(skew.message());
+            boolean running = VmManager.isRunning();
+            // Read once: the line below shows the version the skew was decided on.
+            var version = running ? VmManager.runningApplianceVersion() : null;
+            var skew = VmManager.applianceSkew(version);
+            var line = line(quiet, running, version, skew);
+            if (line != null) System.out.println(line);
             return CommandResult.SUCCESS;
+        }
+
+        /** What to print, or {@code null} for nothing: {@code --quiet} keeps only the skew. */
+        static String line(boolean quiet, boolean running, String runningVersion, VmManager.ApplianceSkew skew) {
+            return quiet && skew == null ? null : verdict(running, runningVersion, skew);
+        }
+
+        /** One line in every case: a check that prints nothing reads as one that did not run (#1391). */
+        static String verdict(boolean running, String runningVersion, VmManager.ApplianceSkew skew) {
+            if (!running) return "The VM is not running: there is no running appliance to check.";
+            if (skew != null) return skew.message();
+            if (runningVersion == null) return "Could not read the running appliance's version.";
+            return "The VM is running appliance " + runningVersion + "; a restart would not change it.";
         }
     }
 }

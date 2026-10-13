@@ -1786,7 +1786,7 @@ Manage the incus-spawn VM appliance. macOS only.
 | `resize` | Grow the VM data disk that backs the storage pool |
 | `reset` | Wipe the VM data disk: deletes every instance, template and cached image |
 | `console` | Follow VM serial console output |
-| `check-version` | Check whether the running appliance matches the installed version |
+| `check-version` | Say whether the running appliance matches the installed version; with `--quiet`, only when a restart would change it |
 
 #### `isx vm restart`
 
