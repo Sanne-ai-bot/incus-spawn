@@ -1225,6 +1225,7 @@ public final class VmManager {
                 throw new VmException("Failed to delete data disk: " + e.getMessage());
             }
             wiped = true;
+            markDataDiskReset(java.time.LocalDate.now());
             BuildOutput.stepDone();
             createDataDisk(size);
             return startLocked() == StartResult.LAUNCHED && awaitReady() ? ResetResult.READY : ResetResult.VM_DOWN;
@@ -1232,6 +1233,36 @@ public final class VmManager {
             System.err.println("Error: " + e.getMessage());
             return wiped ? ResetResult.VM_DOWN : ResetResult.NOT_RESET;
         }
+    }
+
+    /** When {@link #resetDataDisk} last replaced the disk, so {@code isx list} can say why it is empty (#1393); else null. */
+    public static java.time.LocalDate dataDiskResetOn() {
+        try {
+            return java.time.LocalDate.parse(Files.readString(dataDiskResetMarker()).strip());
+        } catch (IOException | java.time.format.DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    static void markDataDiskReset(java.time.LocalDate on) {
+        try {
+            Files.createDirectories(Environment.vmStateDir());
+            Files.writeString(dataDiskResetMarker(), on + "\n");
+        } catch (IOException e) {
+            // Only the hint in 'isx list' is lost.
+        }
+    }
+
+    public static void forgetDataDiskReset() {
+        try {
+            Files.deleteIfExists(dataDiskResetMarker());
+        } catch (IOException e) {
+            // The hint stays one more listing.
+        }
+    }
+
+    private static Path dataDiskResetMarker() {
+        return Environment.vmStateDir().resolve("data-disk-reset-on");
     }
 
     /**

@@ -64,12 +64,14 @@ class ListCommandOutputTest {
 
     private static ListCommand cmd(String format) {
         var cmd = new ListCommand();
+        cmd.dataDiskResetOn = () -> null;
         cmd.format = format;
         return cmd;
     }
 
     private static ListCommand quiet() {
         var cmd = new ListCommand();
+        cmd.dataDiskResetOn = () -> null;
         cmd.quiet = true;
         return cmd;
     }
@@ -155,6 +157,39 @@ class ListCommandOutputTest {
         assertEquals("", list(cmd("plain"), empty));
         assertEquals("[ ]\n", list(cmd("json"), empty));
         assertEquals("", list(quiet(), empty));
+    }
+
+    @Test
+    void anEmptyTableAfterAVmResetSaysTheDiskWasReset() {
+        // #1393: after 'isx vm reset' the first-run hint alone reads as if nothing had been there.
+        var cmd = cmd(null);
+        cmd.dataDiskResetOn = () -> java.time.LocalDate.of(2026, 10, 12);
+        var output = list(cmd, new FakeIncusDaemon());
+        assertTrue(output.startsWith("The VM's data disk was reset on 2026-10-12; it holds no instances or templates.\n"),
+                output);
+        assertTrue(output.contains("isx build --all"), output);
+
+        assertTrue(list(cmd(null), new FakeIncusDaemon()).startsWith("No incus-spawn environments found."));
+    }
+
+    @Test
+    void listingStartsAStoppedVmButCompletionDoesNot() throws Exception {
+        // #1393: 'isx list' on a stopped macOS VM boots it rather than failing to list; --quiet
+        // answers shell completion on every TAB, which must never boot a VM.
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        var cmd = cmd(null);
+        cmd.incusHost = () -> { asked.incrementAndGet(); return false; };
+        assertEquals(1, cmd.doExecute().getResultValue(), "a VM that does not start is a failure");
+        assertEquals(1, asked.get());
+
+        var quiet = quiet();
+        quiet.incusHost = () -> { throw new AssertionError("--quiet must not start the VM"); };
+        assertTrue(quiet.incusHostReady());
+
+        var badStatus = cmd(null);
+        badStatus.status = "bogus";
+        badStatus.incusHost = () -> { throw new AssertionError("a bad option must not start the VM"); };
+        assertThrows(IllegalArgumentException.class, badStatus::doExecute);
     }
 
     @Test
