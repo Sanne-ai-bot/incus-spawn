@@ -1085,7 +1085,8 @@ public class IncusClient {
     public String networkConfigGet(String networkName, String key) {
         var resp = http().get("/1.0/networks/" + networkName);
         if (!resp.isSuccess()) {
-            throw new IncusException("Failed to get network config " + key + " from " + networkName);
+            throw new IncusException("Failed to get network config " + key + " from " + networkName
+                    + ": " + resp.body().pathText("error", "unknown error"));
         }
         var value = resp.body().path("metadata").path("config").path(key);
         return value.isMissingNode() || value.isNull() ? "" : value.asText();
@@ -1099,7 +1100,8 @@ public class IncusClient {
     public Set<String> networkLeaseAddresses(String networkName) {
         var resp = http().get("/1.0/networks/" + networkName + "/leases");
         if (!resp.isSuccess()) {
-            throw new IncusException("Failed to read the DHCP leases of " + networkName);
+            throw new IncusException("Failed to read the DHCP leases of " + networkName
+                    + ": " + resp.body().pathText("error", "unknown error"));
         }
         var addresses = new HashSet<String>();
         for (var lease : resp.body().getField("metadata").asList()) {
@@ -1113,7 +1115,8 @@ public class IncusClient {
     public Map<String, String> networkConfig(String networkName) {
         var resp = http().get("/1.0/networks/" + networkName);
         if (!resp.isSuccess()) {
-            throw new IncusException("Failed to get network config from " + networkName);
+            throw new IncusException("Failed to get network config from " + networkName
+                    + ": " + resp.body().pathText("error", "unknown error"));
         }
         var config = new HashMap<String, String>();
         var metadataConfig = resp.body().getField("metadata").getField("config");
@@ -1132,7 +1135,8 @@ public class IncusClient {
         var resp = http().requestAndWait("PATCH", "/1.0/networks/" + networkName,
                 Map.of("config", Map.of(key, value)));
         if (!resp.isSuccess()) {
-            throw new IncusException("Failed to set network config " + key + " on " + networkName);
+            throw new IncusException("Failed to set network config " + key + " on " + networkName
+                    + ": " + resp.body().pathText("error", "unknown error"));
         }
     }
 

@@ -74,6 +74,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final List<String> brokenFetches = new ArrayList<>();
     private int nextFetch = 1;
     private boolean refuseNextWrite;
+    /** Errors the next network PATCHes answer with, in order; each leaves the network unchanged. */
+    private final ArrayDeque<String> networkWriteErrors = new ArrayDeque<>();
     private final Map<String, ArrayDeque<Runnable>> writesAfterRead = new LinkedHashMap<>();
     private int failReadsWith;
     /** What the next operation reads answer, in order; {@code Success} once it is empty. */
@@ -296,6 +298,19 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** Refuse the next instance PUT or PATCH, whatever it carries, as a transient failure would. */
     public FakeIncusDaemon refuseNextWrite() {
         refuseNextWrite = true;
+        return this;
+    }
+
+    /** What Incus answers when the dnsmasq it restarts to apply raw.dnsmasq does not stay up. */
+    public static final String DNSMASQ_EXITED = "The DNS and DHCP service exited prematurely: "
+            + "exit status 2 (\"dnsmasq: failed to create listening socket for 10.1.2.1: Address already in use\")";
+
+    /**
+     * Refuse the next network PATCHes, one per error, with a 500 carrying it and no change: Incus
+     * reverts a network update whose bridge setup fails, such as dnsmasq exiting on restart.
+     */
+    public FakeIncusDaemon refuseNetworkWrites(String... errors) {
+        networkWriteErrors.addAll(List.of(errors));
         return this;
     }
 
@@ -605,6 +620,8 @@ public final class FakeIncusDaemon implements IncusTransport {
             // Incus merges a PATCH's config keys into the network's
             var network = networks.get(path.substring("/1.0/networks/".length()));
             if (network == null) return notFound();
+            var refusal = networkWriteErrors.poll();
+            if (refusal != null) return error(500, refusal);
             var config = (ObjectNode) network.get("config");
             JSON.readTree(body).path("config").properties().forEach(e -> config.set(e.getKey(), e.getValue()));
             return sync(JSON.createObjectNode());
