@@ -5,6 +5,7 @@ import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -149,5 +150,18 @@ class IncusClientTest {
         assertFalse(daemon.hasImage("fp"));
         assertTrue(daemon.requests().stream().anyMatch(r -> r.contains("/wait")), daemon.requests().toString());
         assertThrows(IncusException.class, () -> client.deleteImageOrThrow("fp"));
+    }
+
+    /** #1391: the macOS appliance's Incus has no QEMU driver, and lists only containers. */
+    @Test
+    void virtualMachineSupportIsReadFromInstanceTypesThenDrivers() {
+        assertEquals(Optional.of(false), IncusClient.supportsVirtualMachines(
+                JqValues.parse("{\"driver\":\"lxc\",\"instance_types\":[\"container\"]}")));
+        assertEquals(Optional.of(true), IncusClient.supportsVirtualMachines(
+                JqValues.parse("{\"driver\":\"lxc | qemu\",\"instance_types\":[\"container\",\"virtual-machine\"]}")));
+        assertEquals(Optional.of(true), IncusClient.supportsVirtualMachines(JqValues.parse("{\"driver\":\"lxc | qemu\"}")));
+        assertEquals(Optional.of(false), IncusClient.supportsVirtualMachines(JqValues.parse("{\"driver\":\"lxc\"}")));
+        assertEquals(Optional.empty(), IncusClient.supportsVirtualMachines(JqValues.parse("{}")));
+        assertEquals(Optional.empty(), IncusClient.supportsVirtualMachines(JqNull.NULL));
     }
 }
