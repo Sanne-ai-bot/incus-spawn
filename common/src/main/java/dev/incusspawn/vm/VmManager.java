@@ -556,7 +556,7 @@ public final class VmManager {
             } catch (IOException ignored) {}
         }
         var appliance = runningApplianceVersion();
-        var skew = appliance == null ? null : applianceSkew();
+        var skew = applianceSkew(appliance);
         return new State(true, pid, restApi, Environment.vmLogFile().toString(), appliance,
                 skew == null ? null : skew.installed(), vsockForwarderConnectionCount());
     }

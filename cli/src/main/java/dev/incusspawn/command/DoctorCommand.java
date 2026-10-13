@@ -1154,7 +1154,7 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkApplianceVersion() {
         var running = VmManager.runningApplianceVersion();
         if (running == null) return Finding.ok("Appliance version", "(unknown)");
-        var skew = VmManager.applianceSkew();
+        var skew = VmManager.applianceSkew(running);
         if (skew == null) return Finding.ok("Appliance version", running);
         return Finding.warn("Appliance outdated",
                 "running " + running + ", installed " + skew.installed(),
