@@ -6,6 +6,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.FirewallDetector.DetectionResult;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.lifecycle.InstanceNetwork;
@@ -67,6 +68,15 @@ public class InitCommand extends BaseCommand {
             "inject credentials into HTTPS requests without containers",
             "needing any special network configuration."
     };
+
+    /**
+     * How many times the DNS step writes the overrides. Incus applies a bridge's raw.dnsmasq by
+     * restarting its dnsmasq, giving the old one 100ms to let go of its sockets and the new one
+     * 500ms to stay up; on a busy host that can miss, and Incus then reverts the whole update, so
+     * writing again starts from where the first try did. The likely cause of a one-off init
+     * failure on CI (#1376); a refusal that persists still fails.
+     */
+    static final int BRIDGE_DNS_ATTEMPTS = 3;
 
     private final HostSetup host = new HostSetup(this);
     private int totalSteps;
@@ -347,7 +357,28 @@ public class InitCommand extends BaseCommand {
      */
     void setupBridgeDns() {
         startStep("DNS Configuration", DNS_HINT);
-        ProxyConfig.configureBridgeDns(incus, SpawnConfig.load());
+        var domains = ProxyConfig.bridgeDnsDomains(SpawnConfig.load());
+        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+        for (int attempt = 1; ; attempt++) {
+            try {
+                ProxyConfig.configureBridgeDns(incus, domains, gatewayIp);
+                return;
+            } catch (IncusException e) {
+                if (attempt == BRIDGE_DNS_ATTEMPTS) throw e;
+                System.err.println("  Warning: " + e.getMessage() + "; trying again...");
+                try {
+                    pauseBeforeBridgeDnsRetry();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    e.addSuppressed(ie);
+                    throw e;
+                }
+            }
+        }
+    }
+
+    void pauseBeforeBridgeDnsRetry() throws InterruptedException {
+        Thread.sleep(2000);
     }
 
     private void setupMacOsCa() {
