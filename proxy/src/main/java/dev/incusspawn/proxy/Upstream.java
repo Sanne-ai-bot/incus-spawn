@@ -18,6 +18,7 @@ import io.vertx.core.net.SocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -593,13 +594,25 @@ class Upstream {
 
     // --- Vert.x helpers ---
 
+    /** Hop-by-hop request headers (RFC 9110 7.6.1), and Proxy-Authorization, which is for us (11.7.2). */
+    private static final List<String> HOP_BY_HOP = List.of("Connection", "Keep-Alive", "Proxy-Connection",
+            "Proxy-Authorization", "TE", "Transfer-Encoding", "Upgrade");
+    /** What the relay itself reads from the client's head to frame and send the body: never named away. */
+    private static final List<String> RELAY_READS = List.of("Content-Length", "Expect");
+
     void copyRequestHeaders(HttpServerRequest clientReq, HttpClientRequest upReq,
                                     String domain) {
-        upReq.headers().setAll(clientReq.headers());
-        upReq.headers().remove("Host");
-        upReq.headers().remove("Connection");
-        upReq.headers().remove("Transfer-Encoding");
-        upReq.putHeader("Host", domain);
+        var headers = upReq.headers();
+        headers.setAll(clientReq.headers());
+        // What Connection names is hop-by-hop for this message alone
+        for (var value : clientReq.headers().getAll("Connection")) {
+            for (var token : value.split(",")) {
+                var name = token.strip();
+                if (!name.isEmpty() && RELAY_READS.stream().noneMatch(name::equalsIgnoreCase)) headers.remove(name);
+            }
+        }
+        HOP_BY_HOP.forEach(headers::remove);
+        headers.set("Host", domain);
     }
 
     /** Upstream's status and headers, for a response relayed as it is. */

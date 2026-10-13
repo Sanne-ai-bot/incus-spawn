@@ -50,7 +50,7 @@ class RelayRequestBodyTest {
     /** What each upstream received, by host. */
     static final Map<String, CompletableFuture<Received>> received = new ConcurrentHashMap<>();
 
-    record Received(String method, String path, String contentEncoding, byte[] body) {}
+    record Received(String method, String path, String contentEncoding, byte[] body, io.vertx.core.MultiMap headers) {}
 
     @BeforeAll
     static void start() throws Exception {
@@ -124,7 +124,8 @@ class RelayRequestBodyTest {
 
     static void record(String host, HttpServerRequest req, Buffer body) {
         received.computeIfAbsent(host, h -> new CompletableFuture<>()).complete(
-                new Received(req.method().name(), req.path(), req.getHeader("Content-Encoding"), body.getBytes()));
+                new Received(req.method().name(), req.path(), req.getHeader("Content-Encoding"), body.getBytes(),
+                        io.vertx.core.MultiMap.caseInsensitiveMultiMap().addAll(req.headers())));
         req.response().putHeader("Connection", "close").putHeader("Content-Type", "application/json").end("{}");
     }
 
@@ -173,6 +174,47 @@ class RelayRequestBodyTest {
         var got = received.get(host).get(5, TimeUnit.SECONDS);
         assertEquals("PUT", got.method());
         assertEquals("hello world", new String(got.body(), StandardCharsets.UTF_8));
+    }
+
+    /** Hop-by-hop headers are for the guest's hop to the proxy, not for upstream (#1360, RFC 9110 7.6.1). */
+    @Test
+    void hopByHopHeadersStayOnTheGuestsHop() throws Exception {
+        var host = "registry.npmjs.org";
+        var head = "GET /left-pad HTTP/1.1\r\n"
+                + "Host: " + host + "\r\n"
+                + "Connection: close\r\n"
+                + "Connection: X-Foo\r\n"
+                + "X-Foo: 1\r\n"
+                + "TE: trailers\r\n"
+                + "Keep-Alive: timeout=5\r\n"
+                + "Proxy-Connection: keep-alive\r\n"
+                + "Proxy-Authorization: Basic Zm9vOmJhcg==\r\n"
+                + "X-Kept: 2\r\n\r\n";
+        var answer = exchange(host, Buffer.buffer(head));
+
+        assertTrue(answer.startsWith("HTTP/1.1 200"), answer);
+        var headers = received.get(host).get(5, TimeUnit.SECONDS).headers();
+        for (var name : List.of("X-Foo", "TE", "Keep-Alive", "Proxy-Connection", "Proxy-Authorization")) {
+            assertNull(headers.get(name), name + " reached upstream");
+        }
+        assertEquals("2", headers.get("X-Kept"));
+        assertEquals(host, headers.get("Host"));
+    }
+
+    /** Naming what frames the body in Connection does not break the upload (#1360). */
+    @Test
+    void connectionCannotNameTheBodysFramingAway() throws Exception {
+        var host = "registry.npmjs.org";
+        var head = "POST /left-pad HTTP/1.1\r\n"
+                + "Host: " + host + "\r\n"
+                + "Connection: close\r\n"
+                + "Connection: Content-Length, Expect\r\n"
+                + "Expect: 100-continue\r\n"
+                + "Content-Length: 5\r\n\r\nhello";
+        var answer = exchange(host, Buffer.buffer(head));
+
+        assertTrue(answer.contains("HTTP/1.1 200"), answer);
+        assertEquals("hello", new String(received.get(host).get(5, TimeUnit.SECONDS).body(), StandardCharsets.UTF_8));
     }
 
     /**
