@@ -406,7 +406,7 @@ isx templates edit tpl-java    # opens in $EDITOR, validates on save
 
 Editing a built-in template automatically creates a user-level override in `~/.config/incus-spawn/images/`. The override takes precedence over the built-in but will not auto-update with isx upgrades. Templates are validated after editing: YAML syntax, required fields, and parent references are checked.
 
-You can also define a custom root image (no `parent`) by specifying `image`, `image_url`, `image_tag`, and `image_sha256` to point at your own pre-baked OS tarball. See the built-in [`minimal.yaml`](src/main/resources/images/minimal.yaml) and the [incus-spawn-images](https://github.com/Sanne/incus-spawn-images) repo for the reference example.
+You can also define a custom root image (no `parent`) by specifying `image`, `image_url`, `image_tag`, and `image_sha256` to point at your own pre-baked OS tarball. See the built-in [`minimal.yaml`](common/src/main/resources/images/minimal.yaml) and the [incus-spawn-images](https://github.com/Sanne/incus-spawn-images) repo for the reference example.
 
 Image schema fields (all optional except `name`; `isx templates new` writes them all into the new file, commented out):
 - `image` -- base OS image, only for root images (default: `images:fedora/44`)
