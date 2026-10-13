@@ -42,7 +42,10 @@ Key design:
   Only re-encoded certificates reach a guest or the stamp: a file holding anything that does not parse as certificates (a private key beside a cert) is refused whole, with a warning.
   Content-addressable naming eliminates filename collisions and shell injection.
   One stamp (`TrustAnchors.stamp()`) goes in `Metadata.CA_FINGERPRINT`: the CA's fingerprint, then `+` and a fingerprint over the host anchors when there are any; without host anchors it is the CA's fingerprint alone, as before.
-  `fixContainerCaIfNeeded` reconciles the whole set in one guest exec (`buildReconcileScript`): it first stamps `<ca>+pending`, which matches no set, so a failed install retries (an empty stamp would read as pre-versioning and never be checked again), removes old `incus-spawn-mitm.crt` and `isx-*.crt`, writes the current set via `Container.heredoc`, runs `update-ca-trust`, and re-stamps on success.
+  `fixContainerCaIfNeeded` reconciles the whole set in one guest exec (`buildReconcileScript`): it first stamps `<ca>+pending`, which matches no set, so a failed install retries (an empty stamp would read as pre-versioning and never be checked again).
+  It removes old `incus-spawn-mitm.crt` and the managed anchors, writes the current set via `Container.heredoc`, runs `update-ca-trust`, and re-stamps on success.
+  Managed means exactly `isx-<64 lowercase hex>.crt` (`MANAGED_ANCHOR_PATTERN`, built from `anchorFile`); `isx-company.crt` is not isx's.
+  The pattern is a `case` test over `isx-*.crt`, never a path: a glob matching nothing reaches `rm` as an over-long name and fails the script.
   It is serialized per instance across isx processes on this host (`HostLock` on `locks/trust/<instance>.lock`): the unlocked check only decides whether to take the lock; under it the stamp is read again from Incus (a caller's prefetched read may predate another reconcile) and the set collected afresh, so the last holder installs and stamps what it saw (#1381).
   Builds install and stamp under the same lock (`CertificateAuthority.lockTrust`).
   A lock not acquired in time changes nothing and is reported; the next use retries.

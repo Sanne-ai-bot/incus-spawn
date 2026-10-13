@@ -296,10 +296,50 @@ class CertificateAuthorityTest {
         var script = CertificateAuthority.buildReconcileScript(anchors);
         assertTrue(script.contains("rm -f"));
         assertTrue(script.contains("incus-spawn-mitm.crt"));
-        assertTrue(script.contains("isx-*.crt"));
         assertTrue(script.contains("isx-abc.crt"));
         assertTrue(script.contains("update-ca-trust"));
         assertTrue(script.startsWith("set -e\n"), "a failed write must fail the script");
+    }
+
+    @Test
+    void reconcileRemovesOnlyTheAnchorsIsxNamed(@TempDir Path guest) throws Exception {
+        // The guest's anchors directory also holds files isx did not write: only the legacy
+        // proxy CA name and isx-<sha256>.crt are isx's to remove, even with propagation off.
+        // No two names differ only in case: macOS's default filesystem would make them one file.
+        var managed = "isx-" + "0123456789abcdef".repeat(4) + ".crt";
+        var kept = new String[] {"isx-company.crt", "isx-" + "ABCDEF0123456789".repeat(4) + ".crt",
+                "isx-" + "0123456789abcdef".repeat(4) + "0.crt", "corp.crt"};
+        Files.writeString(guest.resolve("incus-spawn-mitm.crt"), "old");
+        Files.writeString(guest.resolve(managed), "removed CA");
+        for (var name : kept) Files.writeString(guest.resolve(name), "custom");
+
+        var current = "isx-" + "f".repeat(64) + ".crt";
+        runReconcile(guest, current);
+
+        assertFalse(Files.exists(guest.resolve("incus-spawn-mitm.crt")));
+        assertFalse(Files.exists(guest.resolve(managed)), "a CA taken off the host must leave the guest");
+        assertEquals("PEM\n", Files.readString(guest.resolve(current)));
+        for (var name : kept) {
+            assertEquals("custom", Files.readString(guest.resolve(name)), name + " is not isx's");
+        }
+    }
+
+    @Test
+    void reconcileSucceedsOnAGuestWithNoManagedAnchors(@TempDir Path guest) throws Exception {
+        // A fresh base image holds none: a pattern matching nothing must not reach rm as a path
+        var current = "isx-" + "f".repeat(64) + ".crt";
+        runReconcile(guest, current);
+        assertEquals("PEM\n", Files.readString(guest.resolve(current)));
+    }
+
+    /** Runs the reconcile script for a set holding {@code anchor} against {@code guest} as the anchors directory. */
+    private static void runReconcile(Path guest, String anchor) throws Exception {
+        var script = CertificateAuthority.buildReconcileScript(new TreeMap<>(Map.of(anchor, "PEM")))
+                .replace("/etc/pki/ca-trust/source/anchors/", guest + "/")
+                .replace("update-ca-trust", "true");
+        var process = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true).start();
+        var output = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor(), output);
     }
 
     @Test
