@@ -2434,6 +2434,11 @@ Clones use `--single-branch` to fetch only the target branch (or the default bra
 After cloning, `git remote set-branches origin '*'` immediately widens the fetch refspec — this is a pure metadata write with no network traffic — so the clone is indistinguishable from a regular one.
 Other branches populate lazily on first `git fetch` or `git checkout`.
 
+**One clone per destination** (#1394): a repo's identity is its destination (`~/x` and `/home/agentuser/x` are one, and the default path comes from the URL), resolved across the whole template chain by `ImageDef.chainRepos`.
+A layer clones only the destinations it declares first; one an ancestor declared is already in the parent copy (or was cloned by that ancestor's layer in a build from scratch), so the build prints `✓ Inherited <repo> (from <template>)` and neither clones nor primes it again, and a repeat within a template is the same clone.
+Repeating a declaration is only allowed when it is identical (URL compared via `GitRemoteUtils.urlsMatch`, branch, depth, prime): `ImageDef.repoConflict` refuses the build before any work starts, naming the destination, both templates and the differing fields, because changing an inherited checkout's branch, depth or prime has no defined meaning yet.
+Trust, the agent context and the TUI's chain view list the same resolved repos.
+
 **Parallel cloning**: when a template declares multiple repos they are cloned concurrently, bounded to the host's high-performance ("P") core count (`CpuInfo.highPerfCores()` — `sysctl hw.perflevel0.logicalcpu` on macOS, on Linux the top tier of the sysfs scan described in "VM boot: where the wait goes" (the hybrid PMU's `cpu_core` list, else `cpu_capacity`, else `cpufreq`), falling back to all logical processors).
 `CpuInfo` is the shared home for CPU-topology detection.
 It also backs the appliance VM's vCPU default (`VmManager.detectCpus()` → `performanceCores()`) and the native-image-safe host processor count (`ResourceLimits.hostProcessorCount()` → `logicalCores()`, which reads `/proc/cpuinfo`/`sysctl` rather than `Runtime.availableProcessors()` since the CLI native image pins the latter via `-R:ActiveProcessorCount`).

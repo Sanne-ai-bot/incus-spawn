@@ -248,8 +248,8 @@ final class TemplateDetailView {
         addSection(lines, "Tools", allToolsFormatted, noLongerInherited);
         addOptionalSection(lines, "Dependencies (auto)", source.autoDeps(allToolNames));
 
-        var allRepos = new ArrayList<ImageDef.RepoEntry>();
-        for (var def : chain) allRepos.addAll(def.getRepos());
+        // One per destination: a descendant repeating an inherited repo reuses its checkout (#1394).
+        var allRepos = ImageDef.chainRepos(current, source.imageDefs()).stream().map(ImageDef.ChainRepo::repo).toList();
         if (allRepos.isEmpty()) {
             lines.add(Line.from(List.of(Span.styled("Repos: ", labelStyle), Span.styled("(none)", dimStyle))));
         } else {

@@ -330,6 +330,7 @@ public class BuildCommand extends BaseCommand {
         var seen = new HashSet<String>();
         for (var target : targets) collectAllRecursive(target, defs, chains, seen);
         requireValidAccounts(chains, defs);
+        requireConsistentRepos(chains, defs);
         startHostRepoRefresh(targets, defs, executor);
         build(parentsFirst(targets, defs), defs);
         return CommandResult.SUCCESS;
@@ -415,6 +416,7 @@ public class BuildCommand extends BaseCommand {
             return;
         }
         requireValidAccounts(templatesToRebuild, defs);
+        requireConsistentRepos(templatesToRebuild, defs);
 
         if (!confirmBatch(outdatedOnly ? "Templates to rebuild: " : "This will rebuild: ",
                 templatesToRebuild, defs, outdatedOnly ? "Rebuild?" : "Continue?")) return;
@@ -605,6 +607,7 @@ public class BuildCommand extends BaseCommand {
             collectAllRecursive(leaf, defs, toCheck, seen);
         }
         requireValidAccounts(toCheck, defs);
+        requireConsistentRepos(toCheck, defs);
         build(missingLeaves, defs);
     }
 
@@ -619,6 +622,7 @@ public class BuildCommand extends BaseCommand {
             collectAllRecursive(target, defs, chain, seen);
         }
         requireValidAccounts(chain, defs);
+        requireConsistentRepos(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
 
@@ -640,6 +644,7 @@ public class BuildCommand extends BaseCommand {
             collectDescendants(target.getName(), defs, chain, seen);
         }
         requireValidAccounts(chain, defs);
+        requireConsistentRepos(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
 
@@ -1364,7 +1369,7 @@ public class BuildCommand extends BaseCommand {
         maskServices(container, imageDef);
         // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
         installSkills(container, imageDef, defs, toolResolution.effective());
-        cloneRepos(container, imageDef, machineType);
+        cloneRepos(container, imageDef, defs, machineType);
         // After the repos' prime commands, which may download a runtime (a Gradle toolchain into
         // ~/.gradle/jdks); the parent's path units do not settle in time before the stop.
         bindTrustStores(container);
@@ -1619,7 +1624,7 @@ public class BuildCommand extends BaseCommand {
             allTools.addAll(toolResolution.effective());
             maskServices(container, layer);
             installSkills(container, layer, defs, toolResolution.effective());
-            cloneRepos(container, layer, machineType);
+            cloneRepos(container, layer, defs, machineType);
         }
         updateClaudeJsonTrust(container, imageDef, defs);
         updateCodexTrust(container, imageDef, defs);
@@ -2217,6 +2222,17 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
+    /** Refuses before any build work when a template redeclares a repo destination differently (#1394). */
+    private static void requireConsistentRepos(Collection<String> templates, Map<String, ImageDef> defs) {
+        for (var name : templates) {
+            var conflict = ImageDef.repoConflict(defs.get(name), defs);
+            if (conflict != null) {
+                System.err.println("Cannot build: " + conflict);
+                throw new BuildFailedException();
+            }
+        }
+    }
+
     /**
      * The first of {@code templates} whose {@code accounts:} names something that is not
      * configured, or null when all of them resolve. Only definitions that select anything are
@@ -2596,7 +2612,7 @@ public class BuildCommand extends BaseCommand {
     }
 
     /** Waits for this run's host repo refresh, then clones the repos ({@link RepoCloner#cloneRepos}). */
-    void cloneRepos(Container container, ImageDef imageDef, MachineType machineType) {
+    void cloneRepos(Container container, ImageDef imageDef, Map<String, ImageDef> defs, MachineType machineType) {
         if (hostRepoRefresh != null) {
             if (!hostRepoRefresh.isDone()) {
                 BuildOutput.stepStart("Waiting for host repo refresh");
@@ -2610,7 +2626,7 @@ public class BuildCommand extends BaseCommand {
             }
             hostRepoRefresh = null;
         }
-        new RepoCloner(incus).cloneRepos(container, imageDef, machineType);
+        new RepoCloner(incus).cloneRepos(container, imageDef, defs, machineType);
     }
 
     enum InstanceType {

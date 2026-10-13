@@ -109,7 +109,7 @@ class RepoClonerReferenceTest {
         System.setErr(new PrintStream(out, true));
         try {
             assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
-                    () -> cmd.cloneRepos(new Container(incus, VM), imageDef, MachineType.VM));
+                    () -> cmd.cloneRepos(new Container(incus, VM), imageDef, java.util.Map.of(), MachineType.VM));
         } finally {
             System.setOut(originalOut);
             System.setErr(originalErr);

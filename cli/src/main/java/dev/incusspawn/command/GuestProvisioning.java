@@ -23,7 +23,6 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -551,24 +550,12 @@ public class GuestProvisioning {
     private static final String CODEX_CONFIG_PATH = CodexSetup.CONFIG_PATH;
 
     /**
-     * Repos declared across the template chain, one per resolved path, skipping entries with no
-     * path. Tool setup in a child layer can rewrite Claude's or Codex's config, so trust is
-     * restored for all of them after it, not just for the current layer's.
+     * Repos declared across the template chain, one per destination ({@link ImageDef#chainRepos}).
+     * Tool setup in a child layer can rewrite Claude's or Codex's config, so trust is restored for
+     * all of them after it, not just for the current layer's.
      */
     static List<ImageDef.RepoEntry> chainRepos(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var seen = new HashSet<String>();
-        var repos = new ArrayList<ImageDef.RepoEntry>();
-        for (var layer : ImageDef.chain(imageDef, defs)) {
-            for (var repo : layer.getRepos()) {
-                // getPath() derives ~/<name> from the url, but yields null for an entry
-                // with neither — nothing was cloned for it.
-                var path = repo.getPath();
-                if (path == null || path.isBlank()) continue;
-                // Dedupe on the resolved path: ~/jdk and /home/agentuser/jdk are one clone.
-                if (seen.add(expandHome(path))) repos.add(repo);
-            }
-        }
-        return repos;
+        return ImageDef.chainRepos(imageDef, defs).stream().map(ImageDef.ChainRepo::repo).toList();
     }
 
     static void updateCodexTrust(Container container, ImageDef imageDef, Map<String, ImageDef> defs) {
