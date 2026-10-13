@@ -56,6 +56,10 @@ Files written by releases users are on (v0.3.7, v0.3.8) are pinned by `PreviousR
 Add the tag to its `RELEASES` and to the CI loop whenever a release changes the format or users stay on it.
 v0.3.7 still writes the old `host-path` key, beside `host-paths` naming the same path, which must load as one.
 
+**The new-template skeleton is the format's reference** (#1386): `TemplatesCommand.SKELETON`, which `isx templates new` and the TUI write, shows every field `ImageDef` reads, each with a one-line note.
+A new `ImageDef` field, or a new key in one of its entries, gets a line there; `TemplateSkeletonTest` takes the field names the mappings bind (`@JqName`, else the field's own) and the env and skills converters' keys, and fails without it.
+The skeleton's examples, uncommented, must stay a valid template.
+
 **Name conflicts vs. overrides**: Overriding a definition from a *later* layer is intentional and supported.
 Two files declaring the same `name:` *within a single directory* (usually a copy-paste that forgot to update `name:`) is always a mistake and is reported as a conflict.
 `ImageDef.loadAllWithConflicts()` / `ToolDefLoader.conflicts()` return these same-directory collisions (all colliding files, so 3+ are listed together) plus the intentional cross-layer overrides.

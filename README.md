@@ -396,7 +396,7 @@ Use `isx templates` to manage templates from the CLI:
 isx templates list
 isx templates list -v          # with source path and description
 
-# Create a new template (opens in $EDITOR with a commented skeleton)
+# Create a new template (opens in $EDITOR with a skeleton listing every field, commented out)
 isx templates new my-app       # creates ~/.config/incus-spawn/images/my-app.yaml
 isx templates new my-app --project  # creates .incus-spawn/images/my-app.yaml
 
@@ -408,7 +408,7 @@ Editing a built-in template automatically creates a user-level override in `~/.c
 
 You can also define a custom root image (no `parent`) by specifying `image`, `image_url`, `image_tag`, and `image_sha256` to point at your own pre-baked OS tarball. See the built-in [`minimal.yaml`](src/main/resources/images/minimal.yaml) and the [incus-spawn-images](https://github.com/Sanne/incus-spawn-images) repo for the reference example.
 
-Image schema fields (all optional except `name`):
+Image schema fields (all optional except `name`; `isx templates new` writes them all into the new file, commented out):
 - `image` -- base OS image, only for root images (default: `images:fedora/44`)
 - `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders; `file://` works for testing a locally built image)
 - `image_tag` -- release tag identifying the base image version
@@ -433,6 +433,7 @@ Image schema fields (all optional except `name`):
 - `shell-command` -- command to run instead of the login shell (see below)
 - `default-action` -- tool action to run when pressing Enter on an instance in the TUI (see below)
 - `description` -- human-readable description for the TUI
+- `accounts` -- credential account per namespace (e.g. `claude: work`), overriding the namespace's `default` (see [Credential accounts](#credential-accounts))
 - `deprecated` -- `true`, or a note saying what to use instead: the template still builds, but every build of it or of a template naming it as `parent` warns (templates further down do not), and the TUI shows the warning in the template's details
 
 ```shell
