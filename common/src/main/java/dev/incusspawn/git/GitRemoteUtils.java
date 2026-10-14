@@ -230,7 +230,17 @@ public final class GitRemoteUtils {
                 .findFirst().orElse(null);
     }
 
-    record ExecResult(boolean success, String output) {}
+    /**
+     * @param output what Git said, and only that
+     * @param reason isx's reason when it stopped Git or could not run it, null when Git ran to completion
+     * @param note   isx's explanation of a failure a prompt would have answered, or null
+     */
+    record ExecResult(boolean success, String output, String reason, String note) {
+        ExecResult(boolean success, String output) { this(success, output, null, null); }
+
+        /** isx's words, then Git's quoted: see {@link GitCommandException#details()}. */
+        List<String> details() { return GitCommandException.details(note, output); }
+    }
 
     static ExecResult hostGitExecResult(Path repoDir, String... gitArgs) {
         var command = new ArrayList<String>();
@@ -247,29 +257,26 @@ public final class GitRemoteUtils {
             int exitCode = process.waitFor();
             return new ExecResult(exitCode == 0, output);
         } catch (IOException e) {
-            return new ExecResult(false, e.toString());
+            return new ExecResult(false, "", "could not run git: " + e.getMessage(), null);
         } catch (InterruptedException e) {
             if (process != null) process.destroyForcibly();
             Thread.currentThread().interrupt();
-            return new ExecResult(false, "interrupted");
+            return new ExecResult(false, "", "interrupted", null);
         }
     }
 
-    /**
-     * A host Git command that talks to a remote, under {@code limits}: see {@link GitProcess}. A stopped
-     * transfer's output is the reason it was stopped, so a warning names it.
-     */
+    /** A host Git command that talks to a remote, under {@code limits}: see {@link GitProcess}. */
     static ExecResult hostGitTransfer(Path repoDir, GitTransferConfig limits, Consumer<GitProcess.Progress> progress,
                                       String... gitArgs) {
         var command = new ArrayList<>(List.of("git", "-C", repoDir.toString()));
         command.addAll(List.of(gitArgs));
         try {
-            var result = GitProcess.run(new ProcessBuilder(command).redirectErrorStream(true), repoDir, limits, progress);
-            if (result.stopReason() == null) return new ExecResult(result.success(), result.diagnostics());
-            var said = result.diagnostics().lines().reduce((a, b) -> b).orElse(null);
-            return new ExecResult(false, result.stopReason() + (said == null ? "" : " (Git's last line: " + said + ")"));
+            // update-all keeps the user's own SSH command as it is.
+            var result = GitProcess.run(new ProcessBuilder(command).redirectErrorStream(true), repoDir, false, limits, progress);
+            return new ExecResult(result.success(), result.diagnostics(), result.stopReason(), result.success() ? null
+                    : GitCommandException.promptNote(result.diagnostics(), result.ssh()));
         } catch (IOException e) {
-            return new ExecResult(false, e.toString());
+            return new ExecResult(false, "", "could not run git: " + e.getMessage(), null);
         }
     }
 

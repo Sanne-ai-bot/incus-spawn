@@ -78,14 +78,14 @@ class GitPreparationTest {
 
     @Test void sshDefaultsToBatchModeAndRespectsExplicitTransports() {
         var environment = new java.util.HashMap<String, String>();
-        PreparationGit.nonInteractiveSsh(environment, null);
+        PreparationGit.nonInteractiveSsh(environment, null, false);
         assertEquals("ssh -o BatchMode=yes", environment.get("GIT_SSH_COMMAND"));
         environment.put("GIT_SSH_COMMAND", "custom-ssh --identity test");
-        PreparationGit.nonInteractiveSsh(environment, null);
+        PreparationGit.nonInteractiveSsh(environment, null, false);
         assertEquals("custom-ssh --identity test", environment.get("GIT_SSH_COMMAND"));
         environment.clear();
         environment.put("GIT_SSH", "/custom/ssh");
-        PreparationGit.nonInteractiveSsh(environment, null);
+        PreparationGit.nonInteractiveSsh(environment, null, false);
         assertFalse(environment.containsKey("GIT_SSH_COMMAND"));
     }
 

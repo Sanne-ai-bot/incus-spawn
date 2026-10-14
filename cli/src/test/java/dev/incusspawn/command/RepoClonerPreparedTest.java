@@ -117,6 +117,19 @@ class RepoClonerPreparedTest {
         assertTrue(scripts.stream().noneMatch(script -> script.contains("git fsck")), "no prime on denied access");
     }
 
+    @Test void aFailedPreparationKeepsGitsWordsApartForTheWarning() {
+        var cloner = new RepoCloner(incus, preparation);
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl(server.url(tmp.resolve("missing")));
+        var planned = new RepoCloner.RepoReference("ref", "/mnt/ref", host.toString(), null,
+                new GitPreparation.Request(repo.getUrl(), null, host), null);
+        var ref = cloner.prepareReference(repo, planned, states, 0, "");
+        assertEquals("Git preparation unavailable: Git preparation failed: ls-remote", ref.skipReason());
+        var details = cloner.preparationFailures.get(0).details();
+        assertEquals("Git's output:", details.getFirst(), details.toString());
+        assertTrue(details.get(1).startsWith("  | fatal: "), details.toString());
+    }
+
     @Test void differentGuestCredentialRefScopeUsesOnlyTheGuestRemote() throws Exception {
         var visible = tmp.resolve("visible.git");
         git(tmp, "clone", "--bare", remote.toString(), visible.toString());

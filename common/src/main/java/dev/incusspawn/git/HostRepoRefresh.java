@@ -27,8 +27,13 @@ public final class HostRepoRefresh {
     private HostRepoRefresh() {}
 
     enum FetchState { FETCHING, DONE, FAILED }
-    /** {@code detail}: live progress while fetching, the time taken when done, the error when failed. */
-    record TaskProgress(FetchState state, String detail) {}
+    /**
+     * {@code detail}: live progress while fetching, the time taken when done, isx's one-line reason when
+     * failed; {@code details}: a failure's explanation and Git's quoted output, printed under it.
+     */
+    record TaskProgress(FetchState state, String detail, List<String> details) {
+        TaskProgress(FetchState state, String detail) { this(state, detail, List.of()); }
+    }
 
     /** How often a fetch off a terminal says it is still running. */
     static final long HEARTBEAT_NANOS = TimeUnit.SECONDS.toNanos(30);
@@ -122,7 +127,9 @@ public final class HostRepoRefresh {
                             states.set(idx, new TaskProgress(FetchState.DONE,
                                     millis >= 2_000 ? BuildOutput.formatElapsed(millis) : null));
                         } else {
-                            states.set(idx, new TaskProgress(FetchState.FAILED, extractGitError(result.output()) + promptHint(result.output())));
+                            // isx's reason on the line; Git's own words only quoted under it.
+                            states.set(idx, new TaskProgress(FetchState.FAILED,
+                                    result.reason(), result.details()));
                         }
                     } catch (Exception e) {
                         states.set(idx, new TaskProgress(FetchState.FAILED, e.getMessage()));
@@ -131,6 +138,13 @@ public final class HostRepoRefresh {
                 (idx, frame) -> formatFetchLine(tasks.get(idx), states.get(idx), frame),
                 idx -> plainFetchLine(tasks.get(idx), states.get(idx)),
                 output);
+        // The animated lines hold one line each: the explanations and Git's words follow them.
+        if (live) {
+            for (int i = 0; i < tasks.size(); i++) {
+                var failed = states.get(i);
+                if (failed.state() == FetchState.FAILED && !failed.details().isEmpty()) output.accept(plainFetchLine(tasks.get(i), failed));
+            }
+        }
     }
 
     static String formatFetchLine(FetchTask task, TaskProgress progress, int frame) {
@@ -144,23 +158,28 @@ public final class HostRepoRefresh {
         sb.append(' ');
         sb.append(task.repoName());
         sb.append(" \033[2m(").append(task.hostPath()).append(")\033[0m"); // raw ANSI: animated line
-        if (progress.detail() != null && !progress.detail().isEmpty()) {
+        var detail = progress.detail();
+        if (progress.state() == FetchState.FAILED && (detail == null || detail.isEmpty()) && !progress.details().isEmpty()) {
+            detail = "details below";
+        }
+        if (detail != null && !detail.isEmpty()) {
             sb.append(progress.state() == FetchState.FAILED ? "  \033[31m" : "  \033[2m") // raw ANSI: animated line
-                    .append(progress.detail()).append("\033[0m"); // raw ANSI: animated line
+                    .append(detail).append("\033[0m"); // raw ANSI: animated line
         }
         return sb.toString();
     }
 
-    private static String plainFetchLine(FetchTask task, TaskProgress progress) {
+    static String plainFetchLine(FetchTask task, TaskProgress progress) {
         if (progress.state() == FetchState.DONE) {
             return BuildOutput.STEP_INDENT + "Fetched " + task.repoName() + " (" + task.hostPath() + ")"
                     + (progress.detail() == null ? "" : " in " + progress.detail());
         }
-        var msg = BuildOutput.STEP_INDENT + "Warning: fetch failed for " + task.repoName() + " at " + task.hostPath();
-        if (progress.detail() != null && !progress.detail().isEmpty()) {
-            msg += ": " + progress.detail();
-        }
-        return msg + "; keeping the existing checkout";
+        var msg = new StringBuilder(BuildOutput.STEP_INDENT + "Warning: fetch failed for " + task.repoName()
+                + " at " + task.hostPath());
+        if (progress.detail() != null && !progress.detail().isEmpty()) msg.append(" (").append(progress.detail()).append(')');
+        msg.append("; keeping the existing checkout");
+        for (var line : progress.details()) msg.append('\n').append(BuildOutput.STEP_INDENT).append("  ").append(line);
+        return msg.toString();
     }
 
     private static void cloneSequentially(List<CloneTask> tasks, SpawnConfig config) {
@@ -212,10 +231,9 @@ public final class HostRepoRefresh {
                 BuildOutput.stepBreak();
                 // A clone stopped part way is no checkout: never leave it for a later build to use.
                 if (!existed) deletePartialClone(task.targetDir);
-                var detail = extractGitError(result.output());
-                var msg = "Warning: clone failed for " + task.url;
-                if (!detail.isEmpty()) msg += ": " + detail;
-                System.err.println(BuildOutput.STEP_INDENT + msg);
+                System.err.println(BuildOutput.STEP_INDENT + "Warning: clone failed for " + GitCommandException.scrub(task.url)
+                        + (result.reason() == null ? "" : " (" + result.reason() + ")"));
+                for (var line : result.details()) System.err.println(BuildOutput.STEP_INDENT + "  " + line);
             }
         }
     }
@@ -333,37 +351,6 @@ public final class HostRepoRefresh {
     }
 
     /**
-     * For a failure a prompt would have answered, what to set up instead, since the refresh never
-     * prompts; empty otherwise. {@code output} is all of Git's: the cause comes before its {@code fatal:}.
-     */
-    static String promptHint(String output) {
-        if (output == null) return "";
-        if (output.contains("Host key verification failed")) {
-            return " (fetches never prompt: add the host's key to ~/.ssh/known_hosts)";
-        }
-        if (output.contains("Permission denied (publickey")) {
-            return " (fetches never prompt: load the key into ssh-agent, or set core.sshCommand)";
-        }
-        if (output.contains("terminal prompts disabled") || output.contains("could not read Username")
-                || output.contains("could not read Password")) {
-            return " (fetches never prompt: configure a Git credential helper)";
-        }
-        return "";
-    }
-
-    static String extractGitError(String text) {
-        if (text == null || text.isEmpty()) return "";
-        for (var line : text.split("\n")) {
-            var trimmed = line.strip();
-            if (trimmed.startsWith("fatal:") || trimmed.startsWith("error:")) {
-                return trimmed;
-            }
-        }
-        var lines = text.strip().split("\n");
-        return lines[lines.length - 1].strip();
-    }
-
-    /**
      * {@code managedDepth} is the depth isx cloned the checkout with ({@link #DEPTH_KEY}), null for a
      * user's checkout; {@code depth} is the one the templates ask for now, null for all of history.
      */
@@ -379,7 +366,9 @@ public final class HostRepoRefresh {
             // Unmarked last: a failure on the way leaves it marked, and the next refresh repeats
             // these steps, which are safe to repeat.
             var shallowState = GitRemoteUtils.hostGitExec(hostPath, "rev-parse", "--is-shallow-repository");
-            if (shallowState == null) return new GitRemoteUtils.ExecResult(false, "could not tell whether the checkout is shallow");
+            if (shallowState == null) {
+                return new GitRemoteUtils.ExecResult(false, "", "could not tell whether the checkout is shallow", null);
+            }
             var shallow = "true".equals(shallowState);
             var result = shallow ? transfer(limits, progress, "--unshallow", "--", remoteName)
                     : transfer(limits, progress, "--", remoteName);
@@ -398,7 +387,10 @@ public final class HostRepoRefresh {
         }
 
         private GitRemoteUtils.ExecResult git(String... args) {
-            return GitRemoteUtils.hostGitExecResult(hostPath, args);
+            var result = GitRemoteUtils.hostGitExecResult(hostPath, args);
+            // A local step may fail without a word from Git: name it.
+            return result.success() || result.reason() != null ? result
+                    : new GitRemoteUtils.ExecResult(false, result.output(), "git " + args[0] + " failed", null);
         }
     }
 
