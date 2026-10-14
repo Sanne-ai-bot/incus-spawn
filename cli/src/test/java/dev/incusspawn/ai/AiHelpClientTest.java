@@ -184,4 +184,11 @@ class AiHelpClientTest {
         var e = assertThrows(java.io.IOException.class, () -> AiHelpClient.processStream(stream, s -> {}));
         assertEquals("API stream error: overloaded [2J", e.getMessage());
     }
+
+    @Test
+    void longErrorBodyIsCutBetweenCharacters() {
+        // 199 letters, then an emoji whose two UTF-16 units straddle the cut.
+        var body = "x".repeat(199) + "\uD83D\uDE00" + "tail";
+        assertEquals("API error (502): " + "x".repeat(199) + "\uD83D\uDE00...", AiHelpClient.describeError(502, body));
+    }
 }

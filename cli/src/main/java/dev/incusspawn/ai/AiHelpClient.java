@@ -425,7 +425,8 @@ public class AiHelpClient {
         if (message != null && !message.isBlank()) {
             detail.append(message);
         } else if (!body.isBlank()) {
-            detail.append(body.length() > 200 ? body.substring(0, 200) + "..." : body);
+            detail.append(body.codePointCount(0, body.length()) > 200
+                    ? body.substring(0, body.offsetByCodePoints(0, 200)) + "..." : body);
         } else {
             detail.append("no response body");
         }
