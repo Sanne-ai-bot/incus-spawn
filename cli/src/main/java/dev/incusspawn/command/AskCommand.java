@@ -74,25 +74,28 @@ public class AskCommand extends BaseCommand {
 
         var firstChunk = new AtomicBoolean(true);
         var answer = new AnswerWriter(System.out, ansi);
-        AiHelpClient.askStreaming(question, systemBlocks, config, target, chunk -> {
-            if (firstChunk.getAndSet(false)) {
-                spinning.set(false);
-                if (ansi) {
-                    System.err.print("\r\033[2K" + BuildOutput.STEP_INDENT // raw ANSI: spinner line, only when ansi
-                            + BuildOutput.DIM + "✓ " + label + BuildOutput.RESET + "\n");
+        try {
+            AiHelpClient.askStreaming(question, systemBlocks, config, target, chunk -> {
+                if (firstChunk.getAndSet(false)) {
+                    spinning.set(false);
+                    if (ansi) {
+                        System.err.print("\r\033[2K" + BuildOutput.STEP_INDENT // raw ANSI: spinner line, only when ansi
+                                + BuildOutput.DIM + "✓ " + label + BuildOutput.RESET + "\n");
+                    }
+                    System.err.println();
                 }
-                System.err.println();
+                answer.accept(chunk);
+            });
+        } finally {
+            // A stream that fails part way still shows what came, and stops the spinner before the error.
+            answer.finish();
+            spinning.set(false);
+            if (spinner != null) spinner.join(200);
+            if (firstChunk.get() && ansi) {
+                System.err.print("\r\033[2K"); // raw ANSI: spinner line, only when ansi
             }
-            answer.accept(chunk);
-        });
-
-        answer.finish();
-        spinning.set(false);
-        if (spinner != null) spinner.join(200);
-        if (firstChunk.get() && ansi) {
-            System.err.print("\r\033[2K"); // raw ANSI: spinner line, only when ansi
+            System.out.println();
         }
-        System.out.println();
         return CommandResult.SUCCESS;
     }
 
