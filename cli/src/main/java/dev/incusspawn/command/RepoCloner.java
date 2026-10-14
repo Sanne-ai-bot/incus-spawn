@@ -377,6 +377,8 @@ class RepoCloner {
                 if (hasReference && ref.hasDevice()) ref = mounts.attach(idx, ref);
                 long attachMillis = (System.nanoTime() - attaching) / 1_000_000;
                 long start = System.nanoTime();
+                // Never leave a preparation phase or its frozen progress up while the guest clones.
+                states.set(idx, StepProgress.running("Cloning"));
                 clone = cloneOne(container, repo, ref, states, idx);
                 var snapshot = prepared.get(idx);
                 preparationTimings.merge(idx, (snapshot == null ? "" : snapshot.timingSummary() + ", ")
