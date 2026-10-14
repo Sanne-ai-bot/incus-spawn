@@ -17,6 +17,15 @@ class BuildProgressTest {
     }
 
     @Test
+    void formatStepLineShowsLiveDetailAfterTheLabel() {
+        var p = BuildProgress.StepProgress.running("Creating clean Git snapshot", "12s  Receiving objects:  45% (12345/67890)");
+        var line = stripAnsi(BuildProgress.formatStepLine("quarkus", "https://github.com/quarkusio/quarkus.git", p, 0, "Ready"));
+        assertTrue(line.indexOf("quarkus") < line.indexOf("Receiving objects"), line);
+        assertTrue(line.indexOf("Receiving objects") < line.indexOf("(https://"), "the URL goes last: " + line);
+        assertTrue(line.indexOf("quarkus") < 50, "the name survives an 80-column cut: " + line);
+    }
+
+    @Test
     void formatStepLineShowsCheckmarkAndNoteWhenDone() {
         var p = BuildProgress.StepProgress.done("via host reference");
         var line = BuildProgress.formatStepLine("alpha", "url", p, 0, "Ready");

@@ -50,7 +50,8 @@ class RepoClonerShallowTest {
         upstream = releasesFixture(tmp);
         server = new dev.incusspawn.git.GitTestServer(tmp);
 
-        preparation = new dev.incusspawn.git.GitPreparation(dev.incusspawn.config.GitCacheConfig.DEFAULT);
+        preparation = new dev.incusspawn.git.GitPreparation(dev.incusspawn.config.GitCacheConfig.DEFAULT,
+                dev.incusspawn.config.GitTransferConfig.DEFAULT);
         incus = mock(IncusClient.class);
         container = new Container(incus, "test");
         // The guest is this machine; a reference is a plain directory here, so it needs no mount wait.
