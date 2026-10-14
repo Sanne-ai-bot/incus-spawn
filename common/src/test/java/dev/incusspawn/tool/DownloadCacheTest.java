@@ -3,6 +3,7 @@ package dev.incusspawn.tool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
@@ -12,8 +13,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -386,9 +391,144 @@ class DownloadCacheTest {
         }
     }
 
+    private static final byte[] BODY = "0123456789".repeat(10).getBytes(StandardCharsets.UTF_8);
+    private static final byte[] CHANGED = "abcdefghij".repeat(10).getBytes(StandardCharsets.UTF_8);
+    private static final Map<String, String> V1 = Map.of("ETag", "\"v1\"");
+
+    /** One server answer per request, numbered from 1. */
+    private interface Answer {
+        void answer(int request, HttpExchange ex) throws IOException;
+    }
+
+    /**
+     * Downloads from a server giving {@code answer}, with one retry, recording each request's
+     * {@code Range} and {@code If-Range} ({@code -} for none), and returns the file's bytes.
+     */
+    private static byte[] downloadResuming(Path cacheDir, Answer answer, List<String> requests,
+                                           List<Duration> paused, RecordingListener listener) throws IOException {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var count = new AtomicInteger();
+        server.createContext("/asset", ex -> {
+            var range = ex.getRequestHeaders().getFirst("Range");
+            requests.add(range == null ? "-" : range + " " + ex.getRequestHeaders().getFirst("If-Range"));
+            answer.answer(count.incrementAndGet(), ex);
+        });
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/asset";
+            // A single retry: starting over after a refused resume must not use up a second one.
+            var cache = new DownloadCache(cacheDir, uri -> false, List.of(Duration.ofSeconds(2)), paused::add);
+            return Files.readAllBytes(cache.downloadAllowingLocalFile(url, null, listener));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** A 200 with the whole of {@code body} promised, dropping the connection after {@code cutAt} bytes. */
+    private static void whole(HttpExchange ex, byte[] body, Map<String, String> headers, int cutAt) throws IOException {
+        headers.forEach(ex.getResponseHeaders()::add);
+        ex.sendResponseHeaders(200, body.length);
+        ex.getResponseBody().write(body, 0, Math.min(cutAt, body.length));
+        // Flushed, or the connection closes before the headers and the JDK client retries on its own.
+        ex.getResponseBody().flush();
+        ex.close();
+    }
+
+    /** A 206 with {@code body} from {@code from} on, labelled with {@code contentRange}. */
+    private static void rest(HttpExchange ex, byte[] body, Map<String, String> headers, int from,
+                             String contentRange) throws IOException {
+        headers.forEach(ex.getResponseHeaders()::add);
+        ex.getResponseHeaders().add("Content-Range", contentRange);
+        ex.sendResponseHeaders(206, body.length - from);
+        ex.getResponseBody().write(body, from, body.length - from);
+        ex.close();
+    }
+
+    @Test
+    void aBrokenBodyIsResumedFromWhereItStopped(@TempDir Path cacheDir) throws IOException {
+        var requests = new ArrayList<String>();
+        var paused = new ArrayList<Duration>();
+        var listener = new RecordingListener();
+        var result = downloadResuming(cacheDir, (n, ex) -> {
+            if (n == 1) whole(ex, BODY, V1, 40);
+            else rest(ex, BODY, V1, 40, "bytes 40-99/100");
+        }, requests, paused, listener);
+        assertArrayEquals(BODY, result);
+        assertEquals(List.of("-", "bytes=40- \"v1\""), requests, "only the missing range is asked for");
+        assertEquals(1, paused.size());
+        // The resumed attempt reports where it starts, so its percentage does not jump back to 0.
+        assertEquals(List.of(0L, 40L), listener.starts);
+    }
+
+    @Test
+    void aLastModifiedDateIsEnoughToResume(@TempDir Path cacheDir) throws IOException {
+        // Strong only when the server's Date is at least a second later; the JDK server sends today's.
+        var dated = Map.of("Last-Modified", "Tue, 01 Oct 2024 10:00:00 GMT");
+        var requests = new ArrayList<String>();
+        var result = downloadResuming(cacheDir, (n, ex) -> {
+            if (n == 1) whole(ex, BODY, dated, 40);
+            else rest(ex, BODY, dated, 40, "bytes 40-99/100");
+        }, requests, new ArrayList<>(), new RecordingListener());
+        assertArrayEquals(BODY, result);
+        assertEquals(List.of("-", "bytes=40- Tue, 01 Oct 2024 10:00:00 GMT"), requests);
+    }
+
+    @Test
+    void aServerIgnoringTheRangeSendsTheWholeBodyAgain(@TempDir Path cacheDir) throws IOException {
+        var requests = new ArrayList<String>();
+        var result = downloadResuming(cacheDir, (n, ex) -> whole(ex, BODY, V1, n == 1 ? 40 : BODY.length),
+                requests, new ArrayList<>(), new RecordingListener());
+        assertArrayEquals(BODY, result, "the 200 replaces the partial body instead of being appended to it");
+        assertEquals(List.of("-", "bytes=40- \"v1\""), requests);
+    }
+
+    @Test
+    void aRangeThatDoesNotContinueTheFileStartsOver(@TempDir Path cacheDir) throws IOException {
+        var v2 = Map.of("ETag", "\"v2\"");
+        // Each answer to the Range request, then the whole file the next request must get.
+        record Case(String name, Answer refusal, byte[] file, Map<String, String> headers) {}
+        for (var c : List.of(
+                // As GitHub's asset store does: a 206 even though If-Range names an older ETag.
+                new Case("changed file", (n, ex) -> rest(ex, CHANGED, v2, 40, "bytes 40-99/100"), CHANGED, v2),
+                new Case("other start", (n, ex) -> rest(ex, BODY, V1, 30, "bytes 30-99/100"), BODY, V1),
+                new Case("416", (n, ex) -> {
+                    ex.getResponseHeaders().add("Content-Range", "bytes */100");
+                    ex.sendResponseHeaders(416, -1);
+                    ex.close();
+                }, BODY, V1))) {
+            var requests = new ArrayList<String>();
+            var paused = new ArrayList<Duration>();
+            var result = downloadResuming(cacheDir, (n, ex) -> {
+                if (n == 1) whole(ex, BODY, V1, 40);
+                else if (n == 2) c.refusal().answer(n, ex);
+                else whole(ex, c.file(), c.headers(), c.file().length);
+            }, requests, paused, new RecordingListener());
+            assertArrayEquals(c.file(), result, c.name() + ": nothing spliced onto the partial body");
+            assertEquals(List.of("-", "bytes=40- \"v1\"", "-"), requests, c.name());
+            assertEquals(1, paused.size(), c.name() + ": starting over is part of the same attempt");
+        }
+    }
+
+    @Test
+    void withoutAStrongValidatorABrokenBodyStartsOver(@TempDir Path cacheDir) throws IOException {
+        // Nothing a 206 could be checked against: a weak ETag, a Last-Modified as recent as the
+        // response (the file may change again within that second), or neither.
+        var justNow = DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC));
+        for (var headers : List.of(Map.of("ETag", "W/\"v1\""), Map.of("Last-Modified", justNow),
+                Map.<String, String>of())) {
+            var requests = new ArrayList<String>();
+            var result = downloadResuming(cacheDir, (n, ex) -> whole(ex, BODY, headers, n == 1 ? 40 : BODY.length),
+                    requests, new ArrayList<>(), new RecordingListener());
+            assertArrayEquals(BODY, result);
+            assertEquals(List.of("-", "-"), requests, headers.toString());
+        }
+    }
+
     /** Records what a download reported, in order. */
     private static final class RecordingListener implements DownloadCache.Listener {
         final List<String> events = new ArrayList<>();
+        /** The bytes each run of {@link #received} started from. */
+        final List<Long> starts = new ArrayList<>();
         long lastBytes = -1;
         long lastTotal;
 
@@ -399,7 +539,10 @@ class DownloadCacheTest {
 
         @Override
         public void received(long bytes, long total) {
-            if (events.isEmpty() || !events.get(events.size() - 1).equals("received")) events.add("received");
+            if (events.isEmpty() || !events.get(events.size() - 1).equals("received")) {
+                events.add("received");
+                starts.add(bytes);
+            }
             lastBytes = bytes;
             lastTotal = total;
         }

@@ -7,6 +7,7 @@ import java.net.ProtocolException;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
@@ -16,6 +17,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -23,6 +27,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicReference;
@@ -79,8 +84,9 @@ public class DownloadCache {
         default void received(long bytes, long total) {}
 
         /**
-         * An attempt failed transiently and the download starts over from byte 0 after a pause;
-         * {@link #received} then counts from zero again.
+         * An attempt failed transiently and the download goes on after a pause: from where its body
+         * broke off when the server can resume it, otherwise from byte 0. The next {@link #received}
+         * reports where it starts.
          *
          * @param reason why the previous attempt failed, e.g. {@code HTTP 500 from example.com}
          */
@@ -210,11 +216,13 @@ public class DownloadCache {
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build()) {
             var failures = new ArrayList<TransientDownloadException>();
+            // The file a broken body on disk belongs to, so a later attempt can ask for the rest.
+            var resume = new AtomicReference<Partial>();
             for (int attempt = 0; ; attempt++) {
                 try {
                     // Each attempt starts again from the original URL: a redirect target is often
                     // a short-lived signed URL, and the failing hop may be the redirector itself.
-                    fetchOnce(client, uri, url, tmp, listener);
+                    fetchOnce(client, uri, url, tmp, listener, resume);
                     return;
                 } catch (TransientDownloadException e) {
                     failures.add(e);
@@ -259,25 +267,53 @@ public class DownloadCache {
         }
     }
 
-    private void fetchOnce(HttpClient client, URI uri, String url, Path tmp, Listener listener)
-            throws IOException, InterruptedException {
+    private void fetchOnce(HttpClient client, URI uri, String url, Path tmp, Listener listener,
+                           AtomicReference<Partial> resume) throws IOException, InterruptedException {
         // Checked again on every attempt, just before connecting: a retry comes seconds after the
         // first check, by when the JDK's address cache may have let a rebinding domain move to
         // 127.0.0.1.
         requireRemote(uri, url);
+        var partial = resume.get();
+        var offset = partial == null ? 0 : Files.size(tmp);
+        if (partial != null && (offset == 0 || offset >= partial.length())) {
+            partial = null;
+            offset = 0;
+        }
+        var asked = partial;
+        var from = offset;
         var current = uri;
         for (int hops = 0; ; hops++) {
-            var request = HttpRequest.newBuilder(current).GET().build();
+            var builder = HttpRequest.newBuilder(current).GET();
+            if (asked != null) {
+                // On every hop, since which one serves the file is only known from its answer; a
+                // redirect ignores it. If-Range is sent but not relied on: GitHub's asset store
+                // answers 206 to a mismatched one, so the 206 is checked here.
+                builder.header("Range", "bytes=" + from + "-").header("If-Range", asked.validator());
+            }
+            var request = builder.build();
             var body = new AtomicReference<CountingSubscriber<Path>>();
-            // Only a 200 body reaches the disk: a redirect or error body is discarded unread, so a
-            // server cannot fill the host's disk through responses that never become the download.
+            // Only the file reaches the disk (a 200, or a 206 continuing it): a redirect or error body
+            // is discarded unread, so a server cannot fill the host's disk through responses that
+            // never become the download.
             HttpResponse<Path> response;
             try {
                 response = client.send(request, info -> {
-                    if (info.statusCode() != 200) return HttpResponse.BodySubscribers.replacing(tmp);
-                    body.set(new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
-                            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
-                            info.headers().firstValueAsLong("Content-Length").orElse(-1), listener));
+                    var headers = info.headers();
+                    if (info.statusCode() == 200) {
+                        resume.set(Partial.of(headers));
+                        body.set(new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
+                                StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
+                                0, headers.firstValueAsLong("Content-Length").orElse(-1), listener));
+                    } else if (info.statusCode() == 206 && asked != null && asked.continuedBy(headers, from)) {
+                        body.set(new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
+                                StandardOpenOption.WRITE, StandardOpenOption.APPEND),
+                                from, asked.length(), listener));
+                    } else if (info.statusCode() == 206) {
+                        // Not the rest of this file, and possibly most of another: not read at all.
+                        return cancelling(tmp);
+                    } else {
+                        return HttpResponse.BodySubscribers.replacing(tmp);
+                    }
                     return body.get();
                 });
             } catch (IOException e) {
@@ -299,7 +335,14 @@ public class DownloadCache {
                 throw new IOException("Download failed: " + reason + " for " + url, e);
             }
             var status = response.statusCode();
-            if (status == 200) return;
+            if (body.get() != null) return;
+            if (asked != null && (status == 206 || status == 416)) {
+                // The server would not continue the broken body: start over from byte 0, in the same
+                // attempt, since finding that out must not use up a retry.
+                resume.set(null);
+                fetchOnce(client, uri, url, tmp, listener, resume);
+                return;
+            }
             if (!isRedirect(status)) {
                 var reason = "HTTP " + status + " from " + current.getHost();
                 if (RETRIED_STATUSES.contains(status)) {
@@ -326,6 +369,77 @@ public class DownloadCache {
             requireRemote(next, url);
             current = next;
         }
+    }
+
+    /**
+     * The file a {@code 200} started to deliver, as far as a later {@code 206} can be checked
+     * against it: its validator and its length. Only made for a body that arrives as it is stored
+     * (no {@code Content-Encoding}) and has a strong validator, since a body without a checksum
+     * depends on this check alone.
+     */
+    private record Partial(String validator, long length) {
+        static Partial of(HttpHeaders headers) {
+            var validator = validator(headers);
+            var length = headers.firstValueAsLong("Content-Length").orElse(-1);
+            if (validator == null || length <= 0 || headers.firstValue("Content-Encoding").isPresent()) return null;
+            return new Partial(validator, length);
+        }
+
+        /** Whether a {@code 206} is the rest of this file from {@code offset}: same file, same length, to its end. */
+        boolean continuedBy(HttpHeaders headers, long offset) {
+            return validator.equals(validator(headers))
+                    && headers.firstValue("Content-Encoding").isEmpty()
+                    && headers.firstValue("Content-Range")
+                            .filter(("bytes " + offset + "-" + (length - 1) + "/" + length)::equals).isPresent()
+                    && headers.firstValueAsLong("Content-Length").orElse(-1) == length - offset;
+        }
+
+        /**
+         * A strong {@code ETag}, or else a {@code Last-Modified} at least a second older than the
+         * response, as RFC 9110 (8.8.2.2) lets it stand in; where there is an {@code ETag},
+         * {@code Last-Modified} may not (13.1.5), so a weak one leaves none.
+         */
+        private static String validator(HttpHeaders headers) {
+            var etag = headers.firstValue("ETag").orElse(null);
+            if (etag != null) return etag.startsWith("W/") ? null : etag;
+            var lastModified = headers.firstValue("Last-Modified").orElse(null);
+            var date = headers.firstValue("Date").orElse(null);
+            if (lastModified == null || date == null) return null;
+            try {
+                var modified = ZonedDateTime.parse(lastModified, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
+                var sent = ZonedDateTime.parse(date, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
+                return sent.minusSeconds(1).isBefore(modified) ? null : lastModified;
+            } catch (DateTimeParseException e) {
+                return null;
+            }
+        }
+    }
+
+    /** Completes with {@code value} at once and cancels the body, closing the connection unread. */
+    private static <T> HttpResponse.BodySubscriber<T> cancelling(T value) {
+        return new HttpResponse.BodySubscriber<>() {
+            @Override
+            public CompletionStage<T> getBody() {
+                return CompletableFuture.completedFuture(value);
+            }
+
+            @Override
+            public void onSubscribe(Flow.Subscription subscription) {
+                subscription.cancel();
+            }
+
+            @Override
+            public void onNext(List<ByteBuffer> item) {
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+            }
+
+            @Override
+            public void onComplete() {
+            }
+        };
     }
 
     /**
@@ -371,8 +485,10 @@ public class DownloadCache {
         volatile boolean networkFailure;
         volatile RuntimeException localFailure;
 
-        CountingSubscriber(HttpResponse.BodySubscriber<T> delegate, long total, Listener listener) {
+        /** @param from the bytes already on disk, which a resumed body continues */
+        CountingSubscriber(HttpResponse.BodySubscriber<T> delegate, long from, long total, Listener listener) {
             this.delegate = delegate;
+            this.received = from;
             this.total = total;
             this.listener = listener;
         }
@@ -385,7 +501,7 @@ public class DownloadCache {
         @Override
         public void onSubscribe(Flow.Subscription subscription) {
             this.subscription = subscription;
-            if (report(0)) delegate.onSubscribe(subscription);
+            if (report(received)) delegate.onSubscribe(subscription);
         }
 
         @Override

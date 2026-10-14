@@ -161,11 +161,14 @@ class BuildProgressTest {
     void transferShowsPercentRateAndTimeLeft() {
         long mb = 1024 * 1024;
         assertEquals("25%  100.0 MB / 400.0 MB  10.0 MB/s  30s left",
-                BuildProgress.describeTransfer(100 * mb, 400 * mb, 10_000_000_000L));
+                BuildProgress.describeTransfer(100 * mb, 0, 400 * mb, 10_000_000_000L));
         // Without a Content-Length there is no percentage or estimate.
-        assertEquals("100.0 MB  10.0 MB/s", BuildProgress.describeTransfer(100 * mb, -1, 10_000_000_000L));
+        assertEquals("100.0 MB  10.0 MB/s", BuildProgress.describeTransfer(100 * mb, 0, -1, 10_000_000_000L));
         // Within the first second the rate is not yet meaningful.
-        assertEquals("0%  64.0 KB / 400.0 MB", BuildProgress.describeTransfer(64 * 1024, 400 * mb, 200_000_000L));
+        assertEquals("0%  64.0 KB / 400.0 MB", BuildProgress.describeTransfer(64 * 1024, 0, 400 * mb, 200_000_000L));
+        // A resumed download counts the bytes it started from in the percentage, not in the rate.
+        assertEquals("75%  300.0 MB / 400.0 MB  10.0 MB/s  10s left",
+                BuildProgress.describeTransfer(300 * mb, 200 * mb, 400 * mb, 10_000_000_000L));
     }
 
     @Test
@@ -184,8 +187,9 @@ class BuildProgressTest {
         assertTrue(progress.fetched());
         progress.retrying("HTTP 500 from example.com", 2, 3);
         assertEquals("HTTP 500 from example.com, retrying (attempt 2 of 3)", progress.detail());
-        progress.received(0, 4096);
-        assertTrue(progress.detail().startsWith("0%  0 B / 4.0 KB"), progress.detail());
+        // Resumed where the body broke off: the percentage carries on from there.
+        progress.received(1024, 4096);
+        assertTrue(progress.detail().startsWith("25%  1.0 KB / 4.0 KB"), progress.detail());
         progress.verifying();
         assertEquals("verifying checksum", progress.detail());
 

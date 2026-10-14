@@ -2149,7 +2149,15 @@ So it applies to all definitions, trusted or not:
   What another attempt cannot fix fails at once: other statuses, these rules' refusals, an unresolvable name, a TLS handshake or certificate failure, a malformed response, and anything on this side of the connection (a failed write to the cache, a throwing `Listener`).
   `CountingSubscriber` tells the two apart once the body has started, since only the connection signals `onError`.
   The error names each distinct failure with its host, since behind a redirect the failing host is not the one in the URL.
-  A retry restarts from byte 0; resuming with `Range` is a possible follow-up.
+- **A broken body is resumed, checked by isx rather than by the server.**
+  When a `200`'s body breaks off, the next attempt keeps the partial file and asks for the rest with `Range: bytes=<size>-` and `If-Range`.
+  It still starts at the original URL, so the host-local check and a fresh signed redirect target come with it; the `Range` goes on every hop, since only the answer says which hop serves the file, and a redirect ignores it.
+  `If-Range` is not relied on: GitHub's asset store answers `206` to a mismatched one (measured for #900).
+  So only a `206` that carries the first response's validator, a `Content-Range` from the byte on disk to the end of the same length, and the matching `Content-Length` is appended.
+  A `200` replaces the partial file; a `416` or any other `206` starts over from byte 0 in the same attempt, without using up a retry.
+  A download is resumable only when its `200` had a validator a `206` can be checked against (a strong `ETag`, or a `Last-Modified` at least a second older than its `Date` when there is no `ETag`, the same rule as the proxy's `CachingDownload`), a length, and no `Content-Encoding`; otherwise it restarts from byte 0.
+  That matters most for downloads without a `sha256` (appliance artifacts, some tools), which have only this check.
+  Every large download (base images, the macOS appliance VM artifacts, tool tarballs, the Claude binary) goes through `DownloadCache`, and one that moves off it should keep its retries and resume rather than grow its own.
 - **DNS rebinding cannot split check from connect.**
   A rebinding domain answers with a public address for the check and `127.0.0.1` for the connection.
   But both resolve through the JDK's in-process address cache, which keeps a successful lookup for 30 seconds whatever TTL the DNS answer carries, so the connection a few milliseconds after the check sees the same address.
