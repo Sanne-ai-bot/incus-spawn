@@ -85,6 +85,11 @@ final class BuildProgress {
         // Set when the body starts, so re-hashing a stale cached copy and connecting do not
         // count against the rate, the time left or the reported duration.
         private volatile long start;
+        // Where the body started from: a resumed attempt continues bytes an earlier one fetched,
+        // which the rate must not count
+        private volatile long from;
+        // When the first attempt's body started: a resumed download took all its attempts
+        private volatile long began;
         private volatile String phase = "connecting";
         private volatile long bytes;
         private volatile long total = -1;
@@ -98,7 +103,11 @@ final class BuildProgress {
 
         @Override
         public void received(long bytes, long total) {
-            if (start == 0) start = System.nanoTime();
+            if (start == 0) {
+                start = System.nanoTime();
+                from = bytes;
+                if (began == 0) began = start;
+            }
             this.bytes = bytes;
             this.total = total;
             fetched = true;
@@ -107,8 +116,8 @@ final class BuildProgress {
 
         @Override
         public void retrying(String reason, int attempt, int attempts) {
-            // The next attempt starts from byte 0, so its rate and time left must not count the
-            // failed one or the pause.
+            // The next attempt resumes or starts from byte 0; either way its rate and time left
+            // must not count the failed one or the pause.
             start = 0;
             bytes = 0;
             total = -1;
@@ -128,22 +137,26 @@ final class BuildProgress {
 
         String detail() {
             var p = phase;
-            return p != null ? p : describeTransfer(bytes, total, System.nanoTime() - start);
+            return p != null ? p : describeTransfer(bytes, from, total, System.nanoTime() - start);
         }
 
-        /** Size and duration of a finished download, e.g. {@code 1.9 GB in 5m 12s}. */
+        /**
+         * Size and duration of a finished download, e.g. {@code 1.9 GB in 5m 12s}: from its first
+         * byte, across retries, since a resumed attempt fetched only the rest.
+         */
         String summary() {
             var finished = end != 0 ? end : System.nanoTime();
-            return CleanCommand.formatSize(bytes) + " in " + formatDuration(finished - start);
+            return CleanCommand.formatSize(bytes) + " in " + formatDuration(finished - began);
         }
     }
 
     /**
      * {@code 42%  812.0 MB / 1.9 GB  3.1 MB/s  4m 30s left}, or just the size and rate when the
-     * server sent no length. The rate waits for a full second of data, since the first chunks
-     * alone would project a wildly wrong one.
+     * server sent no length. The rate counts the bytes since {@code from} (where a resumed download
+     * started), and waits for a full second of data, since the first chunks alone would project a
+     * wildly wrong one.
      */
-    static String describeTransfer(long bytes, long total, long elapsedNanos) {
+    static String describeTransfer(long bytes, long from, long total, long elapsedNanos) {
         var sb = new StringBuilder();
         if (total > 0) {
             sb.append(Math.min(100, bytes * 100 / total)).append("%  ")
@@ -151,8 +164,8 @@ final class BuildProgress {
         } else {
             sb.append(CleanCommand.formatSize(bytes));
         }
-        if (elapsedNanos >= 1_000_000_000L && bytes > 0) {
-            double perSecond = bytes / (elapsedNanos / 1e9);
+        if (elapsedNanos >= 1_000_000_000L && bytes > from) {
+            double perSecond = (bytes - from) / (elapsedNanos / 1e9);
             sb.append("  ").append(CleanCommand.formatSize((long) perSecond)).append("/s");
             if (total > bytes) {
                 sb.append("  ").append(formatDuration((long) ((total - bytes) / perSecond * 1e9))).append(" left");
