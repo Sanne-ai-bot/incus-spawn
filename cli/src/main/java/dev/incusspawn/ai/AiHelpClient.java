@@ -8,6 +8,7 @@ import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.config.SpawnConfig;
 
 import dev.incusspawn.proxy.ProxyConfig;
+import dev.incusspawn.util.OutputFormat;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -355,7 +356,7 @@ public class AiHelpClient {
                         break;
                     case "error":
                         var errMsg = node.getField("error").pathText("message", "Unknown error");
-                        throw new IOException("API stream error: " + errMsg);
+                        throw new IOException("API stream error: " + OutputFormat.oneLine(errMsg));
                 }
             }
         }
@@ -403,9 +404,11 @@ public class AiHelpClient {
     /**
      * Renders an error response as a diagnosable one-liner. Providers sometimes answer with a
      * deliberately unhelpful {@code message} (an OAuth token used outside Claude Code returns a
-     * bare "Error"), so the error type and request id carry the signal and must survive.
+     * bare "Error"), so the error type and request id carry the signal and must survive. The
+     * provider wrote all of it, so it goes through {@link OutputFormat#oneLine}: it cannot drive
+     * the terminal it is shown on.
      */
-    private static String describeError(int status, String body) {
+    static String describeError(int status, String body) {
         var detail = new StringBuilder("API error (").append(status);
         String message = null;
         try {
@@ -426,7 +429,7 @@ public class AiHelpClient {
         } else {
             detail.append("no response body");
         }
-        return detail.toString();
+        return OutputFormat.oneLine(detail.toString());
     }
 
     private static InputStream sendStream(HttpRequest request) throws IOException {

@@ -165,4 +165,23 @@ class AiHelpClientTest {
         sb.append("data: [DONE]\n\n");
         return new java.io.ByteArrayInputStream(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
+
+    @Test
+    void providerErrorCannotDriveTheTerminal() {
+        // The error is shown by isx ask and in AI Help; the provider wrote its body.
+        assertEquals("API error (401, auth  x, req [2J): bad  key ]0;t ",
+                AiHelpClient.describeError(401, """
+                        {"error":{"type":"auth\\u202E\\u009bx","message":"bad\\r\\nkey\\u001b]0;t\\u0007"},\
+                        "request_id":"req\\u001b[2J"}"""));
+        assertEquals("API error (502): <html>  </html>", AiHelpClient.describeError(502, "<html>\u0085\n</html>"));
+    }
+
+    @Test
+    void streamErrorCannotDriveTheTerminal() {
+        var stream = sse("""
+                {"type":"error","error":{"message":"overloaded\\u001b[2J"}}
+                """);
+        var e = assertThrows(java.io.IOException.class, () -> AiHelpClient.processStream(stream, s -> {}));
+        assertEquals("API stream error: overloaded [2J", e.getMessage());
+    }
 }
