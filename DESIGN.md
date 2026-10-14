@@ -362,6 +362,19 @@ Enablement is purely the `features` list: the earlier "a configured `openai.apiK
 Builds never fetch into or create user working checkouts for acceleration (#1395).
 `GitPreparation` reads matching checkouts as object sources and reconciles against the real remote in owned staging.
 Explicit `isx update-all` still uses `HostRepoRefresh` to fetch linked checkouts; its existing managed-shallow depth policy remains intact.
+Every host Git command that talks to a remote runs through `GitProcess` (#1343).
+It is non-interactive (`GIT_TERMINAL_PROMPT=0`, stdin `/dev/null`, SSH `BatchMode` unless the environment or `core.sshCommand` already picks the SSH command, which `GIT_SSH_COMMAND` would override), and it reads Git's `--progress` output on its own thread into a bounded tail (the last 20 lines of up to 200 characters, terminal escapes and control characters removed, since a remote's text reaches the terminal).
+A `\r` alone ends a progress update; `\r\n`, as ssh ends its messages, ends a whole line that the tail keeps.
+The calling thread polls instead of reading, so it can stop Git at any time.
+It stops a transfer that exceeds the `git-transfer:` total limit, or that stalls for the stall budget: no output, no I/O (`/proc/<pid>/io`, sockets included, on Linux), and less than 5% of a CPU across Git and its live helpers between samples, a second or more apart.
+Any change in CPU time is not enough: an idle `git-remote-http` polls curl and gains a clock tick a minute while its server says nothing.
+Usage is kept per process, so a helper that exits neither looks like work nor takes the others' usage with it.
+Silence alone is not a stall, since resolving deltas or writing a pack is quiet but busy, and a server that is still building a pack sends keepalives; where CPU times are unavailable only the total limit applies.
+On macOS the JDK reports CPU time only for its own process, so the tree's CPU times come from `ps -o pid=,time=` instead.
+There are no I/O counters there, so a server that builds a pack for longer than the stall budget, sending only keepalives and no progress, is taken for a stall.
+On a stop or an interrupt it sends Git and every helper it started a SIGTERM, so Git can remove its temporary packs and locks, then a SIGKILL after two seconds; it waits (bounded) for them to exit, and stops waiting for a helper that still holds the pipe.
+`update-all` shows each fetch's elapsed time and latest progress line live, or a "Still fetching" line every 30s off a terminal; a stopped fetch is the usual non-fatal warning and leaves the checkout as it was.
+A clone it stops is deleted, since an incomplete clone is no checkout.
 `--skip-git-refresh` remains accepted by builds as a compatibility no-op.
 Checkout discovery and instance push/pull linking still use `host-paths` and `repo-paths`.
 

@@ -73,6 +73,9 @@ public class SpawnConfig {
     @JqName("git-cache")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object gitCache;
+    @JqName("git-transfer")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object gitTransfer;
     @JqName("ready-timeouts")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object readyTimeouts;
@@ -642,6 +645,8 @@ public class SpawnConfig {
     public ArtifactCacheConfig artifactCache() { return ArtifactCacheConfig.of(artifactCache); }
     /** Bounded, immutable remote-derived Git snapshots. */
     public GitCacheConfig gitCache() { return GitCacheConfig.of(gitCache); }
+    /** Stall and total bounds for host-side Git transfers. */
+    public GitTransferConfig gitTransfer() { return GitTransferConfig.of(gitTransfer); }
     /** The {@code ready-timeouts:} section, or null when there is none. */
     public ReadyTimeoutsConfig readyTimeouts() { return ReadyTimeoutsConfig.of(readyTimeouts); }
     /** The {@code host-routes:} section; it has no routes when there is none. */
@@ -796,6 +801,7 @@ public class SpawnConfig {
         this.tuiLiveRefresh = other.tuiLiveRefresh;
         this.artifactCache = other.artifactCache;
         this.gitCache = other.gitCache;
+        this.gitTransfer = other.gitTransfer;
         this.readyTimeouts = other.readyTimeouts;
         this.hostRoutes = other.hostRoutes;
         this.hostCa = other.hostCa;

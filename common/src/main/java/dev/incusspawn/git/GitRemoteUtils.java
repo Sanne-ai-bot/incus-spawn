@@ -1,5 +1,6 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.config.GitTransferConfig;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
@@ -22,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 public final class GitRemoteUtils {
@@ -250,6 +252,24 @@ public final class GitRemoteUtils {
             if (process != null) process.destroyForcibly();
             Thread.currentThread().interrupt();
             return new ExecResult(false, "interrupted");
+        }
+    }
+
+    /**
+     * A host Git command that talks to a remote, under {@code limits}: see {@link GitProcess}. A stopped
+     * transfer's output is the reason it was stopped, so a warning names it.
+     */
+    static ExecResult hostGitTransfer(Path repoDir, GitTransferConfig limits, Consumer<GitProcess.Progress> progress,
+                                      String... gitArgs) {
+        var command = new ArrayList<>(List.of("git", "-C", repoDir.toString()));
+        command.addAll(List.of(gitArgs));
+        try {
+            var result = GitProcess.run(new ProcessBuilder(command).redirectErrorStream(true), repoDir, limits, progress);
+            if (result.stopReason() == null) return new ExecResult(result.success(), result.diagnostics());
+            var said = result.diagnostics().lines().reduce((a, b) -> b).orElse(null);
+            return new ExecResult(false, result.stopReason() + (said == null ? "" : " (Git's last line: " + said + ")"));
+        } catch (IOException e) {
+            return new ExecResult(false, e.toString());
         }
     }
 

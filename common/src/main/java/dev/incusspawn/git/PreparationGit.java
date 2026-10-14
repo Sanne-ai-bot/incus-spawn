@@ -42,7 +42,7 @@ final class PreparationGit {
             // In particular, do not inherit an alternate, a worktree, replace refs or injected -c options.
             // Keep the normal host config/credential helpers for authenticating the real remote.
             builder.environment().keySet().removeIf(k -> k.startsWith("GIT_") && !TRANSPORT_ENV.contains(k));
-            nonInteractiveSsh(builder.environment());
+            nonInteractiveSsh(builder.environment(), null);
             builder.environment().put("GIT_TERMINAL_PROMPT", "0");
             builder.environment().put("GIT_OPTIONAL_LOCKS", "0");
             builder.environment().put("LC_ALL", "C");
@@ -70,9 +70,37 @@ final class PreparationGit {
         }
     }
 
-    static void nonInteractiveSsh(java.util.Map<String, String> environment) {
-        if (!environment.containsKey("GIT_SSH_COMMAND") && !environment.containsKey("GIT_SSH")) {
-            environment.put("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+    /**
+     * SSH without passphrase or host-key prompts, unless the environment or Git's config for {@code repo}
+     * ({@code core.sshCommand}) already chooses the SSH command: that choice is the user's, and
+     * {@code GIT_SSH_COMMAND} would override it. Such a command can still prompt; the stall budget bounds it.
+     * Git's config is read with {@code environment}, the one the real command runs with; when that read
+     * cannot tell, the user's possible choice is kept.
+     */
+    static void nonInteractiveSsh(java.util.Map<String, String> environment, Path repo) {
+        if (environment.containsKey("GIT_SSH_COMMAND") || environment.containsKey("GIT_SSH")) return;
+        if (repo != null && !sshCommandUnset(environment, repo)) return;
+        environment.put("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+    }
+
+    /** True only when Git says {@code core.sshCommand} is unset ({@code git config --get} exits 1). */
+    private static boolean sshCommandUnset(java.util.Map<String, String> environment, Path repo) {
+        var probe = new ProcessBuilder("git", "-C", repo.toString(), "config", "--get", "core.sshCommand")
+                .redirectInput(Path.of("/dev/null").toFile()).redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD);
+        probe.environment().clear();
+        probe.environment().putAll(environment);
+        Process process = null;
+        try {
+            process = probe.start();
+            return process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() == 1;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } finally {
+            if (process != null && process.isAlive()) process.destroyForcibly();
         }
     }
 
