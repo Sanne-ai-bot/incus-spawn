@@ -1,4 +1,5 @@
 import dev.incusspawn.config.GitCacheConfig;
+import dev.incusspawn.config.GitTransferConfig;
 import dev.incusspawn.git.GitPreparation;
 
 import java.nio.file.Files;
@@ -16,7 +17,7 @@ public class GitPreparationBench {
         }
         var cache = persistent ? Path.of(args[1]) : Files.createTempDirectory("isx-git-bench-");
         try {
-            var preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT);
+            var preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT, GitTransferConfig.DEFAULT);
             var request = new GitPreparation.Request(args[offset], null,
                     args.length == offset + 2 ? Path.of(args[offset + 1]) : null);
             for (int trial = 0; trial < 3; trial++) {

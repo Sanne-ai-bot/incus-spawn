@@ -2,6 +2,7 @@ package dev.incusspawn.git;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.GitCacheConfig;
+import dev.incusspawn.config.GitTransferConfig;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -23,13 +24,22 @@ public final class GitPreparation {
     private static final String POLICY = "isx-clean-full-snapshot-v1";
     static final int MAX_INCREMENTAL_PACKS = 32;
     private final PreparationCache cache;
+    private final GitTransferConfig transfer;
 
-    public GitPreparation(GitCacheConfig policy) throws IOException {
-        this(Environment.cacheDir().resolve("git"), policy);
+    public GitPreparation(GitCacheConfig policy, GitTransferConfig transfer) throws IOException {
+        this(Environment.cacheDir().resolve("git"), policy, transfer);
     }
 
-    public GitPreparation(Path cacheRoot, GitCacheConfig policy) throws IOException {
+    /** {@code transfer} bounds the network commands (ls-remote, clone, fetch); local ones keep {@link PreparationGit#LOCAL}. */
+    public GitPreparation(Path cacheRoot, GitCacheConfig policy, GitTransferConfig transfer) throws IOException {
         cache = new PreparationCache(cacheRoot, policy);
+        this.transfer = transfer;
+    }
+
+    /** Where preparation reports its phases, and the progress of a transfer running under one. */
+    public interface Phases extends Consumer<String> {
+        /** {@code detail} is the transfer's elapsed time and Git's latest progress line. */
+        default void progress(String phase, String detail) {}
     }
 
     /** Exact URL (including transport), optional branch/tag, and an optional discovered checkout. */
@@ -83,7 +93,7 @@ public final class GitPreparation {
                 && url.matches("(?:[^/@:]+@)?(?:\\[[0-9a-fA-F:]+\\]|[^/@:]+):[^:].*");
     }
 
-    public Prepared prepare(Request request, Consumer<String> phase) throws IOException {
+    public Prepared prepare(Request request, Phases phase) throws IOException {
         if (!isRemoteUrl(request.url())) throw new IOException("Git preparation requires an HTTPS, SSH or Git remote");
         var timings = new LinkedHashMap<String, Long>();
         var key = hash(POLICY + "\n" + request.url());
@@ -91,9 +101,8 @@ public final class GitPreparation {
         boolean success = false;
         try (var ignored = cache.writer(key)) {
             long start = System.nanoTime();
-            phase.accept("Reading remote refs");
             // Always authenticate/contact the remote, even on a hit. Never serve a stale offline snapshot.
-            var advertised = advertisement(lease.path, request.url());
+            var advertised = advertisement(lease.path, request.url(), phase);
             elapsed(timings, "remote", start);
 
             start = System.nanoTime();
@@ -140,7 +149,8 @@ public final class GitPreparation {
                     incremental = refreshSnapshot(request.url(), previousRepo, manifest, advertised,
                             lease.path, result, phase, timings);
                 } catch (IOException failedRefresh) {
-                    if (Thread.currentThread().isInterrupted()) throw failedRefresh;
+                    // A stalled remote stalls a full clone too: fail now and let the build clone in the guest.
+                    if (Thread.currentThread().isInterrupted() || failedRefresh instanceof TransferStopped) throw failedRefresh;
                     phase.accept("Incremental Git refresh failed; rebuilding snapshot");
                 }
             }
@@ -150,7 +160,8 @@ public final class GitPreparation {
                 try {
                     cloneSnapshot(request.url(), lease.path, result, reference, phase, timings);
                 } catch (IOException failedReference) {
-                    if (reference == null || Thread.currentThread().isInterrupted()) throw failedReference;
+                    if (reference == null || Thread.currentThread().isInterrupted()
+                            || failedReference instanceof TransferStopped) throw failedReference;
                     // A live checkout can be repacked, removed or damaged while we borrow from it.
                     // Discard every byte of the failed attempt and retry once with only the real remote.
                     delete(result);
@@ -216,10 +227,16 @@ public final class GitPreparation {
         return new Reference(checkout.toAbsolutePath(), tips);
     }
 
-    private static void cloneSnapshot(String url, Path work, Path result, Reference reference,
-                                      Consumer<String> phase, Map<String, Long> timings) throws IOException {
+    /** Shows {@code label}, then the transfer's elapsed time and Git's progress under it. */
+    private static Consumer<GitProcess.Progress> live(Phases phase, String label) {
+        phase.accept(label);
+        return progress -> phase.progress(label, progress.summary());
+    }
+
+    private void cloneSnapshot(String url, Path work, Path result, Reference reference,
+                               Phases phase, Map<String, Long> timings) throws IOException {
         long start = System.nanoTime();
-        phase.accept("Creating clean Git snapshot");
+        var progress = live(phase, "Creating clean Git snapshot");
         try {
             var clone = new ArrayList<String>();
             if (reference != null && reference.tips() != null) {
@@ -230,10 +247,10 @@ public final class GitPreparation {
             }
             // A bare clone avoids the commit-graph/checkout bug in older Git's --dissociate.
             // The real remote selects refs; Git's non-thin repack excludes private reference objects.
-            clone.addAll(List.of("clone", "--bare", "--no-local", "--template="));
+            clone.addAll(List.of("clone", "--progress", "--bare", "--no-local", "--template="));
             if (reference != null) clone.addAll(List.of("--reference", reference.repository().toString(), "--dissociate"));
             clone.addAll(List.of("--", url, result.toString()));
-            run(work, null, null, clone);
+            run(work, null, null, clone, transfer, progress);
             if (Files.exists(result.resolve("shallow")) || Files.exists(result.resolve("objects/info/alternates"))) {
                 throw new IOException("Git snapshot is not a standalone full repository");
             }
@@ -256,18 +273,19 @@ public final class GitPreparation {
     }
 
     /** Extend a verified generation without rewriting or decoding its old packs. */
-    private static boolean refreshSnapshot(String url, Path previous, Map<String, String> previousManifest,
+    private boolean refreshSnapshot(String url, Path previous, Map<String, String> previousManifest,
                                            String advertised, Path work, Path result,
-                                           Consumer<String> phase, Map<String, Long> timings) throws IOException {
+                                           Phases phase, Map<String, Long> timings) throws IOException {
         long start = System.nanoTime();
-        phase.accept("Fetching incremental Git snapshot");
+        var progress = live(phase, "Fetching incremental Git snapshot");
         try {
             // Only owned immutable packs are linked. Config, HEAD and refs are recreated independently.
             sanitize(previous, result);
-            git(result, "-c", "fetch.fsckObjects=true", "-c", "fetch.unpackLimit=1",
-                    "fetch", "--atomic", "--prune", "--no-tags", "--no-write-fetch-head",
+            run(result, null, null, List.of("-c", "fetch.fsckObjects=true", "-c", "fetch.unpackLimit=1",
+                    "fetch", "--progress", "--atomic", "--prune", "--no-tags", "--no-write-fetch-head",
                     "--no-auto-maintenance", "--no-write-commit-graph", "--no-recurse-submodules",
-                    "--", url, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+HEAD:refs/isx/remote-head");
+                    "--", url, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+HEAD:refs/isx/remote-head"),
+                    transfer, progress);
         } finally {
             elapsed(timings, "fetch", start);
         }
@@ -345,8 +363,10 @@ public final class GitPreparation {
     }
 
     /** Canonical heads, tags, HEAD target and inferred object format. Unborn/ambiguous HEADs cannot hit. */
-    private static String advertisement(Path work, String url) throws IOException {
-        return parseAdvertisement(git(work, "ls-remote", "--symref", "--", url, "HEAD", "refs/heads/*", "refs/tags/*"));
+    private String advertisement(Path work, String url, Phases phase) throws IOException {
+        return parseAdvertisement(run(work, null, null,
+                List.of("ls-remote", "--symref", "--", url, "HEAD", "refs/heads/*", "refs/tags/*"),
+                transfer, live(phase, "Reading remote refs")));
     }
 
     private static String parseAdvertisement(String output) throws IOException {

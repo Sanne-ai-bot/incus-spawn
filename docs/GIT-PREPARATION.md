@@ -123,6 +123,15 @@ Git may recover by downloading objects it can no longer borrow.
 If the reference clone, dissociation or full integrity check fails, preparation deletes the entire partial repository and retries once from the real remote without any reference.
 An unavailable source during reference selection also uses the remote directly.
 Interruption is propagated, and a failed remote retry cannot publish a snapshot.
+
+Contacting the remote (`ls-remote`, the clone, the incremental fetch) is bounded by `git-transfer:` in `config.yaml` (#1343).
+A transfer is stopped when it stalls: no output, no I/O and next to no CPU in Git or its helpers for the stall budget, five minutes by default.
+It is also stopped at the total limit, three hours by default.
+Git and every helper it started are killed and reaped.
+A stopped transfer is not retried, whether from a reference or as a fresh clone, since the same remote would stall again.
+The build then clones inside the guest, as for any other preparation failure.
+While a transfer runs, the build's repository line shows its elapsed time and Git's latest progress line after the repository's name.
+Local steps such as `fsck` and `repack` keep a fixed 15-minute limit and no stall budget, and reaching it still allows the retry without a reference.
 After successful dissociation, verification, publication and guest copying no longer access the user checkout.
 
 The authoritative remote supplies refs to a new bare transport clone.

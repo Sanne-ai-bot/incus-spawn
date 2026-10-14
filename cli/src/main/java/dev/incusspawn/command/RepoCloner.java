@@ -257,7 +257,7 @@ class RepoCloner {
             }
             if (java.util.Arrays.stream(refs).anyMatch(r -> r != null && r.request() != null)) {
                 try {
-                    preparation = new GitPreparation(config.gitCache());
+                    preparation = new GitPreparation(config.gitCache(), config.gitTransfer());
                 } catch (Exception e) {
                     for (int i = 0; i < refs.length; i++) {
                         if (refs[i] != null && refs[i].request() != null) {
@@ -469,8 +469,13 @@ class RepoCloner {
                                    AtomicReferenceArray<StepProgress> states, int idx, String advertisement) {
         try {
             var request = new GitPreparation.Request(repo.getUrl(), repo.getBranch(), ref.request().checkout());
-            var result = preparation.prepare(request,
-                    phase -> states.set(idx, StepProgress.running(phase)));
+            var result = preparation.prepare(request, new GitPreparation.Phases() {
+                @Override public void accept(String phase) { states.set(idx, StepProgress.running(phase)); }
+                // Git's progress goes after the repo's name, which a narrow terminal must not cut off.
+                @Override public void progress(String phase, String detail) {
+                    states.set(idx, StepProgress.running(phase, detail));
+                }
+            });
             boolean accepted = false;
             try {
                 if (!result.matchesAdvertisement(advertisement)) {

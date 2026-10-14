@@ -1,6 +1,7 @@
 package dev.incusspawn.git;
 
 import dev.incusspawn.config.GitCacheConfig;
+import dev.incusspawn.config.GitTransferConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -44,7 +45,7 @@ class GitPreparationTest {
         git(tmp, "clone", "-q", "--", server.url(remote), host.toString());
         git(host, "repack", "-a", "-d");
         cache = tmp.resolve("cache");
-        preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT);
+        preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT, GitTransferConfig.DEFAULT);
     }
 
     private GitPreparation.Prepared prepare(Path checkout, String branch) throws IOException {
@@ -53,7 +54,7 @@ class GitPreparationTest {
 
     @Test void hostPathsAndFileUrlsCannotPublishPrivateBranches() throws Exception {
         git(remote, "branch", "unpushed-secret");
-        var preparation = new GitPreparation(tmp.resolve("blocked-cache"), GitCacheConfig.DEFAULT);
+        var preparation = new GitPreparation(tmp.resolve("blocked-cache"), GitCacheConfig.DEFAULT, GitTransferConfig.DEFAULT);
         for (var url : List.of(remote.toString(), remote.toUri().toString(), "../private", "./private", "~/private",
                 "C:/private", "ext::cat private", "file:private", "https::private")) {
             assertThrows(IOException.class, () -> preparation.prepare(new GitPreparation.Request(url, null, remote), s -> {}), url);
@@ -557,7 +558,7 @@ class GitPreparationTest {
         assertTrue(Files.isRegularFile(host.resolve(".git/objects/" + tip.substring(0, 2) + "/" + tip.substring(2))));
         // This path is passed to Git's shell-based alternateRefsCommand; it must be quoted literally.
         cache = tmp.resolve("cache ' $(touch unexpected) $literal");
-        preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT);
+        preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT, GitTransferConfig.DEFAULT);
         var before = contents(host.resolve(".git"));
         try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
             if (phase.equals("Creating clean Git snapshot")) {
@@ -702,7 +703,7 @@ class GitPreparationTest {
                 assertEquals(1, PreparationGit.children(cache.resolve("snapshots")).size());
             }
             // A different cache policy can evict every persistent entry, while this reader stays valid.
-            var disabled = new GitPreparation(cache, new GitCacheConfig(0, Duration.ZERO));
+            var disabled = new GitPreparation(cache, new GitCacheConfig(0, Duration.ZERO), GitTransferConfig.DEFAULT);
             try (var next = disabled.prepare(new GitPreparation.Request(server.url(remote), null, null), s -> {})) {
                 assertEquals(oldObjects, allObjects(first.repository()));
                 assertEquals(List.of(), PreparationGit.children(cache.resolve("snapshots")));
@@ -816,7 +817,7 @@ class GitPreparationTest {
 
     public static class Reader {
         public static void main(String[] args) throws Exception {
-            try (var result = new GitPreparation(Path.of(args[0]), GitCacheConfig.DEFAULT)
+            try (var result = new GitPreparation(Path.of(args[0]), GitCacheConfig.DEFAULT, GitTransferConfig.DEFAULT)
                     .prepare(new GitPreparation.Request(args[1], null, null), s -> {})) {
                 Files.writeString(Path.of(args[2]), result.repository().toString());
                 Thread.sleep(TimeUnit.MINUTES.toMillis(1));

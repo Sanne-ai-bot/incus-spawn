@@ -407,6 +407,10 @@ final class BuildProgress {
             case FAILED  -> sb.append("\033[31m✗ ").append(padStatus("Failed")).append("\033[0m "); // raw ANSI: animated line
         }
         sb.append(label);
+        // Live detail before the context, so a long URL is what a narrow terminal cuts off.
+        if (progress.state() == StepState.RUNNING && progress.detail() != null && !progress.detail().isEmpty()) {
+            sb.append("  \033[2m").append(progress.detail()).append("\033[0m"); // raw ANSI: animated line
+        }
         if (dimContext != null && !dimContext.isEmpty()) {
             sb.append(" \033[2m(").append(dimContext).append(")\033[0m"); // raw ANSI: animated line
         }

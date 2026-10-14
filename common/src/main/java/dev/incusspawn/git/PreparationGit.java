@@ -1,5 +1,7 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.config.GitTransferConfig;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -12,20 +14,34 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /** Git in an owned repository. Output goes to files: object enumerations can exceed a pipe or heap. */
 final class PreparationGit {
     private static final Set<String> TRANSPORT_ENV = Set.of("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT",
             "GIT_ASKPASS", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_SSL_NO_VERIFY", "GIT_PROXY_COMMAND",
             "GIT_HTTP_PROXY_AUTHMETHOD", "GIT_HTTP_USER_AGENT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM");
+    /** Local work on owned repositories: no stall budget, since an fsck or repack can be quiet for long. */
+    static final GitTransferConfig LOCAL = new GitTransferConfig(null, Duration.ofMinutes(15));
+
     private PreparationGit() {}
+
+    /** A transfer {@link GitProcess} stopped for stalling or overrunning: retrying it would only wait again. */
+    static final class TransferStopped extends IOException {
+        TransferStopped(String message) { super(message); }
+    }
 
     static String git(Path repo, String... args) throws IOException {
         return run(repo, null, null, List.of(args));
     }
 
     static String run(Path repo, Path input, Path output, List<String> args) throws IOException {
+        return run(repo, input, output, args, LOCAL, progress -> {});
+    }
+
+    /** {@code progress} sees Git's progress only when {@code args} ask for it ({@code --progress}). */
+    static String run(Path repo, Path input, Path output, List<String> args, GitTransferConfig limits,
+                      Consumer<GitProcess.Progress> progress) throws IOException {
         var command = new ArrayList<>(List.of("git", "--no-replace-objects", "-c", "gc.auto=0",
                 "-c", "maintenance.auto=false", "-c", "core.hooksPath=/dev/null",
                 "-c", "pack.writeReverseIndex=false",
@@ -35,39 +51,39 @@ final class PreparationGit {
                 "-c", "protocol.file.allow=never", "-C", repo.toString()));
         command.addAll(args);
         var stdout = output == null ? Files.createTempFile("isx-git-", ".out") : output;
-        var stderr = Files.createTempFile("isx-git-", ".err");
-        Process process = null;
         try {
             var builder = new ProcessBuilder(command);
             // In particular, do not inherit an alternate, a worktree, replace refs or injected -c options.
             // Keep the normal host config/credential helpers for authenticating the real remote.
             builder.environment().keySet().removeIf(k -> k.startsWith("GIT_") && !TRANSPORT_ENV.contains(k));
-            nonInteractiveSsh(builder.environment(), null);
-            builder.environment().put("GIT_TERMINAL_PROMPT", "0");
+            // GitProcess makes it non-interactive (prompts, SSH) and kills the whole tree on a stop.
             builder.environment().put("GIT_OPTIONAL_LOCKS", "0");
             builder.environment().put("LC_ALL", "C");
             builder.redirectInput(input == null ? Path.of("/dev/null").toFile() : input.toFile());
-            builder.redirectOutput(stdout.toFile()).redirectError(stderr.toFile());
-            process = builder.start();
-            if (!process.waitFor(Duration.ofMinutes(15).toMillis(), TimeUnit.MILLISECONDS)) {
-                throw new IOException("Git preparation timed out: " + args.getFirst());
-            }
-            if (process.exitValue() != 0) {
-                // Never include the command/URL: it may contain a credential.
-                throw new IOException("Git preparation failed: " + args.getFirst());
-            }
-            return output == null ? Files.readString(stdout).strip() : "";
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Git preparation interrupted", e);
+            builder.redirectOutput(stdout.toFile());
+            var result = GitProcess.run(builder, limits == LOCAL ? null : repo, limits, progress);
+            // Never include the command/URL or Git's output: they may contain a credential.
+            return switch (result.status()) {
+                case OK -> output == null ? Files.readString(stdout).strip() : "";
+                case FAILED -> throw new IOException("Git preparation failed: " + verb(args));
+                case INTERRUPTED -> throw new IOException("Git preparation interrupted");
+                // A slow local step is not a stalled remote: the usual fallbacks still apply.
+                case STALLED, TIMED_OUT -> throw limits == LOCAL
+                        ? new IOException("Git preparation timed out: " + verb(args)) : new TransferStopped(
+                        "Git preparation " + verb(args) + " " + result.stopReason());
+            };
         } finally {
-            if (process != null && process.isAlive()) {
-                process.descendants().forEach(ProcessHandle::destroyForcibly);
-                process.destroyForcibly();
-            }
             if (output == null) Files.deleteIfExists(stdout);
-            Files.deleteIfExists(stderr);
         }
+    }
+
+    /** The Git command {@code args} run, past any {@code -c} options. */
+    static String verb(List<String> args) {
+        for (int i = 0; i < args.size(); i++) {
+            if (args.get(i).equals("-c")) i++;
+            else return args.get(i);
+        }
+        return "git";
     }
 
     /**

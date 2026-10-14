@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.GitCacheConfig;
+import dev.incusspawn.config.GitTransferConfig;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.git.GitPreparation;
 import dev.incusspawn.incus.Container;
@@ -48,7 +50,7 @@ class RepoClonerPreparedTest {
         git(tmp, "clone", "-q", "--", server.url(remote), host.toString());
         commitBinary(host, "private work");
         git(host, "repack", "-a", "-d");
-        preparation = new dev.incusspawn.git.GitPreparation(dev.incusspawn.config.GitCacheConfig.DEFAULT);
+        preparation = new GitPreparation(GitCacheConfig.DEFAULT, GitTransferConfig.DEFAULT);
         incus = mock(IncusClient.class);
         when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenAnswer(inv -> {
             String script = inv.getArgument(2);
@@ -100,7 +102,7 @@ class RepoClonerPreparedTest {
     @ValueSource(booleans = {false, true})
     void deniedTemplateAccountCannotReceiveEvenAWarmHostSnapshot(boolean warm) throws Exception {
         if (warm) {
-            try (var snapshot = new GitPreparation(dev.incusspawn.config.GitCacheConfig.DEFAULT)
+            try (var snapshot = new GitPreparation(GitCacheConfig.DEFAULT, GitTransferConfig.DEFAULT)
                     .prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {})) { }
         }
         guestConfig = tmp.resolve("guest.config");
