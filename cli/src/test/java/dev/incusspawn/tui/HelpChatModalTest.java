@@ -180,6 +180,24 @@ class HelpChatModalTest {
     }
 
     @Test
+    void answerTextOutsideLinksCannotInjectTerminalCommands() {
+        // #1413: the text around a link, and a line with none, reach the terminal through the same cells.
+        var modal = answering("Plain \u009b2J\u001b]0;owned\u0007 line.\n"
+                + "See [docs](https://example.com) \u009d0;x\u009c\u001b[2J then more.");
+        type(modal, "?");
+        modal.handleKey(CTRL_S);
+        for (int width : new int[] {40, 80}) {
+            var buffer = TuiSnapshot.render(width, 24, f -> modal.render(f, f.area()));
+            var ansi = buffer.toAnsiString();
+            assertTrue(TuiSnapshot.toText(buffer).contains("then more"), ansi);
+            assertFalse(ansi.contains("\u001b]0;owned"), ansi);
+            assertFalse(ansi.contains("\u001b[2J"), ansi);
+            assertFalse(ansi.contains("\u0007"), ansi);
+            assertFalse(ansi.chars().anyMatch(c -> c >= 0x80 && c <= 0x9f), ansi);
+        }
+    }
+
+    @Test
     void multiLineQuestion() {
         var modal = answering(ANSWER);
         type(modal, "Why does this fail?\n\n  Error: proxy CA not trusted\n  at MitmProxy.handshake\n");

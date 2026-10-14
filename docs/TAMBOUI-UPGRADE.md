@@ -13,6 +13,7 @@ Terminal-error recovery and Panama locale parsing fixes apply to our existing ru
 TamboUI now percent-encodes C0, DEL and C1 controls in OSC 8 link parameters, and it stopped escaping `;` and `\` there.
 The second change is the one AI Help sees: 0.5.0 wrote an answer URL containing `;` or `\` as `\;` or `\\`, so the link opened the wrong address.
 The control-character encoding is a backstop, since our own `TerminalLink` strips from a link what `OutputFormat.isControl` names (C0, DEL, C1, line separators and bidi controls) before building the styled span.
+It turns the same characters into spaces in the answer text around a link, line feeds and tabs apart (#1413).
 
 ## Improvements to consider
 

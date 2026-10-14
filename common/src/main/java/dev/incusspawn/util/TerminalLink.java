@@ -45,7 +45,8 @@ public final class TerminalLink {
 
     /**
      * Parse text into {@link Segment}s, detecting markdown links {@code [text](url)}
-     * and bare {@code https://} URLs.
+     * and bare {@code https://} URLs. Every segment is sanitized: text through {@link #plainText}
+     * (#1413), a link's URL and label by dropping every {@link OutputFormat#isControl} character.
      */
     public static List<Segment> parseSegments(String text) {
         var segments = new ArrayList<Segment>();
@@ -53,7 +54,7 @@ public final class TerminalLink {
         int pos = 0;
         while (matcher.find()) {
             if (matcher.start() > pos) {
-                segments.add(new Segment.Text(text.substring(pos, matcher.start())));
+                segments.add(new Segment.Text(plainText(text.substring(pos, matcher.start()))));
             }
             if (matcher.group(1) != null) {
                 segments.add(new Segment.Link(
@@ -67,7 +68,7 @@ public final class TerminalLink {
             }
         }
         if (pos < text.length()) {
-            segments.add(new Segment.Text(text.substring(pos)));
+            segments.add(new Segment.Text(plainText(text.substring(pos))));
         }
         return segments;
     }
@@ -145,8 +146,8 @@ public final class TerminalLink {
      */
     public static String linkify(String text) {
         var segments = parseSegments(text);
-        if (segments.size() == 1 && segments.getFirst() instanceof Segment.Text) {
-            return text;
+        if (segments.size() == 1 && segments.getFirst() instanceof Segment.Text t) {
+            return t.text();
         }
         var sb = new StringBuilder();
         for (var seg : segments) {
@@ -164,6 +165,23 @@ public final class TerminalLink {
             end--;
         }
         return end > 0 ? url.substring(0, end) : url;
+    }
+
+    /**
+     * {@code text} with what a terminal may act on ({@link OutputFormat#isControl}) turned into
+     * spaces, line feeds and tabs apart: how text someone else wrote, such as an AI answer, may
+     * reach a terminal (#1413). A space, as {@link OutputFormat#oneLine} writes, keeps apart the
+     * words a line separator or carriage return stood between.
+     */
+    public static String plainText(String text) {
+        if (text.codePoints().noneMatch(TerminalLink::actsOnTerminal)) return text;
+        var sb = new StringBuilder(text.length());
+        text.codePoints().forEach(c -> sb.appendCodePoint(actsOnTerminal(c) ? ' ' : c));
+        return sb.toString();
+    }
+
+    private static boolean actsOnTerminal(int c) {
+        return c != '\n' && c != '\t' && OutputFormat.isControl(c);
     }
 
     /** Drops what a terminal may act on ({@link OutputFormat#isControl}): C1 included, as U+009B is an 8-bit CSI. */

@@ -815,6 +815,8 @@ Completion scripts installed by older releases call it by name, so it stays, hid
 **Commands that act need clean stdout, not a format** (#1037).
 `BuildOutput` writes colour only when `BuildOutput.ansi()` says so, which is `TerminalProgress.isAnsiTerminal()`: false without a console, for `TERM=dumb`, and when `NO_COLOR` is set to anything non-empty (no-color.org), so the live spinner also falls back to `label... done.` lines.
 `TerminalLink.link()` asks the same gate and prints the bare URL off a terminal, since an OSC 8 hyperlink is an escape too.
+An AI answer never reaches the terminal raw (#1413): `TerminalLink.plainText` turns what `OutputFormat.isControl` names into spaces, line feeds and tabs apart.
+`TerminalLink.parseSegments` and `linkify` pass the text around a link through it, and `isx ask` prints a chunk through it off a terminal.
 The console is decided by stdin and stdout, never stderr, and Java cannot ask whether stderr alone is a terminal without native code.
 So the contract is that escapes follow stdout: redirecting stdout or setting `NO_COLOR` clears both streams, while `2>log` alone from a terminal keeps colour in the log.
 The README says so rather than promising more.
