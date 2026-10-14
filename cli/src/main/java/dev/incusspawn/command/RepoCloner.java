@@ -5,6 +5,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
+import dev.incusspawn.git.GitCommandException;
 import dev.incusspawn.git.GitPreparation;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
@@ -40,6 +41,8 @@ class RepoCloner {
     private GitPreparation preparation;
     private final java.util.Map<Integer, GitPreparation.Prepared> prepared = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<Integer, String> preparationTimings = new java.util.concurrent.ConcurrentHashMap<>();
+    /** By repo: why its Git preparation failed, isx's words then Git's quoted, for a warning after the group. */
+    final java.util.Map<Integer, GitCommandException> preparationFailures = new java.util.concurrent.ConcurrentHashMap<>();
 
     RepoCloner(IncusClient incus) {
         this.incus = incus;
@@ -227,6 +230,7 @@ class RepoCloner {
         }
         if (repos.isEmpty()) return;
         preparationTimings.clear();
+        preparationFailures.clear();
 
         try (var reposGroup = BuildOutput.group("Repositories", repos.size() + " to prepare")) {
 
@@ -316,6 +320,10 @@ class RepoCloner {
             }
 
             preparationTimings.forEach((idx, timing) -> BuildOutput.note(repoDisplayName(repos.get(idx)) + ": " + timing));
+            // isx's words, then Git's quoted: the step lines hold one line each.
+            preparationFailures.forEach((idx, failed) -> BuildOutput.warn(repoDisplayName(repos.get(idx))
+                    + ": " + failed.getMessage() + "; falling back to a clone in the guest.",
+                    failed.details().toArray(String[]::new)));
 
             assertNoStepFailures(repos, states, "prepare");
         }
@@ -491,6 +499,7 @@ class RepoCloner {
                 if (!accepted) result.close();
             }
         } catch (Exception e) {
+            if (e instanceof GitCommandException failed && !failed.details().isEmpty()) preparationFailures.put(idx, failed);
             return RepoReference.skipped("Git preparation unavailable: " + e.getMessage());
         }
     }

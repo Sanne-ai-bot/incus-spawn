@@ -2,6 +2,7 @@ package dev.incusspawn.git;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.util.BuildOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -132,49 +133,18 @@ class HostRepoRefreshTest {
         assertEquals(2, repos.size());
     }
 
-    // ── extractGitError ────────────────────────────────────────────────────
-
     @Test
-    void extractGitErrorReturnsFatalLine() {
-        var text = "remote: Enumerating objects: 5\nfatal: could not read Username";
-        assertEquals("fatal: could not read Username", HostRepoRefresh.extractGitError(text));
-    }
-
-    @Test
-    void extractGitErrorReturnsErrorLine() {
-        var text = "something\nerror: cannot lock ref\nother stuff";
-        assertEquals("error: cannot lock ref", HostRepoRefresh.extractGitError(text));
-    }
-
-    @Test
-    void extractGitErrorFallsBackToLastLine() {
-        var text = "some info\nconnection timed out";
-        assertEquals("connection timed out", HostRepoRefresh.extractGitError(text));
-    }
-
-    @Test
-    void extractGitErrorReturnsEmptyForNullOrEmpty() {
-        assertEquals("", HostRepoRefresh.extractGitError(null));
-        assertEquals("", HostRepoRefresh.extractGitError(""));
-    }
-
-    @Test
-    void extractGitErrorPrefersFatalOverLaterContent() {
-        var text = "fatal: Authentication failed\nerror: also this\nlast line";
-        assertEquals("fatal: Authentication failed", HostRepoRefresh.extractGitError(text));
-    }
-
-    // ── promptHint ────────────────────────────────────────────────────────
-
-    @Test
-    void failuresAPromptWouldHaveAnsweredSayWhatToSetUp() {
-        assertTrue(HostRepoRefresh.promptHint("git@github.com: Permission denied (publickey).\n"
-                + "fatal: Could not read from remote repository.").contains("ssh-agent"));
-        assertTrue(HostRepoRefresh.promptHint("Host key verification failed.\n"
-                + "fatal: Could not read from remote repository.").contains("known_hosts"));
-        assertTrue(HostRepoRefresh.promptHint("fatal: could not read Username for 'https://github.com': terminal prompts disabled")
-                .contains("credential helper"));
-        assertEquals("", HostRepoRefresh.promptHint("fatal: repository not found"));
+    void aFailureQuotesGitsOutputUnderIsxsWarning() {
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin", null, null);
+        var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FAILED, null,
+                GitCommandException.details("isx ran Git without prompts.", "fatal: could not read Username"));
+        assertTrue(HostRepoRefresh.formatFetchLine(task, progress, 0).contains("details below"));
+        var in = BuildOutput.STEP_INDENT;
+        assertEquals(String.join("\n",
+                in + "Warning: fetch failed for myrepo at /tmp/myrepo; keeping the existing checkout",
+                in + "  isx ran Git without prompts.",
+                in + "  Git's output:",
+                in + "    | fatal: could not read Username"), HostRepoRefresh.plainFetchLine(task, progress));
     }
 
     // ── formatFetchLine ────────────────────────────────────────────────────
@@ -201,11 +171,11 @@ class HostRepoRefreshTest {
     @Test
     void formatFetchLineShowsErrorDetailWhenFailed() {
         var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin", null, null);
-        var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FAILED, "fatal: could not read Username");
+        var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FAILED, "stalled: no output for 5m");
         var line = HostRepoRefresh.formatFetchLine(task, progress, 0);
         assertTrue(line.contains("Failed"), "should contain 'Failed'");
         assertTrue(line.contains("✗"), "should contain cross");
-        assertTrue(line.contains("fatal: could not read Username"), "should contain error detail");
+        assertTrue(line.contains("stalled: no output for 5m"), "should contain isx's reason");
     }
 
     @Test

@@ -34,8 +34,9 @@ final class GitProcess {
     /**
      * @param diagnostics the last lines Git wrote, bounded by {@link #TAIL_LINES} and {@link #MAX_LINE}
      * @param stopReason  why it was stopped, null when Git ran to completion
+     * @param ssh         what isx did to keep SSH from prompting; null when nothing
      */
-    record Result(Status status, String diagnostics, String stopReason) {
+    record Result(Status status, String diagnostics, String stopReason, PreparationGit.SshSetup ssh) {
         boolean success() { return status == Status.OK; }
     }
 
@@ -64,14 +65,15 @@ final class GitProcess {
     private static final Pattern CSI = Pattern.compile("\u001B\\[[0-9;?]*[ -/]*[@-~]");
 
     /**
-     * Runs {@code builder} on {@code repo} (null when none), reading its stderr (or its merged output) as progress. Its stdin becomes
+     * Runs {@code builder} on {@code repo} (null when none), with SSH as
+     * {@link PreparationGit#nonInteractiveSsh} sets it for {@code forceNoPrompt}, reading its stderr (or its merged output) as progress. Its stdin becomes
      * {@code /dev/null} and a separate stdout is discarded, unless redirected. {@code progress} is called a few times a second while Git runs,
      * on the calling thread. Interruption stops Git, returns {@link Status#INTERRUPTED} and keeps the
      * interrupt flag set.
      */
-    static Result run(ProcessBuilder builder, Path repo, GitTransferConfig limits, Consumer<Progress> progress)
-            throws IOException {
-        nonInteractive(builder, repo);
+    static Result run(ProcessBuilder builder, Path repo, boolean forceNoPrompt, GitTransferConfig limits,
+                      Consumer<Progress> progress) throws IOException {
+        var ssh = nonInteractive(builder, repo, forceNoPrompt);
         var tail = new Tail();
         long start = System.nanoTime();
         var process = builder.start();
@@ -127,15 +129,16 @@ final class GitProcess {
             if (reader.isAlive()) closeQuietly(stream);
             if (interrupted) Thread.currentThread().interrupt();
         }
-        if (stopped != null) return new Result(stopped, tail.text(), reason);
-        return new Result(process.exitValue() == 0 ? Status.OK : Status.FAILED, tail.text(), null);
+        if (stopped != null) return new Result(stopped, tail.text(), reason, ssh);
+        return new Result(process.exitValue() == 0 ? Status.OK : Status.FAILED, tail.text(), null, ssh);
     }
 
-    private static void nonInteractive(ProcessBuilder builder, Path repo) {
+    /** Says what isx did to SSH, or null when nothing. */
+    private static PreparationGit.SshSetup nonInteractive(ProcessBuilder builder, Path repo, boolean forceNoPrompt) {
         var env = builder.environment();
         env.put("GIT_TERMINAL_PROMPT", "0");
         env.put("GCM_INTERACTIVE", "never");
-        PreparationGit.nonInteractiveSsh(env, repo);
+        var ssh = PreparationGit.nonInteractiveSsh(env, repo, forceNoPrompt);
         if (builder.redirectInput() == ProcessBuilder.Redirect.PIPE) {
             builder.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
         }
@@ -143,6 +146,7 @@ final class GitProcess {
         if (!builder.redirectErrorStream() && builder.redirectOutput() == ProcessBuilder.Redirect.PIPE) {
             builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
         }
+        return ssh;
     }
 
     /** One process's CPU time and I/O (reads and writes, sockets included; Linux only, else 0). */
@@ -367,7 +371,8 @@ final class GitProcess {
         }
 
         static String clean(CharSequence raw) {
-            var line = OutputFormat.oneLine(CSI.matcher(raw).replaceAll("")).strip();
+            // Scrubbed before the cut: a credential cut short of its '@' no longer looks like one.
+            var line = GitCommandException.scrub(OutputFormat.oneLine(CSI.matcher(raw).replaceAll(""))).strip();
             return line.length() > MAX_LINE ? line.substring(0, MAX_LINE - 1) + "…" : line;
         }
 

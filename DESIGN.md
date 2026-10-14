@@ -363,8 +363,25 @@ Builds never fetch into or create user working checkouts for acceleration (#1395
 `GitPreparation` reads matching checkouts as object sources and reconciles against the real remote in owned staging.
 Explicit `isx update-all` still uses `HostRepoRefresh` to fetch linked checkouts; its existing managed-shallow depth policy remains intact.
 Every host Git command that talks to a remote runs through `GitProcess` (#1343).
-It is non-interactive (`GIT_TERMINAL_PROMPT=0`, stdin `/dev/null`, SSH `BatchMode` unless the environment or `core.sshCommand` already picks the SSH command, which `GIT_SSH_COMMAND` would override), and it reads Git's `--progress` output on its own thread into a bounded tail (the last 20 lines of up to 200 characters, terminal escapes and control characters removed, since a remote's text reaches the terminal).
+It is non-interactive: `GIT_TERMINAL_PROMPT=0` and stdin `/dev/null`.
+It reads Git's `--progress` output on its own thread into a bounded tail: the last 20 lines of up to 200 characters, with terminal escapes, control characters and URL credentials removed, since a remote's text reaches the terminal.
 A `\r` alone ends a progress update; `\r\n`, as ssh ends its messages, ends a whole line that the tail keeps.
+SSH in `update-all` runs `ssh -o BatchMode=yes` unless the environment or `core.sshCommand` picks the command.
+A user's command runs as it is, since `GIT_SSH_COMMAND` would override it, so it can still prompt until the stall budget ends it.
+A build never prompts (decided on #1403).
+It inserts `-o BatchMode=yes` right after the `ssh` of the command Git would run, in Git's order (`GIT_SSH_COMMAND`, else the user's global `core.sshCommand`, else `GIT_SSH`), where a later `-o BatchMode=no` or a trailing comment cannot undo it, or uses plain `ssh -o BatchMode=yes`.
+A build runs Git in isx's own repository, so a repository's own `core.sshCommand` does not apply to it.
+Where the option cannot go (`GIT_SSH`, a wrapper or plink, a command isx could not read), `SSH_ASKPASS_REQUIRE=force` with `SSH_ASKPASS=false` makes OpenSSH 8.4 and later ask a program that answers nothing instead of the terminal.
+A build sets those two for every case.
+OpenSSH before 8.4 ignores them, so there a wrapper or `GIT_SSH` can still prompt until the stall budget ends it.
+A build also sets an empty `GIT_ASKPASS`, which ends Git's own askpass chain (`GIT_ASKPASS`, `core.askPass`, `SSH_ASKPASS`) before any dialog.
+The failure note says which of these isx did, and to which command.
+Local preparation steps use no SSH and skip reading `core.sshCommand`.
+A failure keeps isx's words apart from Git's (`GitCommandException.details()`).
+isx's reason comes first, then, for a failure a prompt would have answered, what isx did and what to set up; there is no such note for an SSH failure isx had no part in.
+Then comes `Git's output:`, with each of Git's lines quoted as `| …` and URL credentials scrubbed, an HTTP(S) URL's whole userinfo included.
+isx's own text, such as a reason it stopped Git or could not run it, never goes under that header.
+The exception message names only the Git command, never its URL or output.
 The calling thread polls instead of reading, so it can stop Git at any time.
 It stops a transfer that exceeds the `git-transfer:` total limit, or that stalls for the stall budget: no output, no I/O (`/proc/<pid>/io`, sockets included, on Linux), and less than 5% of a CPU across Git and its live helpers between samples, a second or more apart.
 Any change in CPU time is not enough: an idle `git-remote-http` polls curl and gains a clock tick a minute while its server says nothing.

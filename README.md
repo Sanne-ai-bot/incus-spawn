@@ -1274,7 +1274,7 @@ git-cache:
 
 These are the defaults. Set either limit to `0` to disable persistent retention. Active builds keep their temporary data until their reference mounts are detached. See [Git preparation](docs/GIT-PREPARATION.md) for details.
 
-Git transfers on the host (`isx update-all` fetching linked checkouts, and a build preparing a clean snapshot) show their elapsed time and Git's progress as they run. They do not stop to ask for a password or SSH passphrase: they fail instead, with Git's message. An SSH command you set in `core.sshCommand` is used as it is. A transfer that stops making progress is ended without waiting for it:
+Git transfers on the host (`isx update-all` fetching linked checkouts, and a build preparing a clean snapshot) show their elapsed time and Git's progress as they run. Git does not stop to ask for a password: it fails at once instead. The failure says what isx changed and what to set up, then quotes Git's own output under `Git's output:`, each line marked with `|`. A build never lets ssh ask for a passphrase or about a host key either: it adds `-o BatchMode=yes` to ssh or to your global `core.sshCommand`, and makes any other ssh fail rather than ask (OpenSSH 8.4 or later). So load the key into `ssh-agent` and keep the host in `~/.ssh/known_hosts`; when SSH fails, the build says what isx did. `isx update-all` runs an SSH command you set in `core.sshCommand` as it is, so that one can still ask until the stall budget below ends it. A transfer that stops making progress is ended without waiting for it:
 
 ```yaml
 git-transfer:

@@ -51,7 +51,7 @@ Project-local definitions never prepare repositories on the host or mount host r
 
 Host preparation accepts HTTPS, SSH (including SCP spelling) and Git network URLs only.
 Paths, `file:` URLs and arbitrary remote helpers are rejected before preparation; Git also runs with an explicit protocol allowlist and `protocol.file.allow=never`, covering URL rewrites.
-SSH defaults to `ssh -o BatchMode=yes` unless the user supplied `GIT_SSH_COMMAND` or `GIT_SSH`.
+SSH never waits on a prompt; "Creating a snapshot" says how.
 
 Before preparing a full snapshot, the guest runs `ls-remote --symref` with the template's own accounts.
 All such checks finish before any prime runs, so primes cannot interfere with another repository's authorization check.
@@ -131,6 +131,11 @@ Git and every helper it started are killed and reaped.
 A stopped transfer is not retried, whether from a reference or as a fresh clone, since the same remote would stall again.
 The build then clones inside the guest, as for any other preparation failure.
 While a transfer runs, the build's repository line shows its elapsed time and Git's latest progress line after the repository's name.
+Preparation never waits on an SSH prompt.
+It adds `-o BatchMode=yes` to the command Git runs, in Git's order: the user's `GIT_SSH_COMMAND`, their global `core.sshCommand`, or plain `ssh` (a `GIT_SSH` program cannot take it); a repository's own does not apply, since preparation runs Git in isx's own repository.
+For every SSH command, those the option cannot reach included (`GIT_SSH`, a wrapper), it also sets `SSH_ASKPASS_REQUIRE=force` with `SSH_ASKPASS=false`, so OpenSSH 8.4 and later fails instead of asking.
+An empty `GIT_ASKPASS` keeps Git itself from running an askpass dialog for a credential.
+When preparation fails, the build warns after its repository lines with isx's reason and explanation, including what it did to SSH when SSH refused, then Git's own output quoted line by line.
 Local steps such as `fsck` and `repack` keep a fixed 15-minute limit and no stall budget, and reaching it still allows the retry without a reference.
 After successful dissociation, verification, publication and guest copying no longer access the user checkout.
 
