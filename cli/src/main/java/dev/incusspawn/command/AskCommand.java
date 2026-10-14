@@ -11,6 +11,7 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.option.Arguments;
 import org.aesh.command.option.Option;
 
+import java.io.PrintStream;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -72,7 +73,7 @@ public class AskCommand extends BaseCommand {
         }
 
         var firstChunk = new AtomicBoolean(true);
-        var lineBuf = new StringBuilder();
+        var answer = new AnswerWriter(System.out, ansi);
         AiHelpClient.askStreaming(question, systemBlocks, config, target, chunk -> {
             if (firstChunk.getAndSet(false)) {
                 spinning.set(false);
@@ -82,22 +83,10 @@ public class AskCommand extends BaseCommand {
                 }
                 System.err.println();
             }
-            if (ansi) {
-                lineBuf.append(chunk);
-                int nl;
-                while ((nl = lineBuf.indexOf("\n")) >= 0) {
-                    System.out.println(TerminalLink.linkify(lineBuf.substring(0, nl)));
-                    lineBuf.delete(0, nl + 1);
-                }
-            } else {
-                System.out.print(chunk);
-            }
-            System.out.flush();
+            answer.accept(chunk);
         });
 
-        if (ansi && !lineBuf.isEmpty()) {
-            System.out.print(TerminalLink.linkify(lineBuf.toString()));
-        }
+        answer.finish();
         spinning.set(false);
         if (spinner != null) spinner.join(200);
         if (firstChunk.get() && ansi) {
@@ -105,6 +94,41 @@ public class AskCommand extends BaseCommand {
         }
         System.out.println();
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * Writes a streamed answer, which the model wrote, so none of it can drive the terminal
+     * ({@link TerminalLink#plainText}, #1413). On an ANSI terminal each line goes out once whole,
+     * with its links made clickable; otherwise each chunk goes out as it comes.
+     */
+    static final class AnswerWriter {
+        private final PrintStream out;
+        private final boolean ansi;
+        private final StringBuilder lineBuf = new StringBuilder();
+
+        AnswerWriter(PrintStream out, boolean ansi) {
+            this.out = out;
+            this.ansi = ansi;
+        }
+
+        void accept(String chunk) {
+            if (ansi) {
+                lineBuf.append(chunk);
+                int nl;
+                while ((nl = lineBuf.indexOf("\n")) >= 0) {
+                    out.println(TerminalLink.linkify(lineBuf.substring(0, nl)));
+                    lineBuf.delete(0, nl + 1);
+                }
+            } else {
+                out.print(TerminalLink.plainText(chunk));
+            }
+            out.flush();
+        }
+
+        /** Writes what is left of the last line. */
+        void finish() {
+            if (!lineBuf.isEmpty()) out.print(TerminalLink.linkify(lineBuf.toString()));
+        }
     }
 
     private void printUsage() {

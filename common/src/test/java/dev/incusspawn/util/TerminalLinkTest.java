@@ -167,6 +167,26 @@ class TerminalLinkTest {
     }
 
     @Test
+    void textOutsideLinksCannotDriveTheTerminal() {
+        // Clear the screen, retitle the window, and an 8-bit CSI: none may reach the terminal (#1413).
+        var attack = "a\033[2Jb\033]0;title\007c\u009b31md\u202Ee";
+        assertEquals("a [2Jb ]0;title c 31md e", TerminalLink.linkify(attack));
+        assertEquals("x " + TerminalLink.link("https://example.com") + " a [2Jb ]0;title c 31md e",
+                TerminalLink.linkify("x https://example.com " + attack));
+        var segments = TerminalLink.parseSegments(attack + " [docs](https://example.com) " + attack);
+        assertEquals("a [2Jb ]0;title c 31md e ", ((TerminalLink.Segment.Text) segments.get(0)).text());
+        assertEquals(" a [2Jb ]0;title c 31md e", ((TerminalLink.Segment.Text) segments.get(2)).text());
+    }
+
+    @Test
+    void plainTextSpacesControlsButLineFeedsAndTabs() {
+        assertEquals("a\tb \nc ", TerminalLink.plainText("a\tb\r\nc\033"));
+        assertEquals("first second", TerminalLink.plainText("first\u2028second"));
+        assertEquals("a\tb", TerminalLink.parseSegments("a\tb").getFirst() instanceof TerminalLink.Segment.Text t
+                ? t.text() : null);
+    }
+
+    @Test
     void linkStripsBidiOverrides() {
         // U+202E would draw the rest of the label, and the line after it, right to left.
         var result = TerminalLink.link("https://example.com/", "safe\u202Etxt.exe\u2066");
