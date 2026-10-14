@@ -164,6 +164,19 @@ class HostRepoRefreshTest {
         assertEquals("fatal: Authentication failed", HostRepoRefresh.extractGitError(text));
     }
 
+    // ── promptHint ────────────────────────────────────────────────────────
+
+    @Test
+    void failuresAPromptWouldHaveAnsweredSayWhatToSetUp() {
+        assertTrue(HostRepoRefresh.promptHint("git@github.com: Permission denied (publickey).\n"
+                + "fatal: Could not read from remote repository.").contains("ssh-agent"));
+        assertTrue(HostRepoRefresh.promptHint("Host key verification failed.\n"
+                + "fatal: Could not read from remote repository.").contains("known_hosts"));
+        assertTrue(HostRepoRefresh.promptHint("fatal: could not read Username for 'https://github.com': terminal prompts disabled")
+                .contains("credential helper"));
+        assertEquals("", HostRepoRefresh.promptHint("fatal: repository not found"));
+    }
+
     // ── formatFetchLine ────────────────────────────────────────────────────
 
     @Test

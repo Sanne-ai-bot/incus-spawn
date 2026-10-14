@@ -1274,6 +1274,16 @@ git-cache:
 
 These are the defaults. Set either limit to `0` to disable persistent retention. Active builds keep their temporary data until their reference mounts are detached. See [Git preparation](docs/GIT-PREPARATION.md) for details.
 
+Git transfers on the host (`isx update-all` fetching linked checkouts, and a build preparing a clean snapshot) show their elapsed time and Git's progress as they run. They do not stop to ask for a password or SSH passphrase: they fail instead, with Git's message. An SSH command you set in `core.sshCommand` is used as it is. A transfer that stops making progress is ended without waiting for it:
+
+```yaml
+git-transfer:
+  stall: 5m      # ended after this long with no output, no I/O and next to no CPU in Git or its helpers
+  timeout: 3h    # ended after this long in any case
+```
+
+These are the defaults; `0` turns a bound off. Quiet work such as resolving deltas still uses the CPU, so it is not a stall. An ended `isx update-all` fetch is a warning, and the checkout stays as it was. An ended build preparation falls back to cloning inside the build.
+
 The `config.yaml` also supports git remote auto-management via `host-paths` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions. Tilde (`~`) expansion is supported for all path settings:
 
 ```yaml

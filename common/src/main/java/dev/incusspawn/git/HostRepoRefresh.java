@@ -1,19 +1,24 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.FileTrees;
+import dev.incusspawn.config.GitTransferConfig;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.TerminalProgress;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Consumer;
 
@@ -22,7 +27,11 @@ public final class HostRepoRefresh {
     private HostRepoRefresh() {}
 
     enum FetchState { FETCHING, DONE, FAILED }
+    /** {@code detail}: live progress while fetching, the time taken when done, the error when failed. */
     record TaskProgress(FetchState state, String detail) {}
+
+    /** How often a fetch off a terminal says it is still running. */
+    static final long HEARTBEAT_NANOS = TimeUnit.SECONDS.toNanos(30);
 
     /** {@code depths} is {@link #hostDepths(Map)} of every definition, not only of those refreshed. */
     public static void refresh(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths, SpawnConfig config,
@@ -35,7 +44,7 @@ public final class HostRepoRefresh {
 
         if (!classified.toFetch.isEmpty()) {
             BuildOutput.section("Refreshing " + classified.toFetch.size() + " host " + (classified.toFetch.size() == 1 ? "repo:" : "repos:"));
-            fetchInParallel(classified.toFetch, output);
+            fetchInParallel(classified.toFetch, config.gitTransfer(), output);
         }
 
         if (!classified.toClone.isEmpty()) {
@@ -83,22 +92,37 @@ public final class HostRepoRefresh {
         return new ClassifiedRepos(toFetch, toClone);
     }
 
-    private static void fetchInParallel(List<FetchTask> tasks, Consumer<String> output) {
+    private static void fetchInParallel(List<FetchTask> tasks, GitTransferConfig limits, Consumer<String> output) {
         var states = new AtomicReferenceArray<TaskProgress>(tasks.size());
         for (int i = 0; i < tasks.size(); i++) {
             states.set(i, new TaskProgress(FetchState.FETCHING, null));
         }
 
+        // A terminal shows each fetch's progress live; a log gets a bounded line now and then instead.
+        boolean live = TerminalProgress.isAnsiTerminal();
         // Fetches are lightweight; run them all at once (no concurrency cap).
         TerminalProgress.run(tasks.size(), tasks.size(),
                 idx -> {
                     var task = tasks.get(idx);
+                    long start = System.nanoTime();
+                    long[] nextHeartbeat = {start + HEARTBEAT_NANOS};
                     try {
-                        var result = task.fetch();
+                        var result = task.fetch(limits, progress -> {
+                            // The task's time, not the current Git process's: an unshallow runs several.
+                            long now = System.nanoTime();
+                            var shown = new GitProcess.Progress(Duration.ofNanos(now - start), progress.line()).summary();
+                            states.set(idx, new TaskProgress(FetchState.FETCHING, shown));
+                            if (!live && now >= nextHeartbeat[0]) {
+                                nextHeartbeat[0] = now + HEARTBEAT_NANOS; // after a gap, one line rather than a burst
+                                output.accept(BuildOutput.STEP_INDENT + "Still fetching " + task.repoName() + " (" + shown + ")");
+                            }
+                        });
                         if (result.success()) {
-                            states.set(idx, new TaskProgress(FetchState.DONE, null));
+                            long millis = (System.nanoTime() - start) / 1_000_000;
+                            states.set(idx, new TaskProgress(FetchState.DONE,
+                                    millis >= 2_000 ? BuildOutput.formatElapsed(millis) : null));
                         } else {
-                            states.set(idx, new TaskProgress(FetchState.FAILED, extractGitError(result.output())));
+                            states.set(idx, new TaskProgress(FetchState.FAILED, extractGitError(result.output()) + promptHint(result.output())));
                         }
                     } catch (Exception e) {
                         states.set(idx, new TaskProgress(FetchState.FAILED, e.getMessage()));
@@ -120,25 +144,28 @@ public final class HostRepoRefresh {
         sb.append(' ');
         sb.append(task.repoName());
         sb.append(" \033[2m(").append(task.hostPath()).append(")\033[0m"); // raw ANSI: animated line
-        if (progress.state() == FetchState.FAILED && progress.detail() != null && !progress.detail().isEmpty()) {
-            sb.append("  \033[31m").append(progress.detail()).append("\033[0m"); // raw ANSI: animated line
+        if (progress.detail() != null && !progress.detail().isEmpty()) {
+            sb.append(progress.state() == FetchState.FAILED ? "  \033[31m" : "  \033[2m") // raw ANSI: animated line
+                    .append(progress.detail()).append("\033[0m"); // raw ANSI: animated line
         }
         return sb.toString();
     }
 
     private static String plainFetchLine(FetchTask task, TaskProgress progress) {
         if (progress.state() == FetchState.DONE) {
-            return BuildOutput.STEP_INDENT + "Fetched " + task.repoName() + " (" + task.hostPath() + ")";
+            return BuildOutput.STEP_INDENT + "Fetched " + task.repoName() + " (" + task.hostPath() + ")"
+                    + (progress.detail() == null ? "" : " in " + progress.detail());
         }
         var msg = BuildOutput.STEP_INDENT + "Warning: fetch failed for " + task.repoName() + " at " + task.hostPath();
         if (progress.detail() != null && !progress.detail().isEmpty()) {
             msg += ": " + progress.detail();
         }
-        return msg;
+        return msg + "; keeping the existing checkout";
     }
 
     private static void cloneSequentially(List<CloneTask> tasks, SpawnConfig config) {
         var policy = resolvePolicy(config);
+        var limits = config.gitTransfer();
 
         if (policy == ClonePolicy.ASK && System.console() == null) {
             BuildOutput.note("Skipping clone of " + tasks.size() + " repo(s) — set auto-clone-repos: always in config.yaml to clone automatically.");
@@ -176,16 +203,29 @@ public final class HostRepoRefresh {
             }
 
             BuildOutput.stepStart("Cloning " + task.repoName + "...");
-            var result = GitRemoteUtils.hostGitExecResult(task.targetDir.getParent(), task.cloneArgs());
+            boolean existed = Files.exists(task.targetDir);
+            var result = GitRemoteUtils.hostGitTransfer(task.targetDir.getParent(), limits,
+                    progress -> BuildOutput.stepProgress(progress.summary()), task.cloneArgs());
             if (result.success()) {
                 BuildOutput.stepDone();
             } else {
                 BuildOutput.stepBreak();
+                // A clone stopped part way is no checkout: never leave it for a later build to use.
+                if (!existed) deletePartialClone(task.targetDir);
                 var detail = extractGitError(result.output());
                 var msg = "Warning: clone failed for " + task.url;
                 if (!detail.isEmpty()) msg += ": " + detail;
                 System.err.println(BuildOutput.STEP_INDENT + msg);
             }
+        }
+    }
+
+    private static void deletePartialClone(Path dir) {
+        try {
+            FileTrees.delete(dir);
+        } catch (IOException e) {
+            System.err.println(BuildOutput.STEP_INDENT + "Warning: could not remove the incomplete clone at " + dir
+                    + ": " + e.getMessage());
         }
     }
 
@@ -292,6 +332,25 @@ public final class HostRepoRefresh {
         }
     }
 
+    /**
+     * For a failure a prompt would have answered, what to set up instead, since the refresh never
+     * prompts; empty otherwise. {@code output} is all of Git's: the cause comes before its {@code fatal:}.
+     */
+    static String promptHint(String output) {
+        if (output == null) return "";
+        if (output.contains("Host key verification failed")) {
+            return " (fetches never prompt: add the host's key to ~/.ssh/known_hosts)";
+        }
+        if (output.contains("Permission denied (publickey")) {
+            return " (fetches never prompt: load the key into ssh-agent, or set core.sshCommand)";
+        }
+        if (output.contains("terminal prompts disabled") || output.contains("could not read Username")
+                || output.contains("could not read Password")) {
+            return " (fetches never prompt: configure a Git credential helper)";
+        }
+        return "";
+    }
+
     static String extractGitError(String text) {
         if (text == null || text.isEmpty()) return "";
         for (var line : text.split("\n")) {
@@ -309,10 +368,10 @@ public final class HostRepoRefresh {
      * user's checkout; {@code depth} is the one the templates ask for now, null for all of history.
      */
     record FetchTask(String repoName, Path hostPath, String remoteName, Integer managedDepth, Integer depth) {
-        GitRemoteUtils.ExecResult fetch() {
-            if (managedDepth == null) return git("fetch", "--", remoteName);
+        GitRemoteUtils.ExecResult fetch(GitTransferConfig limits, Consumer<GitProcess.Progress> progress) {
+            if (managedDepth == null) return transfer(limits, progress, "--", remoteName);
             if (depth != null) {
-                var result = git("fetch", "--depth", depth.toString(), "--", remoteName);
+                var result = transfer(limits, progress, "--depth", depth.toString(), "--", remoteName);
                 if (result.success() && !depth.equals(managedDepth)) git("config", DEPTH_KEY, depth.toString());
                 return result;
             }
@@ -322,11 +381,20 @@ public final class HostRepoRefresh {
             var shallowState = GitRemoteUtils.hostGitExec(hostPath, "rev-parse", "--is-shallow-repository");
             if (shallowState == null) return new GitRemoteUtils.ExecResult(false, "could not tell whether the checkout is shallow");
             var shallow = "true".equals(shallowState);
-            var result = shallow ? git("fetch", "--unshallow", "--", remoteName) : git("fetch", "--", remoteName);
+            var result = shallow ? transfer(limits, progress, "--unshallow", "--", remoteName)
+                    : transfer(limits, progress, "--", remoteName);
             if (result.success()) result = git("remote", "set-branches", remoteName, "*");
-            if (result.success()) result = git("fetch", "--", remoteName);
+            if (result.success()) result = transfer(limits, progress, "--", remoteName);
             if (result.success()) result = git("config", "--unset", DEPTH_KEY);
             return result;
+        }
+
+        /** {@code git fetch --progress} with {@code args}, under {@code limits}. */
+        private GitRemoteUtils.ExecResult transfer(GitTransferConfig limits, Consumer<GitProcess.Progress> progress,
+                                                   String... args) {
+            var fetch = new ArrayList<>(List.of("fetch", "--progress"));
+            fetch.addAll(List.of(args));
+            return GitRemoteUtils.hostGitTransfer(hostPath, limits, progress, fetch.toArray(String[]::new));
         }
 
         private GitRemoteUtils.ExecResult git(String... args) {
@@ -336,7 +404,7 @@ public final class HostRepoRefresh {
 
     private record CloneTask(String repoName, String url, Path targetDir, Integer depth, String branch) {
         String[] cloneArgs() {
-            var args = new ArrayList<>(List.of("clone"));
+            var args = new ArrayList<>(List.of("clone", "--progress"));
             if (depth != null) args.addAll(List.of("--depth", depth.toString(), "-c", DEPTH_KEY + "=" + depth));
             if (branch != null) args.addAll(List.of("--branch", branch));
             args.addAll(List.of("--", url, targetDir.getFileName().toString()));
