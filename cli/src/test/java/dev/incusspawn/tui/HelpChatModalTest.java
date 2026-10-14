@@ -248,6 +248,20 @@ class HelpChatModalTest {
     }
 
     @Test
+    void errorCannotInjectTerminalCommands() {
+        var modal = modal((target, q, t) -> { throw new IllegalStateException(
+                "gcloud auth print-access-token failed: \u009b2J\u001b]0;owned\u0007 denied"); });
+        type(modal, "hello");
+        modal.handleKey(CTRL_S);
+        var buffer = TuiSnapshot.render(80, 24, f -> modal.render(f, f.area()));
+        var ansi = buffer.toAnsiString();
+        assertTrue(TuiSnapshot.toText(buffer).contains("denied"), ansi);
+        assertFalse(ansi.contains("\u001b]0;owned"), ansi);
+        assertFalse(ansi.contains("\u0007"), ansi);
+        assertFalse(ansi.chars().anyMatch(c -> c >= 0x80 && c <= 0x9f), ansi);
+    }
+
+    @Test
     void disclaimerIsNeverTruncated() {
         for (int width : new int[] {40, 60, 80, 120, 200}) {
             var modal = answering(ANSWER);

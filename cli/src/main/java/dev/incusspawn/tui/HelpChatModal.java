@@ -8,6 +8,7 @@ import java.util.concurrent.Executor;
 import dev.incusspawn.ai.AiHelpClient.AiResponse;
 import dev.incusspawn.ai.AiHelpClient.Target;
 import dev.incusspawn.ai.AiHelpClient.Usage;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.util.TerminalProgress;
 import dev.tamboui.layout.Constraint;
@@ -211,7 +212,8 @@ final class HelpChatModal {
             try {
                 response = asker.ask(target, question, attach);
             } catch (Exception e) {
-                failure = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                // Whatever wrote the message (a provider, gcloud), it must not drive the terminal.
+                failure = e.getMessage() != null ? OutputFormat.oneLine(e.getMessage()) : e.getClass().getSimpleName();
             }
             synchronized (this) {
                 if (requestId != id) return; // cancelled while running: drop the result
