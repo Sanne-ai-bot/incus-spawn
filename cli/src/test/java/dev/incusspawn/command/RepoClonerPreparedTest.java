@@ -40,6 +40,8 @@ class RepoClonerPreparedTest {
     private boolean breakCopy;
     private Path guestConfig;
     private String checksumPrelude = "";
+    private final AtomicReferenceArray<BuildProgress.StepProgress> states = new AtomicReferenceArray<>(1);
+    private final List<BuildProgress.StepProgress> statesWhileCloning = new ArrayList<>();
 
     @org.junit.jupiter.api.AfterEach void stopServer() throws Exception { if (server != null) server.close(); }
 
@@ -55,6 +57,7 @@ class RepoClonerPreparedTest {
         when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenAnswer(inv -> {
             String script = inv.getArgument(2);
             scripts.add(script);
+            if (script.contains("git clone")) statesWhileCloning.add(states.get(0));
             script = script.replaceAll("\\{ ! command -v mountpoint .*?; \\} && ", "");
             if (breakCopy && script.contains("git clone --no-hardlinks")) {
                 // Produce a valid copy first, then alter a byte before the checksum phase.
@@ -80,7 +83,6 @@ class RepoClonerPreparedTest {
         repo.setPrime("git fsck --full --no-dangling");
         var planned = new RepoCloner.RepoReference("ref", "/mnt/ref", host.toString(), null,
                 new GitPreparation.Request(repo.getUrl(), branch, host), null);
-        var states = new AtomicReferenceArray<BuildProgress.StepProgress>(1);
         var mounts = new RepoCloner.ReferenceMounts() {
             @Override public RepoCloner.RepoReference attach(int index, RepoCloner.RepoReference ref) {
                 var path = ref.prepared().repository();
@@ -125,6 +127,8 @@ class RepoClonerPreparedTest {
         var result = run(null);
         assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
         assertEquals("template and host repository refs differ", result.note());
+        // The fallback clone in the guest says so, rather than leaving the last preparation phase up.
+        assertEquals(List.of(BuildProgress.StepProgress.running("Cloning")), statesWhileCloning);
         assertTrue(mounts.isEmpty(), "the wider host selection must never be mounted");
         assertEquals("", git(tmp.resolve("guest"), "for-each-ref", "refs/remotes/origin/stable"));
         assertEquals("", git(tmp.resolve("guest"), "fsck", "--full", "--no-dangling"));
