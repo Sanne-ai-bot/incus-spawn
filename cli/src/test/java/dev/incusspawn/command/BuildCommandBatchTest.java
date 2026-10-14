@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -102,17 +101,15 @@ class BuildCommandBatchTest {
             return null;
         }).when(cmd).buildSingleImage(any(), any());
 
-        var executor = Executors.newSingleThreadExecutor();
         var originalErr = System.err;
         var err = new ByteArrayOutputStream();
         System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
         try {
             var defs = tree();
             defs.putAll(extraDefs);
-            return cmd.dispatch(defs, executor).getResultValue();
+            return cmd.dispatch(defs).getResultValue();
         } finally {
             System.setErr(originalErr);
-            executor.shutdownNow();
             stderr = err.toString(StandardCharsets.UTF_8);
         }
     }
