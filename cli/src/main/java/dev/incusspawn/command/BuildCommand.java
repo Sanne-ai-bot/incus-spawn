@@ -60,8 +60,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -252,27 +250,20 @@ public class BuildCommand extends BaseCommand {
         }
         var defs = loaded.defs();
 
-        var executor = Executors.newCachedThreadPool(r -> {
-            var t = new Thread(r, "git-refresh");
-            t.setDaemon(true);
-            return t;
-        });
         // Only definitions read from disk: dispatch may add stale build-source snapshots to defs
         var loadedDefs = Map.copyOf(defs);
         try {
-            var result = dispatch(defs, executor);
+            var result = dispatch(defs);
             if (result.equals(CommandResult.SUCCESS)) syncDefaultActions(loadedDefs);
             return result;
         } catch (BuildFailedException e) {
             // Templates this build skipped or had already promoted are still worth syncing
             syncDefaultActions(loadedDefs);
             return CommandResult.valueOf(1);
-        } finally {
-            executor.shutdownNow();
         }
     }
 
-    CommandResult dispatch(Map<String, ImageDef> defs, ExecutorService executor) {
+    CommandResult dispatch(Map<String, ImageDef> defs) {
         var names = this.names == null ? List.<String>of() : this.names.stream().distinct().toList();
         if (withParents || withDescendants) {
             var flag = withParents ? "--with-parents" : "--with-descendants";
