@@ -485,6 +485,22 @@ public class ImageDef {
      */
     public static List<ImageDef> ancestors(ImageDef start, Map<String, ImageDef> defs) {
         var result = new ArrayList<ImageDef>();
+        var cycle = walkParents(start, defs, result);
+        if (cycle != null) Warnings.warn(cycle + "; every chain through it stops before repeating a layer");
+        return result;
+    }
+
+    /**
+     * The parent cycle the chain of {@code start} runs into, as "parent cycle a → b → a", or null
+     * when it ends at a root or a missing parent. Only a build-source snapshot merged in after
+     * load can close one (#1443); a build must refuse it, as it would have no root to start from.
+     */
+    public static String parentCycle(ImageDef start, Map<String, ImageDef> defs) {
+        return walkParents(start, defs, new ArrayList<>());
+    }
+
+    /** Add the ancestors of {@code start} to {@code result}; the cycle it stopped at, or null. */
+    private static String walkParents(ImageDef start, Map<String, ImageDef> defs, List<ImageDef> result) {
         var seen = new LinkedHashSet<String>();
         seen.add(start.getName());
         var parentName = start.getParent();
@@ -493,14 +509,12 @@ public class ImageDef {
             if (parent == null) break;
             if (!seen.add(parentName)) {
                 var path = new ArrayList<>(seen);
-                Warnings.warn(cycleText(path.subList(path.indexOf(parentName), path.size()))
-                        + "; every chain through it stops before repeating a layer");
-                break;
+                return cycleText(path.subList(path.indexOf(parentName), path.size()));
             }
             result.add(parent);
             parentName = parent.getParent();
         }
-        return result;
+        return null;
     }
 
     /**
