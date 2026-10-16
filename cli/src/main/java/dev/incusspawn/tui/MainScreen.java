@@ -479,9 +479,17 @@ final class MainScreen {
                     hasWarning = true;
                 }
             }
+            // The key bar has no room left at 80 columns: the marks are counted here, after the warnings
+            // (which say why the template needs a build), and Space is hinted last, so it is cut first
+            int marked = tui.markedTemplates().size();
+            if (marked > 0) {
+                spans.add(Span.styled("  ● " + marked + " marked, Esc clears", Style.EMPTY.fg(tui.theme.contextAccentFg()).bg(bg)));
+            }
             if (!hasWarning && template.description() != null && !template.description().isEmpty()) {
                 spans.add(Span.styled("  " + template.description(), Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
             }
+            spans.add(Span.styled("  Space", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(bg)));
+            spans.add(Span.styled(" Mark", Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
             return Line.from(spans);
         }
         if (!onTemplates && instance != null) {

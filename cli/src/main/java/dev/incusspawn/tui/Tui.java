@@ -248,6 +248,9 @@ public class Tui {
     Map<String, dev.incusspawn.config.ImageDef> imageDefs;
     List<TemplateInfo> templateEntries;
     List<Row> templateRows;
+    /** The template rows' cells after the name, kept so a mark redraws them without assessing staleness again. */
+    private List<TemplateRowCells> templateRowCells = List.of();
+    private record TemplateRowCells(String name, String status, String disk, String description, Style style) {}
     boolean anyTemplateOutdated;
     boolean anyDefinitionChanged;
     boolean anyParentRebuilt;
@@ -258,6 +261,12 @@ public class Tui {
     java.util.Set<String> templatesParentRebuilt = java.util.Set.of();
     private java.util.Set<String> templatesOutOfSync = java.util.Set.of();
     java.util.Set<String> storedSourceTemplates = java.util.Set.of();
+    /**
+     * Templates marked with Space for one build from F5 (#1131), by name in the order marked: in
+     * memory only, they outlive refreshes and the TUI's return from a build or a shell, lose a
+     * template that is gone, and clear on Esc or once a build is launched from them.
+     */
+    private final java.util.SequencedSet<String> markedTemplates = new java.util.LinkedHashSet<>();
     TableState templateTableState;
 
     // Instance panel data (bottom)
@@ -421,17 +430,16 @@ public class Tui {
                 case BUILD_TEMPLATE, BUILD_THEN_BRANCH -> {
                     var args = java.util.Arrays.copyOf(pendingBuildArgs, pendingBuildArgs.length + 1);
                     args[args.length - 1] = "--yes";
-                    var buildTarget = pendingBuildArgs[0];
-                    if (!buildTarget.startsWith("--")) {
-                        returnToTemplate = buildTarget;
-                    }
+                    // The one template the build names, if just one: a batch has no report to show
+                    var buildTarget = singleBuildTarget(pendingBuildArgs);
+                    if (buildTarget != null) returnToTemplate = buildTarget;
                     try {
                         // Delete any stale report so freshFailureReport cannot mistake it for this build's.
                         // The build writes a new one on failure; on success no report should be shown.
                         // If the delete fails, suppress the report path entirely (buildStart = null)
                         // rather than risk showing a stale report from the same filesystem second.
                         java.time.Instant buildStart = null;
-                        if (!buildTarget.startsWith("--")) {
+                        if (buildTarget != null) {
                             try {
                                 java.nio.file.Files.deleteIfExists(Environment.buildFailureLogFile(buildTarget));
                                 buildStart = java.time.Instant.now();
@@ -554,6 +562,8 @@ public class Tui {
     }
 
     void publishRows() {
+        var names = templateEntries.stream().map(TemplateInfo::name).collect(java.util.stream.Collectors.toSet());
+        markedTemplates.retainAll(names);
         allTemplateEntries = new ArrayList<>(templateEntries);
         allEntries = new ArrayList<>(entries);
         rebuildRowData();
@@ -622,6 +632,14 @@ public class Tui {
         }
         statusMessage = null;
 
+        // Esc has no other meaning in browse mode: it drops the marks
+        if (key.isKey(KeyCode.ESCAPE) && !markedTemplates.isEmpty()) {
+            // Said, since from the instances panel the marks are easy to miss
+            statusMessage = "Cleared " + markedTemplates.size() + (markedTemplates.size() == 1 ? " mark" : " marks");
+            markedTemplates.clear();
+            markTemplateRows();
+            return true;
+        }
         if (key.isKey(KeyCode.F1)) {
             about.open();
             mode = Mode.INFO;
@@ -714,6 +732,13 @@ public class Tui {
         var template = selectedTemplate();
         if (template == null) return false;
 
+        // Space: mark or unmark the template for a build of several from F5
+        if (key.isChar(' ')) {
+            if (!markedTemplates.remove(template.name())) markedTemplates.add(template.name());
+            markTemplateRows();
+            return true;
+        }
+
         // F3: Show template details
         if (key.isKey(KeyCode.F3)) {
             templateDetail.open();
@@ -721,8 +746,16 @@ public class Tui {
             return true;
         }
 
+        // F5 with marks: the row under the cursor may not be built at all, so each option checks
+        // the templates it builds instead
+        if (key.isKey(KeyCode.F5) && !markedTemplates.isEmpty()) {
+            if (showProxyError()) return true;
+            openBuildMenu(template);
+            return true;
+        }
+
         // Block all actions if there's a pending operation
-        if (hasPendingOp(template) || backgroundTasks.hasRunningTask(template.name())) {
+        if (isBusy(template)) {
             statusMessage = "Operation in progress for " + template.name();
             return true;
         }
@@ -1211,7 +1244,8 @@ public class Tui {
     }
 
     private void openBuildMenu(TemplateInfo template) {
-        buildMenu = new BuildMenu(modal, theme, template, imageDefs, templateEntries, templatesOutOfSync);
+        buildMenu = new BuildMenu(modal, theme, template, imageDefs, templateEntries, templatesOutOfSync,
+                List.copyOf(markedTemplates));
         mode = Mode.BUILD_MENU;
     }
 
@@ -1231,8 +1265,23 @@ public class Tui {
     }
 
     private void executeBuildOption(BuildMenu.BuildMenuOption option, TuiRunner tui) {
+        // An option for the marks checks what it rebuilds; any other also the row under the cursor,
+        // which F5 checks only while nothing is marked
+        var checked = new java.util.HashSet<>(option.rebuilds());
+        var cursor = selectedTemplate();
+        if (!option.marked() && cursor != null) checked.add(cursor.name());
+        var busy = (allTemplateEntries != null ? allTemplateEntries : templateEntries).stream()
+                .filter(t -> checked.contains(t.name()))
+                .filter(this::isBusy)
+                .findFirst();
+        if (busy.isPresent()) {
+            statusMessage = "Operation in progress for " + busy.get().name();
+            mode = Mode.BROWSE;
+            return;
+        }
         pendingAction = PendingAction.BUILD_TEMPLATE;
         pendingBuildArgs = option.buildArgs();
+        if (option.marked()) markedTemplates.clear();
         mode = Mode.BROWSE;
         tui.quit();
     }
@@ -1634,10 +1683,25 @@ public class Tui {
         };
     }
 
+    /**
+     * The one template a build names: the cursor goes to it afterwards, and its failure report is
+     * the one to show. A batch of several (marked templates, #1131) or a flag-only build has none,
+     * so the cursor stays where it was.
+     */
+    static String singleBuildTarget(String[] args) {
+        var names = buildTargetNames(args);
+        return names.size() == 1 ? names.getFirst() : null;
+    }
+
+    /** The templates {@code isx build} arguments name, without the flags. */
+    private static List<String> buildTargetNames(String[] args) {
+        return java.util.Arrays.stream(args).filter(a -> !a.startsWith("--")).toList();
+    }
+
     static String buildStatusMessage(String[] args, boolean success, java.time.Instant buildStart) {
         var firstArg = args[0];
         // isx build takes several templates (#1130): name them all.
-        var targets = String.join(", ", java.util.Arrays.stream(args).filter(a -> !a.startsWith("--")).toList());
+        var targets = String.join(", ", buildTargetNames(args));
         boolean hasWithParents = java.util.Arrays.asList(args).contains("--with-parents");
         boolean hasWithDescendants = java.util.Arrays.asList(args).contains("--with-descendants");
         if (firstArg.equals("--all")) {
@@ -1912,6 +1976,16 @@ public class Tui {
         return pendingAction;
     }
 
+    /** The {@code isx build} arguments a build left pending will run with, for a test to read. */
+    String[] pendingBuildArgs() {
+        return pendingBuildArgs;
+    }
+
+    /** The marked templates, which the context line counts and a test reads. */
+    java.util.SequencedSet<String> markedTemplates() {
+        return markedTemplates;
+    }
+
     boolean dispatchAction(ToolAction action, ActionContext context) {
         var cmd = action.shellCommand(context);
         if (cmd.isPresent()) {
@@ -1954,6 +2028,11 @@ public class Tui {
 
     private static boolean hasPendingOp(TemplateInfo template) {
         return template != null && !template.pendingOp().isEmpty();
+    }
+
+    /** Whether an operation on {@code template} is under way, here or in another isx, so it must not be built now. */
+    private boolean isBusy(TemplateInfo template) {
+        return hasPendingOp(template) || backgroundTasks.hasRunningTask(template.name());
     }
 
     /**
@@ -2380,7 +2459,7 @@ public class Tui {
     // --- Data ---
 
     void buildTemplateRowData() {
-        templateRows = new ArrayList<>();
+        var cells = new ArrayList<TemplateRowCells>();
         anyTemplateOutdated = false;
         anyDefinitionChanged = false;
         anyParentRebuilt = false;
@@ -2436,11 +2515,24 @@ public class Tui {
                 }
             }
 
-            templateRows.add(Row.from(t.name(), statusDisplay, diskCell(t.diskUsage()), desc).style(statusStyle));
+            cells.add(new TemplateRowCells(t.name(), statusDisplay, diskCell(t.diskUsage()), desc, statusStyle));
         }
+        templateRowCells = cells;
+        markTemplateRows();
         templatesDefChanged = defChanged;
         templatesParentRebuilt = parentRebuilt;
         templatesOutOfSync = outOfSync;
+    }
+
+    /** The template rows from their cells, each name led by its mark while any template is marked (#1131). */
+    private void markTemplateRows() {
+        templateRows = new ArrayList<>();
+        for (var c : templateRowCells) {
+            // Every name moves over while anything is marked, so the names stay aligned
+            var name = markedTemplates.isEmpty() ? c.name()
+                    : (markedTemplates.contains(c.name()) ? "● " : "  ") + c.name();
+            templateRows.add(Row.from(name, c.status(), c.disk(), c.description()).style(c.style()));
+        }
     }
 
     private void buildRowData() {
