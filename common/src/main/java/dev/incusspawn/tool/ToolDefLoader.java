@@ -194,11 +194,11 @@ public class ToolDefLoader {
         var map = load().defs();
         for (var entry : fallbacks.entrySet()) {
             if (entry.getKey() == null || entry.getValue() == null || map.containsKey(entry.getKey())) continue;
-            var invalidNamespace = ToolDefValidator.invalidNamespace(entry.getValue());
-            if (invalidNamespace == null) {
+            var refused = ToolDefValidator.refusal(entry.getValue());
+            if (refused == null) {
                 map.put(entry.getKey(), new YamlToolSetup(entry.getValue()));
             } else {
-                Warnings.warn("a stored definition: " + invalidNamespace + "; it is skipped");
+                Warnings.warn("a stored definition: " + refused + "; it is skipped");
             }
         }
     }
@@ -246,9 +246,9 @@ public class ToolDefLoader {
                     var def = ToolDef.loadFromStream(is);
                     if (def.getName() != null) {
                         var source = path.toAbsolutePath().normalize();
-                        var invalidNamespace = ToolDefValidator.invalidNamespace(def);
-                        if (invalidNamespace != null) {
-                            warnings.add(OutputFormat.oneLine(path.getFileName().toString()) + ": " + invalidNamespace
+                        var refused = ToolDefValidator.refusal(def);
+                        if (refused != null) {
+                            warnings.add(OutputFormat.oneLine(path.getFileName().toString()) + ": " + refused
                                     + LayeredDefinitions.REFUSED);
                             // Like an unparsable file, it may have meant to replace a lower layer's.
                             defs.parseFailed(source);

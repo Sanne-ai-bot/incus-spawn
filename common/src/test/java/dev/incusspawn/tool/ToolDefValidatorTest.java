@@ -65,6 +65,45 @@ class ToolDefValidatorTest {
         assertFalse(result.hasWarnings(), result.warnings().toString());
     }
 
+    @Test void invalidPathScopesAreRejected(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("scoped.yaml");
+        var yaml = """
+                name: scoped
+                env:
+                  - name: SCOPED_TOKEN
+                    value: scoped_placeholder
+                proxy:
+                  config-namespace: scoped
+                  placeholders:
+                    - env: SCOPED_TOKEN
+                      prefix: scoped_
+                  configuration:
+                    token:
+                      config-path: token
+                      description: Scoped token
+                      secret: true
+                  auth:
+                    - domains: [scoped.example]
+                      paths: [PATHS]
+                      type: bearer
+                      token: '${token}'
+                """;
+        Files.writeString(file, yaml.replace("PATHS", "/, /mcp, /mcp/, /api/v1"));
+        var valid = ToolDefValidator.validate(file);
+        assertFalse(valid.hasErrors(), valid.errors().toString());
+
+        for (var invalid : Map.of(
+                "''", "is empty", "mcp", "must start with '/' (for example '/mcp')",
+                "'/mcp '", "whitespace", "' /api'", "whitespace", "'/mcp?x=1'", "query", "'/mcp/*'", "wildcards",
+                "'/a//b'", "empty segment", "/a/../b", "'..' segment").entrySet()) {
+            Files.writeString(file, yaml.replace("PATHS", "/ok, " + invalid.getKey()));
+            var result = ToolDefValidator.validate(file);
+            assertEquals(1, result.errors().size(), invalid.getKey() + ": " + result.errors());
+            assertTrue(result.errors().getFirst().contains(invalid.getValue()), result.errors().getFirst());
+            assertTrue(result.errors().getFirst().contains("[scoped.example]"), result.errors().getFirst());
+        }
+    }
+
     @Test
     void validToolPasses(@TempDir Path dir) throws Exception {
         var file = dir.resolve("test.yaml");
