@@ -733,16 +733,21 @@ public final class InstanceLifecycle {
      * <p>The fallback drops the setting, says plainly what is no longer enforced, and starts.
      * An instance that works without separation beats an instance that does not work, but the
      * user has to know which one they have.
+     *
+     * <p>Package-private, as {@link #prepareForStart} is: code outside {@code lifecycle} starts an
+     * existing instance through {@link #startForUse}, so it cannot skip the re-arm before this.
+     * The other public paths here that start one ({@code RuntimeSetup.prefetchAndStart},
+     * {@code BuildAccounts.start}) start an instance just created, which has it set already.
      */
-    public static void startInstance(IncusClient incus, String name) {
+    static void startInstance(IncusClient incus, String name) {
         startInstance(incus, name, System.err::println);
     }
 
     /**
-     * As above, reporting the loss of protection to {@code warn} rather than stderr, for callers
-     * that may own the terminal (the TUI).
+     * As above, reporting the loss of protection to {@code warn} rather than stderr: the sink its
+     * caller was given, which is the TUI's warning log when the TUI starts while it owns the terminal.
      */
-    public static void startInstance(IncusClient incus, String name, Consumer<String> warn) {
+    static void startInstance(IncusClient incus, String name, Consumer<String> warn) {
         try {
             incus.start(name);
         } catch (RuntimeException e) {
