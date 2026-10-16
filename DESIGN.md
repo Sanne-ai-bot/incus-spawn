@@ -1988,6 +1988,9 @@ But the TUI's AI Help dialog makes the account explicit, offering every target a
 `subscriptionAccounts()` names the Pro/Max accounts so the dialog can show them as unavailable with the reason, instead of leaving a subscriber to wonder why their account is missing.
 The optional template and tool definitions are presented as an *attachment* with their measured size.
 The word itself says they leave the machine with the question, which matters because they include the user's own YAML files.
+User and search-path tool YAML comes from `ToolDefLoader.userAndSearchPathToolDirs()`, the loader's own list of its layers, so the attachment lists the same directories the loader reads (#1173).
+That list leaves out a project's `.incus-spawn/tools/` because the flag is named `--with-templates`; it may later be widened to project tools.
+A project's templates' names, descriptions and tool lists do go in, through `ImageDef.loadAll`.
 `HelpContext.definitions()` is built once per opening of the dialog, so the size shown is exactly what gets sent.
 **Prompt caching:** every question carries the whole README and DESIGN.md (~205 KB, the bulk of the cost; kept because answers are markedly less complete without the design rationale).
 So `HelpContext.systemBlocks()` returns the prompt as two blocks -- the fixed documentation, then the attached definitions -- and `AiHelpClient.cachedSystem()` puts a 5-minute `cache_control` breakpoint on each for Anthropic and Vertex.
