@@ -276,6 +276,7 @@ Key design:
   The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot inject a credential; keep it that way.
   npm's per-version shasum lookups go through `probeClient` (`fetchNpmVersion` → `fetchSmallBody`) like Maven/Gradle checksums.
   A `5xx` is asked once more (while over half the client's budget is left), since a failed lookup relays the tarball uncached and unresumable (#925).
+  A cached tarball whose lookup gives no shasum is served only when the registry is unreachable (`SidecarAnswer.unreachable()`); a `404`/`410` evicts it and anything else relays (`checkNpmTarballCache`, #787).
   Never wait on the network inside an ordered `executeBlocking` (the default): every MITM connection shares one context and so one ordered queue, and a raw-socket lookup there ran every cold-install lookup one at a time (#960).
   The npm disk checks stay ordered on purpose, behind the packument's ETag write.
   All three commit through `Verification` (`fetchCacheAndServe`): nothing reaches the cache unverified.
