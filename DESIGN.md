@@ -4188,6 +4188,23 @@ Custom kernel from kernel.org source (zero modules, no initrd) with musl libc fo
 The build produces a rootfs tarball (~30-40 MB) and kernel (~10.5 MB on aarch64, ~5 MB on x86_64, both gzipped to ~5 MB for release download); a writable btrfs disk image is created on first boot.
 See [`appliance/DESIGN.md`](appliance/DESIGN.md) for full architecture details.
 
+### No VM instances or KVM passthrough on macOS, yet
+
+On macOS isx runs containers only, and says so before anything is created (#1254).
+`isx build` refuses a VM template when the appliance's Incus lists no `virtual-machine` instance type (#1391).
+`BranchFlow.vmUnsupportedOnMacOs` and `kvmUnsupportedOnMacOs` refuse a branch of a VM and an explicit `--kvm`, for `isx branch`, `isx mcp` and the TUI's branch dialog alike.
+A template's own `type: kvm` is how it was built, not the branch's request, so on macOS its branches go without KVM and say so, as GUI does outside a Wayland session.
+`isx mcp` has no `--no-kvm` to ask for that itself, so refusing would leave such a template unusable there.
+`isx doctor` states the limit as a note.
+Before this, each path failed in a lower layer: the build in QEMU's absence inside the appliance, and `--kvm` with a `/dev/kvm` message that described a Linux host.
+
+It is not ruled out.
+It has not been done because nobody has needed it yet.
+It needs four layers, listed in [`appliance/DESIGN.md`](appliance/DESIGN.md) "No nested virtualization": the appliance kernel, vfkit's `--nested`, QEMU and its firmware in the appliance, and isx's own `/dev/kvm` check.
+It would also raise the hardware floor to an M3 or later on macOS 15, and grow the appliance by roughly 150 MB.
+A VM in the appliance sits two hypervisor levels down, where #1240 measured a 49 s boot under one level of nesting ("VM boot: where the wait goes").
+So the VM image boot work on Sanne/incus-spawn-images#12 is a prerequisite for it being usable at all.
+
 ## Security Considerations
 
 ### Container vs VM Trade-off

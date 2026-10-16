@@ -232,6 +232,18 @@ vfkit --cpus 2 --memory 2048 \
 - **vsock tunnel**: the `virtio-vsock` device exposes the VM's vsock port 8443 as a Unix domain socket on the host. Inside the VM, socat bridges this to the Incus daemon's Unix socket, giving the host direct plain-HTTP access to the Incus API without TCP or TLS. This bypasses corporate VPN socket filters (e.g. Cisco AnyConnect) that block non-Apple-signed binaries from TCP connections to the VM subnet
 - **control agent channel**: a second `virtio-vsock` device (port 1025 → `vm.agent.sock`) exposes the allowlisted in-VM control agent on an independent channel, so the host can introspect and recover the forwarder even when the Incus tunnel itself is wedged. See "Control agent and forwarder recovery" below.
 
+### No nested virtualization
+
+The appliance runs containers only, so isx on macOS has no VM instances and no KVM passthrough (#1254, DESIGN.md "No VM instances or KVM passthrough on macOS, yet").
+Adding them is not ruled out; it would take all four of these:
+
+1. **Kernel**: `CONFIG_VIRTUALIZATION` and `CONFIG_KVM` (arm64), `CONFIG_VHOST_NET`, and `CONFIG_VHOST_VSOCK`, which the Incus agent needs on the host side of every VM.
+2. **vfkit `--nested`**: `VmManager.vfkitCommand` does not pass it.
+   vfkit has had it since mid-2025 (crc-org/vfkit#279); it needs macOS 15 and an M3 or later.
+   Without it the appliance has no virtualization extensions, whatever the kernel says.
+3. **Userspace** (`build.sh`): `qemu-system-*`, `qemu-img`, AAVMF firmware, `virtiofsd` and `swtpm`, roughly 150 MB.
+4. **isx's `/dev/kvm` check**: `KvmPassthrough.configureKvm` looks on the machine running isx, which on macOS is the Mac, not the appliance.
+
 ### QEMU (Linux / CI)
 
 Architecture-aware with KVM acceleration when available:
