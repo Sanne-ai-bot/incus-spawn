@@ -93,7 +93,7 @@ class VmAgentRecoveryTest {
         assertEquals(Long.toString(incus.pid("vm1")),
                 daemon.instance("vm1").path("config").path(Metadata.AGENT_RESTART_BOOT).asText());
 
-        daemon.stateActions().clear();
+        daemon.clearStateActions();
         var second = assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(incus, "vm1", said::add));
         var msg = second.getMessage();
         assertTrue(msg.contains("already restarted vm1 once"), msg);
