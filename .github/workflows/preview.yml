@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'README.md'
+      - 'docs/*.md'
       - 'site/**'
       - '.github/workflows/preview.yml'
 

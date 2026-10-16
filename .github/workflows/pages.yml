@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'README.md'
+      - 'docs/*.md'
       - 'site/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
@@ -49,9 +50,11 @@ jobs:
         continue-on-error: true
         run: |
           KEY=$(cat site/indexnow-key.txt)
+          # Every page in the sitemap, the docs pages included, and llms.txt
+          URLS=$(grep -o 'https://isx.run[^<]*' _site/sitemap.xml | sed 's/.*/"&"/' | paste -sd, -)
           curl -sS --fail-with-body --retry 3 --retry-delay 10 -X POST https://api.indexnow.org/indexnow \
             -H 'Content-Type: application/json; charset=utf-8' \
             -d "{\"host\": \"isx.run\", \"key\": \"$KEY\",
                  \"keyLocation\": \"https://isx.run/indexnow-key.txt\",
-                 \"urlList\": [\"https://isx.run/\", \"https://isx.run/docs\", \"https://isx.run/llms.txt\"]}" \
+                 \"urlList\": [$URLS, \"https://isx.run/llms.txt\"]}" \
             -w '\nIndexNow: HTTP %{http_code}\n'
