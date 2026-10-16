@@ -223,7 +223,7 @@ Key design:
   **Setting it succeeds even where it cannot be enforced**.
   The failure appears only when the instance starts and Incus installs the per-NIC rules (`ebtables -t filter` under xtables, the nft equivalent otherwise), so a host without that kernel support would accept every branch and start none of them.
   The macOS appliance kernel needs `CONFIG_NF_TABLES_BRIDGE` for this (#905); its smoke test asserts it.
-  `InstanceLifecycle.startInstance` is therefore the way isx starts an instance: it recognises that one failure, drops the setting, says plainly what is no longer enforced, and retries.
+  `InstanceLifecycle.startInstance` (package-private, like `prepareForStart`, so code outside `lifecycle` starts an existing instance through `startForUse`; the other public start paths, `RuntimeSetup.prefetchAndStart` and `BuildAccounts.start`, are for an instance just created) is therefore the way isx starts an instance: it recognises that one failure, drops the setting, says plainly what is no longer enforced, and retries.
   Keep the match narrow -- it strips a security setting, so any other start failure must surface as itself.
 - **Per-request credentials.**
   `RequestContext(domain, instanceName, creds, routing, usesDefaultCredentials)` replaces the bare `domain` parameter down `routeRequest -> handleApiRequest -> streamApiRequest` (the relay's `RelayHooks.prepare`), or `-> retainVertexRequest -> sendVertexRequest`, to `injectHeaders`.
