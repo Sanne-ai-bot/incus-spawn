@@ -21,7 +21,7 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/), p
 
 Requires **Linux, or macOS 15 (Sequoia) or later**; older macOS releases are not supported. On macOS, Apple Silicon is supported; Intel Macs get a binary built for the same macOS 15 minimum on a best-effort basis: it is released, but not verified on an Intel Mac. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|restart|status|resize|reset`. Windows is not supported.
 
-**macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead.
+**macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead. VM instances (`type: vm`, `--type vm`) and KVM passthrough (`--kvm`, `type: kvm`) are Linux-only too: on macOS isx runs containers, refuses a VM or `--kvm` before it creates anything, and branches a `type: kvm` template without KVM.
 
 <!-- tabs:os -->
 
@@ -423,7 +423,7 @@ Image schema fields (all optional except `name`; `isx templates new` writes them
 - `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders; `file://` works for testing a locally built image)
 - `image_tag` -- release tag identifying the base image version
 - `image_sha256` -- per-architecture SHA256 checksums for integrity verification
-- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. With the built-in base image that is isx's own kernel, which the firmware starts directly (no boot loader, no initrd, no loadable modules). It is pinned: image rebuilds bring Fedora's userspace updates, not kernel updates, which arrive only when isx's kernel pin is bumped. By default dnf in the VM excludes Fedora's kernel packages (`/etc/dnf/libdnf5.conf.d/isx-kernel.conf`); kernel work belongs in a nested VM inside a `--kvm` branch. `kvm` is a container with the host's `/dev/kvm` passed through, so it can run VMs of its own (skip it per branch with `--no-kvm`). Inherits from parent -- a child without `type` inherits its parent's type
+- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. With the built-in base image that is isx's own kernel, which the firmware starts directly (no boot loader, no initrd, no loadable modules). It is pinned: image rebuilds bring Fedora's userspace updates, not kernel updates, which arrive only when isx's kernel pin is bumped. By default dnf in the VM excludes Fedora's kernel packages (`/etc/dnf/libdnf5.conf.d/isx-kernel.conf`); kernel work belongs in a nested VM inside a `--kvm` branch. `kvm` is a container with the host's `/dev/kvm` passed through, so it can run VMs of its own (skip it per branch with `--no-kvm`). `vm` and `kvm` need Linux: macOS runs containers only, and a `kvm` template's branches go without KVM there. Inherits from parent -- a child without `type` inherits its parent's type
 - `vm_image_url` -- download URL for the VM base image (qcow2 tarball). Only used when `type` is `vm`. Supports `{arch}` and `{tag}` placeholders
 - `vm_image_sha256` -- per-architecture SHA256 checksums for the VM base image
 - `parent` -- parent image name (omit for root images)
@@ -1682,7 +1682,7 @@ Several templates build in one invocation: plainly, each in turn, a named parent
 | `--with-parents` | Rebuild the templates and all their parents unconditionally |
 | `--with-descendants` | Rebuild the templates and all templates inheriting from them |
 | `--missing` | Build only templates that don't exist yet; like several named templates, a failure skips what inherits from it and the rest are still built, then exits 1 naming what was not |
-| `--type <type>` | Instance type: `container`, `vm`, or `kvm` (overrides image definition) |
+| `--type <type>` | Instance type: `container`, `vm`, or `kvm` (overrides image definition); `vm` and `kvm` work on Linux only |
 | `--yes` | Skip interactive confirmations |
 | `--skip-git-refresh` | Compatibility option; builds no longer refresh host checkouts |
 
@@ -1697,7 +1697,7 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 | `--from <source>` | Source instance to branch from (auto-detected from cwd if omitted) |
 | `--gui` | Enable GUI passthrough (Wayland + GPU + audio); the default for a `gui: true` container template (not a project-local one) when isx runs in a Wayland session |
 | `--no-gui` | Disable GUI passthrough even if the template has `gui: true` |
-| `--kvm` | Expose /dev/kvm for nested virtualization |
+| `--kvm` | Expose /dev/kvm for nested virtualization (Linux only: refused on macOS) |
 | `--no-kvm` | Disable KVM even if the template was built with `type: kvm` |
 | `--airgap` | Disable all network access |
 | `--proxy-only` | Restrict network to the host proxy only |
