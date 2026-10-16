@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.McpConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
@@ -17,6 +19,36 @@ class SupportBundleTest {
 
     @TempDir
     Path dir;
+
+    @Test
+    @ExtendWith(IsolatedHome.class)
+    void theMcpPolicyIsBundledAsParsedOrWithWhyItCannotBeUsed() throws Exception {
+        assertTrue(SupportBundle.collectMcpPolicy().startsWith("# no mcp.yaml"));
+        var file = McpConfig.file();
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, "templates: [tpl-dev]  # approved by hand\nmax-instances: 3\n");
+        var policy = SupportBundle.collectMcpPolicy();
+        assertTrue(policy.contains("tpl-dev") && policy.contains("max-instances: 3"), policy);
+        assertFalse(policy.contains("approved by hand"), "written from the parsed policy, not copied: " + policy);
+        Files.writeString(file, "templates: [tpl-dev\n");
+        assertTrue(SupportBundle.collectMcpPolicy().startsWith("# " + file), SupportBundle.collectMcpPolicy());
+    }
+
+    /** The upgrade state: isx mcp refuses everything, and the bundle must say so, not "approves none". */
+    @Test
+    @ExtendWith(IsolatedHome.class)
+    void theMcpPolicyInTheBundleReportsALegacySectionWithNoMcpYaml() throws Exception {
+        IsolatedHome.seed("mcp:\n  templates: [tpl-dev]\n");
+        var policy = SupportBundle.collectMcpPolicy();
+        assertTrue(policy.startsWith("# " + McpConfig.file() + " does not exist, and the mcp: section"),
+                policy);
+        assertTrue(policy.contains("refuses everything"), policy);
+
+        Files.writeString(McpConfig.file(), "templates: [tpl-java]\n");
+        policy = SupportBundle.collectMcpPolicy();
+        assertTrue(policy.startsWith("# the mcp: section of config.yaml is no longer read"), policy);
+        assertTrue(policy.contains("tpl-java"), policy);
+    }
 
     @Test
     void everyFileIsScrubbedOnTheWayIn() throws Exception {

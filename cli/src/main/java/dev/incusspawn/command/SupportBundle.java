@@ -5,6 +5,8 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
 import dev.incusspawn.Platform;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.Jjq;
+import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.config.SecretRegistry;
 import dev.incusspawn.config.SpawnConfig;
@@ -85,6 +87,7 @@ final class SupportBundle {
             // The config is already redacted structurally; it still goes through the funnel
             // so its own markers are counted consistently with everything else.
             bundle.add("config-sanitized.yaml", redaction.yaml());
+            bundle.add("mcp.yaml", collectMcpPolicy());
 
             bundle.add("REDACTIONS.txt", bundle.redactionManifest(redaction.redactedPaths()));
             bundle.add("README.txt", readme());
@@ -174,6 +177,7 @@ final class SupportBundle {
                   instances.json        instance list and configuration
                   service-status.txt    platform and proxy service state
                   config-sanitized.yaml config.yaml with every credential redacted
+                  mcp.yaml              the isx mcp policy as isx reads it, or why it cannot
                   REDACTIONS.txt        what was removed, and how
 
                 Credentials have been removed; REDACTIONS.txt says what was taken out and
@@ -184,6 +188,22 @@ final class SupportBundle {
     }
 
     // ---- Collectors ----
+
+    /** The policy as parsed, so only the keys isx knows reach the bundle; it holds no credentials. */
+    static String collectMcpPolicy() {
+        try {
+            var policy = McpConfig.load();
+            var legacy = McpConfig.legacySectionNotice(SpawnConfig.load());
+            return (legacy == null ? "" : "# " + legacy + "\n") + (Files.notExists(McpConfig.file())
+                    ? "# no " + McpConfig.FILE_NAME + ": isx mcp approves no templates\n"
+                    : Jjq.toYaml(policy));
+        } catch (McpConfig.Invalid e) {
+            return "# " + e.getMessage() + "\n";
+        } catch (RuntimeException e) {
+            // One optional file must not cost the user the whole bundle.
+            return "# could not read " + McpConfig.FILE_NAME + ": " + e.getMessage() + "\n";
+        }
+    }
 
     private static String collectVersions() {
         var info = BuildInfo.instance();
