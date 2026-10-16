@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -746,8 +747,38 @@ public class ImageDef {
             loadFromDirectory(Path.of(expandedPath).resolve("images"), defs, warnings, null);
         }
         if (includeProject) loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings, projectRoot());
+        refuseParentCycles(defs, warnings);
         inheritTypes(defs.defs());
         return defs;
+    }
+
+    /**
+     * Refuse every template on a parent cycle, naming the layers (#1443): walking its chain would
+     * never end. A cycle is only visible once every layer is loaded, since an override can close it.
+     */
+    private static void refuseParentCycles(LayeredDefinitions<ImageDef> defs, Consumer<String> warnings) {
+        var map = defs.defs();
+        var walked = new HashSet<String>();
+        var cycles = new ArrayList<List<String>>();
+        for (var start : map.keySet()) {
+            var path = new ArrayList<String>();
+            var name = start;
+            while (name != null && map.containsKey(name) && walked.add(name)) {
+                path.add(name);
+                var def = map.get(name);
+                name = def.isRoot() ? null : def.getParent();
+            }
+            // Stopped at a template walked before: a cycle only if this walk reached it
+            int loopStart = path.indexOf(name);
+            if (loopStart >= 0) cycles.add(List.copyOf(path.subList(loopStart, path.size())));
+        }
+        for (var cycle : cycles) {
+            var files = cycle.stream().map(defs::getSource).distinct()
+                    .map(OutputFormat::oneLine).toList();
+            warnings.accept("parent cycle " + String.join(" → ", cycle) + " → " + cycle.get(0)
+                    + " (" + String.join(", ", files) + ")" + LayeredDefinitions.REFUSED);
+            cycle.forEach(defs::refuse);
+        }
     }
 
     /**

@@ -69,6 +69,7 @@ The TUI stays resilient (surfaces the conflict as a status warning but still lis
 Plain `ImageDef.loadAll()` still returns the resolved map (last-writer-wins) and emits a one-line conflict warning via its warnings consumer, so existing callers are unaffected.
 Files that fail to parse are recorded too (`LayeredDefinitions.parseFailures()`, `ToolDefLoader.parseFailures()`).
 So are image definitions refused at load because their `name:` or `parent:` is not a valid Incus instance name (`InstanceNames`).
+So are image definitions on a parent cycle (#1443), found once every layer is loaded since an override can close one: one warning names the cycle and its files, and every template on it is dropped (`LayeredDefinitions.refuse`), so no chain walk (`ImageDef.ancestors`, `inheritTypes`) can loop.
 So are tool definitions refused at load because a credential namespace they name is not an identifier (`ToolDefValidator.invalidNamespace`).
 `isx build` refuses while any exist.
 The skipped file's name is unknown or unusable, so building would silently fall back to a lower layer or the existing template's build-source snapshot.

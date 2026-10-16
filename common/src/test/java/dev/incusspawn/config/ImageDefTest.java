@@ -640,6 +640,98 @@ class ImageDefTest {
     }
 
     @Test
+    void aParentCycleIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        var cx = imagesDir.resolve("cx.yaml");
+        var cy = imagesDir.resolve("cy.yaml");
+        Files.writeString(cx, """
+                name: tpl-cx
+                type: container
+                parent: tpl-cy
+                """);
+        Files.writeString(cy, """
+                name: tpl-cy
+                type: container
+                parent: tpl-cx
+                """);
+        Files.writeString(imagesDir.resolve("child.yaml"), """
+                name: tpl-child
+                parent: tpl-cx
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), warnings::add);
+
+        // Walking the chain of any of them would never end (#1443)
+        assertFalse(result.defs().containsKey("tpl-cx"));
+        assertFalse(result.defs().containsKey("tpl-cy"));
+        // So isx build refuses, as for any definition refused at load.
+        assertEquals(java.util.Set.of(cx.toAbsolutePath().normalize(), cy.toAbsolutePath().normalize()),
+                java.util.Set.copyOf(result.parseFailures()));
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains("tpl-cx → tpl-cy → tpl-cx"), warnings.get(0));
+        assertTrue(warnings.get(0).contains("cx.yaml") && warnings.get(0).contains("cy.yaml"), warnings.get(0));
+        // A template below the cycle still loads, its chain ending at the missing parent
+        var child = result.defs().get("tpl-child");
+        assertEquals(List.of(), ImageDef.ancestors(child, result.defs()));
+    }
+
+    @Test
+    void aParentCycleClosedByALaterLayerIsRefused(@TempDir Path tempDir) throws Exception {
+        var lower = tempDir.resolve("lower");
+        var upper = tempDir.resolve("upper");
+        Files.createDirectories(lower.resolve("images"));
+        Files.createDirectories(upper.resolve("images"));
+        var cx = lower.resolve("images/cx.yaml");
+        Files.writeString(cx, """
+                name: tpl-cx
+                parent: tpl-cy
+                """);
+        Files.writeString(lower.resolve("images/cy.yaml"), """
+                name: tpl-cy
+                parent: tpl-minimal
+                """);
+        // Each directory alone has no cycle; the override closes one
+        var cy = upper.resolve("images/cy.yaml");
+        Files.writeString(cy, """
+                name: tpl-cy
+                parent: tpl-cx
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var result = ImageDef.loadAllWithConflicts(List.of(lower.toString(), upper.toString()), warnings::add);
+
+        assertFalse(result.defs().containsKey("tpl-cx"));
+        assertFalse(result.defs().containsKey("tpl-cy"));
+        assertEquals(java.util.Set.of(cx.toAbsolutePath().normalize(), cy.toAbsolutePath().normalize()),
+                java.util.Set.copyOf(result.parseFailures()));
+        assertEquals(List.of(), result.overrides());
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains(cy.toAbsolutePath().normalize().toString()), warnings.get(0));
+    }
+
+    @Test
+    void aTemplateThatIsItsOwnParentIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        // Without a type: inheriting one walks the chain while loading
+        var self = imagesDir.resolve("self.yaml");
+        Files.writeString(self, """
+                name: tpl-self
+                parent: tpl-self
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), warnings::add);
+
+        assertFalse(result.defs().containsKey("tpl-self"));
+        assertEquals(List.of(self.toAbsolutePath().normalize()), result.parseFailures());
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains("tpl-self → tpl-self"), warnings.get(0));
+    }
+
+    @Test
     void namesIncusAcceptsStillLoad(@TempDir Path tempDir) throws Exception {
         var imagesDir = tempDir.resolve("images");
         Files.createDirectories(imagesDir);
