@@ -381,16 +381,10 @@ public final class RuntimeSetup {
         if (keys.isEmpty()) return;
 
         try {
-            var tmpKey = Files.createTempFile("isx-ssh-", ".pub");
-            try {
-                Files.writeString(tmpKey, String.join("\n", keys) + "\n");
-                // Push with agentuser ownership (uid=1000) and mode 0600 directly,
-                // avoiding a separate chown+chmod exec round trip
-                incus.filePush(tmpKey.toString(), name, "/home/agentuser/.ssh/authorized_keys",
-                        "1000", "1000", "0600");
-            } finally {
-                Files.deleteIfExists(tmpKey);
-            }
+            // Push with agentuser ownership (uid=1000) and mode 0600 directly,
+            // avoiding a separate chown+chmod exec round trip
+            incus.filePushContent(String.join("\n", keys) + "\n", name, "/home/agentuser/.ssh/authorized_keys",
+                    "1000", "1000", "0600");
         } catch (IOException e) {
             System.err.println(BuildOutput.STEP_INDENT + "Warning: failed to inject SSH key: " + e.getMessage());
             return;

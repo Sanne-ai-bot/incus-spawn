@@ -4,7 +4,6 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.util.UUID;
 
 /**
@@ -38,14 +37,8 @@ public final class MachineId {
      */
     static void giveOwn(IncusClient incus, String name) {
         try {
-            var tmp = Files.createTempFile("isx-machine-id-", "");
-            try {
-                // The format systemd itself writes: a random v4 UUID, lowercase, without dashes
-                Files.writeString(tmp, UUID.randomUUID().toString().replace("-", "") + "\n");
-                incus.filePush(tmp.toString(), name, PATH, "0", "0", "0444");
-            } finally {
-                Files.deleteIfExists(tmp);
-            }
+            // The format systemd itself writes: a random v4 UUID, lowercase, without dashes
+            incus.filePushContent(UUID.randomUUID().toString().replace("-", "") + "\n", name, PATH, "0", "0", "0444");
         } catch (IOException | RuntimeException e) {
             BuildOutput.warn("failed to give " + name + " a machine-id of its own, it may share its source's: "
                     + e.getMessage());
