@@ -20,11 +20,11 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * Loads YAML tool definitions from built-in resources, user-level, and
+ * Loads YAML tool definitions from built-in resources, user-level, search-path and
  * project-local files.
  * <p>
  * Resolution order: built-in (classpath) → user ({@code ~/.config/incus-spawn/tools/})
- * → project-local ({@code .incus-spawn/tools/}). Later definitions with the
+ * → each search path's {@code tools/} → project-local ({@code .incus-spawn/tools/}). Later definitions with the
  * same name override earlier ones.
  * <p>
  * Overriding across layers is intentional and supported. Two files that declare
