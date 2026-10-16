@@ -69,7 +69,7 @@ public class ToolDefValidator {
                         + "' — must be one of: string, integer, boolean, enum");
             }
             if ("enum".equals(param.getType())
-                    && (param.getOptions() == null || param.getOptions().isEmpty())) {
+                    && param.getOptions().isEmpty()) {
                 warnings.add("parameter '" + name + "' is type 'enum' but has no 'options' defined");
             }
             if ("integer".equals(param.getType())
@@ -89,7 +89,7 @@ public class ToolDefValidator {
             var configMap = proxyDef.getConfiguration();
             var ns = proxyDef.getConfigNamespace();
 
-            boolean hasAuth = proxyDef.getAuth() != null && !proxyDef.getAuth().isEmpty();
+            boolean hasAuth = !proxyDef.getAuth().isEmpty();
             boolean hasUnscopedConfigPaths = configMap.values().stream()
                     .anyMatch(c -> !c.getConfigPath().isBlank() && proxyDef.namespaceOf(c).isBlank());
             if (hasAuth && hasUnscopedConfigPaths) {
@@ -115,7 +115,7 @@ public class ToolDefValidator {
             }
 
             for (var ae : proxyDef.getAuth()) {
-                if (ae.getDomains() == null || ae.getDomains().isEmpty()) {
+                if (ae.getDomains().isEmpty()) {
                     errors.add("auth entry in proxy for '" + def.getName() + "' is missing 'domains'");
                     continue;
                 }
@@ -210,8 +210,6 @@ public class ToolDefValidator {
         if (proxy == null) return List.of();
         var errors = new ArrayList<String>();
         for (var ae : proxy.getAuth()) {
-            // An empty item ('auth:' then a bare '-') arrives as null
-            if (ae == null) continue;
             for (var path : ae.getPaths()) {
                 var problem = pathScopeProblem(path);
                 if (problem != null) {
@@ -313,17 +311,12 @@ public class ToolDefValidator {
      */
     public static List<String> embeddedTokens(ToolDef def) {
         var proxy = def.getProxy();
-        if (proxy == null || proxy.getAuth() == null || proxy.getAuth().isEmpty()) return List.of();
+        if (proxy == null || proxy.getAuth().isEmpty()) return List.of();
         var warnings = new ArrayList<String>();
-        // A key left empty in YAML ('run:') arrives as null, list and items alike
-        var steps = java.util.stream.Stream.of(def.getRun(), def.getRunAsUser())
-                .filter(java.util.Objects::nonNull).flatMap(List::stream)
-                .filter(java.util.Objects::nonNull).toList();
+        var steps = java.util.stream.Stream.of(def.getRun(), def.getRunAsUser()).flatMap(List::stream).toList();
         // The variables the proxy checks, where the tool declares them (#1106); else a guess
-        var declared = orEmpty(proxy.getPlaceholders()).stream()
-                .filter(java.util.Objects::nonNull).map(ToolDef.PlaceholderDef::getEnv).toList();
-        for (var env : orEmpty(def.getEnv())) {
-            if (env == null) continue;
+        var declared = proxy.getPlaceholders().stream().map(ToolDef.PlaceholderDef::getEnv).toList();
+        for (var env : def.getEnv()) {
             var value = env.getValue();
             if (env.getName() == null || value == null || value.length() < MIN_TOKEN_LENGTH
                     || env.getStrategy() == EnvEntry.Strategy.PREPEND
@@ -331,8 +324,8 @@ public class ToolDefValidator {
             if (declared.isEmpty() ? !SecretRedactor.looksSecret(env.getName()) || !TOKEN_SHAPE.matcher(value).matches()
                     : !declared.contains(env.getName())) continue;
             var where = new ArrayList<String>();
-            for (var file : orEmpty(def.getFiles())) {
-                if (file != null && file.getContent() != null && file.getContent().contains(value)) {
+            for (var file : def.getFiles()) {
+                if (file.getContent() != null && file.getContent().contains(value)) {
                     where.add("file '" + file.getPath() + "'");
                 }
             }
@@ -347,9 +340,5 @@ public class ToolDefValidator {
             }
         }
         return warnings;
-    }
-
-    private static <T> List<T> orEmpty(List<T> list) {
-        return list == null ? List.of() : list;
     }
 }
