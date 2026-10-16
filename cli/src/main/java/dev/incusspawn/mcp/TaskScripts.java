@@ -425,7 +425,7 @@ final class TaskScripts {
 
     /**
      * {@link #unfinished}, for every task, background commands included: how another session of
-     * the same host user counts this instance's tasks against {@code mcp.max-concurrent-tasks}.
+     * the same host user counts this instance's tasks against {@code max-concurrent-tasks} in {@code mcp.yaml}.
      */
     static String busy() {
         return unfinished("[ -f \"$D/kind\" ] || continue; ");

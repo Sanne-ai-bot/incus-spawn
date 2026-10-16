@@ -335,7 +335,7 @@ class ListCommandOutputTest {
         var released = held.stream().filter(i -> i.name().equals("released")).findFirst().orElseThrow();
         var text = rows(InstanceDetailView.mcpDetailRows(released.mcp()));
         assertEquals("MCP:|orphaned since 2026-10-05T08:00:00Z", text.get(0));
-        assertTrue(text.stream().anyMatch(r -> r.contains("mcp.orphan-grace-hours")), text.toString());
+        assertTrue(text.stream().anyMatch(r -> r.contains("orphan-grace-hours in mcp.yaml")), text.toString());
         assertEquals("  Purpose:|review #12", text.getLast());
     }
 
@@ -350,8 +350,8 @@ class ListCommandOutputTest {
         var idle = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
         var text = rows(InstanceDetailView.mcpDetailRows(idle.mcp()));
         assertEquals("MCP:|orphaned since 2026-10-04T08:00:00Z, stopped as dormant since 2026-10-05T09:00:00Z", text.get(0));
-        assertTrue(text.stream().anyMatch(r -> r.contains("mcp.dormant-grace-hours")), text.toString());
-        assertTrue(text.stream().noneMatch(r -> r.contains("mcp.orphan-grace-hours")), "its orphan grace is over: " + text);
+        assertTrue(text.stream().anyMatch(r -> r.contains("dormant-grace-hours in mcp.yaml")), text.toString());
+        assertTrue(text.stream().noneMatch(r -> r.contains("orphan-grace-hours in mcp.yaml")), "its orphan grace is over: " + text);
     }
 
     private static List<String> rows(List<InstanceDetailView.DetailRow> rows) {

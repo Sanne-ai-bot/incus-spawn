@@ -89,11 +89,6 @@ public class SpawnConfig {
     @JqName("host-ca")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object hostCa;
-    // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
-    // never written back.
-    @JqName("mcp")
-    @JqInclude(JqInclude.Include.NON_NULL)
-    private McpConfig mcp;
     private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
     /**
@@ -655,9 +650,15 @@ public class SpawnConfig {
     /** The {@code host-ca:} section, or its defaults (disabled) when absent. */
     public HostCaConfig hostCa() { return HostCaConfig.of(hostCa); }
 
-    /** The {@code mcp:} section, or its defaults (no templates approved) when absent. */
-    public McpConfig mcp() { return mcp != null ? mcp : new McpConfig(); }
-    public void setMcp(McpConfig mcp) { this.mcp = mcp; }
+    /**
+     * Whether an {@code mcp:} section is left over from before {@code mcp.yaml} (#1331). It is
+     * kept like any unknown key and never read: only for telling the user to move it.
+     */
+    public boolean hasLegacyMcpSection() {
+        // An empty one (`mcp:` or `mcp: {}`) set nothing the defaults would widen.
+        var section = extras.get("mcp");
+        return section != null && !(section instanceof Map<?, ?> map && map.isEmpty());
+    }
     public void setAutoCloneRepos(String autoCloneRepos) { this.autoCloneRepos = autoCloneRepos == null ? "" : autoCloneRepos; }
     @JqAnySetter
     public void setExtra(String key, Object value) { extras.put(key, value); }
@@ -805,7 +806,6 @@ public class SpawnConfig {
         this.readyTimeouts = other.readyTimeouts;
         this.hostRoutes = other.hostRoutes;
         this.hostCa = other.hostCa;
-        this.mcp = other.mcp;
         this.extras = other.extras;
     }
 
@@ -855,19 +855,28 @@ public class SpawnConfig {
         return Environment.configDir();
     }
 
+    public static Path file() {
+        return configDir().resolve("config.yaml");
+    }
+
     public static SpawnConfig load() {
-        var configFile = configDir().resolve("config.yaml");
-        if (!Files.exists(configFile)) {
-            return new SpawnConfig();
-        }
         try {
-            var config = Jjq.spawnConfig(configFile);
-            config.migrateHostPath();
-            return config;
+            return loadStrict();
         } catch (IOException e) {
             ClientLog.warn(YamlErrors.friendly("config.yaml", e));
             return new SpawnConfig();
         }
+    }
+
+    /** As {@link #load}, but a file that cannot be read or parsed throws instead of reading as empty. */
+    public static SpawnConfig loadStrict() throws IOException {
+        var configFile = file();
+        if (!Files.exists(configFile)) {
+            return new SpawnConfig();
+        }
+        var config = Jjq.spawnConfig(configFile);
+        config.migrateHostPath();
+        return config;
     }
 
     void migrateHostPath() {

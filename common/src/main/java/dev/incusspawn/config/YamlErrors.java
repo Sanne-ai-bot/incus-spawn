@@ -198,7 +198,7 @@ public final class YamlErrors {
         return field + " expects " + expected + ", but got " + received + hint;
     }
 
-    /** Where a binding failed, as the file writes it: {@code mcp.orphan-grace-hours}, {@code repos[1].url}. */
+    /** Where a binding failed, as the file writes it: {@code codex.sandbox-mode}, {@code repos[1].url}. */
     static String written(JqMapperException ex) {
         return SecretRedactor.label(ex.pathSegments());
     }

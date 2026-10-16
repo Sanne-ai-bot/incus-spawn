@@ -226,27 +226,27 @@ class YamlSemanticsTest {
 
     @Test
     void aWordForAnIntegerSettingFailsWithTheFieldAndLine() {
-        var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  orphan-grace-hours: abc\n"));
-        var message = YamlErrors.friendly("config.yaml", e);
-        assertEquals("config.yaml:2: 'mcp.orphan-grace-hours' expects a whole number, but got 'abc'", message);
+        var e = assertThrows(java.io.IOException.class, () -> Jjq.mcpConfig("orphan-grace-hours: abc\n"));
+        var message = YamlErrors.friendly("mcp.yaml", e);
+        assertEquals("mcp.yaml:1: 'orphan-grace-hours' expects a whole number, but got 'abc'", message);
     }
 
     @Test
     void aBooleanForAnIntegerSettingFails() {
-        var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  orphan-grace-hours: true\n"));
-        var message = YamlErrors.friendly("config.yaml", e);
-        assertTrue(message.startsWith("config.yaml:2: ") && message.contains("orphan-grace-hours"), message);
+        var e = assertThrows(java.io.IOException.class, () -> Jjq.mcpConfig("orphan-grace-hours: true\n"));
+        var message = YamlErrors.friendly("mcp.yaml", e);
+        assertTrue(message.startsWith("mcp.yaml:1: ") && message.contains("orphan-grace-hours"), message);
     }
 
     @Test
     void aQuotedNumberForAnIntegerSettingIsThatNumber() throws Exception {
-        assertEquals(24, Jjq.spawnConfig("mcp:\n  orphan-grace-hours: \"24\"\n").mcp().orphanGraceHours());
-        assertEquals(7, Jjq.spawnConfig("mcp:\n  max-instances: 7\n").mcp().maxInstances());
+        assertEquals(24, Jjq.mcpConfig("orphan-grace-hours: \"24\"\n").orphanGraceHours());
+        assertEquals(7, Jjq.mcpConfig("max-instances: 7\n").maxInstances());
     }
 
     @Test
     void aBlankIntegerSettingIsUnset() throws Exception {
-        assertEquals(McpConfig.DEFAULT_MAX_INSTANCES, Jjq.spawnConfig("mcp:\n  max-instances: \"\"\n").mcp().maxInstances());
+        assertEquals(McpConfig.DEFAULT_MAX_INSTANCES, Jjq.mcpConfig("max-instances: \"\"\n").maxInstances());
     }
 
     /** .inf and .nan read as 0 in jjq, and 1e400 is out of range: "never" must not be an immediate reap. */
@@ -254,9 +254,9 @@ class YamlSemanticsTest {
     void anInfiniteNanOrHugeNumberFailsRatherThanBeingZero() {
         for (var text : java.util.List.of(".inf", "-.inf", ".nan", "1e400", "-1e400")) {
             for (var key : java.util.List.of("orphan-grace-hours", "max-instances")) {
-                var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  " + key + ": " + text + "\n"),
+                var e = assertThrows(java.io.IOException.class, () -> Jjq.mcpConfig(key + ": " + text + "\n"),
                         key + ": " + text);
-                assertTrue(friendly(e).startsWith("x.yaml:2: 'mcp." + key + "' expects a whole number"), friendly(e));
+                assertTrue(friendly(e).startsWith("x.yaml:1: '" + key + "' expects a whole number"), friendly(e));
             }
         }
     }
@@ -276,17 +276,17 @@ class YamlSemanticsTest {
 
     @Test
     void aListOrMappingForAnIntegerSettingSaysWhatItWas() {
-        var list = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: [8]\n"));
+        var list = assertThrows(java.io.IOException.class, () -> Jjq.mcpConfig("max-instances: [8]\n"));
         assertTrue(friendly(list).endsWith("expects a whole number, but got a list"), friendly(list));
-        var mapping = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances:\n    n: 8\n"));
+        var mapping = assertThrows(java.io.IOException.class, () -> Jjq.mcpConfig("max-instances:\n    n: 8\n"));
         assertTrue(friendly(mapping).endsWith("expects a whole number, but got a mapping"), friendly(mapping));
     }
 
     @Test
     void aKeyWithADotIsQuotedWhereItIsNamed() {
-        var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig(
-                "mcp:\n  delegate-permission-modes:\n    tpl.v2: [plan]\n"));
-        assertTrue(friendly(e).contains("'mcp.delegate-permission-modes[\"tpl.v2\"]' expects a single value"), friendly(e));
+        var e = assertThrows(java.io.IOException.class, () -> Jjq.mcpConfig(
+                "delegate-permission-modes:\n  tpl.v2: [plan]\n"));
+        assertTrue(friendly(e).contains("'delegate-permission-modes[\"tpl.v2\"]' expects a single value"), friendly(e));
         assertTrue(friendly(e).contains("e.g. 'tpl.v2: value'"), friendly(e));
     }
 
@@ -313,16 +313,16 @@ class YamlSemanticsTest {
     @Test
     void aStringIsAnIntegerOnlyIfItIsOneLiterally() throws Exception {
         for (var text : java.util.List.of("1e2", "5.0", "0x10", "abc", "9999999999")) {
-            assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: \"" + text + "\"\n"), text);
+            assertThrows(java.io.IOException.class, () -> Jjq.mcpConfig("max-instances: \"" + text + "\"\n"), text);
         }
-        assertEquals(24, Jjq.spawnConfig("mcp:\n  max-instances: \" 24 \"\n").mcp().maxInstances());
+        assertEquals(24, Jjq.mcpConfig("max-instances: \" 24 \"\n").maxInstances());
     }
 
     @Test
     void anIntegerSettingBeyondTheIntRangeFailsRatherThanWrapping() {
-        var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("mcp:\n  max-instances: 99999999999\n"));
-        var message = YamlErrors.friendly("config.yaml", e);
-        assertTrue(message.startsWith("config.yaml:2: ") && message.contains("max-instances"), message);
+        var e = assertThrows(java.io.IOException.class, () -> Jjq.mcpConfig("max-instances: 99999999999\n"));
+        var message = YamlErrors.friendly("mcp.yaml", e);
+        assertTrue(message.startsWith("mcp.yaml:1: ") && message.contains("max-instances"), message);
     }
 
     @Test

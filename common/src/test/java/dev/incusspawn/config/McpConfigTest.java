@@ -1,25 +1,36 @@
 package dev.incusspawn.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The {@code mcp:} section: what {@code isx mcp} lets an agent do, read but never written by it. */
+/** {@code mcp.yaml}: what {@code isx mcp} lets an agent do, read but never written by it. */
 class McpConfigTest {
 
+    @TempDir
+    Path dir;
 
-    private static SpawnConfig parse(String yaml) throws Exception {
-        return Jjq.spawnConfig(yaml);
+    private static McpConfig parse(String yaml) {
+        return McpConfig.parse(yaml, "mcp.yaml");
+    }
+
+    private static String invalid(String yaml) {
+        return assertThrows(McpConfig.Invalid.class, () -> parse(yaml)).getMessage();
     }
 
     @Test
-    void aConfigWithoutMcpApprovesNothing() throws Exception {
-        var mcp = parse("github:\n  token: ghp_x\n").mcp();
+    void noFileApprovesNothing() {
+        var mcp = McpConfig.load(dir.resolve("mcp.yaml"));
         assertEquals(List.of(), mcp.templates());
         assertEquals(McpConfig.DEFAULT_MAX_INSTANCES, mcp.maxInstances());
         assertEquals(McpConfig.DEFAULT_MAX_CONCURRENT_TASKS, mcp.maxConcurrentTasks());
@@ -27,60 +38,83 @@ class McpConfigTest {
     }
 
     @Test
-    void aConfigWithoutMcpGainsNoMcpOnSave() throws Exception {
-        var out = Jjq.toYaml(parse("github:\n  token: ghp_x\n"));
-        assertFalse(out.contains("mcp"), "saving must not pin an mcp: section:\n" + out);
+    void anEmptyDocumentOrListApprovesNothing() {
+        for (var yaml : List.of("", "\n", "# nothing yet\n", "templates: []\n", "templates:\n", "max-instances: 2\n")) {
+            assertEquals(List.of(), parse(yaml).templates(), yaml);
+        }
     }
 
     @Test
-    void theMcpSectionLoadsAndSurvivesASave() throws Exception {
+    void theSettingsLoadFromTheTopLevelAndSurviveASave() {
         var yaml = """
-                mcp:
-                  templates: [tpl-java, tpl-dev]
-                  max-instances: 5
-                  max-concurrent-tasks: 1
-                  delegate-max-turns: 40
+                templates: [tpl-java, tpl-dev]
+                max-instances: 5
+                max-concurrent-tasks: 1
+                delegate-max-turns: 40
                 """;
-        var mcp = parse(yaml).mcp();
+        var mcp = parse(yaml);
         assertEquals(List.of("tpl-java", "tpl-dev"), mcp.templates());
         assertEquals(5, mcp.maxInstances());
         assertEquals(1, mcp.maxConcurrentTasks());
         assertEquals(40, mcp.delegateMaxTurns());
 
-        var again = parse(Jjq.toYaml(parse(yaml))).mcp();
+        var again = parse(Jjq.toYaml(mcp));
         assertEquals(List.of("tpl-java", "tpl-dev"), again.templates());
         assertEquals(5, again.maxInstances());
         assertEquals(40, again.delegateMaxTurns());
     }
 
     @Test
-    void onlyTheLimitsSetAreWrittenBack() throws Exception {
-        var out = Jjq.toYaml(parse("mcp:\n  templates: [tpl-dev]\n"));
+    void onlyTheLimitsSetAreWrittenBack() {
+        var out = Jjq.toYaml(parse("templates: [tpl-dev]\n"));
         assertTrue(out.contains("tpl-dev"));
         assertFalse(out.contains("max-instances"), "an unset limit must stay unset:\n" + out);
+        assertFalse(out.contains("mcp"), "no enclosing key:\n" + out);
     }
 
     @Test
-    void removingAnUnrelatedKeyKeepsTheMcpSection() throws Exception {
-        var config = parse("""
-                github:
-                  token: ghp_x
-                mcp:
-                  templates: [tpl-java]
-                """);
-        config.removeConfigPath("github.token");
-        assertEquals(List.of("tpl-java"), config.mcp().templates());
+    void aNegativeLimitIsZeroNotUnlimited() {
+        assertEquals(0, parse("max-instances: -1\n").maxInstances());
+    }
+
+    /** The section people will paste across: refused, so its limits are not dropped in silence. */
+    @Test
+    void theOldEnclosingKeyIsRefusedNotIgnored() {
+        var message = invalid("mcp:\n  templates: [tpl-java]\n  max-instances: 2\n");
+        assertTrue(message.startsWith("mcp.yaml: the settings go at the top level"), message);
+        assertTrue(message.contains("refuses everything that depends on it"), message);
     }
 
     @Test
-    void aNegativeLimitIsZeroNotUnlimited() throws Exception {
-        var mcp = parse("mcp:\n  max-instances: -1\n").mcp();
-        assertEquals(0, mcp.maxInstances());
+    void anEmptyTemplateEntryIsRefusedNotAnErrorOnUse() {
+        assertTrue(invalid("templates:\n  - tpl-dev\n  -\n").contains("templates has an empty entry"));
     }
 
     @Test
-    void theCoordinatorSettingsHaveDefaultsAndLoad() throws Exception {
-        var defaults = parse("mcp:\n  templates: [tpl-java]\n").mcp();
+    void anUnknownKeyIsRefusedSoAMistypedLimitIsNeverDropped() {
+        assertTrue(invalid("templates: [t]\nmax-instance: 2\n").contains("unknown key max-instance"));
+        assertTrue(invalid("codex:\n  sandbox-mod: read-only\n").contains("unknown key codex.sandbox-mod"));
+    }
+
+    @Test
+    void aMalformedFileNamesItselfAndTheLine() {
+        var message = invalid("templates: [tpl-java\n");
+        assertTrue(message.startsWith("mcp.yaml"), message);
+        var typed = invalid("templates: [t]\norphan-grace-hours: abc\n");
+        assertTrue(typed.startsWith("mcp.yaml:2: 'orphan-grace-hours' expects a whole number"), typed);
+    }
+
+    @Test
+    void anUnreadableFileIsRefusedNotTreatedAsMissing() throws Exception {
+        var file = dir.resolve("mcp.yaml");
+        Files.createDirectory(file);
+        var message = assertThrows(McpConfig.Invalid.class, () -> McpConfig.load(file)).getMessage();
+        assertTrue(message.startsWith(file + ": cannot be read"), message);
+    }
+
+    @Test
+    void theCoordinatorSettingsHaveDefaultsAndLoad() {
+        var defaults = parse("templates: [tpl-java]\n");
         assertEquals("bypassPermissions", defaults.delegatePermissionMode("tpl-java"));
         assertEquals(24, defaults.orphanGraceHours());
         assertEquals(24, defaults.dormantAfterHours());
@@ -88,39 +122,42 @@ class McpConfigTest {
         assertEquals("haiku", defaults.summaryModel());
 
         var mcp = parse("""
-                mcp:
-                  delegate-permission-mode: acceptEdits
-                  delegate-permission-modes:
-                    tpl-review: plan
-                  orphan-grace-hours: 72
-                  dormant-after-hours: 6
-                  dormant-grace-hours: 48
-                  summary-model: claude-haiku-4-5
-                """).mcp();
+                delegate-permission-mode: acceptEdits
+                delegate-permission-modes:
+                  tpl-review: plan
+                orphan-grace-hours: 72
+                dormant-after-hours: 6
+                dormant-grace-hours: 48
+                summary-model: claude-haiku-4-5
+                """);
         assertEquals("acceptEdits", mcp.delegatePermissionMode("tpl-java"));
         assertEquals("plan", mcp.delegatePermissionMode("tpl-review"));
         assertEquals(72, mcp.orphanGraceHours());
         assertEquals(6, mcp.dormantAfterHours());
         assertEquals(48, mcp.dormantGraceHours());
         assertEquals("claude-haiku-4-5", mcp.summaryModel());
-        var out = Jjq.toYaml(parse("mcp:\n  templates: [tpl-java]\n"));
+        var out = Jjq.toYaml(defaults);
         assertFalse(out.contains("grace") || out.contains("dormant") || out.contains("permission") || out.contains("summary"),
                 "unset settings are not written back:\n" + out);
     }
 
+    /** Checked when the file is read, so a bad value refuses every call, not only the one using it. */
     @Test
-    void aModeOrModelThatIsNotAPlainNameIsRefused() throws Exception {
-        var mcp = parse("mcp:\n  delegate-permission-mode: \"plan --dangerously\"\n  summary-model: \"haiku; rm\"\n").mcp();
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> mcp.delegatePermissionMode("t"));
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, mcp::summaryModel);
+    void aModeOrModelThatIsNotAPlainNameIsRefused() {
+        assertTrue(invalid("delegate-permission-mode: \"plan --dangerously\"\n").contains("is not a permission mode"));
+        assertTrue(invalid("delegate-permission-modes:\n  t: \"plan --x\"\n").contains("delegate-permission-modes.t 'plan --x' is not"));
+        assertTrue(invalid("summary-model: \"haiku; rm\"\n").contains("is not a model name"));
+        var direct = new McpConfig();
+        direct.setDelegatePermissionMode("plan --dangerously");
+        assertThrows(IllegalArgumentException.class, () -> direct.delegatePermissionMode("t"));
     }
 
     @Test
-    void aDelegatesOwnBudgetStaysWithinTheCeiling() throws Exception {
-        var unset = parse("mcp:\n  templates: [t]\n").mcp();
+    void aDelegatesOwnBudgetStaysWithinTheCeiling() {
+        var unset = parse("templates: [t]\n");
         assertNull(unset.delegateMaxTurns(null));
         assertEquals(500, unset.delegateMaxTurns(500), "no ceiling: the task's own");
-        var capped = parse("mcp:\n  delegate-max-turns: 50\n").mcp();
+        var capped = parse("delegate-max-turns: 50\n");
         assertEquals(50, capped.delegateMaxTurns(null));
         assertEquals(7, capped.delegateMaxTurns(7));
         assertEquals(50, capped.delegateMaxTurns(80), "never above the user's");
@@ -139,53 +176,112 @@ class McpConfigTest {
     }
 
     @Test
-    void codexPoliciesRoundTripAndDoNotSilentlyWidenClaudeRestrictions() throws Exception {
+    void codexPoliciesRoundTripAndDoNotSilentlyWidenClaudeRestrictions() {
         var config = parse("""
-                mcp:
-                  delegate-permission-mode: plan
-                  codex:
-                    sandbox-mode: workspace-write
-                    sandbox-modes:
-                      tpl-review: read-only
+                delegate-permission-mode: plan
+                codex:
+                  sandbox-mode: workspace-write
+                  sandbox-modes:
+                    tpl-review: read-only
                 """);
-        var again = parse(Jjq.toYaml(config)).mcp();
+        var again = parse(Jjq.toYaml(config));
         assertEquals("read-only", again.codexSandboxMode("tpl-review"));
         assertEquals("workspace-write", again.codexSandboxMode("tpl-dev"));
-        var restricted = parse("mcp:\n  delegate-permission-mode: plan\n").mcp();
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> restricted.codexSandboxMode("tpl-dev"));
+        var restricted = parse("delegate-permission-mode: plan\n");
+        assertThrows(IllegalArgumentException.class, () -> restricted.codexSandboxMode("tpl-dev"));
         var ownRestriction = parse("""
-                mcp:
-                  delegate-permission-modes:
-                    prod: plan
-                  codex:
-                    sandbox-mode: danger-full-access
-                    sandbox-modes:
-                      review: read-only
-                """).mcp();
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> ownRestriction.codexSandboxMode("prod"));
+                delegate-permission-modes:
+                  prod: plan
+                codex:
+                  sandbox-mode: danger-full-access
+                  sandbox-modes:
+                    review: read-only
+                """);
+        assertThrows(IllegalArgumentException.class, () -> ownRestriction.codexSandboxMode("prod"));
         assertEquals("danger-full-access", ownRestriction.codexSandboxMode("tpl-dev"));
         var ownRestrictionCovered = parse("""
-                mcp:
-                  delegate-permission-modes:
-                    prod: plan
-                  codex:
-                    sandbox-mode: danger-full-access
-                    sandbox-modes:
-                      prod: read-only
-                """).mcp();
+                delegate-permission-modes:
+                  prod: plan
+                codex:
+                  sandbox-mode: danger-full-access
+                  sandbox-modes:
+                    prod: read-only
+                """);
         assertEquals("read-only", ownRestrictionCovered.codexSandboxMode("prod"));
         var emptyEntry = parse("""
-                mcp:
-                  delegate-permission-mode: plan
-                  delegate-permission-modes:
-                    prod: ~
-                  codex:
-                    sandbox-mode: read-only
-                """).mcp();
-        assertEquals("read-only", emptyEntry.codexSandboxMode("prod"), "an empty entry is the section's restriction");
-        var invalid = parse("mcp:\n  codex:\n    sandbox-mode: arbitrary\n").mcp();
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> invalid.codexSandboxMode("tpl-dev"));
+                delegate-permission-mode: plan
+                delegate-permission-modes:
+                  prod: ~
+                codex:
+                  sandbox-mode: read-only
+                """);
+        assertEquals("read-only", emptyEntry.codexSandboxMode("prod"), "an empty entry is the file's restriction");
+        assertTrue(invalid("codex:\n  sandbox-mode: arbitrary\n").contains("codex.sandbox-mode 'arbitrary'"));
+        assertTrue(invalid("codex:\n  sandbox-modes:\n    t: arbitrary\n").contains("codex.sandbox-modes.t 'arbitrary'"));
         assertEquals("danger-full-access", new McpConfig().codexSandboxMode("tpl-dev"));
         assertFalse(Jjq.mapper().toJqValue(new McpConfig()).toJsonString().contains("codex"));
+    }
+
+    /** The old section is kept like any unknown key, and approves nothing anywhere. */
+    @Test
+    void aLegacySectionInConfigYamlIsKeptButNeverRead() throws Exception {
+        var config = Jjq.spawnConfig("github:\n  token: ghp_x\nmcp:\n  templates: [tpl-java]\n");
+        assertTrue(config.hasLegacyMcpSection());
+        assertTrue(Jjq.toYaml(config).contains("tpl-java"), "a save does not drop what the user wrote");
+        assertFalse(Jjq.spawnConfig("github:\n  token: ghp_x\n").hasLegacyMcpSection());
+        assertFalse(Jjq.spawnConfig("mcp:\n").hasLegacyMcpSection(), "an empty section set nothing");
+        assertFalse(Jjq.spawnConfig("mcp: {}\n").hasLegacyMcpSection(), "an empty section set nothing");
+    }
+
+    @Test
+    void savingCreatesTheFileOwnerOnly(@TempDir Path home) throws Exception {
+        var previous = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        try {
+            var mcp = new McpConfig();
+            mcp.setTemplates(List.of("tpl-dev"));
+            mcp.save();
+            var file = home.resolve(".config/incus-spawn/mcp.yaml");
+            assertEquals(McpConfig.file(), file);
+            assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
+            Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-rw-rw-"));
+            mcp.save();
+            assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)),
+                    "a save leaves it owner-only, whoever loosened it");
+            try (var left = Files.list(file.getParent())) {
+                assertEquals(List.of(file), left.toList(), "no temporary file is left behind");
+            }
+            assertEquals(List.of("tpl-dev"), McpConfig.load().templates());
+            assertFalse(Files.exists(home.resolve(".config/incus-spawn/config.yaml")), "config.yaml is not touched");
+        } finally {
+            System.setProperty("user.home", previous);
+        }
+    }
+
+    @Test
+    void savingWritesThroughASymlinkedFile(@TempDir Path home) throws Exception {
+        var previous = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        try {
+            var dotfiles = Files.createDirectories(home.resolve("dotfiles"));
+            var target = Files.writeString(dotfiles.resolve("mcp.yaml"), "templates: [tpl-old]\n");
+            Files.createDirectories(McpConfig.file().getParent());
+            Files.createSymbolicLink(McpConfig.file(), target);
+            var mcp = McpConfig.load();
+            mcp.setTemplates(List.of("tpl-new"));
+            mcp.save();
+            assertTrue(Files.isSymbolicLink(McpConfig.file()), "the link stays a link");
+            assertTrue(Files.readString(target).contains("tpl-new"), Files.readString(target));
+            try (var left = Files.list(dotfiles)) {
+                assertEquals(List.of(target), left.toList(), "no temporary file is left behind");
+            }
+            // Dotfiles not checked out yet: the dangling link is written through, not replaced.
+            Files.delete(target);
+            mcp.save();
+            assertTrue(Files.isSymbolicLink(McpConfig.file()), "a dangling link stays a link");
+            assertTrue(Files.readString(target).contains("tpl-new"));
+        } finally {
+            System.setProperty("user.home", previous);
+        }
     }
 }

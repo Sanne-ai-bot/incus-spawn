@@ -104,7 +104,7 @@ class McpToolsTest {
     @Test
     void withNothingApprovedTheAgentIsToldWhoCanApprove() throws Exception {
         config.setTemplates(List.of());
-        assertTrue(text(call("list_templates", "{}")).contains("mcp.templates"));
+        assertTrue(text(call("list_templates", "{}")).contains("templates in ~/.config/incus-spawn/mcp.yaml"));
     }
 
     @Test
@@ -321,7 +321,7 @@ class McpToolsTest {
         assertFalse(fork(source, "").path("isError").asBoolean(false));
         var r = fork(source, "");
         assertTrue(r.path("isError").asBoolean(false));
-        assertTrue(text(r).contains("mcp.max-instances"), text(r));
+        assertTrue(text(r).contains("max-instances in mcp.yaml"), text(r));
     }
 
     @Test

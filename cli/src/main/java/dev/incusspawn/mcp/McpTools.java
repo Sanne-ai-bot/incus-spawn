@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 
 /**
  * The tools {@code isx mcp} offers. Every tool naming an instance checks that this session holds
- * it first; none can build, define or reconfigure templates, change {@code config.yaml}, touch
+ * it first; none can build, define or reconfigure templates, change {@code config.yaml} or {@code mcp.yaml}, touch
  * the host's files or run anything on the host.
  */
 final class McpTools {
@@ -82,7 +82,7 @@ final class McpTools {
                 "Create a disposable instance from an approved template: a copy-on-write branch, "
                         + "ready in seconds. Returns its name, which the other tools take. It outlives "
                         + "this session: when the session ends it is orphaned, and a later session of "
-                        + "yours can take it back with adopt_instance until mcp.orphan-grace-hours pass. "
+                        + "yours can take it back with adopt_instance until orphan-grace-hours in mcp.yaml pass. "
                         + "Destroy it with destroy_instance when you are done with it. Or fork one of "
                         + "your instances with from_instance: prepare it once (build, prime caches), "
                         + "stop it with stop_instance, then fork it as many times as you need -- each "
@@ -104,7 +104,7 @@ final class McpTools {
         tools.add(new McpTool("list_instances",
                 "List your instances: the ones this session holds (with their tasks), and the ones "
                         + "other sessions of yours hold or left orphaned, which adopt_instance takes over. "
-                        + "An orphan whose delegate showed no activity for mcp.dormant-after-hours past its "
+                        + "An orphan whose delegate showed no activity for dormant-after-hours in mcp.yaml past its "
                         + "grace period is stopped rather than destroyed: dormant_since says when, and it is "
                         + "destroyed at dormant_until unless adopted.",
                 Schema.object().build(),
@@ -997,7 +997,7 @@ final class McpTools {
 
     /**
      * The {@code model} and {@code max_turns} a call chose, checked as far as can be without
-     * the instance: a model name, and a budget within the user's {@code mcp.delegate-max-turns}.
+     * the instance: a model name, and a budget within the user's {@code delegate-max-turns} in {@code mcp.yaml}.
      */
     private Tasks.Profile profile(McpTool.Args args) {
         var model = args.string("model");
@@ -1008,7 +1008,7 @@ final class McpTools {
             if (maxTurns < 1) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "max_turns must be at least 1");
             var ceiling = session.config().delegateMaxTurns();
             if (ceiling != null && maxTurns > ceiling) {
-                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "max_turns " + maxTurns + " is more than the user allows (mcp.delegate-max-turns: "
+                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "max_turns " + maxTurns + " is more than the user allows (delegate-max-turns in mcp.yaml: "
                         + ceiling + "); choose at most " + ceiling + ".");
             }
         }

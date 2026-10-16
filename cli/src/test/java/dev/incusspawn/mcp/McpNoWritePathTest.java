@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * What an agent can never do through {@code isx mcp}, pinned at the source level: nothing in the
- * package may write {@code config.yaml} or template definitions, build templates, change
+ * package may write {@code config.yaml}, {@code mcp.yaml} or template definitions, build templates, change
  * credential accounts, or run anything on the host. A change that needs one of these is a change
  * to the trust model, and should have to delete a line here to happen.
  */
@@ -25,6 +25,7 @@ class McpNoWritePathTest {
     /** Forbidden text, and the one file (if any) allowed to contain it. */
     private static final Map<String, Set<String>> FORBIDDEN = Map.ofEntries(
             Map.entry(".save(", Set.of()),
+            Map.entry("writeYaml", Set.of()),
             Map.entry("setConfigByPath", Set.of()),
             Map.entry("removeConfigPath", Set.of()),
             Map.entry("NamespaceAccounts", Set.of()),

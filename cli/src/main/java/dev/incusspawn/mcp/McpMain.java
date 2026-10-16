@@ -18,7 +18,7 @@ import java.util.function.Supplier;
 /**
  * {@code isx mcp}: serve this session over stdio until the client goes away, then release the
  * instances it holds: they become orphans a later session may adopt, destroyed only once
- * {@code mcp.orphan-grace-hours} have passed with nobody working in them.
+ * {@code orphan-grace-hours} in {@code mcp.yaml} have passed with nobody working in them.
  *
  * <p>{@code isx mcp --caller-instance <name>} serves an isx instance instead (#915): the proxy
  * runs it for each MCP connection the instance makes to {@code mcp.isx.internal}, its stdio
@@ -77,8 +77,9 @@ public final class McpMain {
             cwd = Path.of("").toAbsolutePath().toString();
         }
         var owner = System.getProperty("user.name", "");
-        // Read on every use: a person narrowing the config affects a running session at once.
-        Supplier<McpConfig> config = () -> SpawnConfig.load().mcp();
+        // Read on every use: a person narrowing the policy affects a running session at once.
+        Supplier<McpConfig> config = McpMain::policy;
+        warnAboutPolicy();
         var alive = new CallerLiveness(backend);
         var session = new McpSession(self, owner, clientPid, cwd, backend, config, alive);
         var tasks = new Tasks(session, backend, config);
@@ -112,6 +113,29 @@ public final class McpMain {
     }
 
     /**
+     * The host user's {@code mcp.yaml} as it is now. One that cannot be used refuses the call that
+     * needed it: never the policy it held before, never an {@code mcp:} section in config.yaml.
+     */
+    static McpConfig policy() {
+        try {
+            return McpConfig.load();
+        } catch (McpConfig.Invalid e) {
+            throw new ToolError(ToolError.Code.REFUSED, e.getMessage() + ". Ask the user to fix it.");
+        }
+    }
+
+    /** Say at start what the user has to fix, before an agent meets it as a refusal. */
+    private static void warnAboutPolicy() {
+        try {
+            McpConfig.load();
+            var legacy = McpConfig.legacySectionNotice(SpawnConfig.load());
+            if (legacy != null) System.err.println("isx mcp: " + legacy);
+        } catch (McpConfig.Invalid e) {
+            System.err.println("isx mcp: " + e.getMessage());
+        }
+    }
+
+    /**
      * Take back what this instance session held before, then the tasks of those running, in the
      * background: their ids work again once read, and a stopped one's are read by start_instance.
      */
@@ -119,6 +143,11 @@ public final class McpMain {
         Map<String, Map<String, String>> resumed;
         try {
             resumed = session.resume();
+        } catch (ToolError e) {
+            // Not retried in this process: the next connection takes them back.
+            System.err.println("isx mcp: not taking back the instances this session held: " + e.getMessage()
+                    + " Once it is fixed, reconnect to hold them again.");
+            return;
         } catch (RuntimeException e) {
             System.err.println("isx mcp: could not list the instances this session held: " + e.getMessage());
             return;

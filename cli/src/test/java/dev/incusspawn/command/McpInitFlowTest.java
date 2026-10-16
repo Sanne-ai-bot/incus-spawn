@@ -1,10 +1,12 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
-import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.config.McpConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.nio.file.Files;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * The "Agent Access over MCP" step of {@code isx init}: registering {@code isx mcp} with Claude
  * Code, and approving templates. What an agent may branch from is decided here and nowhere
- * else, so what reaches {@code config.yaml} is asserted on disk.
+ * else, so what reaches {@code mcp.yaml} is asserted on disk.
  */
 @ExtendWith(IsolatedHome.class)
 class McpInitFlowTest {
@@ -76,8 +78,8 @@ class McpInitFlowTest {
                 "name: tpl-agent-java\nparent: tpl-agent\ntools: [maven-3]\n");
     }
 
-    private static void run(Host host, SpawnConfig config, ScriptedPrompts prompts) throws Exception {
-        host.setupMcp(config, prompts, templates());
+    private static void run(Host host, ScriptedPrompts prompts) throws Exception {
+        host.setupMcp(prompts, templates());
         prompts.assertFullyConsumed();
     }
 
@@ -98,15 +100,31 @@ class McpInitFlowTest {
     }
 
     private static List<String> approved() {
-        return SpawnConfig.load().mcp().templates();
+        return McpConfig.load().templates();
+    }
+
+    /** Writes {@code yaml} as the mcp.yaml the step reads. */
+    private static void seedMcp(String yaml) throws Exception {
+        Files.createDirectories(McpConfig.file().getParent());
+        Files.writeString(McpConfig.file(), yaml);
+    }
+
+    private static void assertMcpUnchanged(String seeded) throws Exception {
+        assertEquals(seeded, Files.readString(McpConfig.file()), "mcp.yaml should not have been rewritten");
+    }
+
+    /** Neither file was written: the step saves only mcp.yaml, and only on a change. */
+    private static void assertNothingSavedAnywhere() {
+        assertFalse(Files.exists(McpConfig.file()), "mcp.yaml was written");
+        assertNothingSaved();
     }
 
     @Test
     void withoutClaudeCodeOnTheHostNothingIsAsked() throws Exception {
         var host = new Host();
         host.hasClaude = false;
-        run(host, new SpawnConfig(), ScriptedPrompts.lines());
-        assertNothingSaved();
+        run(host, ScriptedPrompts.lines());
+        assertNothingSavedAnywhere();
         assertEquals(List.of(), host.registrations);
     }
 
@@ -114,19 +132,19 @@ class McpInitFlowTest {
     void itIsOffByDefaultAndANonInteractiveInitLeavesItOff() throws Exception {
         // 'isx init </dev/null': every prompt reads end of input.
         var host = new Host();
-        host.setupMcp(new SpawnConfig(), ScriptedPrompts.lines(), templates());
-        assertNothingSaved();
+        host.setupMcp(ScriptedPrompts.lines(), templates());
+        assertNothingSavedAnywhere();
         assertEquals(List.of(), host.registrations);
 
-        run(host, new SpawnConfig(), ScriptedPrompts.lines(""));
-        assertNothingSaved();
+        run(host, ScriptedPrompts.lines(""));
+        assertNothingSavedAnywhere();
     }
 
     @Test
     void enablingRegistersItAndAsksOnlyAboutTemplatesThatInstallClaude() throws Exception {
         var host = new Host();
         // Enable; then tpl-agent (asked first, sorted) no, tpl-agent-java yes.
-        run(host, new SpawnConfig(), ScriptedPrompts.lines("y", "n", "y"));
+        run(host, ScriptedPrompts.lines("y", "n", "y"));
         assertEquals(List.of("/home/u/.local/bin/isx"), host.registrations);
         assertEquals(List.of("tpl-agent-java"), approved());
     }
@@ -135,9 +153,9 @@ class McpInitFlowTest {
     void aTemplateApprovedEarlierIsTheDefaultAndHandApprovedOnesAreKept() throws Exception {
         var host = new Host();
         host.registered = true;
-        var config = seed("mcp:\n  templates: [tpl-dev, tpl-agent]\n");
+        seedMcp("templates: [tpl-dev, tpl-agent]\n");
         // Already set up: 't' to change; Enter keeps tpl-agent; Enter declines tpl-agent-java.
-        run(host, config, ScriptedPrompts.lines("t", "", ""));
+        run(host, ScriptedPrompts.lines("t", "", ""));
         assertEquals(List.of(), host.registrations, "already registered: not again");
         assertEquals(List.of("tpl-dev", "tpl-agent"), approved(),
                 "tpl-dev was approved by hand and is not this step's to drop");
@@ -147,30 +165,31 @@ class McpInitFlowTest {
     void unapprovingATemplateRemovesIt() throws Exception {
         var host = new Host();
         host.registered = true;
-        var config = seed("mcp:\n  templates: [tpl-agent, tpl-agent-java]\n  max-instances: 5\n");
-        run(host, config, ScriptedPrompts.lines("t", "n", "y"));
+        seedMcp("templates: [tpl-agent, tpl-agent-java]\nmax-instances: 5\n");
+        run(host, ScriptedPrompts.lines("t", "n", "y"));
         assertEquals(List.of("tpl-agent-java"), approved());
-        assertEquals(5, SpawnConfig.load().mcp().maxInstances(), "the other mcp settings survive");
+        assertEquals(5, McpConfig.load().maxInstances(), "the other settings survive");
     }
 
     @Test
     void endOfInputAtATemplateQuestionKeepsItsApproval() throws Exception {
         var host = new Host();
         host.registered = true;
-        var seeded = "mcp:\n  templates: [tpl-agent, tpl-agent-java]\n";
+        var seeded = "templates: [tpl-agent, tpl-agent-java]\n";
         // 't', then Ctrl-D at the first template question (and the script is exhausted for the rest).
-        host.setupMcp(seed(seeded), ScriptedPrompts.lines("t"), templates());
-        assertUnchanged(seeded);
+        seedMcp(seeded);
+        host.setupMcp(ScriptedPrompts.lines("t"), templates());
+        assertMcpUnchanged(seeded);
     }
 
     @Test
     void turningItOffOnlyShowsHow() throws Exception {
         var host = new Host();
         host.registered = true;
-        var seeded = "mcp:\n  templates: [tpl-agent]\n";
-        var config = seed(seeded);
-        run(host, config, ScriptedPrompts.lines("n"));
-        assertUnchanged(seeded);
+        var seeded = "templates: [tpl-agent]\n";
+        seedMcp(seeded);
+        run(host, ScriptedPrompts.lines("n"));
+        assertMcpUnchanged(seeded);
     }
 
     @Test
@@ -178,7 +197,7 @@ class McpInitFlowTest {
         var host = new Host();
         host.registered = true;
         // Enabled is the default: Enter keeps it; then tpl-agent yes, tpl-agent-java no.
-        run(host, new SpawnConfig(), ScriptedPrompts.lines("", "y", "n"));
+        run(host, ScriptedPrompts.lines("", "y", "n"));
         assertEquals(List.of(), host.registrations);
         assertEquals(List.of("tpl-agent"), approved());
     }
@@ -188,14 +207,15 @@ class McpInitFlowTest {
         // #1292: re-running init for something else must not walk through every template again.
         var host = new Host();
         host.registered = true;
-        var seeded = "mcp:\n  templates: [tpl-agent]\n";
-        var out = captureStdout(() -> run(host, seed(seeded), ScriptedPrompts.lines("")));
-        assertUnchanged(seeded);
+        var seeded = "templates: [tpl-agent]\n";
+        seedMcp(seeded);
+        var out = captureStdout(() -> run(host, ScriptedPrompts.lines("")));
+        assertMcpUnchanged(seeded);
         assertTrue(out.contains("Not approved: tpl-agent-java."), "a template not yet approved is named: " + out);
 
         // 'isx init </dev/null': the one question reads end of input, which keeps it too.
-        host.setupMcp(seed(seeded), ScriptedPrompts.lines(), templates());
-        assertUnchanged(seeded);
+        host.setupMcp(ScriptedPrompts.lines(), templates());
+        assertMcpUnchanged(seeded);
         assertEquals(List.of(), host.registrations);
     }
 
@@ -203,8 +223,8 @@ class McpInitFlowTest {
     void anUnknownChoiceAsksAgain() throws Exception {
         var host = new Host();
         host.registered = true;
-        var config = seed("mcp:\n  templates: [tpl-agent]\n");
-        run(host, config, ScriptedPrompts.lines("y", "t", "n", "y"));
+        seedMcp("templates: [tpl-agent]\n");
+        run(host, ScriptedPrompts.lines("y", "t", "n", "y"));
         assertEquals(List.of("tpl-agent-java"), approved());
     }
 
@@ -212,8 +232,8 @@ class McpInitFlowTest {
     void halfASetupStillGetsTheWholeStep() throws Exception {
         // Templates approved by hand but never registered: there is something to finish.
         var host = new Host();
-        var config = seed("mcp:\n  templates: [tpl-agent]\n");
-        run(host, config, ScriptedPrompts.lines("", "", "y"));
+        seedMcp("templates: [tpl-agent]\n");
+        run(host, ScriptedPrompts.lines("", "", "y"));
         assertEquals(List.of("/home/u/.local/bin/isx"), host.registrations);
         assertEquals(List.of("tpl-agent", "tpl-agent-java"), approved());
     }
@@ -222,7 +242,7 @@ class McpInitFlowTest {
     void aFailedRegistrationStillLetsTemplatesBeApproved() throws Exception {
         var host = new Host();
         host.registrationWorks = false;
-        run(host, new SpawnConfig(), ScriptedPrompts.lines("y", "y", "n"));
+        run(host, ScriptedPrompts.lines("y", "y", "n"));
         assertEquals(List.of("tpl-agent"), approved());
     }
 
@@ -230,20 +250,66 @@ class McpInitFlowTest {
     void withNoTemplateInstallingClaudeThereIsNothingToApprove() throws Exception {
         var host = new Host();
         var prompts = ScriptedPrompts.lines("y");
-        host.setupMcp(new SpawnConfig(), prompts, defs("name: tpl-minimal\n", "name: tpl-dev\nparent: tpl-minimal\n"));
+        host.setupMcp(prompts, defs("name: tpl-minimal\n", "name: tpl-dev\nparent: tpl-minimal\n"));
         prompts.assertFullyConsumed();
         assertEquals(1, host.registrations.size());
-        assertNothingSaved();
+        assertNothingSavedAnywhere();
     }
 
     @Test
     void codexOnlyAndInheritedCodexTemplatesCanBeApproved() throws Exception {
         var host = new Host();
         var prompts = ScriptedPrompts.lines("y", "y", "y");
-        host.setupMcp(new SpawnConfig(), prompts, defs("name: tpl-minimal\n",
+        host.setupMcp(prompts, defs("name: tpl-minimal\n",
                 "name: tpl-codex\nparent: tpl-minimal\ntools: [codex]\n",
                 "name: tpl-codex-java\nparent: tpl-codex\ntools: [maven-3]\n"));
         prompts.assertFullyConsumed();
         assertEquals(List.of("tpl-codex", "tpl-codex-java"), approved());
+    }
+
+    @Test
+    void approvalsGoToAnOwnerOnlyMcpYamlAndNeverToConfigYaml() throws Exception {
+        var seeded = "github:\n  token: ghp_x\n";
+        seed(seeded);
+        run(new Host(), ScriptedPrompts.lines("y", "y", "n"));
+        assertEquals(List.of("tpl-agent"), approved());
+        assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(McpConfig.file())));
+        assertUnchanged(seeded);
+    }
+
+    /**
+     * #1331: with only the old section, nothing is asked or saved, since saving approvals alone
+     * would put the defaults in place of the section's limits; once mcp.yaml exists the section
+     * is only named, never read.
+     */
+    @Test
+    void aLegacySectionInConfigYamlIsNotReadButNamed() throws Exception {
+        var seeded = "mcp:\n  templates: [tpl-agent]\n  max-instances: 2\n";
+        seed(seeded);
+        var host = new Host();
+        host.registered = true;
+        var out = captureStdout(() -> run(host, ScriptedPrompts.lines()));
+        assertTrue(out.contains("mcp.yaml does not exist, and the mcp: section of config.yaml"), out);
+        assertFalse(Files.exists(McpConfig.file()));
+        assertUnchanged(seeded);
+
+        seedMcp("templates: [tpl-agent-java]\n");
+        // Already set up: Enter keeps it.
+        out = captureStdout(() -> run(host, ScriptedPrompts.lines("")));
+        assertTrue(out.contains("The mcp: section of config.yaml is no longer read; move its contents to"), out);
+        assertTrue(out.contains("approved templates: tpl-agent-java."), out);
+        assertUnchanged(seeded);
+    }
+
+    @Test
+    void anInvalidMcpYamlIsReportedAndLeftAlone() throws Exception {
+        var seeded = "templates: [tpl-agent\n";
+        seedMcp(seeded);
+        var host = new Host();
+        var out = captureStdout(() -> run(host, ScriptedPrompts.lines()));
+        assertTrue(out.contains("mcp.yaml"), out);
+        assertTrue(out.contains("Fix it, then re-run 'isx init'."), out);
+        assertMcpUnchanged(seeded);
+        assertEquals(List.of(), host.registrations);
     }
 }

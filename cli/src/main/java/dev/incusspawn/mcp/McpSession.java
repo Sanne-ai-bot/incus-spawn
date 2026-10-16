@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
  * agent restarts (its context fills, it crashes, the machine reboots) while its workers wait in
  * their instances, and must be able to pick them up again. Ending a session never destroys
  * anything; it releases what the session held, and a later session destroys an orphan only once
- * {@code mcp.orphan-grace-hours} have passed and nobody is working in it ({@link Orphans}).
+ * {@code orphan-grace-hours} in {@code mcp.yaml} have passed and nobody is working in it ({@link Orphans}).
  *
  * <p>Holding is checked twice for every instance a tool names: the name must be in this
  * session's registry, and the instance Incus has under that name must carry this session's
@@ -77,7 +77,7 @@ final class McpSession {
         this.alive = alive;
     }
 
-    /** The {@code mcp:} config as it is now: it is re-read on every call. */
+    /** The {@code mcp.yaml} policy as it is now: it is re-read on every call. */
     McpConfig config() {
         return config.get();
     }
@@ -99,7 +99,7 @@ final class McpSession {
      * This user's running instances whose tasks this session does not count as its own: those
      * other sessions hold, and the orphans, from one listing. A kept instance counts while a live
      * session still holds it, which can go on running tasks there; once that session ends it is
-     * the user's, as for {@code mcp.max-instances}.
+     * the user's, as for {@code max-instances} in {@code mcp.yaml}.
      */
     List<String> taskInstancesElsewhere() {
         var result = new ArrayList<String>();
@@ -204,7 +204,7 @@ final class McpSession {
             if (mine + others >= max) {
                 throw new ToolError(ToolError.Code.LIMIT, "you already have " + (mine + others) + " instance(s) ("
                         + mine + " in this session, " + others + " held by other sessions or orphaned), "
-                        + "the most mcp.max-instances allows (" + max + "). Destroy one with "
+                        + "the most max-instances in mcp.yaml allows (" + max + "). Destroy one with "
                         + "destroy_instance first; list_instances shows them all.");
             }
             var base = template.name().startsWith("tpl-") ? template.name().substring(4) : template.name();

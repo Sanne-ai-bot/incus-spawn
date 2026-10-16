@@ -90,13 +90,18 @@ public final class Jjq {
         return YAML.readValue(file, SpawnConfig.class);
     }
 
+    /** {@code mcp.yaml}; null for an empty document. */
+    public static McpConfig mcpConfig(String yaml) throws IOException {
+        return YAML.readValue(yaml, McpConfig.class);
+    }
+
     /** Serialize a config for {@code save()}: block-style YAML, same shape Jackson wrote. */
-    public static String toYaml(SpawnConfig config) {
+    public static String toYaml(Object config) {
         return YAML.writeValueAsString(config);
     }
 
     /** Write a config file straight from the tree: no intermediate String. */
-    public static void writeYaml(java.nio.file.Path file, SpawnConfig config) throws IOException {
+    public static void writeYaml(java.nio.file.Path file, Object config) throws IOException {
         YAML.writeValue(file, config);
     }
 

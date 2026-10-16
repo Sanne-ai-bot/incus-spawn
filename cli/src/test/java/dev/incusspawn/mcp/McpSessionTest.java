@@ -168,7 +168,7 @@ class McpSessionTest {
         var s = session(1);
         s.reserve(TEMPLATE, null, null, null, null); // not created yet
         var e = assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, null, null, null));
-        assertTrue(e.getMessage().contains("mcp.max-instances"), e.getMessage());
+        assertTrue(e.getMessage().contains("max-instances in mcp.yaml"), e.getMessage());
     }
 
     @Test
@@ -474,7 +474,7 @@ class McpSessionTest {
         busyIn.put("mcp-stopped", 5);
 
         var e = assertThrows(ToolError.class, () -> bTasks.startCommand(bInstance, "/", Map.of(), "make test", null));
-        assertTrue(e.getMessage().contains("mcp.max-concurrent-tasks") && e.getMessage().contains("(3)"),
+        assertTrue(e.getMessage().contains("max-concurrent-tasks in mcp.yaml") && e.getMessage().contains("(3)"),
                 e.getMessage());
         assertTrue(e.getMessage().contains("0 in this session, 3 in other sessions or orphaned"), e.getMessage());
         assertTrue(e.getMessage().contains(aInstance + " 1") && e.getMessage().contains("mcp-orphan 1")

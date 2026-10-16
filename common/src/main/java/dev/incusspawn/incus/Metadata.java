@@ -137,13 +137,13 @@ public final class Metadata {
     /**
      * When the instance lost its session (an ISO-8601 instant): stamped when the session ends,
      * or by the first later session to notice it died. Orphans are destroyed only once
-     * {@code mcp.orphan-grace-hours} have passed since; adoption clears it.
+     * {@code orphan-grace-hours} in {@code mcp.yaml} have passed since; adoption clears it.
      */
     public static final String MCP_ORPHANED = MCP_PREFIX + "orphaned";
     /**
      * When the orphan sweep stopped the instance because nothing in it moved
      * ({@code <time> <session>}, as {@link #MCP_ORPHANED}): only an instance stamped so gets the
-     * longer {@code mcp.dormant-grace-hours} before it is destroyed. Adoption clears it (#1028).
+     * longer {@code dormant-grace-hours} in {@code mcp.yaml} before it is destroyed. Adoption clears it (#1028).
      */
     public static final String MCP_DORMANT = MCP_PREFIX + "dormant";
     /**

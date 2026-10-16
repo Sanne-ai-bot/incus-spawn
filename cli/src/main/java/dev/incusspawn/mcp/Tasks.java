@@ -469,7 +469,7 @@ final class Tasks {
 
     /**
      * Reserve a task slot before launching: a new task ({@code fresh}), or the next run of task
-     * {@code continuing}. Refuses beyond {@code mcp.max-concurrent-tasks}, a second agent in one
+     * {@code continuing}. Refuses beyond {@code max-concurrent-tasks} in {@code mcp.yaml}, a second agent in one
      * working tree, or a run of a task still running. The check and the reservation happen under
      * one lock, so concurrent calls see each other's reservations; asking the instances which
      * tasks have finished happens before it, outside the lock. Another session's runs are seen
@@ -533,7 +533,7 @@ final class Tasks {
     }
 
     /**
-     * Refuse a new run when as many as {@code mcp.max-concurrent-tasks} are busy, counting what
+     * Refuse a new run when as many as {@code max-concurrent-tasks} in {@code mcp.yaml} are busy, counting what
      * is busy in this user's other sessions and orphans. Holds the lock.
      */
     private void checkLimit(Map<String, Long> elsewhere) {
@@ -545,7 +545,7 @@ final class Tasks {
             throw new ToolError(ToolError.Code.LIMIT, busy + " task(s) are running (" + mine + " in this session, " + others
                     + " in other sessions or orphaned instances" + (others > 0 ? ": " + elsewhere.entrySet().stream()
                     .map(e -> e.getKey() + " " + e.getValue()).collect(Collectors.joining(", ")) : "")
-                    + "), the most mcp.max-concurrent-tasks allows (" + max + "). Wait for one to finish, or "
+                    + "), the most max-concurrent-tasks in mcp.yaml allows (" + max + "). Wait for one to finish, or "
                     + "cancel_task one of this session's" + (others > 0 ? "; list_instances shows the other "
                     + "sessions' instances and the orphans, which adopt_instance takes over" : "") + ".");
         }
@@ -554,13 +554,13 @@ final class Tasks {
     /**
      * The tasks still running in this host user's instances that another session holds or that
      * are orphaned ({@link McpSession#taskInstancesElsewhere}): the cap is per user, like
-     * {@code mcp.max-instances}, since the machine runs them all whichever process holds them.
+     * {@code max-instances} in {@code mcp.yaml}, since the machine runs them all whichever process holds them.
      * One listing, then one exec per such instance, in parallel; none when there are none.
      * {@code unknown} counts as running, as this session keeps an unknown task's slot; each task
      * id once.
      *
      * <p>An instance that cannot be asked counts nothing, so one broken instance cannot block
-     * every later task: {@code mcp.max-instances} still bounds it. Nor can one that never answers
+     * every later task: {@code max-instances} in {@code mcp.yaml} still bounds it. Nor can one that never answers
      * (a login profile that hangs) hold up every task start, or pile up execs: its probe is bounded
      * ({@link InstanceBackend#probe}: no login shell, killed at {@link #elsewhereTimeout}), there is never more
      * than one per instance, and once it has not answered in time the instance counts as none

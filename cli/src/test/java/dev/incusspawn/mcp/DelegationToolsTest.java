@@ -338,7 +338,7 @@ class DelegationToolsTest {
         delegateFresh();
         var r = call("delegate", "{\"instruction\":\"another\",\"template\":\"tpl-agent\"}");
         assertTrue(r.path("isError").asBoolean(false));
-        assertTrue(text(r).contains("mcp.max-concurrent-tasks"), text(r));
+        assertTrue(text(r).contains("max-concurrent-tasks in mcp.yaml"), text(r));
     }
 
     @Test
@@ -895,7 +895,7 @@ class DelegationToolsTest {
         config.setDelegateMaxTurns(50);
         var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":51}");
         assertTrue(r.path("isError").asBoolean(false));
-        assertTrue(text(r).contains("mcp.delegate-max-turns"), text(r));
+        assertTrue(text(r).contains("delegate-max-turns in mcp.yaml"), text(r));
         assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":0}")
                 .path("isError").asBoolean(false));
         assertEquals(0, instancesMade(), "refused before an instance was made");

@@ -1,40 +1,62 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.Environment;
+import io.hyperfoil.tools.jjq.mapper.JqAnySetter;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * The {@code mcp:} section of {@code config.yaml}: what {@code isx mcp} lets a local agent do.
- * Only a person edits it -- the MCP server reads it on every call and has no way to write it.
+ * {@code ~/.config/incus-spawn/mcp.yaml}: what {@code isx mcp} lets a local agent do. Only a
+ * person edits it -- the MCP server reads it on every call and has no way to write it.
  *
  * <pre>
- * mcp:
- *   templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
- *   max-instances: 8                 # per host user, across sessions, counting creates in flight
- *   max-concurrent-tasks: 8          # background commands and delegated agents, per host user, across sessions
- *   delegate-max-turns: 200          # passed to the inner agent as --max-turns; a delegate's
- *                                    # max_turns may narrow it, never exceed it
- *   delegate-permission-mode: bypassPermissions   # passed to every delegate as --permission-mode
- *   delegate-permission-modes:       # per-template overrides of it
- *     tpl-review: plan
- *   orphan-grace-hours: 24           # how long an instance outlives the session that held it
- *   dormant-after-hours: 24          # past that, an orphan kept only for a task that shows no
- *                                    # activity this long is stopped, not destroyed
- *   dormant-grace-hours: 168         # and destroyed this long after it was stopped
- *   summary-model: haiku             # the model that answers a tool's `ask`, inside the instance
+ * templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
+ * max-instances: 8                 # per host user, across sessions, counting creates in flight
+ * max-concurrent-tasks: 8          # background commands and delegated agents, per host user, across sessions
+ * delegate-max-turns: 200          # passed to the inner agent as --max-turns; a delegate's
+ *                                  # max_turns may narrow it, never exceed it
+ * delegate-permission-mode: bypassPermissions   # passed to every delegate as --permission-mode
+ * delegate-permission-modes:       # per-template overrides of it
+ *   tpl-review: plan
+ * orphan-grace-hours: 24           # how long an instance outlives the session that held it
+ * dormant-after-hours: 24          # past that, an orphan kept only for a task that shows no
+ *                                  # activity this long is stopped, not destroyed
+ * dormant-grace-hours: 168         # and destroyed this long after it was stopped
+ * summary-model: haiku             # the model that answers a tool's `ask`, inside the instance
  * </pre>
  *
- * Unset limits are never written back, so a saved config does not pin today's defaults.
+ * A missing or empty file approves nothing. One that cannot be read, does not parse, or holds
+ * a key or value isx does not know is {@link Invalid}: nothing that depends on the policy may
+ * run until it is fixed, so a mistyped restriction is never dropped in silence (#1331). An
+ * {@code mcp:} section left in {@code config.yaml} is never read.
+ *
+ * Unset limits are never written back, so a saved file does not pin today's defaults.
  */
 @JqInclude(JqInclude.Include.NON_NULL)
 @JqMapped
 public class McpConfig {
+
+    public static final String FILE_NAME = "mcp.yaml";
+
+    /** Why the policy file cannot be used; its message names the file and says what is wrong. */
+    public static final class Invalid extends IllegalStateException {
+        Invalid(String message) {
+            super(message);
+        }
+    }
 
     public static final int DEFAULT_MAX_INSTANCES = 8;
     public static final int DEFAULT_MAX_CONCURRENT_TASKS = 8;
@@ -85,6 +107,12 @@ public class McpConfig {
     @JqName("codex")
     private Codex codex;
 
+    // Keys isx does not know, only to refuse them: never written back.
+    private final List<String> unknown = new ArrayList<>();
+
+    @JqAnySetter
+    public void setUnknown(String key, Object value) { unknown.add(key); }
+
     @JqInclude(JqInclude.Include.NON_NULL)
     @JqMapped
     public static class Codex {
@@ -92,9 +120,157 @@ public class McpConfig {
         private String sandboxMode;
         @JqName("sandbox-modes")
         private Map<String, String> sandboxModes;
+        private final List<String> unknown = new ArrayList<>();
 
         public void setSandboxMode(String mode) { sandboxMode = mode; }
         public void setSandboxModes(Map<String, String> modes) { sandboxModes = modes; }
+
+        @JqAnySetter
+        public void setUnknown(String key, Object value) { unknown.add(key); }
+    }
+
+    public static Path file() {
+        return Environment.configDir().resolve(FILE_NAME);
+    }
+
+    /**
+     * The policy in {@link #file()}, read now: defaults (nothing approved) when there is none.
+     * While config.yaml still has the {@code mcp:} section this file replaced and there is no
+     * file yet, it is {@link Invalid} instead: the defaults would widen what the user wrote there
+     * (a longer orphan grace, a narrower permission mode), and an {@code isx init} saving its
+     * approvals would make that permanent. Nothing is read from the section.
+     */
+    public static McpConfig load() {
+        var file = file();
+        var config = read(file);
+        if (config != null) return config;
+        if (hasLegacySection()) {
+            throw invalid(file + " does not exist, and the mcp: section of config.yaml it replaced is no longer "
+                    + "read; move that section's contents to " + file + ", without the enclosing mcp: key");
+        }
+        return new McpConfig();
+    }
+
+    /**
+     * Whether config.yaml still has the old section. One that does not parse cannot say, and
+     * {@link SpawnConfig#load} would read it as empty, so it is {@link Invalid} too.
+     */
+    private static boolean hasLegacySection() {
+        try {
+            return SpawnConfig.loadStrict().hasLegacyMcpSection();
+        } catch (IOException e) {
+            throw invalid(file() + " does not exist, and " + YamlErrors.friendly(SpawnConfig.file().toString(), e)
+                    + ", so whether it still has the mcp: section that " + FILE_NAME + " replaced cannot be told; "
+                    + "fix config.yaml or create " + FILE_NAME);
+        }
+    }
+
+    static McpConfig load(Path file) {
+        var config = read(file);
+        return config != null ? config : new McpConfig();
+    }
+
+    /** Null when there is no file. */
+    private static McpConfig read(Path file) {
+        String yaml;
+        try {
+            yaml = Files.readString(file);
+        } catch (NoSuchFileException e) {
+            return null;
+        } catch (IOException e) {
+            throw invalid(file + ": cannot be read (" + e.getMessage() + ")");
+        }
+        return parse(yaml, file.toString());
+    }
+
+    /** {@code yaml} as the contents of {@code name}, validated: what {@link #load} returns. */
+    static McpConfig parse(String yaml, String name) {
+        McpConfig config;
+        try {
+            config = Jjq.mcpConfig(yaml);
+        } catch (IOException e) {
+            throw invalid(YamlErrors.friendly(name, e));
+        }
+        if (config == null) return new McpConfig();
+        try {
+            config.validate();
+        } catch (IllegalArgumentException e) {
+            throw invalid(name + ": " + e.getMessage());
+        }
+        return config;
+    }
+
+    private static Invalid invalid(String why) {
+        return new Invalid(why + "; isx mcp refuses everything that depends on it until it is fixed");
+    }
+
+    /** Every value checked on use, checked at once, so no call runs on part of a policy. */
+    private void validate() {
+        if (templates != null && templates.stream().anyMatch(t -> t == null || t.isBlank())) {
+            throw new IllegalArgumentException("templates has an empty entry");
+        }
+        if (!unknown.isEmpty()) {
+            throw new IllegalArgumentException(unknown.contains("mcp")
+                    ? "the settings go at the top level of mcp.yaml, without an enclosing mcp: key"
+                    : "unknown key " + String.join(", ", unknown));
+        }
+        if (delegatePermissionMode != null) requirePermissionMode("delegate-permission-mode", delegatePermissionMode);
+        // An empty per-template entry falls back to the file's own setting, as on use.
+        if (delegatePermissionModes != null) {
+            delegatePermissionModes.forEach((template, mode) -> {
+                if (mode != null) requirePermissionMode("delegate-permission-modes." + template, mode);
+            });
+        }
+        summaryModel();
+        if (codex != null) {
+            if (!codex.unknown.isEmpty()) {
+                throw new IllegalArgumentException("unknown key codex." + String.join(", codex.", codex.unknown));
+            }
+            if (codex.sandboxMode != null) requireSandboxMode("codex.sandbox-mode", codex.sandboxMode);
+            if (codex.sandboxModes != null) {
+                codex.sandboxModes.forEach((template, mode) -> {
+                    if (mode != null) requireSandboxMode("codex.sandbox-modes." + template, mode);
+                });
+            }
+        }
+    }
+
+    /**
+     * What to tell the user while {@code config} still has the {@code mcp:} section this file
+     * replaced, or null when it has none.
+     */
+    public static String legacySectionNotice(SpawnConfig config) {
+        return config.hasLegacyMcpSection()
+                ? "the mcp: section of config.yaml is no longer read; move its contents to " + file()
+                        + ", without the enclosing mcp: key"
+                : null;
+    }
+
+    /**
+     * Write {@link #file()}, owner-only (also when it was not before). Only {@code isx init} calls this;
+     * nothing in {@code isx mcp} may ({@code McpNoWritePathTest}).
+     */
+    public void save() {
+        var file = file();
+        try {
+            // Through a symlink, as a dotfiles setup has it: the rename replaces the target.
+            var target = file;
+            // readSymbolicLink, not toRealPath: a dangling link (dotfiles not checked out yet) stays one.
+            while (Files.isSymbolicLink(target)) target = target.resolveSibling(Files.readSymbolicLink(target));
+            Files.createDirectories(target.getParent());
+            // Owner-only from the first byte, and swapped in whole: a session reading it meanwhile
+            // sees the old policy or the new one, never an empty or half-written file.
+            var temp = Files.createTempFile(target.getParent(), ".mcp-", ".yaml",
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+            try {
+                Jjq.writeYaml(temp, this);
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } finally {
+                Files.deleteIfExists(temp);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to save " + file + ": " + e.getMessage(), e);
+        }
     }
 
     public void setCodex(Codex codex) { this.codex = codex; }
@@ -112,19 +288,24 @@ public class McpConfig {
             var restricted = !DEFAULT_PERMISSION_MODE.equals(delegatePermissionMode(template));
             if (restricted && delegatePermissionModes != null && delegatePermissionModes.get(template) != null) {
                 throw new IllegalArgumentException("template '" + template + "' has its own restrictive Claude "
-                        + "permission mode; set mcp.codex.sandbox-modes for it explicitly before using Codex");
+                        + "permission mode; set codex.sandbox-modes for it in mcp.yaml before using Codex");
             }
             if (codex != null) mode = codex.sandboxMode;
             if (mode == null) {
                 if (restricted) {
                     throw new IllegalArgumentException("template '" + template + "' has a restrictive Claude permission "
-                            + "policy; set mcp.codex.sandbox-mode or sandbox-modes explicitly before using Codex");
+                            + "policy; set codex.sandbox-mode or sandbox-modes in mcp.yaml before using Codex");
                 }
                 return "danger-full-access";
             }
         }
+        return requireSandboxMode("codex sandbox mode", mode);
+    }
+
+    private static String requireSandboxMode(String key, String mode) {
         if (!List.of("read-only", "workspace-write", "danger-full-access").contains(mode)) {
-            throw new IllegalArgumentException("mcp.codex sandbox mode must be read-only, workspace-write or danger-full-access");
+            throw new IllegalArgumentException(key + " '" + mode
+                    + "' is not one of read-only, workspace-write or danger-full-access");
         }
         return mode;
     }
@@ -165,8 +346,12 @@ public class McpConfig {
         var mode = delegatePermissionModes == null ? null : delegatePermissionModes.get(template);
         if (mode == null) mode = delegatePermissionMode;
         if (mode == null) return DEFAULT_PERMISSION_MODE;
+        return requirePermissionMode("delegate-permission-mode", mode);
+    }
+
+    private static String requirePermissionMode(String key, String mode) {
         if (!MODE.matcher(mode).matches()) {
-            throw new IllegalArgumentException("mcp.delegate-permission-mode '" + mode + "' is not a permission mode");
+            throw new IllegalArgumentException(key + " '" + mode + "' is not a permission mode");
         }
         return mode;
     }
@@ -191,7 +376,7 @@ public class McpConfig {
     public String summaryModel() {
         if (summaryModel == null) return DEFAULT_SUMMARY_MODEL;
         if (!isModelName(summaryModel)) {
-            throw new IllegalArgumentException("mcp.summary-model '" + summaryModel + "' is not a model name");
+            throw new IllegalArgumentException("summary-model '" + summaryModel + "' is not a model name");
         }
         return summaryModel;
     }

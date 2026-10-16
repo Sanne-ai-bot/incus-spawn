@@ -238,12 +238,12 @@ See DESIGN.md "Project-local templates are confined to their project" and `.clau
 
 **`isx mcp` gives a local agent a narrow slice of isx.**
 It serves MCP over stdio (hand-rolled JSON-RPC in `cli/.../mcp/`: the Quarkus MCP extension cost every isx command ~1.7 ms at startup).
-An agent may branch only templates listed in `config.yaml`'s `mcp:` section (read per call, never written by the package -- `McpNoWritePathTest`), never project-local ones, always with template defaults via `BranchFlow` -- or fork a stopped instance it holds (`create_instance(from_instance)`, #1013), which is `isx branch --from <instance>` with that instance's lineage re-checked.
+An agent may branch only templates listed in `~/.config/incus-spawn/mcp.yaml` (read per call, refused whole when invalid, never written by the package -- `McpNoWritePathTest`; an `mcp:` section in `config.yaml` is not read, #1331), never project-local ones, always with template defaults via `BranchFlow` -- or fork a stopped instance it holds (`create_instance(from_instance)`, #1013), which is `isx branch --from <instance>` with that instance's lineage re-checked.
 An `idempotency_key` on `create_instance`, `delegate` and `exec(background)` (#1011) makes repeating a call safe.
 It is stamped on the instance by the copy request (`mcp-idempotency-key`) and written to the task's directory, so it lives as long as what it made, with no host ledger.
 Instances belong to the host user and are held by one session (`<pid>-<start>`), stamped by the copy request itself and checked on every tool call.
-A session ending releases them as orphans, which a later session can `adopt_instance` (tasks included) and which are destroyed only after `mcp.orphan-grace-hours` with nobody in them (#898).
-One kept only for a delegate that shows no activity is stopped instead, and destroyed after `mcp.dormant-grace-hours` unless adopted (#1028).
+A session ending releases them as orphans, which a later session can `adopt_instance` (tasks included) and which are destroyed only after `orphan-grace-hours` in `mcp.yaml` with nobody in them (#898).
+One kept only for a delegate that shows no activity is stopped instead, and destroyed after `dormant-grace-hours` in `mcp.yaml` unless adopted (#1028).
 A person sees the same: `isx list` (`mcp_state`, `mcp_purpose`) and the TUI's instance details say which instances a session made, what for, and whether they are held, orphaned or kept (`McpStanding`, from the listing alone, #1053).
 `exec` has no default time limit (cancel kills the process tree).
 Background commands and `delegate` (Claude Code or Codex inside the instance) run as systemd units in the guest.

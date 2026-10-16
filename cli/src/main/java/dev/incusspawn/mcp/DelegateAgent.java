@@ -49,7 +49,7 @@ enum DelegateAgent {
         if (this != CODEX) return;
         if (profile.maxTurns() != null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "Codex does not support max_turns; omit it.");
         if (config.delegateMaxTurns() != null) throw new ToolError(ToolError.Code.REFUSED,
-                "Codex cannot enforce mcp.delegate-max-turns; the user must revise that policy before delegating to Codex.");
+                "Codex cannot enforce delegate-max-turns in mcp.yaml; the user must revise that policy before delegating to Codex.");
     }
 
     /** A CLI check inside the worker, with no inference and no credential reads. */
