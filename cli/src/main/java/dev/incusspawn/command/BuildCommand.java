@@ -252,7 +252,8 @@ public class BuildCommand extends BaseCommand {
 
         // Only definitions read from disk: dispatch may add stale build-source snapshots to defs
         var loadedDefs = Map.copyOf(defs);
-        try {
+        // At a terminal one Ctrl+C may be a copy (Ctrl+Shift+C), so a running build waits for a second
+        try (var ignored = BuildInterrupt.atTerminal() ? BuildInterrupt.install(() -> activeBuild != null) : null) {
             var result = dispatch(defs);
             if (result.equals(CommandResult.SUCCESS)) syncDefaultActions(loadedDefs);
             return result;
