@@ -511,10 +511,12 @@ class DownloadCacheTest {
 
     @Test
     void withoutAStrongValidatorABrokenBodyStartsOver(@TempDir Path cacheDir) throws IOException {
-        // Nothing a 206 could be checked against: a weak ETag, a Last-Modified as recent as the
-        // response (the file may change again within that second), or neither.
-        var justNow = DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC));
-        for (var headers : List.of(Map.of("ETag", "W/\"v1\""), Map.of("Last-Modified", justNow),
+        // Nothing a 206 could be checked against: a weak ETag, a Last-Modified not a second older
+        // than the response's Date, or neither. The JDK server stamps its own Date, so this one is
+        // a minute ahead of it whenever the request lands; the boundary itself, a Last-Modified in
+        // the second of the Date, is pinned with fixed headers where the rule is tested directly.
+        var recent = DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC).plusMinutes(1));
+        for (var headers : List.of(Map.of("ETag", "W/\"v1\""), Map.of("Last-Modified", recent),
                 Map.<String, String>of())) {
             var requests = new ArrayList<String>();
             var result = downloadResuming(cacheDir, (n, ex) -> whole(ex, BODY, headers, n == 1 ? 40 : BODY.length),
