@@ -219,6 +219,9 @@ That is also why a template whose parent was rebuilt after it now counts as out 
 Plain `isx build a b` and `--missing` build their targets one after the other, and like a batch (`rebuildAll`) a failure does not stop the run.
 A target inheriting from a template that failed in this run is skipped, since its build would copy the old image, the others are built, and the run exits 1 with a single summary naming every template it left unbuilt, a parent a target's chain failed on included (the chain's own summary is held back for it).
 One named target behaves as it always did.
+In the TUI, Space marks templates on the templates table (#1131), and F5 then offers to rebuild the marked ones with their parents, with their descendants, or alone, as one `isx build` of several names.
+The menu describes each batch with the chain `isx build` computes (`BuildCommand.withParentsChain`, `withDescendantsChain`), so a shared parent shows once.
+The marks are TUI state only, kept by name: a refresh keeps them, drops those of templates that are gone, and Esc or a build launched from them clears them.
 
 **Base image**: The root image (`tpl-minimal`) uses a custom Fedora base image from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images) instead of linuxcontainers.org.
 This image is a pre-baked systemd rootfs with agentuser, systemd-networkd, a connectivity watchdog, container-specific service masking, and a tmpfiles override for device node permissions — all the static setup that `buildFromScratch` would otherwise perform on every build.

@@ -77,6 +77,9 @@ They also say how an instance an `isx mcp` session made stands (`InstanceDetailV
 Tool setups come from the TUI's own `toolDefLoader` (`AccountSelection.namespaceSetups(config, loader)`), not a fresh loader.
 
 The F5 build menu is `BuildMenu` (`BuildMenuTest`): it builds its options from the template definitions, rows and out-of-sync set `Tui` passes in, owns their keys and its rendering, and hands the chosen option back, so `Tui` leaves the build pending and quits the runner.
+`Tui.markedTemplates` is the set Space marks on the templates table (#1131, `TuiTemplateMarksTest`); `BuildMenu` leads with options for it, and `Tui` clears it when one of those (`BuildMenuOption.marked`) is built.
+Each option names the templates it rebuilds (`BuildMenuOption.rebuilds`, a chain from `BuildCommand.withParentsChain`/`withDescendantsChain`), and `Tui` refuses it while any of them, or for an option not about the marks the row under the cursor, has an operation under way; so with marks set F5 opens even on a busy row.
+While any template is marked, every name is led by a two-cell prefix, `●` on the marked ones, and the context line counts them; the key bar has no room left at 80 columns, so `Space Mark` is hinted at the end of the templates' context line.
 The F1 dialog (versions and keyboard shortcuts) is `AboutModal` (`AboutModalTest`): what it says about the build and the host comes through its `Source`, and it hands Esc and `?` (AI Help) back to `Tui`.
 The F9 actions dialog is `ActionsMenu` (`ActionsMenuTest`): it owns the list, the selection and its rendering, and hands Enter back, so `Tui` checks the instance still exists and runs the selected action through `dispatchAction`.
 The branch dialog is `BranchModal` (`BranchModalTest`): it owns its fields, their keys and its rendering, and hands Enter back, so `Tui` runs the proxy, credential and still-exists checks and creates the branch from `BranchModal.request` once the terminal is released.

@@ -586,11 +586,7 @@ public class BuildCommand extends BaseCommand {
      * their chains, parents before children, so an ancestor they share is built once (#1130).
      */
     void buildWithParents(List<ImageDef> targets, Map<String, ImageDef> defs) {
-        var chain = new ArrayList<String>();
-        var seen = new LinkedHashSet<String>();
-        for (var target : targets) {
-            collectAllRecursive(target, defs, chain, seen);
-        }
+        var chain = withParentsChain(targets, defs);
         requireValidAccounts(chain, defs);
         requireConsistentRepos(chain, defs);
 
@@ -605,6 +601,27 @@ public class BuildCommand extends BaseCommand {
      * before children whatever order the targets were named in.
      */
     void buildWithDescendants(List<ImageDef> targets, Map<String, ImageDef> defs) {
+        var chain = withDescendantsChain(targets, defs);
+        requireValidAccounts(chain, defs);
+        requireConsistentRepos(chain, defs);
+
+        if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
+
+        rebuildAll(chain, defs);
+    }
+
+    /** What {@code --with-parents} rebuilds for {@code targets}: their chains' union, parents first, each once. */
+    public static List<String> withParentsChain(List<ImageDef> targets, Map<String, ImageDef> defs) {
+        var chain = new ArrayList<String>();
+        var seen = new LinkedHashSet<String>();
+        for (var target : targets) {
+            collectAllRecursive(target, defs, chain, seen);
+        }
+        return chain;
+    }
+
+    /** What {@code --with-descendants} rebuilds for {@code targets}: their subtrees' union, parents first, each once. */
+    public static List<String> withDescendantsChain(List<ImageDef> targets, Map<String, ImageDef> defs) {
         var targetNames = targets.stream().map(ImageDef::getName).collect(Collectors.toSet());
         var chain = new ArrayList<String>();
         var seen = new LinkedHashSet<String>();
@@ -613,12 +630,7 @@ public class BuildCommand extends BaseCommand {
             if (seen.add(target.getName())) chain.add(target.getName());
             collectDescendants(target.getName(), defs, chain, seen);
         }
-        requireValidAccounts(chain, defs);
-        requireConsistentRepos(chain, defs);
-
-        if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
-
-        rebuildAll(chain, defs);
+        return chain;
     }
 
     /**
