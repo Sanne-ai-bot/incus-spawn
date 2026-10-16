@@ -377,7 +377,7 @@ class ArtifactCacheHandler {
             // ignores a weak ETag in If-Range, and without a validator there is no resume
             this.validator = validator(first);
             // Compressed on the fly, the same file need not give the same bytes twice
-            this.neverResumable = isGzip ? "it is gzip-encoded"
+            this.neverResumable = contentEncoding != null ? "it is " + contentEncoding + "-encoded"
                     : length < 0 ? "its length is unknown"
                     : validator == null
                     ? "upstream gave nothing to resume against (a strong ETag, or Last-Modified without one)"

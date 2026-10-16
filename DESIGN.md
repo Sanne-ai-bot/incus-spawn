@@ -1429,8 +1429,8 @@ Only an unreachable upstream serves an older one.
   A response that ends before that length is another break.
   A `5xx` or `429` to the Range request is retried like a resume that could not connect: an overloaded upstream is what stalls a download in the first place.
   Three resumes in a row that get no further give up; one that got further starts the count again.
-  A gzip-encoded body is never resumed: compressed on the fly, the same file need not give the same bytes twice.
-  A download that could never be resumed (gzip, no length, no validator) is not cut at a stall either, since that could only fail a body that may yet carry on.
+  An encoded body (any `Content-Encoding`, as in `DownloadCache`) is never resumed: compressed on the fly, the same file need not give the same bytes twice.
+  A download that could never be resumed (encoded, no length, no validator) is not cut at a stall either, since that could only fail a body that may yet carry on.
   Only the client's budget ends it, with a line, where before the MITM server's 120s did so silently.
   An error sent before the first byte drops the headers set for the artifact, so a 502 never carries its `X-Checksum-SHA1`.
   Verification is unchanged: the whole file is checked before it is committed.
