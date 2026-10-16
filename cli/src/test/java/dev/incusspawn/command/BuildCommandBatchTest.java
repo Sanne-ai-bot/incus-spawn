@@ -9,6 +9,8 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.RuntimeConstants;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -55,6 +57,8 @@ class BuildCommandBatchTest {
     private final FakeIncusDaemon daemon = new FakeIncusDaemon();
     private final List<String> built = new ArrayList<>();
     private String stderr = "";
+    /** What stderr held when the first build began. */
+    private String stderrBeforeBuild;
 
     /** Every template of {@link #tree()} built, current, at {@code created}. */
     private void builtAt(Map<String, String> created) {
@@ -70,6 +74,8 @@ class BuildCommandBatchTest {
     private final Set<String> failing = new HashSet<>();
     /** Tools the loader knows, each taking no parameters. */
     private final Set<String> tools = new HashSet<>();
+    /** What the loader lists as every known tool; none unless a test sets them. */
+    private Map<String, ToolSetup> allToolSetups = Map.of();
     /** Definitions besides {@link #tree()}. */
     private final Map<String, ImageDef> extraDefs = new LinkedHashMap<>();
 
@@ -78,6 +84,7 @@ class BuildCommandBatchTest {
         cmd.incus = daemon.client();
         cmd.toolDefLoader = mock(ToolDefLoader.class);
         tools.forEach(name -> when(cmd.toolDefLoader.find(name)).thenReturn(BuildCommandTest.simpleToolSetup(name)));
+        when(cmd.toolDefLoader.allToolSetups()).thenReturn(allToolSetups);
         cmd.yes = true;
         cmd.skipGitRefresh = true;
         var names = new ArrayList<String>();
@@ -91,7 +98,9 @@ class BuildCommandBatchTest {
             }
         }
         cmd.names = names.isEmpty() ? null : names;
+        var err = new ByteArrayOutputStream();
         doAnswer(i -> {
+            if (stderrBeforeBuild == null) stderrBeforeBuild = err.toString(StandardCharsets.UTF_8);
             var name = i.<ImageDef>getArgument(0).getName();
             built.add(name);
             if (failing.contains(name)) throw new BuildCommand.BuildFailedException();
@@ -103,7 +112,6 @@ class BuildCommandBatchTest {
         }).when(cmd).buildSingleImage(any(), any());
 
         var originalErr = System.err;
-        var err = new ByteArrayOutputStream();
         System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
         try {
             var defs = tree();
@@ -408,6 +416,48 @@ class BuildCommandBatchTest {
         assertEquals(List.of(), built);
         assertTrue(stderr.contains("cannot build 'tpl-a': its chain runs into a parent cycle tpl-a → tpl-b → tpl-a"), stderr);
         assertFalse(stderr.contains("Cannot build:"), stderr);
+    }
+
+    /**
+     * A template whose tools need a credential that is not configured still builds, but the build
+     * says up front that {@code isx branch} will refuse it, rather than leaving that to the branch
+     * after the build's time is spent (#1438). Every template the build may build is named, the
+     * existing parent it checked included.
+     */
+    @Test
+    void aMissingCredentialIsReportedBeforeTheBuildAndTheBuildGoesAhead() throws Exception {
+        allToolSetups = builtInTools();
+        var dev = ImageDef.parseYaml("name: tpl-dev\nparent: tpl-base\ntools: [gh]\n");
+        var agent = ImageDef.parseYaml("name: tpl-agent\nparent: tpl-dev\n");
+        extraDefs.put(dev.getName(), dev);
+        extraDefs.put(agent.getName(), agent);
+        builtAt(Map.of("tpl-base", "2026-10-01T09:00:00", "tpl-dev", "2026-10-01T09:01:00"));
+
+        assertEquals(0, build("tpl-agent"));
+
+        assertEquals(List.of("tpl-agent"), built);
+        assertTrue(stderrBeforeBuild.contains("Missing credential: GitHub personal access token. "
+                + "'isx branch' will refuse tpl-dev and tpl-agent until it is configured with 'isx init'."), stderr);
+        assertEquals(1, stderr.split("GitHub personal access token", -1).length - 1, stderr);
+    }
+
+    @Test
+    void aConfiguredCredentialIsNotReported() throws Exception {
+        IsolatedHome.seed("github:\n  token: \"ghp_x\"\n");
+        allToolSetups = builtInTools();
+        extraDefs.put("tpl-dev", ImageDef.parseYaml("name: tpl-dev\nparent: tpl-base\ntools: [gh]\n"));
+        builtAt(Map.of("tpl-base", "2026-10-01T09:00:00"));
+
+        assertEquals(0, build("tpl-dev"));
+
+        assertEquals(List.of("tpl-dev"), built);
+        assertFalse(stderr.contains("Missing credential"), stderr);
+    }
+
+    private static Map<String, ToolSetup> builtInTools() {
+        var map = new LinkedHashMap<String, ToolSetup>();
+        RuntimeConstants.CDI_TOOLS.forEach(t -> map.put(t.name(), t));
+        return map;
     }
 
     /** Adds definitions as (name, parent) pairs, in this order; an empty parent is a root. */

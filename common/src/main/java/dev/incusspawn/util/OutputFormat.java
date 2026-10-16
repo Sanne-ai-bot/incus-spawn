@@ -5,6 +5,7 @@ import io.hyperfoil.tools.jjq.value.JqValues;
 import io.hyperfoil.tools.jjq.value.PrettyPrintOptions;
 
 import java.io.PrintStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -39,6 +40,32 @@ public enum OutputFormat {
             PrettyPrintOptions.Separator.SPACED,
             PrettyPrintOptions.ArrayStyle.FLOW,
             PrettyPrintOptions.Escaping.STRICT);
+
+    /** {@code a}, {@code a and b}, {@code a, b and c}. */
+    public static String andList(List<String> items) {
+        if (items.size() < 2) return String.join("", items);
+        return String.join(", ", items.subList(0, items.size() - 1)) + " and " + items.getLast();
+    }
+
+    /** Greedy word wrap; a word longer than {@code width} is left whole for the caller to clip. */
+    public static List<String> wrap(String text, int width) {
+        var out = new ArrayList<String>();
+        if (width <= 0 || text.length() <= width) {
+            out.add(text);
+            return out;
+        }
+        var line = new StringBuilder();
+        for (var word : text.split(" ")) {
+            if (!line.isEmpty() && line.length() + 1 + word.length() > width) {
+                out.add(line.toString());
+                line.setLength(0);
+            }
+            if (!line.isEmpty()) line.append(' ');
+            line.append(word);
+        }
+        if (!line.isEmpty()) out.add(line.toString());
+        return out;
+    }
 
     /** The value of a {@code --format} option; {@code null} (not given) is {@link #TABLE}. */
     public static OutputFormat parse(String value) {

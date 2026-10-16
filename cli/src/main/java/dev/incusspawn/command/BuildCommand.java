@@ -2,12 +2,14 @@ package dev.incusspawn.command;
 
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
 import dev.incusspawn.baseimage.BaseImageReleases;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
@@ -330,8 +332,7 @@ public class BuildCommand extends BaseCommand {
         var chains = new ArrayList<String>();
         var seen = new HashSet<String>();
         for (var target : targets) collectAllRecursive(target, defs, chains, seen);
-        requireValidAccounts(chains, defs);
-        requireConsistentRepos(chains, defs);
+        preflight(chains, defs);
         build(parentsFirst(targets, defs), defs);
         return CommandResult.SUCCESS;
     }
@@ -404,8 +405,7 @@ public class BuildCommand extends BaseCommand {
             BuildOutput.step("All templates are up to date.");
             return;
         }
-        requireValidAccounts(templatesToRebuild, defs);
-        requireConsistentRepos(templatesToRebuild, defs);
+        preflight(templatesToRebuild, defs);
 
         if (!confirmBatch(outdatedOnly ? "Templates to rebuild: " : "This will rebuild: ",
                 templatesToRebuild, defs, outdatedOnly ? "Rebuild?" : "Continue?")) return;
@@ -583,8 +583,7 @@ public class BuildCommand extends BaseCommand {
         for (var leaf : missingLeaves) {
             collectAllRecursive(leaf, defs, toCheck, seen);
         }
-        requireValidAccounts(toCheck, defs);
-        requireConsistentRepos(toCheck, defs);
+        preflight(toCheck, defs);
         build(missingLeaves, defs);
     }
 
@@ -594,8 +593,7 @@ public class BuildCommand extends BaseCommand {
      */
     void buildWithParents(List<ImageDef> targets, Map<String, ImageDef> defs) {
         var chain = withParentsChain(targets, defs);
-        requireValidAccounts(chain, defs);
-        requireConsistentRepos(chain, defs);
+        preflight(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
 
@@ -609,8 +607,7 @@ public class BuildCommand extends BaseCommand {
      */
     void buildWithDescendants(List<ImageDef> targets, Map<String, ImageDef> defs) {
         var chain = withDescendantsChain(targets, defs);
-        requireValidAccounts(chain, defs);
-        requireConsistentRepos(chain, defs);
+        preflight(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
 
@@ -2235,6 +2232,33 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader)));
         stampAccountIdentities(container, identityStamps);
+    }
+
+    /**
+     * What every build path checks before building anything, given exactly the templates it may
+     * build: refusals first, then the credentials whose absence {@code isx branch} would refuse.
+     */
+    private void preflight(Collection<String> templates, Map<String, ImageDef> defs) {
+        requireValidAccounts(templates, defs);
+        requireConsistentRepos(templates, defs);
+        warnUnbranchable(templates, defs);
+    }
+
+    /**
+     * Warn, before the build's time is spent, about each credential a template needs that is not
+     * configured: the build goes ahead, but {@code isx branch} refuses its instances (#1438).
+     */
+    private void warnUnbranchable(Collection<String> templates, Map<String, ImageDef> defs) {
+        Map<String, List<String>> missing;
+        try {
+            missing = CredentialCheck.missingByCredential(SpawnConfig.load(), templates, defs, toolDefLoader);
+        } catch (RuntimeException e) {
+            // Only advice: whatever stops this check, the build and the branch report themselves
+            ClientLog.warn("Missing-credential check skipped: " + e);
+            return;
+        }
+        missing.forEach((credential, names) -> BuildOutput.warn("Missing credential: " + credential
+                + ". 'isx branch' will refuse " + OutputFormat.andList(names) + " until it is configured with 'isx init'."));
     }
 
     /**

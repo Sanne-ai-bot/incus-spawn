@@ -630,21 +630,6 @@ final class TemplateDetailView {
 
     /** Greedy word wrap; a word longer than {@code width} is left whole for the view to clip. */
     static List<String> wrap(String text, int width) {
-        var out = new ArrayList<String>();
-        if (width <= 0 || text.length() <= width) {
-            out.add(text);
-            return out;
-        }
-        var line = new StringBuilder();
-        for (var word : text.split(" ")) {
-            if (line.length() > 0 && line.length() + 1 + word.length() > width) {
-                out.add(line.toString());
-                line.setLength(0);
-            }
-            if (line.length() > 0) line.append(' ');
-            line.append(word);
-        }
-        if (line.length() > 0) out.add(line.toString());
-        return out;
+        return OutputFormat.wrap(text, width);
     }
 }

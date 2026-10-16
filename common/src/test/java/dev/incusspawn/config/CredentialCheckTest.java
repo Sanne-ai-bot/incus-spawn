@@ -127,6 +127,23 @@ class CredentialCheckTest {
         assertTrue(result.contains("GitHub"), result);
     }
 
+    @Test
+    void eachMissingCredentialNamesTheTemplatesThatNeedIt() throws Exception {
+        var config = Jjq.spawnConfig("{}");
+        var defs = new LinkedHashMap<String, ImageDef>();
+        for (var yaml : List.of("name: tpl-base\n", "name: tpl-dev\nparent: tpl-base\ntools: [gh]\n",
+                "name: tpl-agent\nparent: tpl-dev\ntools: [codex]\n",
+                "name: tpl-typo\nparent: tpl-dev\naccounts: {github: nope}\n")) {
+            var def = ImageDef.parseYaml(yaml);
+            defs.put(def.getName(), def);
+        }
+        var all = tools();
+        var missing = CredentialCheck.missingByCredential(config, defs.keySet(), defs, all, all);
+        // tpl-typo's unknown account is the build's to refuse, not a missing credential
+        assertEquals(Map.of("GitHub personal access token", List.of("tpl-dev", "tpl-agent"),
+                "OpenAI API key", List.of("tpl-agent")), missing);
+    }
+
     // --- Claude, and pi on Claude's credential
 
     private static final String CLAUDE_API_KEY_AND_VERTEX = """
