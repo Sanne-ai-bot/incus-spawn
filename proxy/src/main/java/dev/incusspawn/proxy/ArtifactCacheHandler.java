@@ -831,7 +831,8 @@ class ArtifactCacheHandler {
      * <p>
      * <b>Cache hit + ETag changed/missing</b>: fetch per-version metadata, compare
      * the upstream shasum with the stored sidecar. Same shasum → update the tarball's
-     * ETag marker and serve. Different shasum → evict and re-fetch.
+     * ETag marker and serve. Different shasum → evict and re-fetch. No shasum: see
+     * {@link #checkNpmTarballCache}; only an unreachable registry serves the copy.
      * <p>
      * <b>Cache miss</b>: fetch per-version shasum, download with digest verification,
      * write shasum + ETag sidecar files alongside the cached tarball.
@@ -851,8 +852,8 @@ class ArtifactCacheHandler {
             return new NpmCacheState(packageEtag, freshNpmHit(cacheFile, packageEtag));
         }).compose(state -> state.hit() != null
                 ? Future.succeededFuture(state.hit())
-                : fetchNpmVersion(domain, packageName, version, started).compose(document -> vertx.executeBlocking(
-                        () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, npmShasum(document))))
+                : fetchNpmVersion(domain, packageName, version, started).compose(answer -> vertx.executeBlocking(
+                        () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, answer)))
         ).onSuccess(result -> {
             if (result == null) {
                 // Said here, so a relay that fails points at the lookup that sent it there
@@ -884,42 +885,55 @@ class ArtifactCacheHandler {
     }
 
     /**
-     * Settle a tarball that {@link #freshNpmHit} could not serve, given its current upstream
-     * {@code shasum} (null when the lookup failed).
+     * Settle a tarball that {@link #freshNpmHit} could not serve, given upstream's
+     * {@code answer} for its version document. Null means relay it uncached.
+     * <p>
+     * When upstream answers, its answer wins, as for Maven/Gradle (#555): a cached copy is
+     * served only on a matching shasum, and a version that is gone (404/410: unpublished,
+     * or taken down as malware) is evicted so the client gets upstream's answer. Any other
+     * answer without a shasum confirms nothing and relays. Only an unreachable registry
+     * (no connection, 5xx, 429) serves the copy unconfirmed (#787).
      */
     static NpmVerifyResult checkNpmTarballCache(Path cacheFile, String packageEtag,
-                                                 String ref, String shasum)
+                                                 String ref, SidecarAnswer answer)
             throws IOException {
-        var etagPath = Path.of(cacheFile + ".etag");
-        var shasumPath = Path.of(cacheFile + ".shasum");
+        var cached = Files.isRegularFile(cacheFile);
+        var shasum = answer.status() == 200 ? npmShasum(answer.body()) : null;
 
-        if (Files.isRegularFile(cacheFile)) {
-            if (shasum == null) {
+        if (shasum == null) {
+            if (!cached) return null;
+            if (answer.unreachable()) {
+                System.out.println("npm: serving " + ref + " unconfirmed, the registry "
+                        + (answer.status() > 0 ? "answered " + answer.status() : "is unreachable"));
                 return new NpmVerifyResult(true, Files.size(cacheFile), null);
             }
+            if (answer.gone()) {
+                System.out.println("npm cache: " + ref + " is gone upstream (" + answer.status() + "), evicting");
+                evictNpmTarball(cacheFile);
+            }
+            return null;
+        }
 
-            var storedShasum = readFileOrNull(shasumPath);
-            if (shasum.equals(storedShasum)) {
+        if (cached) {
+            if (shasum.equals(readFileOrNull(Path.of(cacheFile + ".shasum")))) {
                 if (packageEtag != null) {
-                    Files.writeString(etagPath, packageEtag);
+                    Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
                 }
                 return new NpmVerifyResult(true, Files.size(cacheFile), null);
             }
-
             System.out.println("npm cache stale: " + ref +
                     " (shasum changed), evicting");
-            Files.deleteIfExists(cacheFile);
-            Files.deleteIfExists(shasumPath);
-            Files.deleteIfExists(etagPath);
-            var digest = "sha1:" + shasum;
-            writeNpmSidecarFiles(cacheFile, shasum, packageEtag);
-            return new NpmVerifyResult(false, 0, digest);
+            evictNpmTarball(cacheFile);
         }
 
-        if (shasum == null) return null;
-        var digest = "sha1:" + shasum;
         writeNpmSidecarFiles(cacheFile, shasum, packageEtag);
-        return new NpmVerifyResult(false, 0, digest);
+        return new NpmVerifyResult(false, 0, "sha1:" + shasum);
+    }
+
+    private static void evictNpmTarball(Path cacheFile) throws IOException {
+        Files.deleteIfExists(cacheFile);
+        Files.deleteIfExists(Path.of(cacheFile + ".shasum"));
+        Files.deleteIfExists(Path.of(cacheFile + ".etag"));
     }
 
     static void writeNpmSidecarFiles(Path cacheFile, String shasum,
@@ -941,22 +955,21 @@ class ArtifactCacheHandler {
     /**
      * Fetch an npm package version's metadata document ({@code /<package>/<version>}),
      * which carries its shasum, through {@code probeClient} like every other checksum, so
-     * lookups run concurrently on shared connections. Completes with the document, or null
-     * on any failure; {@link #npmShasum} parses it, on a worker thread.
+     * lookups run concurrently on shared connections. Never fails; see {@link SidecarAnswer}
+     * for what comes back instead. {@link #npmShasum} parses it, on a worker thread.
      * <p>
      * A 5xx is asked once more while over half the client's silence budget is left, so the
      * tarball's head still has time: without a shasum the tarball is relayed uncached, and a
      * relayed body that stalls cannot be resumed (#925, #929). A 429 is not: asked again at
      * once, it would only be refused again.
      */
-    Future<byte[]> fetchNpmVersion(String domain, String packageName, String version, long started) {
+    Future<SidecarAnswer> fetchNpmVersion(String domain, String packageName, String version, long started) {
         var path = "/" + packageName.replace("/", "%2F") + "/" + version;
         return fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES)
                 .compose(answer -> answer.status() >= 500
                         && upstream.silenceLeftMillis(started) > TimeUnit.SECONDS.toMillis(upstream.clientSilenceBudgetSeconds) / 2
                         ? fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES)
-                        : Future.succeededFuture(answer))
-                .map(answer -> answer.status() == 200 ? answer.body() : null);
+                        : Future.succeededFuture(answer));
     }
 
     /** The {@code dist.shasum} of a version document, or null when it has none we can use. */
@@ -1007,6 +1020,11 @@ class ArtifactCacheHandler {
          */
         boolean unreachable() {
             return this == UNREACHABLE || status >= 500 || status == 429;
+        }
+
+        /** Upstream says the document does not exist (any more). */
+        boolean gone() {
+            return status == 404 || status == 410;
         }
 
         /** The status to answer with when nothing can be served. */
@@ -1471,10 +1489,9 @@ class ArtifactCacheHandler {
                 var outcome = VerifiedArtifactStore.reconcile(
                         artifact, revalidation.headerChecksum, header.status(), header.body(), true);
                 if (outcome == VerifiedArtifactStore.Outcome.MATCHED) {
-                    var status = sidecarAnswer.status();
-                    if (status == 404 || status == 410) {
+                    if (sidecarAnswer.gone()) {
                         VerifiedArtifactStore.dropSidecar(artifact, sidecar);
-                    } else if (status == 200 && !sidecar.isChecksum()) {
+                    } else if (sidecarAnswer.status() == 200 && !sidecar.isChecksum()) {
                         VerifiedArtifactStore.storeSidecar(artifact, sidecar, sidecarAnswer.body());
                     }
                 }

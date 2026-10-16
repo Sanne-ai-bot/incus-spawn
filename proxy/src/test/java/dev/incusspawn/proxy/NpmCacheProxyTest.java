@@ -304,6 +304,61 @@ class NpmCacheProxyTest {
         assertFalse(Files.exists(cached(path)));
     }
 
+    /** Fetch {@code name@1.0.0} through the proxy once, so its tarball is cached. */
+    static String publishAndCache(String name) throws Exception {
+        var path = publish(name);
+        assertEquals(new Response(200, "tarball of " + name), get(path, 10));
+        awaitCached(path);
+        return path;
+    }
+
+    @Test
+    void unpublishedVersionIsNotServedFromCache() throws Exception {
+        // A version removed upstream (unpublished, or taken down as malware) is gone for a direct fetch too
+        var path = publishAndCache("unpublished");
+        routes.clear();
+
+        assertEquals(404, get(path, 10).status());
+
+        assertFalse(Files.exists(cached(path)), "the removed version is evicted");
+        assertFalse(Files.exists(Path.of(cached(path) + ".shasum")));
+    }
+
+    @Test
+    void unreachableRegistryStillServesCache() throws Exception {
+        var path = publishAndCache("offline");
+        routes.remove(path);
+        unavailable.put("/offline/1.0.0", new AtomicInteger(Integer.MAX_VALUE));
+
+        assertEquals(new Response(200, "tarball of offline"), get(path, 10));
+
+        assertEquals(1, hits.get(path).get(), "the cached copy is served, the tarball is not fetched again");
+    }
+
+    @Test
+    void forbiddenLookupRelaysWithoutServingCache() throws Exception {
+        var path = publishAndCache("forbidden");
+        routes.put(path, "republished".getBytes(StandardCharsets.UTF_8));
+        unavailable.put("/forbidden/1.0.0", new AtomicInteger(1));
+        unavailableStatus = 403;
+
+        assertEquals(new Response(200, "republished"), get(path, 10));
+
+        assertEquals("tarball of forbidden", Files.readString(cached(path)),
+                "an answer that confirms nothing evicts nothing");
+    }
+
+    @Test
+    void unparseableVersionDocumentRelaysWithoutServingCache() throws Exception {
+        var path = publishAndCache("garbled");
+        routes.put(path, "republished".getBytes(StandardCharsets.UTF_8));
+        routes.put("/garbled/1.0.0", "{not json".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(new Response(200, "republished"), get(path, 10));
+
+        assertEquals("tarball of garbled", Files.readString(cached(path)));
+    }
+
     @Test
     void slowServerErrorIsNotAskedAgainWhenTheClientHasWaitedTooLong() throws Exception {
         // Half of a 2s budget gone on the first answer: a second lookup could leave the tarball's head no time

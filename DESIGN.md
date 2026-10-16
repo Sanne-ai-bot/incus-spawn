@@ -1354,6 +1354,9 @@ There is no upload size limit: a body passes as long as the host has disk for it
 - **npm tarballs** — keyed by package name and version, with ETag-based verification against the npm registry packument.
   When the packument ETag is unchanged, cached tarballs are served without re-verification.
   When the ETag changes, per-version shasum is checked — matching shasum updates the marker, mismatched shasum evicts and re-fetches.
+  As for Maven/Gradle, when upstream answers its answer wins (#787): a version document that is gone (`404`/`410`: unpublished, or taken down as malware) evicts the tarball and the client gets upstream's answer, and any other answer without a usable shasum relays the tarball without serving the copy.
+  Only an unreachable registry (no connection, `5xx` after its retry, `429`) serves the copy unconfirmed, and logs that it did.
+  `npm ci` with a lockfile fetches no packument, so a tarball verified under the package's stored ETag is served without a lookup and this rule does not reach it.
   The per-version shasum is looked up asynchronously through `probeClient`, the same client and verification as Maven/Gradle checksums, so a cold install's lookups run concurrently over shared HTTP/2 connections (#960).
   They used to be a raw `SSLSocket` per tarball inside an *ordered* `executeBlocking`.
   In Vert.x 4.5 an ordered task on a request's duplicated context joins its parent context's single queue, which every MITM connection shares.

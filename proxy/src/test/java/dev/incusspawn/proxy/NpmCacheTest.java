@@ -3,9 +3,13 @@ package dev.incusspawn.proxy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.incusspawn.proxy.ArtifactCacheHandler.SidecarAnswer;
+
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -298,6 +302,14 @@ class NpmCacheTest {
         }
     }
 
+    static final String SHASUM = "a".repeat(40);
+    static final String NEW_SHASUM = "b".repeat(40);
+
+    /** Upstream's version document, carrying {@code shasum}. */
+    static SidecarAnswer found(String shasum) {
+        return new SidecarAnswer(200, ("{\"dist\":{\"shasum\":\"" + shasum + "\"}}").getBytes(StandardCharsets.UTF_8));
+    }
+
     // --- freshNpmHit: ETag fast path ---
 
     @Test
@@ -322,11 +334,11 @@ class NpmCacheTest {
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "");
-        Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
 
         assertNull(ArtifactCacheHandler.freshNpmHit(cacheFile, ""), "an empty ETag vouches for nothing");
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "", "ref",
-                "abc123");
+                found(SHASUM));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -340,10 +352,10 @@ class NpmCacheTest {
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
-        Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
-                "abc123");
+                found(SHASUM));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -358,10 +370,10 @@ class NpmCacheTest {
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
-        Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
-                "abc123");
+                found(SHASUM));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -380,13 +392,13 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old-etag\"");
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new-etag\"", "ref",
-                "new-shasum");
+                found(NEW_SHASUM));
 
         assertNotNull(result);
         assertFalse(result.cacheHit());
-        assertEquals("sha1:new-shasum", result.digest());
+        assertEquals("sha1:" + NEW_SHASUM, result.digest());
         assertFalse(Files.exists(cacheFile), "stale tarball should be deleted");
-        assertEquals("new-shasum",
+        assertEquals(NEW_SHASUM,
                 Files.readString(Path.of(cacheFile + ".shasum")).strip(),
                 "sidecar should be written with new shasum");
     }
@@ -400,28 +412,60 @@ class NpmCacheTest {
         // no .shasum file
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
-                "fresh-shasum");
+                found(NEW_SHASUM));
 
         assertNotNull(result);
         assertFalse(result.cacheHit(), "missing stored shasum should trigger eviction");
-        assertEquals("sha1:fresh-shasum", result.digest());
+        assertEquals("sha1:" + NEW_SHASUM, result.digest());
     }
 
-    // --- checkNpmTarballCache: shasum fetch fails (graceful degradation) ---
+    // --- checkNpmTarballCache: no shasum (#787: only an unreachable registry serves the copy) ---
 
-    @Test
-    void cacheHitShasumFetchFailsServesFromCache(@TempDir Path tmp) throws Exception {
+    static Path cachedTarball(Path tmp) throws Exception {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
+        return cacheFile;
+    }
 
-        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
-                null);
+    @Test
+    void cacheHitRegistryUnreachableServesFromCache(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedTarball(tmp);
 
-        assertNotNull(result);
-        assertTrue(result.cacheHit(),
-                "should serve cached tarball when registry is unreachable");
+        for (var answer : List.of(SidecarAnswer.UNREACHABLE, new SidecarAnswer(503, null), new SidecarAnswer(429, null))) {
+            var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref", answer);
+
+            assertNotNull(result, "status " + answer.status());
+            assertTrue(result.cacheHit(), "status " + answer.status());
+        }
+    }
+
+    @Test
+    void cacheHitVersionGoneEvictsAndRelays(@TempDir Path tmp) throws Exception {
+        for (var status : List.of(404, 410)) {
+            var cacheFile = cachedTarball(tmp);
+
+            assertNull(ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
+                    new SidecarAnswer(status, null)));
+
+            assertFalse(Files.exists(cacheFile), "status " + status);
+            assertFalse(Files.exists(Path.of(cacheFile + ".shasum")));
+            assertFalse(Files.exists(Path.of(cacheFile + ".etag")));
+        }
+    }
+
+    @Test
+    void cacheHitUnverifiableAnswerRelaysWithoutEvicting(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedTarball(tmp);
+
+        for (var answer : List.of(new SidecarAnswer(403, null), SidecarAnswer.UNUSABLE,
+                new SidecarAnswer(200, "{not json".getBytes(StandardCharsets.UTF_8)))) {
+            assertNull(ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref", answer),
+                    "status " + answer.status());
+            assertTrue(Files.exists(cacheFile));
+        }
     }
 
     // --- checkNpmTarballCache: no package ETag ---
@@ -431,11 +475,11 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
-        Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
         // no .etag files at all
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
-                "abc123");
+                found(SHASUM));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -446,10 +490,10 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
-        Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
-                "abc123");
+                found(SHASUM));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -462,12 +506,12 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
-                "abc123");
+                found(SHASUM));
 
         assertNotNull(result);
         assertFalse(result.cacheHit());
-        assertEquals("sha1:abc123", result.digest());
-        assertEquals("abc123",
+        assertEquals("sha1:" + SHASUM, result.digest());
+        assertEquals(SHASUM,
                 Files.readString(Path.of(cacheFile + ".shasum")).strip());
         assertEquals("\"etag\"",
                 Files.readString(Path.of(cacheFile + ".etag")).strip());
@@ -478,7 +522,7 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
-                null);
+                SidecarAnswer.UNREACHABLE);
 
         assertNull(result, "should return null to trigger relay when shasum unavailable");
     }
@@ -488,7 +532,7 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
-                "abc123");
+                found(SHASUM));
 
         assertNotNull(result);
         assertFalse(result.cacheHit());
