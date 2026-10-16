@@ -53,7 +53,7 @@ public class InitCommand extends BaseCommand {
 
     IncusClient incus;
 
-    private static final int BOX_WIDTH = 62;
+    static final int BOX_WIDTH = 62;
     private static final String BORDER_H = "─".repeat(BOX_WIDTH);
 
     // Methods, not constants: whether to style is known only at run time, and a static final
@@ -270,16 +270,8 @@ public class InitCommand extends BaseCommand {
                     proxyServiceInstalled.set(completeWithProxyService(Prompts.console()));
                 }));
 
-        var proxyStep = proxyServiceInstalled.get()
-                ? "   2. Proxy is running as a systemd service"
-                : "   2. Start the auth proxy:  isx proxy start";
-        printCompletionBox(
-                "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"),
-                "",
-                "   " + styled(BOLD, "Next steps:"),
-                "   1. Build a template:      isx build tpl-minimal",
-                proxyStep,
-                "   3. Launch the TUI:        isx");
+        var service = proxyServiceInstalled.get();
+        printCompletionBox(nextSteps(service, !service));
         return CommandResult.SUCCESS;
     }
 
@@ -297,13 +289,29 @@ public class InitCommand extends BaseCommand {
                     completeWithMacOsServices(Prompts.console());
                 }));
 
-        printCompletionBox(
-                "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"),
-                "",
-                "   " + styled(BOLD, "Next steps:"),
-                "   1. Build a template:  isx build tpl-minimal",
-                "   2. Launch the TUI:    isx");
+        printCompletionBox(nextSteps(false, false));
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * The closing box: the Quick Start's way to a first agent (#1435), after saying the proxy runs
+     * as a systemd service, or starting it when nothing does. The template itself is YAML, so the
+     * box points at the page that shows it rather than printing it.
+     */
+    static String[] nextSteps(boolean proxyService, boolean startProxy) {
+        var lines = new ArrayList<String>(List.of(
+                "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"),
+                ""));
+        if (proxyService) lines.addAll(List.of("   The proxy runs as a systemd service.", ""));
+        lines.add("   " + styled(BOLD, "Next steps, to a first agent:"));
+        var steps = new ArrayList<String>();
+        if (startProxy) steps.add("Start the proxy:   isx proxy start");
+        steps.add("Define tpl-agent:  https://isx.run/docs#quick-start");
+        steps.add("Build it:          isx build tpl-agent");
+        steps.add("Branch it:         isx branch my-first --from tpl-agent");
+        for (int i = 0; i < steps.size(); i++) lines.add("   " + (i + 1) + ". " + steps.get(i));
+        lines.add("   Or launch the TUI:    isx");
+        return lines.toArray(String[]::new);
     }
 
     /** One numbered step of init: it shows exactly one header, through {@link #startStep}. */
