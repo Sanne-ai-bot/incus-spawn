@@ -3,6 +3,7 @@ paths:
   - "proxy/**"
   - "common/src/main/java/dev/incusspawn/proxy/**"
   - "common/src/main/java/dev/incusspawn/DerEncoder.java"
+  - "common/src/main/java/dev/incusspawn/util/HttpValidator.java"
   - "cli/src/main/java/dev/incusspawn/command/Proxy*Command.java"
 ---
 
