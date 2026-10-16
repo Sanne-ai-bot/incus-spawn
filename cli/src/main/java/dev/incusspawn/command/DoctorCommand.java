@@ -220,6 +220,8 @@ public class DoctorCommand extends BaseCommand {
 
         // Layer 1: Host configuration
         findings.addAll(checkHostConfig());
+        // Said here so nobody has to find it out from a failed build or branch (#1254)
+        findings.add(Finding.note("VM instances and KVM", "(not available on macOS: isx runs containers only)"));
 
         // Layer 2: Incus daemon (via VM)
         boolean vmRunning = VmManager.isRunning();

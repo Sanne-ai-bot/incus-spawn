@@ -51,6 +51,9 @@ final class BranchModal {
 
     private CheckboxState branchKvmCheck;
 
+    /** What the KVM box started as: left there, the request leaves KVM to BranchFlow's default. */
+    private boolean branchKvmDefault;
+
     private NetworkMode[] branchNetworkModes;
 
     private SelectState branchNetworkSelect;
@@ -98,6 +101,7 @@ final class BranchModal {
         branchGuiCheck = new CheckboxState(defaults.gui());
         branchGuiDefault = defaults.gui();
         branchKvmCheck = new CheckboxState(defaults.kvm());
+        branchKvmDefault = defaults.kvm();
         branchNetworkModes = NetworkMode.values();
         branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
                 .map(NetworkMode::label).toArray(String[]::new));
@@ -117,6 +121,11 @@ final class BranchModal {
     /** Whether the dialog branches a VM, and so offers its limits. */
     boolean sourceIsVm() {
         return branchSourceIsVm;
+    }
+
+    /** Whether the KVM passthrough box is ticked. */
+    boolean kvm() {
+        return branchKvmCheck.isChecked();
     }
 
     /** The name typed so far, stripped. */
@@ -412,8 +421,9 @@ final class BranchModal {
         }
         // An untouched box is the default, so create() applies it and says why it is off, as for isx branch
         var gui = branchGuiCheck.isChecked() == branchGuiDefault ? null : branchGuiCheck.isChecked();
+        var kvm = kvm() == branchKvmDefault ? null : kvm();
         var request = new BranchFlow.Request(source, name, gui,
-                branchKvmCheck.isChecked(), branchNetworkMode(),
+                kvm, branchNetworkMode(),
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
                 cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of());
         return request;
