@@ -20,8 +20,10 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -486,18 +488,38 @@ public class ImageDef {
     /**
      * Return the ordered list of ancestor images, starting from the immediate
      * parent and walking up to the root. Stops if a name is missing from
-     * {@code defs}.
+     * {@code defs}, or before a layer it has already seen: loading refuses a parent cycle, but a
+     * build-source snapshot merged in afterwards can still close one (#1443).
      */
     public static List<ImageDef> ancestors(ImageDef start, Map<String, ImageDef> defs) {
         var result = new ArrayList<ImageDef>();
+        var seen = new LinkedHashSet<String>();
+        seen.add(start.getName());
         var parentName = start.getParent();
         while (parentName != null && !parentName.isBlank()) {
             var parent = defs.get(parentName);
             if (parent == null) break;
+            if (!seen.add(parentName)) {
+                var path = new ArrayList<>(seen);
+                Warnings.warn(cycleText(path.subList(path.indexOf(parentName), path.size()))
+                        + "; every chain through it stops before repeating a layer");
+                break;
+            }
             result.add(parent);
             parentName = parent.getParent();
         }
         return result;
+    }
+
+    /**
+     * "parent cycle a → b → a", starting at the least name, so a cycle reads the same from
+     * wherever a walk entered it and {@link Warnings} reports it once.
+     */
+    private static String cycleText(List<String> cycle) {
+        var rotated = new ArrayList<>(cycle);
+        Collections.rotate(rotated, -rotated.indexOf(Collections.min(cycle)));
+        rotated.add(rotated.get(0));
+        return "parent cycle " + String.join(" → ", rotated);
     }
 
     /**
@@ -775,8 +797,7 @@ public class ImageDef {
         for (var cycle : cycles) {
             var files = cycle.stream().map(defs::getSource).distinct()
                     .map(OutputFormat::oneLine).toList();
-            warnings.accept("parent cycle " + String.join(" → ", cycle) + " → " + cycle.get(0)
-                    + " (" + String.join(", ", files) + ")" + LayeredDefinitions.REFUSED);
+            warnings.accept(cycleText(cycle) + " (" + String.join(", ", files) + ")" + LayeredDefinitions.REFUSED);
             cycle.forEach(defs::refuse);
         }
     }

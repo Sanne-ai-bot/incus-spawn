@@ -55,6 +55,57 @@ class BuildCommandTest {
         assertTrue(msg.contains("/defs/tools/foo.yaml"), msg);
     }
 
+    @Test
+    void collectAllStopsAtACycleClosedAfterLoad() {
+        // A snapshot merged in by isx build can close a cycle the load-time check never saw (#1443)
+        var a = new ImageDef();
+        a.setName("tpl-a");
+        a.setParent("tpl-b");
+        var b = new ImageDef();
+        b.setName("tpl-b");
+        b.setParent("tpl-a");
+        var result = new java.util.ArrayList<String>();
+
+        var warnings = new java.util.ArrayList<String>();
+
+        try (var ignored = dev.incusspawn.Warnings.redirect(new dev.incusspawn.Warnings.Channel(warnings::add))) {
+            BuildCommand.collectAllRecursive(a, Map.of("tpl-a", a, "tpl-b", b), result, new java.util.HashSet<>());
+        }
+
+        assertEquals(List.of("tpl-b", "tpl-a"), result);
+        assertEquals(1, warnings.size(), warnings.toString());
+    }
+
+    @Test
+    void aFailedParentCheckEndsOnACycleClosedAfterLoad() {
+        var a = new ImageDef();
+        a.setName("tpl-a");
+        a.setParent("tpl-b");
+        var b = new ImageDef();
+        b.setName("tpl-b");
+        b.setParent("tpl-a");
+        var defs = Map.of("tpl-a", a, "tpl-b", b);
+
+        try (var ignored = dev.incusspawn.Warnings.redirect(new dev.incusspawn.Warnings.Channel(w -> {}))) {
+            var cmd = new BuildCommand();
+            // Used to alternate tpl-a, tpl-b forever
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> {
+                assertFalse(cmd.shouldSkipDueToFailedParent(a, defs, Set.of()));
+                assertTrue(cmd.shouldSkipDueToFailedParent(a, defs, Set.of("tpl-b")));
+            });
+        }
+    }
+
+    @Test
+    void aParentThatFailedCountsEvenWithoutItsDefinition() {
+        // A target with no definition is recorded as failed; its child must still be skipped
+        var b = new ImageDef();
+        b.setName("tpl-b");
+        b.setParent("tpl-a");
+
+        assertTrue(new BuildCommand().shouldSkipDueToFailedParent(b, Map.of("tpl-b", b), Set.of("tpl-a")));
+    }
+
     // --- reportBuildFailure ---
 
     /**

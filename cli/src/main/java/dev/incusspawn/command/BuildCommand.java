@@ -519,16 +519,11 @@ public class BuildCommand extends BaseCommand {
 
     public static void collectAllRecursive(ImageDef imageDef, Map<String, ImageDef> defs,
                                      List<String> result, Set<String> seen) {
-        var name = imageDef.getName();
-        if (seen.contains(name)) return;
-        if (!imageDef.isRoot()) {
-            var parentDef = defs.get(imageDef.getParent());
-            if (parentDef != null) {
-                collectAllRecursive(parentDef, defs, result, seen);
-            }
+        if (seen.contains(imageDef.getName())) return;
+        // ImageDef.chain, root-first, stops at a parent cycle a merged build-source snapshot closed (#1443)
+        for (var layer : ImageDef.chain(imageDef, defs)) {
+            if (seen.add(layer.getName())) result.add(layer.getName());
         }
-        seen.add(name);
-        result.add(name);
     }
 
     public static void collectDescendants(String parentName, Map<String, ImageDef> defs,
@@ -546,16 +541,9 @@ public class BuildCommand extends BaseCommand {
      */
     boolean shouldSkipDueToFailedParent(ImageDef imageDef, Map<String, ImageDef> defs,
                                          Set<String> failedBuilds) {
-        var current = imageDef;
-        while (!current.isRoot()) {
-            var parentName = current.getParent();
-            if (failedBuilds.contains(parentName)) {
-                return true;
-            }
-            current = defs.get(parentName);
-            if (current == null) break;
-        }
-        return false;
+        // Each layer's parent name, so a failed parent whose definition is missing still counts
+        return ImageDef.chain(imageDef, defs).stream()
+                .anyMatch(layer -> !layer.isRoot() && failedBuilds.contains(layer.getParent()));
     }
 
     /**
@@ -697,23 +685,27 @@ public class BuildCommand extends BaseCommand {
 
     /** The missing or outdated ancestors {@code buildChain} builds first, parents before children. */
     private void collectParentsToBuild(ImageDef imageDef, Map<String, ImageDef> defs, List<String> chain) {
-        if (imageDef.isRoot()) return;
-        var parentName = imageDef.getParent();
-        var parentDef = defs.get(parentName);
-        if (parentDef == null) {
-            System.err.println("Parent image '" + parentName + "' not found in definitions.");
+        var parents = new ArrayList<String>();
+        var child = imageDef;
+        // ImageDef.ancestors stops at a parent cycle a merged build-source snapshot closed (#1443)
+        for (var parentDef : ImageDef.ancestors(imageDef, defs)) {
+            // When the target type differs from the parent's resolved type
+            // (e.g. building a VM from container parents), buildFromScratch
+            // applies the entire ancestor chain from definitions alone —
+            // parent Incus instances are not needed.
+            if (effectiveMachineType(child) != effectiveMachineType(parentDef)
+                    || !parentNeedsBuild(parentDef.getName(), parentDef)) {
+                chain.addAll(parents.reversed());
+                return;
+            }
+            parents.add(parentDef.getName());
+            child = parentDef;
+        }
+        if (!child.isRoot() && !defs.containsKey(child.getParent())) {
+            System.err.println("Parent image '" + child.getParent() + "' not found in definitions.");
             System.exit(1);
         }
-
-        // When the target type differs from the parent's resolved type
-        // (e.g. building a VM from container parents), buildFromScratch
-        // applies the entire ancestor chain from definitions alone —
-        // parent Incus instances are not needed.
-        if (effectiveMachineType(imageDef) != effectiveMachineType(parentDef)) return;
-
-        if (!parentNeedsBuild(parentName, parentDef)) return;
-        collectParentsToBuild(parentDef, defs, chain);
-        chain.add(parentName);
+        chain.addAll(parents.reversed());
     }
 
     private boolean existsHeld(String name) {
@@ -2343,8 +2335,7 @@ public class BuildCommand extends BaseCommand {
         var projectRoots = new LinkedHashMap<String, String>();
 
         var visited = new HashSet<String>();
-        var current = imageDef;
-        while (current != null) {
+        for (var current : ImageDef.chain(imageDef, defs).reversed()) {
             definitions.put(current.getName(), current);
             sources.put(current.getName(), current.getSource());
             if (current.getProjectRoot() != null) {
@@ -2352,8 +2343,6 @@ public class BuildCommand extends BaseCommand {
             }
             collectToolDefs(current, tools, visited);
             collectToolInstances(current, toolInstances);
-            if (current.isRoot()) break;
-            current = defs.get(current.getParent());
         }
 
         var buildSource = new BuildSource(definitions, tools, toolInstances, sources);
@@ -2542,13 +2531,10 @@ public class BuildCommand extends BaseCommand {
         if (colon >= 0) toolName = ref.substring(0, colon);
 
         var allTools = new java.util.LinkedHashSet<String>();
-        var current = imageDef;
-        while (current != null) {
+        for (var current : ImageDef.chain(imageDef, defs).reversed()) {
             for (var toolRef : current.getTools()) {
                 allTools.add(toolRef.getName());
             }
-            if (current.isRoot() || current.getParent() == null) break;
-            current = defs.get(current.getParent());
         }
         if (!allTools.contains(toolName)) {
             System.err.println("Warning: default-action '" + ref
@@ -2559,13 +2545,10 @@ public class BuildCommand extends BaseCommand {
     }
 
     static String resolveEffectiveDefaultAction(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var current = imageDef;
-        while (current != null) {
+        for (var current : ImageDef.chain(imageDef, defs).reversed()) {
             if (current.getDefaultAction() != null) {
                 return current.getDefaultAction();
             }
-            if (current.isRoot() || current.getParent() == null) break;
-            current = defs.get(current.getParent());
         }
         return null;
     }
