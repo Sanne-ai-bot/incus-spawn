@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * mode a dialog opens in to the action left pending when the runner quits. Each dialog's own
  * rendering is snapshotted by its own test.
  */
-@ExtendWith(IsolatedHome.class)
+@ExtendWith({IsolatedHome.class, dev.incusspawn.lifecycle.LinuxBranching.class})
 class TuiCharacterisationTest {
 
     private static final KeyEvent ESC = KeyEvent.ofKey(KeyCode.ESCAPE);

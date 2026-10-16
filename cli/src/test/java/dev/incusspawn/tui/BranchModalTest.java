@@ -60,6 +60,7 @@ class BranchModalTest {
         assertEquals(Boolean.TRUE, request.gui(), "a box changed from its default is passed on");
         assertEquals(NetworkMode.values()[1], request.networkMode());
         assertNull(request.inbox());
+        assertNull(request.kvm(), "an untouched box leaves KVM to the default, so create() says why it is off (#1254)");
     }
 
     @Test

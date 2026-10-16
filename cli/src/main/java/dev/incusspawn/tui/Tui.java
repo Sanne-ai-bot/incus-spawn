@@ -919,6 +919,12 @@ public class Tui {
             return;
         }
         var defaults = BranchFlow.defaultsFor(sourceName, source, imageDefs);
+        var refusal = BranchFlow.vmUnsupportedOnMacOs(sourceName, defaults.machineType());
+        if (refusal != null) {
+            mode = Mode.BROWSE;
+            statusMessage = refusal;
+            return;
+        }
         branch = new BranchModal(modal, theme, sourceName, suggestedName, defaults,
                 branchAccountChoicesFor(sourceName, source));
         mode = Mode.BRANCH;
@@ -942,6 +948,13 @@ public class Tui {
         var validation = validateInstanceName(name);
         if (validation != null) {
             statusMessage = validation;
+            mode = Mode.BROWSE;
+            return true;
+        }
+        // As preflight would, but before the terminal is handed back, like the credential check below
+        var refusal = BranchFlow.kvmUnsupportedOnMacOs(branch.kvm());
+        if (refusal != null) {
+            statusMessage = refusal;
             mode = Mode.BROWSE;
             return true;
         }
