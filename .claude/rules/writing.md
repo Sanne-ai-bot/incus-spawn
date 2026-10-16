@@ -21,7 +21,7 @@ A section opens with why it exists for the reader (the agent must be free to act
 
 **Short factual sentences, plain words.**
 "Terminates TLS" becomes "adds the credentials as the requests leave the machine".
-The README is the reference; the home page is read once, quickly.
+The README is the newcomer's guide and `docs/*.md` the reference beside it, both on isx.run; the home page is read once, quickly.
 
 **Say what is meant before using the word.**
 Introduce "branch" (what `isx branch` makes) before using it as a noun; the same for template, remote, worktree.

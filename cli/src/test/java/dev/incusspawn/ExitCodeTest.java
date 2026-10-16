@@ -10,7 +10,7 @@ import java.util.Arrays;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * The exit codes README "Scripting isx" documents (#1036), through the real entry point: a command
+ * The exit codes docs/CLI.md "Scripting isx" documents (#1036), through the real entry point: a command
  * line aesh cannot parse exits 2 with the usage on stderr, a value the command rejects exits 1 with
  * the reason on stderr, and neither writes anything to stdout. Neither needs Incus.
  */

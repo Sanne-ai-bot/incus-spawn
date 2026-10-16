@@ -22,7 +22,7 @@ The tradeoff: system containers are heavier than application containers (~200MB 
 This is acceptable for development environments that persist for hours or days, and copy-on-write storage means clones are cheap regardless of base image size.
 
 The choice is what a sandbox *is*: in isx, a branch of a template, as a container by default or a VM.
-Other sandboxes for coding agents make it differently, and the README's "Compared with other sandboxes" section says how.
+Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, "Compared with other sandboxes", says how.
 
 ## Goals
 
@@ -856,7 +856,7 @@ An AI answer never reaches the terminal raw (#1413): `TerminalLink.plainText` tu
 An AI request's error goes through `OutputFormat.oneLine`: `AiHelpClient` passes a provider's text through it, and AI Help every error it shows.
 The console is decided by stdin and stdout, never stderr, and Java cannot ask whether stderr alone is a terminal without native code.
 So the contract is that escapes follow stdout: redirecting stdout or setting `NO_COLOR` clears both streams, while `2>log` alone from a terminal keeps colour in the log.
-The README says so rather than promising more.
+`docs/CLI.md` ("Scripting isx") says so rather than promising more.
 `warn`, `stepWarn` and `note` go to stderr: a step line is what the command did, a warning or note is a diagnostic about it.
 The blank line that closes a warning goes to stdout, because it separates the warning from stdout's own flow.
 A following header then neither repeats it on a terminal nor loses it in `>out.log`.
@@ -1063,7 +1063,7 @@ A runtime that lands later is found by systemd path units, not a daemon (#515): 
 A bare `isx-trust` covers the same directories as the build, the home ones as `agentuser`'s whoever runs it.
 The cost is one inotify instance per watched directory (systemd opens one per path), counted in `IncusDiagnostics.INOTIFY_INSTANCES_PER_CONTAINER`.
 What lands outside those directories, or whose bundled file appears only after the last pass, is bound by running `isx-trust <dir>`, and the agent context pairs the TLS symptoms with that command so an agent repairs the binding rather than turning verification off.
-The README section "What differs from a stock Fedora install" lists these deviations for users.
+`docs/FEDORA.md`, "What differs from a stock Fedora install", lists these deviations for users.
 
 **How it works:**
 
@@ -2019,7 +2019,7 @@ User and search-path tool YAML comes from `ToolDefLoader.userAndSearchPathToolDi
 That list leaves out a project's `.incus-spawn/tools/` because the flag is named `--with-templates`; it may later be widened to project tools.
 A project's templates' names, descriptions and tool lists do go in, through `ImageDef.loadAll`.
 `HelpContext.definitions()` is built once per opening of the dialog, so the size shown is exactly what gets sent.
-**Prompt caching:** every question carries the whole README and DESIGN.md (~205 KB, the bulk of the cost; kept because answers are markedly less complete without the design rationale).
+**Prompt caching:** every question carries the whole README, the `docs/` pages and DESIGN.md (~725 KB, the bulk of the cost; kept because answers are markedly less complete without the design rationale).
 So `HelpContext.systemBlocks()` returns the prompt as two blocks -- the fixed documentation, then the attached definitions -- and `AiHelpClient.cachedSystem()` puts a 5-minute `cache_control` breakpoint on each for Anthropic and Vertex.
 A follow-up question within five minutes then reads the documentation from the cache at ~0.1x the input price (the first question pays 1.25x to write it; OpenAI caches the same stable prefix on its own).
 The attachment has its own breakpoint so ticking it still reuses the cached documentation, and its content is sorted so it is byte-identical between questions.
@@ -4317,7 +4317,7 @@ The MITM TLS proxy provides credential isolation:
 
 `isx mcp` exposes a deliberately narrow surface: approved, trusted, built templates only; each instance usable only by the host user's session holding it (another session of that user must adopt it first, never another user's); no host command execution and no host file access; results returned as text.
 It runs as the user, so that boundary holds for the MCP tools, not for an agent that may also run `isx` or edit `~/.config/incus-spawn` through its shell.
-The README gives the Claude Code permission rules that close that path.
+`docs/MCP.md` gives the Claude Code permission rules that close that path.
 Text coming back from an instance (command output, a delegate's report, a diff) is produced inside the sandbox and may try to instruct the host agent; tool descriptions say to treat it as data.
 The same holds for `ask` answers, which a model wrote after reading that text: the summarising Claude Code gets no tools, so injected instructions cannot make it act, only mislead, and its answers are never a basis for merging.
 A delegated agent can do anything its template's credentials allow, which is why those are the user's choice per template and not the agent's.

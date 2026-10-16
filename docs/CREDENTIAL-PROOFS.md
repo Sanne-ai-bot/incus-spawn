@@ -1,9 +1,26 @@
-# Credential proof enforcement
+# Credential proofs
 
-This completes the proxy enforcement work in [#1107](https://github.com/Sanne/incus-spawn/issues/1107), following proof delivery, tool login refresh, doctor diagnostics and explicit account inheritance in [#1100](https://github.com/Sanne/incus-spawn/issues/1100).
+The proxy adds an instance's credentials to a request only when the request carries that instance's proof: a token isx gives each instance, per credential namespace, in place of the credential.
+This page says what the proofs reach, how to share or revoke one, and what to do after an upgrade.
 An instance's address selects its accounts; its current namespace proof authorizes their use.
 A nested container sharing that address receives no credential unless its parent deliberately shares a proof.
 An independent inner credential passes through with its destination, path, query and body unchanged, including through an outer Claude account using a different authentication mode.
+
+## Proof tokens
+
+Each start replaces the placeholders with **proof tokens** unique to the instance and credential namespace (e.g. `gho_isx_…` in `GH_TOKEN`), exported by the login profile.
+These tokens stay the same across stops, starts and reboots, so a nested service explicitly configured with one keeps working.
+A new branch or replacement instance gets different tokens, even if a name or address is reused.
+They reach exactly what runs in an instance's login environment.
+To revoke previously shared tokens, run `isx account reset-proofs <instance>` on the host.
+The command waits for the proxy to confirm the new proof state; a failure to confirm is reported as an error.
+After a reset, open a new login shell and restart tools and nested services with their new tokens.
+Already-authorized requests and established WebSockets continue.
+A nested container, a sandbox or anything started without that environment gets none, unless you pass one in deliberately, e.g. `podman run -e GH_TOKEN …`.
+The proxy injects a selected credential only when the source instance presents its current proof for that namespace. Nested instances with their own accounts keep their own authentication and destination; those without a proof get no outer credential. Deliberate sharing uses [the reserved `inherit` account](CONFIGURATION.md#inheriting-the-outer-instances-account), or explicitly passing the parent's token.
+A shell opened before an explicit proof reset or an upgrade keeps its previous tokens: `isx doctor` compares them with the delivered credential seed and says how to refresh them.
+
+Project creation and updates receive temporary proofs for private repository access and authenticated build commands; those grants are revoked when the operation finishes or fails.
 
 ## Upgrade and recovery
 
@@ -14,6 +31,7 @@ From a terminal on the host, run `isx shell <instance>` for each existing instan
 This detects instances with the earlier proof delivery version and installs fresh proofs and verifier metadata together.
 Open a new login shell and restart long-running tools that inherited the previous environment.
 Run `isx doctor` inside the instance to check its proofs and managed tool auth files.
+Host-side tools now supply their own credentials, and Docker or Podman jobs that used the parent's accounts implicitly need an explicit token pass-through.
 
 Claude API-key images built before the login approval script was introduced need a template rebuild and a new branch.
 Doctor reports this explicitly; opening another login in that old image cannot fix it.
@@ -21,7 +39,7 @@ Static placeholders never authorize injection, including during an upgrade.
 Requests without valid proofs are relayed normally and receive the upstream's own authentication response.
 Unregistered host-originated requests must supply their own credentials.
 
-For a nested isx that should use its parent's account, select `<namespace>=inherit` as described in the README.
+For a nested isx that should use its parent's account, select `<namespace>=inherit`, as [Inheriting the outer instance's account](CONFIGURATION.md#inheriting-the-outer-instances-account) describes.
 The inner proxy verifies its child's proof before presenting the parent's proof upstream.
 For Docker or Podman, sharing a current namespace token explicitly grants that namespace's account to the child.
 The token remains valid across parent stops, starts and reboots.
@@ -106,7 +124,7 @@ The integration fixtures use `proof-curl.sh` to send the proofs delivered to the
 `test-build-proofs.sh` checks that published templates retain neither a grant nor a cached Codex build proof.
 
 Refused injections are counted in `/activity` as `refused_injections`.
-Custom tools must declare `proxy.placeholders` and export the credential variable in `env`, as shown in [Custom Tools](../README.md#proxy-credentials).
+Custom tools must declare `proxy.placeholders` and export the credential variable in `env`, as shown in [Custom Tools](TOOLS.md#proxy-credentials).
 The proxy logs missing declarations when loading configuration, and tool validation warns about them.
 Single-tool validation checks its own namespace; borrowed namespaces are checked against all loaded tools when the proxy loads configuration.
 A top-level credential without a namespace needs `config-namespace` and relative config paths before placeholders can be declared.
@@ -115,3 +133,7 @@ Request warnings are deduplicated and limited to 256 caller/namespace combinatio
 They are emitted only for requests claiming an isx proof or placeholder; an ordinary independent credential does not produce a warning.
 Account refusals retain their known reason.
 Unexpected credential-refusal and WebSocket setup failures log only the exception class to avoid exposing authentication values from exception messages.
+
+## History
+
+Proof enforcement completed the proxy work in [#1107](https://github.com/Sanne/incus-spawn/issues/1107), following proof delivery, tool login refresh, doctor diagnostics and explicit account inheritance in [#1100](https://github.com/Sanne/incus-spawn/issues/1100).

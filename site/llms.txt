@@ -6,16 +6,18 @@ A branch is to a template what a git worktree is to a repository, except that th
 
 ## Docs
 
-- [Full documentation](https://isx.run/llms-full.txt): the complete README as Markdown
-- [Quick start](https://isx.run/docs#quick-start): install, one-time host setup, a first agent template, its first branch and the TUI
-- [Installation](https://isx.run/docs#installation): Homebrew, DNF, APT, native binary and JBang
+- [Full documentation](https://isx.run/llms-full.txt): every page below as one Markdown file
+- [Quick start](https://isx.run/docs#quick-start): install, one-time host setup, a first template and a first agent
 - [Credential isolation](https://isx.run/docs#credential-isolation): how agents use their accounts with no credentials in their workstation
 - [Branching](https://isx.run/docs#branching): creating workstations from templates, network modes, and fetching an agent's commits
-- [Template images](https://isx.run/docs#template-images): defining, building and rebuilding templates
-- [Custom tools](https://isx.run/docs#custom-tools): adding tools with YAML definitions
-- [Credential accounts](https://isx.run/docs#credential-accounts): several accounts per service, chosen per instance
-- [Delegating from an agent on your host (MCP)](https://isx.run/docs#delegating-from-an-agent-on-your-host-mcp): `isx mcp`, approved templates, Claude Code and Codex workers, agent discovery, background commands and delegated tasks
-- [Compared with other sandboxes](https://isx.run/docs#compared-with-other-sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
+- [Installation](https://isx.run/docs#installation): platforms, updating and uninstalling
+- [Templates](https://isx.run/docs/templates): defining, building and rebuilding templates
+- [Agents](https://isx.run/docs/agents): Claude Code, Codex CLI, Pi, Gemini CLI, Bob Shell and GitHub Copilot CLI, agent skills and environment notes
+- [Tools](https://isx.run/docs/tools): built-in tools, and adding your own with YAML definitions
+- [Configuration](https://isx.run/docs/configuration): files, credential accounts (several per service, chosen per instance) and caching
+- [Delegating from an agent on your host (MCP)](https://isx.run/docs/mcp): `isx mcp`, approved templates, Claude Code and Codex workers, agent discovery, background commands and delegated tasks
+- [CLI reference](https://isx.run/docs/cli): every command, and the stable output formats for scripts
+- [Compared with other sandboxes](https://isx.run/docs/sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
 - [FAQ](https://isx.run/docs#faq)
 
 ## Optional

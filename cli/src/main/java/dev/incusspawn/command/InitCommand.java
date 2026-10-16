@@ -746,8 +746,8 @@ public class InitCommand extends BaseCommand {
             mcp.save();
             System.out.println("  Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)) + ".");
         }
-        System.out.println("  " + styled(DIM, "Keep agents to the MCP tools with Claude Code permissions: see the"));
-        System.out.println("  " + styled(DIM, "README section 'Delegating from an agent on your host (MCP)'."));
+        System.out.println("  " + styled(DIM, "Keep agents to the MCP tools with Claude Code permissions: see"));
+        System.out.println("  " + styled(DIM, "https://isx.run/docs/mcp (docs/MCP.md)."));
     }
 
     /** Enter (or end of input) to keep the MCP setup, {@code t} to change templates, {@code n} for how to turn it off. */

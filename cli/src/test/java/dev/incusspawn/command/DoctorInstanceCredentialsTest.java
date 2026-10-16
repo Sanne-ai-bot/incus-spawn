@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.DocsLinksTest;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProofToken;
 import org.junit.jupiter.api.Test;
@@ -203,11 +204,7 @@ class DoctorInstanceCredentialsTest {
     @Test
     void theDocsPointerNamesAHeadingTheDocsPageHas() throws IOException {
         var anchor = DoctorCommand.CREDENTIALS_DOCS.substring(DoctorCommand.CREDENTIALS_DOCS.indexOf('#') + 1);
-        // site/build.sh makes a heading's id the way this does
-        assertTrue(Files.readAllLines(Path.of("..", "README.md")).stream()
-                .filter(line -> line.startsWith("## ") || line.startsWith("### "))
-                .map(line -> line.replaceFirst("^#+ ", "").toLowerCase().replaceAll("[^\\w\\s-]", "").replaceAll("\\s+", "-").replaceAll("-+$", ""))
-                .anyMatch(anchor::equals), anchor);
+        assertTrue(DocsLinksTest.anchors(Path.of("..", "README.md")).contains(anchor), anchor);
     }
 
     @Test

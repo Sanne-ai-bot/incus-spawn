@@ -176,7 +176,7 @@ Key design:
   An `accounts:` entry of that name is never served, and `value()` gives nothing for it, not even the flat credential.
   `ToolProxyResolver.resolveConfigValue` resolves no entry for it, and `ClaudeConfig.account()`/`accountNamed` give none.
   `GhSetup.bakedAccountIdentity` gives `inherit`, so a move to or from it re-derives the git identity through the proxy.
-  It cannot see the parent's account: a parent that switches GitHub accounts leaves the inner identity on the old one until a re-pin or a new branch (#281's mismatch, documented in README).
+  It cannot see the parent's account: a parent that switches GitHub accounts leaves the inner identity on the old one until a re-pin or a new branch (#281's mismatch, documented in `docs/CONFIGURATION.md`).
   `CredentialCheck` counts an inherited namespace as supplied (it skips the `credentialProblem` of a tool whose namespaces are all inherited, and `ToolProxyResolver.missingSecrets` skips inherited keys) and refuses the branch outside an instance, `default: inherit` included.
   A Claude build for `inherit` takes the API-key form (`ClaudeSetup.envEntries` with no account).
   `ProxyCredentials.inheritedNamespaces` carries the namespaces resolved to it.
