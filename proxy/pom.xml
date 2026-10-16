@@ -15,7 +15,7 @@
         <native.optimization>-O3</native.optimization>
 <!-- serial everywhere but Linux (the linux-g1 profile). On macOS aarch64 that is measured, not a
      leftover: G1 builds there since Oracle GraalVM 25.1, and gave the same throughput as serial for a
-     binary 9 MB larger and more memory (docs/PERFORMANCE-NOTES.md, "G1 on Apple Silicon", #1140).
+     binary 9 MB larger and more memory (docs/dev/PERFORMANCE-NOTES.md, "G1 on Apple Silicon", #1140).
      It is also Oracle-only there, so it would fail a native build with GraalVM CE. -->
         <proxy.native.gc>serial</proxy.native.gc>
 <!-- What the proxy takes as physical memory; the collector's maximum heap is a share of it (G1 25%,

@@ -18,8 +18,8 @@ The subsequent checkout then failed to parse that commit.
 It shipped in [Git 2.55.0](https://github.com/git/git/blob/v2.55.0/Documentation/RelNotes/2.55.0.adoc).
 The symptom and workaround match #67, although the original failing repository and logs are unavailable to prove that attribution.
 
-The [reproducer](../bench/git-dissociate-regression.py) creates disposable repositories with a real commit graph.
-Its [recorded results](../bench/data/git-dissociate-commit-graph-results-2026-10-13.json) isolate the failure and working alternatives:
+The [reproducer](../../bench/git-dissociate-regression.py) creates disposable repositories with a real commit graph.
+Its [recorded results](../../bench/data/git-dissociate-commit-graph-results-2026-10-13.json) isolate the failure and working alternatives:
 
 | Operation | Git 2.54.0 | Git 2.56.0 |
 | --- | --- | --- |

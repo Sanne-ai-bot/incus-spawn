@@ -1327,7 +1327,7 @@ isx is evolving from a container manager into **mission control for parallel cod
 brew install Sanne/tap/incus-spawn
 ```
 
-Updates with `brew upgrade incus-spawn`. See [docs/HOMEBREW.md](docs/HOMEBREW.md) for details.
+Updates with `brew upgrade incus-spawn`. See [docs/dev/HOMEBREW.md](docs/dev/HOMEBREW.md) for details.
 
 ### Fedora / RHEL (DNF)
 
@@ -1347,7 +1347,7 @@ echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.i
 sudo apt update && sudo apt install incus-spawn
 ```
 
-Updates automatically with `sudo apt upgrade`. See [docs/APT.md](docs/APT.md) for details.
+Updates automatically with `sudo apt upgrade`. See [docs/dev/APT.md](docs/dev/APT.md) for details.
 
 ### Any Linux distro (native binary)
 
@@ -1472,7 +1472,7 @@ git-cache:
   max-age-days: 7
 ```
 
-These are the defaults. Set either limit to `0` to disable persistent retention. Active builds keep their temporary data until their reference mounts are detached. See [Git preparation](docs/GIT-PREPARATION.md) for details.
+These are the defaults. Set either limit to `0` to disable persistent retention. Active builds keep their temporary data until their reference mounts are detached. See [Git preparation](docs/dev/GIT-PREPARATION.md) for details.
 
 Git transfers on the host (`isx update-all` fetching linked checkouts, and a build preparing a clean snapshot) show their elapsed time and Git's progress as they run. Git does not stop to ask for a password: it fails at once instead. The failure says what isx changed and what to set up, then quotes Git's own output under `Git's output:`, each line marked with `|`. Nor does ssh ask for a passphrase or about a host key: isx adds `-o BatchMode=yes` to ssh or to your `core.sshCommand` (for a build, only a global one applies), and makes any other ssh fail rather than ask (OpenSSH 8.4 or later). So load the key into `ssh-agent` and keep the host in `~/.ssh/known_hosts`; when SSH fails, isx says what it did. A transfer that stops making progress is ended without waiting for it:
 
