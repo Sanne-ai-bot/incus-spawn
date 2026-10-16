@@ -1,5 +1,6 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.command.InstancePrep;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.StaticIpAllocator;
@@ -161,8 +162,7 @@ final class ShellLaunch {
             return;
         }
         // Runs after the TUI has released the terminal, so plain stdout is safe here.
-        InstanceLifecycle.ensureReady(tui.incus, name, instance, machineType, System.out::println);
-        ZmxSocketForward.ensureSymlink(name);
+        InstancePrep.readyForUse(tui.incus, name, instance, machineType, System.out::println, tui.warningLog::add);
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
         var titleMonitor = startAuthTitleMonitor(name);

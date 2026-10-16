@@ -12,9 +12,12 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceNetwork;
+import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+
+import java.util.function.Consumer;
 
 /**
  * Shared instance preparation logic for shell and run commands.
@@ -98,12 +101,30 @@ public class InstancePrep {
 
         // Read after the repair above, so a VM it just reassigned is seen to owe its file
         var instance = incus.instanceMetadata(name);
-        InstanceLifecycle.ensureReady(incus, name, instance, machineType, say);
-
-        // From the same read: what ensureReady writes is none of what the reconcile looks at
-        InstanceLifecycle.reconcileAccountIdentities(incus, name, instance);
-
+        readyForUse(incus, name, instance, machineType, say, msg -> System.err.println("Warning: " + msg));
         return templateName;
+    }
+
+    /**
+     * The last step before a shell or a command, once the terminal is the caller's to print on:
+     * start the instance if it is still stopped, bring its credential identities in line with its
+     * account pins, and recreate the host's zmx symlink to its session socket. The TUI calls this
+     * after releasing the terminal, as {@code isx shell} does at the end of {@link #prepare}.
+     *
+     * <p>The reconcile is what makes an account changed on a stopped instance take effect on its
+     * next use ({@link InstanceLifecycle#reconcileAccountIdentities}); the TUI's shell used to
+     * skip it, and then pushed as the new account and committed as the old one (#907).
+     *
+     * @param instance the instance as read after the repairs before it
+     * @param say      progress, from the start and the reconcile
+     * @param warn     the reconcile's warnings
+     */
+    public static void readyForUse(IncusClient incus, String name, JqValue instance, MachineType machineType,
+                                   Consumer<String> say, Consumer<String> warn) {
+        InstanceLifecycle.ensureReady(incus, name, instance, machineType, say);
+        // From the same read: what ensureReady writes is none of what the reconcile looks at
+        InstanceLifecycle.reconcileAccountIdentities(incus, name, instance, say, warn);
+        ZmxSocketForward.ensureSymlink(name);
     }
 
     private static void fixStaticIpMismatch(IncusClient incus, String name, MachineType machineType) {
