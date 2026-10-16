@@ -1184,6 +1184,7 @@ All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge 
 **Credential validation**: Branching (CLI and TUI alike, through `BranchFlow`) refuses up front when the new instance would lack a credential its tools need.
 Airgapped branches skip the check, and building a template needs none, since only the proxy spends them at runtime.
 A build still says what branching will refuse, before its time is spent (#1438): every build path warns once per credential that a template it may build lacks, naming those templates (`CredentialCheck.missingByCredential`, from each template's own `accounts:`), and goes ahead.
+`isx init`'s closing box makes the same check of every current (non-deprecated) template, naming for each missing credential only the topmost templates that need it and counting the rest, because a credential init skipped or failed to verify otherwise surfaces at the first branch.
 `CredentialCheck` answers for the accounts the branch will *actually* be stamped with -- the template chain's `accounts:`, the source instance's own pins and any `--account` or TUI account row, merged exactly as `BranchFlow` stamps them -- and against the leaf template recorded on the source.
 So a branch of a branch is checked too (#793).
 What a tool needs is declared, not listed.
