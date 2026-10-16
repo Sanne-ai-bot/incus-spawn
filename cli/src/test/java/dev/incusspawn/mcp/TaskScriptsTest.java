@@ -92,7 +92,8 @@ class TaskScriptsTest {
 
     private void git(String... args) throws Exception {
         var cmd = new java.util.ArrayList<String>();
-        cmd.add("git");
+        // No detached auto maintenance racing @TempDir cleanup (#1473).
+        cmd.addAll(java.util.List.of("git", "-c", "gc.auto=0", "-c", "maintenance.auto=false"));
         cmd.addAll(java.util.List.of(args));
         var p = new ProcessBuilder(cmd).directory(work.toFile()).redirectErrorStream(true).start();
         assertTrue(p.waitFor(10, TimeUnit.SECONDS));
