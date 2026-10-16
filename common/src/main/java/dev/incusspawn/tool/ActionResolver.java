@@ -18,7 +18,8 @@ import java.util.function.Supplier;
 
 /**
  * Resolves tool actions for instances, including default actions and named action references.
- * Shared logic between Tui and RunCommand (CLI).
+ * The one copy of these rules: {@code isx run}, {@code isx branch}, the shell's F12 menu and the
+ * TUI's F9 menu and Enter all resolve through it (#1158).
  */
 public class ActionResolver {
 
@@ -26,7 +27,13 @@ public class ActionResolver {
     private final ToolDefLoader toolDefLoader;
     private final List<ToolSetup> cdiTools;
     private final Map<String, ImageDef> imageDefs;
+    /** Loaded on the first feature check, once per resolver. */
+    private SpawnConfig config;
 
+    /**
+     * @param incus only for the methods that read an instance; null for a caller that passes in
+     *              everything it has already read, as the TUI does from its listing
+     */
     public ActionResolver(IncusClient incus, ToolDefLoader toolDefLoader,
                           List<ToolSetup> cdiTools, Map<String, ImageDef> imageDefs) {
         this.incus = incus;
@@ -64,9 +71,11 @@ public class ActionResolver {
             }
         }
 
-        // CDI tool actions (for tools not already handled by YAML)
+        // CDI tool actions (for tools not already handled by YAML). A YAML tool without actions
+        // that shadows a gated-off CDI tool is installed, but the CDI tool's commands are not.
         for (var cdiTool : cdiTools) {
             if (installedTools.contains(cdiTool.name()) && !handledTools.contains(cdiTool.name())) {
+                if (featureOff(cdiTool)) continue;
                 for (var entry : cdiTool.actions()) {
                     if (YamlToolAction.EXPAND_REPOS.equals(entry.getExpand())) {
                         for (var repo : repos) {
@@ -90,7 +99,7 @@ public class ActionResolver {
      *                 for a template YAML that is gone
      */
     public String defaultActionRef(JqValue instance, String parentTemplate) {
-        return resolveDefaultActionRef(parentTemplate, () -> stampedDefaultAction(instance));
+        return defaultActionRef(parentTemplate, () -> stampedDefaultAction(instance));
     }
 
     private static String stampedDefaultAction(JqValue instance) {
@@ -122,7 +131,7 @@ public class ActionResolver {
     private Optional<ToolAction> findDefaultAction(String parentTemplate, Supplier<String> snapshot,
                                                    Supplier<Set<String>> installedTools,
                                                    List<ActionContext.RepoInfo> repos) {
-        var ref = resolveDefaultActionRef(parentTemplate, snapshot);
+        var ref = defaultActionRef(parentTemplate, snapshot);
         if (ref == null) return Optional.empty();
         return findActionByRef(ref, resolveActionsForInstance(null, parentTemplate, installedTools.get(), repos));
     }
@@ -169,9 +178,16 @@ public class ActionResolver {
      */
     public Set<String> collectInstalledTools(JqValue instance, String parentTemplate) {
         var config = instance.getField("config");
-        var buildSourceJson = config.pathText(Metadata.BUILD_SOURCE, "");
-        if (!buildSourceJson.isBlank()) {
-            var type = config.pathText(Metadata.TYPE, "");
+        return collectInstalledTools(config.pathText(Metadata.TYPE, ""),
+                config.pathText(Metadata.BUILD_SOURCE, ""), parentTemplate);
+    }
+
+    /**
+     * {@link #collectInstalledTools(JqValue, String)} from the instance's {@link Metadata#TYPE}
+     * and {@link Metadata#BUILD_SOURCE}, for a caller that already holds them.
+     */
+    public Set<String> collectInstalledTools(String type, String buildSourceJson, String parentTemplate) {
+        if (buildSourceJson != null && !buildSourceJson.isBlank()) {
             if (!Metadata.TYPE_BASE.equals(type) || getInheritanceChain(parentTemplate).isEmpty()) {
                 var bs = dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
                 if (bs != null) {
@@ -228,16 +244,25 @@ public class ActionResolver {
         return tools;
     }
 
+    /**
+     * Drops the tools whose feature is off. A YAML definition shadows the same-named CDI tool, so
+     * only its own gate counts, as the build decides ({@code BuildTools.findTool}).
+     */
     private void removeFeatureGated(Set<String> toolNames) {
-        var config = SpawnConfig.load();
         toolNames.removeIf(name -> {
             var tool = toolDefLoader.find(name);
-            if (tool != null && tool.feature() != null) return !config.isFeatureEnabled(tool.feature());
-            for (var t : cdiTools) {
-                if (t.name().equals(name) && t.feature() != null) return !config.isFeatureEnabled(t.feature());
+            if (tool == null) {
+                tool = cdiTools.stream().filter(t -> t.name().equals(name)).findFirst().orElse(null);
             }
-            return false;
+            return tool != null && featureOff(tool);
         });
+    }
+
+    /** Whether {@code tool} is behind a feature that is off. */
+    private boolean featureOff(ToolSetup tool) {
+        if (tool.feature() == null) return false;
+        if (config == null) config = SpawnConfig.load();
+        return !config.isFeatureEnabled(tool.feature());
     }
 
     /**
@@ -342,8 +367,13 @@ public class ActionResolver {
 
     // --- Private helpers ---
 
-    /** The default-action reference, or null for none: the YAML chain's, else the snapshot's when the YAML is gone. */
-    private String resolveDefaultActionRef(String parentTemplate, Supplier<String> snapshot) {
+    /**
+     * The default-action reference, or null for none: the YAML chain's, else the snapshot's when
+     * the YAML is gone.
+     *
+     * @param snapshot the {@link Metadata#DEFAULT_ACTION} stamp, read only when the YAML is gone
+     */
+    public String defaultActionRef(String parentTemplate, Supplier<String> snapshot) {
         // Walk the template YAML chain (child wins over parent).
         String ref = null;
         var chain = getInheritanceChain(parentTemplate);

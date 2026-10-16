@@ -63,12 +63,17 @@ class ActionResolverDefaultCommandTest {
     /** The default command for a branch of {@code source}, from the source as preflight read it. */
     private static String resolve(FakeIncusDaemon daemon, String source, Map<String, ImageDef> defs,
                                   ToolSetup... tools) {
+        return resolve(daemon, source, defs, new ToolDefLoader(List.of()), tools);
+    }
+
+    private static String resolve(FakeIncusDaemon daemon, String source, Map<String, ImageDef> defs,
+                                  ToolDefLoader loader, ToolSetup... tools) {
         // Airgapped: what is under test is the resolution, not the proxy health check.
         var request = new BranchFlow.Request(source, "dev-2", false, false, NetworkMode.AIRGAP,
                 null, null, null, null, List.of(), false, Map.of());
         var preflight = BranchFlow.preflight(daemon.client(), request, defs);
         var before = daemon.requests().size();
-        var resolver = new ActionResolver(daemon.client(), new ToolDefLoader(List.of()), List.of(tools), defs);
+        var resolver = new ActionResolver(daemon.client(), loader, List.of(tools), defs);
         var command = resolver.defaultCommandForBranch(preflight.template(), preflight.sourceInstance());
         assertEquals(before, daemon.requests().size(),
                 () -> "the source as preflight read it is enough, yet it asked Incus:\n  "
@@ -125,6 +130,34 @@ class ActionResolverDefaultCommandTest {
         var daemon = new FakeIncusDaemon().container(SOURCE, clone(null));
         assertNull(resolve(daemon, SOURCE, Map.of(TEMPLATE, template("agent", "agent")),
                 new Tool("agent", "experimental-agent", null)));
+    }
+
+    @Test
+    void aYamlToolIsGatedByItsOwnFeatureNotByTheCdiToolItShadows() {
+        // As the build decides (BuildTools.findTool): the YAML definition wins, so it is installed.
+        var yaml = new ToolDef();
+        yaml.setName("agent");
+        var entry = new ToolDef.ActionEntry();
+        entry.setType("shell");
+        entry.setCommand("run-yaml-agent");
+        yaml.setActions(List.of(entry));
+        var loader = new ToolDefLoader(List.of());
+        loader.addFallbacks(Map.of("agent", yaml));
+        var daemon = new FakeIncusDaemon().container(SOURCE, clone(null));
+        assertEquals("run-yaml-agent", resolve(daemon, SOURCE, Map.of(TEMPLATE, template("agent", "agent")),
+                loader, new Tool("agent", "experimental-agent", null)));
+    }
+
+    @Test
+    void aGatedCdiToolsActionsAreNotOfferedThroughAYamlToolWithoutActions() {
+        // The YAML definition is what the build installs; the gated CDI tool's commands are not there.
+        var yaml = new ToolDef();
+        yaml.setName("agent");
+        var loader = new ToolDefLoader(List.of());
+        loader.addFallbacks(Map.of("agent", yaml));
+        var daemon = new FakeIncusDaemon().container(SOURCE, clone(null));
+        assertNull(resolve(daemon, SOURCE, Map.of(TEMPLATE, template("agent", "agent")),
+                loader, new Tool("agent", "experimental-agent", null)));
     }
 
     @Test
