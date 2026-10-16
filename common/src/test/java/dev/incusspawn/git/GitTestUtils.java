@@ -15,7 +15,9 @@ public final class GitTestUtils {
 
     public static String runGit(Path dir, String... args) throws IOException, InterruptedException {
         var cmd = new ArrayList<String>();
-        cmd.add("git");
+        // Commits and fetches start auto maintenance (older Git: gc) detached: it could outlive the
+        // test and write into the repository while @TempDir deletes it (#1473).
+        cmd.addAll(List.of("git", "-c", "gc.auto=0", "-c", "maintenance.auto=false"));
         cmd.addAll(List.of(args));
         Process process = null;
         try {
