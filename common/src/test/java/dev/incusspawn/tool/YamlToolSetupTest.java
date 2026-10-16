@@ -4,6 +4,7 @@ import dev.incusspawn.Platform;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.util.SessionProbe;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.InOrder;
@@ -491,5 +492,13 @@ class YamlToolSetupTest {
         // writeFile is called, but chown is not
         verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("/tmp/test"));
         verify(incus, never()).shellExec(eq(CONTAINER), eq("chown"), any(), any(), any());
+    }
+
+    /** Tool setup's host process leads a session of its own: a build's first Ctrl+C reaches isx alone (#1425). */
+    @Test
+    void hostProcessIsOutOfTheTerminalsProcessGroup() throws Exception {
+        SessionProbe.assumeSession();
+        var printed = YamlToolSetup.runProcess("probe", SessionProbe.SH.toArray(String[]::new));
+        assertTrue(SessionProbe.leadsItsGroup(printed), "shares the process group of isx, so Ctrl+C reaches it: " + printed);
     }
 }
