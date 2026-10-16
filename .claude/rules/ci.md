@@ -196,9 +196,15 @@ They must be two **jobs**, not two steps in one job.
 `gitleaks-action` installs the gitleaks binary to a fixed `/tmp` path, so a second invocation in the same job fails with "Destination file path /tmp/gitleaks.tmp already exists".
 This shipped once and failed on the very first PR.
 
-Each config carries its own `[allowlist]` (not shared via a common file, and the path lists differ on purpose: each lists the fixtures whose strings that config's rules actually flag): known-fake credentials in config/proxy unit tests that legitimately need key-shaped strings to exercise parsing and redaction logic (`ClaudeLegacyConfigCompatTest`, `ClaudeAccountsTest`, `ProxyCredentialsAccountsTest`, `SecretRedactorTest`, `SupportBundleTest`, `HelpContextTest`, and the previous-release fixtures under `common/src/test/resources/config-compat/`), plus `^\.gitleaks/` -- the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
+Each config carries its own `[allowlist]`, not shared via a common file.
+The path lists differ on purpose: each lists the fixtures whose strings that config's rules actually flag.
+They cover unit tests that legitimately need key-shaped strings to exercise parsing and redaction logic (`ClaudeLegacyConfigCompatTest`, `ClaudeAccountsTest`, `ProxyCredentialsAccountsTest`, `SecretRedactorTest`, `ExistingConfigCompatTest`, `PerInstanceCredentialsTest`, `SupportBundleTest`, `ClaudeAuthFlowTest`, `HelpContextTest`, the leaktk-only `PinnedAccountStateTest`, and the previous-release fixtures under `common/src/test/resources/config-compat/`).
+Both also list `^\.gitleaks/`: the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
 Path-based allowlist entries apply across all historical commits gitleaks scans, since matching is on file path, not commit content -- so this also covers commits that predate the allowlist.
 A new test fixture with a fake credential needs its path added to whichever `.toml` file's scan flags it (run both scans locally; do not add a path a scan does not need, since a path entry also hides a real key pasted into that file), or it (rightly) fails the PR check the first time.
+Allowlist `regexes` carry both anchors, `^…$`, around the whole captured secret.
+Neither config sets `regexTarget`, so gitleaks tests them against the secret, not the line: a regex with surrounding context (a trailing quote) matches nothing.
+A regex missing either anchor suppresses every longer secret that contains its match, a real key included.
 
 Both configs also carry two custom `[[rules]]` (`anthropic-api-key`, `anthropic-oauth-token`) for `sk-ant-api03-`/`sk-ant-oat01-` keys -- neither gitleaks' defaults nor leaktk/patterns have an Anthropic-specific rule.
 They're gated on a 40+ char suffix rather than matching the prefix alone.
