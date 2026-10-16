@@ -38,7 +38,7 @@ class GitCommandExceptionTest {
     @Test
     void aBuildsSshFailureSaysWhatIsxDidAndOnlyWhatItKnows() {
         var note = GitCommandException.promptNote(PUBLICKEY,
-                new PreparationGit.SshSetup("isx added -o BatchMode=yes to your global core.sshCommand", true,
+                new PreparationGit.SshSetup("isx added -o BatchMode=yes to your global core.sshCommand",
                         "a global core.sshCommand (a repository's own does not apply to builds)"));
         assertTrue(note.startsWith("isx added -o BatchMode=yes to your global core.sshCommand, so ssh could not"), note);
         assertTrue(note.endsWith("choose another with a global core.sshCommand (a repository's own does not apply to builds)."), note);
@@ -48,16 +48,9 @@ class GitCommandExceptionTest {
     }
 
     @Test
-    void anSshFailureUnderTheUsersOwnSshSetupAddsNoIsxNote() {
-        // isx changed nothing there: ssh's own words are the explanation.
-        assertNull(GitCommandException.promptNote(PUBLICKEY, null));
-        assertNull(GitCommandException.promptNote("Host key verification failed.", null));
-    }
-
-    @Test
     void aHostKeyFailureDoesNotJustSayTrustTheNewKey() {
         var note = GitCommandException.promptNote("Host key verification failed.\n"
-                + "fatal: Could not read from remote repository.", new PreparationGit.SshSetup("isx ran ssh with -o BatchMode=yes", false, "core.sshCommand"));
+                + "fatal: Could not read from remote repository.", new PreparationGit.SshSetup("isx ran ssh with -o BatchMode=yes", "core.sshCommand"));
         assertTrue(note.startsWith("isx ran ssh with -o BatchMode=yes, so ssh could not ask about the host's key"), note);
         assertTrue(note.contains("check its fingerprint") && note.contains("if its key changed, find out why"), note);
     }
@@ -65,9 +58,10 @@ class GitCommandExceptionTest {
     @Test
     void aCredentialPromptFailureNamesTheSetting() {
         var note = GitCommandException.promptNote(
-                "fatal: could not read Username for 'https://github.com': terminal prompts disabled", null);
+                "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+                new PreparationGit.SshSetup("x", "y"));
         assertTrue(note.contains("GIT_TERMINAL_PROMPT=0") && note.contains("credential helper"), note);
-        assertNull(GitCommandException.promptNote("fatal: repository not found", new PreparationGit.SshSetup("x", true, "y")));
+        assertNull(GitCommandException.promptNote("fatal: repository not found", new PreparationGit.SshSetup("x", "y")));
     }
 
     @ParameterizedTest
@@ -132,7 +126,7 @@ class GitCommandExceptionTest {
         java.nio.file.Files.setPosixFilePermissions(fakeSsh, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
         var builder = new ProcessBuilder("git", "ls-remote", "ssh://example.invalid/r.git").redirectErrorStream(true);
         builder.environment().put("GIT_SSH_COMMAND", fakeSsh.toString());
-        var result = GitProcess.run(builder, null, true, GitTransferConfig.DEFAULT, p -> {});
+        var result = GitProcess.run(builder, null, PreparationGit.SshScope.BUILD, GitTransferConfig.DEFAULT, p -> {});
         assertEquals(GitProcess.Status.FAILED, result.status());
         assertTrue(result.diagnostics().lines().anyMatch(l -> l.equals("Host key verification failed.")), result.diagnostics());
         var note = GitCommandException.promptNote(result.diagnostics(), result.ssh());
@@ -147,7 +141,7 @@ class GitCommandExceptionTest {
             closed = socket.getLocalPort();
         }
         var result = GitProcess.run(new ProcessBuilder("git", "ls-remote", "ssh://127.0.0.1:" + closed + "/r.git")
-                .redirectErrorStream(true), null, true, GitTransferConfig.DEFAULT, p -> {});
+                .redirectErrorStream(true), null, PreparationGit.SshScope.BUILD, GitTransferConfig.DEFAULT, p -> {});
         assertEquals(GitProcess.Status.FAILED, result.status());
         assertTrue(result.diagnostics().lines().anyMatch(l -> l.startsWith("ssh: connect to host 127.0.0.1 port " + closed)),
                 result.diagnostics());
@@ -157,8 +151,7 @@ class GitCommandExceptionTest {
 
     private Map<String, String> noPrompt(Map<String, String> environment, Path repo) {
         environment.put("PATH", System.getenv("PATH"));
-        lastSetup = PreparationGit.nonInteractiveSsh(environment, repo, true);
-        assertTrue(lastSetup.build());
+        lastSetup = PreparationGit.nonInteractiveSsh(environment, repo, PreparationGit.SshScope.BUILD);
         // OpenSSH 8.4+ asks this program instead of the terminal, whichever command started it.
         assertEquals("force", environment.get("SSH_ASKPASS_REQUIRE"));
         assertEquals("false", environment.get("SSH_ASKPASS"));
@@ -181,11 +174,10 @@ class GitCommandExceptionTest {
             // A configured askpass program must not run: Git runs one even under GIT_TERMINAL_PROMPT=0, and only
             // the empty GIT_ASKPASS a build sets ends the chain (GIT_ASKPASS, core.askPass, SSH_ASKPASS) first.
             var result = GitProcess.run(new ProcessBuilder("git", "-c", "credential.helper=", "-c", "core.askPass=/no/such/dialog",
-                    "ls-remote", url).redirectErrorStream(true), null, true, GitTransferConfig.DEFAULT, p -> {});
+                    "ls-remote", url).redirectErrorStream(true), null, PreparationGit.SshScope.BUILD, GitTransferConfig.DEFAULT, p -> {});
             assertEquals(GitProcess.Status.FAILED, result.status());
             assertTrue(result.diagnostics().contains("terminal prompts disabled"), result.diagnostics());
             assertFalse(result.diagnostics().contains("askpass"), result.diagnostics());
-            assertTrue(result.ssh().build());
             assertTrue(GitCommandException.promptNote(result.diagnostics(), result.ssh()).contains("no askpass program"));
         } finally {
             server.stop(0);
@@ -193,13 +185,64 @@ class GitCommandExceptionTest {
     }
 
     @Test
-    void updateAllLeavesTheUsersOwnSshAlone(@TempDir Path repo) throws Exception {
-        // Not a build: kept as it is, pending Sanne's decision for update-all.
+    void updateAllAddsBatchModeToTheCheckoutsOwnSshCommand(@TempDir Path repo) throws Exception {
+        // update-all runs Git in the user's checkout, where its own core.sshCommand applies (#1410).
         GitTestUtils.git(repo, "init", "-q");
         GitTestUtils.git(repo, "config", "core.sshCommand", "ssh -i k");
         var environment = new HashMap<String, String>(Map.of("PATH", System.getenv("PATH")));
-        assertNull(PreparationGit.nonInteractiveSsh(environment, repo, false));
-        assertEquals(Map.of("PATH", System.getenv("PATH")), environment);
+        var setup = PreparationGit.nonInteractiveSsh(environment, repo, PreparationGit.SshScope.CHECKOUT);
+        assertEquals("ssh -o BatchMode=yes -i k", environment.get("GIT_SSH_COMMAND"));
+        assertEquals("force", environment.get("SSH_ASKPASS_REQUIRE"));
+        assertEquals("isx added -o BatchMode=yes to your core.sshCommand", setup.done());
+        assertTrue(GitCommandException.promptNote(PUBLICKEY, setup).endsWith("choose another with core.sshCommand."));
+    }
+
+    @Test
+    void anUpdateAllCloneSetsNoSshCommandFromConfig(@TempDir Path tmp) throws Exception {
+        // Neither a repository around the new checkout nor a global command: the clone's own config decides.
+        var around = tmp.resolve("work");
+        GitTestUtils.git(tmp, "init", "-q", around.toString());
+        GitTestUtils.git(around, "config", "core.sshCommand", "ssh -i work_key");
+        var home = java.nio.file.Files.createDirectories(tmp.resolve("home"));
+        var environment = new HashMap<String, String>(Map.of("PATH", System.getenv("PATH"), "HOME", home.toString(),
+                "GIT_CONFIG_NOSYSTEM", "1"));
+        GitTestUtils.git(home, "config", "--file", home.resolve(".gitconfig").toString(), "core.sshCommand", "ssh -i home_key");
+        var setup = PreparationGit.nonInteractiveSsh(environment, around, PreparationGit.SshScope.CLONE);
+        assertNull(environment.get("GIT_SSH_COMMAND"), "the clone's own config may still choose one");
+        assertEquals("force", environment.get("SSH_ASKPASS_REQUIRE"));
+        assertEquals("isx set SSH_ASKPASS_REQUIRE=force with SSH_ASKPASS=false for ssh", setup.done());
+        assertEquals("a global core.sshCommand, or one an includeIf \"gitdir:\" sets for the new checkout", setup.keySetting());
+        environment.put("GIT_SSH", "/usr/bin/ssh");
+        assertEquals("your GIT_SSH program", PreparationGit.nonInteractiveSsh(environment, around, PreparationGit.SshScope.CLONE).keySetting());
+    }
+
+    @Test
+    void anUpdateAllCloneKeepsTheSshCommandAGlobalIncludeIfChoosesForTheNewCheckout(@TempDir Path tmp) throws Exception {
+        // git clone evaluates includeIf "gitdir:" against the new checkout: a per-directory key isx cannot probe for.
+        // Reached through a symlink, as macOS's temp dir is (/var -> /private/var): Git matches gitdir: against
+        // the real path, so the include names that.
+        java.nio.file.Files.createDirectories(tmp.resolve("real").resolve("work"));
+        var clones = java.nio.file.Files.createSymbolicLink(tmp.resolve("link"), tmp.resolve("real")).resolve("work");
+        var ssh = java.nio.file.Files.writeString(tmp.resolve("work-ssh"), "#!/bin/sh\n"
+                + "echo \"ran work-ssh: $1 askpass=$SSH_ASKPASS_REQUIRE\" >&2\nexit 255\n");
+        java.nio.file.Files.setPosixFilePermissions(ssh, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        var include = tmp.resolve("work.inc");
+        GitTestUtils.git(tmp, "config", "--file", include.toString(), "core.sshCommand", ssh.toString());
+        var home = java.nio.file.Files.createDirectories(tmp.resolve("home"));
+        // A global command too, which the included one overrides for the new checkout.
+        GitTestUtils.git(tmp, "config", "--file", home.resolve(".gitconfig").toString(), "core.sshCommand", "ssh -i home_key");
+        GitTestUtils.git(tmp, "config", "--file", home.resolve(".gitconfig").toString(),
+                "includeIf.gitdir:" + clones.toRealPath() + "/.path", include.toString());
+
+        var builder = new ProcessBuilder("git", "clone", "git@example.invalid:o/r.git", "r").redirectErrorStream(true)
+                .directory(clones.toFile());
+        builder.environment().keySet().removeIf(k -> k.startsWith("GIT_") || k.startsWith("SSH_"));
+        builder.environment().putAll(Map.of("HOME", home.toString(), "XDG_CONFIG_HOME", home.toString(),
+                "GIT_CONFIG_NOSYSTEM", "1"));
+        var result = GitProcess.run(builder, clones, PreparationGit.SshScope.CLONE, GitTransferConfig.DEFAULT, p -> {});
+        assertEquals(GitProcess.Status.FAILED, result.status());
+        assertTrue(result.diagnostics().lines().anyMatch(l -> l.equals("ran work-ssh: git@example.invalid askpass=force")),
+                "the included command ran, unable to prompt: " + result.diagnostics());
     }
 
     @Test

@@ -34,7 +34,7 @@ final class GitProcess {
     /**
      * @param diagnostics the last lines Git wrote, bounded by {@link #TAIL_LINES} and {@link #MAX_LINE}
      * @param stopReason  why it was stopped, null when Git ran to completion
-     * @param ssh         what isx did to keep SSH from prompting; null when nothing
+     * @param ssh         what isx did to keep SSH from prompting
      */
     record Result(Status status, String diagnostics, String stopReason, PreparationGit.SshSetup ssh) {
         boolean success() { return status == Status.OK; }
@@ -66,14 +66,14 @@ final class GitProcess {
 
     /**
      * Runs {@code builder} on {@code repo} (null when none), with SSH as
-     * {@link PreparationGit#nonInteractiveSsh} sets it for {@code forceNoPrompt}, reading its stderr (or its merged output) as progress. Its stdin becomes
+     * {@link PreparationGit#nonInteractiveSsh} sets it for {@code scope}, reading its stderr (or its merged output) as progress. Its stdin becomes
      * {@code /dev/null} and a separate stdout is discarded, unless redirected. {@code progress} is called a few times a second while Git runs,
      * on the calling thread. Interruption stops Git, returns {@link Status#INTERRUPTED} and keeps the
      * interrupt flag set.
      */
-    static Result run(ProcessBuilder builder, Path repo, boolean forceNoPrompt, GitTransferConfig limits,
+    static Result run(ProcessBuilder builder, Path repo, PreparationGit.SshScope scope, GitTransferConfig limits,
                       Consumer<Progress> progress) throws IOException {
-        var ssh = nonInteractive(builder, repo, forceNoPrompt);
+        var ssh = nonInteractive(builder, repo, scope);
         var tail = new Tail();
         long start = System.nanoTime();
         var process = builder.start();
@@ -133,12 +133,12 @@ final class GitProcess {
         return new Result(process.exitValue() == 0 ? Status.OK : Status.FAILED, tail.text(), null, ssh);
     }
 
-    /** Says what isx did to SSH, or null when nothing. */
-    private static PreparationGit.SshSetup nonInteractive(ProcessBuilder builder, Path repo, boolean forceNoPrompt) {
+    /** Says what isx did to SSH. */
+    private static PreparationGit.SshSetup nonInteractive(ProcessBuilder builder, Path repo, PreparationGit.SshScope scope) {
         var env = builder.environment();
         env.put("GIT_TERMINAL_PROMPT", "0");
         env.put("GCM_INTERACTIVE", "never");
-        var ssh = PreparationGit.nonInteractiveSsh(env, repo, forceNoPrompt);
+        var ssh = PreparationGit.nonInteractiveSsh(env, repo, scope);
         if (builder.redirectInput() == ProcessBuilder.Redirect.PIPE) {
             builder.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
         }
