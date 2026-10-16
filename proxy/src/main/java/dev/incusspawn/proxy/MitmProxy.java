@@ -1180,7 +1180,7 @@ public class MitmProxy {
                 if (hasBody(clientReq)) {
                     // An upload or a query (npm audit, a registry push): never from a cache, keyed by
                     // path alone, and relayed now, since a cache handler waits before it relays (#1164)
-                    relayRequest(clientReq, domain);
+                    relayRequest(clientReq, domain, started);
                 } else {
                     cache.accept(clientReq);
                 }
@@ -1190,15 +1190,15 @@ public class MitmProxy {
                 authorize(state, domain, sourceAddressOf(clientReq), clientReq.headers()).onComplete(result -> {
                     var proven = result.succeeded() ? result.result() : null;
                     if (proven == null) {
-                        handleApiRequest(clientReq, passthroughContext(domain, caller, flow));
+                        handleApiRequest(clientReq, passthroughContext(domain, caller, flow), started);
                     } else {
-                        serveProvenRequest(state, clientReq, domain, proven, flow);
+                        serveProvenRequest(state, clientReq, domain, proven, flow, started);
                     }
                 });
             } else {
                 // Subdomain of an intercepted domain (e.g. cdn01.quay.io) reached us
                 // via dnsmasq wildcard — relay transparently without auth injection.
-                relayRequest(clientReq, domain);
+                relayRequest(clientReq, domain, started);
             }
         } catch (Exception e) {
             var domain = extractDomain(clientReq);
@@ -1210,9 +1210,9 @@ public class MitmProxy {
     }
 
     private void serveProvenRequest(ConfigState state, HttpServerRequest clientReq, String domain,
-                                     InstanceRegistry.Caller caller, ApiActivity.Flow flow) {
+                                     InstanceRegistry.Caller caller, ApiActivity.Flow flow, long started) {
         try {
-            handleApiRequest(clientReq, contextFor(state, domain, caller, flow));
+            handleApiRequest(clientReq, contextFor(state, domain, caller, flow), started);
         } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
                  | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
             ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + refusal(e));
@@ -1600,9 +1600,9 @@ public class MitmProxy {
      * Vertex model call: its URL depends on its body, which may be translated, and it is sent again on
      * a 401, so its body is held in a {@link BodySpool} until it has been sent for good (#1315).
      */
-    private void handleApiRequest(HttpServerRequest clientReq, RequestContext ctx) {
+    private void handleApiRequest(HttpServerRequest clientReq, RequestContext ctx, long started) {
         if (!isVertexModelRequest(clientReq, ctx)) {
-            streamApiRequest(clientReq, ctx);
+            streamApiRequest(clientReq, ctx, started);
             return;
         }
         retainVertexRequest(clientReq, ctx);
@@ -1619,7 +1619,7 @@ public class MitmProxy {
      * on its head before any of it leaves: the body is never held, nor needed, since every credential
      * is a header.
      */
-    private void streamApiRequest(HttpServerRequest clientReq, RequestContext ctx) {
+    private void streamApiRequest(HttpServerRequest clientReq, RequestContext ctx, long started) {
         var domain = ctx.domain();
         var exchange = beginModelCall(clientReq, ctx);
         var debug = debugExchange(clientReq, null);
@@ -1627,7 +1627,7 @@ public class MitmProxy {
                 upReq -> prepareApiHead(clientReq, upReq, ctx, domain, false, exchange),
                 upResp -> onApiResponse(ctx, upResp, exchange, debug),
                 debug == null ? null : chunk -> capture(debug.original, chunk),
-                responseTap(exchange, debug)));
+                responseTap(exchange, debug)), started);
     }
 
     /**
@@ -1756,7 +1756,10 @@ public class MitmProxy {
                     .setPort(443)
                     .setHost(upstreamHost)
                     .setURI(uri);
-            spool.end().onSuccess(done -> sendVertexRequest(clientReq, requestOptions, ctx, spool, false, exchange, debug));
+            // The client has sent all it will: from here it hears only from us, until the idle timeout
+            var watchdog = upstream.watch(clientReq, ctx.domain(), ended);
+            spool.end().onSuccess(done ->
+                    sendVertexRequest(clientReq, requestOptions, ctx, spool, false, exchange, debug, watchdog));
         });
         clientReq.resume();
     }
@@ -1851,46 +1854,58 @@ public class MitmProxy {
      * the body has all gone, or the exchange ends.
      */
     private void sendVertexRequest(HttpServerRequest clientReq, RequestOptions requestOptions, RequestContext ctx,
-                                   BodySpool spool, boolean isRetry, ApiActivity.Exchange exchange, DebugExchange debug) {
+                                   BodySpool spool, boolean isRetry, ApiActivity.Exchange exchange, DebugExchange debug,
+                                   Upstream.RelayWatchdog watchdog) {
         var domain = ctx.domain();
         var clientResp = clientReq.response();
-        if (clientResp.closed()) return;
+        if (watchdog.gone()) return;
         requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
+            if (watchdog.gone()) {
+                upReq.exceptionHandler(ignored -> {}).reset();
+                return;
+            }
+            watchdog.upReq = upReq;
+            // Now, not once the head is set: a cut while the token is fetched resets this request, and
+            // without a handler Vert.x would log that unprefixed
+            upReq.exceptionHandler(ignored -> {});
             Future<Boolean> head;
             try {
                 head = prepareApiHead(clientReq, upReq, ctx, requestOptions.getHost(), true, exchange);
             } catch (RuntimeException e) {
                 // A header Vert.x refuses: answer now, as the relay does, not at the idle timeout
-                upReq.exceptionHandler(ignored -> {}).reset();
+                upReq.reset();
                 System.err.println("Vertex request error (" + domain + "): " + e.getMessage());
                 sendError(clientResp, 502, "Proxy error");
                 return;
             }
             head.onSuccess(ok -> {
                 // The token may take seconds: the client may have left, and its spool with it
-                if (!ok || clientResp.closed()) {
-                    upReq.exceptionHandler(ignored -> {}).reset();
+                if (!ok || watchdog.gone()) {
+                    upReq.reset();
                     return;
                 }
                 // The proxy answered the client's expectation itself; upstream gets the whole body at once
                 upReq.headers().remove("Expect");
                 upReq.putHeader("Content-Length", String.valueOf(spool.size()));
-                upReq.exceptionHandler(ignored -> {});
                 upReq.response().onSuccess(upResp -> {
+                    if (watchdog.cut) return;
                     if (!isRetry && upResp.statusCode() == 401) {
                         System.err.println("Vertex 401: invalidating cached token and retrying");
                         invalidateVertexToken();
                         spool.stopReplay();
                         upReq.reset();
-                        sendVertexRequest(clientReq, requestOptions, ctx, spool, true, exchange, debug);
+                        sendVertexRequest(clientReq, requestOptions, ctx, spool, true, exchange, debug, watchdog);
                         return;
                     }
                     // No send follows this answer: the body goes as soon as it has all gone upstream
                     spool.closeOnceSent();
                     onApiResponse(ctx, upResp, exchange, debug);
                     upstream.copyResponseHead(upResp, clientResp);
-                    upstream.pipeResponse(upResp, clientResp, null, responseTap(exchange, debug));
+                    watchdog.upResp = upResp;
+                    upstream.pipeResponse(upResp, clientResp, watchdog, responseTap(exchange, debug));
                 }).onFailure(err -> {
+                    // A cut resets the request itself
+                    if (watchdog.gone()) return;
                     System.err.println("Upstream send error (" + domain + "): " + err.getMessage());
                     sendError(clientResp, 502, "Upstream error");
                 });
@@ -1900,6 +1915,7 @@ public class MitmProxy {
                 });
             });
         }).onFailure(err -> {
+            if (watchdog.cut) return;
             System.err.println("Upstream connect error (" + domain + "): " + err.getMessage());
             sendError(clientResp, 502, "Upstream connection failed");
         });
@@ -1977,8 +1993,8 @@ public class MitmProxy {
 
     // --- Upstream helpers the credential path uses ---
 
-    private void relayRequest(HttpServerRequest clientReq, String domain) {
-        upstream.relayRequest(clientReq, domain);
+    private void relayRequest(HttpServerRequest clientReq, String domain, long since) {
+        upstream.relayRequest(clientReq, domain, since);
     }
 
     private static boolean hasBody(HttpServerRequest clientReq) {

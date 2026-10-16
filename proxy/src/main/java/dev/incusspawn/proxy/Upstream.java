@@ -303,9 +303,13 @@ class Upstream {
 
     // --- Generic relay (non-cacheable) ---
 
-    /** Relay a non-cacheable request transparently to upstream. */
-    void relayRequest(HttpServerRequest clientReq, String domain) {
-        relayRequest(clientReq, domain, plainHooks(clientReq, domain, null));
+    /**
+     * Relay a non-cacheable request transparently to upstream, counting the client's silence from
+     * {@code since}, when the client last heard from us: a request relayed after lookups of its own
+     * has waited through them too (#1059).
+     */
+    void relayRequest(HttpServerRequest clientReq, String domain, long since) {
+        relayRequest(clientReq, domain, plainHooks(clientReq, domain, null), since);
     }
 
     /**
@@ -316,9 +320,9 @@ class Upstream {
      * so an upload is never held whole in memory (#1175); a request with one is relayed before
      * anything waits, and the caching handlers, which wait, only ever get requests without one.
      */
-    void relayRequest(HttpServerRequest clientReq, String domain,
+    void relayRequest(HttpServerRequest clientReq, String domain, long since,
                                java.util.function.Consumer<HttpClientResponse> responseCallback) {
-        relayRequest(clientReq, domain, plainHooks(clientReq, domain, responseCallback));
+        relayRequest(clientReq, domain, plainHooks(clientReq, domain, responseCallback), since);
     }
 
     /** A plain relay's: the client's head as it is, and no taps. */
@@ -341,7 +345,7 @@ class Upstream {
                       java.util.function.Consumer<Buffer> responseTap) {}
 
     /** As above, with the head and the taps left to {@code hooks}: the credential-injecting relay (#1315). */
-    void relayRequest(HttpServerRequest clientReq, String domain, RelayHooks hooks) {
+    void relayRequest(HttpServerRequest clientReq, String domain, RelayHooks hooks, long since) {
         var streaming = hasBody(clientReq);
         // At once, before anything waits: Vert.x queues a paused body, but drops one that arrives
         // with nothing reading it, and then refuses to read the request at all (#1164)
@@ -351,7 +355,9 @@ class Upstream {
                 .setHost(domain)
                 .setPort(443)
                 .setURI(clientReq.uri());
-        var watchdog = new RelayWatchdog(clientReq, domain, streaming, System.nanoTime(), null);
+        var watchdog = new RelayWatchdog(clientReq, domain, streaming, since, null, null);
+        // Lookups before the relay spent the budget (check() has sent the 502), or the client left
+        if (watchdog.gone()) return;
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
             // A client that left while its body was paused has no handler yet to say so
@@ -491,9 +497,11 @@ class Upstream {
         /**
          * Counting the client's silence from {@code since}: its request, or the last byte it got.
          * {@code upResp} is the response already in hand, if any, for the budget may be spent by now.
+         * {@code onEnd}, if any, runs too when the client's response ends or closes: this takes the
+         * response's end and close handlers, and a handler set later replaces the earlier.
          */
         RelayWatchdog(HttpServerRequest clientReq, String domain, boolean streaming, long since,
-                      HttpClientResponse upResp) {
+                      HttpClientResponse upResp, io.vertx.core.Handler<Void> onEnd) {
             this.clientReq = clientReq;
             this.domain = domain;
             this.streaming = streaming;
@@ -501,8 +509,12 @@ class Upstream {
             this.upResp = upResp;
             if (upResp != null) upReq = upResp.request();
             var clientResp = clientReq.response();
-            clientResp.endHandler(v -> {
+            io.vertx.core.Handler<Void> ended = v -> {
                 stop();
+                if (onEnd != null) onEnd.handle(null);
+            };
+            clientResp.endHandler(v -> {
+                ended.handle(null);
                 if (uploadUnread()) {
                     clientResp.close();
                     // An upstream that answered early may read no more: a half-sent request would
@@ -510,7 +522,7 @@ class Upstream {
                     if (upReq != null) upReq.exceptionHandler(ignored -> {}).reset();
                 }
             });
-            clientResp.closeHandler(v -> stop());
+            clientResp.closeHandler(ended);
             // It may have left during the lookups before the relay, with no handler yet to tell
             if (clientResp.closed()) stop();
             check();
@@ -642,7 +654,7 @@ class Upstream {
      * {@link RelayWatchdog} counting from {@code since}, when the client last heard from us (#1192).
      */
     void relayBody(HttpServerRequest clientReq, String domain, HttpClientResponse upResp, long since) {
-        var watchdog = new RelayWatchdog(clientReq, domain, false, since, upResp);
+        var watchdog = new RelayWatchdog(clientReq, domain, false, since, upResp, null);
         // The budget was spent before the response came (check() has let it go and sent the 502), or
         // the client left. Without a handler, the reset's error would be logged by Vert.x, unprefixed
         if (watchdog.gone()) {
@@ -652,6 +664,14 @@ class Upstream {
         pipeResponse(upResp, clientReq.response(), watchdog);
         // A response held paused, as CachingDownload's is
         upResp.resume();
+    }
+
+    /**
+     * A {@link RelayWatchdog} for a relay its caller sends itself, once the client's body is all in:
+     * counting from now, through the wait for upstream's answer and its body (#1059).
+     */
+    RelayWatchdog watch(HttpServerRequest clientReq, String domain, io.vertx.core.Handler<Void> onEnd) {
+        return new RelayWatchdog(clientReq, domain, false, System.nanoTime(), null, onEnd);
     }
 
     void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp, RelayWatchdog watchdog) {

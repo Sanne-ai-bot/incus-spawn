@@ -416,12 +416,17 @@ class RelayRequestBodyTest {
 
     /** Runs {@code body} with the client's silence budget at {@code seconds}. */
     static void withBudget(int seconds, Body body) throws Exception {
-        var budget = proxy.upstream.clientSilenceBudgetSeconds;
-        proxy.upstream.clientSilenceBudgetSeconds = seconds;
+        withBudget(proxy.upstream, seconds, body);
+    }
+
+    /** As above, for another proxy's {@code upstream}. */
+    static void withBudget(Upstream upstream, int seconds, Body body) throws Exception {
+        var budget = upstream.clientSilenceBudgetSeconds;
+        upstream.clientSilenceBudgetSeconds = seconds;
         try {
             body.run();
         } finally {
-            proxy.upstream.clientSilenceBudgetSeconds = budget;
+            upstream.clientSilenceBudgetSeconds = budget;
         }
     }
 

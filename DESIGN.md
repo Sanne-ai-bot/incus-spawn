@@ -1443,6 +1443,9 @@ Only an unreachable upstream serves an older one.
   A head that never comes is a logged 502, a body that stops a logged reset, and the upstream request is let go rather than left for its 300s read-idle timeout.
   The cache path's own relays get the same watchdog (`relayResponse` and `relayBody`, #1192): an error answered to a fetch or after a redirect, and a download relayed uncached after a cache write error.
   Their clock starts at the client's request, or its last byte, not when the relay begins, since the head wait already spent part of the budget.
+  So does every plain relay (#1059): one a cache handler falls back to after lookups of its own, such as the npm tarball whose shasum lookup failed, and an API request that first waited for its caller's proof to be checked.
+  A Vertex model call, which the proxy sends itself once the body is in, gets a watchdog from then (#1059): through the token fetch, a 401's retry and the answer, which may be a stream.
+  A real stream from the API had never gone more than about a minute between chunks when this was measured, so 110s cuts nothing that would have lived; what changes is that the cut is logged and upstream is let go.
   A relay cannot resume, so a shasum lookup answered with a `5xx` is asked once more, while over half the client's budget is left, before the tarball falls back to a relay (`fetchNpmVersion`).
   A `429` is not, since asked again at once it would be refused again.
   The npm fallback logs that it relays, so a codex install that fails without a stall or resume line in the proxy log points at it directly.

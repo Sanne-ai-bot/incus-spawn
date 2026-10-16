@@ -168,6 +168,11 @@ class ApiRequestBodyTest {
             });
             return;
         }
+        if (req.path().contains("no-answer")) {
+            // Takes the body, then never answers, like a connection that died silently
+            req.handler(ignored -> {});
+            return;
+        }
         if (req.path().contains("hold-open")) {
             // Answers once the body is in, then streams on until a test ends it
             req.body().onSuccess(ignored -> {
@@ -645,6 +650,39 @@ class ApiRequestBodyTest {
         } finally {
             vertexProxy.spoolBudget = budget;
         }
+    }
+
+    /**
+     * A Vertex model call that upstream stops answering is cut at the client's silence budget, as any
+     * other relay is (#1059), not dropped silently at the MITM server's idle timeout: with a 502 when
+     * no head came, with a reset mid-stream. Either way its spool is given back.
+     */
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"no-answer", "hold-open"})
+    void stalledVertexCallIsCutAtTheBudget(String model) throws Exception {
+        heldOpen = new CompletableFuture<>();
+        RelayRequestBodyTest.withBudget(vertexProxy.upstream, 1, () -> withSpoolBudget(SpoolBudget.DEFAULT_LIMIT, () -> {
+            var path = "/v1/projects/proj/locations/us-east5/publishers/anthropic/models/" + model + ":streamRawPredict";
+            var body = "{\"anthropic_version\":\"vertex-2023-10-16\",\"messages\":[]}";
+            var socket = connect(vertexProxy, "api.anthropic.com");
+            var answer = RelayRequestBodyTest.collectUntilClose(socket);
+            socket.write(head("POST", "api.anthropic.com", path, "Content-Length: " + body.length()) + body);
+            String reply;
+            try {
+                reply = answer.get(5, TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                socket.close();
+                reply = fail("A stalled Vertex call was not cut within five times the budget");
+            }
+            if (model.equals("hold-open")) {
+                assertTrue(reply.startsWith("HTTP/1.1 200") && reply.contains("message_start"), reply);
+                var upstream = heldOpen.get(5, TimeUnit.SECONDS);
+                ArtifactCacheProxyTest.await("upstream's stream to be reset", upstream::closed);
+            } else {
+                assertTrue(reply.startsWith("HTTP/1.1 502"), reply);
+                assertTrue(reply.contains("Upstream timed out"), reply);
+            }
+        }));
     }
 
     static String waitForLog(Path dir, String marker) throws Exception {
