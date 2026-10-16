@@ -210,7 +210,7 @@ File-level resources (not directories) fall back to `copy` mode on VMs since dis
 `DownloadCache` handles host-side download caching with SHA256 verification.
 `download()` accepts only `http(s)` and refuses loopback/wildcard/link-local hosts, checking every redirect hop itself (`Redirect.NEVER`).
 A 429/500/502/503/504 or a failed or broken connection is retried twice from the original URL (`RETRY_DELAYS`, or `Retry-After` up to 30s), re-running the host-local check before each attempt; unresolvable names, TLS failures and local write errors are not retried.
-A retry after a body broke off resumes it with `Range`/`If-Range` when the `200` had a strong validator and a length, appending only a `206` whose validator, `Content-Range` and length match (`Partial`, the validator rule being `HttpValidator.strong`, shared with the proxy's `CachingDownload`); a `416` or any other `206` starts over from 0 within the same attempt.
+A retry after a body broke off resumes it with `Range`/`If-Range` when the `200` had a strong validator and a length, appending only a `206` whose validator, `Content-Range` and length match (`Partial`, through `HttpValidator.strong` and `continues`, shared with the proxy's `CachingDownload`); a `416` or any other `206` starts over from 0 within the same attempt.
 `Listener.retrying()` lets `TransferProgress` reset its rate and show the retry; the next `received()` reports the offset it resumes from, which the rate does not count.
 Errors name the failing hop's host.
 `file://` goes only through `downloadAllowingLocalFile()`, which only base images use; see DESIGN.md "Host-side downloads reach only remote hosts".

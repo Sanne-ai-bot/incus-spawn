@@ -372,10 +372,10 @@ class ArtifactCacheHandler {
             this.verification = verification;
             var contentEncoding = first.getHeader("Content-Encoding");
             this.isGzip = contentEncoding != null && contentEncoding.toLowerCase().contains("gzip");
-            this.length = contentLength(first);
+            this.length = HttpValidator.contentLength(first::getHeader);
             // A strong ETag, or with no ETag a Last-Modified a second older than Date: a server
             // ignores a weak ETag in If-Range, and without a validator there is no resume
-            this.validator = validator(first);
+            this.validator = HttpValidator.strong(first::getHeader);
             // Compressed on the fly, the same file need not give the same bytes twice
             this.neverResumable = contentEncoding != null ? "it is " + contentEncoding + "-encoded"
                     : length < 0 ? "its length is unknown"
@@ -653,16 +653,9 @@ class ArtifactCacheHandler {
             if (upResp != null) upResp.request().reset();
         }
 
-        /**
-         * Whether a 206 carries the rest of this file, from {@code offset} to its end, as it is
-         * stored: unencoded, of the length that is left, and with its own validator the first one's,
-         * not If-Range's word: GitHub's asset store answers 206 to a mismatched one (#900).
-         */
+        /** Whether a 206 carries the rest of this file, from {@code offset} to its end, whatever If-Range got. */
         private boolean resumesAt(HttpClientResponse resp, long offset) {
-            return ("bytes " + offset + "-" + (length - 1) + "/" + length).equals(resp.getHeader("Content-Range"))
-                    && resp.getHeader("Content-Encoding") == null
-                    && contentLength(resp) == length - offset
-                    && validator.equals(validator(resp));
+            return HttpValidator.continues(validator, length, offset, resp::getHeader);
         }
 
         private void fail(String message) {
@@ -680,19 +673,6 @@ class ArtifactCacheHandler {
                 Files.deleteIfExists(tempFile);
                 return null;
             }));
-        }
-    }
-
-    private static String validator(HttpClientResponse resp) {
-        return HttpValidator.strong(resp.getHeader("ETag"), resp.getHeader("Last-Modified"), resp.getHeader("Date"));
-    }
-
-    private static long contentLength(HttpClientResponse resp) {
-        var header = resp.getHeader("Content-Length");
-        try {
-            return header == null ? -1 : Long.parseLong(header.strip());
-        } catch (NumberFormatException e) {
-            return -1;
         }
     }
 
