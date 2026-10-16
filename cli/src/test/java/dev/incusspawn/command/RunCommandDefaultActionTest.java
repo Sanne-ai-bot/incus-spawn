@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
@@ -84,5 +85,39 @@ class RunCommandDefaultActionTest {
     @Test
     void onlyNoReferenceIsNoneConfigured() {
         assertEquals("No default action configured for " + NAME, noDefaultAction(null));
+    }
+
+    @Test
+    void aDeletedParentYamlRunsTheStampedAction() {
+        // tpl-agent is on disk, its parent tpl-base's YAML is gone: the stamp stands in for the
+        // inherited default-action, and the repos come from the parent's layer in the build record.
+        var parent = new ImageDef();
+        parent.setName("tpl-base");
+        parent.setDefaultAction("agent");
+        parent.setTools(List.of(new ToolDef.ToolRef("agent")));
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/example/project.git");
+        repo.setPath("~/project");
+        parent.setRepos(List.of(repo));
+        var leaf = new ImageDef();
+        leaf.setName(TEMPLATE);
+        leaf.setParent("tpl-base");
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.TYPE, Metadata.TYPE_CLONE,
+                Metadata.PROFILE, TEMPLATE,
+                Metadata.DEFAULT_ACTION, "agent",
+                Metadata.BUILD_SOURCE, new BuildSource(Map.of(TEMPLATE, leaf, "tpl-base", parent),
+                        Map.of(), Map.of(), Map.of()).toJson()));
+        var resolver = new ActionResolver(daemon.client(), new ToolDefLoader(List.of()),
+                List.of(new Tool("agent", List.of("go"))), Map.of(TEMPLATE, leaf));
+        // As RunCommand.doExecute resolves it.
+        var instance = resolver.readInstance(NAME);
+        var repos = resolver.collectRepos(instance, TEMPLATE);
+        assertEquals(List.of("/home/agentuser/project"), repos.stream().map(r -> r.path()).toList());
+        var actions = resolver.resolveActionsForInstance(NAME, TEMPLATE,
+                resolver.collectInstalledTools(instance, TEMPLATE), repos);
+        var ref = resolver.defaultActionRef(instance, TEMPLATE);
+        assertNull(RunCommand.noDefaultAction(NAME, ref, actions));
+        assertEquals("run-go", ActionResolver.findActionByRef(ref, actions).orElseThrow().shellCommand(null).orElseThrow());
     }
 }

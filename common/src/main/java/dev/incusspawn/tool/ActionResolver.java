@@ -106,6 +106,10 @@ public class ActionResolver {
         return instance.getField("config").pathText(Metadata.DEFAULT_ACTION, "");
     }
 
+    private static String buildSource(JqValue instance) {
+        return instance.getField("config").pathText(Metadata.BUILD_SOURCE, "");
+    }
+
     /**
      * The shell command a new branch opens with: its template's default action, or null for a
      * plain shell. The one rule for {@code isx branch} and the TUI's branch dialog (#868), from
@@ -120,12 +124,12 @@ public class ActionResolver {
      */
     public String defaultCommandForBranch(String template, JqValue sourceInstance) {
         return findDefaultAction(template, () -> stampedDefaultAction(sourceInstance),
-                        () -> collectInstalledTools(sourceInstance, template), collectRepos(template))
+                        () -> collectInstalledTools(sourceInstance, template), collectRepos(sourceInstance, template))
                 .flatMap(a -> a.shellCommand(null)).orElse(null);
     }
 
     /**
-     * @param snapshot the {@link Metadata#DEFAULT_ACTION} stamp, read only when the YAML is gone
+     * @param snapshot the {@link Metadata#DEFAULT_ACTION} stamp, read only when a layer's YAML is gone
      * @param installedTools collected only when there is a reference to match
      */
     private Optional<ToolAction> findDefaultAction(String parentTemplate, Supplier<String> snapshot,
@@ -172,14 +176,14 @@ public class ActionResolver {
      * (branched from a built template), uses the build-time tools list so that action
      * resolution reflects what was actually installed — not what the current YAML says.
      * Falls back to the YAML chain for templates or when BUILD_SOURCE is unavailable; a
-     * template whose YAML is gone still has its snapshot, so it uses that.
+     * template whose YAML is gone still has its snapshot, so it uses that, and a layer of the
+     * chain whose YAML is gone comes from it too.
      *
      * @param instance the instance as {@link #readInstance} returned it
      */
     public Set<String> collectInstalledTools(JqValue instance, String parentTemplate) {
-        var config = instance.getField("config");
-        return collectInstalledTools(config.pathText(Metadata.TYPE, ""),
-                config.pathText(Metadata.BUILD_SOURCE, ""), parentTemplate);
+        return collectInstalledTools(instance.getField("config").pathText(Metadata.TYPE, ""),
+                buildSource(instance), parentTemplate);
     }
 
     /**
@@ -195,20 +199,20 @@ public class ActionResolver {
                 }
             }
         }
-        return collectInstalledToolsFromYaml(parentTemplate);
+        return collectInstalledToolsFromChain(parentTemplate, buildSourceJson);
     }
 
     /**
-     * Collect all installed tools by walking the YAML template inheritance chain.
+     * Collect all installed tools by walking the template inheritance chain.
      * Use for templates (whose YAML IS authoritative) or as a fallback.
      */
-    public Set<String> collectInstalledToolsFromYaml(String parentTemplate) {
+    private Set<String> collectInstalledToolsFromChain(String parentTemplate, String buildSourceJson) {
         var tools = new LinkedHashSet<String>();
         if (parentTemplate == null || parentTemplate.isEmpty() || "-".equals(parentTemplate)) {
             return tools;
         }
 
-        var chain = getInheritanceChain(parentTemplate);
+        var chain = getInheritanceChain(parentTemplate, buildSourceJson);
         for (var def : chain) {
             for (var toolRef : def.getTools()) {
                 tools.add(toolRef.getName());
@@ -267,14 +271,25 @@ public class ActionResolver {
 
     /**
      * Collect repository information from the template inheritance chain.
+     *
+     * @param instance the instance as {@link #readInstance} returned it, whose build record stands
+     *                 in for a layer whose YAML is gone
      */
-    public List<ActionContext.RepoInfo> collectRepos(String parentTemplate) {
+    public List<ActionContext.RepoInfo> collectRepos(JqValue instance, String parentTemplate) {
+        return collectRepos(parentTemplate, buildSource(instance));
+    }
+
+    /**
+     * {@link #collectRepos(JqValue, String)} from the instance's {@link Metadata#BUILD_SOURCE},
+     * for a caller that already holds it.
+     */
+    public List<ActionContext.RepoInfo> collectRepos(String parentTemplate, String buildSourceJson) {
         var repos = new ArrayList<ActionContext.RepoInfo>();
         if (parentTemplate == null || parentTemplate.isEmpty() || "-".equals(parentTemplate)) {
             return repos;
         }
 
-        var chain = getInheritanceChain(parentTemplate);
+        var chain = getInheritanceChain(parentTemplate, buildSourceJson);
         // One per destination, as the build clones them (#1394).
         var seen = new java.util.HashSet<String>();
         for (var def : chain) {
@@ -317,7 +332,7 @@ public class ActionResolver {
         }
         var networkMode = config.pathText(Metadata.NETWORK_MODE, "");
         var installedTools = collectInstalledTools(instance, parentTemplate);
-        var repos = collectRepos(parentTemplate);
+        var repos = collectRepos(instance, parentTemplate);
 
         return new ActionContext(
                 instanceName,
@@ -368,22 +383,31 @@ public class ActionResolver {
     // --- Private helpers ---
 
     /**
-     * The default-action reference, or null for none: the YAML chain's, else the snapshot's when
-     * the YAML is gone.
+     * The default-action reference, or null for none: the YAML chain's, child over parent, else
+     * the snapshot's when a layer's YAML is gone, the leaf's or a parent's. With a layer gone the
+     * inherited value is unknown, and the stamp, kept in step with the chain while it was whole
+     * ({@code BuildCommand.syncDefaultActions}), is the fallback for exactly that. A blank
+     * stamp means none: every build sets or unsets it, so the layers the instance was built with
+     * are not consulted, since they may hold a ref removed since. With a layer gone, the sync
+     * leaves the stamp alone, so it holds the answer of the last build or sync.
      *
-     * @param snapshot the {@link Metadata#DEFAULT_ACTION} stamp, read only when the YAML is gone
+     * @param snapshot the {@link Metadata#DEFAULT_ACTION} stamp, read only when a layer's YAML is gone
      */
     public String defaultActionRef(String parentTemplate, Supplier<String> snapshot) {
-        // Walk the template YAML chain (child wins over parent).
         String ref = null;
         var chain = getInheritanceChain(parentTemplate);
         for (int i = chain.size() - 1; i >= 0 && ref == null; i--) {
             ref = chain.get(i).getDefaultAction();
         }
-        // YAML definitions not on disk (e.g. user deleted them after building the template):
-        // fall back to the snapshot stored in Incus metadata at build time.
-        if (chain.isEmpty()) ref = snapshot.get();
+        if (ref == null && layerGone(chain)) ref = snapshot.get();
         return (ref == null || ref.isBlank()) ? null : ref;
+    }
+
+    /** Whether the YAML chain stops at a layer whose YAML is gone, not at a root or a parent cycle. */
+    private boolean layerGone(List<ImageDef> chain) {
+        if (chain.isEmpty()) return true;
+        var parent = chain.getFirst().getParent();
+        return parent != null && !parent.isBlank() && !"-".equals(parent) && !imageDefs.containsKey(parent);
     }
 
     private record ActionRef(String toolName, String actionId) {}
@@ -421,16 +445,46 @@ public class ActionResolver {
         return slash >= 0 && requestedId.equals(actualId.substring(0, slash));
     }
 
+    /** The template's YAML chain, root first; empty when the leaf's YAML is gone. */
     private List<ImageDef> getInheritanceChain(String templateName) {
+        return getInheritanceChain(templateName, null);
+    }
+
+    /**
+     * The template's chain, root first. A layer whose YAML is gone comes from the definitions the
+     * instance was built with, as {@code isx build} and the TUI's refresh already take them; the
+     * build record is parsed only then. From the first recorded layer up, the ancestors come from
+     * the record too: a recorded layer's parent is the one it was built on, not whatever YAML has
+     * that name now.
+     */
+    private List<ImageDef> getInheritanceChain(String templateName, String buildSourceJson) {
         var chain = new ArrayList<ImageDef>();
         var current = templateName;
         var visited = new java.util.HashSet<String>();
+        Map<String, ImageDef> stored = null;
+        var fromRecord = false;
 
         while (current != null && !current.isEmpty() && !"-".equals(current)) {
             if (visited.contains(current)) break;
             visited.add(current);
 
-            var def = imageDefs.get(current);
+            ImageDef def;
+            if (fromRecord) {
+                def = stored.get(current);
+                // A record that lacks an ancestor (built while it was missing) leaves the rest to the YAML.
+                if (def == null) {
+                    fromRecord = false;
+                    def = imageDefs.get(current);
+                }
+            } else {
+                def = imageDefs.get(current);
+                if (def == null && stored == null && buildSourceJson != null && !buildSourceJson.isBlank()) {
+                    var bs = dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
+                    stored = bs == null ? Map.of() : bs.getDefinitions();
+                    def = stored.get(current);
+                    fromRecord = def != null;
+                }
+            }
             if (def == null) break;
 
             chain.add(def);

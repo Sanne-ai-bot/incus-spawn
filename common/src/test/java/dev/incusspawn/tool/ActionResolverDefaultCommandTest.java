@@ -173,6 +173,82 @@ class ActionResolverDefaultCommandTest {
     }
 
     @Test
+    void aCloneWhoseTemplateYamlWasDeletedFindsTheReposItWasBuiltWith() {
+        // The repo-expanded default action needs the template's repos, which only the build record still holds.
+        var def = template("agent:go", "agent");
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/example/project.git");
+        repo.setPath("~/project");
+        def.setRepos(List.of(repo));
+        var config = clone(new BuildSource(Map.of(TEMPLATE, def), Map.of(), Map.of(), Map.of()).toJson());
+        config.put(Metadata.DEFAULT_ACTION, "agent:go");
+        var daemon = new FakeIncusDaemon().container(SOURCE, config);
+        assertEquals("cd /home/agentuser/project && run-agent",
+                resolve(daemon, SOURCE, Map.of(), new Tool("agent", null, YamlToolAction.EXPAND_REPOS)));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"clone, agent, run-agent", "base, agent, run-agent",
+            "clone, '', ", "base, '', "})
+    void aDeletedParentYamlStillGivesItsDefaultActionAndTools(String type, String stamp, String expected) {
+        // The leaf is on disk, its parent's YAML is gone: the ref comes from the stamp, the tools
+        // from the parent's layer in the build record.
+        var parent = new ImageDef();
+        parent.setName("tpl-base");
+        parent.setDefaultAction("agent");
+        parent.setTools(List.of(new ToolDef.ToolRef("agent")));
+        var leaf = template(null);
+        leaf.setParent("tpl-base");
+        var config = new HashMap<String, String>();
+        config.put(Metadata.TYPE, type);
+        config.put(Metadata.PROFILE, TEMPLATE);
+        // A blank stamp is a build's or sync's answer, not a missing one: the recorded layer's ref
+        // may have been removed since (the stamp is unset then), so it opens a plain shell.
+        if (!stamp.isEmpty()) config.put(Metadata.DEFAULT_ACTION, stamp);
+        config.put(Metadata.BUILD_SOURCE, new BuildSource(Map.of(TEMPLATE, leaf, "tpl-base", parent),
+                Map.of(), Map.of(), Map.of()).toJson());
+        var daemon = new FakeIncusDaemon().container(SOURCE, config);
+        assertEquals(expected, resolve(daemon, SOURCE, Map.of(TEMPLATE, leaf), new Tool("agent")));
+    }
+
+    @Test
+    void aRecordedLayersAncestorsComeFromTheRecordToo() {
+        // tpl-agent -> tpl-mid (YAML gone) -> tpl-root: the tpl-root on disk now has a repo the
+        // instance was not built with, so it must not be offered.
+        var leaf = template(null);
+        leaf.setParent("tpl-mid");
+        var mid = new ImageDef();
+        mid.setName("tpl-mid");
+        mid.setParent("tpl-root");
+        var builtRoot = new ImageDef();
+        builtRoot.setName("tpl-root");
+        var currentRoot = new ImageDef();
+        currentRoot.setName("tpl-root");
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/example/added.git");
+        repo.setPath("~/added");
+        currentRoot.setRepos(List.of(repo));
+        var record = new BuildSource(Map.of(TEMPLATE, leaf, "tpl-mid", mid, "tpl-root", builtRoot),
+                Map.of(), Map.of(), Map.of()).toJson();
+        var resolver = new ActionResolver(null, new ToolDefLoader(List.of()), List.of(),
+                Map.of(TEMPLATE, leaf, "tpl-root", currentRoot));
+        assertEquals(List.of(), resolver.collectRepos(TEMPLATE, record));
+    }
+
+    @Test
+    void aParentCycleKeepsTheYamlsAnswerOverTheStamp() {
+        // The YAML is all on disk, so no layer is gone: the stamp must not stand in for it.
+        var cx = template(null);
+        cx.setParent("tpl-cy");
+        var cy = new ImageDef();
+        cy.setName("tpl-cy");
+        cy.setParent(TEMPLATE);
+        var resolver = new ActionResolver(null, new ToolDefLoader(List.of()), List.of(),
+                Map.of(TEMPLATE, cx, "tpl-cy", cy));
+        assertNull(resolver.defaultActionRef(TEMPLATE, () -> "agent"));
+    }
+
+    @Test
     void noDefaultActionMeansAPlainShell() {
         var daemon = new FakeIncusDaemon().container(SOURCE, clone(buildSource("agent")));
         assertNull(resolve(daemon, SOURCE, Map.of(TEMPLATE, template(null, "agent")), new Tool("agent")));

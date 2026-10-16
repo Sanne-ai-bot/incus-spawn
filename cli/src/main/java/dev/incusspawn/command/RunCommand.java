@@ -46,7 +46,7 @@ public class RunCommand extends BaseCommand {
         // (#1159); the context is built only where it is used, since it may ask for /state.
         var instance = resolver.readInstance(name);
         var installedTools = resolver.collectInstalledTools(instance, parent);
-        var repos = resolver.collectRepos(parent);
+        var repos = resolver.collectRepos(instance, parent);
         var allActions = resolver.resolveActionsForInstance(name, parent, installedTools, repos);
 
         // Find the action to execute

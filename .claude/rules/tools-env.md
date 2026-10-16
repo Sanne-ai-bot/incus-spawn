@@ -76,6 +76,7 @@ A YAML tool shadows the same-named CDI tool, so only the YAML definition's `feat
 `ActionResolver` handles discovering actions from installed tools, resolving default actions from template inheritance chains, finding specific actions by reference, and building `ActionContext` for execution.
 For instances (clones), the installed-tools set comes from `BUILD_SOURCE` metadata (baked at build time) so that action resolution reflects what is actually installed — the current YAML chain may reference tools added after the instance was branched.
 For templates, the YAML chain is authoritative -- unless it is gone (the YAML deleted after the build), when the template's own `BUILD_SOURCE` snapshot stands in, as the `default-action` stamp does for the ref.
+A layer of the chain whose YAML alone is gone (a deleted parent) takes its tools and repos from the instance's own `BUILD_SOURCE`, which records every layer it was built from, and the ref falls back to the stamp when no layer still on disk sets one; a blank stamp means a plain shell, since every build sets or unsets it (#1158).
 The `default-action` ref itself still comes from YAML (YAML-first, metadata fallback) so users can switch between already-installed tools without rebuilding.
 Switching to a tool not yet installed produces a "tool not found" error instead of trying to execute a missing binary.
 The action a new branch opens with is `ActionResolver.defaultCommandForBranch`, the one rule for `isx branch` and the TUI's branch dialog (#868).
