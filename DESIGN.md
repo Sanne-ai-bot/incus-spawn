@@ -638,6 +638,19 @@ Every build container holds a claimed address only while it builds, so the proxy
 Its claim also skips every address the bridge's DHCP server has leased (see "Builds are served their template's accounts").
 The base image (from `Sanne/incus-spawn-images`) provides `systemd-networkd` and bakes in a connectivity watchdog (30s systemd timer) that detects IP loss after host sleep/wake and restarts `systemd-networkd` to recover; `isx` only supplies the per-branch address.
 
+**Machine-id**: Every instance has an `/etc/machine-id` of its own (#1305).
+A copy carries its source's, and without this every branch of a template would be one host to the journal, to a DHCP server's DUID and to anything derived with `systemd-id128`.
+`BranchFlow` pushes a stopped container branch a fresh ID (`MachineId.giveOwn`) right after the copy, a random v4 UUID without dashes, as systemd writes it.
+A failed push only warns: the branch works, and shares its source's ID unless that was cleared.
+A stopped VM takes no file push, so a VM gets its own from its template instead: every template build and project build empties the file in the guest before its last stop (`BuildAccounts.clearGuestProofs`).
+It unmounts the file first, since a transient ID systemd never committed is mounted over the one on disk, and is best effort like the push: a template that keeps its ID still works.
+Each copy's first start then finds none, and systemd generates one and commits it, from the VM's SMBIOS UUID (which Incus makes anew for a copy) or at random.
+An empty file boots as any other boot.
+`uninitialized`, the other value machine-id(5) offers for images, makes the boot a first boot.
+On Fedora a first boot runs a full `preset-all`, which disables every unit the image and the template build enabled against Fedora's presets: `systemd-networkd`, its sockets, `systemd-networkd-wait-online` and the image's network watchdog timer (checked by booting the base image's rootfs with each value).
+So `ConditionFirstBoot` units do not run again in a branch; on the base image those are only `systemd-firstboot` and `systemd-homed-firstboot`, which it masks, and `first-boot-complete.target`.
+A VM branched from a template built before this, from a kept failed build or from another branch still shares its source's ID.
+
 **VM deferred file pushes**: File push to a stopped VM is not possible (it requires the running `incus-agent` inside the VM).
 For VMs, `BranchFlow` (behind both `isx branch` and the TUI) skips pre-start file pushes (network config, SSH keys, terminfo) and instead call `InstanceNetwork.pushDeferredVmFiles()` after starting the VM and waiting for the agent to become ready.
 The network config (IP, gateway and the NIC's MAC address) is read from one instance GET at push time.
@@ -3479,9 +3492,10 @@ isx pushed terminfo, and for SSH-capable templates the authorized keys, 1 ms bef
 Both now travel inside the post-start setup script as heredocs (`buildSetupScript`), which costs no extra request, and `RuntimeSetup.prefetchAndStart()` -- shared by `isx branch` and the TUI -- pushes nothing between reading the config and starting.
 Two related savings on the same path: `GuiPassthrough.removeGui()` returns after one read when the instance has no GUI state (it used to rewrite devices and config and push two empty files on every branch), and the setup script polls for the network address every 50 ms rather than every 0.5 s, which was ~400 ms of idle time per branch.
 
-Two kinds of file still go in before the start, because they must be in place at boot: the static `.network` file, and the Wayland profile.d/tmpfiles.d files of a `--gui` branch (or the empty files that clear them, when a branch drops GUI state it inherited).
-Both are pushed well before the start.
-GUI setup runs first, right after the copy, and `configureBranch()` pushes the `.network` file just before its combined settings write, leaving that write, host integration and the runtime prefetch between it and the start.
+Three kinds of file still go in before the start, because they must be in place at boot: a container's own `/etc/machine-id`, the static `.network` file, and the Wayland profile.d/tmpfiles.d files of a `--gui` branch (or the empty files that clear them, when a branch drops GUI state it inherited).
+All are pushed well before the start.
+The machine-id goes in first, right after the copy.
+GUI setup follows it, and `configureBranch()` pushes the `.network` file just before its combined settings write, leaving that write, host integration and the runtime prefetch between it and the start.
 That has been enough to finish the flush; if a trace ever shows the one-second gap again, the `.network` push is the next candidate.
 
 ### Why a branch is configured in one write

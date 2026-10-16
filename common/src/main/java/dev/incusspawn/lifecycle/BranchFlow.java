@@ -358,6 +358,9 @@ public final class BranchFlow {
         BuildOutput.stepStart("Copying from template...");
         incus.copy(source, name, copyPlan, copyConfig);
         BuildOutput.stepDone();
+        // Right after the copy, well before the start (see "Why nothing is pushed into an
+        // instance just before it starts"); a VM gets its own from its template instead
+        if (defaults.machineType() == MachineType.CONTAINER) MachineId.giveOwn(incus, name);
 
         // Configure GUI before start so environment.* keys are visible to init. First, because
         // it may push files: any push lands well before the start (see prefetchAndStart).

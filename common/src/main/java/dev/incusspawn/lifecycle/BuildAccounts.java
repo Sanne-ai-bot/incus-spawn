@@ -70,7 +70,10 @@ public final class BuildAccounts {
                 Metadata.INSTANCE_PROOF_SHA256, "", Metadata.INSTANCE_PROOF_ID, "", Metadata.INSTANCE_SECRET_BOOT, ""));
     }
 
-    /** Remove managed tool caches of the build's temporary proof before publishing its rootfs. */
+    /**
+     * Remove managed tool caches of the build's temporary proof before publishing its rootfs, and
+     * the build's machine-id, which every branch would otherwise boot with ({@link MachineId#CLEAR_SCRIPT}).
+     */
     public static void clearGuestProofs(dev.incusspawn.incus.Container container) {
         container.runAsUserQuiet("agentuser", """
                 export ANTHROPIC_API_KEY=sk-ant-placeholder OPENAI_API_KEY=sk-placeholder
@@ -78,7 +81,8 @@ public final class BuildAccounts {
                   if [ -r "$script" ]; then . "$script"; fi
                 done
                 """, "Failed to clear build credential caches");
-        container.sh("rm -f /run/isx/instance-secret /run/isx/credential-secret /run/isx/proof-tokens /run/isx/proof-version /run/isx/proof-generation")
+        container.sh("rm -f /run/isx/instance-secret /run/isx/credential-secret /run/isx/proof-tokens /run/isx/proof-version /run/isx/proof-generation || exit 1; "
+                        + MachineId.CLEAR_SCRIPT)
                 .assertSuccess("Failed to clear build proofs");
     }
 
