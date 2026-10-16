@@ -1424,7 +1424,7 @@ Only an unreachable upstream serves an older one.
   A connect timed out that early says nothing about the domain, so it does not start the unreachable backoff below.
   A resume needs a validator for `If-Range`: a strong `ETag`, or `Last-Modified` when there is no `ETag` at all and it is at least a second older than the response's `Date` (servers ignore a weak ETag, RFC 9110 does not let a date stand in for an entity tag, and a date within the second it was sent could match two versions).
   Without one there is no resume, since a file changed meanwhile would be spliced onto the old one's bytes.
-  Only a `206` whose `Content-Range` runs from the byte the client has to the end of the same length continues.
+  Only a `206` with the first response's validator, and a `Content-Range` from the byte the client has to the end of the same length, continues; `If-Range` alone is not trusted, since GitHub's asset store answers `206` to a mismatched one (#900, #1405).
   Anything else (a `200` from an upstream that ignores `Range` or whose file changed) ends the response with an error.
   A response that ends before that length is another break.
   A `5xx` or `429` to the Range request is retried like a resume that could not connect: an overloaded upstream is what stalls a download in the first place.

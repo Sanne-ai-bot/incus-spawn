@@ -125,9 +125,11 @@ class ArtifactCacheProxyTest {
     static volatile boolean cutByClosing;
     /** Whether a Range request gets its 206, as from the real repositories and registries. */
     static volatile boolean honourRange;
+    /** Whether that 206 comes whatever If-Range says, as from GitHub's asset store (#900). */
+    static volatile boolean ignoreIfRange;
     static final List<String> rangesAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
     static final List<String> ifRangesAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
-    /** The ETag GETs answer with, if any; with {@link #changeOnCut} a cut changes it, as a republish would. */
+    /** The ETag GETs answer with, if any; with {@link #changeOnCut} a cut changes it (or Last-Modified) and the bytes, as a republish would. */
     static volatile String etag;
     static volatile String lastModified;
     /** The Date GETs answer with, if any: what makes Last-Modified a strong validator or not. */
@@ -267,7 +269,7 @@ class ArtifactCacheProxyTest {
             return;
         }
         if (range != null && honourRange && reply.status() == 200
-                && (ifRange == null || ifRange.equals(currentEtag) || ifRange.equals(currentLastModified))) {
+                && (ignoreIfRange || ifRange == null || ifRange.equals(currentEtag) || ifRange.equals(currentLastModified))) {
             var from = Integer.parseInt(range.substring("bytes=".length(), range.length() - 1));
             var rest = java.util.Arrays.copyOfRange(body, from, body.length);
             resp.setStatusCode(206)
@@ -293,7 +295,13 @@ class ArtifactCacheProxyTest {
         if (req.method() == HttpMethod.GET && reply.status() == 200
                 && getsToCut.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
             resp.putHeader("Content-Length", String.valueOf(body.length));
-            if (changeOnCut) etag = "\"changed\"";
+            if (changeOnCut) {
+                if (etag != null) etag = "\"changed\"";
+                if (lastModified != null) lastModified = "Tue, 29 Sep 2026 08:11:30 GMT";
+                var changed = new byte[body.length];
+                for (int i = 0; i < body.length; i++) changed[i] = body[body.length - 1 - i];
+                routes.put(key, new Reply(200, changed, reply.location(), reply.checksumHeader()));
+            }
             var cutAt = cutBeforeBody ? 0 : body.length / 2;
             var pause = cutPauseMs;
             resp.write(Buffer.buffer(java.util.Arrays.copyOf(body, cutAt)))
@@ -340,6 +348,7 @@ class ArtifactCacheProxyTest {
         date = null;
         rangesToShorten.set(0);
         changeOnCut = false;
+        ignoreIfRange = false;
         getsToIgnore.set(0);
         nextGetDelayMs = 0;
         cutBeforeBody = false;
@@ -1055,6 +1064,33 @@ class ArtifactCacheProxyTest {
 
         assertDownloadFails();
         assertEquals(List.of(ETAG), ifRangesAsked);
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void changedFileIsNotSplicedOntoTheOldOneByAnUpstreamThatIgnoresIfRange() throws Exception {
+        // GitHub's asset store answers 206 to a mismatched If-Range (#900): only the 206's own
+        // validator tells that the rest belongs to another file
+        publishCutJar(true);
+        changeOnCut = true;
+        ignoreIfRange = true;
+
+        assertDownloadFails();
+        assertEquals(List.of(ETAG), ifRangesAsked);
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void changedFileWithOnlyLastModifiedIsNotSplicedOntoTheOldOneByAnUpstreamThatIgnoresIfRange() throws Exception {
+        publishCutJar(true);
+        etag = null;
+        lastModified = "Tue, 29 Sep 2026 08:10:59 GMT";
+        date = "Wed, 30 Sep 2026 09:00:00 GMT";
+        changeOnCut = true;
+        ignoreIfRange = true;
+
+        assertDownloadFails();
+        assertEquals(List.of("Tue, 29 Sep 2026 08:10:59 GMT"), ifRangesAsked);
         assertStaysAbsent(cached(CENTRAL, JAR));
     }
 

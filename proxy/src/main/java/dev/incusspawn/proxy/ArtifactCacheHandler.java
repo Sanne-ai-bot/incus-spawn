@@ -373,7 +373,8 @@ class ArtifactCacheHandler {
             var contentEncoding = first.getHeader("Content-Encoding");
             this.isGzip = contentEncoding != null && contentEncoding.toLowerCase().contains("gzip");
             this.length = contentLength(first);
-            // A server ignores a weak ETag in If-Range: then there is no resume
+            // A strong ETag, or with no ETag a Last-Modified a second older than Date: a server
+            // ignores a weak ETag in If-Range, and without a validator there is no resume
             this.validator = validator(first);
             // Compressed on the fly, the same file need not give the same bytes twice
             this.neverResumable = isGzip ? "it is gzip-encoded"
@@ -638,6 +639,7 @@ class ArtifactCacheHandler {
                         return;
                     }
                     ProxyLog.warn("Could not resume " + ref + ": upstream answered " + resp.statusCode()
+                            + (resp.statusCode() == 206 ? " with another validator or range" : "")
                             + " to a Range request");
                     fail("Upstream stream error");
                 }
@@ -651,9 +653,13 @@ class ArtifactCacheHandler {
             if (upResp != null) upResp.request().reset();
         }
 
-        /** Whether a 206 carries the rest of this file, from {@code offset} to its end. */
+        /**
+         * Whether a 206 carries the rest of this file, from {@code offset} to its end. Its own
+         * validator decides, not If-Range: GitHub's asset store answers 206 to a mismatched one (#900).
+         */
         private boolean resumesAt(HttpClientResponse resp, long offset) {
-            return ("bytes " + offset + "-" + (length - 1) + "/" + length).equals(resp.getHeader("Content-Range"));
+            return ("bytes " + offset + "-" + (length - 1) + "/" + length).equals(resp.getHeader("Content-Range"))
+                    && validator.equals(validator(resp));
         }
 
         private void fail(String message) {
