@@ -10,6 +10,7 @@ import dev.incusspawn.tool.ToolSetup;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -74,11 +75,9 @@ final class InstanceActions {
 
     /** The actions F9 offers for an instance, and Enter's default action is chosen from. */
     List<ToolAction> resolveActionsForInstance(InstanceInfo instance) {
-        var resolver = resolver();
-        var template = resolveTemplateName(instance);
-        return resolver.resolveActionsForInstance(instance.name(), template,
-                resolver.collectInstalledTools(instance.type(), instance.buildSourceJson(), template),
-                resolver.collectRepos(template));
+        var inputs = inputs(instance);
+        return inputs.resolver().resolveActionsForInstance(instance.name(), inputs.template(),
+                inputs.tools(), inputs.repos());
     }
 
     /** The template's {@code default-action} reference, or null for a plain shell. */
@@ -87,13 +86,22 @@ final class InstanceActions {
     }
 
     ActionContext buildActionContext(InstanceInfo instance) {
-        var resolver = resolver();
-        var template = resolveTemplateName(instance);
+        var inputs = inputs(instance);
         return new ActionContext(
-                instance.name(), instance.machineType(),
-                resolver.collectInstalledTools(instance.type(), instance.buildSourceJson(), template),
-                resolver.collectRepos(template),
+                instance.name(), instance.machineType(), inputs.tools(), inputs.repos(),
                 new ActionContext.InstanceState(instance.ipv4(), instance.status(),
                         instance.parent(), instance.networkMode()));
+    }
+
+    /** The resolver's inputs for an instance: its leaf template, the tools it was built with, and its repos. */
+    private record Inputs(ActionResolver resolver, String template, Set<String> tools,
+                          List<ActionContext.RepoInfo> repos) {}
+
+    private Inputs inputs(InstanceInfo instance) {
+        var resolver = resolver();
+        var template = resolveTemplateName(instance);
+        return new Inputs(resolver, template,
+                resolver.collectInstalledTools(instance.type(), instance.buildSourceJson(), template),
+                resolver.collectRepos(template, instance.buildSourceJson()));
     }
 }

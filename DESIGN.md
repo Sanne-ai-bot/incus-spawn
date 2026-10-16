@@ -2280,7 +2280,7 @@ user.incus-spawn.host-resources=[...]        # (JSON, when host-resources declar
 ```
 
 **Metadata outside the fingerprint**: `default-action` changes nothing in the image, so it is left out of `definition-sha` and editing it does not make a template outdated.
-Its stamp (`user.incus-spawn.default-action`, which `ActionResolver` falls back to when the YAML chain is gone) was then only ever written by a rebuild, and diverged silently from the YAML (#284).
+Its stamp (`user.incus-spawn.default-action`, which `ActionResolver` falls back to when a layer of the YAML chain is gone and no layer on disk sets one) was then only ever written by a rebuild, and diverged silently from the YAML (#284).
 So every `isx build` that returns, successfully or with a failed template build, ends with `syncDefaultActions()`: one `GET /1.0/instances?recursion=1` covers every existing template, and a stamp is written only where it differs from the definition chain.
 Because the value is inherited, the guard covers the whole chain, not just the template's own definition: the chain must reach a root in the loaded definitions (with a parent's YAML gone the inherited value is unknown, and the stamp is exactly the fallback for that case), the template's own `definition-sha` must be current, and its `build-source` must record every ancestor with the content and project root it has now.
 So an outdated template, or a child built before its parent added a tool, keeps the stamp matching what it has installed until it is rebuilt.
