@@ -129,6 +129,8 @@ class ArtifactCacheProxyTest {
     static volatile boolean ignoreIfRange;
     /** The Content-Encoding a 206 claims, if any, its bytes unchanged. */
     static volatile String rangeEncoding;
+    /** The Content-Encoding GETs claim, if any, their bytes unchanged. */
+    static volatile String encoding;
     /** Bytes a 206 sends past the end of the file, its Content-Range still right. */
     static volatile int rangeExtraBytes;
     static final List<String> rangesAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -262,6 +264,8 @@ class ArtifactCacheProxyTest {
         if (currentEtag != null && reply.status() == 200) resp.putHeader("ETag", currentEtag);
         var currentLastModified = lastModified;
         if (currentLastModified != null && reply.status() == 200) resp.putHeader("Last-Modified", currentLastModified);
+        var currentEncoding = encoding;
+        if (currentEncoding != null && reply.status() == 200) resp.putHeader("Content-Encoding", currentEncoding);
         var currentDate = date;
         if (currentDate != null) resp.putHeader("Date", currentDate);
         var range = req.getHeader("Range");
@@ -358,6 +362,7 @@ class ArtifactCacheProxyTest {
         changeOnCut = false;
         ignoreIfRange = false;
         rangeEncoding = null;
+        encoding = null;
         rangeExtraBytes = 0;
         getsToIgnore.set(0);
         nextGetDelayMs = 0;
@@ -1111,6 +1116,17 @@ class ArtifactCacheProxyTest {
 
         assertDownloadFails();
         assertEquals(1, rangesAsked.size(), rangesAsked.toString());
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void encodedDownloadIsNotResumed() throws Exception {
+        // Compressed on the fly, the same file need not give the same bytes twice: not only gzip
+        publishCutJar(true);
+        encoding = "br";
+
+        assertDownloadFails();
+        assertEquals(List.of(), rangesAsked, "not even tried");
         assertStaysAbsent(cached(CENTRAL, JAR));
     }
 
