@@ -17,8 +17,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * The templates README shows (#1435): the Quick Start ends with one a newcomer can save and
- * build as is, no other example takes its name, and no example starts from the deprecated
- * tpl-dev, so a copied one builds without its deprecation warning.
+ * build as is, no other example takes its name, and no example, there or in the docs/ pages
+ * (#1440), starts from the deprecated tpl-dev, so a copied one builds without its deprecation
+ * warning.
  */
 class ReadmeTemplatesTest {
 
@@ -26,6 +27,15 @@ class ReadmeTemplatesTest {
 
     private static String readme() throws Exception {
         return Files.readString(Path.of("..", "README.md"));
+    }
+
+    /** README.md and every docs/*.md page, where the README's reference moved (#1440). */
+    private static String readmeAndDocs() throws Exception {
+        var docs = new StringBuilder(readme());
+        try (var pages = Files.list(Path.of("..", "docs"))) {
+            for (var page : pages.filter(p -> p.toString().endsWith(".md")).sorted().toList()) docs.append(Files.readString(page));
+        }
+        return docs.toString();
     }
 
     /** README's Quick Start section, from its heading to the next one. */
@@ -81,11 +91,10 @@ class ReadmeTemplatesTest {
     void noOtherExampleTakesTheQuickStartName() throws Exception {
         // A newcomer keeps the Quick Start file; an example copied next to it under the same
         // name makes every build stop on conflicting definitions
-        var readme = readme();
-        var name = ImageDef.parseYaml(templates(quickStart(readme)).get(0)).getName();
-        var named = templates(readme).stream()
+        var name = ImageDef.parseYaml(templates(quickStart(readme())).get(0)).getName();
+        var named = templates(readmeAndDocs()).stream()
                 .filter(yaml -> yaml.startsWith("name: " + name + "\n")).count();
-        assertEquals(1, named, name + " is defined once in README");
+        assertEquals(1, named, name + " is defined once in README and docs/");
     }
 
     @Test
@@ -94,7 +103,7 @@ class ReadmeTemplatesTest {
         // A block that shows a built-in's own definition (tpl-java's) shows it as it is.
         var builtins = builtins();
         var offenders = new ArrayList<String>();
-        for (var yaml : templates(readme())) {
+        for (var yaml : templates(readmeAndDocs())) {
             var def = ImageDef.parseYaml(yaml);
             if ("tpl-dev".equals(def.getParent()) && !builtins.containsKey(def.getName())) offenders.add(def.getName());
         }

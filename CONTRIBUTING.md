@@ -24,14 +24,14 @@ The project website is hosted on Cloudflare Pages (project `isx`): `.github/work
 To preview changes locally:
 
 ```shell
-# Build the site (generates _site/ directory from README.md)
+# Build the site (generates _site/ directory from README.md and docs/*.md)
 ./site/build.sh
 
-# Serve locally
-cd _site && python3 -m http.server 8000
+# Serve it the way Cloudflare Pages does (/docs serves docs.html)
+npx wrangler pages dev _site
 ```
 
-Then open http://localhost:8000 in your browser. The build script converts README.md to HTML and generates the table of contents for the docs page.
+Then open the address it prints in your browser. The build script renders README.md as the docs page and every `docs/*.md` as a page beside it (`docs/CLI.md` is `/docs/cli`), each with its table of contents; `docs/dev/` holds maintainer notes and is not published.
 
 ## Releasing
 
