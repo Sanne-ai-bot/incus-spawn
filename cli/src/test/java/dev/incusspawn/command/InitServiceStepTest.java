@@ -76,7 +76,7 @@ class InitServiceStepTest {
     @Test
     void macOsServicesAreInstalledOnlyOnceInitIsMarkedComplete() throws IOException {
         var prompts = ScriptedPrompts.lines("y");
-        init.completeWithMacOsServices(prompts);
+        assertTrue(init.completeWithMacOsServices(prompts));
         prompts.assertFullyConsumed();
         assertEquals(List.of("install"), init.serviceActions);
     }
@@ -128,7 +128,7 @@ class InitServiceStepTest {
     void macOsServicesAlreadyInstalledAreLeftAloneAndInitCompletes() throws IOException {
         init.macOsServicesInstalled = true;
         var prompts = ScriptedPrompts.lines();
-        init.completeWithMacOsServices(prompts);
+        assertTrue(init.completeWithMacOsServices(prompts));
         prompts.assertFullyConsumed();
         assertCompleteWithoutTouchingTheService();
     }
@@ -136,7 +136,7 @@ class InitServiceStepTest {
     @Test
     void decliningTheMacOsServicesStillCompletesInit() throws IOException {
         var prompts = ScriptedPrompts.lines("n");
-        init.completeWithMacOsServices(prompts);
+        assertFalse(init.completeWithMacOsServices(prompts));
         prompts.assertFullyConsumed();
         assertCompleteWithoutTouchingTheService();
     }
@@ -152,7 +152,7 @@ class InitServiceStepTest {
     /** {@code isx init </dev/null}, as CI runs it. */
     @Test
     void initCompletesWithoutATerminal() throws IOException {
-        init.completeWithMacOsServices(null);
+        assertFalse(init.completeWithMacOsServices(null));
         assertCompleteWithoutTouchingTheService();
     }
 
