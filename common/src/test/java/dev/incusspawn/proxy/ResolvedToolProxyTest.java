@@ -174,4 +174,35 @@ class ResolvedToolProxyTest {
         assertTrue(proxy.matchesPath("/foo"), "root scope matches any path");
         assertTrue(proxy.matchesPath("/foo/bar"), "root scope matches nested path");
     }
+
+    @Test
+    void invalidPrefixesMatchNothing() {
+        var auth = new ToolDef.AuthDef();
+        auth.setType("bearer");
+        auth.setToken("tok");
+        auth.setPaths(java.util.Arrays.asList("", "mcp", "//", null));
+        var proxy = new ResolvedToolProxy("test", "example.com", auth, Map.of());
+
+        assertFalse(proxy.matchesPath("/"), "an empty prefix never widens the scope to every path");
+        assertFalse(proxy.matchesPath("/mcp"), "a prefix without a leading slash never matches");
+        assertEquals(-1, proxy.pathMatchLength("/anything"));
+
+        auth.setPaths(List.of("", "/mcp"));
+        assertTrue(proxy.matchesPath("/mcp/x"));
+        assertFalse(proxy.matchesPath("/api"), "the valid prefix alone scopes the entry");
+    }
+
+    @Test
+    void pathMatchLengthPrefersTheLongestPrefix() {
+        var auth = new ToolDef.AuthDef();
+        auth.setType("bearer");
+        auth.setToken("tok");
+        auth.setPaths(List.of("/", "/api", "/api/admin/"));
+        var proxy = new ResolvedToolProxy("test", "example.com", auth, Map.of());
+
+        assertEquals("/api/admin".length(), proxy.pathMatchLength("/api/admin/users"));
+        assertEquals("/api".length(), proxy.pathMatchLength("/api/v1"));
+        assertEquals(1, proxy.pathMatchLength("/other"));
+        assertEquals(0, new ResolvedToolProxy("test", "example.com", null, Map.of()).pathMatchLength("/x"));
+    }
 }

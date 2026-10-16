@@ -509,6 +509,56 @@ class ToolProxyResolutionTest {
         assertEquals("Bearer broad-token", api.computeHeaderValue());
     }
 
+    @Test
+    void overlappingPrefixesSelectTheLongestInEitherOrder() throws Exception {
+        var apiTool = loadToolSetup("""
+                name: api-tool
+                proxy:
+                  config-namespace: api
+                  configuration:
+                    token:
+                      value: "api-token"
+                  auth:
+                    - domains:
+                        - shared.example.com
+                      paths:
+                        - /api
+                      type: bearer
+                      token: "${token}"
+                """);
+        var adminTool = loadToolSetup("""
+                name: admin-tool
+                proxy:
+                  config-namespace: admin
+                  configuration:
+                    token:
+                      value: "admin-token"
+                  auth:
+                    - domains:
+                        - shared.example.com
+                      paths:
+                        - /api/admin/
+                      type: bearer
+                      token: "${token}"
+                """);
+        var config = new SpawnConfig();
+        var api = ToolProxyResolver.resolve(config, Map.of("api-tool", apiTool));
+        var admin = ToolProxyResolver.resolve(config, Map.of("admin-tool", adminTool));
+        for (var order : java.util.List.of(java.util.List.of(api, admin), java.util.List.of(admin, api))) {
+            var resolved = order.stream().flatMap(java.util.List::stream).toList();
+            var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1",
+                    new ProxyCredentials("", "", false, "", "", resolved));
+
+            assertEquals("Bearer admin-token", proxy.findToolProxy("shared.example.com", "/api/admin/users").computeHeaderValue(),
+                    "the longer prefix wins, whichever loaded first");
+            assertEquals("Bearer admin-token", proxy.findToolProxy("shared.example.com", "/api/admin?x=1").computeHeaderValue());
+            assertEquals("Bearer api-token", proxy.findToolProxy("shared.example.com", "/api/administrators").computeHeaderValue(),
+                    "a prefix matches whole segments only");
+            assertEquals("Bearer api-token", proxy.findToolProxy("shared.example.com", "/api/v1").computeHeaderValue());
+            assertNull(proxy.findToolProxy("shared.example.com", "/other"));
+        }
+    }
+
     private static ToolSetup loadToolSetup(String yaml) throws Exception {
         var def = ToolDef.loadFromStream(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
         return new YamlToolSetup(def);
