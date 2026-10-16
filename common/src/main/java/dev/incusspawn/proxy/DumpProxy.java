@@ -85,14 +85,27 @@ public class DumpProxy {
         }
     }
 
+    /** A handshaken TLS socket to {@code host}, whose certificate must be for that name, not only trusted. */
+    static SSLSocket openUpstream(SSLSocketFactory tls, String host, int port) throws IOException {
+        var socket = (SSLSocket) tls.createSocket(host, port);
+        try {
+            var params = socket.getSSLParameters();
+            params.setEndpointIdentificationAlgorithm("HTTPS");
+            socket.setSSLParameters(params);
+            socket.setSoTimeout(300_000);
+            socket.startHandshake();
+            return socket;
+        } catch (IOException e) {
+            socket.close();
+            throw e;
+        }
+    }
+
     private void handleExchange(HttpMessage request, byte[] bodyBytes,
                                 String originalDump, OutputStream clientOut) throws Exception {
-        var upstreamSocket = (SSLSocket) upstreamTls
-                .createSocket(UPSTREAM_HOST, 443);
-        upstreamSocket.setSoTimeout(300_000);
+        var upstreamSocket = openUpstream(upstreamTls, UPSTREAM_HOST, 443);
 
         try (upstreamSocket) {
-            upstreamSocket.startHandshake();
             var upstreamOut = upstreamSocket.getOutputStream();
             var upstreamIn = upstreamSocket.getInputStream();
 
