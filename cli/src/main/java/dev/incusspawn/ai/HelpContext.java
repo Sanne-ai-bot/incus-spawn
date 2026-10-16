@@ -125,10 +125,10 @@ public class HelpContext {
             sb.append("\n");
             if (img.getParent() != null) sb.append("  parent: ").append(img.getParent()).append("\n");
             if (img.getType() != null) sb.append("  type: ").append(img.getType()).append("\n");
-            if (img.getPackages() != null && !img.getPackages().isEmpty()) {
+            if (!img.getPackages().isEmpty()) {
                 sb.append("  packages: ").append(String.join(", ", img.getPackages())).append("\n");
             }
-            if (img.getTools() != null && !img.getTools().isEmpty()) {
+            if (!img.getTools().isEmpty()) {
                 sb.append("  tools: ").append(img.getTools().stream()
                         .map(t -> t.getName()).collect(Collectors.joining(", "))).append("\n");
             }
