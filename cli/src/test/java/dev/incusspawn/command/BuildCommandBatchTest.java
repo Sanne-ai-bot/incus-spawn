@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
@@ -387,6 +388,26 @@ class BuildCommandBatchTest {
         assertEquals(0, build("--out-of-sync"));
 
         assertEquals(List.of("tpl-g", "tpl-q", "tpl-a"), built);
+    }
+
+    @Test
+    void aTargetWhoseSnapshotClosesAParentCycleIsRefusedBeforeAnythingElse() {
+        // tpl-a was built from tpl-b; then its file was deleted and tpl-b pointed at it (#1443)
+        var a = new ImageDef();
+        a.setName("tpl-a");
+        a.setParent("tpl-b");
+        var snapshot = new BuildSource(Map.of("tpl-a", a), Map.of(), Map.of(), Map.of());
+        daemon.container("tpl-a", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.BUILD_VERSION, NOW,
+                Metadata.BUILD_SOURCE, snapshot.toJson()));
+        extra(List.of("tpl-b", "tpl-a"));
+        // An account the truncated chain could not resolve, which used to be reported instead
+        extraDefs.get("tpl-b").setAccounts(Map.of("github", "nobody-configured"));
+
+        assertEquals(1, build("tpl-a"));
+
+        assertEquals(List.of(), built);
+        assertTrue(stderr.contains("cannot build 'tpl-a': its chain runs into a parent cycle tpl-a → tpl-b → tpl-a"), stderr);
+        assertFalse(stderr.contains("Cannot build:"), stderr);
     }
 
     /** Adds definitions as (name, parent) pairs, in this order; an empty parent is a root. */

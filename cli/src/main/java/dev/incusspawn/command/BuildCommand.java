@@ -168,6 +168,19 @@ public class BuildCommand extends BaseCommand {
                 + " characters, so a template name may have at most " + MAX_TEMPLATE_NAME_LENGTH + ".");
         return true;
     }
+    /**
+     * Whether the chain of {@code imageDef} runs into a parent cycle, which it has then reported.
+     * Loading refuses one, but a build-source snapshot merged in for a target whose file is gone
+     * can close one (#1443), and a build from it would start from a layer that has a parent.
+     */
+    static boolean reportParentCycle(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var cycle = ImageDef.parentCycle(imageDef, defs);
+        if (cycle == null) return false;
+        System.err.println("Error: cannot build '" + shown(imageDef.getName()) + "': its chain runs into a "
+                + shown(cycle) + ". Fix the 'parent:' in one of their definition files; one that has none was"
+                + " brought back from its earlier build, so restore its file or destroy that template.");
+        return true;
+    }
     private static final String INBOX_FAILURE_PATH = "/home/agentuser/inbox/BUILD_FAILURE.txt";
 
     private int buildIndex;
@@ -307,6 +320,12 @@ public class BuildCommand extends BaseCommand {
         }
         var targets = definitionsOf(names, defs);
         if (targets == null) return CommandResult.valueOf(1);
+        // A snapshot just merged can close a parent cycle loading refused (#1443): before any check
+        // or question walks the cut-short chain, and before anything is built from it. Like an
+        // unknown name, one such target builds nothing, not the others named with it.
+        for (var target : targets) {
+            if (reportParentCycle(target, defs)) return CommandResult.valueOf(1);
+        }
         // buildChain may rebuild any ancestor that turns out to be missing or outdated
         var chains = new ArrayList<String>();
         var seen = new HashSet<String>();
