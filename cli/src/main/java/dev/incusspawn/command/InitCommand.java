@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
+import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.McpConfig;
@@ -21,6 +23,7 @@ import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
@@ -148,9 +151,62 @@ public class InitCommand extends BaseCommand {
         for (var line : lines) {
             System.out.println(boxLine(line));
         }
+        for (var line : credentialGapLines()) {
+            System.out.println(boxLine(line));
+        }
         System.out.println(boxLine(""));
         System.out.println(bottomBorder());
         System.out.println();
+    }
+
+    /**
+     * What the closing box says about each credential a known template needs that is still not
+     * configured: init may have skipped one, or failed to verify it, without a word (#1438).
+     * Nothing when everything is configured, or when the definitions cannot be read; the build
+     * warns again either way.
+     */
+    private static List<String> credentialGapLines() {
+        try {
+            var config = SpawnConfig.load();
+            var defs = ImageDef.loadAll(warning -> {});
+            // A deprecated template is on its way out; a credential only it needs is not a gap
+            var current = defs.values().stream().filter(d -> !d.isDeprecated()).map(ImageDef::getName).toList();
+            return credentialGapLines(CredentialCheck.missingByCredential(config, current, defs,
+                    new ToolDefLoader(config.getSearchPaths())), defs);
+        } catch (RuntimeException e) {
+            ClientLog.warn("Missing-credential check skipped: " + e);
+            return List.of();
+        }
+    }
+
+    /**
+     * The lines for {@code missing}: each credential, and the templates {@code isx branch} refuses
+     * without it. Only the topmost are named, those with no ancestor that needs it too, and the
+     * rest are counted, so a credential {@code tpl-dev} needs is not repeated for every template
+     * built on it.
+     */
+    static List<String> credentialGapLines(Map<String, List<String>> missing, Map<String, ImageDef> defs) {
+        if (missing.isEmpty()) return List.of();
+        var lines = new ArrayList<String>(List.of("", "   " + styled(BOLD + YELLOW, "Not configured:")));
+        missing.forEach((credential, templates) -> {
+            var topmost = templates.stream()
+                    .filter(name -> ImageDef.ancestors(defs.get(name), defs).stream()
+                            .noneMatch(ancestor -> templates.contains(ancestor.getName())))
+                    .map(OutputFormat::oneLine)
+                    .toList();
+            var rest = templates.size() - topmost.size();
+            var builtOn = rest == 0 ? "" : " and " + rest + (rest == 1 ? " template" : " templates")
+                    + " built on " + (topmost.size() == 1 ? "it" : "them");
+            var refused = "'isx branch' refuses " + OutputFormat.andList(topmost) + builtOn + ".";
+            var bullet = "• ";
+            for (var line : OutputFormat.wrap(OutputFormat.oneLine(credential), BOX_WIDTH - 6)) {
+                lines.add("   " + bullet + line);
+                bullet = "  ";
+            }
+            for (var line : OutputFormat.wrap(refused, BOX_WIDTH - 6)) lines.add("     " + line);
+        });
+        lines.add("   Re-run 'isx init' to configure " + (missing.size() == 1 ? "it." : "them."));
+        return lines;
     }
 
     /**
