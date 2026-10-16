@@ -235,8 +235,9 @@ public final class InstanceLifecycle {
      * the tool needs no argument beyond the account name.
      *
      * <p>Called from {@code BranchCommand} so a freshly branched instance is right from its
-     * first commit, and again from {@code InstancePrep} so one branched {@code --no-start}, or
-     * re-pointed later, is reconciled on its next use. Both are needed: only the second can
+     * first commit, and again from {@code InstancePrep.readyForUse} (the shell of {@code isx
+     * shell}, {@code isx run} and the TUI) so one branched {@code --no-start}, or re-pointed
+     * later, is reconciled on its next use. Both are needed: only the second can
      * catch a swap on an existing instance, and only the first stops an instance being wrong
      * for as long as nobody happens to run {@code isx shell}.
      *
@@ -259,7 +260,7 @@ public final class InstanceLifecycle {
      * account pins, stamps and network mode are all this looks at.
      */
     public static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance) {
-        reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, BuildOutput::step,
+        reconcileAccountIdentities(incus, name, instance, BuildOutput::step,
                 msg -> System.err.println("Warning: " + msg));
     }
 
@@ -271,6 +272,12 @@ public final class InstanceLifecycle {
     public static void reconcileAccountIdentities(IncusClient incus, String name,
                                                   Consumer<String> progress, Consumer<String> warnings) {
         reconcileAccountIdentities(incus, name, null, SpawnConfig.load(), null, progress, warnings);
+    }
+
+    /** Both of the above: from the caller's read, reporting through sinks. */
+    public static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance,
+                                                  Consumer<String> progress, Consumer<String> warnings) {
+        reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, progress, warnings);
     }
 
     static void reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,

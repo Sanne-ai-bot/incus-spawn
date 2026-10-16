@@ -1894,7 +1894,7 @@ Keep pins them to the account they use now as an explicit choice, before the def
 Removing the default account names its followers the same way.
 For a hand edit nothing can ask, so the proxy's `reload()` logs which instances a changed default moved (`logDefaultChanges`), and `isx account list` shows who follows each default.
 *Safe*: the two things a default change could break are handled as a pin change is.
-GitHub's baked git identity is re-derived for running followers straight away (`refreshIdentities`, the same reconcile `isx account set` runs; stopped ones catch up in `InstancePrep`).
+GitHub's baked git identity is re-derived for running followers straight away (`refreshIdentities`, the same reconcile `isx account set` runs; stopped ones catch up in `InstancePrep.readyForUse` on their next shell).
 A Claude auth mode cannot be re-derived, and `isx account set` refuses such a move while the user chooses.
 But a default change moves instances without asking, so the proxy checks instead.
 `AccountSelection.servingMismatches` compares the account an instance would be served (its pin, or the default it follows) with its `account-identity` stamp, which the registry now reads, and for a tool that cannot rebake it fails the request closed with a message naming an account the instance was built for -- the same rule as a pin to an account that is gone, never a mismatched credential.
@@ -1936,7 +1936,8 @@ A stamp from a build that recorded only the name cannot say whether its token ha
 Child templates are covered by `BuildAccounts.settleIdentities` (from `BuildCommand`), which re-derives an inherited identity that no longer matches after tool setup (before it, a child adding gh to a parent without it would get its identity written first, and gh's setup, finding a `.gitconfig`, would skip its git defaults).
 Otherwise the stamp written at the end of the build would claim the current identity over the parent's `.gitconfig` and hide it from the branch-time reconcile too.
 Since every build stamps every namespace, instances without gh carry a GitHub stamp as well; `GhSetup.rebakeForAccount` does nothing where gh is not installed.
-It runs from every point a pin can change or first take effect: `isx branch --account` after the instance starts, `isx account set` while it is running, and `InstancePrep` on the next `isx shell`/`isx run`, alongside the other `fix*` reconcilers.
+It runs from every point a pin can change or first take effect: `isx branch --account` after the instance starts, `isx account set` while it is running, and `InstancePrep.readyForUse` on the next shell, from `isx shell`, `isx run` or the TUI, after the other `fix*` reconcilers.
+The TUI's shell skipped it until #907, so an account changed on a stopped instance and opened from the TUI pushed as the new account and committed as the old one.
 Reconciling only in `InstancePrep` was not enough.
 The token swaps on the next request, but the identity is baked, so an instance driven over `incus exec`, SSH or an IDE would push as one account and commit as another until someone happened to open a shell.
 A tool that cannot re-derive — Claude, whose variables a running agent has already read — has the swap refused at selection time instead, while the user is still choosing.

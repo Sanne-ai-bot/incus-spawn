@@ -239,7 +239,7 @@ Key design:
   Namespaces that bake nothing return `""` and are freely interchangeable.
   Stamped at build as `user.incus-spawn.account-identity.<ns>`.
   On a re-point, a tool that `canRebakeForAccount()` is asked to fix itself up -- `GhSetup.rebakeForAccount` clears the git identity and asks the API again, which resolves through the proxy and so answers for the new account by itself.
-  `AccountSelection.staleIdentities` maps each stale namespace to the *account* to re-derive for, and `InstanceLifecycle.reconcileAccountIdentities` drives that, stamping back the tool's current identity, and is called from **all three** places a pin can change or take effect: `BranchCommand` after start, `AccountCommand`'s `set` when the instance is running, and `InstancePrep` on the next `isx shell`/`isx run`.
+  `AccountSelection.staleIdentities` maps each stale namespace to the *account* to re-derive for, and `InstanceLifecycle.reconcileAccountIdentities` drives that, stamping back the tool's current identity, and is called from **all three** places a pin can change or take effect: `BranchCommand` after start, `AccountCommand`'s `set` when the instance is running, and `InstancePrep.readyForUse` on the next `isx shell`/`isx run` or TUI shell.
   All three are needed.
   Only the last catches an instance branched `--no-start`, and without the first two an instance used over `incus exec`, SSH or an IDE would keep committing as the template's account for as long as nobody happened to run `isx shell`.
   A tool that cannot (Claude: the mode is in `/etc/profile.d`, which a running agent has already read) has the swap refused by `AccountSelection.incompatibilityReason`.
