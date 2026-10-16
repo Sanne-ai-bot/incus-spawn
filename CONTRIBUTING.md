@@ -19,7 +19,7 @@ To try a change against a real Incus on a disposable Linux machine (a scratch VM
 
 ## Website Development
 
-The project website is hosted on Cloudflare Pages (project `isx`): `.github/workflows/pages.yml` deploys `main` to production and `preview.yml` deploys each PR to its own preview URL. See [docs/WEBSITE.md](docs/WEBSITE.md) for the Cloudflare setup. The build script requires Node.js (for `npx` and `node`). Install it from [nodejs.org](https://nodejs.org/) or via your package manager (`brew install node`, `dnf install nodejs`, `apt install nodejs npm`).
+The project website is hosted on Cloudflare Pages (project `isx`): `.github/workflows/pages.yml` deploys `main` to production and `preview.yml` deploys each PR to its own preview URL. See [docs/dev/WEBSITE.md](docs/dev/WEBSITE.md) for the Cloudflare setup. The build script requires Node.js (for `npx` and `node`). Install it from [nodejs.org](https://nodejs.org/) or via your package manager (`brew install node`, `dnf install nodejs`, `apt install nodejs npm`).
 
 To preview changes locally:
 
@@ -95,7 +95,7 @@ Before the first dev release, these one-time steps are needed:
 
 ### Installing Dev Builds
 
-See [docs/HOMEBREW.md](docs/HOMEBREW.md) and [docs/APT.md](docs/APT.md) for per-platform dev channel instructions. Summary:
+See [docs/dev/HOMEBREW.md](docs/dev/HOMEBREW.md) and [docs/dev/APT.md](docs/dev/APT.md) for per-platform dev channel instructions. Summary:
 
 ```shell
 # macOS (Homebrew)

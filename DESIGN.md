@@ -2557,8 +2557,8 @@ Repos declared in an image definition are cloned into the container during build
 Full network clones select all advertised branches and tags, with the remote's default HEAD or the requested branch/tag checked out.
 This is the former local path's scope, now also used by the network fallback; the old network path initially fetched only one branch.
 The normal broad fetch refspec is retained, while shallow clones keep their existing narrow selection and refspec.
-The selection and cache contracts are specified in [Git preparation](docs/GIT-PREPARATION.md).
-Its [clean-snapshot decision table](docs/GIT-PREPARATION.md#when-and-why-we-use-a-clean-snapshot) explains the build's ready-line labels and when snapshots are reused, updated incrementally, rebuilt or bypassed.
+The selection and cache contracts are specified in [Git preparation](docs/dev/GIT-PREPARATION.md).
+Its [clean-snapshot decision table](docs/dev/GIT-PREPARATION.md#when-and-why-we-use-a-clean-snapshot) explains the build's ready-line labels and when snapshots are reused, updated incrementally, rebuilt or bypassed.
 
 **Explicit host repositories** (`repos[].host-source`, #756 / #1408) export local branches and tags, including unpushed history, through `GitPreparation.prepareHost`.
 The source is an absolute or tilde-expanded host path in a trusted template; project-local templates remain unable to prepare host repositories.
@@ -2724,7 +2724,7 @@ The result is a canonical form like `github.com/org/repo` that matches regardles
 The host agent plans and reviews; instances do the work, with the same isolation and credential injection as any branch.
 
 Managed delegation selects the installed worker agent independently of the MCP client.
-The [Codex worker design](docs/MCP-CODEX-DELEGATION.md) describes agent discovery, durable continuation, adoption, and explicit capability differences.
+The [Codex worker design](docs/dev/MCP-CODEX-DELEGATION.md) describes agent discovery, durable continuation, adoption, and explicit capability differences.
 Existing Claude-only calls retain their defaults; mixed templates default to Claude, and Codex-only templates default to Codex.
 
 **Hand-rolled protocol, measured.**
@@ -3240,7 +3240,7 @@ A larger G1 heap (`MaxRAM=512m`, 128 MB) changes nothing either, so `MaxRAM` sta
 G1 on macOS is also an Oracle GraalVM feature: `native-image` from GraalVM Community Edition, which is what Homebrew's `graalvm` formula installs, stops with "'G1' is not an accepted value".
 So `install.sh --native` would fail on such a Mac. macOS x86_64 has no choice in any case: GraalVM dropped it after 25.0, before G1 reached macOS.
 
-The figures and their conditions are in `docs/PERFORMANCE-NOTES.md`, "G1 on Apple Silicon".
+The figures and their conditions are in `docs/dev/PERFORMANCE-NOTES.md`, "G1 on Apple Silicon".
 
 ### The minimum macOS is set by the build
 
@@ -3271,7 +3271,7 @@ A runner newer than the target is fine: it builds for the older version.
 There is no runtime check in `isx`: on an older macOS, dyld refuses the native binary before any of its code runs, so such a message could never print.
 `install.sh --native` refuses on an older Mac instead (reading the pom's value), where it would otherwise build a binary its own host cannot load; its JVM install is left alone, since that still runs there, unsupported.
 
-Raising the minimum is changing the pom value, `MACOS_MIN` and the docs that state it (README, `docs/HOMEBREW.md`); the tests name `MACOS_MIN` if it is left behind, not the prose.
+Raising the minimum is changing the pom value, `MACOS_MIN` and the docs that state it (README, `docs/dev/HOMEBREW.md`); the tests name `MACOS_MIN` if it is left behind, not the prose.
 
 ### CLI latency baseline: native vs JVM
 

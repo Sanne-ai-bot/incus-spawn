@@ -231,7 +231,7 @@ Measurements and their limits are recorded with the raw dataset linked from `ben
 Build diagnostics report guest access checks, remote selection, snapshot validation, reference selection, incremental fetching, cloning, verification and publication durations alongside guest-copy time.
 Credential-bearing command lines are not included in failure diagnostics.
 
-The [incremental Quarkus measurements](../bench/data/git-incremental-snapshots-2026-10-13.json) use Git 2.56.0, four packing threads, loopback transport, tmpfs and a warm filesystem cache.
+The [incremental Quarkus measurements](../../bench/data/git-incremental-snapshots-2026-10-13.json) use Git 2.56.0, four packing threads, loopback transport, tmpfs and a warm filesystem cache.
 The initial fixture contains 1,097,673 selected objects, with private objects mixed into the host's packs.
 Each of the two upstream advances adds one commit without changing its tree; new file contents would add transfer and validation work.
 
@@ -247,7 +247,7 @@ The retained snapshot is about 310 MiB in this fixture.
 These are small-sample JVM host measurements excluding fixture setup, Incus, guest access checks, guest copying and priming.
 They are not a controlled direct comparison with #1400's earlier measurements on a different filesystem.
 
-The [historical pre-incremental dataset](../bench/data/git-clean-snapshots-2026-10-13.json) recorded 20.80 seconds for a one-commit refresh, with about 13.3 seconds in full integrity verification.
+The [historical pre-incremental dataset](../../bench/data/git-clean-snapshots-2026-10-13.json) recorded 20.80 seconds for a one-commit refresh, with about 13.3 seconds in full integrity verification.
 That dataset also includes the former preliminary host-pack copy; source fingerprints identify both measured implementations.
 The current approach still retains a full clean payload and hashes its bytes, but ordinary upstream advances no longer repeat full-history packing and object validation.
 

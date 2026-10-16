@@ -17,9 +17,9 @@ To measure changes to a disposable upstream fixture, pass `--cache /tmp/isx-meas
 
 The [incremental measurements](data/git-incremental-snapshots-2026-10-13.json) use the same Quarkus fixture size with direct borrowing: initial preparation takes 21.52 s, two successive one-commit advances take 0.80 s, and unchanged reuse takes 0.22–0.27 s. These commits leave the tree unchanged; larger updates add transfer and validation cost. The dataset records source fingerprints, pack counts and phase timings; physical inventory and full-fsck audits run outside the measurement.
 
-The [initial clean-snapshot measurements](data/git-clean-snapshots-2026-10-13.json) use a controlled Quarkus fixture with 1,097,673 objects; they predate removal of the preliminary host-pack copy, as identified by their recorded source revision. The [preparation design](../docs/GIT-PREPARATION.md) describes selection, retention and platform limits. The certificate/bitmap alternative has its separate measurements in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400).
+The [initial clean-snapshot measurements](data/git-clean-snapshots-2026-10-13.json) use a controlled Quarkus fixture with 1,097,673 objects; they predate removal of the preliminary host-pack copy, as identified by their recorded source revision. The [preparation design](../docs/dev/GIT-PREPARATION.md) describes selection, retention and platform limits. The certificate/bitmap alternative has its separate measurements in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400).
 
-The [dissociation regression note](../docs/GIT-DISSOCIATE-REVIEW.md) explains why preparation uses a bare clone and how to run `git-dissociate-regression.py` against older and fixed Git versions.
+The [dissociation regression note](../docs/dev/GIT-DISSOCIATE-REVIEW.md) explains why preparation uses a bare clone and how to run `git-dissociate-regression.py` against older and fixed Git versions.
 
 ## Prerequisites
 

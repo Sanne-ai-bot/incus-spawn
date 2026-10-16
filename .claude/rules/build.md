@@ -162,7 +162,7 @@ Bare dissociation avoids older Git's commit-graph/checkout bug, and rebuilt outp
 Only the clean prepared bare repository is mounted for `clone --no-hardlinks`; guest SHA-256 checks precede priming, and a failed check falls back to the remote.
 Both prepared and network full clones start with all advertised branches and tags and a broad future-fetch refspec.
 Shallow clones bypass the snapshot cache and report their depth plus guest/attach/detach timings.
-See [Git preparation](../../docs/GIT-PREPARATION.md) for the selection, retention and failure contracts.
+See [Git preparation](../../docs/dev/GIT-PREPARATION.md) for the selection, retention and failure contracts.
 Explicit `host-source` entries use `GitPreparation.prepareHost`: local branches/tags select an offline pack, with no remote authentication, refresh or fallback.
 They reuse the prepared copy and verification path, retain all branches locally, and remove the temporary origin.
 Only trusted templates may export host repositories, and sources must have complete history.

@@ -17,7 +17,7 @@ Managed delegation supports Claude Code and Codex through the closed `DelegateAg
 `list_templates.delegate_agents` exposes installed agents, capabilities, permissions and configuration refusals; explicit `delegate.agent` selects one, otherwise Claude wins when installed.
 `send_message` keeps the task's recorded agent, including after adoption and idempotent replay.
 `send_message` and `delegate(instance=...)` re-check the instance's template with `TemplatePolicy.requireLineage` to select the agent, so follow-ups are refused once that template is unapproved, project-local or has no definition.
-The [Codex worker design](../../docs/MCP-CODEX-DELEGATION.md) describes the lifecycle and capability differences.
+The [Codex worker design](../../docs/dev/MCP-CODEX-DELEGATION.md) describes the lifecycle and capability differences.
 Codex runs through the bundled guest Node runner (`mcp/codex-runner.cjs`, included in native resources), which saves the thread ID while running and publishes outcome and report files before the exit record.
 Task identity is `1 <agent>` in the `identity` file; absence means legacy Claude, while an unknown version or agent refuses continuation.
 The keyed creation stamp `mcp-delegate-agent` preserves selection before the first task exists and is cleared on copies like other MCP stamps.

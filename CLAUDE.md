@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Full Git clone acceleration is specified in [Git preparation](docs/GIT-PREPARATION.md): remote-authoritative selection, bare reference/dissociation, immutable bounded clean snapshots and reader leases.
+Full Git clone acceleration is specified in [Git preparation](docs/dev/GIT-PREPARATION.md): remote-authoritative selection, bare reference/dissociation, immutable bounded clean snapshots and reader leases.
 Borrow host objects directly, without a preliminary pack copy; a failed reference attempt retries once from the remote before publication.
 Refresh verified snapshots incrementally when their old history remains selected, sharing owned packs and validating new objects; removed history and pack compaction use a clean rebuild.
 Never run build-time fetch or maintenance in a user checkout, or mount its full object store for a full clone.
@@ -118,7 +118,7 @@ Three Maven modules under a parent POM:
   On x86_64 the default `x86-64-v3` omits AES/CLMUL: 79 MB/s vs ~3100 MB/s for AES-256-GCM, with byte-identical binary size and ~11% faster startup, so it costs nothing here (x86_64 measurements; the CLI was not measured on aarch64).
 - **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`).
   Depends on common.
-  Native image: G1 GC on Linux and serial GC on macOS (measured: G1 buys nothing on Apple Silicon, see `docs/PERFORMANCE-NOTES.md`), `-O3` (throughput-optimized, enables ML-inferred PGO), on x86_64 `-march=haswell`, on aarch64 `-march=armv8.1-a+aes`.
+  Native image: G1 GC on Linux and serial GC on macOS (measured: G1 buys nothing on Apple Silicon, see `docs/dev/PERFORMANCE-NOTES.md`), `-O3` (throughput-optimized, enables ML-inferred PGO), on x86_64 `-march=haswell`, on aarch64 `-march=armv8.1-a+aes`.
   The `-march` value is set by arch-gated Maven profiles in `proxy/pom.xml` (one per arch: an x86 `-march` fails an aarch64 build and vice versa).
   x86_64: GraalVM's default `-march=x86-64-v3` omits AES and CLMUL, so the image cannot use AES-NI/GHASH intrinsics and TLS falls back to software AES -- measured 73 MB/s vs 960 MB/s serving a cached Maven artifact (~13x).
   `haswell` costs no hardware support: AES-NI predates the v3 baseline by three years.
@@ -257,7 +257,7 @@ No copy inherits the stamp and the MCP path refuses it.
 Every start registers the server in that instance's Claude Code, or removes it from one without the stamp, inside the exec that delivers the secret (`McpClientRegistration`, #1182), so a copy loses it on its first start.
 See `.claude/rules/mcp.md` and DESIGN.md "MCP server".
 Managed delegation selects `claude` or `codex`, exposes installed agents through `list_templates.delegate_agents`, and persists the selected agent with each task.
-See [MCP delegation to Codex workers](docs/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation.
+See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation.
 
 **Native image: host paths belong in the run-time-initialized classes.**
 Quarkus initializes application classes at image-build time unless they are listed in `--initialize-at-run-time`, and Linux native builds run as **root inside the GraalVM builder container**.
