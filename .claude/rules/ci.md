@@ -177,7 +177,7 @@ The `tpl-minimal` base image is Fedora with only git, curl, which, procps-ng, an
 
 # Secret Scanning
 
-`.github/workflows/gitleaks.yml` runs on every push and on PRs targeting `main` with `gitleaks/gitleaks-action@v2`, in two independent jobs.
+`.github/workflows/gitleaks.yml` runs on every push and on PRs targeting `main` with `gitleaks/gitleaks-action@v3`, in two independent jobs.
 It scans **the commits in that push or PR**, not the repository's full history -- the `fetch-depth: 0` checkout is there so the action can resolve the range, not so it re-scans everything.
 The difference matters: a credential committed before this workflow existed, or in any range it did not scan, is not caught by it.
 The stock ruleset's `generic-api-key` captures the type name after a Java `PrivateKey` parameter (`PrivateKey key, X509Certificate cert` in `CertificateAuthority.java`) as if it were a secret, so the root `.gitleaks.toml` allowlists the exact captured value `^X509Certificate$`.
