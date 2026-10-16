@@ -18,14 +18,14 @@ class BranchModalTest {
 
     private static BranchModal dialog(MachineType type) {
         return new BranchModal(new ModalRenderer(THEME), THEME, "tpl-dev", "dev-1",
-                new BranchFlow.Defaults(type, false, false, null),
+                new BranchFlow.Defaults(type, false, false, null, null),
                 new BranchAccountChoices(new ModalRenderer(THEME), THEME, List.of()));
     }
 
     /** A VM's dialog with its limits given, rather than this host's defaults. */
     private static BranchModal vmDialog(BranchModal.VmLimits limits) {
         return new BranchModal(new ModalRenderer(THEME), THEME, "tpl-dev", "dev-1",
-                new BranchFlow.Defaults(MachineType.VM, false, false, null),
+                new BranchFlow.Defaults(MachineType.VM, false, false, null, null),
                 new BranchAccountChoices(new ModalRenderer(THEME), THEME, List.of()), limits);
     }
 
