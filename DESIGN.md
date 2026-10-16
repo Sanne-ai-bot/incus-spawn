@@ -1529,7 +1529,7 @@ Unscoped collisions between tools are warned at startup (exact-domain conflicts 
 A `proxy:` entry also declares `placeholders:` -- each an `env` variable the tool reads its credential from and the `prefix` its value must start with -- which every start fills with the instance's proof token for the entry's namespace (see "Proof tokens" below).
 A YAML tool that exports a static placeholder through `env:` declares the same variable here (`typesafe.yaml` does).
 A proxied namespace with no usable placeholder declaration warns once per tool and namespace on proxy configuration load and during tool validation.
-It fails closed for every tool sharing its domains, so the warning names the affected domains and explains how to declare and export the proof variable.
+Its own entries fail closed, so the warning names the affected domains and explains how to declare and export the proof variable.
 
 **Dynamic credential setup:** `isx init` builds its credential menu dynamically from tool setups via `ToolDefLoader.allToolSetups()`.
 Tools with proxy configuration are discovered, filtered by `ToolSetup.hasOwnCredentials()` (a tool whose `proxy()` configuration borrows another tool's credential, like `CopilotSetup` reusing `github.token`, overrides this to `false` so it isn't offered as a separately "configurable" entry), and sorted (known tools first: claude, gh, bob, codex; then alphabetically).
@@ -1732,7 +1732,10 @@ Single-tool validation checks only the tool's own namespace, since an absolute c
 An unscoped credential is diagnosed with instructions to set `config-namespace` before declaring placeholders.
 Claude accepts its API-key, OAuth and Vertex prefixes through either `Authorization` or `x-api-key`, independently of the outer account's mode.
 HTTP and WebSocket requests share `MitmProxy.authorize`, before account resolution, compatibility checks, Vertex translation, token acquisition, injection or inheritance substitution.
-Every credential namespace declared for the destination must prove itself.
+The entry a request selects is injected only when the request proved every namespace that entry spends (`ResolvedToolProxy.namespaces`), checked at injection against the per-account routing that chose it (#1423).
+Every proof the request carries for the destination must verify, but tools sharing a domain under different path scopes each need only their own: requiring every namespace on the domain blocked a request to one tool's path for lack of another tool's proof.
+Selecting the entry before authorization was rejected, because the entry depends on the account: a pinned account that does not resolve a scoped entry falls back to another tool's, which the check at injection refuses without that tool's proof.
+Claude's domains still require every namespace their carriers declare, and the `inherit` swap covers only proven namespaces.
 The authorization and account resolution use the same configuration snapshot even if a reload finishes during a registry refresh.
 A missing, static, malformed, stale, cross-instance or cross-namespace proof preserves incoming authentication, host, path, query and body semantics.
 An unknown address receives no injected defaults, including host-originated traffic; host tools must use their own credentials.

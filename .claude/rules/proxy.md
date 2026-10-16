@@ -134,7 +134,9 @@ Key design:
   Verification and account resolution use one configuration snapshot across an asynchronous refresh.
   Missing or incorrect proofs relay unchanged, including authentication and destination semantics; unknown addresses never get defaults.
   Valid proofs still obey account selection, including missing-account failures.
-  A proxied namespace without declared placeholders produces a warning once per tool and namespace on configuration load; it blocks injection for every tool sharing that domain.
+  A proxied namespace without declared placeholders produces a warning once per tool and namespace on configuration load; it blocks injection for its own entries.
+  `authorize` verifies every proof the request carries for the domain, without requiring one per namespace there (#1423), except on Claude's domains; `RequestContext.proven` holds the namespaces that verified, and `injectHeaders`/`injectWebSocketAuth` inject the selected entry only when they cover `ResolvedToolProxy.namespaces()` (`provesOrWarn`), so a fallback to another tool's entry or another namespace's proof never spends a credential.
+  The `inherit` swap covers only proven namespaces: a proof in a header no carrier reads is never replaced by the parent's.
   Single-tool validation checks its own namespace, leaving borrowed declarations to the proxy's combined check; an unscoped credential needs `config-namespace` before placeholders.
   HTTP and WebSocket account refusals log the instance and reason, including the missing pinned account.
   Unexpected credential-refusal and WebSocket setup failures log the exception class only, since exception messages can contain authentication values.

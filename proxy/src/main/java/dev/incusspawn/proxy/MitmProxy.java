@@ -252,11 +252,26 @@ public class MitmProxy {
      *               (for {@link ApiActivity}); null for any other caller
      * @param flow   the request's traffic in {@link ApiActivity}, which a model call ends with;
      *               null where nothing counts it
+     * @param proven the namespaces whose proofs the request carried and verified; an entry is
+     *               injected only when they include all of its own (#1423)
      */
     record RequestContext(String domain, InstanceRegistry.Caller caller,
                           ProxyCredentials creds, ToolProxyRouting routing,
                           boolean usesDefaultCredentials, ApiActivity.Flow flow,
-                          InheritedProof.Swap inherited, boolean authorized) {}
+                          InheritedProof.Swap inherited, Set<String> proven) {
+
+        boolean authorized() {
+            return !proven.isEmpty();
+        }
+
+        /** Whether the request proved every namespace {@code entry} spends. */
+        boolean proves(ResolvedToolProxy entry) {
+            return !entry.namespaces().isEmpty() && proven.containsAll(entry.namespaces());
+        }
+    }
+
+    /** A caller {@link #authorize} verified, with the namespaces its proofs verified for. */
+    private record Proof(InstanceRegistry.Caller caller, Set<String> namespaces) {}
 
     /**
      * Credentials plus the routing that indexes them, cached together per selection; or, for
@@ -358,14 +373,14 @@ public class MitmProxy {
     }
 
     /**
-     * Account resolution in isolation, for tests. A null caller selects the configured defaults
-     * here; live request handlers use {@link #authorize} before calling the private overload,
+     * Account resolution in isolation, for tests: the context proves nothing, so it injects
+     * nothing. A null caller selects the configured defaults here; live request handlers use {@link #authorize} before calling the private overload,
      * and never reach account resolution for an unknown address or an unproven request.
      *
      * <p>Never blocks: reads the registry snapshot and schedules a refresh when it is stale.
      */
     RequestContext contextFor(String domain, String sourceAddress) {
-        return contextFor(configState, domain, callerAt(sourceAddress), null);
+        return contextFor(configState, domain, callerAt(sourceAddress), Set.of(), null);
     }
 
     /**
@@ -386,7 +401,8 @@ public class MitmProxy {
         return caller;
     }
 
-    private RequestContext contextFor(ConfigState state, String domain, InstanceRegistry.Caller caller, ApiActivity.Flow flow) {
+    private RequestContext contextFor(ConfigState state, String domain, InstanceRegistry.Caller caller,
+                                      Set<String> proven, ApiActivity.Flow flow) {
         var instance = caller == null ? null : caller.accounts();
 
         if (instance != null && !instance.bakedIdentities().isEmpty()) {
@@ -394,7 +410,7 @@ public class MitmProxy {
         }
         if (instance == null || instance.usesDefaults()) {
             return new RequestContext(domain, caller, state.credentials(), state.routing(), true, flow,
-                    inheritedProofs(state, state.credentials(), domain), true);
+                    inheritedProofs(state, state.credentials(), domain, proven), proven);
         }
         var selection = instance.accountsByNamespace();
         // Plain get() first: this runs on the event loop for every intercepted request, and
@@ -412,27 +428,29 @@ public class MitmProxy {
         }
         if (bundle.unknown() != null) throw bundle.unknown();
         return new RequestContext(domain, caller, bundle.creds(), bundle.routing(), false, flow,
-                inheritedProofs(state, bundle.creds(), domain), true);
+                inheritedProofs(state, bundle.creds(), domain, proven), proven);
     }
 
     /**
      * The swap that presents the parent instance's proofs for the namespaces {@code creds}
-     * inherit and a request to {@code domain} spends (#1110), or null for none. The parent's
+     * inherit, a request to {@code domain} spends and the caller {@code proven} (#1110), or null
+     * for none. The parent's
      * secret is the one read last, off the event loop ({@link #parentSecret}). Without one this
      * isx is not running nested, and the request is refused as for a missing account.
      */
-    private InheritedProof.Swap inheritedProofs(ConfigState state, ProxyCredentials creds, String domain) {
+    private InheritedProof.Swap inheritedProofs(ConfigState state, ProxyCredentials creds, String domain,
+                                                Set<String> proven) {
         var inherited = creds.inheritedNamespaces();
         if (inherited.isEmpty()) return null;
         var namespaces = dev.incusspawn.config.AccountSelection.namespacesForDomain(state.namespacesByDomain(), domain)
-                .stream().filter(inherited::contains).toList();
+                .stream().filter(inherited::contains).filter(proven::contains).toList();
         if (namespaces.isEmpty()) return null;
         var secret = parentSecret();
         if (secret == null) {
             throw new dev.incusspawn.config.AccountResolver.UnknownAccountException(namespaces.getFirst(),
                     dev.incusspawn.config.AccountResolver.INHERIT, InheritedProof.notNestedMessage(namespaces.getFirst()));
         }
-        // Reached only after the caller has proved every namespace this destination can spend.
+        // Never a namespace the caller did not prove: its own proof is what the parent's replaces.
         return InheritedProof.Swap.of(secret, namespaces, state.placeholders());
     }
 
@@ -1210,9 +1228,9 @@ public class MitmProxy {
     }
 
     private void serveProvenRequest(ConfigState state, HttpServerRequest clientReq, String domain,
-                                     InstanceRegistry.Caller caller, ApiActivity.Flow flow, long started) {
+                                     Proof proof, ApiActivity.Flow flow, long started) {
         try {
-            handleApiRequest(clientReq, contextFor(state, domain, caller, flow), started);
+            handleApiRequest(clientReq, contextFor(state, domain, proof.caller(), proof.namespaces(), flow), started);
         } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
                  | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
             ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + refusal(e));
@@ -1243,20 +1261,28 @@ public class MitmProxy {
     private Future<Void> proofRefresh;
     private final java.util.concurrent.atomic.AtomicLong refusedInjections = new java.util.concurrent.atomic.AtomicLong();
 
-    /** The only entry to account-dependent handling, shared by HTTP and WebSockets. */
-    private Future<InstanceRegistry.Caller> authorize(ConfigState state, String domain, String address, io.vertx.core.MultiMap headers) {
+    /**
+     * The only entry to account-dependent handling, shared by HTTP and WebSockets. Every proof
+     * the request carries for the domain must verify, but it need not carry one for every
+     * namespace there: injection then checks the entry it selects against those it proved
+     * ({@link RequestContext#proves}), so tools sharing a domain under different path scopes
+     * each need only their own (#1423). Claude's domains still need all of theirs.
+     */
+    private Future<Proof> authorize(ConfigState state, String domain, String address, io.vertx.core.MultiMap headers) {
         var registry = instanceRegistry;
         var presented = state.proofCarriers().read(domain, headers::getAll);
-        var digests = presented.digests();
-        if (digests.isEmpty()) return Future.succeededFuture(null);
-        if (registry == null || digests.values().stream().anyMatch(List::isEmpty)) {
+        if (presented.digests().isEmpty()) return Future.succeededFuture(null);
+        var offered = ANTHROPIC_DOMAINS.contains(domain) ? presented.digests()
+                : presented.digests().entrySet().stream().filter(e -> !e.getValue().isEmpty())
+                        .collect(java.util.stream.Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        if (registry == null || offered.isEmpty() || offered.values().stream().anyMatch(List::isEmpty)) {
             refusedProof(address, presented);
             return Future.succeededFuture(null);
         }
-        var caller = registry.prove(address, digests);
-        if (caller != null && !registry.isStale()) return Future.succeededFuture(caller);
+        var caller = registry.prove(address, offered);
+        if (caller != null && !registry.isStale()) return Future.succeededFuture(new Proof(caller, offered.keySet()));
         var refreshed = refreshProofs(registry);
-        return refreshed.map(done -> provenOrWarn(registry, address, presented))
+        return refreshed.map(done -> provenOrWarn(registry, address, presented, offered))
                 .recover(error -> {
                     refusedProof(address, presented);
                     return Future.succeededFuture(null);
@@ -1307,11 +1333,35 @@ public class MitmProxy {
         if (proofRefresh == promise.future()) proofRefresh = null;
     }
 
-    private InstanceRegistry.Caller provenOrWarn(InstanceRegistry registry, String address,
-                                                  ProofCarriers.Presented presented) {
-        var caller = registry.isStale() ? null : registry.prove(address, presented.digests());
-        if (caller == null) refusedProof(address, presented);
-        return caller;
+    private Proof provenOrWarn(InstanceRegistry registry, String address, ProofCarriers.Presented presented,
+                               Map<String, List<String>> offered) {
+        var caller = registry.isStale() ? null : registry.prove(address, offered);
+        if (caller == null) {
+            refusedProof(address, presented);
+            return null;
+        }
+        return new Proof(caller, offered.keySet());
+    }
+
+    /**
+     * Whether {@code entry} may be injected into {@code ctx}'s request: only when it proved the
+     * entry's own namespaces. Otherwise the request is relayed with its own authentication, as
+     * for a missing proof: another namespace's proof never spends this one's credential.
+     */
+    private boolean provesOrWarn(RequestContext ctx, ResolvedToolProxy entry) {
+        if (ctx.proves(entry)) return true;
+        refusedInjections.incrementAndGet();
+        var caller = ctx.caller() == null ? "an unknown caller" : "instance '" + ctx.caller().accounts().instanceName() + "'";
+        if (refusedProofWarnings.shouldLog(caller + ":" + entry.toolName(), System.nanoTime())) {
+            ProxyLog.warn(entry.namespaces().isEmpty()
+                    ? "Tool '" + entry.toolName() + "' references no configuration on " + ctx.domain()
+                            + ", so no proof can authorize its credential; relaying unchanged for " + caller + "."
+                    : "Credential proof for tool '" + entry.toolName() + "' (" + String.join(", ", entry.namespaces())
+                            + ") missing from " + caller + " on " + ctx.domain() + "; relaying unchanged."
+                            + " Send that tool's credential variable with the requests it serves;"
+                            + " a tool without proxy.placeholders cannot.");
+        }
+        return false;
     }
 
     private void refusedProof(String address, ProofCarriers.Presented presented) {
@@ -1423,7 +1473,8 @@ public class MitmProxy {
             authorize(state, domain, address, clientWs.headers()).onComplete(result -> {
                 try {
                     var proven = result.succeeded() ? result.result() : null;
-                    context.set(proven == null ? passthroughContext(domain, callerAt(address), flow) : contextFor(state, domain, proven, flow));
+                    context.set(proven == null ? passthroughContext(domain, callerAt(address), flow)
+                            : contextFor(state, domain, proven.caller(), proven.namespaces(), flow));
                     status.complete(101);
                 } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
                          | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
@@ -1439,7 +1490,7 @@ public class MitmProxy {
 
     private RequestContext passthroughContext(String domain, InstanceRegistry.Caller caller, ApiActivity.Flow flow) {
         return new RequestContext(domain, caller, new ProxyCredentials("", "", false, "", "", List.of()),
-                buildRouting(List.of(), List.of(), false), false, flow, null, false);
+                buildRouting(List.of(), List.of(), false), false, flow, null, Set.of());
     }
 
     private void handleWebSocketUpgrade(ServerWebSocket clientWs, RequestContext ctx, ApiActivity.Flow flow) {
@@ -1583,7 +1634,7 @@ public class MitmProxy {
             }
         } else {
             var tp = findToolProxy(ctx.routing(), domain, options.getURI());
-            if (tp != null) {
+            if (tp != null && provesOrWarn(ctx, tp)) {
                 var headerName = tp.headerName();
                 var headerValue = tp.computeHeaderValue();
                 if (headerName != null && headerValue != null) {
@@ -2058,7 +2109,7 @@ public class MitmProxy {
             }
         } else {
             var tp = findToolProxy(ctx.routing(), domain, upReq.getURI());
-            if (tp != null) {
+            if (tp != null && provesOrWarn(ctx, tp)) {
                 var headerName = tp.headerName();
                 var headerValue = tp.computeHeaderValue();
                 if (headerName != null && headerValue != null) {

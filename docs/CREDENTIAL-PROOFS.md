@@ -110,7 +110,7 @@ Custom tools must declare `proxy.placeholders` and export the credential variabl
 The proxy logs missing declarations when loading configuration, and tool validation warns about them.
 Single-tool validation checks its own namespace; borrowed namespaces are checked against all loaded tools when the proxy loads configuration.
 A top-level credential without a namespace needs `config-namespace` and relative config paths before placeholders can be declared.
-Without a declaration, the namespace blocks credential injection for every tool sharing its domains.
+Without a declaration, the namespace's own entries are never injected; another tool sharing its domains still is, for requests that select that tool's entry.
 Request warnings are deduplicated and limited to 256 caller/namespace combinations in a five-minute window, so a burst cannot permanently silence later diagnostics.
 They are emitted only for requests claiming an isx proof or placeholder; an ordinary independent credential does not produce a warning.
 Account refusals retain their known reason.

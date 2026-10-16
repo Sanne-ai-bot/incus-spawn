@@ -4,18 +4,33 @@ import dev.incusspawn.tool.ToolDef;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * A fully resolved tool proxy entry ready for the MITM proxy.
  * Contains the domain, auth rule, and actual configuration values
  * (read from config.yaml, not placeholder definitions).
+ *
+ * @param namespaces the credential namespaces a request must prove before this entry's
+ *                   credential is injected ({@link ToolProxyResolver#namespacesOf}); with none it
+ *                   never is
  */
 public record ResolvedToolProxy(
         String toolName,
         String domain,
         ToolDef.AuthDef auth,
-        Map<String, String> configValues
+        Map<String, String> configValues,
+        Set<String> namespaces
 ) {
+
+    public ResolvedToolProxy {
+        namespaces = Set.copyOf(namespaces);
+    }
+
+    /** An entry no proof authorizes, for lookup alone. */
+    public ResolvedToolProxy(String toolName, String domain, ToolDef.AuthDef auth, Map<String, String> configValues) {
+        this(toolName, domain, auth, configValues, Set.of());
+    }
 
     /**
      * Return the HTTP header name to set.

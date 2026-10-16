@@ -62,7 +62,7 @@ class ProofCarriersTest {
         assertEquals(List.of(), carriers.read("custom.example", name -> List.of("Bearer " + GH)).digests().get(""));
     }
 
-    @Test void missingPlaceholdersWarnOncePerNamespaceAndKeepSharedDomainsClosed() throws Exception {
+    @Test void missingPlaceholdersWarnOncePerNamespaceAndProveNothing() throws Exception {
         var tool = new YamlToolSetup(Jjq.toolDef("""
                 name: custom
                 proxy:

@@ -156,7 +156,7 @@ Each start fills credential placeholders with stable per-instance namespace proo
 A protected host key and a public random generation derive the credential seed; ordinary starts keep it, while branches and `isx account reset-proofs` replace it.
 The seed is separate from the rotating MCP secret and is delivered to `/run/isx/credential-secret`.
 Which variables carry them is declared on the tool's `proxy:` entry (`placeholders:`).
-Missing declarations warn on proxy configuration load and during tool validation, since they block injection for every tool sharing the affected domains.
+Missing declarations warn on proxy configuration load and during tool validation, since they block injection for that namespace's entries.
 Single-tool validation checks its own namespace; the proxy checks borrowed namespaces against all loaded tools.
 The proxy checks address and namespace proof before account resolution, HTTP or WebSocket injection, Vertex translation or `inherit` substitution (#1107).
 Missing or incorrect proofs preserve the incoming authentication and destination; unknown addresses get no defaults.

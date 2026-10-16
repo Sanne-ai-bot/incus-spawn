@@ -1028,7 +1028,7 @@ A tool borrowing a namespace through an absolute `config-path`, such as `github.
 Install the tool supplying those declarations and send its current proof with each request.
 The proxy checks declarations across all loaded tools and warns if the borrowed namespace has none.
 An unscoped top-level credential needs a `config-namespace` and relative config paths before it can declare placeholders.
-If another tool shares that domain, its requests must also prove this namespace, so the missing declaration blocks injection for it too.
+Another tool sharing that domain is not affected: a request needs only the proofs of the entry it selects.
 Requests without valid proofs are forwarded with their own authentication unchanged.
 
 Three auth types are supported:
@@ -1126,8 +1126,9 @@ A prefix matches whole path segments, so `/api` does not match `/apis`.
 When two tools register unscoped entries for the same domain, the first one loaded wins and a warning is logged.
 Trailing slashes in prefixes are normalized (`/mcp/` is treated as `/mcp`), and a root scope of `/` matches every path.
 Each prefix is a literal path starting with `/`, without a query, wildcard, whitespace, empty segment or `.`/`..` segment; a tool definition with any other is skipped with a warning when definitions load.
-When two tools with different credential namespaces share a domain, credential proof authorization currently requires proofs for all namespaces registered on that domain, not only the one selected by path.
-A single tool scoping paths on a domain it alone claims is not affected.
+When tools with different credential namespaces share a domain, a request needs only the proof of the entry its path selects; a proof it does carry for another namespace must still be valid.
+This needs distinct placeholder prefixes: when two such tools send their proofs in the same header under the same prefix, the proxy cannot tell which namespace a proof is for, and a request must carry both.
+An entry is never injected for a request that did not prove its own namespace: with an `/mcp` request carrying only the other tool's proof, or one that falls back to an unscoped entry of another tool, the request is relayed with its own authentication and the proxy logs a warning.
 
 Configuration entries can also use `value` for hardcoded literals (no prompt during `isx init`) and `type: confirm` for yes/no prompts like license acceptance.
 

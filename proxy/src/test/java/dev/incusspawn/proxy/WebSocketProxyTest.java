@@ -135,7 +135,7 @@ class WebSocketProxyTest {
         openaiAuth.setType("bearer");
         openaiAuth.setToken("${token}");
         var toolProxies = List.of(new ResolvedToolProxy(
-                "codex", "api.openai.com", openaiAuth, Map.of("token", "sk-real-openai-key")));
+                "codex", "api.openai.com", openaiAuth, Map.of("token", "sk-real-openai-key"), java.util.Set.of("openai")));
         var credentials = new ProxyCredentials(
                 "", "", false, "", "", toolProxies);
         proxy = new MitmProxy(serverVertx, "127.0.0.1", 0, 0,
