@@ -73,6 +73,8 @@ So are image definitions on a parent cycle (#1443), found once every layer is lo
 So are tool definitions refused at load because a credential namespace they name is not an identifier (`ToolDefValidator.invalidNamespace`).
 `isx build` refuses while any exist.
 The skipped file's name is unknown or unusable, so building would silently fall back to a lower layer or the existing template's build-source snapshot.
+A build-source snapshot merged in after load (`isx build`, the TUI's `ListingLoader`) can still close one, so `ImageDef.ancestors` (and `chain`) also stops before a layer it has already seen, warning through `Warnings` once per cycle (named from its least template, so every walk into it gives the same line).
+Walk a parent chain through `ancestors` or `chain` so that guard covers it; a hand-written `getParent()` loop or recursion needs its own visited set (`BuildCommand.definitionChain`, `ActionResolver`, `DiskUsageModel`).
 `YamlErrors.friendly()` names the offending field for shape mismatches (list vs. single value vs. mapping), with the line jjq reports on the binding failure.
 
 Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (DESIGN.md "jjq rather than Jackson"):

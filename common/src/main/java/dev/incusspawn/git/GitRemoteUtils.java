@@ -195,11 +195,9 @@ public final class GitRemoteUtils {
             if (templateName.isEmpty()) return repos;
 
             var allDefs = ImageDef.loadAll();
-            var current = allDefs.get(templateName);
-            while (current != null) {
-                repos.addAll(current.getRepos());
-                if (current.isRoot() || current.getParent() == null) break;
-                current = allDefs.get(current.getParent());
+            var leaf = allDefs.get(templateName);
+            if (leaf != null) {
+                for (var current : ImageDef.chain(leaf, allDefs).reversed()) repos.addAll(current.getRepos());
             }
         } catch (Exception e) {
             // Instance might not have parent metadata — that's fine

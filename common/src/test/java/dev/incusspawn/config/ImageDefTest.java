@@ -709,6 +709,30 @@ class ImageDefTest {
     }
 
     @Test
+    void aCycleClosedAfterLoadStopsTheChainWalk() {
+        // A build-source snapshot merged in after load (isx build, the TUI) can bring back tpl-a,
+        // whose definition file is gone, while the loaded tpl-b now names it as parent (#1443)
+        var a = new ImageDef();
+        a.setName("tpl-a");
+        a.setParent("tpl-b");
+        var b = new ImageDef();
+        b.setName("tpl-b");
+        b.setParent("tpl-a");
+        var defs = Map.of("tpl-a", a, "tpl-b", b);
+        var warnings = new java.util.ArrayList<String>();
+
+        try (var ignored = dev.incusspawn.Warnings.redirect(new dev.incusspawn.Warnings.Channel(warnings::add))) {
+            assertEquals(List.of(b), ImageDef.ancestors(a, defs));
+            assertEquals(List.of(b, a), ImageDef.chain(a, defs));
+            assertEquals(List.of(a, b), ImageDef.chain(b, defs));
+        }
+
+        assertEquals(1, warnings.size(), warnings.toString());
+        // Once per cycle, however the walks entered it
+        assertTrue(warnings.get(0).contains("tpl-a → tpl-b → tpl-a"), warnings.get(0));
+    }
+
+    @Test
     void namesIncusAcceptsStillLoad(@TempDir Path tempDir) throws Exception {
         var imagesDir = tempDir.resolve("images");
         Files.createDirectories(imagesDir);

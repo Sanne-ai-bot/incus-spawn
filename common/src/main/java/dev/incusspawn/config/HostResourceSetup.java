@@ -114,14 +114,7 @@ public final class HostResourceSetup {
 
     public static List<ImageDef.HostResource> collectEffective(ImageDef imageDef, Map<String, ImageDef> defs) {
         var result = new LinkedHashMap<String, ImageDef.HostResource>();
-        var chain = new ArrayList<ImageDef>();
-        var current = imageDef;
-        while (current != null) {
-            chain.add(0, current);
-            if (current.isRoot()) break;
-            current = defs.get(current.getParent());
-        }
-        for (var def : chain) {
+        for (var def : ImageDef.chain(imageDef, defs)) {
             for (var hr : def.getHostResources()) {
                 var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
                 result.put(containerPath, def.getProjectRoot() == null
