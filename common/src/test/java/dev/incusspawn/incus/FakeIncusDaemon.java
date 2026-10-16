@@ -25,6 +25,9 @@ import java.util.Map;
  * {@link #requests()}. Exec is among them: every instance behaves as one whose agent never
  * answers. A running VM refuses a disk device beyond its PCI hotplug slots, as Incus does
  * ({@link #hotplugSlots}).
+ *
+ * <p>Every request, setter and read of its state holds one lock, so a stubbed exec may inspect or
+ * change the daemon while other threads' requests write it (#1478).
  */
 public final class FakeIncusDaemon implements IncusTransport {
 
@@ -114,7 +117,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** Define (or replace) a profile with exactly these devices. */
-    public FakeIncusDaemon profile(String name, Map<String, Map<String, String>> devices) {
+    public synchronized FakeIncusDaemon profile(String name, Map<String, Map<String, String>> devices) {
         var profile = JSON.createObjectNode();
         profile.put("name", name);
         var node = profile.putObject("devices");
@@ -124,13 +127,13 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** A profile's devices as they are now, device name to config. */
-    public Map<String, Map<String, String>> profileDevices(String name) {
+    public synchronized Map<String, Map<String, String>> profileDevices(String name) {
         return JSON.convertValue(profiles.get(name).get("devices"),
                 new com.fasterxml.jackson.core.type.TypeReference<Map<String, Map<String, String>>>() {});
     }
 
     /** Add a device to an existing instance, as if it had been configured or copied over. */
-    public FakeIncusDaemon device(String instanceName, String deviceName, Map<String, String> config) {
+    public synchronized FakeIncusDaemon device(String instanceName, String deviceName, Map<String, String> config) {
         ((ObjectNode) instances.get(instanceName).get("devices")).set(deviceName, JSON.valueToTree(config));
         expand(instanceName);
         return this;
@@ -141,23 +144,23 @@ public final class FakeIncusDaemon implements IncusTransport {
      * spoofing protection on, the steady state of every instance branched since #905's check.
      * Without it the profile's NIC has no filtering, which the pre-start repair turns back on.
      */
-    public FakeIncusDaemon ipFiltering(String instanceName, String value) {
+    public synchronized FakeIncusDaemon ipFiltering(String instanceName, String value) {
         return device(instanceName, "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0",
                 "ipv4.address", "10.166.11.20", "security.ipv4_filtering", value));
     }
 
     /** How many disk devices a running VM can have hot-plugged at once; Incus allocates 8. */
-    public FakeIncusDaemon hotplugSlots(int slots) {
+    public synchronized FakeIncusDaemon hotplugSlots(int slots) {
         hotplugSlots = slots;
         return this;
     }
 
     /** Add a stopped container with the given config. */
-    public FakeIncusDaemon container(String name, Map<String, String> config) {
+    public synchronized FakeIncusDaemon container(String name, Map<String, String> config) {
         return instance(name, "container", "Stopped", config);
     }
 
-    public FakeIncusDaemon instance(String name, String type, String status, Map<String, String> config) {
+    public synchronized FakeIncusDaemon instance(String name, String type, String status, Map<String, String> config) {
         var node = JSON.createObjectNode();
         node.put("name", name);
         node.put("type", type);
@@ -173,13 +176,13 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** A cached image, by fingerprint. */
-    public FakeIncusDaemon image(String fingerprint) {
+    public synchronized FakeIncusDaemon image(String fingerprint) {
         images.add(fingerprint);
         return this;
     }
 
     /** A local image under {@code alias}. */
-    public FakeIncusDaemon imageAlias(String alias, String fingerprint) {
+    public synchronized FakeIncusDaemon imageAlias(String alias, String fingerprint) {
         images.add(fingerprint);
         aliases.put(alias, fingerprint);
         return this;
@@ -189,40 +192,40 @@ public final class FakeIncusDaemon implements IncusTransport {
      * The image's {@code /sbin/init} fails to exec: starting an instance made from it fails, as
      * Incus's forkstart does, and the instance's {@code lxc.log} says why, as LXC writes it.
      */
-    public FakeIncusDaemon brokenInit(String fingerprint) {
+    public synchronized FakeIncusDaemon brokenInit(String fingerprint) {
         brokenInit.add(fingerprint);
         return this;
     }
 
     /** The next fetch of the remote {@code alias} comes back with a broken init; call it again for the one after. */
-    public FakeIncusDaemon nextFetchBrokenInit(String alias) {
+    public synchronized FakeIncusDaemon nextFetchBrokenInit(String alias) {
         brokenFetches.add(alias);
         return this;
     }
 
     /** The image a remote alias was fetched as, or null if it never was. */
-    public String fetchedAs(String remoteAlias) {
+    public synchronized String fetchedAs(String remoteAlias) {
         return fetched.get(remoteAlias);
     }
 
-    public boolean hasImage(String fingerprint) {
+    public synchronized boolean hasImage(String fingerprint) {
         return images.contains(fingerprint);
     }
 
     /** A storage pool; once one is declared, only declared pools are listed. */
-    public FakeIncusDaemon pool(String name, String driver) {
+    public synchronized FakeIncusDaemon pool(String name, String driver) {
         pools.put(name, driver);
         return this;
     }
 
     /** Answer instance listings with this metadata instead, as a broken or foreign server might. */
-    public FakeIncusDaemon listingAnswers(JsonNode metadata) {
+    public synchronized FakeIncusDaemon listingAnswers(JsonNode metadata) {
         listingOverride = metadata;
         return this;
     }
 
     /** Have the guest ignore a graceful stop, as a wedged one does: only a forced stop works. */
-    public FakeIncusDaemon ignoreShutdown(String instanceName) {
+    public synchronized FakeIncusDaemon ignoreShutdown(String instanceName) {
         shutdownIgnored.add(instanceName);
         return this;
     }
@@ -231,7 +234,7 @@ public final class FakeIncusDaemon implements IncusTransport {
      * A dynamic lease on the bridge held by some other MAC, as a stopped or deleted instance
      * leaves one behind until it expires.
      */
-    public FakeIncusDaemon lease(String address) {
+    public synchronized FakeIncusDaemon lease(String address) {
         leases.add(address);
         return this;
     }
@@ -240,20 +243,24 @@ public final class FakeIncusDaemon implements IncusTransport {
      * Have the instance's DHCP client get {@code address} instead of its NIC's reservation, as
      * dnsmasq answers when another MAC still holds a lease on the reserved one.
      */
-    public FakeIncusDaemon dhcpAnswers(String instanceName, String address) {
+    public synchronized FakeIncusDaemon dhcpAnswers(String instanceName, String address) {
         dhcpAnswers.put(instanceName, address);
         return this;
     }
 
     /** Another interface of the running guest holding {@code address}, as a docker0 bridge does. */
-    public FakeIncusDaemon guestInterface(String instanceName, String address) {
+    public synchronized FakeIncusDaemon guestInterface(String instanceName, String address) {
         guestInterfaces.put(instanceName, address);
         return this;
     }
 
     /** Each {@code PUT /state} so far, as {@code "<instance> <action>"} plus {@code " force"} if forced. */
-    public List<String> stateActions() {
-        return stateActions;
+    public synchronized List<String> stateActions() {
+        return List.copyOf(stateActions);
+    }
+
+    public synchronized void clearStateActions() {
+        stateActions.clear();
     }
 
     private void expand(String instanceName) {
@@ -268,7 +275,7 @@ public final class FakeIncusDaemon implements IncusTransport {
      * Refuse any instance PUT or PATCH whose body contains {@code needle}, as Incus refuses a
      * setting it cannot apply: a 400 and no change.
      */
-    public FakeIncusDaemon refuseWritesContaining(String needle) {
+    public synchronized FakeIncusDaemon refuseWritesContaining(String needle) {
         refusedWrites.add(needle);
         return this;
     }
@@ -277,7 +284,7 @@ public final class FakeIncusDaemon implements IncusTransport {
      * A volume on the {@code default} pool with no instance of this daemon behind it, as another
      * Incus project's instance has.
      */
-    public FakeIncusDaemon volume(String project, String name, String type) {
+    public synchronized FakeIncusDaemon volume(String project, String name, String type) {
         var vol = JSON.createObjectNode();
         vol.put("name", name);
         vol.put("type", type);
@@ -290,13 +297,13 @@ public final class FakeIncusDaemon implements IncusTransport {
      * After each of the next reads of {@code instanceName}, run one of {@code writes}, in order:
      * another process changing the instance between a caller's read and its write.
      */
-    public FakeIncusDaemon writeAfterRead(String instanceName, Runnable... writes) {
+    public synchronized FakeIncusDaemon writeAfterRead(String instanceName, Runnable... writes) {
         writesAfterRead.computeIfAbsent(instanceName, n -> new ArrayDeque<>()).addAll(List.of(writes));
         return this;
     }
 
     /** Refuse the next instance PUT or PATCH, whatever it carries, as a transient failure would. */
-    public FakeIncusDaemon refuseNextWrite() {
+    public synchronized FakeIncusDaemon refuseNextWrite() {
         refuseNextWrite = true;
         return this;
     }
@@ -309,19 +316,19 @@ public final class FakeIncusDaemon implements IncusTransport {
      * Refuse the next network PATCHes, one per error, with a 500 carrying it and no change: Incus
      * reverts a network update whose bridge setup fails, such as dnsmasq exiting on restart.
      */
-    public FakeIncusDaemon refuseNetworkWrites(String... errors) {
+    public synchronized FakeIncusDaemon refuseNetworkWrites(String... errors) {
         networkWriteErrors.addAll(List.of(errors));
         return this;
     }
 
     /** Answer every instance GET with this error status (0: answer normally), as a failing daemon would. */
-    public FakeIncusDaemon failInstanceReads(int status) {
+    public synchronized FakeIncusDaemon failInstanceReads(int status) {
         failReadsWith = status;
         return this;
     }
 
     /** What the instance's console log holds, as {@code incus console --show-log} would print it. */
-    public FakeIncusDaemon consoleLog(String instanceName, String log) {
+    public synchronized FakeIncusDaemon consoleLog(String instanceName, String log) {
         consoleLogs.put(instanceName, log);
         return this;
     }
@@ -331,7 +338,7 @@ public final class FakeIncusDaemon implements IncusTransport {
      * from there on: -1 while its agent is not connected, as Incus reports it, then a real count.
      * Without this the state carries no {@code processes} at all.
      */
-    public FakeIncusDaemon agentProcesses(String instanceName, int... reads) {
+    public synchronized FakeIncusDaemon agentProcesses(String instanceName, int... reads) {
         var queue = new ArrayDeque<Integer>();
         for (int r : reads) queue.add(r);
         agentProcesses.put(instanceName, queue);
@@ -339,17 +346,17 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** The instance as a GET would return it. */
-    public JsonNode instance(String name) {
+    public synchronized JsonNode instance(String name) {
         return instances.get(name).deepCopy();
     }
 
     /** Set when {@code instanceName} last started, which Incus records on every start. */
-    public FakeIncusDaemon lastUsedAt(String instanceName, String at) {
+    public synchronized FakeIncusDaemon lastUsedAt(String instanceName, String at) {
         instances.get(instanceName).put("last_used_at", at);
         return this;
     }
 
-    public FakeIncusDaemon network(String name, Map<String, String> config) {
+    public synchronized FakeIncusDaemon network(String name, Map<String, String> config) {
         var node = JSON.createObjectNode();
         node.put("name", name);
         node.set("config", JSON.valueToTree(config));
@@ -358,7 +365,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** Drop a network, the default {@code incusbr0} included, so reads of it fail. */
-    public FakeIncusDaemon withoutNetwork(String name) {
+    public synchronized FakeIncusDaemon withoutNetwork(String name) {
         networks.remove(name);
         return this;
     }
@@ -368,13 +375,13 @@ public final class FakeIncusDaemon implements IncusTransport {
      * command. Their round trips are recorded like any other: the POST, a WebSocket per fd
      * ({@code WS ...}) and the operation wait.
      */
-    public FakeIncusDaemon servesExecs() {
+    public synchronized FakeIncusDaemon servesExecs() {
         servesExecs = true;
         return this;
     }
 
     /** A served exec whose command line contains {@code needle} prints {@code stdout}. */
-    public FakeIncusDaemon execOutput(String needle, String stdout) {
+    public synchronized FakeIncusDaemon execOutput(String needle, String stdout) {
         servesExecs = true;
         execOutputs.put(needle, stdout);
         return this;
@@ -385,7 +392,7 @@ public final class FakeIncusDaemon implements IncusTransport {
      * A client whose readiness wait gives up after a few milliseconds, for tests outside this
      * package that go through a start: this daemon serves no exec, so the wait can only time out.
      */
-    public IncusClient clientWithShortReadyWait() {
+    public synchronized IncusClient clientWithShortReadyWait() {
         var client = client();
         client.readyTimeouts(new IncusClient.ReadyTimeouts(java.time.Duration.ofMillis(20),
                 java.time.Duration.ofMillis(20), java.time.Duration.ofMillis(10), java.time.Duration.ofMillis(5),
@@ -393,7 +400,7 @@ public final class FakeIncusDaemon implements IncusTransport {
         return client;
     }
 
-    public IncusClient client() {
+    public synchronized IncusClient client() {
         var client = new IncusClient(new IncusApi(this));
         if (subvolumeListing != null) client.subvolumeLister = pool -> subvolumeListing;
         return client;
@@ -403,13 +410,13 @@ public final class FakeIncusDaemon implements IncusTransport {
      * What {@code btrfs subvolume list} prints for a pool, for clients made from here on; without
      * it a client runs the real command, which a test host cannot answer.
      */
-    public FakeIncusDaemon subvolumeListing(String listing) {
+    public synchronized FakeIncusDaemon subvolumeListing(String listing) {
         subvolumeListing = listing;
         return this;
     }
 
     /** {@link #subvolumeListing} with a container subvolume for each name. */
-    public FakeIncusDaemon containerSubvolumes(String... names) {
+    public synchronized FakeIncusDaemon containerSubvolumes(String... names) {
         return subvolumeListing(listing(names));
     }
 
@@ -422,28 +429,28 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** The mode a file was last pushed into an instance with, or null if it never was. */
-    public String pushedMode(String instanceName, String path) {
+    public synchronized String pushedMode(String instanceName, String path) {
         var p = pushed.get(instanceName + path);
         return p == null ? null : p.mode();
     }
 
     /** What a file was last pushed into an instance with, or null if it never was. */
-    public String pushedContent(String instanceName, String path) {
+    public synchronized String pushedContent(String instanceName, String path) {
         var p = pushed.get(instanceName + path);
         return p == null ? null : p.content();
     }
 
     /** Every request so far, as {@code "METHOD path"}, in order. */
-    public List<String> requests() {
+    public synchronized List<String> requests() {
         return List.copyOf(requests);
     }
 
     /** Every exec asked for, in order, whether or not it was served (none is). */
-    public List<Exec> execs() {
+    public synchronized List<Exec> execs() {
         return List.copyOf(execs);
     }
 
-    public void clearRequests() {
+    public synchronized void clearRequests() {
         requests.clear();
     }
 
@@ -481,7 +488,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     @Override
-    public WsConnection openWebSocket(String wsPath) throws IOException {
+    public synchronized WsConnection openWebSocket(String wsPath) throws IOException {
         requests.add("WS " + wsPath);
         var marker = "/websocket?secret=";
         var secret = wsPath.contains(marker) ? wsPath.substring(wsPath.indexOf(marker) + marker.length()) : null;
@@ -530,13 +537,13 @@ public final class FakeIncusDaemon implements IncusTransport {
      * {@code Running} is what Incus answers a {@code /wait} whose long-poll timed out: HTTP 200,
      * not finished.
      */
-    public FakeIncusDaemon operationsAnswer(String... statuses) {
+    public synchronized FakeIncusDaemon operationsAnswer(String... statuses) {
         operationStatuses.addAll(List.of(statuses));
         return this;
     }
 
     /** Advertise these in {@code GET /1.0}'s {@code api_extensions}. */
-    public FakeIncusDaemon apiExtensions(String... extensions) {
+    public synchronized FakeIncusDaemon apiExtensions(String... extensions) {
         apiExtensions.clear();
         apiExtensions.addAll(List.of(extensions));
         return this;
