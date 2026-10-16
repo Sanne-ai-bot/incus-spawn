@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.util.HttpValidator;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ProtocolException;
@@ -17,9 +18,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -394,24 +392,9 @@ public class DownloadCache {
                     && headers.firstValueAsLong("Content-Length").orElse(-1) == length - offset;
         }
 
-        /**
-         * A strong {@code ETag}, or else a {@code Last-Modified} at least a second older than the
-         * response, as RFC 9110 (8.8.2.2) lets it stand in; where there is an {@code ETag},
-         * {@code Last-Modified} may not (13.1.5), so a weak one leaves none.
-         */
         private static String validator(HttpHeaders headers) {
-            var etag = headers.firstValue("ETag").orElse(null);
-            if (etag != null) return etag.startsWith("W/") ? null : etag;
-            var lastModified = headers.firstValue("Last-Modified").orElse(null);
-            var date = headers.firstValue("Date").orElse(null);
-            if (lastModified == null || date == null) return null;
-            try {
-                var modified = ZonedDateTime.parse(lastModified, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
-                var sent = ZonedDateTime.parse(date, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
-                return sent.minusSeconds(1).isBefore(modified) ? null : lastModified;
-            } catch (DateTimeParseException e) {
-                return null;
-            }
+            return HttpValidator.strong(headers.firstValue("ETag").orElse(null),
+                    headers.firstValue("Last-Modified").orElse(null), headers.firstValue("Date").orElse(null));
         }
     }
 

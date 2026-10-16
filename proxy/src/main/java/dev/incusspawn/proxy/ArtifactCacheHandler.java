@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
+import dev.incusspawn.util.HttpValidator;
 
 import io.hyperfoil.tools.jjq.value.JqValues;
 
@@ -372,11 +373,8 @@ class ArtifactCacheHandler {
             var contentEncoding = first.getHeader("Content-Encoding");
             this.isGzip = contentEncoding != null && contentEncoding.toLowerCase().contains("gzip");
             this.length = contentLength(first);
-            // A server ignores a weak ETag in If-Range, and where there is an ETag, RFC 9110
-            // (13.1.5) does not let Last-Modified stand in for it: then there is no resume
-            var etag = first.getHeader("ETag");
-            this.validator = etag == null ? strongLastModified(first)
-                    : etag.startsWith("W/") ? null : etag;
+            // A server ignores a weak ETag in If-Range: then there is no resume
+            this.validator = validator(first);
             // Compressed on the fly, the same file need not give the same bytes twice
             this.neverResumable = isGzip ? "it is gzip-encoded"
                     : length < 0 ? "its length is unknown"
@@ -676,22 +674,8 @@ class ArtifactCacheHandler {
         }
     }
 
-    /**
-     * Last-Modified if it is a strong validator: at least a second before the response's Date
-     * (RFC 9110 8.8.2.2), or a file changed twice within that second would pass If-Range.
-     */
-    static String strongLastModified(HttpClientResponse resp) {
-        var lastModified = resp.getHeader("Last-Modified");
-        var date = resp.getHeader("Date");
-        if (lastModified == null || date == null) return null;
-        try {
-            var format = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME;
-            var modified = java.time.ZonedDateTime.parse(lastModified, format).toInstant();
-            var sent = java.time.ZonedDateTime.parse(date, format).toInstant();
-            return sent.minusSeconds(1).isBefore(modified) ? null : lastModified;
-        } catch (java.time.format.DateTimeParseException e) {
-            return null;
-        }
+    private static String validator(HttpClientResponse resp) {
+        return HttpValidator.strong(resp.getHeader("ETag"), resp.getHeader("Last-Modified"), resp.getHeader("Date"));
     }
 
     private static long contentLength(HttpClientResponse resp) {
