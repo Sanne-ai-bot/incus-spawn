@@ -98,8 +98,10 @@ public class HelpContext {
         for (var file : ToolDefLoader.BUILTIN_TOOLS) {
             appendResource(sb, "tools/" + file, file);
         }
-        appendUserToolFiles(sb, SpawnConfig.configDir().resolve("tools"));
-        ToolDefLoader.searchPathToolDirs(SpawnConfig.load().getSearchPaths())
+        // The loader's own list, so this lists the same directories the loader reads (#1173). It leaves
+        // out the project's .incus-spawn/tools because the flag is named --with-templates; it may later
+        // be widened to project tools.
+        ToolDefLoader.userAndSearchPathToolDirs(SpawnConfig.load().getSearchPaths())
                 .forEach(toolsDir -> appendUserToolFiles(sb, toolsDir));
         sb.append("Java-based tools (always available, installed when a template references them):\n");
         for (var tool : RuntimeConstants.CDI_TOOLS) {

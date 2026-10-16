@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.Warnings;
+import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -184,6 +185,13 @@ class ToolDefLoaderTest {
         loader.setProjectToolsDir(tempDir.resolve("does-not-exist"));
         // Should still find builtins without error
         assertNotNull(loader.find("podman"));
+    }
+
+    @Test
+    void userAndSearchPathToolDirsAreEveryLayerButTheProjectInLoadOrder(@TempDir Path tempDir) {
+        // HelpContext reads these instead of keeping its own copy of the layers (#1173).
+        assertEquals(List.of(SpawnConfig.configDir().resolve("tools"), tempDir.resolve("tools")),
+                ToolDefLoader.userAndSearchPathToolDirs(List.of(tempDir.toString())));
     }
 
     @Test

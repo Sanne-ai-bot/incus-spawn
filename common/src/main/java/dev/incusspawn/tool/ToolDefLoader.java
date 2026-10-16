@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * Loads YAML tool definitions from built-in resources, user-level, and
@@ -82,6 +83,15 @@ public class ToolDefLoader {
         return searchPaths.stream()
                 .map(searchPath -> Path.of(HostResourceSetup.expandHostTilde(searchPath)).resolve("tools"))
                 .toList();
+    }
+
+    /**
+     * The user's {@code tools/} directory, then the {@code tools/} directory of each search path:
+     * every directory this loader reads, in load order, except a project's {@code .incus-spawn/tools/}.
+     * {@code isx ask --with-templates} lists the same directories (#1173).
+     */
+    public static List<Path> userAndSearchPathToolDirs(List<String> searchPaths) {
+        return Stream.concat(Stream.of(userToolsDir()), searchPathToolDirs(searchPaths).stream()).toList();
     }
 
     /**
@@ -208,9 +218,8 @@ public class ToolDefLoader {
             defs = new LayeredDefinitions<>("tool");
             warnings = new ArrayList<>();
             loadBuiltins();
-            loadFromDirectory(userToolsDir());
             var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
-            searchPathToolDirs(paths).forEach(this::loadFromDirectory);
+            userAndSearchPathToolDirs(paths).forEach(this::loadFromDirectory);
             if (projectToolsDir != null) loadFromDirectory(projectToolsDir);
             warnings.forEach(Warnings::warn);
         }
