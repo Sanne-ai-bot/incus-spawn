@@ -17,18 +17,19 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 /**
- * Which tools' actions the TUI offers a template on F9, and picks Enter's default action from.
- * Its own copy of {@code ActionResolver.collectInstalledTools}' rule (#1158 would merge them), so
- * it is pinned here: a template uses its YAML, unless that is gone, when the tools it was built
- * with stand in (#868).
+ * Which tools' actions the TUI offers on F9, and picks Enter's default action from: through
+ * {@code ActionResolver}, so the same as {@code isx run} (#1158). A template uses its YAML, unless
+ * that is gone, when the tools it was built with stand in (#868).
  */
 @ExtendWith(IsolatedHome.class)
 class InstanceActionsInstalledToolsTest {
@@ -107,5 +108,52 @@ class InstanceActionsInstalledToolsTest {
         var action = assertInstanceOf(YamlToolAction.class, offered.getFirst());
         assertEquals("Open repo 'local' in " + editor, action.label());
         assertEquals(expectedUrl, action.resolveUrl(context));
+    }
+
+    /** A YAML tool with one shell action, requiring {@code requires}. */
+    private static ToolDef yamlTool(String name, String... requires) {
+        var def = new ToolDef();
+        def.setName(name);
+        def.setRequires(java.util.Arrays.stream(requires).map(ToolDef.ToolRef::new).toList());
+        var entry = new ToolDef.ActionEntry();
+        entry.setType("shell");
+        entry.setCommand("run-" + name);
+        def.setActions(List.of(entry));
+        return def;
+    }
+
+    /** The tool names whose actions F9 offers for an unbuilt clone of {@code template}. */
+    private static List<String> offeredForClone(Map<String, ImageDef> defs, String template, ToolDef... tools) {
+        var daemon = new FakeIncusDaemon().container("dev-1", Map.of(
+                Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PROFILE, template));
+        var instance = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
+        var loader = new ToolDefLoader(List.of());
+        var fallbacks = new java.util.LinkedHashMap<String, ToolDef>();
+        for (var tool : tools) fallbacks.put(tool.getName(), tool);
+        loader.addFallbacks(fallbacks);
+        var actions = new InstanceActions(() -> defs, () -> loader, List::of);
+        return actions.resolveActionsForInstance(instance).stream().map(ToolAction::toolName).toList();
+    }
+
+    @Test
+    void transitiveDependenciesAreOfferedInTheOrderIsxRunListsThem() {
+        // pa -> pb -> pc: isx run and the shell's F12 menu list them depth first from the top.
+        assertEquals(List.of("pa", "pb", "pc"), offeredForClone(Map.of(TEMPLATE, template("pa")), TEMPLATE,
+                yamlTool("pa", "pb"), yamlTool("pb", "pc"), yamlTool("pc")));
+    }
+
+    @Test
+    void aParentCycleStillResolves() {
+        // A template edited into a cycle after it was built still loads; the refresh must not spin.
+        var cx = template("pa");
+        cx.setName("tpl-cx");
+        cx.setParent("tpl-cy");
+        var cy = new ImageDef();
+        cy.setName("tpl-cy");
+        cy.setParent("tpl-cx");
+        cy.setTools(List.of(new ToolDef.ToolRef("pb")));
+        var offered = assertTimeoutPreemptively(Duration.ofSeconds(5), () -> offeredForClone(
+                Map.of("tpl-cx", cx, "tpl-cy", cy), "tpl-cx", yamlTool("pa"), yamlTool("pb")));
+        assertEquals(List.of("pb", "pa"), offered);
     }
 }

@@ -33,6 +33,7 @@ import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
+import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -1820,26 +1821,10 @@ public class Tui {
         return actionsCache.getOrDefault(instance.name(), java.util.List.of());
     }
 
-    private java.util.Optional<ToolAction> findDefaultAction(String ref, InstanceInfo instance) {
-        var parsed = InstanceActions.parseActionRef(ref);
+    private Optional<ToolAction> findDefaultAction(String ref, InstanceInfo instance) {
         var actions = getActionsForInstance(instance);
-        var matching = actions.stream()
-                .filter(a -> parsed.toolName().equals(a.toolName()))
-                .toList();
-
-        if (matching.isEmpty()) {
-            statusMessage = "default-action '" + ref + "': tool not found";
-            return java.util.Optional.empty();
-        }
-
-        var result = InstanceActions.resolveActionByRef(parsed, matching);
-        if (result.isEmpty()) {
-            if (parsed.actionId() != null) {
-                statusMessage = "default-action '" + ref + "': action id not found or ambiguous";
-            } else {
-                statusMessage = "default-action '" + ref + "': ambiguous, use tool:action-id";
-            }
-        }
+        var result = ActionResolver.findActionByRef(ref, actions);
+        if (result.isEmpty()) statusMessage = ActionResolver.unresolvedReason(ref, actions);
         return result;
     }
 
