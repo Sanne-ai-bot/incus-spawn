@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.SystemTrust;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -15,8 +16,6 @@ import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.net.SocketAddress;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -581,25 +580,12 @@ class Upstream {
 
     // --- SSL trust ---
 
-    private static final String[] SYSTEM_CA_BUNDLES = {
-            "/etc/ssl/cert.pem",                                    // Fedora (symlink), macOS, Alpine
-            "/etc/ssl/certs/ca-certificates.crt",                   // Debian, Ubuntu
-            "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",    // RHEL, CentOS
-    };
-
-    private static String findSystemCaBundle() {
-        for (var path : SYSTEM_CA_BUNDLES) {
-            if (Files.exists(Path.of(path))) return path;
-        }
-        return null;
-    }
-
     /** The system CA bundle, plus a benchmark stub's certificate when one is configured. */
     private io.vertx.core.net.PemTrustOptions upstreamTrust() {
-        var systemCaBundle = findSystemCaBundle();
+        var systemCaBundle = SystemTrust.findBundle();
         if (systemCaBundle == null && extraUpstreamTrustPem == null) return null;
         var trust = new io.vertx.core.net.PemTrustOptions();
-        if (systemCaBundle != null) trust.addCertPath(systemCaBundle);
+        if (systemCaBundle != null) trust.addCertPath(systemCaBundle.toString());
         if (extraUpstreamTrustPem != null) trust.addCertPath(extraUpstreamTrustPem);
         return trust;
     }
