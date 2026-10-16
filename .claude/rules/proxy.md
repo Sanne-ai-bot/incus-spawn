@@ -219,7 +219,7 @@ Key design:
   The routes live in `ConfigState` (replaced whole on reload) and their names in the routing's intercepted domains, from `ToolProxyResolver.hostRoutes`, which `resolvedDomains` includes for the CLI's DNS writers.
   See DESIGN.md "Host routes".
 - **`security.ipv4_filtering` is load-bearing**, not incidental hardening: without it a container can re-address itself as a neighbour and spend that neighbour's credentials, so the whole model would be decorative.
-  Set by `InstanceLifecycle.configureBranch` (a refused setting is retried without it and warned about, never fails the branch), re-armed on every stopped start by `InstanceLifecycle.prepareHostDevicesForStart` (so both `isx shell` and the TUI shell, and whatever merges them, must keep going through it -- `IpFilteringRearmTest`), which also restores it on instances the fallback below turned off.
+  Set by `InstanceLifecycle.configureBranch` (a refused setting is retried without it and warned about, never fails the branch), re-armed on every stopped start by `InstanceLifecycle.prepareForStart` (package-private, reached only through `startForUse` and VM agent recovery; both shells get there through `InstancePrep.repairBeforeUse` and `readyForUse` -- `IpFilteringRearmTest`, `InstancePrepTest`), which also restores it on instances the fallback below turned off.
   **Setting it succeeds even where it cannot be enforced**.
   The failure appears only when the instance starts and Incus installs the per-NIC rules (`ebtables -t filter` under xtables, the nft equivalent otherwise), so a host without that kernel support would accept every branch and start none of them.
   The macOS appliance kernel needs `CONFIG_NF_TABLES_BRIDGE` for this (#905); its smoke test asserts it.

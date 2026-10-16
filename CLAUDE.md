@@ -194,7 +194,7 @@ See `.claude/rules/commands.md` and DESIGN.md "Testing".
 
 **Never print straight to stdout/stderr from code the TUI can reach.**
 While the TUI renders it owns the terminal: a `System.out`/`System.err` line is drawn over and lost, and scrambles the screen.
-Shared code (`common`, especially `lifecycle/` and `incus/`) that reports progress or warnings takes a sink instead -- a `Consumer<String>` (`InstanceLifecycle.prepareHostDevicesForStart(..., warn)`, `ensureReady(..., say)`) or `StaticIpAllocator.Output`.
+Shared code (`common`, especially `lifecycle/` and `incus/`) that reports progress or warnings takes a sink instead -- a `Consumer<String>` (`InstanceLifecycle.startForUse(..., warn)`, `ensureReady(..., say)`) or `StaticIpAllocator.Output`.
 Each caller routes it: the CLI to `System.out::println`, the TUI to its warning log.
 Pass plain stdout from the TUI only where it has provably released the terminal (e.g. `ShellLaunch.shellInto`, after the runner closes), and say so in a comment.
 Code with no caller to take a sink from -- e.g. a definition loader built several layers down, as `ToolProxyResolver` builds `ToolDefLoader`s -- reports through `Warnings.warn()` (`common`): each distinct message once per channel (a long-running process that re-reads definitions calls `Warnings.forgetReported()`, as the proxy does on each reload), to stderr by default, and into the TUI's `WarningLog` while the TUI draws or reloads (#872).

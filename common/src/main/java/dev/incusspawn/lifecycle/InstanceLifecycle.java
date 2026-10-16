@@ -490,7 +490,7 @@ public final class InstanceLifecycle {
      * Start a stopped instance for use and wait until it answers exec: the start every path
      * that brings an existing instance up goes through -- {@code isx shell} and {@code isx run},
      * the TUI's shell, and their CA repairs. Prepares its host devices
-     * ({@link #prepareHostDevicesForStart}), and gives it a new secret ({@link
+     * ({@link #prepareForStart}), and gives it a new secret ({@link
      * #rotateInstanceSecret}), which the readiness probe itself puts in place, with the Claude
      * Code registration its {@code mcp-caller} grant calls for (#1182), read from the instance
      * the device repairs read: neither costs a request of its own.
@@ -507,7 +507,7 @@ public final class InstanceLifecycle {
     static JqValue startForUse(IncusClient incus, String name, JqValue instance, MachineType machineType,
                                 Consumer<String> warn) {
         var placeholders = ProofToken.declaredInBackground();
-        prepareHostDevicesForStart(incus, name, instance, warn);
+        prepareForStart(incus, name, instance, warn);
         // A VM branched or built before #1238 still has Secure Boot on: it goes in the write the
         // secret makes anyway
         var secret = rotateInstanceSecret(incus, name, instance, machineType == MachineType.VM
@@ -770,8 +770,9 @@ public final class InstanceLifecycle {
     /**
      * Repair an existing, stopped instance before starting it. Every path that starts one for use
      * (the {@code isx shell}/{@code run} prep, the TUI, {@link #ensureReady}, VM agent recovery)
-     * goes through here, so a repair placed here reaches all of them, and any path that merges
-     * them must keep calling it.
+     * goes through here, so a repair placed here reaches all of them. Package-private, so code
+     * outside {@code lifecycle} cannot prepare and start by hand and has to call
+     * {@link #startForUse}, which carries it (#907).
      *
      * <ul>
      *   <li>Host-side devices: a host-resource source that has disappeared and a missing zmx socket
@@ -779,8 +780,8 @@ public final class InstanceLifecycle {
      *   <li>IP spoofing protection ({@link InstanceNetwork#rearmIpFiltering}): turned back on where it is off.</li>
      * </ul>
      */
-    public static void prepareHostDevicesForStart(IncusClient incus, String name) {
-        prepareHostDevicesForStart(incus, name, System.err::println);
+    static void prepareForStart(IncusClient incus, String name) {
+        prepareForStart(incus, name, System.err::println);
     }
 
     /**
@@ -788,14 +789,14 @@ public final class InstanceLifecycle {
      * owns the terminal, where stderr would be drawn over and lost, so it passes a sink that puts
      * the warning on its status line instead.
      */
-    public static void prepareHostDevicesForStart(IncusClient incus, String name, Consumer<String> warn) {
+    static void prepareForStart(IncusClient incus, String name, Consumer<String> warn) {
         // All repairs read the same instance, so fetch it once: start has to
         // stay as cheap as it was before the repairs existed.
-        prepareHostDevicesForStart(incus, name, incus.instanceMetadata(name), warn);
+        prepareForStart(incus, name, incus.instanceMetadata(name), warn);
     }
 
-    /** {@link #prepareHostDevicesForStart(IncusClient, String, Consumer)} with the instance already read. */
-    public static void prepareHostDevicesForStart(IncusClient incus, String name, JqValue instance,
+    /** {@link #prepareForStart(IncusClient, String, Consumer)} with the instance already read. */
+    static void prepareForStart(IncusClient incus, String name, JqValue instance,
                                                   Consumer<String> warn) {
         HostResourceSetup.removeStaleDevices(incus, name, instance, warn);
         removeStaleInbox(incus, name, instance, warn);

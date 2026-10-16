@@ -182,7 +182,7 @@ class ZmxSocketForwardTest {
      * either one failing start validation is what it exists to prevent.
      */
     @Test
-    void prepareHostDevicesForStart_bothRepairsShareOneFetch() {
+    void prepareForStart_bothRepairsShareOneFetch() {
         // A name no real host directory can collide with: this call resolves
         // the zmx dir from the environment, unlike the tests above.
         var name = "wiring-" + java.util.UUID.randomUUID();
@@ -191,7 +191,7 @@ class ZmxSocketForwardTest {
                 .build();
         when(incus.instanceMetadata(name)).thenReturn(instance);
 
-        InstanceLifecycle.prepareHostDevicesForStart(incus, name);
+        InstanceLifecycle.prepareForStart(incus, name);
 
         verify(incus).instanceMetadata(name);
         verifyNoMoreInteractions(incus);
