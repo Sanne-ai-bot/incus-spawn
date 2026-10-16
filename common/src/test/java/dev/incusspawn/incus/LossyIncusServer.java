@@ -88,8 +88,6 @@ final class LossyIncusServer implements AutoCloseable {
     volatile List<String> trailingStdout = List.of();
     /** The trailing chunks go out together, in one write: each but the first waits in the host's socket. */
     volatile boolean trailingInOneWrite = false;
-    /** Keep writing stdout after completion until the client hangs up (never idle). */
-    volatile boolean trickleForever = false;
     /** The command never ends by itself: a login profile that never returns. */
     volatile boolean runsForever = false;
     /** With {@link #runsForever}, a signal on the control fd ends it, as Incus's does a killable process. */
@@ -371,12 +369,8 @@ final class LossyIncusServer implements AutoCloseable {
                 return;
             }
             for (var chunk : trailingStdout) sendStdoutChunk(chunk);
-            while (trickleForever) {
-                Thread.sleep(50);
-                execFds.get("1").send(0x2, ".".getBytes(StandardCharsets.UTF_8));
-            }
         } catch (IOException | InterruptedException ignored) {
-            // The client force-closed the fd: exactly how a trickle is meant to end.
+            // The client force-closed an fd, or the test is over: nothing more can be sent.
         } finally {
             operationDone.countDown();
         }

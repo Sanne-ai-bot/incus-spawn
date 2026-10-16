@@ -14,10 +14,12 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -47,6 +49,10 @@ class IncusApiLossyTunnelTest {
 
     private IncusApi api() {
         return new IncusApi(new UnixSocketTransport(server.socketPath()));
+    }
+
+    private IncusApi api(IncusApi.DrainClock clock) {
+        return new IncusApi(new UnixSocketTransport(server.socketPath()), IncusApi.WS_PING_INTERVAL_MS, clock);
     }
 
     private IncusClient.ExecResult exec(IncusApi api) {
@@ -151,9 +157,8 @@ class IncusApiLossyTunnelTest {
         server.sendCloseFrames = false;
         server.stdout = "a";
         // Each gap is half the drain's idle window, so the drain must keep extending.
-        var clock = new PacedClock(OutputDrain.IDLE_MS / 2, List.of("b", "c", "d", "e", "f"));
-        var api = new IncusApi(new UnixSocketTransport(server.socketPath()), IncusApi.WS_PING_INTERVAL_MS, clock);
-        assertEquals("abcdef", exec(api).stdout(),
+        var clock = new PacedClock(OutputDrain.IDLE_MS / 2, List.of("b", "c", "d", "e", "f").iterator(), true);
+        assertEquals("abcdef", exec(api(clock)).stdout(),
                 "output still in flight when /wait returns must not be truncated");
         // Bounded by the ceiling, not by the idle window: a chunk is stamped when a reader takes
         // it, so a late reader moves the drain's end out in drain time too.
@@ -164,23 +169,26 @@ class IncusApiLossyTunnelTest {
 
     /**
      * The drain's time, advanced only by its own pauses; every {@code gapMillis} of it, the pause
-     * that reaches it sends the next chunk, then sleeps for real so a reader can take it. However
-     * late any thread wakes, the chunks go out at the drain times they were given, and what was
-     * sent is either read or still in the socket by its next poll. When the drain ends still
-     * depends on when a reader takes the last chunk.
+     * that reaches it sends the next chunk. However late any thread wakes, the chunks go out at
+     * the drain times they were given, and what was sent is either read or still in the socket by
+     * its next poll. With {@code realPauses}, every pause also sleeps for real so a reader can
+     * take what was sent, and when the drain ends still depends on when a reader takes the last
+     * chunk. Without them the drain takes no wall time to speak of, but a reader may never catch up.
      */
     private final class PacedClock implements IncusApi.DrainClock {
         private final long pausesPerChunk;
-        private final java.util.ArrayDeque<String> chunks;
+        private final Iterator<String> chunks;
+        private final boolean realPauses;
         private long now;
         private long pauses;
 
-        PacedClock(long gapMillis, List<String> chunks) {
+        PacedClock(long gapMillis, Iterator<String> chunks, boolean realPauses) {
             if (gapMillis <= 0 || gapMillis % OutputDrain.POLL_MS != 0) {
                 throw new IllegalArgumentException("a gap is a whole number of drain polls: " + gapMillis);
             }
             this.pausesPerChunk = gapMillis / OutputDrain.POLL_MS;
-            this.chunks = new java.util.ArrayDeque<>(chunks);
+            this.chunks = chunks;
+            this.realPauses = realPauses;
         }
 
         @Override
@@ -193,10 +201,10 @@ class IncusApiLossyTunnelTest {
             String due;
             synchronized (this) {
                 now += millis * 1_000_000L;
-                due = ++pauses % pausesPerChunk == 0 ? chunks.poll() : null;
+                due = ++pauses % pausesPerChunk == 0 && chunks.hasNext() ? chunks.next() : null;
             }
             if (due != null) server.sendStdout(due);
-            Thread.sleep(millis);
+            if (realPauses) Thread.sleep(millis);
         }
     }
 
@@ -276,17 +284,21 @@ class IncusApiLossyTunnelTest {
         assertEquals(new IncusClient.ExecResult(0, "ab", "e"), result);
     }
 
+    // #1084: the trickle is paced by the drain's polls too. A trickle on the fake's own sleep
+    // could be woken late past the idle window, which the drain rightly read as the output
+    // having stopped, and gave up seconds before its ceiling. Nor do the polls sleep for real:
+    // a slow macOS runner overslept each one, and every poll up to the ceiling took the test
+    // past its timeout. Bytes left unread extend the drain as much as bytes read.
     @Test
-    @Timeout(20)
+    @Timeout(10)
     void drainIsBoundedWhenOutputNeverStops() {
         server.sendCloseFrames = false;
-        server.trickleForever = true; // never idle, never closed
-        long start = System.nanoTime();
-        var result = exec(api());
-        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-        assertEquals(0, result.exitCode());
-        assertTrue(elapsedMs >= 4000 && elapsedMs < 10_000,
-                "the drain must extend while output flows and give up at its ceiling (5s): " + elapsedMs + "ms");
+        // Never idle, never closed: a chunk every half idle window, for as long as the drain polls.
+        var clock = new PacedClock(OutputDrain.IDLE_MS / 2, Stream.generate(() -> ".").iterator(), false);
+        assertEquals(0, exec(api(clock)).exitCode());
+        long drainMillis = clock.nanoTime() / 1_000_000;
+        assertTrue(drainMillis >= OutputDrain.MAX_MS && drainMillis < OutputDrain.MAX_MS + OutputDrain.POLL_MS,
+                "the drain must extend while output flows and give up at its ceiling: " + drainMillis + "ms of drain time");
     }
 
     @Test
