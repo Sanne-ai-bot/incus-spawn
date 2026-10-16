@@ -41,7 +41,7 @@ record McpPrompt(String name, String description, String text) {
             6. destroy_instance once its work is taken or discarded; keep_instance instead hands an \
             instance to the user for good.
 
-            Limits: the user's mcp: configuration caps how many instances you may hold and how many \
+            Limits: the user's mcp.yaml caps how many instances you may hold and how many \
             tasks may run at once, and a refusal names the limit. Destroy finished instances before \
             asking for more; never work around a refusal.
 

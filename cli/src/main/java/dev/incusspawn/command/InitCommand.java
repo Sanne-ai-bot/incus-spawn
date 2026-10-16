@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
@@ -645,22 +646,33 @@ public class InitCommand extends BaseCommand {
             System.out.println("  Skipped: no console. Re-run 'isx init' interactively to set this up.");
             return;
         }
-        setupMcp(SpawnConfig.load(), prompts, ImageDef.loadTrusted());
+        setupMcp(prompts, ImageDef.loadTrusted());
     }
 
     /**
      * Offer to register {@code isx mcp} with Claude Code, then ask about each template that
      * installs Claude Code or Codex (the only ones a task can be delegated to) whether agents may
      * use it. Templates already approved by hand that install neither are left as they are.
+     * The approvals live in {@code mcp.yaml}; one that cannot be read is reported and left alone.
      */
-    void setupMcp(SpawnConfig config, Prompts prompts, java.util.Map<String, ImageDef> defs) {
+    void setupMcp(Prompts prompts, java.util.Map<String, ImageDef> defs) {
         if (!hostHasCommand("claude")) {
             System.out.println("  Claude Code is not installed on this host; skipping.");
             System.out.println("  Install it and re-run 'isx init' to enable this.");
             return;
         }
+        McpConfig mcp;
+        try {
+            mcp = McpConfig.load();
+        } catch (McpConfig.Invalid e) {
+            System.out.println("  " + e.getMessage() + ".");
+            System.out.println("  Fix it, then re-run 'isx init'.");
+            return;
+        }
+        var legacy = McpConfig.legacySectionNotice(SpawnConfig.load());
+        if (legacy != null) System.out.println("  " + Character.toUpperCase(legacy.charAt(0)) + legacy.substring(1) + ".");
         var registered = claudeMcpRegistered();
-        var approved = config.mcp().templates();
+        var approved = mcp.templates();
         var candidates = defs.values().stream()
                 .filter(def -> ImageDef.chain(def, defs).stream()
                         .anyMatch(d -> d.getTools().stream().anyMatch(t -> List.of("claude", "codex").contains(t.getName()))))
@@ -711,8 +723,8 @@ public class InitCommand extends BaseCommand {
 
         if (candidates.isEmpty()) {
             System.out.println("  No template installs Claude Code or Codex yet, so there is");
-            System.out.println("  none to approve. Add one, then re-run 'isx init' or edit the mcp:");
-            System.out.println("  section of " + Environment.configDir().resolve("config.yaml") + ".");
+            System.out.println("  none to approve. Add one, then re-run 'isx init' or edit");
+            System.out.println("  " + McpConfig.file() + ".");
             return;
         }
         System.out.println("  Approve the templates agents may create instances from:");
@@ -730,10 +742,8 @@ public class InitCommand extends BaseCommand {
         if (updated.equals(approved)) {
             System.out.println("  Approved templates unchanged.");
         } else {
-            var mcp = config.mcp();
             mcp.setTemplates(updated);
-            config.setMcp(mcp);
-            config.save();
+            mcp.save();
             System.out.println("  Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)) + ".");
         }
         System.out.println("  " + styled(DIM, "Keep agents to the MCP tools with Claude Code permissions: see the"));

@@ -23,7 +23,7 @@ class TemplatePolicyTest {
     void nothingIsApprovedByDefault() {
         assertEquals(List.of(), policy.approved());
         var e = assertThrows(ToolError.class, () -> policy.require("tpl-java"));
-        assertTrue(e.getMessage().contains("mcp.templates"), e.getMessage());
+        assertTrue(e.getMessage().contains("templates in ~/.config/incus-spawn/mcp.yaml"), e.getMessage());
     }
 
     @Test

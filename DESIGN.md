@@ -2796,7 +2796,7 @@ Every tool that names an instance checks the session's registry *and* the stamp 
 It reads nothing beyond the listing it is given.
 A process session's liveness is a local `/proc` read, and a coordinator instance's is whether that instance is in the same listing with the same grant, so `isx list` still costs one request.
 The TUI has no column for it, because the instance table has no width to spare, only rows in the detail pane.
-An orphan a sweep stopped as dormant (#1028) is still `orphaned` there, as in `list_instances`; the detail pane says when it was stopped and that `mcp.dormant-grace-hours`, not the orphan grace, comes next.
+An orphan a sweep stopped as dormant (#1028) is still `orphaned` there, as in `list_instances`; the detail pane says when it was stopped and that `dormant-grace-hours` in `mcp.yaml`, not the orphan grace, comes next.
 `isx list --format=plain|json` gains `mcp_state` and `mcp_purpose` at the end, and its table gains an `MCP` column only when some instance has those stamps.
 Human output flattens control characters in these stamps: `isx mcp` refuses them in a purpose, but `incus config set` does not.
 
@@ -2805,7 +2805,7 @@ A name is registered before its copy starts, so a session ending mid-create stil
 On end of input or SIGTERM a session destroys nothing: it stamps `mcp-orphaned` with the time on what it holds.
 After a SIGKILL nobody stamps that, so the first later session to see the dead holder stamps it then.
 Either way, the grace period starts when the orphan is first known, without a per-call heartbeat write (each instance write costs Incus a backup-file rewrite).
-Each new session sweeps this user's orphans and destroys those past `mcp.orphan-grace-hours` (default 24: long enough to outlast a night's CI wait, short enough that forgotten instances do not pile up) -- never kept ones, never ones in a pending operation, never one being adopted, never one a person is working in, and never one whose delegated agent is still running.
+Each new session sweeps this user's orphans and destroys those past `orphan-grace-hours` in `mcp.yaml` (default 24: long enough to outlast a night's CI wait, short enough that forgotten instances do not pile up) -- never kept ones, never ones in a pending operation, never one being adopted, never one a person is working in, and never one whose delegated agent is still running.
 That check is one exec: a probe (`Presence`) reading `/proc` for a process on a pseudo-terminal (an `isx shell`, including a tmux or zmx session left detached) or a Claude Code that does not carry the `ISX_MCP_TASK` marker of a task's own processes, and `TaskScripts.unfinished()`, which asks systemd about every agent task whose current run has no exit file.
 Background commands do not count: a dev server never finishes, and would keep its orphan forever.
 `Presence` deliberately ignores a task's own processes, so without the second half a delegate still working when its coordinator's grace period ran out was destroyed with its unpushed work.
@@ -2830,14 +2830,14 @@ The `mcp-orphaned` stamp names the session it was written for (`<time> <session>
 The rules above leave one case open-ended: an orphan "in use" with nobody coming back -- a delegate hung on a dead API call, or one waiting longer than anyone will.
 It cannot be destroyed (the sweep cannot tell hung from waiting, and its unpushed work is on the disk), but keeping it running holds its memory forever.
 So a third outcome sits between keep and destroy.
-An orphan past its grace period that the sweep would keep *only* because a delegated agent has not finished (or systemd cannot say) -- never one a person is in -- is **stopped** once nothing in it has moved for `mcp.dormant-after-hours` (default 24), and stamped `mcp-dormant: <time> <session>`, in the shape of `mcp-orphaned`.
+An orphan past its grace period that the sweep would keep *only* because a delegated agent has not finished (or systemd cannot say) -- never one a person is in -- is **stopped** once nothing in it has moved for `dormant-after-hours` in `mcp.yaml` (default 24), and stamped `mcp-dormant: <time> <session>`, in the shape of `mcp-orphaned`.
 "Nothing moved" needs two quiet signals, both free of new machinery: the newest mtime among delegated agents' task files (`TaskScripts.agentIdle()`, in the same probe exec, as seconds by the guest's own clock), and the CPU time in the instance's Incus state (`IncusClient.cpuUsage`, one GET, no exec) compared with the sample the previous sweep recorded on the instance (`mcp-cpu-sample: <time> <cpu-nanos> <quiet-since>`).
 The CPU counts as quiet while it grows by under 1% of one CPU between two samples (`Orphans.QUIET_CPU_SHARE`), taken at least an hour apart (`MIN_SAMPLE_GAP`, or the window if shorter).
 Sessions starting seconds apart would otherwise hold the probes' own CPU against an allowance of milliseconds and keep a hung delegate forever, so a sweep that close to the last sample neither compares nor records.
 More starts the window again, and so does a first look, a counter that went back (a restart) or a state Incus cannot give -- so a stop always needs two sweeps at least `dormant-after-hours` apart.
 A delegate polling CI writes no events but burns CPU; one hung on a dead call does neither.
 The stop goes through `InstanceBackend.stopIfHeldBy`, the guard the delete uses: mark `pending-op: stopping`, re-read the holder, then stamp and stop -- stamped first, since a stopped orphan without the stamp is destroyed by the next sweep, and taken back if the stop fails and the instance still runs, so a later stop by anything else is not given the dormant clock.
-A dormant orphan is then destroyed without being looked into once `mcp.dormant-grace-hours` (default 168) have passed since its stop.
+A dormant orphan is then destroyed without being looked into once `dormant-grace-hours` in `mcp.yaml` (default 168) have passed since its stop.
 A stopped orphan without the stamp, or with one naming an earlier holder, is destroyed past its orphan grace period as before -- the dormant clock only ever adds time.
 Stop rather than freeze: a frozen instance returns no memory, the resource that matters on the appliance VM, and a frozen Claude Code loses its in-flight API call on thaw anyway, so stopping is no worse and reuses `stop_instance`'s machinery.
 `adopt_instance` starts a dormant instance again (`McpSession.wakeIfDormant`, with a progress notification and an audit line) before `Tasks.adopt` reads its tasks: any instance it holds and finds stopped with an `mcp-dormant` stamp -- its own, or one a sweep wrote for the previous holder just after the adoption's stamp -- and clears the stamp only once started.
@@ -2868,7 +2868,7 @@ The answer is as untrusted as any output and lossy besides, so the tool descript
 **Fewer calls per tick.**
 `wait_any` blocks until any of several tasks finishes, probing each instance once per two seconds, instead of the coordinator polling N tasks in turn.
 `delegate(skill, args)` runs `/<skill> <args>` so that the brief lives in the instance, versioned with the template, and the coordinator sends a name.
-The delegate's permission mode is always passed explicitly (`--permission-mode`, from `mcp.delegate-permission-mode` or its per-template override, default `bypassPermissions` as isx's managed settings already set).
+The delegate's permission mode is always passed explicitly (`--permission-mode`, from `delegate-permission-mode` in `mcp.yaml` or its per-template override, default `bypassPermissions` as isx's managed settings already set).
 A headless agent that meets a permission prompt has nobody to answer it.
 The refusals it does meet are surfaced from the result event's `permission_denials` in `task_status` and `task_result` instead of failing silently.
 
@@ -2960,10 +2960,28 @@ Either is the last word for the task: the watcher tombstones its id, so a `task_
 
 **The agent gets `isx branch`, not options.**
 Instances are created through `BranchFlow` with `Request.defaults()`: the template's network mode, account pins, KVM and resource defaults, no GUI, no inbox.
-Template approval lives in the `mcp:` section of `config.yaml`, read on every call; a template must be listed, not built from a project-local definition (`BuildSource.usedProjectLocal()`), and built.
+Template approval lives in `~/.config/incus-spawn/mcp.yaml`, read on every call; a template must be listed, not built from a project-local definition (`BuildSource.usedProjectLocal()`), and built.
 Definitions come from `ImageDef.loadTrusted()`, which leaves out the working directory's `.incus-spawn/`.
 `isx mcp` runs in whatever repository the agent was started in, and a definition there must not reach an agent's instance even by overriding a parent of an approved template (which would decide, among other things, which credential accounts it gets).
 Nothing in the package can write config or definitions; `McpNoWritePathTest` pins that at the source level, so widening it means deleting a line of that test.
+
+**The policy has a file of its own (#1331).**
+Every MCP setting lives at the top level of `mcp.yaml` in the host user's configuration directory, with the names, meanings and defaults the `mcp:` section of `config.yaml` had.
+That section is no longer read at all: it stays in `config.yaml` as any unknown key does, so a save does not delete what the user wrote, and `isx mcp` and `isx init` say to move it.
+Its presence alone, with no `mcp.yaml` yet, makes the policy `Invalid`: the defaults would replace what the user wrote there (a longer orphan grace, a narrower permission mode), so the first session after an upgrade would sweep orphans early and release a coordinator's instances, and `isx init` saving approvals would make the wider policy permanent.
+Nothing is taken from the section; it only stops isx guessing.
+An empty section (`mcp:` or `mcp: {}`) set nothing the defaults would widen, so it does not count.
+A `config.yaml` that does not parse counts the same, since `SpawnConfig.load()` would read it as empty and hide the section.
+A coordinator session whose resume meets an invalid policy holds nothing until it reconnects, and says so on stderr.
+MCP was experimental, so this is a clean break: no fallback, no merging and no migration, because a policy assembled from two files is one nobody can review in one place.
+`McpConfig.load()` reads the file on every call, as before.
+A missing file or an empty document approves nothing.
+One that cannot be read, does not parse, or holds a key or value isx does not know throws `McpConfig.Invalid`, naming the file; `isx mcp` turns that into a `refused` error for the call that needed the policy, never an earlier policy and never defaults.
+Unknown keys are refused rather than ignored because ignoring them drops a restriction in silence: a mistyped `max-instance: 2`, or the old section pasted with its `mcp:` line, would otherwise leave the defaults in force.
+Values that were only checked on use (permission modes, the summary model, Codex sandbox modes) are checked at load for the same reason, so a bad one stops every call rather than only the one that reads it.
+`isx init` is the only writer: it writes the file only when an approval changes, owner-only into a temporary file renamed over it (over a symlink's target, so a dotfiles link stays a link) (a session reading meanwhile sees one policy or the other, never a truncated file), and leaves an invalid one alone.
+`host-routes:` stays in `config.yaml`: it is proxy routing that a controller without MCP may use, and its template list answers who may reach a service, not which templates an agent may create instances from, so neither list is derived from the other.
+The split organizes the configuration; it is not a new security boundary, since both files belong to the same host user.
 
 **Forks: prepare once, try N things (#1013).**
 A review that builds a PR once and then runs several specialist reviewers wants each in an identical, warm environment -- the built checkout, the primed `~/.m2`, the compiled `target/` -- without rebuilding per specialist or sharing one `target/` and one failure domain.
@@ -3038,11 +3056,11 @@ One agent per instance, because two would clash in one working tree; `delegate(t
 
 **Per-task profiles (#1012).**
 A coordinator spends tokens per kind of work -- a small model and a short budget for a rebase, a large one for a design -- so `delegate` and `send_message` take `model` and `max_turns`, passed as `--model` and `--max-turns`.
-Without them nothing changes: no `--model`, so the template's `settings.json` model applies (`list_templates` shows it as `delegate_model`: the `model` parameter of the nearest layer listing the `claude` tool, which the build reconfigures with that layer's parameters alone), and `mcp.delegate-max-turns`.
+Without them nothing changes: no `--model`, so the template's `settings.json` model applies (`list_templates` shows it as `delegate_model`: the `model` parameter of the nearest layer listing the `claude` tool, which the build reconfigures with that layer's parameters alone), and `delegate-max-turns` in `mcp.yaml`.
 The alternative, a template per model, made every profile a build.
 Three bounds:
 - *The budget is the user's.*
-  `max_turns` may narrow `mcp.delegate-max-turns`, never exceed it, and a budget recorded under a higher ceiling is held to a lower one set since -- the same rule as everything in `mcp:`, which an agent can narrow and never widen.
+  `max_turns` may narrow `delegate-max-turns` in `mcp.yaml`, never exceed it, and a budget recorded under a higher ceiling is held to a lower one set since -- the same rule as everything in `mcp.yaml`, which an agent can narrow and never widen.
 - *The model is the account's.*
   A model the template's credential cannot use must fail the call, not the task, which would cost a branch and a poll to discover.
   The check (`ModelCheck`) is a one-turn, tool-less `claude -p --model <m>` in the instance, through its proxy account: the same path the task takes, so it answers alike for a model id, an alias (`haiku`, `opus[1m]`) and a Vertex account's naming.
@@ -3127,7 +3145,7 @@ The pieces, and why each is the way it is:
   It is a warning, never a failure: the branch is made either way, and the user sees a coordinator that cannot work while still there to fix it.
   One exec, only for `--mcp-client` branches.
 
-The tool contract is the stdio one, unchanged: the same tools, approved templates, `mcp:` limits and audit log, the session's host-side stamps (`mcp-cwd`, `mcp-client-pid`) simply absent.
+The tool contract is the stdio one, unchanged: the same tools, approved templates, `mcp.yaml` limits and audit log, the session's host-side stamps (`mcp-cwd`, `mcp-client-pid`) simply absent.
 Out of scope: gating outward actions such as pushes at the proxy (the complement to this), and reaching Incus on another host.
 
 ### Native image CPU baseline
@@ -3699,7 +3717,7 @@ Jackson's semantics are the ones users' files were written against, so where jjq
 - A tree is immutable: code that changes one (the support-bundle redaction) rebuilds it along key/index segments, never along a dotted path re-split, since keys may contain `.` or `[`.
 - A strict-parse failure quotes the whole document; messages show `Jjq.brief`.
 - A JSON document with a repeated key is refused, where Jackson kept the last value: a request body, an MCP message or `~/.claude.json` with one fails like malformed JSON rather than being read one way or the other.
-- An `Integer` field binds through `IntegerConverter`: jjq gives 0 for `.inf` and `.nan`, which for `mcp.orphan-grace-hours` or `max-instances` would fail open, and refuses `""`, which Jackson left unset (a word, a boolean, a fraction or an out-of-range number it refuses itself since 0.2.3).
+- An `Integer` field binds through `IntegerConverter`: jjq gives 0 for `.inf` and `.nan`, which for `orphan-grace-hours` in `mcp.yaml` or `max-instances` would fail open, and refuses `""`, which Jackson left unset (a word, a boolean, a fraction or an out-of-range number it refuses itself since 0.2.3).
 The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2), #131-#134 (fixed in 0.2.3) and #130 (open).
 
 ### DNS: static resolv.conf + bridge dnsmasq
@@ -3869,7 +3887,7 @@ Three details keep a route to its own name:
 The entry is keyed by name with the target and the filter as fields, so #935's per-instance grants can later sit beside `templates:` on the same entry rather than in a second route table.
 
 Rejected:
-- Templates declaring their routes: a project-local template is untrusted (#765), and a route reaches host state outside the project; the host owner opts in from `config.yaml`, as with `mcp: templates`.
+- Templates declaring their routes: a project-local template is untrusted (#765), and a route reaches host state outside the project; the host owner opts in from `config.yaml`, as with the `templates` of `mcp.yaml`.
 - Any target address: it would make the proxy a pivot from proxy-only boxes onto the LAN.
 - A unix-socket target: Vert.x needs its native transport for one on Linux and has no portable path on macOS; loopback TCP covers the need, and a socket can be added later behind the same entry.
 - Forwarding the instance's secret for the controller to check: the controller would then hold credentials, while the proxy already checks address and secret together.
@@ -4094,7 +4112,7 @@ Every path that copies from a template holds it shared, from the lookup until th
 A reader that arrives during the gap waits the two requests out and then finds the new template.
 Readers never hold each other off, so concurrent branches of one template, such as a coordinator's fan-out, cost each other nothing; the lock adds a few file syscalls and no Incus request to the branch path.
 The lock file is `~/.cache/incus-spawn/locks/templates/<name>.lock`, one per name and never deleted, since deleting it would let two processes lock different files.
-Names come from untrusted places (a project-local `name:`, an agent's `template` argument), so only a name Incus would accept for an instance gets a file (any other cannot be a template, and is held by nothing), and `isx mcp` holds only templates the user listed under `mcp.templates`.
+Names come from untrusted places (a project-local `name:`, an agent's `template` argument), so only a name Incus would accept for an instance gets a file (any other cannot be a template, and is held by nothing), and `isx mcp` holds only templates the user listed under `templates` in `mcp.yaml`.
 `isx branch` cannot do the same.
 Whether its `--from` names a template is only known from a lookup, which has to be made under the hold, so a mistyped `--from`, or a branch of a plain instance, leaves a lock file behind.
 That is an empty file per name the user typed, against a branch that never has to wait out a swap.

@@ -230,27 +230,35 @@ To register it with Claude Code by hand instead:
 claude mcp add --scope user isx -- ~/.local/bin/isx mcp
 ```
 
-Nothing is available until you approve templates in `~/.config/incus-spawn/config.yaml`. Agents never can -- `isx mcp` reads this section on every call and has no way to write it:
+Nothing is available until you approve templates in `~/.config/incus-spawn/mcp.yaml`, a file of its own beside `config.yaml`.
+Agents never can -- `isx mcp` reads this file on every call and has no way to write it:
 
 ```yaml
-mcp:
-  templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
-  max-instances: 8                 # per host user, across sessions (default 8)
-  max-concurrent-tasks: 8          # background commands and delegated agents, per host user, across sessions (default 8)
-  # delegate-max-turns: 200        # optional Claude turn ceiling; Codex is refused while this is set
-  delegate-permission-mode: bypassPermissions   # Claude's --permission-mode (default shown)
-  delegate-permission-modes:       # per-template overrides, e.g. a reviewer that only plans
-    tpl-review: plan
-  codex:
-    sandbox-mode: danger-full-access  # Codex always runs with approval_policy=never
-    sandbox-modes:
-      tpl-codex-review: read-only
-  orphan-grace-hours: 24           # how long an instance outlives its session (default 24)
-  dormant-after-hours: 24          # past that, one kept only for a delegate showing no activity
-                                   # this long is stopped instead (default 24)
-  dormant-grace-hours: 168         # and destroyed this long after (default 168)
-  summary-model: haiku             # answers the tools' `ask` inside the instance (default haiku)
+templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
+max-instances: 8                 # per host user, across sessions (default 8)
+max-concurrent-tasks: 8          # background commands and delegated agents, per host user, across sessions (default 8)
+# delegate-max-turns: 200        # optional Claude turn ceiling; Codex is refused while this is set
+delegate-permission-mode: bypassPermissions   # Claude's --permission-mode (default shown)
+delegate-permission-modes:       # per-template overrides, e.g. a reviewer that only plans
+  tpl-review: plan
+codex:
+  sandbox-mode: danger-full-access  # Codex always runs with approval_policy=never
+  sandbox-modes:
+    tpl-codex-review: read-only
+orphan-grace-hours: 24           # how long an instance outlives its session (default 24)
+dormant-after-hours: 24          # past that, one kept only for a delegate showing no activity
+                                 # this long is stopped instead (default 24)
+dormant-grace-hours: 168         # and destroyed this long after (default 168)
+summary-model: haiku             # answers the tools' `ask` inside the instance (default haiku)
 ```
+
+A missing or empty file approves nothing.
+A file `isx mcp` cannot use -- unreadable, malformed, an unknown key or a value it does not accept -- refuses every call that depends on it, naming `mcp.yaml` and what is wrong, until you fix it; a change takes effect on the next call, with no restart.
+
+Earlier versions kept these settings in the `mcp:` section of `config.yaml`.
+That section is no longer read, not even as a fallback: move its contents into `mcp.yaml` and drop the `mcp:` line, un-indenting what was under it.
+Until `mcp.yaml` exists, the old section makes `isx mcp` refuse everything and `isx init` leave the step alone, so its limits are never quietly replaced by the defaults.
+Once `mcp.yaml` exists, both only remind you to delete the old section.
 
 `max-instances` and `max-concurrent-tasks` are the two knobs to raise for a controller, one session running many tasks at once. They are a safety net against runaway creation, not a budget: the only cost of a high number is host memory. `list_templates` reports both, under the same names (`max_instances`, `max_concurrent_tasks`). Every tool also returns its facts as `structuredContent` matching the `outputSchema` it lists, so a program need not parse the text. A task's `state` is the same word in every tool: `running`, `finished`, `attached` (finished, and a person is in its conversation), `lost` or `unknown` (`list_instances` gives it as the session last saw it, so `unknown` there means nothing has read how it ended yet, as after `cancel_task`; `task_status` reads it). A refusal says why in `_meta["dev.incusspawn/error"].code`.
 
@@ -280,7 +288,7 @@ Each descriptor reports `supports_max_turns`, `supports_model_preflight`, its co
 Models and permissions come from the selected agent's configuration; task `model` overrides persist across follow-ups and adoption.
 Claude validates a chosen model against its account before launching; Codex reports model-access errors in the task result.
 
-Codex has no equivalent to Claude's `max_turns`: an explicit argument is rejected, and a configured `mcp.delegate-max-turns` prevents Codex delegation and continuation.
+Codex has no equivalent to Claude's `max_turns`: an explicit argument is rejected, and a configured `delegate-max-turns` in `mcp.yaml` prevents Codex delegation and continuation.
 The user must revise that policy to use Codex.
 `ask` requires Claude's tool-free summarizer and is refused on Codex-only instances before its command runs; ordinary output, reports and diffs work with either agent.
 Codex uses the template's `openai` credential account and always runs without approval prompts.
@@ -331,7 +339,7 @@ isx branch coord --from tpl-dev --proxy-only --mcp-client
 
 Inside it, `isx mcp` is served at `https://mcp.isx.internal/mcp` (MCP's Streamable HTTP transport) by the host proxy, which runs one host `isx mcp` for the instance. Each request must come from the instance's own address and carry the secret isx gives it at every start, in `X-Isx-Instance-Secret`. If the template has the `claude` tool, there is nothing to set up: every isx start registers the server in the instance's Claude Code (`claude mcp list` shows it as `isx`), with a `headersHelper` that reads the current secret from `/run/isx/instance-secret`, so interactive sessions, `claude --continue` and `claude -p` under a systemd unit all have the tools. Claude Code runs a `headersHelper` only in a trusted workspace; the `claude` tool already trusts the home directory and every repository the template clones, so a coordinator started from anywhere else meets Claude Code's ordinary trust prompt once. A copy of the coordinator (`isx branch --from coord`) loses the registration on its first start, along with the grant. The server also offers the coordination workflow as a prompt, which Claude Code lists as `/mcp__isx__coordinate`. `isx branch --mcp-client` asks the server from inside the new instance once it has started, and says whether it was reached (with the server's version and tool count) or why not, and whether its Claude Code has the server.
 
-It gets exactly the tools, approved templates and limits a host agent gets, and the same `mcp:` configuration applies. What differs:
+It gets exactly the tools, approved templates and limits a host agent gets, and the same `mcp.yaml` applies. What differs:
 
 - **The session is the instance.** What it creates stays held by it across restarts of its Claude Code and of the instance itself, and is picked up again on the next connection: nothing to adopt. Its instances become orphans only once it is destroyed, or no longer allowed to call; a new coordinator under the same name is another session and gets none of them. One whose template you no longer approve is released when the coordinator next connects, as a host session's would be when it ends.
 - **One connection at a time.** A new connection from the instance ends its previous one.
@@ -1362,7 +1370,8 @@ Both are needed, and `jbang` must stay on your PATH. To update, re-run both comm
 
 ## Configuration
 
-- `~/.config/incus-spawn/config.yaml` -- auth credentials and global settings (including the `mcp:` section, see [Delegating from an agent](#delegating-from-an-agent-on-your-host-mcp))
+- `~/.config/incus-spawn/config.yaml` -- auth credentials and global settings, including `host-routes:`
+- `~/.config/incus-spawn/mcp.yaml` -- what `isx mcp` lets agents do (see [Delegating from an agent](#delegating-from-an-agent-on-your-host-mcp))
 - `~/.config/incus-spawn/ssh/` -- managed SSH key pair, per-instance config, and known_hosts
 - `~/.config/incus-spawn/images/*.yaml` -- user-level template definitions
 - `~/.config/incus-spawn/tools/*.yaml` -- user-level tool definitions

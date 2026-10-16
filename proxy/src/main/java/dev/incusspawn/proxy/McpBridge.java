@@ -42,7 +42,7 @@ import java.util.function.Supplier;
  * goes back as the answer to the POST that asked (matched by JSON-RPC id), or else -- a
  * notification -- on the session's GET stream. One process per instance: a new
  * {@code initialize} from it ends the previous one first, because two processes serving one
- * instance session would each count only their own instances against {@code mcp.max-instances}.
+ * instance session would each count only their own instances against {@code max-instances} in {@code mcp.yaml}.
  *
  * <p><b>Contract.</b> POST a JSON-RPC message (no batches) with {@code Mcp-Session-Id} after
  * {@code initialize}: a request is answered as {@code text/event-stream} carrying its one

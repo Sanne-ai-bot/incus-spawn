@@ -141,10 +141,10 @@ public final class InstanceDetailView {
                         + (mcp.dormantSince() == null ? "" : ", stopped as dormant since " + mcp.dormantSince())));
                 if (mcp.dormantSince() == null) {
                     rows.add(new DetailRow(null, "its session ended: another may adopt it, and one destroys it"));
-                    rows.add(new DetailRow(null, "after mcp.orphan-grace-hours unless someone is working in it"));
+                    rows.add(new DetailRow(null, "after orphan-grace-hours in mcp.yaml unless someone is working in it"));
                 } else {
                     rows.add(new DetailRow(null, "its delegate never finished and stopped moving: another session"));
-                    rows.add(new DetailRow(null, "may adopt it, or destroys it after mcp.dormant-grace-hours"));
+                    rows.add(new DetailRow(null, "may adopt it, or destroys it after dormant-grace-hours in mcp.yaml"));
                 }
             }
             case KEPT -> {

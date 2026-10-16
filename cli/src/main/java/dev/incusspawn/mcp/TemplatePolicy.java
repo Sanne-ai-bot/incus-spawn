@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.function.Supplier;
 
 /**
- * Which templates an agent may branch from. A template must be listed in {@code mcp.templates},
+ * Which templates an agent may branch from. A template must be listed in {@code templates} in {@code mcp.yaml},
  * be defined by a trusted layer (never a project-local {@code .incus-spawn/} definition, nor an
  * image built from one), and be built. Unbuilt templates are refused, never built on demand.
  *
@@ -19,7 +19,7 @@ import java.util.function.Supplier;
 final class TemplatePolicy {
 
     static final String HOW_TO_APPROVE = "Only the user can approve templates, by listing them "
-            + "under mcp.templates in ~/.config/incus-spawn/config.yaml.";
+            + "under templates in ~/.config/incus-spawn/mcp.yaml.";
 
     private final InstanceBackend backend;
     private final Supplier<McpConfig> config;
@@ -48,7 +48,7 @@ final class TemplatePolicy {
         return info;
     }
 
-    /** Refuses a template the user has not listed under {@code mcp.templates}, from the config alone. */
+    /** Refuses a template the user has not listed under {@code templates} in {@code mcp.yaml}, from the config alone. */
     void requireListed(String name) {
         var listed = config.get().templates();
         if (!listed.contains(name)) {
@@ -67,7 +67,7 @@ final class TemplatePolicy {
         requireListed(name);
         var info = backend.template(name)
                 .orElseThrow(() -> new ToolError(ToolError.Code.NOT_APPROVED, "template '" + name + "' is approved but has no "
-                        + "definition. Ask the user to check mcp.templates in their config."));
+                        + "definition. Ask the user to check templates in their mcp.yaml."));
         if (info.projectLocal()) {
             throw new ToolError(ToolError.Code.NOT_APPROVED, "template '" + name + "' was built from a project-local definition "
                     + "(.incus-spawn/ in a repository), which agents may never use.");

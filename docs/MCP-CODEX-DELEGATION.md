@@ -214,22 +214,21 @@ Keep any outstanding Codex instances before a downgrade so an old orphan sweep c
 ## Permissions, models, and feature differences
 
 Permission policy belongs to host configuration, never to the coordinator's tool arguments.
-Retain the existing Claude permission keys and add Codex-specific settings:
+Retain the existing Claude permission keys and add Codex-specific settings, in `~/.config/incus-spawn/mcp.yaml`:
 
 ```yaml
-mcp:
-  templates: [tpl-claude-dev, tpl-codex-dev, tpl-codex-review]
-  codex:
-    sandbox-mode: danger-full-access
-    sandbox-modes:
-      tpl-codex-review: read-only
+templates: [tpl-claude-dev, tpl-codex-dev, tpl-codex-review]
+codex:
+  sandbox-mode: danger-full-access
+  sandbox-modes:
+    tpl-codex-review: read-only
 ```
 
 Allow only `read-only`, `workspace-write`, and `danger-full-access`, with `approval_policy=never` on every Codex invocation.
 These are Codex settings, documented in the [CLI reference](https://developers.openai.com/codex/cli/reference/) and [configuration reference](https://developers.openai.com/codex/config-reference/).
 The default matches `CodexSetup` and relies on the existing isx instance boundary.
 If the effective legacy Claude permission setting is restrictive and no explicit Codex setting covers the template, refuse Codex delegation until the user chooses its policy.
-A restriction set for one template in `delegate-permission-modes` is covered only by that template's `sandbox-modes` entry, never by the section-wide `sandbox-mode`.
+A restriction set for one template in `delegate-permission-modes` is covered only by that template's `sandbox-modes` entry, never by the file-wide `sandbox-mode`.
 Do not silently turn a configured Claude `plan` worker into a fully writable Codex worker.
 Codex sandboxing is not a promise that every remote tool is read-only; the template's credentials remain the external authority boundary.
 
@@ -248,7 +247,7 @@ The first release makes three capability differences explicit:
 
 Neither local `codex exec --help` nor the fetched CLI reference establishes an equivalent to Claude's maximum agent-turn count.
 Do not confuse Codex's terminal `turn.completed` with Claude's internal agent-loop turns, and do not reinterpret turns as tokens or wall time.
-If `mcp.delegate-max-turns` is configured, Codex delegation and continuation are refused because the server cannot enforce that ceiling.
+If `delegate-max-turns` in `mcp.yaml` is configured, Codex delegation and continuation are refused because the server cannot enforce that ceiling.
 Discovery reports this refusal before a coordinator tries to branch a worker.
 The user would have to revise that policy explicitly to use Codex in the first release.
 A future provider-independent time budget needs a guest-side watchdog that survives host disconnects and kills marked descendants; it must be designed separately from turn accounting.

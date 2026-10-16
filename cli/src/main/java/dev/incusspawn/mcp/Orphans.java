@@ -18,10 +18,10 @@ import java.util.function.Predicate;
 /**
  * Instances whose session is gone. An orphan is quarantined, never destroyed on sight: a
  * coordinating agent that restarts finds its workers where it left them and adopts them. Once
- * {@code mcp.orphan-grace-hours} have passed since it was orphaned, the next session to start
+ * {@code orphan-grace-hours} in {@code mcp.yaml} have passed since it was orphaned, the next session to start
  * destroys it -- unless a person or one of its tasks is still working in it. One kept only for a
  * delegate that shows no activity is stopped instead, and destroyed once
- * {@code mcp.dormant-grace-hours} more have passed (#1028).
+ * {@code dormant-grace-hours} in {@code mcp.yaml} more have passed (#1028).
  *
  * <p>Only this host user's instances are considered, and only ones that were never kept and are
  * not in the middle of another operation. A session is dead when its process no longer exists,
