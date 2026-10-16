@@ -12,6 +12,7 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.util.ArrayList;
+import java.util.List;
 
 @CommandDefinition(
         name = "run",
@@ -46,26 +47,27 @@ public class RunCommand extends BaseCommand {
         var instance = resolver.readInstance(name);
         var installedTools = resolver.collectInstalledTools(instance, parent);
         var repos = resolver.collectRepos(parent);
+        var allActions = resolver.resolveActionsForInstance(name, parent, installedTools, repos);
 
         // Find the action to execute
         ToolAction toolAction;
         if (action == null || action.isBlank()) {
             // Execute default action
-            var defaultAction = resolver.findDefaultAction(instance, parent, installedTools, repos);
-            if (defaultAction.isEmpty()) {
-                // No default action configured, fall back to shell
-                System.out.println("No default action configured for " + name + ", opening shell...\n");
+            var ref = resolver.defaultActionRef(instance, parent);
+            var noDefault = noDefaultAction(name, ref, allActions);
+            if (noDefault != null) {
+                // Fall back to shell; a broken reference is a warning, so it goes to stderr
+                (ref == null ? System.out : System.err).println(noDefault + ", opening shell...\n");
                 var prep = dev.incusspawn.incus.IncusClient.ShellPrep.fromInstance(incus, instance);
                 incus.interactiveShell(name, "agentuser", prep,
                         resolver.shellMenu(name, instance, parent, prep.workdir()));
                 return CommandResult.SUCCESS;
             }
-            toolAction = defaultAction.get();
+            toolAction = ActionResolver.findActionByRef(ref, allActions).orElseThrow();
             System.out.println("Running default action: " + toolAction.label());
         } else {
             // Execute named action
-            var allActions = resolver.resolveActionsForInstance(name, parent, installedTools, repos);
-            var namedAction = resolver.findActionByRef(action, allActions);
+            var namedAction = ActionResolver.findActionByRef(action, allActions);
             if (namedAction.isEmpty()) {
                 System.err.println("Error: action '" + action + "' not found for instance '" + name + "'.");
                 System.err.println("Available actions:");
@@ -107,8 +109,7 @@ public class RunCommand extends BaseCommand {
                     prep.workdir(), shellCmd, prep.autoAttachTmux(), prep.autoAttachZmx(),
                     prep.subnetDiagnostic(), prep.terminfoHandled(), prep.templateName());
             var menu = ShellMenu.enabled()
-                    ? ShellMenu.of(resolver.resolveActionsForInstance(name, parent, installedTools, repos),
-                            prep.workdir(), context)
+                    ? ShellMenu.of(allActions, prep.workdir(), context)
                     : ShellMenu.NONE;
             incus.interactiveShell(name, "agentuser", updatedPrep, menu);
             return CommandResult.SUCCESS;
@@ -129,5 +130,14 @@ public class RunCommand extends BaseCommand {
         }
 
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * Why {@code isx run} opens a shell instead of the default action {@code ref}, or null when
+     * {@code ref} resolves among {@code actions}: none configured, or what is wrong with it (#1444).
+     */
+    static String noDefaultAction(String name, String ref, List<ToolAction> actions) {
+        return ref == null ? "No default action configured for " + name
+                : ActionResolver.unresolvedReason(ref, actions);
     }
 }

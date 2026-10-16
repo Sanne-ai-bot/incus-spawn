@@ -83,15 +83,14 @@ public class ActionResolver {
     }
 
     /**
-     * Find the default action for an instance based on its template's default-action field.
+     * The instance's {@code default-action} reference, or null when its template names none.
+     * Resolve it with {@link #findActionByRef}, and say why it failed with {@link #unresolvedReason}.
      *
      * @param instance the instance as {@link #readInstance} returned it, whose stamp stands in
      *                 for a template YAML that is gone
      */
-    public Optional<ToolAction> findDefaultAction(JqValue instance, String parentTemplate,
-                                                   Set<String> installedTools,
-                                                   List<ActionContext.RepoInfo> repos) {
-        return findDefaultAction(parentTemplate, () -> stampedDefaultAction(instance), () -> installedTools, repos);
+    public String defaultActionRef(JqValue instance, String parentTemplate) {
+        return resolveDefaultActionRef(parentTemplate, () -> stampedDefaultAction(instance));
     }
 
     private static String stampedDefaultAction(JqValue instance) {
@@ -131,17 +130,32 @@ public class ActionResolver {
     /**
      * Find a specific action by reference (e.g., "tool-name" or "tool-name:action-id").
      */
-    public Optional<ToolAction> findActionByRef(String ref, List<ToolAction> actions) {
+    public static Optional<ToolAction> findActionByRef(String ref, List<ToolAction> actions) {
         var parsed = parseActionRef(ref);
-        var matching = actions.stream()
-                .filter(a -> parsed.toolName().equals(a.toolName()))
-                .toList();
+        var matching = actionsOfTool(parsed, actions);
 
         if (matching.isEmpty()) {
             return Optional.empty();
         }
 
         return resolveActionByRef(parsed, matching);
+    }
+
+    /**
+     * Why {@link #findActionByRef} finds no action for the default-action {@code ref}, worded as
+     * the TUI's Enter says it, or null when it finds one: {@code isx run} names a broken
+     * reference rather than passing it off as none (#1444).
+     */
+    public static String unresolvedReason(String ref, List<ToolAction> actions) {
+        var parsed = parseActionRef(ref);
+        var matching = actionsOfTool(parsed, actions);
+        if (matching.isEmpty()) {
+            return "default-action '" + ref + "': tool not found";
+        }
+        if (resolveActionByRef(parsed, matching).isPresent()) return null;
+        return parsed.actionId() != null
+                ? "default-action '" + ref + "': action id not found or ambiguous"
+                : "default-action '" + ref + "': ambiguous, use tool:action-id";
     }
 
     /**
@@ -351,6 +365,10 @@ public class ActionResolver {
             return new ActionRef(ref.substring(0, colon), id.isEmpty() ? null : id);
         }
         return new ActionRef(ref, null);
+    }
+
+    private static List<ToolAction> actionsOfTool(ActionRef parsed, List<ToolAction> actions) {
+        return actions.stream().filter(a -> parsed.toolName().equals(a.toolName())).toList();
     }
 
     private static Optional<ToolAction> resolveActionByRef(ActionRef parsed,

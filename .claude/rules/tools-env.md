@@ -66,6 +66,7 @@ An action with `shell_menu: true` and a one-key `shortcut` also appears in the s
 F9 runs in-process actions through `ToolAction.executeWithoutPrompting` (#982, `TuiActionDispatchTest`); `execute`, which may prompt on stdin, is only for `isx run` and deferred `command` actions.
 Templates select a default action via `ImageDef.defaultAction` (`default-action` in YAML), which is run on Enter in the TUI or when executing `isx run <instance>`.
 The reference format is `tool-name` (single action) or `tool-name:action-id` (multiple actions).
+A reference that does not resolve is named with why, in the same words in the TUI's status line on Enter and on `isx run`'s stderr before it opens a shell (`ActionResolver.unresolvedReason`, #1444): `tool not found`, `action id not found or ambiguous`, or `ambiguous, use tool:action-id`; only a template with no reference gets "No default action configured".
 `default-action` inherits through the parent chain (child overrides parent) and is intentionally excluded from `contentFingerprint()` so changing it doesn't trigger template rebuilds.
 Its metadata stamp (`user.incus-spawn.default-action`, the fallback when the YAML is gone) is instead reconciled onto every up-to-date template at the end of each `isx build` by `BuildCommand.syncDefaultActions()` (see DESIGN.md "Metadata outside the fingerprint").
 
