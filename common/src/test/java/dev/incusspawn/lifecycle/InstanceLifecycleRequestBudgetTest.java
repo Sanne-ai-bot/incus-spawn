@@ -40,7 +40,7 @@ import static org.mockito.Mockito.spy;
  * <p>Budgets are exact, so they ratchet: above budget is a regression to fix; below budget is
  * an improvement, so lower the number here in the same change.
  */
-@ExtendWith(TempHome.class)
+@ExtendWith({TempHome.class, LinuxBranching.class})
 class InstanceLifecycleRequestBudgetTest {
 
     private static final String NAME = "dev-1";

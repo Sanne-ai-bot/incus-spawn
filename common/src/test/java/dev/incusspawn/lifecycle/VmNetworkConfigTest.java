@@ -34,7 +34,7 @@ import static org.mockito.Mockito.when;
  * is called, so a {@code .network} file matching {@code Name=eth0} matches nothing there (#997).
  * The VM's file matches its NIC by MAC address instead, which Incus records for the device.
  */
-@ExtendWith(TempHome.class)
+@ExtendWith({TempHome.class, LinuxBranching.class})
 class VmNetworkConfigTest {
 
     private static final String FILE = InstanceNetwork.NETWORK_FILE;

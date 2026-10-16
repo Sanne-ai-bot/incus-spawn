@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * What a branch gets for the settings its request leaves open (#869): the same in
  * {@code isx branch} and the TUI's branch dialog, both taken from the template definition.
  */
-@ExtendWith(TempHome.class)
+@ExtendWith({TempHome.class, LinuxBranching.class})
 class BranchDefaultsTest {
 
     @BeforeEach

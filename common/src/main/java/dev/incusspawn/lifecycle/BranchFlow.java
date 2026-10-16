@@ -57,6 +57,9 @@ public final class BranchFlow {
     /** Whether the proxy is up, warning if not; replaced by tests, which have no proxy. */
     static java.util.function.Predicate<IncusClient> proxyHealthCheck = ProxyHealthCheck::checkOrWarn;
 
+    /** Whether isx runs on macOS; replaced by tests, so the macOS refusals are tested anywhere. */
+    static java.util.function.BooleanSupplier macOS = dev.incusspawn.Platform::isMacOS;
+
     /**
      * What to branch. A null {@code gui}, {@code kvm}, {@code cpu}, {@code memory} or
      * {@code disk} means the {@linkplain #defaultsFor default} for the source.
@@ -96,8 +99,9 @@ public final class BranchFlow {
      * {@code sysctl}, which a request that sets its own limits should not pay.
      *
      * @param guiNote why {@code gui} is off although the source asks for GUI, or null
+     * @param kvmNote why {@code kvm} is off although the source asks for KVM, or null
      */
-    public record Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote) {
+    public record Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote, String kvmNote) {
         /** The CPU limit, or null for a container, which gets none. */
         public Integer cpu() {
             return machineType == MachineType.VM ? ResourceLimits.defaultVmCpus() : null;
@@ -126,6 +130,10 @@ public final class BranchFlow {
      * project-local definition, or a source built with one: a cloned repository's
      * {@code .incus-spawn/} gets only what stays inside its project, so its {@code gui: true}
      * still needs {@code --gui}.
+     *
+     * <p>KVM is off on macOS whatever the source asks for: there is no {@code /dev/kvm} to pass
+     * through (#1254). A template's KVM is how it was built, not a request, so the branch goes
+     * ahead without it; only an explicit {@code --kvm} is {@linkplain #kvmUnsupportedOnMacOs refused}.
      */
     public static Defaults defaultsFor(String source, JqValue instance, Map<String, ImageDef> defs) {
         var def = defs.get(source);
@@ -149,7 +157,32 @@ public final class BranchFlow {
         var kvm = template
                 ? (def != null && def.isKvm()) || "kvm".equals(config.path(Metadata.INSTANCE_MODE).asText(""))
                 : "true".equals(config.path(Metadata.KVM_ENABLED).asText(""));
-        return new Defaults(machineType, gui, kvm, guiNote);
+        String kvmNote = null;
+        if (kvm && macOS.getAsBoolean()) {
+            kvm = false;
+            kvmNote = "'" + source + "' asks for KVM passthrough, which is " + NOT_ON_MACOS + ", so it is off.";
+        }
+        return new Defaults(machineType, gui, kvm, guiNote, kvmNote);
+    }
+
+    private static final String NOT_ON_MACOS = "not available on macOS, where isx runs containers only";
+
+    /*
+     * The two refusals below are the one gate for isx branch, isx mcp and the TUI's branch dialog,
+     * so each refuses with the same sentence before anything is created, instead of failing later
+     * in a lower layer: macOS's appliance has no nested virtualization (#1254).
+     */
+
+    /** Why a branch of {@code source}, of type {@code machineType}, cannot be made on this host, or null when it can. */
+    public static String vmUnsupportedOnMacOs(String source, MachineType machineType) {
+        if (machineType != MachineType.VM || !macOS.getAsBoolean()) return null;
+        return "VM instances are " + NOT_ON_MACOS + ", and '" + source + "' is a VM. Branch a container template instead.";
+    }
+
+    /** Why a branch asking for KVM passthrough ({@code kvm}) cannot be made on this host, or null when it can. */
+    public static String kvmUnsupportedOnMacOs(boolean kvm) {
+        if (!kvm || !macOS.getAsBoolean()) return null;
+        return "KVM passthrough is " + NOT_ON_MACOS + ". Leave out --kvm, or untick KVM passthrough in the branch dialog.";
     }
 
     /** Whether {@code def}, or any definition the source was built from, is project-local. */
@@ -216,6 +249,13 @@ public final class BranchFlow {
      * {@link ImageDef#loadTrusted()} for a caller that must not see project-local ones.
      */
     public static Preflight preflight(IncusClient incus, Request req, Map<String, ImageDef> defs) {
+        // Before any Incus request: the request alone says it asks for KVM
+        var refusal = kvmUnsupportedOnMacOs(Boolean.TRUE.equals(req.kvm()));
+        if (refusal != null) throw new BranchException(refusal);
+        // Then from the source, before any other check, so a VM is not first refused for its name
+        var sourceInstance = incus.instanceMetadata(req.source());
+        refusal = vmUnsupportedOnMacOs(req.source(), IncusClient.machineType(sourceInstance));
+        if (refusal != null) throw new BranchException(refusal);
         if (incus.exists(req.name())) {
             throw new BranchException("an instance named '" + req.name() + "' already exists.");
         }
@@ -225,7 +265,6 @@ public final class BranchFlow {
         var config = SpawnConfig.load();
         var loader = new ToolDefLoader();
         var served = ToolProxyResolver.proxyToolSetups(config, loader);
-        var sourceInstance = incus.instanceMetadata(req.source());
         ResolvedAccounts accounts;
         try {
             accounts = resolveAccountSelection(incus, req.source(), sourceInstance, req.accountOverrides(), defs, config,
@@ -342,6 +381,7 @@ public final class BranchFlow {
 
         BuildOutput.step("Resource limits: " +
                 (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
+        if (req.kvm() == null && defaults.kvmNote() != null) BuildOutput.warn(defaults.kvmNote());
         var enableKvm = req.kvm() != null ? req.kvm() : defaults.kvm();
         var machineType = defaults.machineType();
         InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
