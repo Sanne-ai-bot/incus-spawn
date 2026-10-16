@@ -20,8 +20,8 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins how many Incus round trips building an {@link ActionContext} costs. {@code isx run} pays
@@ -146,7 +146,8 @@ class ActionResolverRequestBudgetTest {
                 List.of(new ActionResolverDefaultCommandTest.Tool("some-tool")), Map.of());
         var instance = resolver.readInstance(NAME);
         var tools = resolver.collectInstalledTools(instance, TEMPLATE);
-        var action = resolver.findDefaultAction(instance, TEMPLATE, tools, List.of());
+        var action = ActionResolver.findActionByRef(resolver.defaultActionRef(instance, TEMPLATE),
+                resolver.resolveActionsForInstance(NAME, TEMPLATE, tools, List.of()));
         resolver.buildActionContext(NAME, instance, TEMPLATE);
         IncusClient.ShellPrep.fromInstance(daemon.client(), instance);
         assertInstanceReadOnce(daemon, "isx run's default action (YAML gone)");
@@ -162,7 +163,8 @@ class ActionResolverRequestBudgetTest {
         var resolver = resolver(daemon);
         var instance = resolver.readInstance(NAME);
         var tools = resolver.collectInstalledTools(instance, TEMPLATE);
-        assertTrue(resolver.findDefaultAction(instance, TEMPLATE, tools, List.of()).isEmpty());
+        resolver.resolveActionsForInstance(NAME, TEMPLATE, tools, List.of());
+        assertNull(resolver.defaultActionRef(instance, TEMPLATE));
         var prep = IncusClient.ShellPrep.fromInstance(daemon.client(), instance);
         resolver.shellMenu(NAME, instance, TEMPLATE, prep.workdir());
         assertInstanceReadOnce(daemon, "isx run's shell with no default action");
