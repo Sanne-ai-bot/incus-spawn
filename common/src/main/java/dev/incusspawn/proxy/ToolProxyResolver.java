@@ -113,9 +113,10 @@ public final class ToolProxyResolver {
 
                 if (isAnthropic ? allConfigValues.isEmpty() : !allReferenced) continue;
 
+                var spends = namespacesOf(proxyDef, authEntry);
                 for (var domain : authEntry.getDomains()) {
                     if (domain == null || domain.isBlank()) continue;
-                    result.add(new ResolvedToolProxy(toolName, domain, authEntry, Map.copyOf(allConfigValues)));
+                    result.add(new ResolvedToolProxy(toolName, domain, authEntry, Map.copyOf(allConfigValues), spends));
                 }
             }
         }
@@ -230,14 +231,31 @@ public final class ToolProxyResolver {
             if (proxyDef == null || tool.placeholders().isEmpty()) return;
             for (var auth : proxyDef.getAuth()) {
                 if (auth.getDomains() == null || auth.getType() == null) continue;
+                var spends = namespacesOf(proxyDef, auth);
                 for (var domain : auth.getDomains()) {
                     if (domain != null && !domain.isBlank()) {
-                        result.add(new ResolvedToolProxy(toolName, domain, auth, Map.of()));
+                        result.add(new ResolvedToolProxy(toolName, domain, auth, Map.of(), spends));
                     }
                 }
             }
         });
         return result;
+    }
+
+    /**
+     * The credential namespaces {@code auth} spends: those of the configuration it references.
+     * A request must prove each of them before the entry is injected.
+     */
+    public static java.util.Set<String> namespacesOf(ToolDef.ProxyDef proxy, ToolDef.AuthDef auth) {
+        var namespaces = new java.util.LinkedHashSet<String>();
+        var keys = extractReferencedKeys(auth);
+        // Anthropic's carrier varies with the guest's mode, independently of this host's.
+        if ("anthropic".equals(auth.getType())) keys = List.copyOf(proxy.getConfiguration().keySet());
+        for (var key : keys) {
+            var config = proxy.getConfiguration().get(key);
+            if (config != null) namespaces.add(proxy.namespaceOf(config));
+        }
+        return namespaces;
     }
 
     public record UnresolvedToolProxy(String toolName, String configKey) {}

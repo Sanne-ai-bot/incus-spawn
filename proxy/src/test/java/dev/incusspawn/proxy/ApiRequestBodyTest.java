@@ -103,7 +103,7 @@ class ApiRequestBodyTest {
         auth.setType("basic");
         auth.setUsername("x-access-token");
         auth.setPassword("${token}");
-        var github = new ResolvedToolProxy("gh", "github.com", auth, Map.of("token", REAL_GITHUB));
+        var github = new ResolvedToolProxy("gh", "github.com", auth, Map.of("token", REAL_GITHUB), java.util.Set.of("github"));
         proxy = startProxy(new ProxyCredentials(REAL_ANTHROPIC, "", false, "", "", List.of(github)));
         oauthProxy = startProxy(new ProxyCredentials("", REAL_OAUTH, false, "", "", List.of()));
         vertexProxy = startProxy(new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",

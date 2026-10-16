@@ -23,7 +23,7 @@ public final class ProofCarriers {
                     : " has no declared placeholders: declare proxy.placeholders";
             return dev.incusspawn.util.OutputFormat.oneLine("tool '" + tool + "': proxy auth namespace '" + namespace + "'"
                     + advice + " and export its credential variable in env; send that variable with each request."
-                    + " Credential injection is disabled for " + domains + ", including other tools sharing those domains.");
+                    + " Credential injection is disabled for its entries on " + domains + ".");
         }
     }
     private final Map<MissingPlaceholders, java.util.Set<String>> missing;
@@ -37,14 +37,7 @@ public final class ProofCarriers {
             if (proxy == null) continue;
             for (var auth : proxy.getAuth()) {
                 if (auth.getDomains() == null) continue;
-                var namespaces = new java.util.LinkedHashSet<String>();
-                var keys = ToolProxyResolver.extractReferencedKeys(auth);
-                // Anthropic's carrier varies with the guest's mode, independently of this host's.
-                if ("anthropic".equals(auth.getType())) keys = List.copyOf(proxy.getConfiguration().keySet());
-                for (var key : keys) {
-                    var config = proxy.getConfiguration().get(key);
-                    if (config != null) namespaces.add(proxy.namespaceOf(config));
-                }
+                var namespaces = ToolProxyResolver.namespacesOf(proxy, auth);
                 var headers = switch (String.valueOf(auth.getType())) {
                     case "anthropic" -> List.of("Authorization", "x-api-key");
                     case "header" -> auth.getName() == null ? List.<String>of() : List.of(auth.getName());
@@ -83,7 +76,11 @@ public final class ProofCarriers {
                 .map(entry -> entry.getKey().warning(entry.getValue())).toList();
     }
 
-    /** Every namespace the destination can spend must prove itself; empty lists fail closed. */
+    /**
+     * The proofs a request carries for each namespace the destination's carriers declare, an
+     * empty list for one it carries none for. Which of them must verify depends on the entry the
+     * request selects: the proxy injects an entry only when every namespace of its own verified.
+     */
     public record Presented(Map<String, List<String>> digests, boolean claimsProof) {}
 
     public Presented read(String domain, Function<String, List<String>> headers) {

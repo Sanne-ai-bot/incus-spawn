@@ -96,6 +96,8 @@ class InheritedProofProxyTest {
                 .requestHandler(req -> {
                     var auth = req.getHeader("Authorization");
                     received.put(req.path(), auth == null ? "" : auth);
+                    var other = req.getHeader("X-Other");
+                    if (other != null) received.put(req.path() + "#X-Other", other);
                     req.response().end("{}");
                 });
     }
@@ -243,6 +245,57 @@ class InheritedProofProxyTest {
 
         assertEquals("token gho_placeholder", received.get("/static"));
         assertEquals("token gho_callersOwnToken", received.get("/own"));
+    }
+
+    /**
+     * A namespace sharing the domain under another path scope, its proof in a header no carrier
+     * reads: unproven, so it is never swapped for the parent's, which would hand this request the
+     * parent's account for it (#1423).
+     */
+    @Test
+    void anUnprovenNamespaceIsNotSwapped() throws Exception {
+        var tool = Files.createDirectories(tempHome.resolve(".config/incus-spawn/tools")).resolve("extra.yaml");
+        Files.writeString(tool, """
+                name: extra
+                env:
+                  - name: EXTRA_TOKEN
+                    value: extra-placeholder
+                proxy:
+                  config-namespace: extra
+                  placeholders:
+                    - env: EXTRA_TOKEN
+                      prefix: extra-
+                  configuration:
+                    token:
+                      config-path: token
+                      description: "extra token"
+                      secret: true
+                  auth:
+                    - domains: [%s]
+                      paths: [/extra]
+                      type: header
+                      name: X-Extra-Key
+                      value: "${token}"
+                """.formatted(API));
+        try {
+            serve(INNER_ACCOUNT + "extra:\n  default: inherit\n", pinned("inherit"));
+            var extraProof = "extra-isx_" + ProofToken.derive(INSTANCE_SECRET, "extra");
+            var options = new RequestOptions()
+                    .setMethod(HttpMethod.GET)
+                    .setServer(SocketAddress.inetSocketAddress(proxy.mitmPort(), "127.0.0.1"))
+                    .setHost(API).setPort(443).setURI("/user");
+            int status = client.request(options)
+                    .compose(req -> req.putHeader("Authorization", "token " + INSTANCE_PROOF)
+                            .putHeader("X-Other", extraProof).send())
+                    .compose(resp -> resp.body().map(b -> resp.statusCode()))
+                    .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+
+            assertEquals(200, status);
+            assertEquals("token " + PARENT_PROOF, received.get("/user"), "the proven namespace inherits");
+            assertEquals(extraProof, received.get("/user#X-Other"), "the unproven one is left as it is");
+        } finally {
+            Files.delete(tool);
+        }
     }
 
     @Test
