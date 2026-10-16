@@ -68,12 +68,14 @@ class BuildCommandTest {
             var incus = mock(IncusClient.class);
             when(incus.shellExec(anyString(), any(String[].class)))
                     .thenThrow(new IncusException("exec channel wedged"));
+            when(incus.instanceMetadataOrThrow("tpl-minimal-rebuilding")).thenReturn(instance("container", Map.of()));
             var cmd = new BuildCommand();
             cmd.incus = incus;
 
             cmd.reportBuildFailure("tpl-minimal-rebuilding", "tpl-minimal",
                     "Build failed for tpl-minimal: boom");
 
+            verify(incus).shellExec(anyString(), any(String[].class));
             var log = Environment.buildFailureLogFile("tpl-minimal");
             assertTrue(Files.exists(log), "host log should exist at " + log);
             assertTrue(assertDoesNotThrow(() -> Files.readString(log))
@@ -92,6 +94,7 @@ class BuildCommandTest {
             var incus = mock(IncusClient.class);
             doThrow(new IncusException("Failed to rename tpl-minimal-rebuilding to tpl-minimal: file exists"))
                     .when(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
+            when(incus.instanceMetadataOrThrow("tpl-minimal-rebuilding")).thenReturn(instance("container", Map.of()));
             var cmd = spy(new BuildCommand());
             cmd.incus = incus;
             cmd.yes = true;
@@ -119,6 +122,7 @@ class BuildCommandTest {
             cmd.incus = incus;
             cmd.yes = true;
             doThrow(new IncusException("a build step failed")).when(cmd).buildInto(any(), any(), anyString());
+            when(incus.instanceMetadataOrThrow("tpl-minimal-rebuilding")).thenReturn(instance("container", Map.of()));
             var imageDef = new ImageDef();
             imageDef.setName("tpl-minimal");
 
@@ -130,6 +134,88 @@ class BuildCommandTest {
             verify(incus).configSetAll(eq("tpl-minimal-failed-build"), argThat(config ->
                     Metadata.TYPE_FAILED_BUILD.equals(config.get(Metadata.UNTRUSTED_LINEAGE))
                             && Metadata.TYPE_FAILED_BUILD.equals(config.get(Metadata.TYPE))));
+        });
+    }
+
+    /**
+     * A build that fails before its container exists, the base image's download say (#1439), has
+     * nothing to inspect: the report is the error and where it was saved, with no container
+     * status, no in-container copy, no promotion and no manual cleanup of a container never made.
+     */
+    @Test
+    void aBuildThatFailsBeforeItsContainerExistsReportsNoContainer(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doThrow(new IncusException("Failed to download base image from https://example.invalid/base.tar.xz: "
+                    + "Download failed: unable to find valid certification path"))
+                    .when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+
+            var out = bothStreams(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef))));
+
+            assertTrue(out.contains("Failed to download base image"), out);
+            assertTrue(out.contains("Failure report saved to " + Environment.buildFailureLogFile("tpl-minimal")), out);
+            assertFalse(out.contains("Container"), out);
+            assertFalse(out.contains("BUILD_FAILURE.txt"), out);
+            assertFalse(out.contains("promote"), out);
+            verify(incus, never()).getInstanceStatus(anyString());
+            verify(incus, never()).forceStop(anyString());
+            verify(incus, never()).rename(anyString(), anyString());
+            verify(incus, never()).configSetAll(anyString(), anyMap());
+        });
+    }
+
+    /** Ctrl-C before the build's container exists: likewise nothing about a container (#1439). */
+    @Test
+    void anInterruptedBuildWithoutItsContainerReportsNoContainer(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+            var out = new String[1];
+            doAnswer(invocation -> {
+                out[0] = bothStreams(cmd::reportInterruptedBuild);
+                throw new BuildCommand.BuildFailedException("tpl-minimal");
+            }).when(cmd).buildInto(any(), any(), anyString());
+
+            assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
+
+            assertTrue(out[0].contains("Build interrupted for tpl-minimal"), out[0]);
+            assertFalse(out[0].contains("Container"), out[0]);
+            verify(incus, never()).getInstanceStatus(anyString());
+            verify(incus, never()).forceStop(anyString());
+            verify(incus, never()).rename(anyString(), anyString());
+            verify(incus, never()).configSetAll(anyString(), anyMap());
+        });
+    }
+
+    /** Incus failing to answer is not Incus saying there is no container: it is still kept (#1439). */
+    @Test
+    void aBuildWhoseContainerIncusCannotReadIsStillPromoted(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.instanceMetadataOrThrow("tpl-minimal-rebuilding"))
+                    .thenThrow(new IncusException("Failed to read instance 'tpl-minimal-rebuilding' (HTTP 500)"));
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doThrow(new IncusException("a build step failed")).when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+
+            assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
+
+            verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal-failed-build");
         });
     }
 

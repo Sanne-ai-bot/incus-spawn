@@ -195,10 +195,7 @@ public class BuildCommand extends BaseCommand {
     void reportInterruptedBuild() {
         var build = activeBuild;
         if (build != null) {
-            reportBuildFailure(build.tempName(), build.canonicalName(),
-                    "Build interrupted for " + shown(build.canonicalName()));
-            promoteToFailedInstance(build.tempName(), build.canonicalName(),
-                    build.machineType());
+            failBuild(build, "Build interrupted for " + shown(build.canonicalName()), () -> {});
         }
     }
 
@@ -776,7 +773,8 @@ public class BuildCommand extends BaseCommand {
         // Once the build is certain to go ahead: a refused or declined build built nothing on it
         warnDeprecated(imageDef, defs);
         incus.deleteIfExists(tempName);
-        activeBuild = new ActiveBuild(tempName, canonicalName, effectiveMachineType(imageDef));
+        var build = new ActiveBuild(tempName, canonicalName, effectiveMachineType(imageDef));
+        activeBuild = build;
 
         long referenced;
         try {
@@ -800,17 +798,12 @@ public class BuildCommand extends BaseCommand {
             buildDone(canonicalName);
         } catch (Exception e) {
             BuildOutput.abandonStep();
-            reportBuildFailure(tempName, canonicalName,
-                    "Build failed for " + shown(canonicalName) + ": " + e.getMessage());
-            try {
-                // A build that failed before its instance existed has no devices to remove, and
-                // trying would print one warning per resource.
-                if (incus.exists(tempName)) {
+            failBuild(build, "Build failed for " + shown(canonicalName) + ": " + e.getMessage(), () -> {
+                try {
                     var failedHostResources = HostResourceSetup.collectEffective(imageDef, defs);
                     HostResourceSetup.removeBuildDevices(incus, tempName, failedHostResources);
-                }
-            } catch (Exception ignored) {}
-            promoteToFailedInstance(tempName, canonicalName, activeBuild.machineType());
+                } catch (Exception ignored) {}
+            });
             activeBuild = null;
             throw new BuildFailedException(canonicalName);
         }
@@ -990,23 +983,53 @@ public class BuildCommand extends BaseCommand {
                 TemplateStaleness.Built.of(imageDef.getParent(), parent), built);
     }
 
-    private String printBuildDiagnostics(String buildName) {
+    /**
+     * Report a failed build and keep its container for inspection, removing what
+     * {@code removeDevices} removes first. A build that failed before its container existed (the
+     * base image's download, say) has nothing to inspect: its report is the error and where it was
+     * saved, without a promotion that fails and asks for a manual cleanup of nothing (#1439).
+     */
+    private void failBuild(ActiveBuild build, String errorLine, Runnable removeDevices) {
+        if (!reportBuildFailure(build.tempName(), build.canonicalName(), errorLine)) return;
+        removeDevices.run();
+        promoteToFailedInstance(build.tempName(), build.canonicalName(), build.machineType());
+    }
+
+    /**
+     * Whether the build's container was created: only Incus answering that it does not exist says
+     * no. A failure report that mentions a container which never existed is noise, one that hides
+     * a container left behind is worse.
+     */
+    private boolean buildContainerExists(String buildName) {
+        try {
+            return incus.instanceMetadataOrThrow(buildName) != null;
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private String printBuildDiagnostics(String buildName, boolean created) {
         var diag = new StringBuilder();
         try {
-            var status = incus.getInstanceStatus(buildName);
-            appendDiag(diag, "  Container status: " + (status.isEmpty() ? "(unknown)" : status));
+            // Without a container only the host's state is left to report: a full pool can be
+            // why it was never created
+            var status = "";
+            if (created) {
+                status = incus.getInstanceStatus(buildName);
+                appendDiag(diag, "  Container status: " + (status.isEmpty() ? "(unknown)" : status));
 
-            var log = incus.getLog(buildName);
-            if (!log.isBlank()) {
-                var lines = log.lines()
-                        .filter(l -> !l.contains("No security context received"))
-                        .toList();
-                if (lines.isEmpty()) {
-                    appendDiag(diag, "  LXC log: (no actionable entries)");
-                } else {
-                    var tail = lines.subList(Math.max(0, lines.size() - 20), lines.size());
-                    appendDiag(diag, "  LXC log (last " + tail.size() + " lines):");
-                    tail.forEach(l -> appendDiag(diag, "    " + l));
+                var log = incus.getLog(buildName);
+                if (!log.isBlank()) {
+                    var lines = log.lines()
+                            .filter(l -> !l.contains("No security context received"))
+                            .toList();
+                    if (lines.isEmpty()) {
+                        appendDiag(diag, "  LXC log: (no actionable entries)");
+                    } else {
+                        var tail = lines.subList(Math.max(0, lines.size() - 20), lines.size());
+                        appendDiag(diag, "  LXC log (last " + tail.size() + " lines):");
+                        tail.forEach(l -> appendDiag(diag, "    " + l));
+                    }
                 }
             }
 
@@ -1162,7 +1185,8 @@ public class BuildCommand extends BaseCommand {
         return OutputFormat.oneLine(String.valueOf(value));
     }
 
-    void reportBuildFailure(String buildName, String canonicalName, String errorLine) {
+    /** Whether the build's container exists: only then is there one to report on and to promote. */
+    boolean reportBuildFailure(String buildName, String canonicalName, String errorLine) {
         System.err.println("\n" + styled(YELLOW, "─".repeat(60)));
         // The message can quote what a template chose, and only isx's own line breaks are kept:
         // each line is made safe as it is printed (#1228).
@@ -1190,7 +1214,9 @@ public class BuildCommand extends BaseCommand {
             }
         }
 
-        var diagnostics = printBuildDiagnostics(buildName);
+        // Asked only now: Incus may be what failed, and the host report must exist before it is asked
+        boolean created = buildContainerExists(buildName);
+        var diagnostics = printBuildDiagnostics(buildName, created);
         var report = errorLine + "\n\n" + diagnostics;
 
         // Update the host report with the full diagnostics. Write to a temp file and move so
@@ -1211,6 +1237,7 @@ public class BuildCommand extends BaseCommand {
 
         // The in-container copy is a convenience for poking around inside the promoted instance.
         savedFailureSummary = false;
+        if (!created) return false;
         try {
             new Container(incus, buildName).writeFile(INBOX_FAILURE_PATH, report);
             savedFailureSummary = true;
@@ -1218,6 +1245,7 @@ public class BuildCommand extends BaseCommand {
             System.err.println("Could not write " + INBOX_FAILURE_PATH + " inside the container: "
                     + shown(e.getMessage()));
         }
+        return true;
     }
 
     /**
