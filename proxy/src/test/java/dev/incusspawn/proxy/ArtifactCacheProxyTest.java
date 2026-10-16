@@ -127,6 +127,10 @@ class ArtifactCacheProxyTest {
     static volatile boolean honourRange;
     /** Whether that 206 comes whatever If-Range says, as from GitHub's asset store (#900). */
     static volatile boolean ignoreIfRange;
+    /** The Content-Encoding a 206 claims, if any, its bytes unchanged. */
+    static volatile String rangeEncoding;
+    /** Bytes a 206 sends past the end of the file, its Content-Range still right. */
+    static volatile int rangeExtraBytes;
     static final List<String> rangesAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
     static final List<String> ifRangesAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
     /** The ETag GETs answer with, if any; with {@link #changeOnCut} a cut changes it (or Last-Modified) and the bytes, as a republish would. */
@@ -274,6 +278,8 @@ class ArtifactCacheProxyTest {
             var rest = java.util.Arrays.copyOfRange(body, from, body.length);
             resp.setStatusCode(206)
                     .putHeader("Content-Range", "bytes " + from + "-" + (body.length - 1) + "/" + body.length);
+            if (rangeEncoding != null) resp.putHeader("Content-Encoding", rangeEncoding);
+            if (rangeExtraBytes > 0) rest = java.util.Arrays.copyOf(rest, rest.length + rangeExtraBytes);
             if (getsToCut.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 // Stalls again, halfway through the rest
                 resp.putHeader("Content-Length", String.valueOf(rest.length))
@@ -281,6 +287,8 @@ class ArtifactCacheProxyTest {
                 return;
             }
             if (rangesToShorten.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                // The whole rest announced, half of it sent
+                resp.putHeader("Content-Length", String.valueOf(rest.length));
                 rest = java.util.Arrays.copyOf(rest, rest.length / 2);
             }
             resp.end(Buffer.buffer(rest));
@@ -349,6 +357,8 @@ class ArtifactCacheProxyTest {
         rangesToShorten.set(0);
         changeOnCut = false;
         ignoreIfRange = false;
+        rangeEncoding = null;
+        rangeExtraBytes = 0;
         getsToIgnore.set(0);
         nextGetDelayMs = 0;
         cutBeforeBody = false;
@@ -1091,6 +1101,27 @@ class ArtifactCacheProxyTest {
 
         assertDownloadFails();
         assertEquals(List.of("Tue, 29 Sep 2026 08:10:59 GMT"), ifRangesAsked);
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void encodedRangeIsNotSplicedOntoThePlainBytes() throws Exception {
+        publishCutJar(true);
+        rangeEncoding = "br";
+
+        assertDownloadFails();
+        assertEquals(1, rangesAsked.size(), rangesAsked.toString());
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void rangeLongerThanTheRestOfTheFileIsNotSpliced() throws Exception {
+        // Content-Range says the rest, Content-Length says more: not the rest of this file
+        publishCutJar(true);
+        rangeExtraBytes = 16;
+
+        assertDownloadFails();
+        assertEquals(1, rangesAsked.size(), rangesAsked.toString());
         assertStaysAbsent(cached(CENTRAL, JAR));
     }
 
