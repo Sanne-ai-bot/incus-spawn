@@ -19,7 +19,7 @@ class GitProcessTest {
 
     private static GitProcess.Result sh(String script, GitTransferConfig limits, List<GitProcess.Progress> seen)
             throws Exception {
-        return GitProcess.run(new ProcessBuilder("sh", "-c", script), null, false, limits, seen::add);
+        return GitProcess.run(new ProcessBuilder("sh", "-c", script), null, PreparationGit.SshScope.CHECKOUT, limits, seen::add);
     }
 
     @Test
@@ -39,7 +39,7 @@ class GitProcessTest {
     void aSilentIdleHelperIsStoppedAsAStallAndKilled() throws Exception {
         var helper = new AtomicReference<Long>();
         long start = System.nanoTime();
-        var result = GitProcess.run(new ProcessBuilder("sh", "-c", "echo started >&2; sleep 600 & wait"), null, false, STALL_1S, p -> {
+        var result = GitProcess.run(new ProcessBuilder("sh", "-c", "echo started >&2; sleep 600 & wait"), null, PreparationGit.SshScope.CHECKOUT, STALL_1S, p -> {
             if (helper.get() == null) GitProcessTest.children().forEach(c -> helper.compareAndSet(null, c));
         });
         assertEquals(GitProcess.Status.STALLED, result.status());
@@ -63,7 +63,7 @@ class GitProcessTest {
         // couple of seconds (about 0.5% of a CPU), no output, no I/O and no new processes.
         var result = GitProcess.run(new ProcessBuilder("perl", "-e",
                         "while (1) { select(undef, undef, undef, 0.5); my $x = 0; $x++ for 1..200000; }"),
-                null, false, new GitTransferConfig(Duration.ofSeconds(3), Duration.ofMinutes(1)), p -> {});
+                null, PreparationGit.SshScope.CHECKOUT, new GitTransferConfig(Duration.ofSeconds(3), Duration.ofMinutes(1)), p -> {});
         assertEquals(GitProcess.Status.STALLED, result.status());
     }
 
@@ -114,7 +114,7 @@ class GitProcessTest {
         var caller = Thread.ofPlatform().start(() -> {
             try {
                 // The helper keeps the output pipe open, so a plain read would never return.
-                outcome.set(GitProcess.run(new ProcessBuilder("sh", "-c", "sleep 600 & wait"), null, false,
+                outcome.set(GitProcess.run(new ProcessBuilder("sh", "-c", "sleep 600 & wait"), null, PreparationGit.SshScope.CHECKOUT,
                         GitTransferConfig.DEFAULT, p -> {
                             children().forEach(c -> helper.compareAndSet(null, c));
                             if (helper.get() != null) started.countDown();
@@ -141,7 +141,7 @@ class GitProcessTest {
         var started = new java.util.concurrent.CountDownLatch(1);
         var caller = Thread.ofPlatform().start(() -> {
             try {
-                GitProcess.run(new ProcessBuilder("sh", "-c", "trap '' TERM; sleep 600 & wait"), null, false,
+                GitProcess.run(new ProcessBuilder("sh", "-c", "trap '' TERM; sleep 600 & wait"), null, PreparationGit.SshScope.CHECKOUT,
                         GitTransferConfig.DEFAULT, p -> {
                             children().forEach(c -> helper.compareAndSet(null, c));
                             if (helper.get() != null) started.countDown();
@@ -166,12 +166,12 @@ class GitProcessTest {
         injected.keySet().removeIf(k -> k.startsWith("GIT_"));
         injected.putAll(java.util.Map.of("GIT_CONFIG_COUNT", "1", "GIT_CONFIG_KEY_0", "core.sshCommand",
                 "GIT_CONFIG_VALUE_0", "ssh -i work_key"));
-        PreparationGit.nonInteractiveSsh(injected, repo, false);
-        assertNull(injected.get("GIT_SSH_COMMAND"), "Git will run with the injected sshCommand");
-
         var plain = new java.util.HashMap<>(injected);
         plain.keySet().removeIf(k -> k.startsWith("GIT_CONFIG_"));
-        PreparationGit.nonInteractiveSsh(plain, repo, false);
+        PreparationGit.nonInteractiveSsh(injected, repo, PreparationGit.SshScope.CHECKOUT);
+        assertEquals("ssh -o BatchMode=yes -i work_key", injected.get("GIT_SSH_COMMAND"), "the injected sshCommand, without prompts");
+
+        PreparationGit.nonInteractiveSsh(plain, repo, PreparationGit.SshScope.CHECKOUT);
         assertEquals("ssh -o BatchMode=yes", plain.get("GIT_SSH_COMMAND"));
     }
 
@@ -179,7 +179,7 @@ class GitProcessTest {
     void runsWithoutAnyWayToPrompt() throws Exception {
         var result = GitProcess.run(new ProcessBuilder("sh", "-c",
                         "read line; echo \"read=$? prompt=$GIT_TERMINAL_PROMPT ssh=$GIT_SSH_COMMAND\" >&2"),
-                null, false, STALL_1S, p -> {});
+                null, PreparationGit.SshScope.CHECKOUT, STALL_1S, p -> {});
         assertEquals(GitProcess.Status.OK, result.status());
         assertEquals("read=1 prompt=0 ssh=ssh -o BatchMode=yes", result.diagnostics());
     }
@@ -199,12 +199,12 @@ class GitProcessTest {
     }
 
     @Test
-    void aRepositorysOwnSshCommandIsNotOverridden(@TempDir Path repo) throws Exception {
+    void aRepositorysOwnSshCommandKeepsItsOptionsButCannotPrompt(@TempDir Path repo) throws Exception {
         GitTestUtils.git(repo, "init", "-q");
         GitTestUtils.git(repo, "config", "core.sshCommand", "ssh -i work_key");
         var result = GitProcess.run(new ProcessBuilder("sh", "-c", "echo \"ssh=${GIT_SSH_COMMAND-unset}\" >&2"),
-                repo, false, STALL_1S, p -> {});
-        assertEquals("ssh=unset", result.diagnostics());
+                repo, PreparationGit.SshScope.CHECKOUT, STALL_1S, p -> {});
+        assertEquals("ssh=ssh -o BatchMode=yes -i work_key", result.diagnostics());
     }
 
     @Test

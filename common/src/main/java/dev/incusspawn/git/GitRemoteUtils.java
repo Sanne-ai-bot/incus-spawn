@@ -272,14 +272,13 @@ public final class GitRemoteUtils {
         }
     }
 
-    /** A host Git command that talks to a remote, under {@code limits}: see {@link GitProcess}. */
-    static ExecResult hostGitTransfer(Path repoDir, GitTransferConfig limits, Consumer<GitProcess.Progress> progress,
-                                      String... gitArgs) {
+    /** A host Git command in {@code repoDir} that talks to a remote, under {@code limits}: see {@link GitProcess}. */
+    static ExecResult hostGitTransfer(Path repoDir, PreparationGit.SshScope scope, GitTransferConfig limits,
+                                      Consumer<GitProcess.Progress> progress, String... gitArgs) {
         var command = new ArrayList<>(List.of("git", "-C", repoDir.toString()));
         command.addAll(List.of(gitArgs));
         try {
-            // update-all keeps the user's own SSH command as it is.
-            var result = GitProcess.run(new ProcessBuilder(command).redirectErrorStream(true), repoDir, false, limits, progress);
+            var result = GitProcess.run(new ProcessBuilder(command).redirectErrorStream(true), repoDir, scope, limits, progress);
             return new ExecResult(result.success(), result.diagnostics(), result.stopReason(), result.success() ? null
                     : GitCommandException.promptNote(result.diagnostics(), result.ssh()));
         } catch (IOException e) {

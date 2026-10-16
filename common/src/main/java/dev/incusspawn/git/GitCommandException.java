@@ -50,26 +50,25 @@ public class GitCommandException extends IOException {
 
     /**
      * isx's explanation for a failure that a prompt would have answered, or null when isx changed
-     * nothing that explains it. {@code ssh}: what isx did, null when the user's own SSH setup ran as it
-     * is, and ssh's words say enough.
+     * nothing that explains it. {@code ssh}: what isx did.
      */
     static String promptNote(String gitOutput, PreparationGit.SshSetup ssh) {
         if (gitOutput == null) return null;
-        if (ssh != null && gitOutput.contains("Permission denied (publickey")) {
+        if (gitOutput.contains("Permission denied (publickey")) {
             // Also what a server says when it accepts none of the keys: isx cannot tell which.
             return ssh.done() + ", so ssh could not ask for a key's passphrase. If your key has one, load it"
                     + " into ssh-agent; otherwise check that the server accepts the key, or choose another with "
                     + ssh.keySetting() + ".";
         }
-        if (ssh != null && gitOutput.contains("Host key verification failed")) {
+        if (gitOutput.contains("Host key verification failed")) {
             return ssh.done() + ", so ssh could not ask about the host's key. If the host is new, check its"
                     + " fingerprint and add it to ~/.ssh/known_hosts; if its key changed, find out why before"
                     + " trusting it.";
         }
         if (gitOutput.contains("terminal prompts disabled") || gitOutput.contains("could not read Username")
                 || gitOutput.contains("could not read Password")) {
-            return "isx ran Git with GIT_TERMINAL_PROMPT=0" + (ssh != null && ssh.build() ? " and no askpass program" : "")
-                    + ", so it could not ask for a username or password. Configure a Git credential helper.";
+            return "isx ran Git with GIT_TERMINAL_PROMPT=0 and no askpass program, so it could not ask for a"
+                    + " username or password. Configure a Git credential helper.";
         }
         return null;
     }

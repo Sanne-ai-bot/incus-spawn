@@ -62,10 +62,8 @@ final class PreparationGit {
             builder.environment().put("LC_ALL", "C");
             builder.redirectInput(input == null ? Path.of("/dev/null").toFile() : input.toFile());
             builder.redirectOutput(stdout.toFile());
-            // A build adds BatchMode even to the user's own SSH command (decided on #1403). Local steps use no
-            // SSH, so they skip reading core.sshCommand.
-            boolean network = limits != LOCAL;
-            var result = GitProcess.run(builder, network ? repo : null, network, limits, progress);
+            // Local steps use no SSH, so they skip reading core.sshCommand.
+            var result = GitProcess.run(builder, limits == LOCAL ? null : repo, SshScope.BUILD, limits, progress);
             // The message never holds the command/URL: it may contain a credential. Git's own words go in
             // GitCommandException.details(), scrubbed, apart from isx's.
             return switch (result.status()) {
@@ -93,59 +91,64 @@ final class PreparationGit {
     }
 
     /**
-     * What isx did to make SSH (and, in a build, Git) unable to prompt: {@code done} in words for a
-     * failure ({@link GitCommandException#promptNote}); {@code build}: a build's, which runs Git in isx's
-     * own repository, where only a global {@code core.sshCommand} applies; {@code keySetting}: where to
-     * choose another SSH key, given the command Git ran.
+     * What isx did to make SSH and Git unable to prompt: {@code done} in words for a failure
+     * ({@link GitCommandException#promptNote}); {@code keySetting}: where to choose another SSH key, given
+     * the command Git ran.
      */
-    record SshSetup(String done, boolean build, String keySetting) {}
+    record SshSetup(String done, String keySetting) {}
 
-    private static final String BUILD_KEY_SETTING = "a global core.sshCommand (a repository's own does not apply to builds)";
+    /** Where Git runs, which decides whose {@code core.sshCommand} applies and how a failure names it. */
+    enum SshScope {
+        /** A build: Git in isx's own repository, where only a global {@code core.sshCommand} applies. */
+        BUILD("your global core.sshCommand", "a global core.sshCommand (a repository's own does not apply to builds)"),
+        /** {@code update-all} fetching: Git in the user's checkout, where its own applies. */
+        CHECKOUT("your core.sshCommand", "core.sshCommand"),
+        /**
+         * {@code update-all} cloning: a global {@code includeIf "gitdir:"} matching the new checkout may choose
+         * the command, and no probe sees it before the clone. isx never sets one from config, since any it set would
+         * win, and reads no config ({@code repo} is unused).
+         */
+        CLONE("your core.sshCommand", "a global core.sshCommand, or one an includeIf \"gitdir:\" sets for the new checkout");
 
-    /**
-     * SSH without passphrase or host-key prompts.
-     * <ul>
-     * <li>{@code forceNoPrompt} false ({@code update-all}): a command from the environment or from
-     *     Git's config for {@code repo} ({@code core.sshCommand}) is the user's and runs as it is, since
-     *     {@code GIT_SSH_COMMAND} would override it; it can still prompt, and the stall budget bounds that.
-     * <li>{@code forceNoPrompt} true (builds, decided on #1403): see {@link #noPrompt}.
-     * </ul>
-     * Git's config is read with {@code environment}, the one the real command runs with. Returns what isx
-     * did, or null when nothing.
-     */
-    static SshSetup nonInteractiveSsh(java.util.Map<String, String> environment, Path repo, boolean forceNoPrompt) {
-        if (forceNoPrompt) return noPrompt(environment, repo);
-        if (environment.containsKey("GIT_SSH_COMMAND") || environment.containsKey("GIT_SSH")) return null;
-        // Set, or unknown because the read failed: the user's possible choice runs as it is.
-        if (repo != null && !configuredSshCommand(environment, repo).map(String::isBlank).orElse(false)) return null;
-        environment.put("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
-        return new SshSetup("isx ran ssh with -o BatchMode=yes", false, "core.sshCommand");
+        private final String source, keySetting;
+
+        SshScope(String source, String keySetting) {
+            this.source = source;
+            this.keySetting = keySetting;
+        }
     }
 
     /**
-     * A build never prompts. {@code -o BatchMode=yes} goes into the SSH command Git runs where it can
+     * Git and SSH without passphrase, host-key or credential prompts, for a build and for {@code update-all}
+     * alike (#1403, #1410), with Git run in {@code repo} as {@code scope} says. Git's config is read with
+     * {@code environment}, the one the real command runs with. Returns what isx did.
+     * <p>
+     * {@code -o BatchMode=yes} goes into the SSH command Git runs where it can
      * ({@link #withBatchMode}), keeping the user's options. For every case, those the option cannot reach
      * included ({@code GIT_SSH}, a wrapper, plink, a command isx could not read), OpenSSH 8.4 and later asks
      * {@code SSH_ASKPASS} instead of the terminal, and {@code false} answers nothing. An empty
      * {@code GIT_ASKPASS} ends Git's own askpass chain ({@code GIT_ASKPASS}, {@code core.askPass}, then
      * {@code SSH_ASKPASS}) before any dialog, whatever the Git version does with {@code GIT_TERMINAL_PROMPT=0}.
      */
-    private static SshSetup noPrompt(java.util.Map<String, String> environment, Path repo) {
+    static SshSetup nonInteractiveSsh(java.util.Map<String, String> environment, Path repo, SshScope scope) {
         environment.put("SSH_ASKPASS", "false");
         environment.put("SSH_ASKPASS_REQUIRE", "force");
         environment.put("GIT_ASKPASS", "");
         // Git's own order: GIT_SSH_COMMAND, then core.sshCommand, then GIT_SSH, then plain ssh.
         var command = environment.get("GIT_SSH_COMMAND");
         if (command != null) return insertBatchMode(environment, command, "your GIT_SSH_COMMAND", "your GIT_SSH_COMMAND");
+        if (scope == SshScope.CLONE) return environment.containsKey("GIT_SSH")
+                ? new SshSetup(ASKPASS_FOR + "your GIT_SSH program", "your GIT_SSH program")
+                : new SshSetup(ASKPASS_FOR + "ssh", scope.keySetting);
         var configured = repo == null ? java.util.Optional.of("") : configuredSshCommand(environment, repo);
-        if (configured.isEmpty()) return new SshSetup(ASKPASS_FOR + "ssh", true, BUILD_KEY_SETTING);
+        if (configured.isEmpty()) return new SshSetup(ASKPASS_FOR + "ssh", scope.keySetting);
         if (!configured.get().isBlank()) {
-            return insertBatchMode(environment, configured.get(), "your global core.sshCommand", BUILD_KEY_SETTING);
+            return insertBatchMode(environment, configured.get(), scope.source, scope.keySetting);
         }
         // GIT_SSH_COMMAND set by isx would override it: the askpass setting covers it.
-        if (environment.containsKey("GIT_SSH")) return new SshSetup(ASKPASS_FOR + "your GIT_SSH program", true, "your GIT_SSH program");
+        if (environment.containsKey("GIT_SSH")) return new SshSetup(ASKPASS_FOR + "your GIT_SSH program", "your GIT_SSH program");
         environment.put("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
-        return new SshSetup("isx ran ssh with -o BatchMode=yes", true, BUILD_KEY_SETTING);
+        return new SshSetup("isx ran ssh with -o BatchMode=yes", scope.keySetting);
     }
 
     private static final String ASKPASS_FOR = "isx set SSH_ASKPASS_REQUIRE=force with SSH_ASKPASS=false for ";
@@ -153,9 +156,9 @@ final class PreparationGit {
     private static SshSetup insertBatchMode(java.util.Map<String, String> environment, String command, String source,
                                            String keySetting) {
         var withBatchMode = withBatchMode(command);
-        if (withBatchMode == null) return new SshSetup(ASKPASS_FOR + source, true, keySetting);
+        if (withBatchMode == null) return new SshSetup(ASKPASS_FOR + source, keySetting);
         environment.put("GIT_SSH_COMMAND", withBatchMode);
-        return new SshSetup("isx added -o BatchMode=yes to " + source, true, keySetting);
+        return new SshSetup("isx added -o BatchMode=yes to " + source, keySetting);
     }
 
     /**
@@ -171,8 +174,8 @@ final class PreparationGit {
     }
 
     /**
-     * {@code core.sshCommand} as Git sees it with {@code environment}: the value, {@code ""} when unset,
-     * or empty when the read failed.
+     * {@code core.sshCommand} as Git sees it with {@code environment} in {@code repo}: the value, {@code ""}
+     * when unset, or empty when the read failed.
      */
     private static java.util.Optional<String> configuredSshCommand(java.util.Map<String, String> environment, Path repo) {
         var probe = new ProcessBuilder("git", "-C", repo.toString(), "config", "--get", "core.sshCommand")

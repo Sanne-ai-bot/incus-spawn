@@ -223,7 +223,7 @@ public final class HostRepoRefresh {
 
             BuildOutput.stepStart("Cloning " + task.repoName + "...");
             boolean existed = Files.exists(task.targetDir);
-            var result = GitRemoteUtils.hostGitTransfer(task.targetDir.getParent(), limits,
+            var result = GitRemoteUtils.hostGitTransfer(task.targetDir.getParent(), PreparationGit.SshScope.CLONE, limits,
                     progress -> BuildOutput.stepProgress(progress.summary()), task.cloneArgs());
             if (result.success()) {
                 BuildOutput.stepDone();
@@ -384,7 +384,7 @@ public final class HostRepoRefresh {
                                                    String... args) {
             var fetch = new ArrayList<>(List.of("fetch", "--progress"));
             fetch.addAll(List.of(args));
-            return GitRemoteUtils.hostGitTransfer(hostPath, limits, progress, fetch.toArray(String[]::new));
+            return GitRemoteUtils.hostGitTransfer(hostPath, PreparationGit.SshScope.CHECKOUT, limits, progress, fetch.toArray(String[]::new));
         }
 
         private GitRemoteUtils.ExecResult git(String... args) {
