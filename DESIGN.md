@@ -4365,7 +4365,8 @@ A declaration outranks all of this: a declared path is taken at its word and red
 ### Secret Scanning in CI
 
 `.github/workflows/gitleaks.yml` guards against a real leaked credential landing in the repo, as distinct from the credential-isolation work above, which guards containers against ever holding one.
-It runs `gitleaks/gitleaks-action@v2` on every push and PR targeting `main` (on a push, root jobs are gated with `if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork`, so feature-branch pushes only run on forks), scanning full git history rather than just the diff, since a secret introduced and later reverted is still live in history.
+It runs `gitleaks/gitleaks-action@v3` on every push and PR targeting `main` (on a push, root jobs are gated with `if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork`, so feature-branch pushes only run on forks).
+It scans every commit in that push or PR, not just the final diff, since a secret introduced and later reverted in the same range is still live in history; it does not re-scan the repository's earlier history.
 
 The scan runs twice, against two separate rulesets, because gitleaks' `[extend]` table only supports one base ruleset per config file (`path` and `useDefault` are mutually exclusive — see `gitleaks/config/config.go`) and `extend.url` is an unimplemented stub in gitleaks itself.
 So a ruleset can't be pulled in live at scan time either.
