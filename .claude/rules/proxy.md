@@ -275,6 +275,8 @@ Key design:
   The head wait and every resume fit into `clientSilenceBudgetSeconds` (110s since the client's request or last byte, threaded as `started` from `routeRequest`), below the MITM server's 120s idle timeout, which otherwise drops the client silently.
   The stall watchdog re-checks whenever a pause ends (`resumeWhenWritable`) so a late head cannot outsleep it.
   No validator (a strong ETag, or with no ETag a Last-Modified a second or more before `Date`), no resume, and then no stall cut either (`neverResumable`): only the client's budget ends it.
+  A `206` continues only with the first response's own validator (`resumesAt`), whatever `If-Range` got, since some servers ignore it.
+  The validator rule is `HttpValidator.strong` in `common`, shared with `DownloadCache`.
   A connect timeout cut short to fit the budget does not start the unreachable backoff (`requestWithAsyncDns`).
   Plain relays get the same budget with no resume (`RelayWatchdog` in `relayRequest`, #929): counted from the client's last byte, not while its body streams, so uploads are not cut while the client sends.
   The cache handlers' own relays (an error answer to a fetch or a redirect, and `CachingDownload`'s uncached fallback after a cache write error) go through `relayResponse` (`relayBody` for the fallback, under the download's own head), a `RelayWatchdog` counting from `started` or the client's last byte, not from relay entry (#1192); a `pipeResponse` with no watchdog is left only to `relayApiResponse` (#1059).
