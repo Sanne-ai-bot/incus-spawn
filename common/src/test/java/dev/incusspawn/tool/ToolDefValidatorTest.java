@@ -300,6 +300,21 @@ class ToolDefValidatorTest {
     }
 
     @Test
+    void proxyDomainsOfOnlyEmptyItemsIsMissingDomains() throws Exception {
+        var file = writeTemp("""
+                name: blank-domain
+                proxy:
+                  auth:
+                    - domains:
+                        -
+                      type: bearer
+                      token: "${t}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("missing 'domains'")), result.errors().toString());
+    }
+
+    @Test
     void proxyInvalidAuthTypeIsError() throws Exception {
         var file = writeTemp("""
                 name: bad-auth
