@@ -1641,7 +1641,7 @@ A build or branch signals it before its first start anyway, which leaves only a 
 **This only works because the identity cannot be forged.**
 `security.ipv4_filtering` is set on the NIC alongside the pinned `ipv4.address`.
 Without it, root inside a container could re-address its interface as a neighbour and spend that neighbour's subscription — per-instance credentials would *look* like isolation while providing none, which is worse than not having them.
-Every stopped start of an existing instance turns it back on where it is off (`InstanceLifecycle.prepareHostDevicesForStart`, which the `isx shell`/`run` prep, the TUI and VM agent recovery all go through), both for instances branched before this and for ones the fallback below left without it.
+Every stopped start of an existing instance turns it back on where it is off (`InstanceLifecycle.prepareForStart`, reached only through `startForUse` and VM agent recovery, so the `isx shell`/`run` prep and the TUI, which share it in `InstancePrep`, cannot start around it), both for instances branched before this and for ones the fallback below left without it.
 So an instance regains protection once its host can enforce it, rather than staying open until it is re-branched.
 The check reads the instance the other pre-start repairs already read, so it costs no request when filtering is already on.
 A host whose firewall backend cannot apply it warns rather than failing the branch, and the warning says plainly what is not enforced.
@@ -2082,14 +2082,14 @@ The reasons:
 - **A missing source is skipped, not attached.**
   Incus refuses to start an instance whose disk `source` is missing (`Missing source path`), so `attachBuildDevices` attaches only sources that exist.
   `applyForBuild` then warns about the rest once the instance is up.
-  That is the same warn-and-skip as "Missing sources" below, and the reason `prepareHostDevicesForStart` exists for later starts.
+  That is the same warn-and-skip as "Missing sources" below, and the reason `prepareForStart` exists for later starts.
   That pre-start repair reads the instance once and fixes every device isx added: host resources whose source is gone (`removeStaleDevices`), the zmx socket directory, and the `--inbox` device (`removeStaleInbox`, #854).
   The inbox has no entry in `user.incus-spawn.host-resources`, so it needs its own check.
   A deleted inbox directory is removed from the instance with a warning, since the user asked for that mount.
   Its source is kept in `user.incus-spawn.inbox-source`, written in the same update that removes the device, and the first start that finds the directory back mounts it again, says so, and clears the key (#1139).
   The warning used to name an `incus config device add`, which the macOS host has no CLI to run; now it says to recreate the directory, which the next start mounts.
   The check maps the device source back to a host path (`hostPathOfDeviceSource`, the inverse of the macOS `/host` translation), and skips a macOS source outside the shared home, which the host cannot check.
-  The TUI starts an instance while it still owns the terminal, where a stderr warning would be drawn over and lost, so it passes `prepareHostDevicesForStart` its warning log as the sink, the way the static-IP repair already does.
+  The TUI starts an instance while it still owns the terminal, where a stderr warning would be drawn over and lost, so it passes `InstancePrep.repairBeforeUse` its warning log as the sink for the start and the static-IP repair alike.
   The log announces them on the status line when the shell returns to the TUI, and keeps them for the `w` dialog.
   A plain `incus start` still fails on such a device; isx cannot intercept it.
   The zmx device is the exception.
@@ -2135,7 +2135,7 @@ The rules:
   `requireBranchableTemplate` refuses to branch from it before `incus copy`, so no half-made branch is left behind, and the error says to fix and rebuild the template.
   `applyForInstance` checks again before attaching anything, as a backstop.
 - **Existing instances still start.**
-  The start path (`prepareHostDevicesForStart`) does not check: such an instance has been working with that mount, and failing its start would be a surprise with no rebuild on that path.
+  The start path (`prepareForStart`) does not check: such an instance has been working with that mount, and failing its start would be a surprise with no rebuild on that path.
 - **An absolute source without `path:` is also its target.**
   A resource that relies on that default and lives under one of these roots (a project checked out under `/tmp`, say) needs an explicit `path:`.
 

@@ -46,7 +46,7 @@ class StaleInboxTest {
         var original = System.err;
         System.setErr(new java.io.PrintStream(err, true));
         try {
-            InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME);
+            InstanceLifecycle.prepareForStart(daemon.client(), NAME);
         } finally {
             System.setErr(original);
         }
@@ -64,11 +64,11 @@ class StaleInboxTest {
         var inbox = tmp.resolve("inbox");
         var daemon = withInbox(inbox);
         var said = new java.util.ArrayList<String>();
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, said::add);
 
         Files.createDirectories(inbox);
         said.clear();
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, said::add);
 
         var device = daemon.instance(NAME).path("devices").path(InstanceLifecycle.INBOX_DEVICE);
         assertEquals("disk", device.path("type").asText(), device.toString());
@@ -85,10 +85,10 @@ class StaleInboxTest {
     void inboxStillMissingStaysRememberedAndQuiet(@TempDir Path tmp) {
         var daemon = withInbox(tmp.resolve("deleted"));
         var said = new java.util.ArrayList<String>();
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, said::add);
         said.clear();
 
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, said::add);
 
         assertEquals(java.util.List.of(), said, "the warning was given once, at the removal");
         assertTrue(daemon.instance(NAME).path("devices").path(InstanceLifecycle.INBOX_DEVICE).isMissingNode());
@@ -105,7 +105,7 @@ class StaleInboxTest {
         System.setErr(new java.io.PrintStream(err, true));
         try {
             // The TUI's sink: stderr there would be drawn over by the TUI and lost.
-            InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, warnings::add);
+            InstanceLifecycle.prepareForStart(daemon.client(), NAME, warnings::add);
         } finally {
             System.setErr(original);
         }
@@ -119,7 +119,7 @@ class StaleInboxTest {
     void healthyInboxIsKeptAtNoExtraRequest(@TempDir Path tmp) throws Exception {
         var daemon = withInbox(Files.createDirectories(tmp.resolve("inbox")));
 
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME);
 
         assertFalse(daemon.instance(NAME).path("devices").path(InstanceLifecycle.INBOX_DEVICE).isMissingNode());
         assertEquals(1, daemon.requests().size(), String.join("\n", daemon.requests()));

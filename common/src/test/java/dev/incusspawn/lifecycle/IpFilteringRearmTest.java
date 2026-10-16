@@ -24,11 +24,13 @@ import static org.junit.jupiter.api.Assertions.*;
  * the next stopped start once the host can enforce it; otherwise the fix only helps instances
  * branched after the appliance update.
  *
- * <p>This is tested at {@link InstanceLifecycle#prepareHostDevicesForStart} because that is the
+ * <p>This is tested at {@link InstanceLifecycle#prepareForStart} because that is the
  * one step every path starting an existing instance for use goes through: {@code isx shell} and
  * {@code isx run} (via {@link InstanceLifecycle#ensureReady} and {@code InstancePrep}), the TUI's
  * shell, and VM agent recovery. The TUI used to start with a bare {@code incus.start}, so only the
- * CLI re-armed. <b>Whatever those paths are merged into must still call it.</b>
+ * CLI re-armed. Both shells now share {@code InstancePrep.repairBeforeUse}, and
+ * {@code InstancePrepTest} pins that it reaches this step; package-private, it can only be
+ * reached through {@link InstanceLifecycle#startForUse}.
  */
 @ExtendWith(TempHome.class)
 class IpFilteringRearmTest {
@@ -65,7 +67,7 @@ class IpFilteringRearmTest {
         // No override at all: only the profile's NIC, as an instance from before isx set it.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
 
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, w -> fail(w));
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, w -> fail(w));
 
         assertEquals("true", filtering(daemon));
     }
@@ -74,7 +76,7 @@ class IpFilteringRearmTest {
     void anArmedInstanceCostsNoRequestBeyondTheReadTheRepairsShare() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
 
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, w -> fail(w));
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, w -> fail(w));
 
         assertEquals(List.of("GET /1.0/instances/" + NAME), daemon.requests());
     }
@@ -85,7 +87,7 @@ class IpFilteringRearmTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of())
                 .device(NAME, "eth0", Map.of("type", "none"));
 
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, w -> fail(w));
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, w -> fail(w));
 
         assertEquals(List.of("GET /1.0/instances/" + NAME), daemon.requests());
     }
@@ -97,7 +99,7 @@ class IpFilteringRearmTest {
         var warnings = new ArrayList<String>();
 
         // The TUI passes its warning log: stderr would be drawn over while it owns the terminal.
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME, warnings::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, warnings::add);
 
         assertEquals("false", filtering(daemon));
         assertFalse(warnings.isEmpty());

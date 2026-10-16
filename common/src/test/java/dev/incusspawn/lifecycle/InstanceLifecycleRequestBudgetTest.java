@@ -224,8 +224,8 @@ class InstanceLifecycleRequestBudgetTest {
         // Filtering already on, as on every instance branched since #905's check: re-arming it
         // must cost nothing then.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
-        InstanceLifecycle.prepareHostDevicesForStart(daemon.client(), NAME);
-        assertBudget(1, daemon, "prepareHostDevicesForStart");
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME);
+        assertBudget(1, daemon, "prepareForStart");
     }
 
     @Test
