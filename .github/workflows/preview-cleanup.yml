@@ -5,6 +5,7 @@ on:
     types: [closed]
     paths:
       - 'README.md'
+      - 'docs/*.md'
       - 'site/**'
       - '.github/workflows/preview.yml'
 

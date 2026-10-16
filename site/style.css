@@ -867,6 +867,10 @@ kbd {
 
 .docs-toc::before {
   content: "On this page";
+}
+
+.docs-toc::before,
+.toc-heading {
   display: block;
   margin: 0 0 0.75rem 0.85rem;
   font-family: var(--font-mono);
@@ -875,6 +879,10 @@ kbd {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--fg-subtle);
+}
+
+.docs-toc .toc-heading {
+  margin-top: 1.5rem;
 }
 
 .docs-toc ul {
@@ -1283,9 +1291,20 @@ kbd {
    Responsive
    ========================================================================== */
 
+.docs-pages {
+  display: none;
+}
+
 @media (max-width: 1024px) {
   .docs-toc {
     display: none;
+  }
+
+  .docs-pages {
+    display: block;
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
   }
 
   .docs-content {

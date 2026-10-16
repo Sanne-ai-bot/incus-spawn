@@ -1,6 +1,6 @@
 # Website: isx.run
 
-The site at **https://isx.run** is built from `site/` and `README.md` by `site/build.sh`, and served by
+The site at **https://isx.run** is built from `site/`, `README.md` and `docs/*.md` by `site/build.sh`, and served by
 **Cloudflare Pages**. The DNS for both domains, isx.run and getisx.com, is on Cloudflare as well. Most of the
 setup lives in the Cloudflare dashboard, not in this repository, so it is written down here.
 
@@ -8,8 +8,8 @@ setup lives in the Cloudflare dashboard, not in this repository, so it is writte
 
 | What | Where it goes | Workflow |
 |---|---|---|
-| Push to `main` touching `site/**`, `README.md` or the workflow | Production: isx.run | `.github/workflows/pages.yml` |
-| Pull request touching `site/**` or `README.md` | `https://pr-<N>.isx-5ks.pages.dev`, linked in a PR comment | `.github/workflows/preview.yml` |
+| Push to `main` touching `site/**`, `README.md`, `docs/*.md` or the workflow | Production: isx.run | `.github/workflows/pages.yml` |
+| Pull request touching `site/**`, `README.md` or `docs/*.md` | `https://pr-<N>.isx-5ks.pages.dev`, linked in a PR comment | `.github/workflows/preview.yml` |
 | Pull request closed | Its preview deployments are deleted | `.github/workflows/preview-cleanup.yml` |
 
 - **Project:** all three use the Cloudflare Pages project **`isx`**. Its address is `isx-5ks.pages.dev`; `isx.pages.dev` belongs to someone else.
@@ -65,7 +65,7 @@ the mode only matters for anything proxied to another server later.
 **Search engines:** isx.run is a *Domain* property in Google Search Console, verified by the TXT record above, with
 `https://isx.run/sitemap.xml` submitted; Bing Webmaster Tools imported it from there. The Performance and Pages
 reports show what Google indexes and which searches find the site. After each production deploy, `pages.yml` also
-pings **IndexNow** with the home page, `/docs` and `llms.txt`, so Bing, Yandex, Seznam and the other participating
+pings **IndexNow** with every page in the sitemap and `llms.txt`, so Bing, Yandex, Seznam and the other participating
 engines recrawl within minutes. It is authenticated by the key in `site/indexnow-key.txt`, published at
 `https://isx.run/indexnow-key.txt`, which must stay there; to replace the key, put a new random token in that file.
 `pages.yml` reads it from the file rather than spelling it out, because secret scanners (gitleaks) take a
@@ -122,8 +122,14 @@ loaded with `defer`, so it does not hold up the first paint. How the player is s
   text; change them together.
 - `sitemap.xml` is generated, dated by each page's last commit, which is why the deploy workflows fetch the full
   history (`fetch-depth: 0`).
-- `llms.txt` is written by hand and should say what the home page says; `llms-full.txt` is the README, copied at build
-  time.
+- The docs pages are rendered by `site/render.js`: `README.md` at `/docs`, and every `docs/*.md` at `/docs/<name>`
+  (`docs/CLI.md` is `/docs/cli`), each listed in every page's table of contents. A new user page is a new file in
+  `docs/`; maintainer notes go in `docs/dev/`, which is not published. A link from one of these files to another
+  becomes a link to its page; any other relative link goes to the file on GitHub. `DocsLinksTest` checks that every
+  link between them reaches a file and a heading. The pages are served from `/docs/`, so `docs.html` uses absolute
+  addresses (`/style.css`).
+- `llms.txt` is written by hand and should say what the home page says; `llms-full.txt` is every docs page as one
+  Markdown file, generated at build time.
 
 ## Why not GitHub Pages
 
