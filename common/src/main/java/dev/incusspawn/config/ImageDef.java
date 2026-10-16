@@ -172,21 +172,21 @@ public class ImageDef {
     public String getParent() { return parent; }
     public void setParent(String parent) { this.parent = parent; }
     public List<String> getPackages() { return packages; }
-    public void setPackages(List<String> packages) { this.packages = packages; }
+    public void setPackages(List<String> packages) { this.packages = items(packages); }
     public List<String> getRemovePackages() { return removePackages; }
-    public void setRemovePackages(List<String> removePackages) { this.removePackages = removePackages; }
+    public void setRemovePackages(List<String> removePackages) { this.removePackages = items(removePackages); }
     public List<ToolDef.ToolRef> getTools() { return tools; }
-    public void setTools(List<ToolDef.ToolRef> tools) { this.tools = tools; }
+    public void setTools(List<ToolDef.ToolRef> tools) { this.tools = items(tools); }
     public List<RepoEntry> getRepos() { return repos; }
-    public void setRepos(List<RepoEntry> repos) { this.repos = repos; }
+    public void setRepos(List<RepoEntry> repos) { this.repos = items(repos); }
     public SkillsDef getSkills() { return skills; }
     public void setSkills(SkillsDef skills) { this.skills = skills; }
     public List<PackageRepo> getPackageRepos() { return packageRepos; }
-    public void setPackageRepos(List<PackageRepo> packageRepos) { this.packageRepos = packageRepos; }
+    public void setPackageRepos(List<PackageRepo> packageRepos) { this.packageRepos = items(packageRepos); }
     public List<HostResource> getHostResources() { return hostResources; }
-    public void setHostResources(List<HostResource> hostResources) { this.hostResources = hostResources; }
+    public void setHostResources(List<HostResource> hostResources) { this.hostResources = items(hostResources); }
     public List<String> getMaskServices() { return maskServices; }
-    public void setMaskServices(List<String> maskServices) { this.maskServices = maskServices; }
+    public void setMaskServices(List<String> maskServices) { this.maskServices = items(maskServices); }
     public boolean isGui() { return gui; }
     public void setGui(boolean gui) { this.gui = gui; }
     public boolean isPinned() { return pinned; }
@@ -203,7 +203,7 @@ public class ImageDef {
     public String getShellCommand() { return shellCommand; }
     public void setShellCommand(String shellCommand) { this.shellCommand = shellCommand; }
     public List<EnvEntry> getEnv() { return env; }
-    public void setEnv(List<EnvEntry> env) { this.env = env; }
+    public void setEnv(List<EnvEntry> env) { this.env = items(env); }
     public String getDefaultAction() { return defaultAction; }
     public void setDefaultAction(String defaultAction) { this.defaultAction = defaultAction; }
     public String getAgentNote() { return agentNote; }
@@ -222,6 +222,14 @@ public class ImageDef {
     public void setSource(String source) { this.source = source; }
     /** Whether this definition ships with isx itself, as opposed to one the user wrote. */
     public boolean isBuiltIn() { return "built-in".equals(source); }
+
+    /**
+     * A list as mapped from YAML, without its empty items: a bare '-' (or '~') arrives as null
+     * and declares nothing, so no reader has to skip it. An absent or empty key is no list.
+     */
+    static <T> List<T> items(List<T> list) {
+        return list == null ? List.of() : list.stream().filter(java.util.Objects::nonNull).toList();
+    }
 
     /**
      * Groups the skills catalog repo and skill list under a single {@code skills} key.
@@ -249,7 +257,7 @@ public class ImageDef {
 
         public SkillsDef(String repo, List<String> list) {
             this.repo = repo;
-            this.list = list != null ? list : List.of();
+            this.list = items(list);
         }
 
         /** Default skills catalog, used to resolve bare skill names (e.g. {@code security-review}). */
@@ -833,10 +841,6 @@ public class ImageDef {
         if (invalidName != null) {
             warnings.accept(file + ": " + invalidName + LayeredDefinitions.REFUSED);
             return false;
-        }
-        // A bare '-' under repos: is a null item that fingerprinting and cloning cannot take.
-        if (def.getRepos().stream().anyMatch(java.util.Objects::isNull)) {
-            def.setRepos(def.getRepos().stream().filter(java.util.Objects::nonNull).toList());
         }
         for (var repo : def.getRepos()) {
             var problem = repo.sourceProblem();

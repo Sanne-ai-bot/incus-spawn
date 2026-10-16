@@ -502,6 +502,29 @@ class ImageDefTest {
     }
 
     @Test
+    void emptyListItemsAreDroppedFromEveryList() throws Exception {
+        // A bare '-' (or '~') arrives as null; no reader of these lists expects one
+        var def = Jjq.imageDef("""
+                name: tpl-blanks
+                packages: [git, ~]
+                remove_packages: [~]
+                repos: [~]
+                package_repos: [~]
+                host-resources: [~]
+                mask_services: [~, sshd]
+                skills: [~, security-review]
+                """);
+        assertEquals(List.of("git"), def.getPackages());
+        assertEquals(List.of(), def.getRemovePackages());
+        assertEquals(List.of(), def.getRepos());
+        assertEquals(List.of(), def.getPackageRepos());
+        assertEquals(List.of(), def.getHostResources());
+        assertEquals(List.of("sshd"), def.getMaskServices());
+        assertEquals(List.of("security-review"), def.getSkills().getList());
+        def.contentFingerprint(Map.of()); // would throw on a null item
+    }
+
+    @Test
     void aRepoDepthThatIsNotAWholeNumberFailsTheFile(@TempDir Path tempDir) throws Exception {
         var imagesDir = tempDir.resolve("images");
         Files.createDirectories(imagesDir);
