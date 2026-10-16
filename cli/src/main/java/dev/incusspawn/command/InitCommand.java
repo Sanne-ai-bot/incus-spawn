@@ -270,13 +270,13 @@ public class InitCommand extends BaseCommand {
                     proxyServiceInstalled.set(completeWithProxyService(Prompts.console()));
                 }));
 
-        var service = proxyServiceInstalled.get();
-        printCompletionBox(nextSteps(service, !service));
+        printCompletionBox(nextSteps(proxyServiceInstalled.get() ? Services.INSTALLED : Services.START_PROXY));
         return CommandResult.SUCCESS;
     }
 
     private CommandResult doMacOsInit() throws Exception {
         printSetupBanner(" (macOS)", "~2 minutes");
+        var servicesInstalled = new AtomicBoolean();
 
         runSteps(List.of(this::setupMacOsCa, this::setupSshKeyPair),
                 finalSteps(() -> {
@@ -286,26 +286,40 @@ public class InitCommand extends BaseCommand {
                             "reboots. Without this you'll need to manually run",
                             "'isx vm start' and 'isx proxy start' before launching",
                             "containers.");
-                    completeWithMacOsServices(Prompts.console());
+                    servicesInstalled.set(completeWithMacOsServices(Prompts.console()));
                 }));
 
-        printCompletionBox(nextSteps(false, false));
+        printCompletionBox(nextSteps(servicesInstalled.get() ? Services.INSTALLED : Services.START_VM_AND_PROXY));
         return CommandResult.SUCCESS;
     }
 
     /**
-     * The closing box: the Quick Start's way to a first agent (#1435), after saying the proxy runs
-     * as a systemd service, or starting it when nothing does. The template itself is YAML, so the
-     * box points at the page that shows it rather than printing it.
+     * What the closing box says about the services a branch needs: that they are installed, or
+     * the step that starts them.
      */
-    static String[] nextSteps(boolean proxyService, boolean startProxy) {
+    enum Services {
+        INSTALLED(null),
+        START_PROXY("Start the proxy:   isx proxy start"),
+        START_VM_AND_PROXY("Start VM, proxy:   isx vm start && isx proxy start");
+
+        final String step;
+
+        Services(String step) { this.step = step; }
+    }
+
+    /**
+     * The closing box: the Quick Start's way to a first agent (#1435), after saying the services
+     * are installed, or starting them when nothing does. The template itself is YAML, so the box
+     * points at the page that shows it rather than printing it.
+     */
+    static String[] nextSteps(Services services) {
         var lines = new ArrayList<String>(List.of(
                 "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"),
                 ""));
-        if (proxyService) lines.addAll(List.of("   The proxy runs as a systemd service.", ""));
+        if (services.step == null) lines.addAll(List.of("   isx's services start on their own.", ""));
         lines.add("   " + styled(BOLD, "Next steps, to a first agent:"));
         var steps = new ArrayList<String>();
-        if (startProxy) steps.add("Start the proxy:   isx proxy start");
+        if (services.step != null) steps.add(services.step);
         steps.add("Define tpl-agent:  https://isx.run/docs#quick-start");
         steps.add("Build it:          isx build tpl-agent");
         steps.add("Branch it:         isx branch my-first --from tpl-agent");
@@ -987,18 +1001,18 @@ public class InitCommand extends BaseCommand {
      * it fails its first start and init reports a proxy that is not responding (#938; DESIGN.md
      * has the full account). It comes after the question so that an init abandoned at the prompt
      * is still run again. The services are optional: declining them leaves init complete.
+     *
+     * @return whether the services are installed once this returns: found so, or installed now
      */
-    void completeWithMacOsServices(Prompts prompts) throws IOException {
-        var install = wantsMacOsServices(prompts);
+    boolean completeWithMacOsServices(Prompts prompts) throws IOException {
+        var present = macOsServicesInstalled();
+        if (present) System.out.println("  macOS services already installed.");
+        var install = !present && wantsMacOsServices(prompts);
         markInitComplete();
-        if (install) installProxyService();
+        return present || install && installProxyService();
     }
 
     private boolean wantsMacOsServices(Prompts prompts) {
-        if (macOsServicesInstalled()) {
-            System.out.println("  macOS services already installed.");
-            return false;
-        }
         System.out.println();
         System.out.println("  Optional: install VM and proxy as macOS services so they start");
         System.out.println("  automatically on login and survive reboots.");

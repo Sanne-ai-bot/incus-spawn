@@ -13,13 +13,13 @@ import static org.junit.jupiter.api.Assertions.*;
 /** The box {@code isx init} closes with leads to a first agent, as README's Quick Start does (#1435). */
 class InitNextStepsTest {
 
-    private static List<String> lines(boolean proxyService, boolean startProxy) {
-        return Arrays.stream(InitCommand.nextSteps(proxyService, startProxy)).map(BuildOutput::stripAnsi).toList();
+    private static List<String> lines(InitCommand.Services services) {
+        return Arrays.stream(InitCommand.nextSteps(services)).map(BuildOutput::stripAnsi).toList();
     }
 
     @Test
     void stepsEndInABranchWithAnAgent() throws Exception {
-        var text = String.join("\n", lines(false, false));
+        var text = String.join("\n", lines(InitCommand.Services.INSTALLED));
         var readme = Files.readString(Path.of("..", "README.md"));
         var start = readme.indexOf("\n## Quick Start\n");
         assertTrue(start >= 0, "the link's anchor is README's heading");
@@ -36,7 +36,7 @@ class InitNextStepsTest {
 
     @Test
     void theProxyComesFirstWhenNothingStartsIt() {
-        var lines = lines(false, true);
+        var lines = lines(InitCommand.Services.START_PROXY);
         assertTrue(lines.contains("   1. Start the proxy:   isx proxy start"), String.join("\n", lines));
         assertTrue(lines.contains("   4. Branch it:         isx branch my-first --from tpl-agent"),
                 String.join("\n", lines));
@@ -44,14 +44,23 @@ class InitNextStepsTest {
 
     @Test
     void anInstalledServiceIsSaid() {
-        var lines = lines(true, false);
-        assertTrue(lines.contains("   The proxy runs as a systemd service."), String.join("\n", lines));
+        var lines = lines(InitCommand.Services.INSTALLED);
+        assertTrue(lines.contains("   isx's services start on their own."), String.join("\n", lines));
         assertTrue(lines.contains("   1. Define tpl-agent:  https://isx.run/docs#quick-start"),
                 String.join("\n", lines));
     }
 
     @Test
+    void onMacOsWithoutServicesTheVmAndProxyComeFirst() {
+        var lines = lines(InitCommand.Services.START_VM_AND_PROXY);
+        assertTrue(lines.contains("   1. Start VM, proxy:   isx vm start && isx proxy start"), String.join("\n", lines));
+        assertFalse(lines.contains("   isx's services start on their own."), String.join("\n", lines));
+    }
+
+    @Test
     void everyLineFitsTheBox() {
-        for (var line : lines(false, true)) assertTrue(line.length() <= InitCommand.BOX_WIDTH, line);
+        for (var services : InitCommand.Services.values()) {
+            for (var line : lines(services)) assertTrue(line.length() <= InitCommand.BOX_WIDTH, line);
+        }
     }
 }
