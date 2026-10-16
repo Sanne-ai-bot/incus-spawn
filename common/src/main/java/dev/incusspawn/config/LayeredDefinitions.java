@@ -144,6 +144,18 @@ public final class LayeredDefinitions<T> {
         parseFailures.add(source);
     }
 
+    /**
+     * Drop the kept {@code name}, refused once every layer is loaded. The file it came from is
+     * recorded as refused, so isx build refuses too; a built-in has no file to fix. Nor is it
+     * reported as overriding anything any more.
+     */
+    public void refuse(String name) {
+        defs.remove(name);
+        overrides.removeIf(o -> o.name().equals(name));
+        var source = sources.remove(name);
+        if (source != null && !"built-in".equals(source)) parseFailed(Path.of(source));
+    }
+
     /** Mutable resolved map (callers such as tool fallbacks add to it deliberately). */
     public Map<String, T> defs() { return defs; }
 
