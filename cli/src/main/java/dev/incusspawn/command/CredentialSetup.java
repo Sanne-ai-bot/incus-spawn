@@ -18,6 +18,7 @@ import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.SystemTrust;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.Platform;
 
@@ -68,7 +69,7 @@ class CredentialSetup {
     // request in a native-image JVM to fail, then succeed on retry.
     private HttpClient getHttpClient() {
         if (httpClient == null) {
-            httpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
+            httpClient = SystemTrust.httpClient().version(HttpClient.Version.HTTP_1_1).build();
         }
         return httpClient;
     }

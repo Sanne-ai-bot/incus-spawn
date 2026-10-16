@@ -4,6 +4,7 @@ paths:
   - "common/src/main/java/dev/incusspawn/proxy/**"
   - "common/src/main/java/dev/incusspawn/DerEncoder.java"
   - "common/src/main/java/dev/incusspawn/util/HttpValidator.java"
+  - "common/src/main/java/dev/incusspawn/util/SystemTrust.java"
   - "cli/src/main/java/dev/incusspawn/command/Proxy*Command.java"
 ---
 
@@ -39,6 +40,12 @@ Key design:
   Strict validators (OpenSSL 3.5, and so Python 3.13+, which turns on `VERIFY_X509_STRICT` by default) reject a chain without them -- including the trust anchor, so leaf-only extensions are not enough.
   A CA generated before this is re-issued on load over its **existing key** (`reissueWithSki`), which keeps every leaf valid and un-re-minted; the replaced cert is kept as `ca-superseded.crt`.
   Images stamped with that superseded fingerprint carry a stale-but-not-foreign anchor: `BranchCommand` lets them branch (the new cert is pushed into the instance by `InstancePrep`/`fixContainerCaIfNeeded` on first use) instead of demanding a rebuild the way a real CA rotation does.
+- **Host trust** (#1437): isx's own HTTPS trusts the host's CA store, found by `SystemTrust` (in `common/util`) as the first system PEM bundle that exists.
+  The proxy's upstream clients trust that bundle alone (`Upstream.upstreamTrust()`, Vert.x `PemTrustOptions`).
+  Every other TLS client starts from `SystemTrust.httpClient()` or `SystemTrust.sslContext()`, which add the bundle to the JDK store rather than replace it, so a CA a JVM user imported into `cacerts` keeps working; an unreadable bundle leaves the JDK store alone.
+  Without it a native binary trusts only the JDK store baked in at build time, and fails behind TLS inspection where curl and the proxy succeed.
+  `SystemTrustGateTest` (in `cli`) fails on a plain `HttpClient.newBuilder()`, a default `SSLContext`/socket factory or an `HttpsURLConnection` in any module's main sources; a plain HTTP client says so with a `// plain HTTP:` comment on that line.
+  Nothing is cached: the class is initialized at image build time, and the store may change under a long-running isx.
 - **Host CA propagation** (opt-in, `host-ca: { propagate: true }` in config.yaml): `CertificateAuthority.collectTrustAnchors()` builds one trust set -- the MITM CA plus host anchors from `/etc/pki/ca-trust/source/anchors/`, every certificate in each `.crt`/`.pem` file (PEM bundles and DER alike) re-encoded as PEM from its DER and keyed by its SHA-256 fingerprint (`isx-<fp>.crt`).
   Only re-encoded certificates reach a guest or the stamp: a file holding anything that does not parse as certificates (a private key beside a cert) is refused whole, with a warning.
   Content-addressable naming eliminates filename collisions and shell injection.

@@ -10,6 +10,7 @@ import dev.incusspawn.util.CpuInfo;
 import dev.incusspawn.util.HostLock;
 import dev.incusspawn.Platform;
 import dev.incusspawn.Warnings;
+import dev.incusspawn.util.SystemTrust;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -213,7 +214,7 @@ public final class VmManager {
 
     private static String queryLatestGitHubRelease() {
         try {
-            var client = HttpClient.newBuilder()
+            var client = SystemTrust.httpClient()
                     .connectTimeout(Duration.ofSeconds(5))
                     .followRedirects(HttpClient.Redirect.NEVER)
                     .build();

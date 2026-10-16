@@ -1077,7 +1077,7 @@ The README section "What differs from a stock Fedora install" lists these deviat
      Anthropic auth is hardcoded in `MitmProxy` (three auth modes with complex routing)
    - Tool-contributed domains (GitHub, OpenAI, Bob, and user-defined tools) — credential injection is declared in YAML tool definitions via `proxy:` entries (see "Tool-contributed proxy definitions" below)
    - Container registry, Maven, and npm domains — relayed transparently with caching (no auth injection)
-5. The proxy re-encrypts and forwards to the real upstream over TLS
+5. The proxy re-encrypts and forwards to the real upstream over TLS, trusting the host's system CA bundle (`SystemTrust.findBundle()`) alone, or the JDK store when there is none; the CLI's own TLS clients add that bundle to the JDK store instead (`SystemTrust.httpClient()`), so both work behind TLS inspection whose CA is in the system store, and the CLI run on a JVM also keeps a CA imported into that JVM's `cacerts` (a native binary's JDK store is fixed at build time)
 
 **Redirect rule cleanup:** `isx proxy uninstall` removes the systemd service **and** cleans up the PREROUTING redirect rule and bridge DNS overrides unconditionally — even if the service removal itself fails.
 `ProxyConfig.clearRedirectRules()` attempts both firewalld and UFW independently (not else-if) so that a system with firewalld installed but inactive still reaches UFW cleanup.

@@ -3,6 +3,7 @@ package dev.incusspawn.baseimage;
 import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.Environment;
+import dev.incusspawn.util.SystemTrust;
 
 import java.io.IOException;
 import java.net.URI;
@@ -35,7 +36,7 @@ public final class BaseImageReleases {
             Pattern.compile("^https://github\\.com/([^/]+)/([^/]+)/releases/");
 
     private final String releasesApi;
-    private final HttpClient client = HttpClient.newBuilder()
+    private final HttpClient client = SystemTrust.httpClient()
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
