@@ -102,7 +102,8 @@ class GitCommitStampTest {
 
     private static String git(Path dir, String... args) throws Exception {
         var cmd = new ArrayList<>(List.of("git", "-c", "user.name=test", "-c", "user.email=test@example.com",
-                "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"));
+                "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main",
+                "-c", "gc.auto=0", "-c", "maintenance.auto=false")); // no detached maintenance racing @TempDir cleanup (#1473)
         cmd.addAll(List.of(args));
         return run(dir, cmd.toArray(String[]::new));
     }
