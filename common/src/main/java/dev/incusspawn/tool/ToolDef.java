@@ -73,9 +73,9 @@ public class ToolDef {
     public List<FileEntry> getFiles() { return files; }
     public void setFiles(List<FileEntry> files) { this.files = items(files); }
     public List<EnvEntry> getEnv() { return env; }
-    public void setEnv(List<EnvEntry> env) { this.env = env; }
+    public void setEnv(List<EnvEntry> env) { this.env = items(env); }
     public List<ToolRef> getRequires() { return requires; }
-    public void setRequires(List<ToolRef> requires) { this.requires = requires; }
+    public void setRequires(List<ToolRef> requires) { this.requires = items(requires); }
     public String getVerify() { return verify; }
     public void setVerify(String verify) { this.verify = verify; }
     public boolean isVerifyAsRoot() { return verifyAsRoot; }
@@ -484,7 +484,7 @@ public class ToolDef {
                       .append(p.getPattern()).append(',')
                       .append(p.getMin()).append(',')
                       .append(p.getMax()).append(',');
-                    if (p.getOptions() != null && !p.getOptions().isEmpty()) {
+                    if (!p.getOptions().isEmpty()) {
                         p.getOptions().stream().sorted().forEach(opt -> sb.append(opt).append(';'));
                     }
                     sb.append('\n');
