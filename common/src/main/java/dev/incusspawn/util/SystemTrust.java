@@ -48,7 +48,11 @@ public final class SystemTrust {
         return HttpClient.newBuilder().sslContext(sslContext());
     }
 
-    /** A TLS context that trusts the system CA store, for what is not an {@code HttpClient}. */
+    /**
+     * A TLS context that trusts the system CA store, for what is not an {@code HttpClient}. A raw
+     * socket from it checks the chain but not the host name: set endpoint identification to
+     * {@code HTTPS} on it before the handshake, as {@code DumpProxy.openUpstream} does.
+     */
     public static SSLContext sslContext() {
         return sslContext(findBundle());
     }

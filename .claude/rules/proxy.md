@@ -43,6 +43,7 @@ Key design:
 - **Host trust** (#1437): isx's own HTTPS trusts the host's CA store, found by `SystemTrust` (in `common/util`) as the first system PEM bundle that exists.
   The proxy's upstream clients trust that bundle alone (`Upstream.upstreamTrust()`, Vert.x `PemTrustOptions`).
   Every other TLS client starts from `SystemTrust.httpClient()` or `SystemTrust.sslContext()`, which add the bundle to the JDK store rather than replace it, so a CA a JVM user imported into `cacerts` keeps working; an unreadable bundle leaves the JDK store alone.
+  A raw socket from `SystemTrust.sslContext()` checks the chain but not the host name, so it sets endpoint identification to `HTTPS` before the handshake (`DumpProxy.openUpstream`).
   Without it a native binary trusts only the JDK store baked in at build time, and fails behind TLS inspection where curl and the proxy succeed.
   `SystemTrustGateTest` (in `cli`) fails on a plain `HttpClient.newBuilder()`, a default `SSLContext`/socket factory or an `HttpsURLConnection` in any module's main sources; a plain HTTP client says so with a `// plain HTTP:` comment on that line.
   Nothing is cached: the class is initialized at image build time, and the store may change under a long-running isx.
