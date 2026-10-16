@@ -441,7 +441,7 @@ class ToolDefLoaderTest {
         }
     }
 
-    /** An empty auth item ('auth:' followed by a bare '-') arrives as null: the path check skips it. */
+    /** An empty auth item ('auth:' followed by a bare '-') declares nothing: the tool loads without it. */
     @Test
     void aToolWithAnEmptyAuthItemStillLoads(@TempDir Path tempDir) throws Exception {
         Files.writeString(tempDir.resolve("empty-auth.yaml"), """
@@ -456,8 +456,9 @@ class ToolDefLoaderTest {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 
-            assertNotNull(loader.find("empty-auth"));
+            assertEquals(List.of(), loader.find("empty-auth").proxy().getAuth());
             assertEquals(List.of(), loader.parseFailures());
+            assertEquals(List.of(), reported);
         }
     }
 
