@@ -449,6 +449,38 @@ class ToolDefLoaderTest {
         }
     }
 
+    /** Unlike other lists, an empty 'paths' item is kept and refused: dropping it would scope the entry to every path. */
+    @Test
+    void anEmptyPathItemIsRefusedNotDropped(@TempDir Path tempDir) throws Exception {
+        var scoped = tempDir.resolve("scoped.yaml");
+        Files.writeString(scoped, """
+                name: scoped
+                proxy:
+                  config-namespace: scoped
+                  configuration:
+                    token:
+                      config-path: token
+                      secret: true
+                      description: Token
+                  auth:
+                    - domains: [scoped.example]
+                      paths:
+                        -
+                      type: bearer
+                      token: "${token}"
+                """);
+        var reported = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+
+            assertNull(loader.find("scoped"));
+            assertEquals(List.of(scoped.toAbsolutePath().normalize()), loader.parseFailures());
+            assertEquals(1, reported.size(), reported.toString());
+            assertTrue(reported.get(0).contains("is empty"), reported.get(0));
+        }
+    }
+
     /** An empty auth item ('auth:' followed by a bare '-') declares nothing: the tool loads without it. */
     @Test
     void aToolWithAnEmptyAuthItemStillLoads(@TempDir Path tempDir) throws Exception {

@@ -63,15 +63,15 @@ public class ToolDef {
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
     public List<DownloadEntry> getDownloads() { return downloads; }
-    public void setDownloads(List<DownloadEntry> downloads) { this.downloads = downloads; }
+    public void setDownloads(List<DownloadEntry> downloads) { this.downloads = items(downloads); }
     public List<String> getPackages() { return packages; }
-    public void setPackages(List<String> packages) { this.packages = packages; }
+    public void setPackages(List<String> packages) { this.packages = items(packages); }
     public List<String> getRun() { return run; }
-    public void setRun(List<String> run) { this.run = run; }
+    public void setRun(List<String> run) { this.run = items(run); }
     public List<String> getRunAsUser() { return runAsUser; }
-    public void setRunAsUser(List<String> runAsUser) { this.runAsUser = runAsUser; }
+    public void setRunAsUser(List<String> runAsUser) { this.runAsUser = items(runAsUser); }
     public List<FileEntry> getFiles() { return files; }
-    public void setFiles(List<FileEntry> files) { this.files = files; }
+    public void setFiles(List<FileEntry> files) { this.files = items(files); }
     public List<EnvEntry> getEnv() { return env; }
     public void setEnv(List<EnvEntry> env) { this.env = env; }
     public List<ToolRef> getRequires() { return requires; }
@@ -83,9 +83,9 @@ public class ToolDef {
     public String getReady() { return ready; }
     public void setReady(String ready) { this.ready = ready; }
     public List<ActionEntry> getActions() { return actions; }
-    public void setActions(List<ActionEntry> actions) { this.actions = actions != null ? actions : List.of(); }
+    public void setActions(List<ActionEntry> actions) { this.actions = items(actions); }
     public List<ImageDef.PackageRepo> getPackageRepos() { return packageRepos; }
-    public void setPackageRepos(List<ImageDef.PackageRepo> packageRepos) { this.packageRepos = packageRepos; }
+    public void setPackageRepos(List<ImageDef.PackageRepo> packageRepos) { this.packageRepos = items(packageRepos); }
     public Map<String, ParameterDef> getParameters() { return parameters; }
     public void setParameters(Map<String, ParameterDef> parameters) {
         this.parameters = parameters != null ? parameters : Map.of();
@@ -98,6 +98,14 @@ public class ToolDef {
     public void setAgentNote(String agentNote) { this.agentNote = agentNote; }
     public ImageDef.SkillsDef getSkills() { return skills; }
     public void setSkills(ImageDef.SkillsDef skills) { this.skills = skills != null ? skills : ImageDef.SkillsDef.EMPTY; }
+
+    /**
+     * A list as mapped from YAML, without its empty items: a bare '-' (or '~') arrives as null
+     * and declares nothing, so no reader has to skip it. An absent or empty key is no list.
+     */
+    static <T> List<T> items(List<T> list) {
+        return list == null ? List.of() : list.stream().filter(java.util.Objects::nonNull).toList();
+    }
 
     @JqMapped
     public static class DownloadEntry {
@@ -237,7 +245,7 @@ public class ToolDef {
         public Integer getMax() { return max; }
         public void setMax(Integer max) { this.max = max; }
         public List<String> getOptions() { return options; }
-        public void setOptions(List<String> options) { this.options = options; }
+        public void setOptions(List<String> options) { this.options = items(options); }
         public boolean isOptional() { return optional; }
         public void setOptional(boolean optional) { this.optional = optional; }
         public boolean isReconfigurable() { return reconfigurable; }
@@ -261,13 +269,10 @@ public class ToolDef {
             this.configuration = configuration != null ? configuration : Map.of();
         }
         public List<AuthDef> getAuth() { return auth; }
-        /** An empty item ('auth:' then a bare '-') arrives as null and is dropped: it declares nothing. */
-        public void setAuth(List<AuthDef> auth) {
-            this.auth = auth != null ? auth.stream().filter(java.util.Objects::nonNull).toList() : List.of();
-        }
+        public void setAuth(List<AuthDef> auth) { this.auth = items(auth); }
         public List<PlaceholderDef> getPlaceholders() { return placeholders; }
         public void setPlaceholders(List<PlaceholderDef> placeholders) {
-            this.placeholders = placeholders != null ? placeholders : List.of();
+            this.placeholders = items(placeholders);
         }
 
         public String fullConfigPath(ConfigEntry entry) {
@@ -339,7 +344,7 @@ public class ToolDef {
         public String getValue() { return value; }
         public void setValue(String value) { this.value = value != null ? value : ""; }
         public List<String> getHelp() { return help; }
-        public void setHelp(List<String> help) { this.help = help != null ? help : List.of(); }
+        public void setHelp(List<String> help) { this.help = items(help); }
         public boolean isSelfResolving() { return !configPath.isBlank() || !this.value.isBlank(); }
         public boolean isConfirm() { return "confirm".equals(type); }
     }
@@ -379,8 +384,10 @@ public class ToolDef {
         private String value;      // for header: template with ${configKey} substitution
 
         public List<String> getDomains() { return domains; }
-        public void setDomains(List<String> domains) { this.domains = domains != null ? domains : List.of(); }
+        public void setDomains(List<String> domains) { this.domains = items(domains); }
         public List<String> getPaths() { return paths; }
+        // Not items(): dropping an empty path could leave none, which scopes the entry to every path;
+        // ToolDefValidator.invalidPathScopes refuses the tool instead
         public void setPaths(List<String> paths) { this.paths = paths != null ? paths : List.of(); }
         public String getType() { return type; }
         public void setType(String type) { this.type = type; }

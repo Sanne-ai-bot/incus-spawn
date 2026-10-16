@@ -152,4 +152,25 @@ class ProofCarriersTest {
         assertTrue(carriers.read("api.custom.example", name -> List.of("ct_placeholder")).claimsProof());
         assertTrue(carriers.read("api.custom.example", name -> List.of("ct_isx_malformed")).claimsProof());
     }
+
+    @Test void emptyPlaceholderAndDomainItemsLoadWithoutACarrierForThem() throws Exception {
+        var tool = new YamlToolSetup(Jjq.toolDef("""
+                name: p
+                proxy:
+                  config-namespace: p
+                  configuration:
+                    key:
+                      config-path: token
+                  placeholders:
+                    -
+                  auth:
+                    - domains:
+                        -
+                      type: bearer
+                      token: '${key}'
+                """));
+        var carriers = new ProofCarriers(List.of(tool));
+        assertTrue(carriers.warnings().stream().noneMatch(w -> w.contains("null")), carriers.warnings().toString());
+        assertFalse(carriers.read("p.example", name -> List.of("Bearer " + GH)).claimsProof());
+    }
 }

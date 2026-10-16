@@ -149,6 +149,43 @@ class ToolDefTest {
     }
 
     @Test
+    void emptyListItemsAreDroppedFromEveryList() throws Exception {
+        // A bare '-' (or '~') arrives as null; no reader of these lists expects one
+        var def = ToolDef.loadFromStream(toStream("""
+                name: blanks
+                downloads: [~]
+                packages: [git, ~]
+                run: [~, echo hi]
+                run_as_user: [~]
+                files: [~]
+                actions: [~]
+                package_repos: [~]
+                parameters:
+                  flavour:
+                    type: enum
+                    options: [a, ~]
+                proxy:
+                  configuration:
+                    key:
+                      help: [~, see docs]
+                  placeholders: [~]
+                  auth:
+                    - domains: [~, api.example.com]
+                """));
+        assertEquals(List.of(), def.getDownloads());
+        assertEquals(List.of("git"), def.getPackages());
+        assertEquals(List.of("echo hi"), def.getRun());
+        assertEquals(List.of(), def.getRunAsUser());
+        assertEquals(List.of(), def.getFiles());
+        assertEquals(List.of(), def.getActions());
+        assertEquals(List.of(), def.getPackageRepos());
+        assertEquals(List.of("a"), def.getParameters().get("flavour").getOptions());
+        assertEquals(List.of("see docs"), def.getProxy().getConfiguration().get("key").getHelp());
+        assertEquals(List.of(), def.getProxy().getPlaceholders());
+        assertEquals(List.of("api.example.com"), def.getProxy().getAuth().getFirst().getDomains());
+    }
+
+    @Test
     void parseRequiresField() throws Exception {
         var yaml = """
                 name: idea-backend
