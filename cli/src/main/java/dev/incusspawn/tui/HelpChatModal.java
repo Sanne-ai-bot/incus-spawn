@@ -461,9 +461,7 @@ final class HelpChatModal {
     /** A footnote to the account field, so a subscriber isn't left wondering where theirs went. */
     private String subscriptionNote() {
         var names = subscriptionAccounts.stream().map(n -> "\"" + n + "\"").toList();
-        var listed = names.size() == 1 ? names.getFirst()
-                : String.join(", ", names.subList(0, names.size() - 1)) + " and " + names.getLast();
-        return "(" + listed + (names.size() > 1 ? " are" : " is")
+        return "(" + OutputFormat.andList(names) + (names.size() > 1 ? " are" : " is")
                 + " not listed: Claude Pro/Max subscriptions only work in Claude Code.)";
     }
 
