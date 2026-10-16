@@ -117,6 +117,23 @@ class BuildCommandAccountsWiringTest {
     }
 
     @Test
+    void theFinishedTemplateKeepsNoMachineIdForItsBranches() {
+        // #1305: a stopped VM takes no file push, so a VM branch gets an ID of its own only by
+        // finding none at its first start
+        var started = startPinned();
+        var scripts = new ArrayList<String>();
+        org.mockito.Mockito.doAnswer(call -> {
+            assertEquals("Running", daemon.instance(BUILD).path("status").asText(), "cleared in the running guest");
+            scripts.add(String.join(" ", (String[]) call.getRawArguments()[1]));
+            return new dev.incusspawn.incus.IncusClient.ExecResult(0, "", "");
+        }).when(cmd.incus).shellExec(org.mockito.ArgumentMatchers.eq(BUILD), org.mockito.ArgumentMatchers.any(String[].class));
+
+        cmd.stopBuild(BUILD, started);
+
+        assertTrue(scripts.stream().anyMatch(s -> s.contains(": > /etc/machine-id")), scripts.toString());
+    }
+
+    @Test
     void aBuildUsingDefaultsRegistersProofsAndRevokesThemBeforePublication() {
         var root = new ImageDef();
         root.setName("tpl-child");

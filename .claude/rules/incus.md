@@ -218,5 +218,7 @@ Failed builds hold a static IP and pins too (#903), so `isx clean`, `isx clean p
 **No file push right before a start**: Incus's forkfile (which serves file pushes to a stopped container) must exit before the instance starts, and re-checks only once a second while a push is still flushing.
 So a push immediately before `start` costs a full second.
 Put anything the instance needs after start into `buildSetupScript` (one exec, heredocs via `Container.heredoc`), and keep `RuntimeSetup.prefetchAndStart()` push-free.
-A file that must exist at boot (the static `.network`, GUI passthrough files) is pushed early in the branch flow, never as its last pre-start step.
+A file that must exist at boot (a container's `/etc/machine-id`, the static `.network`, GUI passthrough files) is pushed early in the branch flow, never as its last pre-start step.
+**Every instance has its own machine-id** (#1305, `lifecycle/MachineId`): a container branch is pushed a fresh one right after the copy, and a template build empties it before its last stop, so a VM branch generates its own.
+Never write `uninitialized`: a first boot runs Fedora's full `preset-all`, which disables `systemd-networkd` and every other unit the image or template enabled (DESIGN.md "Branching").
 See DESIGN.md "Why nothing is pushed into an instance just before it starts".
