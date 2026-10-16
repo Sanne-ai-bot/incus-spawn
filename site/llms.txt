@@ -7,7 +7,7 @@ A branch is to a template what a git worktree is to a repository, except that th
 ## Docs
 
 - [Full documentation](https://isx.run/llms-full.txt): the complete README as Markdown
-- [Quick start](https://isx.run/docs#quick-start): install, one-time host setup, first template and the TUI
+- [Quick start](https://isx.run/docs#quick-start): install, one-time host setup, a first agent template, its first branch and the TUI
 - [Installation](https://isx.run/docs#installation): Homebrew, DNF, APT, native binary and JBang
 - [Credential isolation](https://isx.run/docs#credential-isolation): how agents use their accounts with no credentials in their workstation
 - [Branching](https://isx.run/docs#branching): creating workstations from templates, network modes, and fetching an agent's commits

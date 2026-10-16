@@ -65,13 +65,33 @@ jbang app install isx-proxy@Sanne/incus-spawn
 ```shell
 # One-time host setup (Incus, firewall, auth)
 isx init
+```
 
-# Build a template (builds missing parent images first)
-isx build tpl-minimal
+A template is a machine image you build once: an OS, tools and repos. This one adds Claude Code to the built-in `tpl-minimal`. Save it as `~/.config/incus-spawn/images/agent.yaml`, or run `isx templates new tpl-agent` and paste it over the skeleton that opens in your editor:
 
-# Launch the interactive TUI
+```yaml
+name: tpl-agent
+description: Claude Code on the base OS
+parent: tpl-minimal
+tools:
+  - claude
+default-action: claude
+```
+
+```shell
+# Build it (builds missing parent images first)
+isx build tpl-agent
+
+# Branch it: an instant copy-on-write machine of its own, with Claude Code open inside
+isx branch my-first --from tpl-agent
+
+# The interactive TUI: your templates and branches
 isx
 ```
+
+Claude Code signs in with the Claude credential set up in `isx init` (run it again to add one). It never sees the credential: the proxy adds it on the way out (see [Credential Isolation](#credential-isolation)). If you did not install the services `isx init` offers, start them before building: `isx proxy start` on Linux, `isx vm start && isx proxy start` on macOS.
+
+Next, for another agent, replace `claude` with `codex`, `pi`, `gemini-cli`, `bob` or `copilot` (see [Template Images](#template-images)). To give the agent a project, add `repos:` ([Declarative Repos](#declarative-repos)). Its commits come back to your host with `git fetch` ([Git Remotes](#git-remotes)).
 
 See [Installation](#installation) for all options and update instructions. Shell completions are available for bash, zsh, and fish via `isx completion <shell>`.
 
@@ -543,9 +563,9 @@ default-action: claude
 Claude Code is Anthropic's official CLI for Claude. Add it to any template with `tools: [claude]`:
 
 ```yaml
-name: tpl-agent
+name: tpl-claude-dev
 description: Isolated dev environment with Claude Code
-parent: tpl-dev
+parent: tpl-minimal
 repos:
   - url: https://github.com/myorg/myproject.git
     path: ~/myproject
@@ -574,7 +594,7 @@ Codex CLI is OpenAI's coding agent. Add it to any template with `tools: [codex]`
 ```yaml
 name: tpl-codex-dev
 description: Isolated dev environment with Codex CLI
-parent: tpl-dev
+parent: tpl-minimal
 repos:
   - url: https://github.com/myorg/myproject.git
     path: ~/myproject
@@ -609,7 +629,7 @@ Pi is a provider-agnostic CLI coding agent that uses the standard Anthropic API.
 ```yaml
 name: tpl-pi-dev
 description: Isolated dev environment with Pi coding agent
-parent: tpl-dev
+parent: tpl-minimal
 repos:
   - url: https://github.com/myorg/myproject.git
     path: ~/myproject
@@ -638,7 +658,7 @@ Add Google's [Gemini CLI](https://geminicli.com/docs/get-started/installation/) 
 
 ```yaml
 name: tpl-gemini-dev
-parent: tpl-dev
+parent: tpl-minimal
 tools:
   - gemini-cli
 default-action: gemini-cli
@@ -685,7 +705,7 @@ Bob Shell is IBM's AI-powered coding assistant. Add it to any template with `too
 ```yaml
 name: tpl-bob-dev
 description: Isolated dev environment with Bob Shell
-parent: tpl-dev
+parent: tpl-minimal
 repos:
   - url: https://github.com/myorg/myproject.git
     path: ~/myproject
@@ -704,7 +724,7 @@ Add GitHub Copilot CLI to a template with `tools: [copilot]`:
 ```yaml
 name: tpl-copilot-dev
 description: Isolated dev environment with GitHub Copilot CLI
-parent: tpl-dev
+parent: tpl-minimal
 repos:
   - url: https://github.com/myorg/myproject.git
     path: ~/myproject
@@ -721,9 +741,9 @@ Copilot uses the same GitHub PAT as the `gh` tool -- run `isx init` to configure
 Template images can declare [agent skills](https://skills.sh) to bake in at build time. Skills are installed once into the template, at `~/.agents/skills`, the shared location any agent can read (Claude Code finds them through `~/.claude/skills`), and inherited by every instance branched from it.
 
 ```yaml
-name: tpl-agent
+name: tpl-skills
 description: Agent with security skills
-parent: tpl-dev
+parent: tpl-minimal
 skills:
   repo: myorg/claude-skills      # default catalog for bare skill names
   list:
@@ -757,7 +777,7 @@ Templates and tools can add their own lines with `agent_note`:
 
 ```yaml
 name: tpl-openjdk
-parent: tpl-dev
+parent: tpl-minimal
 agent_note: |
   The build needs a boot JDK of 26/27/28. This box ships 26 at $JAVA_HOME and
   deliberately omits 25.
@@ -945,7 +965,7 @@ Templates can also declare environment variables directly:
 
 ```yaml
 name: tpl-my-project
-parent: tpl-dev
+parent: tpl-minimal
 env:
   - name: MY_DEBUG
     value: "true"
@@ -1157,8 +1177,8 @@ tools:
 [zmx](https://zmx.sh) provides session attach/detach for the terminal — persistent shell sessions that survive disconnections, with native scrollback and multi-client support. Unlike tmux, it delegates window management to your OS rather than reimplementing it.
 
 ```yaml
-name: tpl-agent
-parent: tpl-dev
+name: tpl-zmx
+parent: tpl-minimal
 tools:
   - zmx
 ```
@@ -1187,8 +1207,8 @@ All zmx commands work natively, including interactive `zmx attach`. On macOS, wh
 The built-in `headroom` tool installs [Headroom](https://github.com/nicobrenner/headroom), a context optimization proxy for Claude Code. It runs as a local proxy on port 8787 that compresses conversation context, reducing token usage and improving response quality on long sessions. An MCP server is also registered with Claude Code for direct integration.
 
 ```yaml
-name: tpl-agent
-parent: tpl-java
+name: tpl-headroom
+parent: tpl-minimal
 tools:
   - headroom    # auto-installs claude via requires
 ```
@@ -1500,7 +1520,7 @@ Query commands take `--format=table|plain|json`: `isx list`, `isx templates [lis
 - When isx cannot read what Incus answered, the command fails (exit 1, the reason on stderr). It never prints an empty result.
 - Both `plain` and `json` are stable. Fields may be added at the end, but are never renamed, removed or reordered.
 - Results go to stdout. Errors and diagnostics go to stderr, so stdout holds only results. Commands that act (`build`, `branch`, `destroy`, ...) report their steps on stdout and their warnings and notes on stderr. A status command's report is its result in every state: `isx proxy status` prints it on stdout whether or not the proxy is healthy, and the exit code says which.
-- isx writes colour, clickable links and animated progress only when stdout is a terminal. When stdout is redirected or piped, or `NO_COLOR` is set to a non-empty value, neither stdout nor stderr holds escape sequences. isx cannot tell whether stderr alone is a terminal, so `isx build tpl-dev 2>build.log` run from a terminal still colours the warnings in `build.log`. For a clean log, redirect both streams or set `NO_COLOR=1`.
+- isx writes colour, clickable links and animated progress only when stdout is a terminal. When stdout is redirected or piped, or `NO_COLOR` is set to a non-empty value, neither stdout nor stderr holds escape sequences. isx cannot tell whether stderr alone is a terminal, so `isx build tpl-minimal 2>build.log` run from a terminal still colours the warnings in `build.log`. For a clean log, redirect both streams or set `NO_COLOR=1`.
 
 `isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state` and `mcp_purpose`, in that order. The last two are `null` (`-`) unless an [`isx mcp`](#delegating-from-an-agent-on-your-host-mcp) session made the instance. `mcp_state` is then `held` (a session holds it), `orphaned` (its session ended and nobody has adopted it yet) or `kept` (an agent handed it to you with `keep_instance`), and `mcp_purpose` is what the agent said the instance is for, or `null`. For names alone, use `isx list -q`:
 
