@@ -76,7 +76,7 @@ class InstanceLifecycleNetworkFixTest {
     }
 
     @Test
-    void fixStaticIpIfNeeded_vm_skipsFilePush() {
+    void fixStaticIpIfNeeded_vm_skipsFilePush() throws Exception {
         var incus = mock(IncusClient.class);
         when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
@@ -87,7 +87,7 @@ class InstanceLifecycleNetworkFixTest {
 
         assertTrue(InstanceNetwork.fixStaticIpIfNeeded(incus, "test"));
 
-        verify(incus, never()).filePush(any(), eq("test"), any());
+        verify(incus, never()).filePushContent(any(), eq("test"), any(), any(), any(), any());
         // ...so the file is pushed once the VM runs (#997)
         verify(incus).configSetAll(eq("test"), argThat(map ->
                 "true".equals(map.get(Metadata.NETWORK_PUSH_PENDING))));

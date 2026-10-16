@@ -14,7 +14,6 @@ import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -366,13 +365,7 @@ public final class InstanceNetwork {
                 + "Gateway=" + gateway + "\n"
                 + "DNS=" + gateway + "\n";
         try {
-            var tmp = Files.createTempFile("isx-network-", ".network");
-            try {
-                Files.writeString(tmp, content);
-                incus.filePush(tmp.toString(), name, NETWORK_FILE, "0", "0", "0644");
-            } finally {
-                Files.deleteIfExists(tmp);
-            }
+            incus.filePushContent(content, name, NETWORK_FILE, "0", "0", "0644");
             return true;
         } catch (IOException | RuntimeException e) {
             warn.accept("failed to push static network config: " + e.getMessage());

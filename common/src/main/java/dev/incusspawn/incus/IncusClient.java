@@ -2172,6 +2172,18 @@ public class IncusClient {
         if (!resp.isSuccess()) throw new IncusException("Failed to push file to " + container + destPath);
     }
 
+    /** Push {@code content} as a file with explicit ownership and mode, through a temp file. */
+    public void filePushContent(String content, String container, String destPath,
+                                String uid, String gid, String mode) throws IOException {
+        var tmp = Files.createTempFile("isx-push-", "");
+        try {
+            Files.writeString(tmp, content);
+            filePush(tmp.toString(), container, destPath, uid, gid, mode);
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
+
     /**
      * Push a directory recursively into a container.
      */

@@ -39,8 +39,7 @@ class BranchMachineIdTest {
 
         var first = daemon.pushedContent("dev-1", MACHINE_ID);
         var second = daemon.pushedContent("dev-2", MACHINE_ID);
-        // An ID, not "uninitialized": that would make the boot a first boot, whose preset-all
-        // undoes every unit the image and the template build enabled, systemd-networkd included
+        // An ID, not "uninitialized" (see MachineId)
         assertTrue(first != null && first.matches("[0-9a-f]{32}\n"), "pushed " + first);
         assertTrue(second != null && second.matches("[0-9a-f]{32}\n"), "pushed " + second);
         assertNotEquals(first, second);

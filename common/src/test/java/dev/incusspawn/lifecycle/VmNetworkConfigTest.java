@@ -133,7 +133,7 @@ class VmNetworkConfigTest {
         var incus = agentAnsweringVm(Map.of("volatile.eth0.hwaddr", MAC, Metadata.NETWORK_PUSH_PENDING, "true"));
         InstanceLifecycle.ensureReady(incus, "vm", incus.instanceMetadata("vm"), MachineType.VM, msg -> {});
 
-        verify(incus).filePush(anyString(), eq("vm"), eq(FILE), eq("0"), eq("0"), eq("0644"));
+        verify(incus).filePushContent(anyString(), eq("vm"), eq(FILE), eq("0"), eq("0"), eq("0644"));
         verify(incus).shellExec("vm", "networkctl", "reload");
         verify(incus).configUnset("vm", Metadata.NETWORK_PUSH_PENDING);
         verify(incus, never()).start(anyString());
@@ -146,7 +146,7 @@ class VmNetworkConfigTest {
         var warnings = new ArrayList<String>();
         InstanceLifecycle.ensureReady(incus, "vm", incus.instanceMetadata("vm"), MachineType.VM, warnings::add);
 
-        verify(incus, never()).filePush(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(incus, never()).filePushContent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
         verify(incus).configUnset("vm", Metadata.NETWORK_PUSH_PENDING);
         assertEquals(1, warnings.size(), warnings::toString);
     }
@@ -191,7 +191,7 @@ class VmNetworkConfigTest {
     }
 
     @Test
-    void aBranchDoesNotInheritItsSourcesPendingPush() {
+    void aBranchDoesNotInheritItsSourcesPendingPush() throws Exception {
         var daemon = new FakeIncusDaemon().instance("vm", "virtual-machine", "Stopped",
                 Map.of(Metadata.NETWORK_PUSH_PENDING, "true"));
         daemon.client().copy("vm", "vm-2");
@@ -203,7 +203,7 @@ class VmNetworkConfigTest {
         var incus = agentAnsweringVm(Map.of("volatile.eth0.hwaddr", MAC));
         InstanceLifecycle.ensureReady(incus, "vm", incus.instanceMetadata("vm"), MachineType.VM, msg -> {});
 
-        verify(incus, never()).filePush(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(incus, never()).filePushContent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
         verify(incus, never()).configUnset(anyString(), anyString());
     }
 
