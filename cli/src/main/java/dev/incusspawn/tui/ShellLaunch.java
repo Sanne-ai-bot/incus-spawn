@@ -6,15 +6,10 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.GuiPassthrough;
-import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.RuntimeSetup;
-import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.util.BuildOutput;
-import dev.incusspawn.proxy.CertificateAuthority;
-import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
-import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tool.ShellMenu;
@@ -106,41 +101,18 @@ final class ShellLaunch {
         System.out.println();
     }
 
-    void fixStaticIpIfNeeded(String name, MachineType machineType) {
-        if (!"Stopped".equalsIgnoreCase(tui.incus.getInstanceStatus(name))) return;
-        // Runs on the TUI's own screen: printing would draw over it. A warning (spoofing
-        // protection refused, an unusable allocation lock) goes to the warning log; progress
-        // does not, since nothing can render until this returns.
-        var output = new StaticIpAllocator.Output(msg -> {}, tui.warningLog::add);
-        try {
-            if (InstanceNetwork.fixStaticIpIfNeeded(tui.incus, name, output, machineType)) {
-                tui.statusMessage = "Static IP reassigned to current bridge subnet";
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    void fixResolvConfIfNeeded(String name) {
-        if ("Stopped".equalsIgnoreCase(tui.incus.getInstanceStatus(name))) return;
-        try {
-            ProxyConfig.fixResolvConfIfNeeded(tui.incus, name);
-        } catch (Exception ignored) {
-        }
-    }
-
-    void fixCaMismatchIfNeeded(String containerName, MachineType machineType) {
-        io.hyperfoil.tools.jjq.value.JqValue started = null;
-        if ("Stopped".equalsIgnoreCase(tui.incus.getInstanceStatus(containerName))) {
-            // Runs on the TUI's own screen, where stderr would be drawn over: a mount dropped
-            // because its host directory is gone must not go unannounced (#852), so it goes to
-            // the warning log, which the status line announces when the shell returns to the TUI.
-            // Through InstanceLifecycle, as isx shell's start is: the prep re-arms IP spoofing
-            // protection (#905), the start falls back where the host cannot enforce it, and the
-            // instance gets its new secret (#934).
-            started = InstanceLifecycle.startForUse(tui.incus, containerName, machineType, tui.warningLog::add);
-        }
-        // The start's own read of the instance, when there was one: no need to read it again
-        CertificateAuthority.fixContainerCaIfNeeded(tui.incus, containerName, started, tui.warningLog::add);
+    /**
+     * The repairs before a shell, through {@link InstancePrep#repairBeforeUse} as {@code isx shell}
+     * makes them. Runs on the TUI's own screen, where printing would draw over it: a warning (a
+     * mount dropped because its host directory is gone, #852; spoofing protection refused; an
+     * unusable allocation lock) goes to the warning log, which the status line announces when
+     * the shell returns to the TUI, and progress goes nowhere, since nothing can render until
+     * this returns.
+     */
+    void repairBeforeUse(String name, MachineType machineType) {
+        InstancePrep.repairBeforeUse(tui.incus, name, machineType, new InstancePrep.Notices(
+                new StaticIpAllocator.Output(msg -> { }, tui.warningLog::add), tui.warningLog::add,
+                (title, detail) -> tui.statusMessage = title + ": " + detail));
     }
 
     void shellInto(ActionContext target) {
@@ -150,7 +122,7 @@ final class ShellLaunch {
     void shellInto(ActionContext target, String commandOverride) {
         var name = target.name();
         var machineType = target.machineType();
-        // Read after fixStaticIpIfNeeded, so a VM it just reassigned is seen to owe its file
+        // Read after repairBeforeUse, so a VM it just reassigned is seen to owe its file
         var instance = tui.incus.instanceMetadata(name);
         var status = instance.path("status").asText("");
         // An empty status means any failed lookup, not just a missing instance, so confirm before
@@ -161,8 +133,13 @@ final class ShellLaunch {
             tui.statusMessage = name + " no longer exists";
             return;
         }
-        // Runs after the TUI has released the terminal, so plain stdout is safe here.
-        InstancePrep.readyForUse(tui.incus, name, instance, machineType, System.out::println, tui.warningLog::add);
+        // Runs after the TUI has released the terminal, so the reconcile prints its own warnings,
+        // and the log keeps a copy: a failed one would otherwise scroll away under the shell.
+        // (The start's warnings come with its progress through say, and are only printed.)
+        InstancePrep.readyForUse(tui.incus, name, instance, machineType, System.out::println, warning -> {
+            BuildOutput.warn(warning);
+            tui.warningLog.add(warning);
+        });
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
         var titleMonitor = startAuthTitleMonitor(name);

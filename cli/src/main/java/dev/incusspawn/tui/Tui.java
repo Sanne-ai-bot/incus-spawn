@@ -2658,10 +2658,9 @@ public class Tui {
             var networkModeStr = incus.configGet(target.name(), Metadata.NETWORK_MODE);
             if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
             if (showProxyError()) return true;
+            shellLaunch.repairBeforeUse(target.name(), target.machineType());
+            // After the repairs, which report on the status line too: this is the one to act on
             showSubnetWarning();
-            shellLaunch.fixStaticIpIfNeeded(target.name(), target.machineType());
-            shellLaunch.fixCaMismatchIfNeeded(target.name(), target.machineType());
-            shellLaunch.fixResolvConfIfNeeded(target.name());
             return false;
         } catch (IncusException e) {
             errorMessage = "Cannot reach Incus: " + e.getMessage();
