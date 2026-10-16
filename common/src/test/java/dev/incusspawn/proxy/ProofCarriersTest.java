@@ -16,6 +16,23 @@ class ProofCarriersTest {
     static final String SECRET = "12".repeat(32);
     static final String GH = "gho_isx_" + ProofToken.derive(SECRET, "github");
 
+    @Test void anEmptyAuthItemDeclaresNothing() throws Exception {
+        var tool = new YamlToolSetup(Jjq.toolDef("""
+                name: empty-auth
+                proxy:
+                  config-namespace: emptyauth
+                  auth:
+                    -
+                    - domains: [empty.example]
+                      type: bearer
+                      token: literal
+                """));
+        assertEquals(1, tool.proxy().getAuth().size());
+        assertTrue(new ProofCarriers(List.of(tool)).warnings().isEmpty());
+        assertEquals(List.of("empty.example"), ToolProxyResolver.resolve(new dev.incusspawn.config.SpawnConfig(),
+                Map.of("empty-auth", tool)).stream().map(ResolvedToolProxy::domain).toList());
+    }
+
     @Test void borrowedNamespaceUsesItsOwnersProofDeclarations() throws Exception {
         var tool = new YamlToolSetup(Jjq.toolDef("""
                 name: custom

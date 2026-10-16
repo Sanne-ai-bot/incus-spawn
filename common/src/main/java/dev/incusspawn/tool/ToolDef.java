@@ -261,7 +261,10 @@ public class ToolDef {
             this.configuration = configuration != null ? configuration : Map.of();
         }
         public List<AuthDef> getAuth() { return auth; }
-        public void setAuth(List<AuthDef> auth) { this.auth = auth != null ? auth : List.of(); }
+        /** An empty item ('auth:' then a bare '-') arrives as null and is dropped: it declares nothing. */
+        public void setAuth(List<AuthDef> auth) {
+            this.auth = auth != null ? auth.stream().filter(java.util.Objects::nonNull).toList() : List.of();
+        }
         public List<PlaceholderDef> getPlaceholders() { return placeholders; }
         public void setPlaceholders(List<PlaceholderDef> placeholders) {
             this.placeholders = placeholders != null ? placeholders : List.of();
