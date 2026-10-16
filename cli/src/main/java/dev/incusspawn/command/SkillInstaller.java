@@ -7,6 +7,7 @@ import dev.incusspawn.command.BuildTools.ResolvedTool;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.SystemTrust;
 
 import java.io.IOException;
 import java.net.URI;
@@ -65,7 +66,7 @@ final class SkillInstaller {
 
         try (var skillsGroup = BuildOutput.group("Skills", resolvedNames.size() + " to install")) {
 
-            var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+            var http = SystemTrust.httpClient().connectTimeout(Duration.ofSeconds(10))
                     .followRedirects(HttpClient.Redirect.NORMAL).build();
             var cache = new dev.incusspawn.tool.SkillsCache();
 

@@ -50,7 +50,7 @@ final class VfkitRest {
             return UnixSocketHttp.postJson(socket, path, json, timeoutSeconds,
                     "vfkit's REST API at " + socket + " did not answer");
         }
-        var client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+        var client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build(); // plain HTTP: vfkit on loopback
         var request = HttpRequest.newBuilder()
                 .uri(URI.create(restUri + path))
                 .timeout(Duration.ofSeconds(timeoutSeconds))

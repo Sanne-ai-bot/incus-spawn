@@ -1,5 +1,7 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.SystemTrust;
+
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.IOException;
@@ -26,6 +28,8 @@ public class DumpProxy {
     private final int port;
     private final ApiTrafficLog log;
     private final ExecutorService executor = Executors.newCachedThreadPool();
+    // One per proxy, so exchanges resume TLS sessions instead of re-reading the trust store
+    private final SSLSocketFactory upstreamTls = SystemTrust.sslContext().getSocketFactory();
 
     public DumpProxy(int port, ApiTrafficLog log) {
         this.port = port;
@@ -83,7 +87,7 @@ public class DumpProxy {
 
     private void handleExchange(HttpMessage request, byte[] bodyBytes,
                                 String originalDump, OutputStream clientOut) throws Exception {
-        var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
+        var upstreamSocket = (SSLSocket) upstreamTls
                 .createSocket(UPSTREAM_HOST, 443);
         upstreamSocket.setSoTimeout(300_000);
 

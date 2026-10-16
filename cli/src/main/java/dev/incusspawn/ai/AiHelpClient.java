@@ -9,6 +9,7 @@ import dev.incusspawn.config.SpawnConfig;
 
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.SystemTrust;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -31,7 +32,7 @@ public class AiHelpClient {
 
     private static HttpClient client() {
         if (httpClient == null) {
-            httpClient = HttpClient.newBuilder()
+            httpClient = SystemTrust.httpClient()
                     .connectTimeout(Duration.ofSeconds(15))
                     .build();
         }

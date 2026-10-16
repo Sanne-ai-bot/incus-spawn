@@ -2,6 +2,7 @@ package dev.incusspawn.tool;
 
 import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.util.HttpValidator;
+import dev.incusspawn.util.SystemTrust;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ProtocolException;
@@ -210,7 +211,7 @@ public class DownloadCache {
     }
 
     private void fetch(URI uri, String url, Path tmp, Listener listener) throws IOException, InterruptedException {
-        try (var client = HttpClient.newBuilder()
+        try (var client = SystemTrust.httpClient()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build()) {
