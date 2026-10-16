@@ -1125,6 +1125,7 @@ When path scopes overlap, the longest matching prefix wins: with `/api` and `/ap
 A prefix matches whole path segments, so `/api` does not match `/apis`.
 When two tools register unscoped entries for the same domain, the first one loaded wins and a warning is logged.
 Trailing slashes in prefixes are normalized (`/mcp/` is treated as `/mcp`), and a root scope of `/` matches every path.
+Each prefix is a literal path starting with `/`, without a query, wildcard, whitespace, empty segment or `.`/`..` segment; a tool definition with any other is skipped with a warning when definitions load.
 When two tools with different credential namespaces share a domain, credential proof authorization currently requires proofs for all namespaces registered on that domain, not only the one selected by path.
 A single tool scoping paths on a domain it alone claims is not affected.
 

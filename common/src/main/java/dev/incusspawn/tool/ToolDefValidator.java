@@ -82,6 +82,7 @@ public class ToolDefValidator {
 
         var invalidNamespace = invalidNamespace(def);
         if (invalidNamespace != null) errors.add(invalidNamespace);
+        errors.addAll(invalidPathScopes(def));
 
         var proxyDef = def.getProxy();
         if (proxyDef != null) {
@@ -189,6 +190,63 @@ public class ToolDefValidator {
                         .warningsForNamespace(proxyDef.getConfigNamespace()));
             }
         }
+    }
+
+    /** Why a definition is refused where definitions load, or null when it is not. */
+    public static String refusal(ToolDef def) {
+        var invalidNamespace = invalidNamespace(def);
+        if (invalidNamespace != null) return invalidNamespace;
+        var invalidPaths = invalidPathScopes(def);
+        return invalidPaths.isEmpty() ? null : invalidPaths.getFirst();
+    }
+
+    /**
+     * Every {@code paths:} entry of the tool's auth entries that cannot scope one, as an error.
+     * Such a tool is refused where definitions load, like an invalid namespace: its scope would
+     * not be the one it declares.
+     */
+    public static List<String> invalidPathScopes(ToolDef def) {
+        var proxy = def.getProxy();
+        if (proxy == null) return List.of();
+        var errors = new ArrayList<String>();
+        for (var ae : proxy.getAuth()) {
+            // An empty item ('auth:' then a bare '-') arrives as null
+            if (ae == null) continue;
+            for (var path : ae.getPaths()) {
+                var problem = pathScopeProblem(path);
+                if (problem != null) {
+                    errors.add(OutputFormat.oneLine("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                            + "': path '" + path + "' " + problem));
+                }
+            }
+        }
+        return errors;
+    }
+
+    /**
+     * Why {@code path} cannot scope an auth entry, or null when it can: a literal prefix of the
+     * request path, matched on whole segments. The proxy ignores one that does not start with
+     * '/', so an empty prefix never widens a scope to every path ({@code ResolvedToolProxy}).
+     */
+    static String pathScopeProblem(String path) {
+        if (path == null || path.isBlank()) {
+            return "is empty: use '/' to scope every path, or omit 'paths'";
+        }
+        if (path.chars().anyMatch(Character::isWhitespace)) return "must not contain whitespace";
+        if (!path.startsWith("/")) return "must start with '/' (for example '/" + path + "')";
+        if (path.contains("?") || path.contains("#")) {
+            return "must not contain a query or fragment: scopes match the path alone";
+        }
+        if (path.contains("*")) return "is a literal prefix: wildcards are not supported";
+        var segments = path.substring(1).split("/", -1);
+        for (int i = 0; i < segments.length; i++) {
+            var segment = segments[i];
+            // A single trailing slash is allowed: '/mcp/' is '/mcp'
+            if (segment.isEmpty() && i == segments.length - 1) continue;
+            if (segment.isEmpty()) return "must not contain an empty segment ('//')";
+            if (segment.equals(".") || segment.equals("..")) return "must not contain a '.' or '..' segment";
+        }
+        return null;
     }
 
     /**
