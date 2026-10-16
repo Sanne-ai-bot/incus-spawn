@@ -168,14 +168,14 @@ class ArtifactCacheHandler {
                     }
                 }).onFailure(err -> {
                     System.err.println("Cache check error: " + err.getMessage());
-                    upstream.relayRequest(clientReq, domain);
+                    upstream.relayRequest(clientReq, domain, started);
                 });
                 return;
             }
         }
 
         // Non-cacheable (auth tokens, manifests, HEAD, tag lookups) — relay
-        upstream.relayRequest(clientReq, domain);
+        upstream.relayRequest(clientReq, domain, started);
     }
 
     private Future<Long> cachedFileSize(Path cacheFile) {
@@ -747,7 +747,7 @@ class ArtifactCacheHandler {
     private void handleNpmRequest(HttpServerRequest clientReq, long started, String domain) {
         var path = clientReq.path();
         if (path == null) {
-            upstream.relayRequest(clientReq, domain);
+            upstream.relayRequest(clientReq, domain, started);
             return;
         }
 
@@ -761,7 +761,7 @@ class ArtifactCacheHandler {
                 if (pkgRef != null) {
                     var cacheFile = cacheDir.resolve(tarballPath).normalize();
                     if (!cacheFile.startsWith(cacheDir)) {
-                        upstream.relayRequest(clientReq, domain);
+                        upstream.relayRequest(clientReq, domain, started);
                         return;
                     }
                     var ref = domain + path;
@@ -774,11 +774,11 @@ class ArtifactCacheHandler {
 
         var packumentMatcher = NPM_PACKUMENT_PATTERN.matcher(path);
         if (packumentMatcher.matches()) {
-            relayNpmPackument(clientReq, domain, packumentMatcher.group(1));
+            relayNpmPackument(clientReq, started, domain, packumentMatcher.group(1));
             return;
         }
 
-        upstream.relayRequest(clientReq, domain);
+        upstream.relayRequest(clientReq, domain, started);
     }
 
     /**
@@ -786,9 +786,9 @@ class ArtifactCacheHandler {
      * The ETag is used by tarball cache hits to skip re-verification when
      * the packument hasn't changed.
      */
-    private void relayNpmPackument(HttpServerRequest clientReq, String domain,
+    private void relayNpmPackument(HttpServerRequest clientReq, long started, String domain,
                                     String packageName) {
-        upstream.relayRequest(clientReq, domain, upResp -> {
+        upstream.relayRequest(clientReq, domain, started, upResp -> {
             var etag = upResp.getHeader("ETag");
             if (etag != null && !etag.isBlank()) {
                 vertx.executeBlocking(() -> {
@@ -857,7 +857,7 @@ class ArtifactCacheHandler {
             if (result == null) {
                 // Said here, so a relay that fails points at the lookup that sent it there
                 ProxyLog.warn("No npm shasum for " + ref + "; relaying it uncached");
-                upstream.relayRequest(clientReq, domain);
+                upstream.relayRequest(clientReq, domain, started);
             } else if (result.cacheHit()) {
                 System.out.println("npm cache hit: " + ref +
                         " (" + formatSize(result.size()) + ")");
@@ -869,7 +869,7 @@ class ArtifactCacheHandler {
         }).onFailure(err -> {
             System.err.println("npm integrity check error for " + ref +
                     ": " + err.getMessage());
-            upstream.relayRequest(clientReq, domain);
+            upstream.relayRequest(clientReq, domain, started);
         });
     }
 
@@ -1100,7 +1100,7 @@ class ArtifactCacheHandler {
             }
         }
 
-        upstream.relayRequest(clientReq, domain);
+        upstream.relayRequest(clientReq, domain, started);
     }
 
     /** A Maven-layout repository: metadata and SNAPSHOTs are not cached ({@link #isMavenCacheable}). */
@@ -1151,7 +1151,7 @@ class ArtifactCacheHandler {
             }
         }).onFailure(err -> {
             System.err.println("Artifact cache check error for " + ref + ": " + err.getMessage());
-            upstream.relayRequest(clientReq, domain);
+            upstream.relayRequest(clientReq, domain, started);
         });
     }
 
@@ -1316,7 +1316,7 @@ class ArtifactCacheHandler {
             }
         }).onFailure(err -> {
             System.err.println("Artifact revalidation error for " + ref + ": " + err.getMessage());
-            upstream.relayRequest(clientReq, domain);
+            upstream.relayRequest(clientReq, domain, started);
         });
     }
 

@@ -320,4 +320,26 @@ class NpmCacheProxyTest {
 
         assertEquals(1, hits.get("/slow/1.0.0").get());
     }
+
+    /**
+     * A tarball relayed uncached after its shasum lookup failed is cut at the client's silence budget
+     * counted from its request, not from the relay's start (#1059): the lookup's wait was the
+     * client's too, and the MITM server's idle timeout counts it.
+     */
+    @Test
+    void relayAfterASlowLookupCountsTheLookupsWait() throws Exception {
+        var path = publish("lookup-then-stall");
+        unavailable.put("/lookup-then-stall/1.0.0", new AtomicInteger(1));
+        unavailableStatus = 404;
+        unavailableDelayMillis = 3000;
+        stalledLookup = path;
+        RelayRequestBodyTest.withBudget(proxy.upstream, 4, () -> {
+            var start = System.nanoTime();
+            var response = get(path, 10);
+            var elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+            assertEquals(502, response.status(), response.text());
+            // From the relay's start it would be 7s
+            assertTrue(elapsed < 5500, "cut " + elapsed + "ms after the request, with a 4s budget");
+        });
+    }
 }
