@@ -523,6 +523,14 @@ A device node can only be handed to a container, which is why `kvm` is a contain
 6. Clean caches
 7. Tag metadata, stop
 
+**A running build takes two Ctrl+C** (#1415).
+A terminal can send Ctrl+C for Ctrl+Shift+C, its copy shortcut: ptyxis does when no text is selected, and on a non-Latin keyboard layout.
+isx then gets the same SIGINT and cannot tell a copy from an interrupt, so copying a line of the output ended a long build.
+While a build instance exists and isx is at a terminal, `BuildInterrupt` takes the first SIGINT as a warning to press it again, and a second within five seconds goes to the handler that was there before.
+So an interrupt still ends the process with the shutdown hook's "Build interrupted for" report, and outside a build, at a prompt before it starts and off a terminal, Ctrl+C acts at once.
+Host processes the build runs (Git preparing a repository) share the terminal's process group, so the first Ctrl+C still reaches them and can fail that step.
+Turning off the terminal's own SIGINT (`stty -isig`) and reading Ctrl+C from stdin was rejected: the bytes are just as ambiguous, and a crash would leave the terminal without Ctrl+C.
+
 ### Agent Context File
 
 Every build regenerates `/etc/claude-code/CLAUDE.md`, a short always-loaded primer for agents running inside the box.
