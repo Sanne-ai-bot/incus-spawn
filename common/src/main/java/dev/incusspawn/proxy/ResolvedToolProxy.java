@@ -32,16 +32,31 @@ public record ResolvedToolProxy(
      * When paths are declared, the request path must equal one or start with one followed by '/'.
      */
     public boolean matchesPath(String requestUri) {
-        if (auth == null || auth.getPaths().isEmpty()) return true;
-        var path = requestUri;
-        var queryIdx = path.indexOf('?');
-        if (queryIdx >= 0) path = path.substring(0, queryIdx);
+        return pathMatchLength(requestUri) >= 0;
+    }
+
+    /**
+     * How specific this entry's match of {@code requestUri} is: the length of the longest
+     * declared prefix it falls under, 0 when no paths are declared, -1 when none matches. The
+     * longest prefix selects among overlapping scopes ({@code /api/admin} over {@code /api}).
+     */
+    public int pathMatchLength(String requestUri) {
+        if (auth == null || auth.getPaths().isEmpty()) return 0;
+        var queryIdx = requestUri.indexOf('?');
+        int pathEnd = queryIdx >= 0 ? queryIdx : requestUri.length();
+        int longest = -1;
         for (var raw : auth.getPaths()) {
-            var prefix = raw.endsWith("/") && raw.length() > 1 ? raw.substring(0, raw.length() - 1) : raw;
-            if ("/".equals(prefix)) return true;
-            if (path.equals(prefix) || path.startsWith(prefix + "/")) return true;
+            // Without a leading '/' a prefix matches nothing: tool validation rejects it, and an
+            // empty one must never widen a scope to every path
+            if (raw == null || !raw.startsWith("/")) continue;
+            // A trailing slash is dropped ('/mcp/' is '/mcp'); the root '/' matches every path
+            int length = raw.length() > 1 && raw.endsWith("/") ? raw.length() - 1 : raw.length();
+            boolean matches = raw.equals("/")
+                    || length > 1 && pathEnd >= length && requestUri.regionMatches(0, raw, 0, length)
+                            && (pathEnd == length || requestUri.charAt(length) == '/');
+            if (matches) longest = Math.max(longest, length);
         }
-        return false;
+        return longest;
     }
 
     /**

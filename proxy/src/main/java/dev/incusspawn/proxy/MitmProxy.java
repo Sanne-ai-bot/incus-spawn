@@ -709,18 +709,18 @@ public class MitmProxy {
 
     private static ResolvedToolProxy selectByPath(List<ResolvedToolProxy> candidates,
                                                   String requestUri) {
-        // Path-scoped entries first: they are more specific than unscoped ones.
+        // The longest matching prefix, then the first loaded: a path-scoped entry matches with at
+        // least 1, so it wins over an unscoped one, which matches with 0.
+        ResolvedToolProxy best = null;
+        int longest = -1;
         for (var tp : candidates) {
-            if (tp.auth() != null && !tp.auth().getPaths().isEmpty() && tp.matchesPath(requestUri)) {
-                return tp;
+            var length = tp.pathMatchLength(requestUri);
+            if (length > longest) {
+                best = tp;
+                longest = length;
             }
         }
-        for (var tp : candidates) {
-            if (tp.auth() == null || tp.auth().getPaths().isEmpty()) {
-                return tp;
-            }
-        }
-        return null;
+        return best;
     }
 
     public Set<String> allInterceptedDomains() {
