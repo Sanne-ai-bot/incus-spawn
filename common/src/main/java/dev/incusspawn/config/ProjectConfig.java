@@ -36,7 +36,7 @@ public class ProjectConfig {
     public String getParent() { return parent; }
     public void setParent(String parent) { this.parent = parent; }
     public List<String> getRepos() { return repos; }
-    public void setRepos(List<String> repos) { this.repos = repos; }
+    public void setRepos(List<String> repos) { this.repos = ImageDef.items(repos); }
     public String getPreBuild() { return preBuild; }
     public void setPreBuild(String preBuild) { this.preBuild = preBuild; }
     public GitConfig getGit() { return git; }

@@ -166,12 +166,10 @@ public class ProjectCommand extends BaseCommand {
                 BuildOutput.stepDone();
 
                 // Clone repos
-                if (projectConfig.getRepos() != null) {
-                    for (var repo : projectConfig.getRepos()) {
-                        BuildOutput.stepStart("Cloning " + repo + "...");
-                        var cloned = incus.execInContainer(buildName, "agentuser", "git clone " + shellQuote(repo));
-                        if (!GuestUpdate.finish(cloned, "git clone " + repo)) return false;
-                    }
+                for (var repo : projectConfig.getRepos()) {
+                    BuildOutput.stepStart("Cloning " + repo + "...");
+                    var cloned = incus.execInContainer(buildName, "agentuser", "git clone " + shellQuote(repo));
+                    if (!GuestUpdate.finish(cloned, "git clone " + repo)) return false;
                 }
 
                 if (!preBuild(incus, buildName, projectConfig.getPreBuild())) return false;
