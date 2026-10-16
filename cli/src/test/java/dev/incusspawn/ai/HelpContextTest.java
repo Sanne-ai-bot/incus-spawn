@@ -14,6 +14,21 @@ import static org.junit.jupiter.api.Assertions.*;
 class HelpContextTest {
 
     @Test
+    void helpReadsEveryUserPageTheSitePublishes() throws IOException {
+        try (var pages = Files.list(Path.of("..", "docs"))) {
+            var expected = pages.map(p -> p.getFileName().toString())
+                    .filter(f -> f.endsWith(".md"))
+                    .map(f -> "help/docs/" + f).sorted().toList();
+            var listed = HelpContext.HELP_RESOURCES.stream().filter(r -> r.startsWith("help/docs/")).sorted().toList();
+            assertEquals(expected, listed);
+        }
+        var documentation = HelpContext.documentation();
+        for (var resource : HelpContext.HELP_RESOURCES) {
+            assertTrue(documentation.contains("--- " + resource.substring("help/".length()) + " ---\n"), resource);
+        }
+    }
+
+    @Test
     void imageYamlRedactsTokenField() {
         var yaml = """
                 name: my-tool
