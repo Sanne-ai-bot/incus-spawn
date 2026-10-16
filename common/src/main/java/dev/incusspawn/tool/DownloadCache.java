@@ -29,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLPeerUnverifiedException;
@@ -377,24 +378,20 @@ public class DownloadCache {
      */
     private record Partial(String validator, long length) {
         static Partial of(HttpHeaders headers) {
-            var validator = validator(headers);
-            var length = headers.firstValueAsLong("Content-Length").orElse(-1);
+            var header = header(headers);
+            var validator = HttpValidator.strong(header);
+            var length = HttpValidator.contentLength(header);
             if (validator == null || length <= 0 || headers.firstValue("Content-Encoding").isPresent()) return null;
             return new Partial(validator, length);
         }
 
         /** Whether a {@code 206} is the rest of this file from {@code offset}: same file, same length, to its end. */
         boolean continuedBy(HttpHeaders headers, long offset) {
-            return validator.equals(validator(headers))
-                    && headers.firstValue("Content-Encoding").isEmpty()
-                    && headers.firstValue("Content-Range")
-                            .filter(("bytes " + offset + "-" + (length - 1) + "/" + length)::equals).isPresent()
-                    && headers.firstValueAsLong("Content-Length").orElse(-1) == length - offset;
+            return HttpValidator.continues(validator, length, offset, header(headers));
         }
 
-        private static String validator(HttpHeaders headers) {
-            return HttpValidator.strong(headers.firstValue("ETag").orElse(null),
-                    headers.firstValue("Last-Modified").orElse(null), headers.firstValue("Date").orElse(null));
+        private static Function<String, String> header(HttpHeaders headers) {
+            return name -> headers.firstValue(name).orElse(null);
         }
     }
 
