@@ -5,12 +5,16 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.JacksonTrees;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.ZmxSocketForward;
+import dev.incusspawn.tool.GhSetup;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -23,8 +27,16 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(IsolatedHome.class)
 class InstancePrepTest {
 
-    /** Unique: readyForUse creates the host zmx symlink, which IsolatedHome does not redirect. */
-    private static final String NAME = "prep-" + java.util.UUID.randomUUID();
+    /**
+     * Unique, and cleaned up after each test: readyForUse creates the host zmx symlink, in a
+     * directory IsolatedHome does not redirect.
+     */
+    private static final String NAME = "prep-" + UUID.randomUUID();
+
+    @AfterEach
+    void removeZmxSymlink() {
+        ZmxSocketForward.cleanup(NAME);
+    }
 
     private static final String WITH_TOKEN = """
             github:
@@ -93,6 +105,35 @@ class InstancePrepTest {
         assertEquals("false", filtering(daemon));
         assertTrue(String.join("\n", warnings).contains("impersonate each other's credential accounts"),
                 warnings.toString());
+    }
+
+    /**
+     * A running, healthy instance, as most shells find it: what both front ends pay before the
+     * shell. Each of these reads the same instance (#897), so fewer is an improvement -- lower
+     * the budget; more is a latency regression on every shell.
+     */
+    @Test
+    void aHealthyRunningInstanceCostsNoMoreThanBefore() throws Exception {
+        // An account configured and the instance's identity current: the reconcile decides from
+        // the caller's read that nothing is stale
+        var config = IsolatedHome.seed(WITH_TOKEN);
+        var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", Map.of(
+                        Metadata.ACCOUNT_IDENTITY_VERIFIED, "true",
+                        Metadata.accountIdentityKey("github"), new GhSetup().bakedAccountIdentity(config, "me")))
+                .ipFiltering(NAME, "true");
+        var incus = daemon.client();
+
+        InstancePrep.repairBeforeUse(incus, NAME, MachineType.CONTAINER, notices(w -> fail(w)));
+        InstancePrep.readyForUse(incus, NAME, JacksonTrees.fromJsonNode(daemon.instance(NAME)),
+                MachineType.CONTAINER, msg -> { }, w -> fail(w));
+
+        var requests = daemon.requests();
+        // Four reads of the instance, then resolv.conf's bridge lookup and exec; the reconcile
+        // works from the caller's read, so with nothing stale it costs nothing
+        assertEquals(List.of("GET /1.0/instances/" + NAME, "GET /1.0/instances/" + NAME,
+                        "GET /1.0/instances/" + NAME, "GET /1.0/instances/" + NAME, "GET /1.0/networks/incusbr0",
+                        "POST /1.0/instances/" + NAME + "/exec"), requests,
+                () -> String.join("\n", requests));
     }
 
     private static InstancePrep.Notices notices(Consumer<String> startWarn) {
