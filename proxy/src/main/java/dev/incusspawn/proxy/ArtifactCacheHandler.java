@@ -654,11 +654,14 @@ class ArtifactCacheHandler {
         }
 
         /**
-         * Whether a 206 carries the rest of this file, from {@code offset} to its end. Its own
-         * validator decides, not If-Range: GitHub's asset store answers 206 to a mismatched one (#900).
+         * Whether a 206 carries the rest of this file, from {@code offset} to its end, as it is
+         * stored: unencoded, of the length that is left, and with its own validator the first one's,
+         * not If-Range's word: GitHub's asset store answers 206 to a mismatched one (#900).
          */
         private boolean resumesAt(HttpClientResponse resp, long offset) {
             return ("bytes " + offset + "-" + (length - 1) + "/" + length).equals(resp.getHeader("Content-Range"))
+                    && resp.getHeader("Content-Encoding") == null
+                    && contentLength(resp) == length - offset
                     && validator.equals(validator(resp));
         }
 
