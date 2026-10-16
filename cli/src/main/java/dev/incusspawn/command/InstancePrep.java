@@ -17,6 +17,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -94,14 +95,12 @@ public class InstancePrep {
             }
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
-            fixStaticIpMismatch(incus, name, machineType);
-            fixCaMismatch(incus, name, machineType);
-            fixResolvConfMismatch(incus, name);
+            repairBeforeUse(incus, name, machineType, Notices.TERMINAL);
         }
 
         // Read after the repair above, so a VM it just reassigned is seen to owe its file
         var instance = incus.instanceMetadata(name);
-        readyForUse(incus, name, instance, machineType, say, msg -> System.err.println("Warning: " + msg));
+        readyForUse(incus, name, instance, machineType, say, BuildOutput::warn);
         return templateName;
     }
 
@@ -127,41 +126,62 @@ public class InstancePrep {
         ZmxSocketForward.ensureSymlink(name);
     }
 
-    private static void fixStaticIpMismatch(IncusClient incus, String name, MachineType machineType) {
+    /** Where {@link #repairBeforeUse} reports, so each front end can keep its own output. */
+    public record Notices(StaticIpAllocator.Output output, Consumer<String> startWarn,
+                          BiConsumer<String, String> repaired) {
+        /**
+         * {@code isx shell}'s and {@code isx run}'s: the terminal. The start's warnings carry their
+         * own prefix and indent, so they are printed as they come.
+         */
+        public static final Notices TERMINAL = new Notices(StaticIpAllocator.Output.TERMINAL,
+                System.err::println, BuildOutput::warnBanner);
+    }
+
+    /**
+     * The repairs an instance may owe before it is used, as {@code isx shell} and the TUI's shell
+     * both make them (#907): a static IP from an old bridge, a stale CA (which starts a stopped
+     * instance to push the new one, through {@link InstanceLifecycle#startForUse}, so the start
+     * re-arms IP spoofing protection and falls back where the host cannot enforce it), then
+     * resolv.conf. The TUI runs this while it still owns the terminal, so it passes
+     * {@link Notices} that print nothing.
+     */
+    public static void repairBeforeUse(IncusClient incus, String name, MachineType machineType, Notices out) {
+        fixStaticIpMismatch(incus, name, machineType, out);
+        fixCaMismatch(incus, name, machineType, out);
+        fixResolvConfMismatch(incus, name, out);
+    }
+
+    private static void fixStaticIpMismatch(IncusClient incus, String name, MachineType machineType, Notices out) {
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
         try {
-            if (InstanceNetwork.fixStaticIpIfNeeded(incus, name, StaticIpAllocator.Output.TERMINAL, machineType)) {
-                BuildOutput.warnBanner("Static IP mismatch",
-                        "Reassigned to current bridge subnet.");
+            if (InstanceNetwork.fixStaticIpIfNeeded(incus, name, out.output(), machineType)) {
+                out.repaired().accept("Static IP mismatch", "Reassigned to current bridge subnet.");
             }
         } catch (Exception e) {
-            System.err.println("Warning: could not repair static IP for " + name
-                    + ": " + e.getMessage());
+            out.output().warn().accept("could not repair static IP for " + name + ": " + e.getMessage());
         }
     }
 
-    private static void fixResolvConfMismatch(IncusClient incus, String name) {
+    private static void fixResolvConfMismatch(IncusClient incus, String name, Notices out) {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
         try {
             if (ProxyConfig.fixResolvConfIfNeeded(incus, name)) {
-                BuildOutput.warnBanner("DNS configuration mismatch",
-                        "Updated /etc/resolv.conf automatically.");
+                out.repaired().accept("DNS configuration mismatch", "Updated /etc/resolv.conf automatically.");
             }
         } catch (Exception ignored) {
         }
     }
 
-    private static void fixCaMismatch(IncusClient incus, String container, MachineType machineType) {
+    private static void fixCaMismatch(IncusClient incus, String container, MachineType machineType, Notices out) {
         // Ensure the container is running so we can push the cert
         JqValue started = null;
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
-            started = InstanceLifecycle.startForUse(incus, container, machineType, System.err::println);
+            started = InstanceLifecycle.startForUse(incus, container, machineType, out.startWarn());
         }
 
         // The start's own read of the instance, when there was one: no need to read it again
-        if (CertificateAuthority.fixContainerCaIfNeeded(incus, container, started, BuildOutput::warn)) {
-            BuildOutput.warnBanner("CA certificate mismatch",
-                    "Updated automatically.");
+        if (CertificateAuthority.fixContainerCaIfNeeded(incus, container, started, out.output().warn())) {
+            out.repaired().accept("CA certificate mismatch", "Updated automatically.");
         }
     }
 }
