@@ -19,7 +19,11 @@ import java.util.stream.Collectors;
 
 public class HelpContext {
 
-    private static final List<String> HELP_RESOURCES = List.of("help/README.md", "help/DESIGN.md");
+    /** README.md, the docs/ pages isx.run publishes beside it, and DESIGN.md. Listed: a native image cannot list its resources. */
+    static final List<String> HELP_RESOURCES = List.of("help/README.md",
+            "help/docs/AGENTS.md", "help/docs/CHARACTER.md", "help/docs/CLI.md", "help/docs/CONFIGURATION.md",
+            "help/docs/CREDENTIAL-PROOFS.md", "help/docs/FEDORA.md", "help/docs/MCP.md", "help/docs/SANDBOXES.md",
+            "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md", "help/DESIGN.md");
     private static volatile String cachedBasePrompt;
 
     private static String basePrompt() {
@@ -45,23 +49,24 @@ public class HelpContext {
                 incus-spawn, you can still help, but note that this channel consumes \
                 AI tokens.
 
-                The project website is https://isx.run and the main documentation \
-                page is https://isx.run/docs.html — it is generated from the \
-                README.md provided below. When answering, link to relevant \
-                documentation sections using anchor fragments derived from the \
-                README headings: lowercase the heading, replace spaces with \
-                hyphens, strip punctuation except hyphens. For example, \
-                "## Custom Tools" becomes \
-                [custom tools](https://isx.run/docs.html#custom-tools) and \
-                "## Credential Isolation" becomes \
-                [credential isolation](https://isx.run/docs.html#credential-isolation). \
-                Prefer deep links to specific sections over linking the top-level page.
+                The project website is https://isx.run. Its documentation is \
+                generated from the files provided below: README.md is \
+                https://isx.run/docs, and each docs/NAME.md is \
+                https://isx.run/docs/name (docs/CLI.md is https://isx.run/docs/cli). \
+                When answering, link to relevant documentation sections using \
+                anchor fragments derived from the headings: lowercase the \
+                heading, replace spaces with hyphens, strip punctuation except \
+                hyphens. For example, "## Custom Tools" in docs/TOOLS.md becomes \
+                [custom tools](https://isx.run/docs/tools#custom-tools) and \
+                "## Credential Isolation" in README.md becomes \
+                [credential isolation](https://isx.run/docs#credential-isolation). \
+                Prefer deep links to specific sections over linking a whole page.
 
                 """);
         for (var resource : HELP_RESOURCES) {
             var content = loadResource(resource);
             if (content != null) {
-                var label = resource.substring(resource.lastIndexOf('/') + 1);
+                var label = resource.substring("help/".length());
                 sb.append("--- ").append(label).append(" ---\n");
                 sb.append(content).append("\n\n");
             }
@@ -81,7 +86,7 @@ public class HelpContext {
         return includeTemplates ? List.of(documentation(), definitions()) : List.of(documentation());
     }
 
-    /** The fixed first block: instructions, README and DESIGN.md, and the host platform. */
+    /** The fixed first block: instructions, the documentation, and the host platform. */
     public static String documentation() {
         return basePrompt() + "The user is running on " + (Platform.isMacOS() ? "macOS" : "Linux")
                 + " (" + System.getProperty("os.arch", "unknown") + ").\n\n";

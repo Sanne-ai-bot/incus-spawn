@@ -126,6 +126,13 @@
                                         <include>DESIGN.md</include>
                                     </includes>
                                 </resource>
+                                <resource>
+                                    <directory>${project.basedir}/../docs</directory>
+                                    <targetPath>docs</targetPath>
+                                    <includes>
+                                        <include>*.md</include>
+                                    </includes>
+                                </resource>
                             </resources>
                         </configuration>
                     </execution>
