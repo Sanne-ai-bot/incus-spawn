@@ -398,6 +398,64 @@ class NpmCacheTest {
                 Instant.now()).hit(), "fresh again after the match");
     }
 
+    // --- reconcileNpmCopy: the background confirmation's verdict ---
+
+    @Test
+    void backgroundConfirmationWritesNothingForATarballAlreadyGone(@TempDir Path tmp) throws Exception {
+        // A foreground request evicted it and is fetching it again; its sidecars are not ours to touch
+        var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
+        Files.createDirectories(cacheFile.getParent());
+        Files.writeString(Path.of(cacheFile + ".shasum"), NEW_SHASUM);
+        Files.writeString(Path.of(cacheFile + ".etag"), "\"new\"");
+
+        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(SHASUM));
+
+        assertEquals(NEW_SHASUM, Files.readString(Path.of(cacheFile + ".shasum")));
+        assertEquals("\"new\"", Files.readString(Path.of(cacheFile + ".etag")));
+    }
+
+    @Test
+    void backgroundConfirmationMatchRenews(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedUnderEtag(tmp, Duration.ofHours(3));
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
+        Files.setLastModifiedTime(Path.of(cacheFile + ".shasum"), FileTime.from(NOW.minus(Duration.ofHours(3))));
+
+        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(SHASUM));
+
+        assertTrue(Files.getLastModifiedTime(Path.of(cacheFile + ".shasum")).toInstant().isAfter(NOW));
+    }
+
+    @Test
+    void backgroundConfirmationChangeEvictsAndWritesNoSidecar(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedUnderEtag(tmp, Duration.ofHours(3));
+
+        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(NEW_SHASUM));
+
+        assertFalse(Files.exists(cacheFile));
+        assertFalse(Files.exists(Path.of(cacheFile + ".shasum")));
+        assertFalse(Files.exists(Path.of(cacheFile + ".etag")));
+    }
+
+    @Test
+    void backgroundConfirmationGoneEvicts(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedUnderEtag(tmp, Duration.ofHours(3));
+
+        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", new SidecarAnswer(404, null));
+
+        assertFalse(Files.exists(cacheFile));
+        assertFalse(Files.exists(Path.of(cacheFile + ".shasum")));
+    }
+
+    @Test
+    void backgroundConfirmationInconclusiveExpires(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedUnderEtag(tmp, Duration.ofHours(3));
+
+        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", new SidecarAnswer(403, null));
+
+        assertTrue(Files.exists(cacheFile), "an answer that confirms nothing evicts nothing");
+        assertNull(state(cacheFile, "\"abc\"").hit(), "the next hit is confirmed first");
+    }
+
     @Test
     void cacheHitEmptyEtagFallsToShasumCheck(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
