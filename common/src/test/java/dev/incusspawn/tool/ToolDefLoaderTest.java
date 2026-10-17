@@ -477,7 +477,7 @@ class ToolDefLoaderTest {
             assertNull(loader.find("scoped"));
             assertEquals(List.of(scoped.toAbsolutePath().normalize()), loader.parseFailures());
             assertEquals(1, reported.size(), reported.toString());
-            assertTrue(reported.get(0).contains("is empty"), reported.get(0));
+            assertTrue(reported.get(0).contains("path '' is empty"), reported.get(0));
         }
     }
 
