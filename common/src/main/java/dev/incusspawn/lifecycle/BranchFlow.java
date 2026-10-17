@@ -11,6 +11,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.FirewallDetector;
@@ -291,6 +292,17 @@ public final class BranchFlow {
             HostResourceSetup.requireBranchableTemplate(incus, req.source());
         } catch (HostResourceSetup.ForbiddenMountTargetException e) {
             throw new BranchException(e.getMessage());
+        }
+        // Last, and before anything is created: a host that cannot enforce proxy-only on its side
+        // gets no proxy-only instance at all (#1137)
+        if (req.networkMode() == NetworkMode.PROXY_ONLY) {
+            try {
+                ProxyOnlyAcl.ensure(incus, BridgeAddress.require(incus).gateway());
+            } catch (ProxyOnlyAcl.NotEnforceableException e) {
+                throw new BranchException(e.getMessage());
+            } catch (RuntimeException e) {
+                throw new BranchException("the proxy-only restriction could not be set up on the host: " + e.getMessage());
+            }
         }
         return new Preflight(req, defs, accounts.accounts(), accounts.origins(), sourceInstance,
                 accounts.inherited().template());

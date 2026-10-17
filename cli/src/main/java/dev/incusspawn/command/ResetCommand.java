@@ -4,6 +4,7 @@ import dev.incusspawn.FileTrees;
 import dev.incusspawn.Platform;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.Environment;
+import dev.incusspawn.lifecycle.ProxyOnlyAcl;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.util.BuildOutput;
@@ -184,6 +185,11 @@ public class ResetCommand extends BaseCommand {
                 ProxyConfig.clearBridgeDns(incus);
             }
             if (!ProxyConfig.clearRedirectRules()) failed = true;
+        }
+        // The proxy-only ACL (#1137); Incus keeps it while an instance that was not reset uses it
+        if (incusReachable && !incus.deleteNetworkAcl(ProxyOnlyAcl.NAME)) {
+            System.err.println("  Note: network ACL " + ProxyOnlyAcl.NAME + " could not be removed;"
+                    + " Incus keeps it while a proxy-only instance that was not reset uses it.");
         }
 
         // 5. Stop the VM (must happen before host dir deletion removes disk images)

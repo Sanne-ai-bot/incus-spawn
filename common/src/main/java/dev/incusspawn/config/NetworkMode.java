@@ -29,4 +29,10 @@ public enum NetworkMode {
         return instance != null && AIRGAP.name().equals(
                 instance.path("config").pathText(dev.incusspawn.incus.Metadata.NETWORK_MODE, ""));
     }
+
+    /** Whether an instance, as Incus returns it, was branched {@link #PROXY_ONLY proxy-only}. */
+    public static boolean isProxyOnly(io.hyperfoil.tools.jjq.value.JqValue instance) {
+        return instance != null && PROXY_ONLY.name().equals(
+                instance.path("config").pathText(dev.incusspawn.incus.Metadata.NETWORK_MODE, ""));
+    }
 }

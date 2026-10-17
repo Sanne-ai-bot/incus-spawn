@@ -40,7 +40,7 @@ public final class InstanceUpdate {
 
     /**
      * Set one property of a device, keeping the rest of its config: a profile-inherited device
-     * becomes an instance device with the property overridden.
+     * becomes an instance device with the property overridden. {@code null} removes the property.
      */
     public InstanceUpdate device(String deviceName, String key, String value) {
         deviceProperties.computeIfAbsent(deviceName, d -> new LinkedHashMap<>()).put(key, value);

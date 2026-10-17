@@ -313,6 +313,9 @@ public final class InstanceNetwork {
             if (nic == null || !"true".equals(nic.config().get("security.ipv4_filtering"))) {
                 return false;
             }
+            // A host that cannot install the per-NIC rules cannot install a proxy-only ACL either,
+            // and that instance must not start without it: its failure stands (#1137)
+            if (ProxyOnlyAcl.anyKey(nic.config())) return false;
             incus.deviceConfigSet(name, nic.name(), "security.ipv4_filtering", "false");
             warn.accept(BuildOutput.STEP_INDENT
                     + "Warning: this host cannot enforce IP spoofing protection, so it has been"
@@ -475,6 +478,14 @@ public final class InstanceNetwork {
         var proxyGw = incus.configGet(name, Metadata.PROXY_GATEWAY);
         if (!proxyGw.isEmpty()) {
             updates.put(Metadata.PROXY_GATEWAY, newGateway);
+            // The ACL allows the old gateway only, so until it is rewritten this instance reaches
+            // nothing: a failure leaves it closed, not open
+            try {
+                ProxyOnlyAcl.write(incus, newGateway);
+            } catch (RuntimeException e) {
+                output.warn().accept("the proxy-only ACL could not be moved to " + newGateway + " (" + e.getMessage()
+                        + "): proxy-only instances reach nothing until the next proxy-only branch rewrites it");
+            }
         }
         var resolvedType = machineType != null ? machineType : incus.machineType(name);
         // The VM's file still holds the old address and is only pushed while it runs

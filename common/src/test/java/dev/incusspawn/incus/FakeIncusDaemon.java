@@ -21,7 +21,7 @@ import java.util.Map;
  *
  * <p>Serves the subset of the API those flows use: server info, instance GET/PUT/PATCH/state,
  * instance listing, rename and DELETE, the {@code default} pool's volume listing, console log GET,
- * network, network lease and profile GET, a running guest's address in its state, file push and async-operation waits. Anything else answers 404, so an unexpected request still shows up in
+ * network, network lease and profile GET, network ACL GET/PUT/POST/DELETE, a running guest's address in its state, file push and async-operation waits. Anything else answers 404, so an unexpected request still shows up in
  * {@link #requests()}. Exec is among them: every instance behaves as one whose agent never
  * answers. A running VM refuses a disk device beyond its PCI hotplug slots, as Incus does
  * ({@link #hotplugSlots}).
@@ -41,6 +41,9 @@ public final class FakeIncusDaemon implements IncusTransport {
      */
     private final Map<String, ObjectNode> profiles = new LinkedHashMap<>();
     private final Map<String, ObjectNode> networks = new LinkedHashMap<>();
+    private final Map<String, ObjectNode> networkAcls = new LinkedHashMap<>();
+    /** The firewall driver {@code GET /1.0} reports; Incus accepts NIC ACLs only from nftables. */
+    private String firewall = "nftables";
     private final List<ObjectNode> extraVolumes = new ArrayList<>();
     private final List<String> requests = new ArrayList<>();
     private final List<Exec> execs = new ArrayList<>();
@@ -542,6 +545,18 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /** Report this firewall driver in {@code GET /1.0}, and refuse NIC ACLs unless it is {@code nftables}. */
+    public synchronized FakeIncusDaemon firewall(String driver) {
+        firewall = driver;
+        return this;
+    }
+
+    /** A network ACL as it is now, or null. */
+    public synchronized JsonNode networkAcl(String name) {
+        var acl = networkAcls.get(name);
+        return acl == null ? null : acl.deepCopy();
+    }
+
     /** Advertise these in {@code GET /1.0}'s {@code api_extensions}. */
     public synchronized FakeIncusDaemon apiExtensions(String... extensions) {
         apiExtensions.clear();
@@ -557,7 +572,37 @@ public final class FakeIncusDaemon implements IncusTransport {
         if (path.equals("/1.0") && method.equals("GET")) {
             var server = JSON.createObjectNode();
             server.set("api_extensions", JSON.valueToTree(apiExtensions));
+            server.putObject("environment").put("firewall", firewall);
             return sync(server);
+        }
+        if (path.equals("/1.0/network-acls") && method.equals("POST")) {
+            var acl = (ObjectNode) JSON.readTree(body);
+            var aclName = acl.path("name").asText();
+            if (networkAcls.containsKey(aclName)) return error(409, "The network ACL already exists");
+            networkAcls.put(aclName, acl);
+            return sync(JSON.createObjectNode());
+        }
+        if (path.startsWith("/1.0/network-acls/")) {
+            var aclName = path.substring("/1.0/network-acls/".length());
+            var acl = networkAcls.get(aclName);
+            if (acl == null) return notFound();
+            if (method.equals("GET")) return sync(acl);
+            if (method.equals("DELETE")) {
+                // Incus refuses to delete an ACL a NIC uses
+                for (var i : instances.values()) {
+                    for (var device : i.path("expanded_devices")) {
+                        if (device.path("security.acls").asText("").contains(aclName)) return badRequest("Cannot delete an ACL that is in use");
+                    }
+                }
+                networkAcls.remove(aclName);
+                return sync(JSON.createObjectNode());
+            }
+            if (method.equals("PUT")) {
+                var replacement = (ObjectNode) JSON.readTree(body);
+                replacement.put("name", aclName);
+                networkAcls.put(aclName, replacement);
+                return sync(JSON.createObjectNode());
+            }
         }
         if (path.startsWith("/1.0/operations/") && method.equals("GET")) {
             var metadata = JSON.createObjectNode();
@@ -683,6 +728,8 @@ public final class FakeIncusDaemon implements IncusTransport {
             var replacement = JSON.readTree(body);
             var stale = staleRunningNic(instance, replacement);
             if (stale != null) return badRequest(stale);
+            var aclRefusal = aclRefusal(replacement);
+            if (aclRefusal != null) return badRequest(aclRefusal);
             var refused = hotplug(name, instance, replacement);
             if (refused != null) return noHotplugSlot(refused);
             instance.set("config", replacement.path("config").deepCopy());
@@ -696,6 +743,9 @@ public final class FakeIncusDaemon implements IncusTransport {
             var patch = JSON.readTree(body);
             var stale = staleRunningNic(instance, patch);
             if (stale != null) return badRequest(stale);
+            var aclRefusal = aclRefusal(patch);
+            if (aclRefusal == null) aclRefusal = keptAclRefusal(instance, patch, "Invalid devices: Device validation failed");
+            if (aclRefusal != null) return badRequest(aclRefusal);
             var refused = hotplug(name, instance, patch);
             if (refused != null) return noHotplugSlot(refused);
             applyPatch(instance, patch);
@@ -738,6 +788,10 @@ public final class FakeIncusDaemon implements IncusTransport {
             boolean force = request.path("force").asBoolean(false);
             stateActions.add(name + " " + action + (force ? " force" : ""));
             if (action.equals("stop") && !force && shutdownIgnored.contains(name)) return badRequest();
+            if (action.equals("start") || action.equals("restart")) {
+                var aclRefusal = keptAclRefusal(instance, JSON.createObjectNode(), "Failed start validation");
+                if (aclRefusal != null) return badRequest(aclRefusal);
+            }
             if (action.equals("start") && brokenInit.contains(instance.path("config").path("volatile.base_image").asText())) {
                 instance.put("status", "Error");
                 lxcLogs.put(name, "lxc " + name + " 20261006133238.740 ERROR    start - ../src/lxc/start.c:start:2208"
@@ -845,6 +899,40 @@ public final class FakeIncusDaemon implements IncusTransport {
                         + "\": Device IP address \"" + address + "\" not within network \""
                         + network.path("name").asText() + "\" subnet";
             }
+        }
+        return null;
+    }
+
+    /** What Incus says of any NIC ACL when its firewall driver is not nftables. */
+    private static final String NO_ACLS = "Security ACLs are only supported when using nftables firewall";
+
+    /**
+     * Why Incus refuses the NIC ACLs this write sets, or null: it validates them against its
+     * firewall driver and the ACLs that exist.
+     */
+    private String aclRefusal(JsonNode patch) {
+        for (var e : patch.path("devices").properties()) {
+            var acls = e.getValue().path("security.acls").asText("");
+            if (acls.isEmpty()) continue;
+            var prefix = "Invalid devices: Device validation failed for \"" + e.getKey() + "\": ";
+            if (!firewall.equals("nftables")) return prefix + NO_ACLS;
+            for (var acl : acls.split(",")) {
+                if (!networkAcls.containsKey(acl.strip())) return prefix + "Network ACL \"" + acl.strip() + "\" not found";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Why Incus refuses a write or a start because of a NIC ACL the instance already has and the
+     * write leaves in place, or null: it validates every device each time, so once its firewall
+     * driver is not nftables nothing about such an instance can change, nor can it start.
+     */
+    private String keptAclRefusal(ObjectNode instance, JsonNode patch, String prefix) {
+        if (firewall.equals("nftables")) return null;
+        for (var e : instance.path("expanded_devices").properties()) {
+            if (patch.path("devices").has(e.getKey()) || e.getValue().path("security.acls").asText("").isEmpty()) continue;
+            return prefix + " for device \"" + e.getKey() + "\": " + NO_ACLS;
         }
         return null;
     }

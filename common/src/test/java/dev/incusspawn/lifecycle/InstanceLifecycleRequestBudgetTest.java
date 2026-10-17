@@ -519,6 +519,8 @@ class InstanceLifecycleRequestBudgetTest {
                         Metadata.accountKey("github"), "work",
                         Metadata.accountKey("claude"), "personal"))
                 .device(NAME, "kvm", Map.of("type", "unix-char", "source", "/dev/kvm"));
+        // What BranchFlow.preflight writes before the copy
+        ProxyOnlyAcl.write(daemon.client(), "10.166.11.1");
         InstanceLifecycle.configureBranch(daemon.client(), NAME,
                 branch(NetworkMode.PROXY_ONLY, Map.of("github", "oss")));
         assertEquals(List.of("PUT /1.0/instances/" + NAME), writes(daemon));
@@ -534,6 +536,7 @@ class InstanceLifecycleRequestBudgetTest {
         assertEquals("10.166.11.1", config.path(Metadata.PROXY_GATEWAY).asText());
         assertEquals("20GiB", after.path("devices").path("root").path("size").asText());
         assertEquals("10.166.11.2", after.path("devices").path("eth0").path("ipv4.address").asText());
+        assertEquals(ProxyOnlyAcl.NAME, after.path("devices").path("eth0").path("security.acls").asText());
     }
 
     @Test
