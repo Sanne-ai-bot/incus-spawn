@@ -212,7 +212,7 @@ public class ActionResolver {
             return tools;
         }
 
-        var chain = getInheritanceChain(parentTemplate, buildSourceJson);
+        var chain = getInheritanceChain(parentTemplate, buildSourceJson, false);
         for (var def : chain) {
             for (var toolRef : def.getTools()) {
                 tools.add(toolRef.getName());
@@ -451,7 +451,7 @@ public class ActionResolver {
 
     /** The template's YAML chain, root first; empty when the leaf's YAML is gone. */
     private List<ImageDef> getInheritanceChain(String templateName) {
-        return getInheritanceChain(templateName, null);
+        return getInheritanceChain(templateName, null, false);
     }
 
     /**
@@ -459,15 +459,8 @@ public class ActionResolver {
      * instance was built with, as {@code isx build} and the TUI's refresh already take them; the
      * build record is parsed only then. From the first recorded layer up, the ancestors come from
      * the record too: a recorded layer's parent is the one it was built on, not whatever YAML has
-     * that name now.
-     */
-    private List<ImageDef> getInheritanceChain(String templateName, String buildSourceJson) {
-        return getInheritanceChain(templateName, buildSourceJson, false);
-    }
-
-    /**
-     * {@link #getInheritanceChain(String, String)}, from the record from the leaf up when
-     * {@code recordFirst}: what a clone was built with, not what the YAML says now.
+     * that name now. With {@code recordFirst} the record is read from the leaf up: what a clone
+     * was built with, not what the YAML says now.
      */
     private List<ImageDef> getInheritanceChain(String templateName, String buildSourceJson, boolean recordFirst) {
         var chain = new ArrayList<ImageDef>();
@@ -490,7 +483,7 @@ public class ActionResolver {
                 }
             } else {
                 def = imageDefs.get(current);
-                if (def == null && stored == null && buildSourceJson != null && !buildSourceJson.isBlank()) {
+                if (def == null && stored == null) {
                     stored = recordedDefinitions(buildSourceJson);
                     def = stored.get(current);
                     fromRecord = def != null;
@@ -510,8 +503,7 @@ public class ActionResolver {
 
     /** The definitions the record holds, empty when there is none or it does not parse. */
     private static Map<String, ImageDef> recordedDefinitions(String buildSourceJson) {
-        var bs = buildSourceJson == null || buildSourceJson.isBlank() ? null
-                : dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
+        var bs = dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
         return bs == null ? Map.of() : bs.getDefinitions();
     }
 
