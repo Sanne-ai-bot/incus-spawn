@@ -4,6 +4,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.AccountUsage;
+import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NamespaceAccounts;
@@ -97,6 +98,9 @@ class CredentialSetup {
         return Platform.openUrl(url);
     }
 
+    private static final String CLAUDE_SKIPPED = "  Skipped Claude setup. Configure later with 'isx account add "
+            + SpawnConfig.ClaudeConfig.NAMESPACE + "'.";
+
     private static final List<String> KNOWN_TOOL_ORDER = List.of("claude", "gh", "bob", "codex");
 
     List<String> selectCredentials(Map<String, ToolSetup> allTools, SpawnConfig config, Prompts prompts) {
@@ -104,11 +108,7 @@ class CredentialSetup {
 
         var toolsWithProxy = new ArrayList<Map.Entry<String, ToolSetup>>();
         for (var entry : allTools.entrySet()) {
-            var tool = entry.getValue();
-            if (!tool.hasOwnCredentials()) continue;
-            var proxyDef = tool.proxy();
-            if (proxyDef == null || proxyDef.getConfiguration().isEmpty()) continue;
-            toolsWithProxy.add(entry);
+            if (CredentialCheck.hasCredentialStep(entry.getValue())) toolsWithProxy.add(entry);
         }
 
         if (toolsWithProxy.isEmpty()) {
@@ -290,13 +290,13 @@ class CredentialSetup {
                 System.out.print("  CLOUD_ML_REGION (or press Enter to skip): ");
                 var region = readInput(prompts.readLine());
                 if (region.isBlank()) {
-                    System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                    System.out.println(CLAUDE_SKIPPED);
                     return;
                 }
                 System.out.print("  ANTHROPIC_VERTEX_PROJECT_ID: ");
                 var projectId = readInput(prompts.readLine());
                 if (projectId.isBlank()) {
-                    System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                    System.out.println(CLAUDE_SKIPPED);
                     return;
                 }
 
@@ -311,7 +311,7 @@ class CredentialSetup {
                     System.out.println("  " + result.message());
                     switch (askVerificationFailureAction(prompts)) {
                         case SKIP -> {
-                            System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                            System.out.println(CLAUDE_SKIPPED);
                             break;
                         }
                         case SAVE_UNVERIFIED -> {
@@ -333,7 +333,7 @@ class CredentialSetup {
                 System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
                 var key = askSecret(prompts);
                 if (key.isBlank()) {
-                    System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                    System.out.println(CLAUDE_SKIPPED);
                     break;
                 }
 
@@ -348,7 +348,7 @@ class CredentialSetup {
                     System.out.println("  " + result.message());
                     switch (askVerificationFailureAction(prompts)) {
                         case SKIP -> {
-                            System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                            System.out.println(CLAUDE_SKIPPED);
                             break;
                         }
                         case SAVE_UNVERIFIED -> {
@@ -364,7 +364,7 @@ class CredentialSetup {
                 }
             }
         } else {
-            System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+            System.out.println(CLAUDE_SKIPPED);
         }
     }
 
@@ -766,7 +766,7 @@ class CredentialSetup {
         System.out.println("    4. Copy the token it prints (it starts with '"
                 + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX + "')");
         System.out.println();
-        System.out.println("  Re-run 'isx init' to paste a fresh token once this one expires.");
+        System.out.println("  Run 'isx account add claude' to paste a fresh token once this one expires.");
         System.out.println();
 
         if (hostHasCommand("claude")) {
@@ -783,7 +783,7 @@ class CredentialSetup {
             System.out.print("  Paste your OAuth token (or press Enter to skip): ");
             var token = askSecret(prompts);
             if (token.isBlank()) {
-                System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                System.out.println(CLAUDE_SKIPPED);
                 break;
             }
 
@@ -798,7 +798,7 @@ class CredentialSetup {
                 System.out.println("  " + result.message());
                 switch (askVerificationFailureAction(prompts)) {
                     case SKIP -> {
-                        System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                        System.out.println(CLAUDE_SKIPPED);
                         break;
                     }
                     case SAVE_UNVERIFIED -> {
@@ -1526,7 +1526,7 @@ class CredentialSetup {
     private static void reportGitHubSkipped(SpawnConfig config) {
         System.out.println(hasAccountsToPreserve(config, GhSetup.NAMESPACE)
                 ? "  No token added for this account."
-                : "  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
+                : "  Skipped GitHub setup. You can configure it later with 'isx account add " + GhSetup.NAMESPACE + "'.");
     }
 
     /**
@@ -1829,7 +1829,8 @@ class CredentialSetup {
             config.save();
             System.out.println("  " + desc + " credentials saved.");
         } else {
-            System.out.println("  Skipped. Configure later with 'isx init'.");
+            System.out.println("  Skipped. Configure later with '"
+                    + CredentialCheck.stepCommand(toolName, new dev.incusspawn.tool.ToolDefLoader().allToolSetups()) + "'.");
         }
     }
 

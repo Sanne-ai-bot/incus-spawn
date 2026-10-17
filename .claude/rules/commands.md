@@ -26,6 +26,8 @@ Keep it free of Incus and secrets: it runs on every TAB.
 `isx account add [<ns>|<tool>]` is `InitCommand.addCredential`: init's step for that one credential, or with no argument its Credential Setup menu, under the same `[n/N]` headers (#1469).
 The credential steps read `InitCommand.credentialPrompts()`, which tests override.
 Every message naming a missing credential's remedy takes it from `CredentialCheck.Missing.command()`, so it names `isx account add <ns>` only when a step owns that namespace.
+A generic tool step's own "configure later" line uses `CredentialCheck.stepCommand`, the same rule seen from the tool.
+Claude's and GitHub's steps name their own namespace (`SpawnConfig.ClaudeConfig.NAMESPACE`, `GhSetup.NAMESPACE`) directly: those built-in tools always own it, so the rule would only load every tool definition to print the same command.
 
 **`isx mcp`** is a normal (visible) command, but it is started by an agent, not typed: it serves MCP on stdin/stdout until end of input.
 See `.claude/rules/mcp.md`.

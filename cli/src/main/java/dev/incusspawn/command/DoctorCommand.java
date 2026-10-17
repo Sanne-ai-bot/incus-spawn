@@ -570,7 +570,7 @@ public class DoctorCommand extends BaseCommand {
         var findings = new ArrayList<Finding>();
         if (!needed.isEmpty()) {
             findings.add(Finding.warn("Missing credentials", "(" + String.join(", ", needed) + ")",
-                    new Remediation("Run 'isx init' to configure", false, null)));
+                    new Remediation("Run 'isx account add' to configure", false, null)));
         } else {
             findings.add(Finding.ok("Credentials",
                     unused.isEmpty() ? "configured" : "configured for the tools in use"));

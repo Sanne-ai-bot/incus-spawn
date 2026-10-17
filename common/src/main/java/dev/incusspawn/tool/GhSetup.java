@@ -184,10 +184,10 @@ public class GhSetup implements ToolSetup {
     public String unbakedIdentityWarning(String accountName) {
         var problem = accountName == null || accountName.isBlank()
                 ? "no GitHub token is configured, so commits made in this template and its branches"
-                        + " have no author. Add a token with 'isx init'"
+                        + " have no author. Add a token with 'isx account add " + NAMESPACE + "'"
                 : "GitHub account '" + accountName + "', which this template uses, has no token, so"
                         + " commits made in this template and its branches have no author. Add a token"
-                        + " to it with 'isx init', or have the template use another account";
+                        + " to it with 'isx account add " + NAMESPACE + "', or have the template use another account";
         return "No git identity: " + problem + "; branches pick the identity up the next time isx"
                 + " branches, opens a shell in or runs a command in them.";
     }
