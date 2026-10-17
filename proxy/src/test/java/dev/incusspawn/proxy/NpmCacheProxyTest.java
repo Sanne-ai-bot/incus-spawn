@@ -23,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,6 +32,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -60,6 +62,8 @@ class NpmCacheProxyTest {
     static int mitmPort;
     static int registryPort;
     static int impostorPort;
+    /** Where {@link #offline} points the registry, picked once every listener is up. */
+    static InetSocketAddress refused;
 
     /** Keyed by path; anything else is a 404. */
     static final Map<String, byte[]> routes = new ConcurrentHashMap<>();
@@ -100,6 +104,7 @@ class NpmCacheProxyTest {
         proxy.trustUpstreamCertificate(SpawnConfig.configDir().resolve("ca.crt").toString());
         ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
+        refused = ArtifactCacheProxyTest.refusedLoopback(Set.of(registryPort, impostorPort, mitmPort, proxy.healthPort()));
 
         clientContext = vertx.getOrCreateContext();
         client = vertx.createHttpClient(new HttpClientOptions()
@@ -180,7 +185,17 @@ class NpmCacheProxyTest {
         synchronized (gathered) {
             gathered.clear();
         }
+        online();
+        proxy.upstream.clearUnreachable();
+    }
+
+    static void online() {
         assertTrue(ProxyMain.applyBenchUpstream(proxy, REGISTRY + "=127.0.0.1:" + registryPort, ""));
+    }
+
+    /** Point the registry at a port nothing listens on, so every connect is refused. */
+    static void offline() {
+        proxy.overrideUpstream(REGISTRY, refused.getHostString(), refused.getPort());
     }
 
     /** Publish {@code name@1.0.0}: its tarball, and the version document carrying its shasum. */
@@ -397,6 +412,25 @@ class NpmCacheProxyTest {
         assertEquals(new Response(200, "tarball of renewed"), get(path, 10));
         assertEquals(2, hits.get("/renewed/1.0.0").get(), "the renewed hit is fresh again");
         assertEquals(1, hits.get(path).get(), "the tarball is never fetched again");
+    }
+
+    @Test
+    void registryInBackoffServesCachedTarballsWithoutALookup() throws Exception {
+        var expired = cacheUnderEtag("backoff-expired", Duration.ofDays(8));
+        var stale = cacheUnderEtag("backoff-stale", Duration.ofHours(3));
+
+        offline();
+        assertEquals(new Response(200, "tarball of backoff-expired"), get(expired, 10));
+        assertTrue(proxy.artifactCache.inBackoff(REGISTRY), "a refused connect starts the backoff");
+
+        // Reachable again, but the backoff is not over: neither hit waits for, or starts, a lookup
+        online();
+        assertEquals(new Response(200, "tarball of backoff-expired"), get(expired, 10));
+        assertEquals(new Response(200, "tarball of backoff-stale"), get(stale, 10));
+        // Queued in the same callback that served it, and the registry asked before it is dequeued
+        assertTrue(proxy.artifactCache.backgroundConfirmations.isEmpty(), "no background confirmation is queued");
+        assertEquals(1, hits.get("/backoff-expired/1.0.0").get(), "the expired hit is served unconfirmed");
+        assertEquals(1, hits.get("/backoff-stale/1.0.0").get(), "the stale hit is not confirmed in the background");
     }
 
     @Test

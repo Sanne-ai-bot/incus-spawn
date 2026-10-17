@@ -226,8 +226,8 @@ class Upstream {
                 return client.request(options);
             });
         }
-        if (Revalidation.forDomain(host) == null) return connected;
-        // Every request to a caching domain, whatever its purpose, keeps its backoff current: a
+        if (!Revalidation.keepsBackoff(host)) return connected;
+        // Every request to a caching domain that keeps one, whatever its purpose, keeps its backoff current: a
         // failed connect starts it, and only a response ends it, since a request on a pooled
         // connection is handed out without any network I/O.
         return connected.andThen(ar -> {

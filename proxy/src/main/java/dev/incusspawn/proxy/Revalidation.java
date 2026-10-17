@@ -82,6 +82,14 @@ enum Revalidation {
         return MAY_WITHDRAW.contains(domain);
     }
 
+    /**
+     * Whether upstream's reachability is tracked for this domain (the unreachable backoff):
+     * those whose cached copies are confirmed with upstream, these and the npm registry.
+     */
+    static boolean keepsBackoff(String domain) {
+        return forDomain(domain) != null || ProxyConfig.NPM_DOMAINS.contains(domain);
+    }
+
     /** How to confirm a cached artifact from this domain, or null when it must not be cached. */
     static Revalidation forDomain(String domain) {
         return BY_DOMAIN.get(domain);

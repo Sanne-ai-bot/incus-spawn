@@ -191,12 +191,7 @@ class ArtifactCacheProxyTest {
         mitmPort = proxy.mitmPort();
         // Only once every listener of the class is up, and never one of their ports: a listener
         // that took it after the pick would answer the offline tests instead of refusing them.
-        do {
-            try (var closed = new Socket()) {
-                closed.bind(new InetSocketAddress("127.0.0.1", 0));
-                refused = (InetSocketAddress) closed.getLocalSocketAddress();
-            }
-        } while (Set.of(upstreamPort, h1UpstreamPort, mitmPort, proxy.healthPort()).contains(refused.getPort()));
+        refused = refusedLoopback(Set.of(upstreamPort, h1UpstreamPort, mitmPort, proxy.healthPort()));
 
         clientContext = vertx.getOrCreateContext();
         client = vertx.createHttpClient(new HttpClientOptions()
@@ -683,6 +678,18 @@ class ArtifactCacheProxyTest {
         get(host, path);
         awaitStoredJar(host, path, content);
         return Sidecar.SHA1.storedFile(cached(host, path));
+    }
+
+    /** A loopback address a connect is refused at ({@link #refused}), on none of the ports in {@code avoid}. */
+    static InetSocketAddress refusedLoopback(Set<Integer> avoid) throws Exception {
+        InetSocketAddress address;
+        do {
+            try (var closed = new Socket()) {
+                closed.bind(new InetSocketAddress("127.0.0.1", 0));
+                address = (InetSocketAddress) closed.getLocalSocketAddress();
+            }
+        } while (avoid.contains(address.getPort()));
+        return address;
     }
 
     /** Make an artifact look last confirmed {@code age} ago. */
