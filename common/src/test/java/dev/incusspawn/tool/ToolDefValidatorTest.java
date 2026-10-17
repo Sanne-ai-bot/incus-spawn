@@ -618,4 +618,29 @@ class ToolDefValidatorTest {
             }
         }
     }
+
+    /** A bare key does not hide the file's other refusals; the loader names the bare key first. */
+    @Test void aBareKeyIsReportedWithTheOtherRefusals(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("bare.yaml");
+        Files.writeString(file, """
+                name: c
+                parameters:
+                  flavour:
+                proxy:
+                  config-namespace: 'bad ns'
+                  auth:
+                    - domains: [c.example]
+                      paths: [""]
+                      type: bearer
+                      token: x
+                """);
+        var errors = ToolDefValidator.validate(file).errors();
+        assertEquals(3, errors.size(), errors.toString());
+        assertEquals("parameter 'flavour' in 'c' has no definition", errors.get(0));
+        assertTrue(errors.get(1).contains("config-namespace 'bad ns'"), errors.toString());
+        assertTrue(errors.get(2).contains("path '' is empty"), errors.toString());
+        try (var is = Files.newInputStream(file)) {
+            assertEquals(errors.get(0), ToolDefValidator.refusal(ToolDef.loadFromStream(is)));
+        }
+    }
 }
