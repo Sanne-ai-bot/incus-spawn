@@ -1,5 +1,7 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.tool.HermeticGit;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -148,11 +150,8 @@ class InstanceSecretTest {
         assertEquals(secret + "\n", Files.readString(root.resolve("run/isx/instance-secret")));
         assertEquals("4", Files.readString(root.resolve("run/isx/proof-version")));
 
-        var git = new ProcessBuilder("git", "credential", "fill").directory(root.toFile()).redirectErrorStream(true);
-        git.environment().keySet().removeIf(k -> k.startsWith("GIT_") || k.equals("GH_TOKEN"));
-        git.environment().putAll(java.util.Map.of("GIT_CONFIG_SYSTEM", root.resolve("etc/gitconfig").toString(),
-                "GIT_CONFIG_GLOBAL", "/dev/null", "GIT_TERMINAL_PROMPT", "0", "GIT_ASKPASS", "/bin/false"));
-        var process = git.start();
+        var process = HermeticGit.configure(new ProcessBuilder("git", "credential", "fill").directory(root.toFile())
+                .redirectErrorStream(true), root.resolve("etc/gitconfig")).start();
         try (var stdin = process.getOutputStream()) {
             stdin.write("url=https://github.com/owner/private.git\n\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }

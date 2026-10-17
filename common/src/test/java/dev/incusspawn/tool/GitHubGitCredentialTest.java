@@ -128,10 +128,7 @@ class GitHubGitCredentialTest {
     private record Result(int exit, String output, String error) {}
 
     private Result run(List<String> command, String input, Map<String, String> env) throws Exception {
-        var pb = new ProcessBuilder(command).directory(root.toFile());
-        pb.environment().keySet().removeIf(k -> k.startsWith("GIT_") || k.equals("GH_TOKEN"));
-        pb.environment().putAll(Map.of("GIT_CONFIG_SYSTEM", config().toString(),
-                "GIT_CONFIG_GLOBAL", "/dev/null", "GIT_TERMINAL_PROMPT", "0", "GIT_ASKPASS", "/bin/false"));
+        var pb = HermeticGit.configure(new ProcessBuilder(command).directory(root.toFile()), config());
         pb.environment().putAll(env);
         var process = pb.start();
         try (var stdin = process.getOutputStream()) { stdin.write(input.getBytes(StandardCharsets.UTF_8)); }

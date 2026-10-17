@@ -1,8 +1,10 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.GitHubGitCredential;
+import dev.incusspawn.tool.HermeticGit;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
@@ -132,20 +134,20 @@ class CredentialProofProxyTest {
                 .get(InstanceSecret.PROOFS_DELIVERY_ENV));
         var ca = guest.resolve("ca.crt");
         Files.writeString(ca, CertificateAuthority.loadOrCreate().caCertPem());
-        var env = Map.of("GIT_CONFIG_SYSTEM", config.toString(), "GIT_CONFIG_GLOBAL", "/dev/null",
-                "GIT_TERMINAL_PROMPT", "0", "GIT_ASKPASS", "/bin/false", "GIT_SSL_CAINFO", ca.toString());
+        var env = Map.of("GIT_SSL_CAINFO", ca.toString());
         var command = List.of("git", "-c", "http.proxy=", "-c",
                 "http.curloptResolve=github.com:" + port + ":127.0.0.1", "ls-remote",
                 "https://github.com:" + port + "/git-proof-private.git", "refs/heads/main");
-        var unauthenticated = gitProcess(command, guest, env);
+        var unauthenticated = gitProcess(command, config, env);
         assertNotEquals(0, unauthenticated.exit());
         assertFalse(received.isDone(), "an anonymous Git request receives no host credential");
 
         // The fixture listens on an ephemeral port instead of 443; keep its helper scope identical.
         var install = GitHubGitCredential.INSTALL_SCRIPT.replace("github.com", "github.com:" + port)
+                .replace("git config --system", "git config --file " + Container.shellQuote(config.toString()))
                 .replace(InstanceSecret.PROOFS_PATH, proofs.toString());
-        assertEquals(0, gitProcess(List.of("sh", "-c", install), guest, env).exit());
-        var authenticated = gitProcess(command, guest, env);
+        assertEquals(0, gitProcess(List.of("sh", "-c", install), config, env).exit());
+        var authenticated = gitProcess(command, config, env);
         assertEquals(0, authenticated.exit(), authenticated.output());
         assertEquals(GIT_HEAD + "\trefs/heads/main\n", authenticated.output());
         assertTrue(gitChallenges.get() >= 2, "both invocations begin anonymously");
@@ -156,9 +158,9 @@ class CredentialProofProxyTest {
 
     private record GitResult(int exit, String output) {}
 
-    private static GitResult gitProcess(List<String> command, Path guest, Map<String, String> env) throws Exception {
-        var pb = new ProcessBuilder(command).directory(guest.toFile()).redirectErrorStream(true);
-        pb.environment().keySet().removeIf(k -> k.startsWith("GIT_") || k.equals("GH_TOKEN"));
+    private static GitResult gitProcess(List<String> command, Path config, Map<String, String> env) throws Exception {
+        var pb = HermeticGit.configure(new ProcessBuilder(command).directory(config.getParent().toFile())
+                .redirectErrorStream(true), config);
         pb.environment().putAll(env);
         var process = pb.start();
         process.getOutputStream().close();
