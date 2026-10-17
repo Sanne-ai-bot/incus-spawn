@@ -437,7 +437,7 @@ class BuildCommandBatchTest {
 
         assertEquals(List.of("tpl-agent"), built);
         assertTrue(stderrBeforeBuild.contains("Missing credential: GitHub personal access token. "
-                + "'isx branch' will refuse tpl-dev and tpl-agent until it is configured with 'isx init'."), stderr);
+                + "'isx branch' will refuse tpl-dev and tpl-agent until it is configured with 'isx account add github'."), stderr);
         assertEquals(1, stderr.split("GitHub personal access token", -1).length - 1, stderr);
     }
 

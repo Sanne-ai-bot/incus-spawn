@@ -185,7 +185,7 @@ public class InitCommand extends BaseCommand {
      * rest are counted, so a credential {@code tpl-dev} needs is not repeated for every template
      * built on it.
      */
-    static List<String> credentialGapLines(Map<String, List<String>> missing, Map<String, ImageDef> defs) {
+    static List<String> credentialGapLines(Map<CredentialCheck.Missing, List<String>> missing, Map<String, ImageDef> defs) {
         if (missing.isEmpty()) return List.of();
         var lines = new ArrayList<String>(List.of("", "   " + styled(BOLD + YELLOW, "Not configured:")));
         missing.forEach((credential, templates) -> {
@@ -199,13 +199,13 @@ public class InitCommand extends BaseCommand {
                     + " built on " + (topmost.size() == 1 ? "it" : "them");
             var refused = "'isx branch' refuses " + OutputFormat.andList(topmost) + builtOn + ".";
             var bullet = "• ";
-            for (var line : OutputFormat.wrap(OutputFormat.oneLine(credential), BOX_WIDTH - 6)) {
+            for (var line : OutputFormat.wrap(OutputFormat.oneLine(credential.credential()), BOX_WIDTH - 6)) {
                 lines.add("   " + bullet + line);
                 bullet = "  ";
             }
             for (var line : OutputFormat.wrap(refused, BOX_WIDTH - 6)) lines.add("     " + line);
         });
-        lines.add("   Re-run 'isx init' to configure " + (missing.size() == 1 ? "it." : "them."));
+        for (var line : OutputFormat.wrap(CredentialCheck.remedy(missing.keySet()), BOX_WIDTH - 6)) lines.add("   " + line);
         return lines;
     }
 
@@ -412,11 +412,71 @@ public class InitCommand extends BaseCommand {
     /** Credential Setup, which returns a step for each credential chosen. */
     List<Step> credentialSteps() {
         var tools = new ToolDefLoader().allToolSetups();
-        return selectCredentials(tools).stream().<Step>map(name -> switch (name) {
+        return selectCredentials(tools).stream().map(name -> credentialStep(name, tools.get(name))).toList();
+    }
+
+    /** The step that configures {@code toolName}'s credential. */
+    private Step credentialStep(String toolName, ToolSetup tool) {
+        return switch (toolName) {
             case "claude" -> this::setupClaudeAuth;
             case "gh" -> this::setupGitHubAuth;
-            default -> () -> setupGenericToolCredentials(name, tools.get(name));
-        }).toList();
+            default -> () -> setupGenericToolCredentials(toolName, tool);
+        };
+    }
+
+    /**
+     * {@code isx account add}: the step that configures one credential, exactly as init runs it,
+     * and nothing else (#1469); with no {@code name}, Credential Setup and the steps it picks.
+     * Nothing has to be restarted: the proxy reloads when {@code config.yaml} changes.
+     *
+     * @param name a credential namespace ({@code github}) or the tool that owns it ({@code gh})
+     * @return the exit code
+     */
+    int addCredential(String name) throws Exception {
+        if (credentialPrompts() == null) {
+            System.err.println("Error: 'isx account add' asks for the credential, so it needs a terminal.");
+            return 1;
+        }
+        currentStep = 0;
+        List<Step> steps;
+        if (name == null) {
+            totalSteps = 1;
+            steps = credentialSteps();
+        } else {
+            var tools = new ToolDefLoader().allToolSetups();
+            var toolName = CredentialCheck.credentialTool(name, tools);
+            if (toolName == null) {
+                System.err.println("Error: no credential named '" + OutputFormat.oneLine(name) + "'."
+                        + " Credentials: " + String.join(", ", credentialNames(tools)) + ".");
+                return 1;
+            }
+            steps = List.of(credentialStep(toolName, tools.get(toolName)));
+        }
+        totalSteps = currentStep + steps.size();
+        try {
+            for (var step : steps) step.run();
+        } finally {
+            credentials.closeHttpClient();
+        }
+        return 0;
+    }
+
+    /**
+     * What {@code isx account add} takes: for each credential step, the name that reaches it, and
+     * its tool when that differs -- its namespace when it owns that, else the tool's own name.
+     */
+    static List<String> credentialNames(Map<String, ToolSetup> tools) {
+        var prefix = "isx account add ";
+        var names = new ArrayList<String>();
+        tools.forEach((toolName, tool) -> {
+            if (!CredentialCheck.hasCredentialStep(tool)) return;
+            var command = CredentialCheck.stepCommand(toolName, tools);
+            if (!command.startsWith(prefix)) return;
+            var name = command.substring(prefix.length());
+            names.add(name.equals(toolName) ? toolName : name + " (" + toolName + ")");
+        });
+        names.sort(null);
+        return names;
     }
 
     /** The steps both platforms end with, the last being {@code service}. */
@@ -489,10 +549,15 @@ public class InitCommand extends BaseCommand {
     }
 
     /** The terminal, or null after saying why interactive setup cannot run without one. */
-    private static Prompts consoleOrExplain() {
-        var prompts = Prompts.console();
+    private Prompts consoleOrExplain() {
+        var prompts = credentialPrompts();
         if (prompts == null) System.err.println("  Error: no console available for interactive setup.");
         return prompts;
+    }
+
+    /** Where the credential steps read their answers: the terminal, or null without one. */
+    Prompts credentialPrompts() {
+        return Prompts.console();
     }
 
     boolean hostHasCommand(String command) {
@@ -637,7 +702,7 @@ public class InitCommand extends BaseCommand {
                 "Choose which API credentials to configure. Each credential",
                 "stays on your host — containers only hold placeholders, and",
                 "the MITM proxy injects real values transparently.");
-        var prompts = Prompts.console();
+        var prompts = credentialPrompts();
         if (prompts == null) {
             return List.of();
         }

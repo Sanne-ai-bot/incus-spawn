@@ -27,16 +27,18 @@ import java.util.Map;
 /**
  * Inspect and change which credential account an instance uses.
  *
- * <p>Accounts themselves are configured by {@code isx init}; this command only decides who
- * uses them. Re-pointing a running instance takes effect on its next request -- credentials
+ * <p>Accounts themselves are configured by {@code isx init}'s credential steps, which
+ * {@code isx account add} runs one at a time; the rest of this command decides who uses them.
+ * Re-pointing a running instance takes effect on its next request -- credentials
  * live in the proxy, never in the container, so nothing inside has to be restarted.
  */
 @CommandDefinition(
         name = "account",
-        description = "Show or change the credential accounts an instance uses",
+        description = "Add credentials, and show or change the accounts an instance uses",
         generateHelp = true,
         groupCommands = {
                 AccountCommand.ListSub.class,
+                AccountCommand.Add.class,
                 AccountCommand.Show.class,
                 AccountCommand.Set.class,
                 AccountCommand.Unset.class,
@@ -275,7 +277,7 @@ public class AccountCommand extends BaseCommand {
                             + (instances.size() == 1 ? " is" : " are") + " pinned to it"));
         }
         if (out.isEmpty()) {
-            out.add("No accounts configured. Run 'isx init' to add one.");
+            out.add("No accounts configured. Run 'isx account add' to add one.");
         } else {
             out.add("");
             out.add("[default] is the global default: the account used by every instance that is not"
@@ -285,6 +287,23 @@ public class AccountCommand extends BaseCommand {
             out.add("(Could not read which instances use each account: " + pinsUnavailable + ")");
         }
         return out;
+    }
+
+    // ── add ─────────────────────────────────────────────────────────────────────
+
+    @CommandDefinition(name = "add",
+            description = "Add or replace one credential, without re-running the rest of 'isx init'",
+            generateHelp = true)
+    public static class Add extends BaseCommand {
+
+        @Argument(description = "The credential: its namespace (e.g. github, claude) or its tool (e.g. gh);"
+                + " without one, choose from a menu")
+        String credential;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            return CommandResult.valueOf(new InitCommand().addCredential(credential));
+        }
     }
 
     // ── show ────────────────────────────────────────────────────────────────────
@@ -419,7 +438,7 @@ public class AccountCommand extends BaseCommand {
         var isTemplate = template.equals(instance);
         out.add(isTemplate ? instance + " (template):" : instance + " (branched from " + template + "):");
         if (uses.isEmpty()) {
-            out.add("  No credential accounts are configured. Run 'isx init' to add one.");
+            out.add("  No credential accounts are configured. Run 'isx account add' to add one.");
             return out;
         }
         // A block per credential: the account and what it is on the first line, then in words

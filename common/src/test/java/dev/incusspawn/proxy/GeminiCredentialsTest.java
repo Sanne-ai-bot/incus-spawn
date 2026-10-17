@@ -58,7 +58,7 @@ class GeminiCredentialsTest {
         var problem = CredentialCheck.check(config, template, Map.of(template.getName(), template),
                 Map.of(), TOOLS, TOOLS);
         assertTrue(problem.contains("Gemini API key"), problem);
-        assertTrue(problem.contains("isx init"), problem);
+        assertTrue(problem.contains("isx account add gemini"), problem);
     }
 
     @Test

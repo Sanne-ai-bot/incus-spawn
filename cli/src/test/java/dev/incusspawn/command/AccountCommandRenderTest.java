@@ -117,7 +117,7 @@ class AccountCommandRenderTest {
 
     @Test
     void listWithNothingConfiguredSaysHowToStart() {
-        assertEquals(List.of("No accounts configured. Run 'isx init' to add one."),
+        assertEquals(List.of("No accounts configured. Run 'isx account add' to add one."),
                 AccountCommand.renderList(List.of(), ""));
     }
 

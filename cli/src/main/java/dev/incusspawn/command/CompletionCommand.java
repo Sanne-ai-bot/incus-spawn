@@ -387,6 +387,7 @@ public class CompletionCommand extends BaseCommand {
               local -a _account_subcmds
               _account_subcmds=(
                 'list:list configured accounts per namespace'
+                'add:add or replace one credential'
                 'show:show the account an instance uses for each credential'
                 'set:point an instance at different credential accounts'
                 'unset:make an instance follow the default account again'
@@ -396,6 +397,7 @@ public class CompletionCommand extends BaseCommand {
                 show|reset-proofs) _isx_instances ;;
                 set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts' ;;
                 unset) _arguments '1:instance:_isx_instances' '*:namespace:_isx_account_namespaces' ;;
+                add) _arguments '1:namespace:_isx_account_namespaces' ;;
                 *) _describe -t subcmds 'account subcommand' _account_subcmds ;;
               esac
             }
@@ -452,7 +454,7 @@ public class CompletionCommand extends BaseCommand {
                     'proxy:manage the MITM authentication proxy'
                     'templates:manage template definitions'
                     'tools:list and inspect available tool definitions'
-                    'account:show or change the credential accounts an instance uses'
+                    'account:add credentials, and show or change the accounts an instance uses'
                     'mcp:serve isx to a local AI agent over MCP (stdio)'
                     'vm:manage the incus-spawn VM appliance'
                     'update-base:check for and install base image updates'
@@ -649,11 +651,16 @@ public class CompletionCommand extends BaseCommand {
                   local j
                   for (( j=i+1; j < cword; j++ )); do
                     case "${words[j]}" in
-                      list|show|set|unset|reset-proofs) acct_cmd="${words[j]}"; break ;;
+                      list|add|show|set|unset|reset-proofs) acct_cmd="${words[j]}"; break ;;
                     esac
                   done
                   case "$acct_cmd" in
-                    "") COMPREPLY=( $(compgen -W "list show set unset reset-proofs --help" -- "$cur") ) ;;
+                    "") COMPREPLY=( $(compgen -W "list add show set unset reset-proofs --help" -- "$cur") ) ;;
+                    add)
+                      if [[ "$prev" == add ]]; then
+                        COMPREPLY=( $(compgen -W "$(_isx_list_account_namespaces) --help" -- "$cur") )
+                      fi
+                      ;;
                     show|set|unset|reset-proofs)
                       if [[ "$prev" == "$acct_cmd" ]]; then
                         COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
@@ -961,11 +968,12 @@ public class CompletionCommand extends BaseCommand {
 
             # ── account ─────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a list -d 'List configured accounts per namespace'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a show -d 'Show the account an instance uses for each credential'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a set  -d 'Point an instance at different credential accounts'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a unset -d 'Make an instance follow the default account again'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a reset-proofs -d 'Revoke and replace shared credential proofs'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a list -d 'List configured accounts per namespace'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a add -d 'Add or replace one credential'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a show -d 'Show the account an instance uses for each credential'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a set  -d 'Point an instance at different credential accounts'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a unset -d 'Make an instance follow the default account again'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a reset-proofs -d 'Revoke and replace shared credential proofs'
 
             complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand show' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_account_args set 0'   -a '(__isx_instances)' -d 'Instance name'
@@ -973,6 +981,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_account_args unset 0' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_account_args reset-proofs 0' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_account_args unset +' -a '(__isx_account_namespaces)' -d 'Namespace'
+            complete -c isx -f -n '__isx_account_args add 0' -a '(__isx_account_namespaces)' -d 'Namespace'
 
             # ── tools ────────────────────────────────────────────────────────────────────
 

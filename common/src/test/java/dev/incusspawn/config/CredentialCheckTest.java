@@ -140,8 +140,145 @@ class CredentialCheckTest {
         var all = tools();
         var missing = CredentialCheck.missingByCredential(config, defs.keySet(), defs, all, all);
         // tpl-typo's unknown account is the build's to refuse, not a missing credential
-        assertEquals(Map.of("GitHub personal access token", List.of("tpl-dev", "tpl-agent"),
-                "OpenAI API key", List.of("tpl-agent")), missing);
+        assertEquals(Map.of(
+                new CredentialCheck.Missing("GitHub personal access token", "isx account add github"),
+                List.of("tpl-dev", "tpl-agent"),
+                new CredentialCheck.Missing("OpenAI API key", "isx account add openai"),
+                List.of("tpl-agent")), missing);
+    }
+
+    // --- The remedy names the one credential's command, not the whole of 'isx init' (#1469)
+
+    @Test
+    void theRefusalNamesTheCommandThatAddsTheMissingCredential() throws Exception {
+        assertEquals("Missing credentials: GitHub personal access token."
+                + " Run 'isx account add github' to configure it.", check("{}", template("[gh]")));
+    }
+
+    @Test
+    void eachMissingCredentialGetsItsOwnCommand() throws Exception {
+        var result = check("{}", template("[claude, gh]"));
+        assertTrue(result.endsWith(" Run 'isx account add claude' and 'isx account add github'"
+                + " to configure them."), result);
+    }
+
+    /** Copilot borrows GitHub's token, so the command is GitHub's: Copilot has no step of its own. */
+    @Test
+    void aBorrowedCredentialNamesTheNamespaceThatOwnsIt() throws Exception {
+        var result = check("{}", template("[copilot]"));
+        assertTrue(result.endsWith(" Run 'isx account add github' to configure it."), result);
+    }
+
+    @Test
+    void piNamesTheCredentialItsProviderSpends() throws Exception {
+        assertTrue(check("{}", template("[pi]")).endsWith("'isx account add claude' to configure it."));
+        assertTrue(check("{}", piTemplate("openai")).endsWith("'isx account add openai' to configure it."));
+    }
+
+    @Test
+    void aYamlToolsCredentialIsAddedByItsNamespace() throws Exception {
+        var result = check("{}", template("[three-ways]"), Map.of(), yamlTool(THREE_WAYS));
+        assertTrue(result.endsWith(" Run 'isx account add threeWays' to configure them."), result);
+    }
+
+    /** A secret outside any namespace, declared by a tool with a step of its own: that step sets it. */
+    @Test
+    void aCredentialOutsideANamespaceNamesTheToolThatDeclaresIt() throws Exception {
+        var result = check("{}", template("[borrower]"), Map.of(), yamlTool(BORROWER));
+        assertEquals("Missing credentials: Borrowed key. Run 'isx account add borrower' to configure it.", result);
+    }
+
+    private static final String BORROWER = """
+            name: borrower
+            proxy:
+              configuration:
+                key: { config-path: elsewhere.key, description: "Borrowed key", secret: true }
+              auth:
+                - { domains: [e.example], type: bearer, token: "${key}" }
+            """;
+
+    /** No step owns the secret, and the tool declaring it has none either: init's menu is the way. */
+    @Test
+    void aCredentialNoStepOwnsFallsBackToInit() throws Exception {
+        var tool = new NoStep(yamlTool(BORROWER));
+        var result = check("{}", template("[borrower]"), Map.of(), tool);
+        assertEquals("Missing credentials: Borrowed key. Run 'isx init' to configure it.", result);
+    }
+
+    /** {@code delegate}'s proxy, but borrowed, as Copilot's is: no step of its own. */
+    private record NoStep(ToolSetup delegate) implements ToolSetup {
+        @Override public String name() { return delegate.name(); }
+        @Override public dev.incusspawn.tool.ToolDef.ProxyDef proxy() { return delegate.proxy(); }
+        @Override public boolean hasOwnCredentials() { return false; }
+        @Override public void install(dev.incusspawn.incus.Container c, Map<String, String> params) { }
+    }
+
+    /**
+     * A YAML tool named after gh's namespace must not take over gh's remedy: {@code isx account
+     * add github} still runs gh's step, which is the one that sets the missing token.
+     */
+    @Test
+    void aToolNamedAfterAnotherNamespaceDoesNotTakeItOver() throws Exception {
+        var impostor = yamlTool("""
+                name: github
+                proxy:
+                  config-namespace: ghe
+                  configuration:
+                    token: { config-path: token, description: "GHE token", secret: true }
+                  auth:
+                    - { domains: [ghe.example], type: bearer, token: "${token}" }
+                """);
+        var all = tools(impostor);
+        assertEquals("gh", CredentialCheck.credentialTool("github", all));
+        assertEquals("github", CredentialCheck.credentialTool("ghe", all));
+        assertEquals("Missing credentials: GitHub personal access token."
+                + " Run 'isx account add github' to configure it.", check("{}", template("[gh]"), Map.of(), impostor));
+        assertEquals("isx account add ghe", CredentialCheck.stepCommand("github", all));
+        assertEquals("isx account add github", CredentialCheck.stepCommand("gh", all));
+        // Its own secret: its namespace, not its name, which is gh's
+        assertEquals("Missing credentials: GHE token. Run 'isx account add ghe' to configure it.",
+                check("{}", template("[github]"), Map.of(), impostor));
+    }
+
+    /**
+     * A tool declaring a key in a namespace another tool's step owns: that step never asks for the
+     * key, so the declaring tool's step is named.
+     */
+    @Test
+    void aKeyTheNamespaceOwnersStepDoesNotAskForNamesTheDeclaringTool() throws Exception {
+        var aider = yamlTool("""
+                name: aider
+                proxy:
+                  config-namespace: openai
+                  configuration:
+                    org: { config-path: org, description: "OpenAI organization", secret: true }
+                  auth:
+                    - { domains: [org.example], type: header, name: X-Org, value: "${org}" }
+                """);
+        // The owner codex's key is served in the same namespace, so it is asked for too
+        assertEquals("Missing credentials: OpenAI organization, OpenAI API key."
+                        + " Run 'isx account add aider' and 'isx account add openai' to configure them.",
+                check("{}", template("[aider]"), Map.of(), aider));
+        // Its step's own skip message names the same command, and codex's names its namespace
+        var all = tools(aider);
+        assertEquals("isx account add aider", CredentialCheck.stepCommand("aider", all));
+        assertEquals("isx account add openai", CredentialCheck.stepCommand("codex", all));
+        // codex's own key still goes to the namespace codex owns
+        assertTrue(check("{}", template("[codex]"), Map.of(), aider).endsWith("'isx account add openai' to configure it."));
+    }
+
+    @Test
+    void theStepIsFoundByNamespaceOrByTool() {
+        var all = tools();
+        assertEquals("gh", CredentialCheck.credentialTool("github", all));
+        assertEquals("gh", CredentialCheck.credentialTool("gh", all));
+        assertEquals("claude", CredentialCheck.credentialTool("claude", all));
+        assertEquals("codex", CredentialCheck.credentialTool("openai", all));
+        // Copilot spends GitHub's token and has no step; pi and podman have no credential at all
+        assertNull(CredentialCheck.credentialTool("copilot", all));
+        assertNull(CredentialCheck.credentialTool("pi", all));
+        assertNull(CredentialCheck.credentialTool("podman", all));
+        assertNull(CredentialCheck.credentialTool("nope", all));
     }
 
     // --- Claude, and pi on Claude's credential

@@ -187,7 +187,7 @@ final class AccountsModal {
         var dim = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
         int cell = 0;
         frame.renderWidget(Paragraph.from(Line.styled(rows.isEmpty()
-                ? "No credential accounts are configured. Run 'isx init' to add one."
+                ? "No credential accounts are configured. Run 'isx account add' to add one."
                 : "Takes effect on the next request; nothing inside restarts.", dim)), cells.get(cell++));
         cell++;
 

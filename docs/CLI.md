@@ -192,13 +192,14 @@ List and inspect available tool definitions. Running bare `isx tools` defaults t
 
 ## `isx account`
 
-Show or change which [credential account](CONFIGURATION.md#credential-accounts) an instance uses. Accounts themselves are configured with `isx init`. Running bare `isx account` defaults to `list`.
+Add credentials, and show or change which [credential account](CONFIGURATION.md#credential-accounts) an instance uses. Running bare `isx account` defaults to `list`.
 
     isx account <subcommand>
 
 | Subcommand | Description |
 |------------|-------------|
 | `list` | Configured accounts per credential, the default, and the instances pinned to each |
+| `add [<credential>]` | Add or replace one credential with the step `isx init` runs for it, and nothing else: no sudo, no other step. Name it by namespace (`github`, `claude`, `openai`) or by tool (`gh`, `codex`); without a name, choose from init's credential menu. Adding a second account goes through the same account menu. The proxy picks the change up by itself |
 | `show <instance>` | The account the instance uses for each credential, and where it comes from |
 | `set <instance> <ns>=<account>...` | Pin the instance to these accounts; takes effect on its next request |
 | `unset <instance> <ns>...` | Remove the pins, so the instance follows the default again |

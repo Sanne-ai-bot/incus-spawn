@@ -1788,7 +1788,7 @@ public class Tui {
             return;
         }
         if (rows.isEmpty()) {
-            statusMessage = "No credential accounts configured. Run 'isx init' to add one.";
+            statusMessage = "No credential accounts configured. Run 'isx account add' to add one.";
             return;
         }
         accountsModal = new AccountsModal(modal, theme, instance, rows);

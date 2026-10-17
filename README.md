@@ -87,7 +87,7 @@ isx branch my-first --from tpl-agent
 isx
 ```
 
-Claude Code signs in with the Claude credential set up in `isx init` (run it again to add one). It never sees the credential: the proxy adds it on the way out (see [Credential Isolation](#credential-isolation)). If you did not install the services `isx init` offers, start them before building: `isx proxy start` on Linux, `isx vm start && isx proxy start` on macOS.
+Claude Code signs in with the Claude credential set up in `isx init` (`isx account add claude` adds one later). It never sees the credential: the proxy adds it on the way out (see [Credential Isolation](#credential-isolation)). If you did not install the services `isx init` offers, start them before building: `isx proxy start` on Linux, `isx vm start && isx proxy start` on macOS.
 
 Next, for another agent, replace `claude` with `codex`, `pi`, `gemini-cli`, `bob` or `copilot` (see [Agents](#agents)). To give the agent a project, add `repos:` ([Declarative Repos](docs/TEMPLATES.md#declarative-repos)). Its commits come back to your host with `git fetch` ([Git Remotes](#git-remotes)).
 
@@ -289,7 +289,7 @@ Shell completions are available for bash, zsh and fish via `isx completion <shel
 | [`isx update-all`](docs/CLI.md#isx-update-all) | Update packages and repos in all templates |
 | [`isx templates`](docs/CLI.md#isx-templates) | Manage template definitions |
 | [`isx tools`](docs/CLI.md#isx-tools) | List and inspect available tool definitions |
-| [`isx account`](docs/CLI.md#isx-account) | Show or change the credential accounts an instance uses |
+| [`isx account`](docs/CLI.md#isx-account) | Add credentials, and show or change the accounts an instance uses |
 | [`isx project`](docs/CLI.md#isx-project) | Manage project templates |
 | [`isx proxy`](docs/CLI.md#isx-proxy) | Manage the MITM authentication proxy |
 | [`isx doctor`](docs/CLI.md#isx-doctor) | Diagnose host, proxy, VM, and tunnel health |
