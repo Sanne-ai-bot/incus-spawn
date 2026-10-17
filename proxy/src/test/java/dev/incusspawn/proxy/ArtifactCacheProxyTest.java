@@ -22,6 +22,7 @@ import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.SocketAddress;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -378,6 +379,25 @@ class ArtifactCacheProxyTest {
             assertTrue(dir.startsWith(tempHome), dir + " is outside the test home");
             await(dir + " to be deleted", () -> deleteOnceIdle(dir));
         }
+    }
+
+    /**
+     * A test's own await can end before its confirmation leaves the set; left there, its key makes the next
+     * test's confirmation of the same path a no-op (#1499). Drained against this test's own fixture, and
+     * charged to it if it never ends. A stalled HEAD is closed first, so a confirmation waiting on it ends now,
+     * and no HEAD is left to stall, so its retry is answered.
+     */
+    @AfterEach
+    void drainBackgroundConfirmations() throws Exception {
+        headsToStall.set(0);
+        var stalled = stalledConnection;
+        if (stalled != null) stalled.close();
+        awaitBackgroundConfirmations(proxy);
+    }
+
+    /** Every background confirmation queued or in flight has finished, for a class sharing one proxy. */
+    static void awaitBackgroundConfirmations(MitmProxy proxy) throws Exception {
+        await("this test's background confirmations to finish", proxy.artifactCache.backgroundConfirmations::isEmpty);
     }
 
     /**
