@@ -129,7 +129,7 @@ class GhSetupTest {
         var warning = new GhSetup().unbakedIdentityWarning("");
         assertTrue(warning.contains("No git identity"), warning);
         assertTrue(warning.contains("no GitHub token is configured"), warning);
-        assertTrue(warning.contains("isx init"), warning);
+        assertTrue(warning.contains("isx account add github"), warning);
         assertFalse(warning.contains("next start"), "a plain start does not reconcile: " + warning);
     }
 
@@ -139,7 +139,7 @@ class GhSetupTest {
         var warning = new GhSetup().unbakedIdentityWarning("work");
         assertTrue(warning.contains("account 'work'"), warning);
         assertFalse(warning.contains("no GitHub token is configured"), warning);
-        assertTrue(warning.contains("isx init"), warning);
+        assertTrue(warning.contains("isx account add github"), warning);
     }
 
     /** With a token configured, an empty login is a failed lookup: it fails the build. */

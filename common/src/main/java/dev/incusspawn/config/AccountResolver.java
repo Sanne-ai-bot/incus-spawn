@@ -114,8 +114,8 @@ public final class AccountResolver {
             if (!problem.isEmpty()) {
                 throw new UnknownAccountException(namespace, selected,
                         "Account '" + selected + "' under '" + namespace + "' is configured but"
-                                + " incomplete: " + problem + ". Repair it with 'isx init' or in"
-                                + " ~/.config/incus-spawn/config.yaml.");
+                                + " incomplete: " + problem + ". Repair it with 'isx account add " + namespace
+                                + "' or in ~/.config/incus-spawn/config.yaml.");
             }
             return selected;
         }

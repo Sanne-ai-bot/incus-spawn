@@ -166,6 +166,30 @@ class CredentialPromptsTest {
         assertEquals("", saved("acme.region"));
     }
 
+    /** A skipped step names itself to come back to, not the whole of init (#1469). */
+    @Test
+    void aSkippedStepNamesTheCommandThatRunsItAlone() throws Exception {
+        var dir = Files.createDirectories(Environment.configDir().resolve("tools"));
+        Files.writeString(dir.resolve("solo.yaml"), """
+                name: solo
+                proxy:
+                  config-namespace: soloCloud
+                  configuration:
+                    key: { config-path: key, description: Solo key, secret: true }
+                """);
+        var out = System.out;
+        var buffer = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            new CredentialSetup().setupGenericToolCredentials("solo", new ToolDefLoader().find("solo"),
+                    new SpawnConfig(), new ScriptedPrompts().secret(""));
+        } finally {
+            System.setOut(out);
+        }
+        var printed = buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(printed.contains("Skipped. Configure later with 'isx account add soloCloud'."), printed);
+    }
+
     /** A configured tool opens on the account menu, whose Enter leaves everything as it is. */
     @Test
     void enterOnReRunLeavesEverythingAsItIs() throws Exception {
