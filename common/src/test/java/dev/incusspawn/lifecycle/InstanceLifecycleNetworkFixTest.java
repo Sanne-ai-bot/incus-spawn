@@ -73,6 +73,9 @@ class InstanceLifecycleNetworkFixTest {
         verify(incus).configSetAll(eq("test"), argThat(map ->
                 map.containsKey(Metadata.PROXY_GATEWAY)
                 && "172.21.0.1".equals(map.get(Metadata.PROXY_GATEWAY))));
+        // The host ACL that enforces proxy-only allows the gateway by address, so it moves too (#1137)
+        verify(incus).putNetworkAcl(eq(ProxyOnlyAcl.NAME), anyString(), argThat(rules -> !rules.isEmpty()
+                && rules.stream().allMatch(rule -> "172.21.0.1".equals(rule.get("destination")))));
     }
 
     @Test

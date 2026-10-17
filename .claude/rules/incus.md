@@ -30,6 +30,13 @@ The flow then re-reads and rebuilds its `InstanceUpdate` under `IncusClient.retr
 Such a write is conditional whenever Incus sends an `ETag`, which it does on every instance GET and every transport keeps: a new removing flow reads with `readInstance` and retries the same way.
 `readInstance` turns a rejected read into a missing node, since Incus's error body carries `"metadata": null` (a `NullNode`), so a removal from an instance that cannot be read fails rather than writing nothing and succeeding.
 The transports keep the `ETag` header on `RawResponse`/`ApiResponse`; `FakeIncusDaemon` sends one and refuses a stale `If-Match`, and `writeAfterRead` stages a concurrent write.
+**`--proxy-only` is a host-side Incus network ACL** (`ProxyOnlyAcl`, #1137; DESIGN.md "Network Modes"): `isx-proxy-only` on the bridge NIC, egress default `drop`, ingress default `allow`.
+Never enforce it, or add to it, from inside the guest: root there can undo anything the guest holds, and the tests must exercise the boundary that actually holds.
+Incus accepts NIC ACLs only under its nftables firewall driver; anything else refuses proxy-only (preflight, and every start of an existing one through `prepareForStart`/`ensureReady`), never falls back.
+A new path that starts an instance for use goes through `prepareForStart`, or proxy-only instances from before #1137 start unrestricted.
+The `startInstance` IP-filtering fallback must not touch a NIC with the ACL keys (`InstanceNetwork.disableIpFiltering`).
+`InstanceUpdate.device(name, key, null)` removes a device property (`IncusApi.update` sends the device whole).
+
 `Container` is a helper for running commands inside a specific container (`exec`, `runAsUser`, `runInteractive`).
 The `incus` CLI binary is not required at runtime.
 

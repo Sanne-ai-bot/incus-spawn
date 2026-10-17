@@ -310,8 +310,13 @@ class IncusApi {
             var current = metadata.getField("expanded_devices").getField(deviceName);
             if (current.isMissingNode()) current = instanceDevices.getField(deviceName);
             var merged = JqObject.builder(4);
-            if (current instanceof JqObject existing) existing.forEach(merged::put);
-            props.forEach(merged::put);
+            if (current instanceof JqObject existing) existing.forEach((key, value) -> {
+                if (!props.containsKey(key)) merged.put(key, value);
+            });
+            // A null property is removed: the device is sent whole, so leaving it out is enough
+            props.forEach((key, value) -> {
+                if (value != null) merged.put(key, value);
+            });
             changedDevices.put(deviceName, merged.build());
         });
         update.replacedDevices().forEach((deviceName, deviceConfig) ->

@@ -1165,6 +1165,48 @@ public class IncusClient {
     }
 
     /**
+     * The firewall driver Incus installs network filters with, as {@code GET /1.0} reports it:
+     * {@code nftables} or {@code xtables}, empty when it does not say.
+     */
+    public String firewallDriver() {
+        var resp = http().get("/1.0");
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to read the Incus server info (HTTP " + resp.statusCode() + ")");
+        }
+        return resp.body().path("metadata").path("environment").pathText("firewall", "");
+    }
+
+    /**
+     * Make the network ACL {@code name} exactly these egress rules and no ingress rules, creating
+     * it if it does not exist: one request when it does. Each rule is a map of Incus's rule fields
+     * ({@code action}, {@code destination}, {@code protocol}, ...).
+     */
+    public void putNetworkAcl(String name, String description, List<Map<String, String>> egress) {
+        var body = new LinkedHashMap<String, Object>();
+        body.put("description", description);
+        body.put("egress", egress);
+        body.put("ingress", List.of());
+        var resp = http().requestAndWait("PUT", "/1.0/network-acls/" + name, body);
+        if (resp.statusCode() == 404) {
+            var create = new LinkedHashMap<>(body);
+            create.put("name", name);
+            resp = http().requestAndWait("POST", "/1.0/network-acls", create);
+            // Another isx created it between the two: it is there now, so write ours over it
+            if (resp.statusCode() == 409) resp = http().requestAndWait("PUT", "/1.0/network-acls/" + name, body);
+        }
+        if (!resp.isSuccess()) throw failedOp(resp, "Failed to write network ACL " + name);
+    }
+
+    /**
+     * Delete the network ACL {@code name}: whether it is gone. Incus refuses while a NIC uses it,
+     * which leaves it in place.
+     */
+    public boolean deleteNetworkAcl(String name) {
+        var resp = http().requestAndWait("DELETE", "/1.0/network-acls/" + name, null);
+        return resp.isSuccess() || resp.statusCode() == 404;
+    }
+
+    /**
      * Find the NIC device name attached to a given network on an instance.
      * Checks expanded_devices to include profile-inherited devices.
      * Returns null if no matching NIC device is found.

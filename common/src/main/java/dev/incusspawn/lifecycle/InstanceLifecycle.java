@@ -122,12 +122,20 @@ public final class InstanceLifecycle {
             update.unset(Metadata.STATIC_IP);
             update.unset(Metadata.STATIC_GATEWAY);
         } else {
-            nicDevice = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
-            if (nicDevice == null) {
+            var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
+            if (nic == null) {
                 throw new IncusException("No NIC device for " + BridgeAddress.BRIDGE + " found on " + name);
             }
+            nicDevice = nic.name();
             // The address itself is allocated in InstanceNetwork.claimAndWrite, under the allocation lock
             update.device(nicDevice, "security.ipv4_filtering", "true");
+            // Proxy-only is the host's ACL on this NIC, which BranchFlow.preflight has written. A
+            // branch with full network of a proxy-only instance drops it.
+            if (mode == NetworkMode.PROXY_ONLY) {
+                ProxyOnlyAcl.NIC_KEYS.forEach((key, value) -> update.device(nic.name(), key, value));
+            } else if (ProxyOnlyAcl.anyKey(nic.config())) {
+                ProxyOnlyAcl.NIC_KEYS.keySet().forEach(key -> update.device(nic.name(), key, null));
+            }
             update.config(Metadata.STATIC_GATEWAY, bridge.gateway());
             // A VM takes its .network file only while running: one not started now owes it to
             // its next start through ensureReady, or it stays on DHCP for good (#1004)
@@ -459,7 +467,10 @@ public final class InstanceLifecycle {
      */
     public static void ensureReady(IncusClient incus, String name, JqValue instance,
                                    MachineType machineType, Consumer<String> say) {
-        if ("Stopped".equalsIgnoreCase(instance.path("status").asText(""))) {
+        var stopped = "Stopped".equalsIgnoreCase(instance.path("status").asText(""));
+        // A running instance too: one branched before #1137 and restarted outside isx runs unrestricted
+        if (!stopped) ProxyOnlyAcl.enforce(incus, name, instance, say);
+        if (stopped) {
             say.accept("Starting " + name + "...");
             startForUse(incus, name, instance, machineType, say);
         } else if (machineType == MachineType.VM) {
@@ -507,13 +518,16 @@ public final class InstanceLifecycle {
     static JqValue startForUse(IncusClient incus, String name, JqValue instance, MachineType machineType,
                                 Consumer<String> warn) {
         var placeholders = ProofToken.declaredInBackground();
-        prepareForStart(incus, name, instance, warn);
-        // A VM branched or built before #1238 still has Secure Boot on: it goes in the write the
-        // secret makes anyway
-        var secret = rotateInstanceSecret(incus, name, instance, machineType == MachineType.VM
-                && !"false".equals(instance.path("config").path(SECURE_BOOT).asText())
-                ? Map.of(SECURE_BOOT, "false") : Map.of(), placeholders.join());
-        startInstance(incus, name, warn);
+        var secret = ProxyOnlyAcl.explaining(incus, name, instance, () -> {
+            prepareForStart(incus, name, instance, warn);
+            // A VM branched or built before #1238 still has Secure Boot on: it goes in the write the
+            // secret makes anyway
+            var delivery = rotateInstanceSecret(incus, name, instance, machineType == MachineType.VM
+                    && !"false".equals(instance.path("config").path(SECURE_BOOT).asText())
+                    ? Map.of(SECURE_BOOT, "false") : Map.of(), placeholders.join());
+            startInstance(incus, name, warn);
+            return delivery;
+        });
         return withCurrentProofs(incus, name, secret, current -> {
             incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
                     InstanceSecret.guestEnv(current, Metadata.isMcpCaller(instance), placeholders.join()));
@@ -540,8 +554,13 @@ public final class InstanceLifecycle {
         // contend with it. A restart that then fails leaves a guest whose secret no longer
         // matches, which is refused -- the safe way for it to go wrong.
         var placeholders = ProofToken.declaredInBackground();
-        var secret = rotateInstanceSecret(incus, name, instance, Map.of(), placeholders.join());
-        incus.restart(name);
+        // Quietly: the TUI owns the terminal here, and a refusal throws, which it reports
+        var secret = ProxyOnlyAcl.explaining(incus, name, instance, () -> {
+            ProxyOnlyAcl.enforce(incus, name, instance, msg -> {});
+            var delivery = rotateInstanceSecret(incus, name, instance, Map.of(), placeholders.join());
+            incus.restart(name);
+            return delivery;
+        });
         withCurrentProofs(incus, name, secret, current -> {
             incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
                     InstanceSecret.guestEnv(current, mcpCaller, placeholders.join()));
@@ -783,6 +802,8 @@ public final class InstanceLifecycle {
      *   <li>Host-side devices: a host-resource source that has disappeared and a missing zmx socket
      *       directory otherwise fail Incus start validation with {@code Missing source path}.</li>
      *   <li>IP spoofing protection ({@link InstanceNetwork#rearmIpFiltering}): turned back on where it is off.</li>
+     *   <li>A proxy-only instance's host ACL ({@link ProxyOnlyAcl#enforce}): put in force where it is
+     *       missing, or the start is refused.</li>
      * </ul>
      */
     static void prepareForStart(IncusClient incus, String name) {
@@ -808,6 +829,7 @@ public final class InstanceLifecycle {
         restoreInbox(incus, name, instance, warn);
         ZmxSocketForward.ensureHostDirForStart(incus, name, instance);
         InstanceNetwork.rearmIpFiltering(incus, name, instance, warn);
+        ProxyOnlyAcl.enforce(incus, name, instance, warn);
     }
 
     /**

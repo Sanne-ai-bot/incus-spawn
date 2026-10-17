@@ -1046,21 +1046,52 @@ Branches run in one of three network modes, selectable via CLI flags or the TUI 
 Unrestricted outbound access to the internet.
 Traffic to intercepted domains (Anthropic, GitHub) is transparently authenticated by the host MITM proxy — credentials never enter the container in any form.
 
-**Proxy only** (`--proxy-only`): Container stays on the bridge but iptables OUTPUT rules restrict all outbound traffic to the MITM proxy (port 443) and DNS.
-The container can only reach intercepted domains via the MITM proxy.
+**Proxy only** (`--proxy-only`): The instance stays on the bridge, and its egress can reach only the gateway's MITM proxy (port 443), the proxy's health check (18080), DNS and a ping of the gateway, so it reaches the intercepted domains through the proxy and nothing else.
+The restriction must hold against the code it restricts, which has root in the guest, so it lives on the host (#1137).
+It is an Incus network ACL, `isx-proxy-only`, on the instance's bridge NIC (`ProxyOnlyAcl`):
 
-Container-side firewall rules:
 ```
-iptables -A OUTPUT -o lo -j ACCEPT
-iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A OUTPUT -d <gateway> -p tcp --dport 443 -j ACCEPT     # MITM proxy
-iptables -A OUTPUT -d <gateway> -p tcp --dport 18080 -j ACCEPT   # Health check
-iptables -A OUTPUT -d <gateway> -p udp --dport 53 -j ACCEPT      # DNS
-iptables -P OUTPUT DROP
+security.acls=isx-proxy-only
+security.acls.default.egress.action=drop     # anything the ACL does not allow, IPv6 included
+security.acls.default.ingress.action=allow   # the host reaches the instance over SSH
 ```
 
-The rules fail closed (#1136): when they cannot be applied, because the image has no working `iptables` (`tpl-minimal`'s base image has none; legacy iptables cannot load its table in a container), no gateway is recorded or Incus cannot run the exec, `RuntimeSetup.applyProxyOnlyFirewall` removes the new instance, or stops it if removing fails (only a 404 counts as gone: an Incus that cannot answer may still be running it), and the branch fails with the command's output.
-Before, the step showed as done and the instance ran with full outbound access while labelled proxy-only.
+The ACL's egress rules allow, to the gateway's address only: tcp 443 and 18080, udp and tcp 53, and ICMP echo (the connectivity watchdog pings the gateway).
+Incus installs it as per-NIC chains in the host's nftables `bridge` family, the table that also enforces `security.ipv4_filtering`, at every start of the instance, whoever starts it: `isx`, `incus restart`, autostart after a host reboot, `isx doctor`'s subnet move.
+A start whose ACL cannot be installed fails.
+Those chains match in the bridge family, before the host's PREROUTING redirect, so they see port 443 rather than the proxy's 18443.
+A rule set there also stops traffic to other instances on the bridge, which a rule on the host's INPUT chain would not see.
+
+*Where it is set.*
+`BranchFlow.preflight` writes the ACL for the current gateway before anything is created (one PUT, a POST the first time).
+`configureBranch` puts the three NIC keys in the branch's one write, before its first start, so a `--no-start` branch is restricted from the moment it exists (#1311).
+A branch with network of a proxy-only instance drops them in that write.
+A subnet move rewrites the ACL when it moves a proxy-only instance's gateway (`InstanceNetwork.fixStaticIp`).
+Until then the ACL allows only the old gateway, so the instance reaches nothing.
+Every start for use (`prepareForStart`), `isx shell` into a running instance (`ensureReady`) and the TUI's restart put the keys on a proxy-only instance that lacks them: one branched before #1137 is restricted from the first time isx sees it.
+An instance that has them costs no request.
+That repair writes the ACL for the bridge's current gateway, never the one the instance recorded: the ACL is every proxy-only instance's, and a record from before a subnet move would take the proxy away from all of them.
+A proxy-only instance whose NIC is on another network is not started or used, since nothing restricts it there; one with no NIC at all has no network, which is within the mode.
+Two isx processes creating the ACL at once both succeed: a POST answered "already exists" is followed by the PUT.
+`isx reset` deletes the ACL, which Incus refuses while an instance that was kept still uses it.
+
+*Fail closed.*
+Incus accepts NIC ACLs only from its nftables firewall driver, and rejects them under xtables.
+On such a host `isx branch --proxy-only` is refused before anything is created, saying why and what to change, and an existing proxy-only instance is not started or shelled into.
+Incus itself refuses every write to and start of an instance whose NIC names an ACL once it runs xtables (the host gained legacy rules after the branch); isx asks for the driver only after such a refusal (`ProxyOnlyAcl.explaining`), so an instance already restricted costs its start no request, and reports the same reason instead of a failed write.
+There is no fallback to rules in the guest: they would make the mode look in force while root in the guest can remove it, and they are why images needed `iptables` (#1312).
+The IP spoofing fallback (`startInstance`, below) never strips a NIC that carries the ACL keys.
+A failure of the ACL means the instance cannot start, so the fallback could only turn a refused start into an unrestricted one.
+
+*History.*
+Until #1137 the rules were iptables OUTPUT rules applied in the guest by an exec after the first start.
+The instance's root could flush them, and nothing applied them again after a restart (#1311).
+The exec also needed `iptables` in the image, which `tpl-minimal`'s base image lacks.
+Since #1136 their failure removed the branch.
+The alternatives to the ACL were re-applying the guest rules on every start, and an isx-owned host nftables table keyed on each branch's address.
+Root in the guest could still flush the first, and an `incus restart` or autostart is a start isx never sees.
+The second needs root on the host for every branch and a boot-time restore ordered before Incus, and there is no host nftables on macOS outside the appliance.
+Incus already does all of that for its own per-NIC rules.
 
 **Airgapped** (`--airgap`): Every NIC is masked with a `type: none` device of the same name, and the instance is stamped `network-mode=AIRGAP`.
 Complete network isolation — no egress at all.
@@ -1714,6 +1745,7 @@ A host whose firewall backend cannot apply it warns rather than failing the bran
 That warning has to come from the *start* path, not the config path.
 Incus accepts `security.ipv4_filtering` on a host that cannot enforce it and only fails when the instance starts, so `InstanceLifecycle.startInstance` recognises that specific failure, drops the setting and retries.
 Otherwise the hardening would take a working host and leave it unable to start anything it branched.
+It never does this for a NIC carrying the proxy-only ACL ("Network Modes"): there, the failed start stands.
 The macOS appliance was such a host until its kernel gained the nft `bridge` family (#905): Incus's nftables driver installs the per-NIC rules there, so every Mac branch fell back to no filtering.
 `CONFIG_NF_TABLES_BRIDGE` is now built in, and the appliance smoke test fails CI if it is dropped (`appliance/DESIGN.md`).
 
@@ -3820,7 +3852,7 @@ Then it must equal the gateway `isx init` cached, if there is one, else `EXIT_CO
 As the credential listener's bind address it must also be private (RFC 1918) or loopback, since nothing vouches for it: a cached gateway could be an address the bridge has since given up (#1022).
 A routable override that passes the cache comparison stops the proxy with exit 1, as it does without an override when the bridge cannot be read.
 Loopback is accepted though, as an A record, it sends instances to themselves: it exposes nothing.
-Recording a differing override where the CLI could read it (a `proxy-gateway-ip` key in `config.yaml`, used by the health address, the DNS writers, init's PREROUTING redirect and the `PROXY_GATEWAY` stamp) was the alternative, rejected because nobody needs a proxy away from the bridge and no such configuration ever worked on Linux: the redirect and the in-instance proxy-only firewall both target the bridge gateway.
+Recording a differing override where the CLI could read it (a `proxy-gateway-ip` key in `config.yaml`, used by the health address, the DNS writers, init's PREROUTING redirect and the `PROXY_GATEWAY` stamp) was the alternative, rejected because nobody needs a proxy away from the bridge and no such configuration ever worked on Linux: the redirect and the proxy-only ACL both target the bridge gateway.
 It is the path to take if a second bridge or a dedicated proxy interface ever becomes a real request.
 Saving `isx proxy start --gateway-ip` into `config.yaml` was rejected too: a command must not rewrite the user's secrets-bearing file to remember an option.
 On macOS the address the proxy listens on is the host's end of the VM link, so the block, which dnsmasq serves inside the VM, still points at the VM's own bridge gateway.
@@ -4358,7 +4390,7 @@ The MITM TLS proxy provides credential isolation:
 2. A custom CA certificate (installed in template images) lets containers trust the proxy's TLS certs
 3. The proxy terminates TLS, replaces placeholder auth with real credentials, and forwards to real upstream over TLS
 4. Placeholder values cannot authenticate against any service — they only bypass local tool checks
-5. In proxy-only mode, iptables OUTPUT rules additionally block all egress except the proxy port (443) and DNS
+5. In proxy-only mode, an Incus network ACL on the instance's NIC, enforced on the host, blocks all egress except the proxy (443), its health check and DNS on the gateway
 
 ### Agents driving isx over MCP
 

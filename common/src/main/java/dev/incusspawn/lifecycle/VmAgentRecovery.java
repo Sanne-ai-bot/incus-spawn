@@ -71,8 +71,11 @@ public final class VmAgentRecovery {
         } catch (RuntimeException guestIgnoredShutdown) {
             incus.forceStop(name);
         }
-        InstanceLifecycle.prepareForStart(incus, name, instance, say);
-        InstanceLifecycle.startInstance(incus, name, say);
+        ProxyOnlyAcl.explaining(incus, name, instance, () -> {
+            InstanceLifecycle.prepareForStart(incus, name, instance, say);
+            InstanceLifecycle.startInstance(incus, name, say);
+            return null;
+        });
         // Stamped before the wait, so a boot whose agent never comes up is still recorded
         // however the wait ends. The boot's new secret (#934) in the same write: nothing in the
         // guest has it before the probe below puts it there.
