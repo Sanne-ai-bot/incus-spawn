@@ -99,7 +99,7 @@ A tool that exports a static credential placeholder declares it there -- `ProofT
 A YAML tool's placeholder must name a variable its own `env:` entries set, to a value starting with its prefix and `placeholder` (`ToolDefValidator` errors; `YamlToolSetup.placeholders()` drops the former, and a start never replaces another value).
 `ToolDefValidator.embeddedTokens` checks exactly a tool's declared placeholders, and guesses from names only for a tool that declares none.
 `ToolDefLoader` refuses a tool whose credential namespace (`config-namespace`, or one a `config-path` borrows) is not an identifier (`ToolDefValidator.invalidNamespace`, #1266): it records it with the parse failures, so `isx build` refuses, and skips it among a template's stored definitions.
-It refuses a tool with a bare key under `parameters:` or `proxy.configuration:` the same way (`ToolDefValidator.bareKeys`, #1475); `validateDef` reports it and checks nothing further, since every later check reads those entries.
+It refuses a tool with a bare key under `parameters:` or `proxy.configuration:` the same way (`ToolDefValidator.bareKeys`, #1475); `refusal` and `validateDef` share one list of refusals (bare keys, namespace, path scopes), each tolerating a bare key (`invalidNamespace` skips null entries); `validateDef` reports them all, then stops before the checks that read those entries.
 `ToolProxyResolver` (in `common`) handles configuration resolution.
 Its `fingerprint(List<ResolvedToolProxy>)` (a SHA-256 of the resolved proxy config) is used only by tests -- nothing in production compares it, so it does not drive restarts.
 `findUnresolved()` returns configuration entries that could not be resolved (excluding `type: anthropic`); `ProxyMain` displays a warning for these at startup.

@@ -61,12 +61,9 @@ public class ToolDefValidator {
             }
         }
 
-        var bareKeys = bareKeys(def);
-        if (!bareKeys.isEmpty()) {
-            // Every later check reads the entries; the tool is refused where definitions load anyway
-            errors.addAll(bareKeys);
-            return;
-        }
+        // The refusals tolerate bare keys; the checks below read the entries, so stop before them
+        errors.addAll(refusals(def));
+        if (!bareKeys(def).isEmpty()) return;
 
         for (var entry : def.getParameters().entrySet()) {
             var name = entry.getKey();
@@ -86,10 +83,6 @@ public class ToolDefValidator {
                         + ") greater than max (" + param.getMax() + ")");
             }
         }
-
-        var invalidNamespace = invalidNamespace(def);
-        if (invalidNamespace != null) errors.add(invalidNamespace);
-        errors.addAll(invalidPathScopes(def));
 
         var proxyDef = def.getProxy();
         if (proxyDef != null) {
@@ -201,12 +194,21 @@ public class ToolDefValidator {
 
     /** Why a definition is refused where definitions load, or null when it is not. */
     public static String refusal(ToolDef def) {
-        var bareKeys = bareKeys(def);
-        if (!bareKeys.isEmpty()) return bareKeys.getFirst();
+        var refusals = refusals(def);
+        return refusals.isEmpty() ? null : refusals.getFirst();
+    }
+
+    /**
+     * Every reason a definition is refused where definitions load, in the order {@link #refusal}
+     * names the first. Each check tolerates bare keys, so {@code validateDef} reports them all in
+     * one pass.
+     */
+    private static List<String> refusals(ToolDef def) {
+        var refusals = new ArrayList<>(bareKeys(def));
         var invalidNamespace = invalidNamespace(def);
-        if (invalidNamespace != null) return invalidNamespace;
-        var invalidPaths = invalidPathScopes(def);
-        return invalidPaths.isEmpty() ? null : invalidPaths.getFirst();
+        if (invalidNamespace != null) refusals.add(invalidNamespace);
+        refusals.addAll(invalidPathScopes(def));
+        return refusals;
     }
 
     /**
@@ -307,7 +309,7 @@ public class ToolDefValidator {
             return isNamespace(own) ? null : notAnIdentifier(def, "config-namespace", own);
         }
         for (var entry : proxy.getConfiguration().values()) {
-            // A bare key ('token:') arrives as null; bareKeys reports it
+            // A bare key ('token:') arrives as null; bareKeys reports it, and refusals needs this skip
             if (entry == null) continue;
             var borrowed = proxy.namespaceOf(entry);
             if (!borrowed.isEmpty() && !isNamespace(borrowed)) {
