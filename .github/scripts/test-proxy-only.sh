@@ -44,7 +44,15 @@ nic() {
 
 restricted_on_host() { [ "$(nic "$1")" = isx-proxy-only ]; }
 not_restricted() { [ -z "$(nic "$1")" ]; }
-reaches_internet() { incus exec "$1" -- curl -s -m 10 -o /dev/null http://1.1.1.1/; }
+# A few tries: a branch that just took the address of one deleted moments before can wait on the
+# bridge's neighbour entry for the old one. A positive check may retry; the no-egress checks never do.
+reaches_internet() {
+    for _ in 1 2 3; do
+        incus exec "$1" -- curl -s -m 10 -o /dev/null http://1.1.1.1/ && return 0
+        sleep 5
+    done
+    return 1
+}
 
 # Root in the guest takes another address on the bridge and tries from it. The ACL is on the
 # host side of the NIC, whatever address a packet carries, and spoofing protection drops it too.
