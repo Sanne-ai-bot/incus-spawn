@@ -56,3 +56,27 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks-leaktk.toml
           GITLEAKS_VERSION: '8.27.0'
+
+  # The scans above check the commits in the push or PR. This checks the allowlists themselves:
+  # they must hide fixture values, not fixture files (#1484), so a real-shaped key planted in every
+  # test file must be reported by both configs.
+  allowlist-test:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
+    runs-on: ubuntu-latest
+    # Runs a script from the PR itself, so it gets none of the pull-requests scope above.
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install gitleaks 8.27.0
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.27.0/gitleaks_8.27.0_linux_x64.tar.gz
+          echo 'ba75459d765ebc9e940c0123a2d41a29e87be674b5ecaaacd5f82f26009255d5  /tmp/gitleaks.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+
+      - name: Check the allowlists against planted keys
+        run: bash .github/scripts/test-gitleaks-allowlist.sh /tmp/gitleaks
