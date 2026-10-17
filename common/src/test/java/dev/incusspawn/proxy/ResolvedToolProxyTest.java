@@ -193,13 +193,17 @@ class ResolvedToolProxyTest {
                 "/mcp/..%00/admin", "/mcp/..%09/admin", "/mcp/%7f", "/mcp/..%20/admin", "/mcp/.../admin",
                 "/mcp/%20/admin", "/mcp/%EF%BC%8E%EF%BC%8E/admin", "/mcp/%ef%ac%81",
                 "/mcp/..%3F/admin", "/mcp/..%23", "/mcp/..+/admin", "/mcp/..%e2%88%95..%e2%88%95admin",
-                "/mcp/..%c2%85/admin", "/mcp/..%c2%ad/admin", "/mcp/..%e2%80%8b/admin", "/mcp/..%e2%80%a8/admin", "/mcp/../admin?x=1")) {
+                "/mcp/..%c2%85/admin", "/mcp/..%c2%ad/admin", "/mcp/..%e2%80%8b/admin", "/mcp/..%e2%80%a8/admin",
+                "/mcp/..%CC%81/admin", "/mcp/..%CD%8F/admin", "/mcp/..%EF%B8%8F/admin", "/mcp/..%E3%85%A4/admin",
+                "/mcp/..%2B/admin", "/mcp/a%CC%B8..%CC%B8admin", "/mcp/a%E2%83%A5b", "/mcp/%EF%AC%81le",
+                "/mcp/%E6%97%A5./admin", "/mcp/%CC%81/admin", "/mcp/%E3%85%A4/admin", "/mcp/../admin?x=1")) {
             assertEquals(-1, proxy.pathMatchLength(path), path);
         }
         assertTrue(proxy.matchesPath("/mcp/x?next=/../admin"), "the query is not part of the path");
         assertTrue(proxy.matchesPath("/mcp/my%20file"), "an escape no upstream reads as a path character");
         assertTrue(proxy.matchesPath("/mcp/caf%C3%A9"), "UTF-8 is no other path");
         assertTrue(proxy.matchesPath("/mcp/%E6%97%A5%E6%9C%AC/cafe%CC%81"), "letters and combining marks are literal");
+        assertTrue(proxy.matchesPath("/mcp/%E6%97%A5/x%2By"), "a segment of letters alone, '+' beside a letter");
         assertTrue(proxy.matchesPath("/mcp/a:b@c!$&'()*+,=/x;v=1"), "every other pchar is literal");
         assertTrue(proxy.matchesPath("/mcp/a%20b/..x"), "a segment with more than dots and spaces is literal");
         assertTrue(proxy.matchesPath("/mcp/a..b/.c/x."), "dots inside a segment are literal");
