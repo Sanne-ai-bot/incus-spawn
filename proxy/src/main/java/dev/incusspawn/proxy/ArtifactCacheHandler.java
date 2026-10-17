@@ -927,17 +927,32 @@ class ArtifactCacheHandler {
         // Timed from when it runs, not from the request it followed: no client waits on it
         inBackground(cacheFile, () -> fetchNpmVersion(domain, packageName, version, System.nanoTime())
                 .compose(answer -> answer.unreachable() ? Future.succeededFuture() : vertx.executeBlocking(() -> {
-                    var result = checkNpmTarballCache(cacheFile, null, ref, answer);
-                    if (result == null) {
-                        VerifiedArtifactStore.expireConfirmation(cacheFile, Path.of(cacheFile + ".shasum"));
-                    } else if (!result.cacheHit()) {
-                        // Changed upstream: nothing downloads the new tarball here, so keep no sidecars for it
-                        evictNpmTarball(cacheFile);
-                    }
+                    reconcileNpmCopy(cacheFile, ref, answer);
                     return null;
                 }))
                 .onFailure(err -> System.err.println("npm background confirmation error for " + ref
                         + ": " + err.getMessage())));
+    }
+
+    /**
+     * Reconcile a cached tarball with upstream's (reachable) answer, for a background
+     * confirmation. It only ever renews, expires or evicts the copy there is, and never
+     * writes a sidecar: a foreground request may have evicted the copy meanwhile and be
+     * fetching it again, and its sidecars are not this one's to touch.
+     */
+    static void reconcileNpmCopy(Path cacheFile, String ref, SidecarAnswer answer) throws IOException {
+        if (!Files.isRegularFile(cacheFile)) return;
+        var storedShasum = Path.of(cacheFile + ".shasum");
+        var shasum = answer.status() == 200 ? npmShasum(answer.body()) : null;
+        if (shasum != null && shasum.equals(readFileOrNull(storedShasum))) {
+            VerifiedArtifactStore.renewConfirmation(cacheFile, storedShasum);
+        } else if (shasum != null || answer.gone()) {
+            System.out.println("npm cache: " + ref + (shasum != null ? " changed upstream"
+                    : " is gone upstream (" + answer.status() + ")") + ", evicting");
+            evictNpmTarball(cacheFile);
+        } else {
+            VerifiedArtifactStore.expireConfirmation(cacheFile, storedShasum);
+        }
     }
 
     /**
