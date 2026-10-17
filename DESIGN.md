@@ -225,7 +225,9 @@ The marks are TUI state only, kept by name: a refresh keeps them, drops those of
 Space marks instances the same way (#1482).
 While the focused table has marks, the keys that change state act on the marked rows and leave the row under the cursor alone, as a file manager with this F-key layout does.
 F8 destroys the marked templates or instances after one confirmation that names them: only the built templates, and anything derived from another marked row before it.
-F7 stops and Shift+F7 restarts the marked running instances.
+F7 stops and Shift+F7 restarts the marked running instances, after a confirmation that lists every one of them and names the marked ones left alone (Sanne, #1482).
+That list, like F8's for marked rows, is never cut short, because the marks may be out of sight and a stop ends what runs there.
+A single row's F7 still acts at once.
 The keys that open one thing (F2, F3, F4, F6, F9, `a`, Enter) keep acting on the cursor's row, since for several rows each would be a shell or a dialog.
 Shift+F8 still means all.
 A batch is refused while any marked row has an operation under way, as F5's are.

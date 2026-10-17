@@ -55,10 +55,13 @@ class DeleteConfirmTest {
     }
 
     @Test
-    void listsAtMostEightNamesAndCountsTheRest() {
-        assertEquals("a, b", DeleteConfirm.listed(List.of("a", "b")));
-        var nine = List.of("a", "b", "c", "d", "e", "f", "g", "h", "i");
-        assertEquals("a, b, c, d, e, f, g and 2 more", DeleteConfirm.listed(nine));
-        assertEquals("a, b, c, d, e, f, g, h", DeleteConfirm.listed(nine.subList(0, 8)));
+    void listsEveryMarkedNameNoneCountedAway() {
+        var names = new java.util.ArrayList<String>();
+        for (int i = 1; i <= 30; i++) names.add("box-" + i);
+        var dialog = DeleteConfirm.ofSeveral(new ModalRenderer(TuiTheme.dark()), names, DeleteConfirm.Kind.INSTANCE);
+        var screen = TuiSnapshot.toText(TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+        var shown = MarkedStopConfirmTest.tokens(screen);
+        for (var name : names) assertTrue(shown.contains(name), name + ":\n" + screen);
+        assertFalse(screen.contains("more"), screen);
     }
 }

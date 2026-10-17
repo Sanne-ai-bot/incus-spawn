@@ -80,7 +80,10 @@ The F5 build menu is `BuildMenu` (`BuildMenuTest`): it builds its options from t
 `Tui.markedTemplates` is the set Space marks on the templates table (#1131, `TuiTemplateMarksTest`); `BuildMenu` leads with options for it, and `Tui` clears it when one of those (`BuildMenuOption.marked`) is built.
 Each option names the templates it rebuilds (`BuildMenuOption.rebuilds`, a chain from `BuildCommand.withParentsChain`/`withDescendantsChain`), and `Tui` refuses it while any of them, or for an option not about the marks the row under the cursor, has an operation under way; so with marks set F5 opens even on a busy row.
 `Tui.markedInstances` is the same set for the instances table (#1482, `TuiInstanceMarksTest`).
-With instance marks set, F8 opens `DeleteConfirm.ofSeveral` for them, and F7 / Shift+F7 stop or restart the marked running ones; both are handled before the cursor row's busy check.
+With instance marks set, F8 opens `DeleteConfirm.ofSeveral` for them, and F7 / Shift+F7 open `MarkedStopConfirm` (`MarkedStopConfirmTest`) for the marked running ones; both are handled before the cursor row's busy check.
+Both list every name they act on through `ModalRenderer.listMessage`: one per line while the dialog fits the screen, wrapped otherwise, never "and N more" (Sanne, #1482).
+On y, `Tui` checks them again, since a refresh may have stopped or busied them while the dialog was open, and stops or restarts those still running.
+`ModalRenderer.confirmLines` widens any confirm dialog for a word too long or text too tall for it; text that still does not fit keeps the buttons and says how many lines are hidden.
 F8 on marked templates (`confirmDestroyMarkedTemplates`) destroys the built ones.
 `Tui.derivedFirst` orders either batch so a row goes after anything derived from it, by the parents the rows record.
 A batch is refused while any marked row is busy, and launching one clears its table's marks; Esc clears both sets.

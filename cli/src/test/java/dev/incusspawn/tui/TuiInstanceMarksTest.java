@@ -145,7 +145,8 @@ class TuiInstanceMarksTest {
         assertEquals(Tui.Mode.CONFIRM_DELETE, tui.mode());
         var dialog = screen(tui);
         assertTrue(dialog.contains("Destroy 2 instances"), dialog);
-        assertTrue(dialog.contains("alpha, gamma"), dialog);
+        assertTrue(dialog.contains("This will destroy:"), dialog);
+        assertTrue(dialog.indexOf("  alpha ") > 0 && dialog.indexOf("  alpha ") < dialog.indexOf("  gamma "), dialog);
         press(tui, KeyEvent.ofChar('y'));
         daemon.clearRequests();
         runQueued();
@@ -174,9 +175,16 @@ class TuiInstanceMarksTest {
     }
 
     @Test
-    void stoppingWithMarksStopsTheMarkedRunningOnes() {
+    void stoppingWithMarksAsksFirstNamingTheOnesItStops() {
         var tui = withAlphaAndGammaMarked();
         press(tui, KeyEvent.ofKey(KeyCode.F7));
+        assertEquals(Tui.Mode.CONFIRM_MARKED_STOP, tui.mode());
+        assertTrue(queued.isEmpty(), "nothing stops before the confirmation");
+        var dialog = screen(tui);
+        assertTrue(dialog.contains("Stop 1 instance"), dialog);
+        assertTrue(dialog.contains("This will stop:") && dialog.contains("  alpha "), dialog);
+        assertTrue(dialog.contains("Not running, left as is: gamma."), dialog);
+        press(tui, KeyEvent.ofChar('y'));
         runQueued();
         assertEquals(List.of("alpha stop"), daemon.stateActions(), "gamma is already stopped, beta not marked");
         assertTrue(tui.markedInstances().isEmpty());
@@ -186,6 +194,11 @@ class TuiInstanceMarksTest {
     void restartingWithMarksRestartsOnlyTheMarkedRunningOnes() {
         var tui = withAlphaAndGammaMarked();
         press(tui, KeyEvent.ofKey(KeyCode.F7, KeyModifiers.SHIFT));
+        assertTrue(tasks.getActiveTasks().isEmpty(), "nothing restarts before the confirmation");
+        var dialog = screen(tui);
+        assertTrue(dialog.contains("Restart 1 instance"), dialog);
+        assertTrue(dialog.contains("This will restart:") && dialog.contains("  alpha "), dialog);
+        press(tui, KeyEvent.ofChar('y'));
         // Not run: a restart waits for the guest, which this daemon does not bring up
         assertEquals(List.of("Restarting alpha"),
                 tasks.getActiveTasks().stream().map(BackgroundTask::displayName).toList());
@@ -222,6 +235,52 @@ class TuiInstanceMarksTest {
         for (var c : "zzz".toCharArray()) press(tui, KeyEvent.ofChar(c));
         // While the search is open it can hide every row, the marked one too
         assertFalse(f7Enabled(tui), "with no row shown, F7 is shown disabled, as F8 is");
+    }
+
+    @Test
+    void confirmingStopsNothingThatStoppedWhileTheDialogWasOpen() {
+        var tui = withAlphaAndGammaMarked();
+        press(tui, KeyEvent.ofKey(KeyCode.F7));
+        assertEquals(Tui.Mode.CONFIRM_MARKED_STOP, tui.mode());
+        // alpha stops elsewhere; the listing the dialog acts on is reloaded
+        daemon.instance("alpha", "container", "Stopped", branch());
+        tui.loader.mergeInstances(InstanceListing.collectEntries(daemon.client().listJson()));
+        tui.publishRows();
+        press(tui, KeyEvent.ofChar('y'));
+        runQueued();
+        assertTrue(daemon.stateActions().isEmpty(), daemon.stateActions().toString());
+        assertEquals("No marked instance is running", tui.statusMessage);
+        assertEquals(List.of("alpha", "gamma"), List.copyOf(tui.markedInstances()), "the marks are kept");
+    }
+
+    @Test
+    void anyOtherKeyCancelsTheStopAndKeepsTheMarks() {
+        var tui = withAlphaAndGammaMarked();
+        press(tui, KeyEvent.ofKey(KeyCode.F7), KeyEvent.ofChar('n'));
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        runQueued();
+        assertTrue(daemon.stateActions().isEmpty(), daemon.stateActions().toString());
+        assertEquals(List.of("alpha", "gamma"), List.copyOf(tui.markedInstances()));
+    }
+
+    @Test
+    void theStopConfirmationListsEveryMarkedRunningInstance() {
+        var names = new java.util.ArrayList<String>();
+        for (int i = 1; i <= 12; i++) {
+            var name = String.format("mcp-tpl-isx-agent-1482-design-%02d", i);
+            names.add(name);
+            daemon.instance(name, "container", "Running", branch());
+        }
+        var tui = tui();
+        press(tui, TAB);
+        // alpha and beta come first in the table; mark everything
+        for (int i = 0; i < names.size() + 3; i++) press(tui, SPACE, DOWN);
+        press(tui, KeyEvent.ofKey(KeyCode.F7));
+        var dialog = screen(tui);
+        assertTrue(dialog.contains("Stop 14 instances"), dialog);
+        for (var name : names) assertTrue(dialog.contains(name), name + " is not listed:\n" + dialog);
+        assertTrue(dialog.contains("alpha") && dialog.contains("beta"), dialog);
+        assertFalse(dialog.contains("more"), "every name is listed, none counted:\n" + dialog);
     }
 
     @Test
