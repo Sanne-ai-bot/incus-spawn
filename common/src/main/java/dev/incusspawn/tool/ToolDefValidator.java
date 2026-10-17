@@ -4,6 +4,7 @@ import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.proxy.ProxyConfig;
+import dev.incusspawn.proxy.ResolvedToolProxy;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.util.OutputFormat;
 
@@ -279,6 +280,11 @@ public class ToolDefValidator {
             if (segment.isEmpty() && i == segments.length - 1) continue;
             if (segment.isEmpty()) return "must not contain an empty segment ('//')";
             if (segment.equals(".") || segment.equals("..")) return "must not contain a '.' or '..' segment";
+        }
+        if (ResolvedToolProxy.mayResolveElsewhere(path)) {
+            return "must be a path no upstream may read as another: no '\\', no ';' on an empty or dot segment,"
+                    + " no escape of an unreserved character, '/', '\\', ';' or '%', only UTF-8 escapes;"
+                    + " the proxy matches no request under such a prefix";
         }
         return null;
     }

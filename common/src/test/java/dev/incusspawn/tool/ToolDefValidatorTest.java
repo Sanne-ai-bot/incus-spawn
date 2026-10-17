@@ -95,7 +95,8 @@ class ToolDefValidatorTest {
         for (var invalid : Map.of(
                 "''", "is empty", "mcp", "must start with '/' (for example '/mcp')",
                 "'/mcp '", "whitespace", "' /api'", "whitespace", "'/mcp?x=1'", "query", "'/mcp/*'", "wildcards",
-                "'/a//b'", "empty segment", "/a/../b", "'..' segment").entrySet()) {
+                "'/a//b'", "empty segment", "/a/../b", "'..' segment",
+                "'/a/..;/b'", "no upstream may read", "'/a%2Fb'", "no upstream may read").entrySet()) {
             Files.writeString(file, yaml.replace("PATHS", "/ok, " + invalid.getKey()));
             var result = ToolDefValidator.validate(file);
             assertEquals(1, result.errors().size(), invalid.getKey() + ": " + result.errors());
