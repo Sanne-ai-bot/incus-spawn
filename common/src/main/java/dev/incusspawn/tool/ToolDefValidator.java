@@ -61,6 +61,13 @@ public class ToolDefValidator {
             }
         }
 
+        var bareKeys = bareKeys(def);
+        if (!bareKeys.isEmpty()) {
+            // Every later check reads the entries; the tool is refused where definitions load anyway
+            errors.addAll(bareKeys);
+            return;
+        }
+
         for (var entry : def.getParameters().entrySet()) {
             var name = entry.getKey();
             var param = entry.getValue();
@@ -194,10 +201,36 @@ public class ToolDefValidator {
 
     /** Why a definition is refused where definitions load, or null when it is not. */
     public static String refusal(ToolDef def) {
+        var bareKeys = bareKeys(def);
+        if (!bareKeys.isEmpty()) return bareKeys.getFirst();
         var invalidNamespace = invalidNamespace(def);
         if (invalidNamespace != null) return invalidNamespace;
         var invalidPaths = invalidPathScopes(def);
         return invalidPaths.isEmpty() ? null : invalidPaths.getFirst();
+    }
+
+    /**
+     * Every key under {@code parameters:} or {@code proxy.configuration:} left without a
+     * definition ({@code flavour:} with nothing under it, which arrives as null), as an error.
+     * Such a tool is refused where definitions load, like an invalid namespace: a bare key has
+     * no meaning of its own, and no default is implied (#1475).
+     */
+    public static List<String> bareKeys(ToolDef def) {
+        var errors = new ArrayList<String>();
+        def.getParameters().forEach((name, param) -> {
+            if (param == null) {
+                errors.add(OutputFormat.oneLine("parameter '" + name + "' in '" + def.getName() + "' has no definition"));
+            }
+        });
+        if (def.getProxy() != null) {
+            def.getProxy().getConfiguration().forEach((key, entry) -> {
+                if (entry == null) {
+                    errors.add(OutputFormat.oneLine("configuration '" + key + "' in proxy for '" + def.getName()
+                            + "' has no definition"));
+                }
+            });
+        }
+        return errors;
     }
 
     /**
@@ -274,7 +307,7 @@ public class ToolDefValidator {
             return isNamespace(own) ? null : notAnIdentifier(def, "config-namespace", own);
         }
         for (var entry : proxy.getConfiguration().values()) {
-            // A key left empty in YAML ('token:') arrives as null
+            // A bare key ('token:') arrives as null; bareKeys reports it
             if (entry == null) continue;
             var borrowed = proxy.namespaceOf(entry);
             if (!borrowed.isEmpty() && !isNamespace(borrowed)) {

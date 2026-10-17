@@ -371,20 +371,29 @@ class ToolDefLoaderTest {
         assertEquals("built-in", loader.getSource("podman"));
     }
 
-    /** A configuration key left empty in YAML arrives as null; main loads such a tool, so must the check. */
+    /** A bare key under parameters: or proxy.configuration: is refused like an invalid namespace (#1475). */
     @Test
-    void aToolWithAnEmptyConfigurationKeyStillLoads(@TempDir Path tempDir) throws Exception {
-        Files.writeString(tempDir.resolve("empty-key.yaml"), """
+    void aToolWithABareKeyIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
+        var bare = tempDir.resolve("empty-key.yaml");
+        Files.writeString(bare, """
                 name: empty-key
+                parameters:
+                  flavour:
                 proxy:
                   configuration:
                     token:
                 """);
-        var loader = new ToolDefLoader();
-        loader.setProjectToolsDir(tempDir);
+        var reported = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
 
-        assertNotNull(loader.find("empty-key"));
-        assertEquals(List.of(), loader.parseFailures());
+            assertNull(loader.find("empty-key"));
+            assertEquals(List.of(bare.toAbsolutePath().normalize()), loader.parseFailures());
+            assertEquals(1, reported.size(), reported.toString());
+            assertTrue(reported.get(0).startsWith("empty-key.yaml: parameter 'flavour' in 'empty-key' has no definition"),
+                    reported.get(0));
+        }
     }
 
     /**

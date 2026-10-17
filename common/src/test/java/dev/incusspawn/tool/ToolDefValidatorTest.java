@@ -617,4 +617,20 @@ class ToolDefValidatorTest {
         var errors = ToolDefValidator.validate(file).errors();
         assertTrue(errors.stream().anyMatch(e -> e.contains("acme_placeholder")), errors.toString());
     }
+
+    /** A bare key ('flavour:' with nothing under it) has no definition: an error, never an NPE (#1475). */
+    @Test void aBareKeyIsAnErrorNamingIt(@TempDir Path dir) throws Exception {
+        for (var entry : Map.of(
+                "name: a\nparameters:\n  flavour:\n", "parameter 'flavour' in 'a' has no definition",
+                "name: b\nproxy:\n  configuration:\n    key:\n", "configuration 'key' in proxy for 'b' has no definition")
+                .entrySet()) {
+            var file = dir.resolve("bare.yaml");
+            Files.writeString(file, entry.getKey());
+            var result = ToolDefValidator.validate(file);
+            assertEquals(List.of(entry.getValue()), result.errors());
+            try (var is = Files.newInputStream(file)) {
+                assertEquals(entry.getValue(), ToolDefValidator.refusal(ToolDef.loadFromStream(is)));
+            }
+        }
+    }
 }

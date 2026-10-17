@@ -283,6 +283,7 @@ That is its `config-namespace`, or the namespace a `config-path` borrows.
 An identifier is letters, digits, `.`, `-` and `_`, starting with a letter or digit, the rule proof tokens already used; camelCase and `.` stay allowed, because a previous release's `config.yaml` may hold such a namespace.
 The namespace names a place in `config.yaml`, and `isx init` and `isx account` print it as is.
 `ToolDefValidator.invalidNamespace` holds the rule, and `ToolDefValidator.validateDef` reports it as an error.
+A tool definition is refused the same way with a bare key under `parameters:` or `proxy.configuration:` (`flavour:` with nothing under it; `ToolDefValidator.bareKeys`, #1475): a bare key has no meaning of its own, and isx does not imply a default for it.
 
 ### Tool System
 
