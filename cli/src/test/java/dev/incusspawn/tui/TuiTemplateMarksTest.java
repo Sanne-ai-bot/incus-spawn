@@ -228,7 +228,8 @@ class TuiTemplateMarksTest {
         assertEquals(Tui.Mode.CONFIRM_DELETE, tui.mode());
         var dialog = TuiSnapshot.toText(TuiSnapshot.render(80, 24, tui::render));
         assertTrue(dialog.contains("Destroy 2 templates"), dialog);
-        assertTrue(dialog.contains("tpl-a, tpl-minimal"), dialog);
+        assertTrue(dialog.contains("This will destroy:"), dialog);
+        assertTrue(dialog.indexOf("  tpl-a ") > 0 && dialog.indexOf("  tpl-a ") < dialog.indexOf("  tpl-minimal "), dialog);
         press(tui, KeyEvent.ofChar('y'));
         assertTrue(tui.markedTemplates().isEmpty(), "a destroy launched from the marks clears them");
         daemon.clearRequests();

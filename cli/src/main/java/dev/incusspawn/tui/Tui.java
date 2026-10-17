@@ -194,11 +194,13 @@ public class Tui {
                                 IncusClient.PoolUsage poolUsage, RuntimeException error) {}
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT, WARNINGS }
+    enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_MARKED_STOP, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT, WARNINGS }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     /** The delete confirmation; set when it opens, and read again by the destroy it confirms. */
     private DeleteConfirm deleteConfirm;
+    /** The confirmation before F7 / Shift+F7 on the marked instances; set when it opens. */
+    private MarkedStopConfirm markedStopConfirm;
     /** The pool-cleanup dialog; set when 'c' finds a pool, and kept for the result it shows after the clean. */
     private CleanModal clean;
     /** The F5 build menu; set when it opens. */
@@ -604,6 +606,7 @@ public class Tui {
         return switch (mode) {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
             case CONFIRM_DELETE -> handleConfirmDeleteEvent(key, tui, tableState);
+            case CONFIRM_MARKED_STOP -> handleConfirmMarkedStopEvent(key);
             case BUILD_MENU -> handleBuildMenuEvent(key, tui);
             case CONFIRM_STOP_FOR_RENAME -> handleConfirmStopForRenameEvent(key, tui, tableState);
             case CONFIRM_BUILD_FOR_BRANCH -> handleConfirmBuildForBranchEvent(key, tui);
@@ -992,11 +995,34 @@ public class Tui {
             statusMessage = "No marked instance is running";
             return;
         }
+        // Asked first (Sanne, #1482): the marks may be out of sight, and a stop ends what runs there
+        markedStopConfirm = new MarkedStopConfirm(modal, running.stream().map(InstanceInfo::name).toList(),
+                marked.stream().filter(e -> !isRunning(e)).map(InstanceInfo::name).toList(), key.hasShift());
+        mode = Mode.CONFIRM_MARKED_STOP;
+    }
+
+    /** y stops or restarts the instances the confirmation lists, those still running; any other key cancels. */
+    private boolean handleConfirmMarkedStopEvent(KeyEvent key) {
+        mode = Mode.BROWSE;
+        if (markedStopConfirm.handleKey(key) != MarkedStopConfirm.Outcome.CONFIRM) return true;
+        // Checked again: a refresh may have changed them while the dialog was open
+        var names = markedStopConfirm.names();
+        var targets = markedInstanceEntries().stream().filter(e -> names.contains(e.name()) && isRunning(e)).toList();
+        var busy = targets.stream().filter(this::isBusy).findFirst();
+        if (busy.isPresent()) {
+            statusMessage = "Operation in progress for " + busy.get().name();
+            return true;
+        }
+        if (targets.isEmpty()) {
+            statusMessage = "No marked instance is running";
+            return true;
+        }
         markedInstances.clear();
-        for (var instance : running) {
-            if (key.hasShift()) restartInBackground(instance);
+        for (var instance : targets) {
+            if (markedStopConfirm.restart()) restartInBackground(instance);
             else stopInBackground(instance);
         }
+        return true;
     }
 
     private void stopInBackground(InstanceInfo instance) {
@@ -1586,6 +1612,7 @@ public class Tui {
         modal.renderScrim(frame, screen);
         switch (mode) {
             case CONFIRM_DELETE -> deleteConfirm.render(frame, screen);
+            case CONFIRM_MARKED_STOP -> markedStopConfirm.render(frame, screen);
             case BUILD_MENU -> buildMenu.renderBuildMenu(frame, screen);
             case CONFIRM_BUILD_FOR_BRANCH -> {
                 modal.renderConfirmModal(frame, screen,

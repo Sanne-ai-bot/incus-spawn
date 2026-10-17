@@ -76,8 +76,8 @@ final class DeleteConfirm {
     void render(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         if (!several.isEmpty()) {
             var title = " Destroy " + several.size() + " " + kind.noun + (several.size() == 1 ? " " : "s ");
-            modal.renderConfirmModal(frame, screen, title,
-                    "This will destroy " + listed(several) + ". This action cannot be undone.", modal.warn());
+            modal.renderConfirmModal(frame, screen, title, ModalRenderer.listMessage("This will destroy", several,
+                    "This action cannot be undone.", screen.height()), modal.warn());
             return;
         }
         var isAllTemplates = "--all".equals(pendingDeleteName);
@@ -91,12 +91,4 @@ final class DeleteConfirm {
                 : "This action cannot be undone." + pendingDeleteNote;
         modal.renderConfirmModal(frame, screen, title, message, modal.warn());
     }
-
-    /** The names, comma separated; past {@link #LISTED} of them, the rest are counted. */
-    static String listed(List<String> names) {
-        if (names.size() <= LISTED) return String.join(", ", names);
-        return String.join(", ", names.subList(0, LISTED - 1)) + " and " + (names.size() - LISTED + 1) + " more";
-    }
-
-    private static final int LISTED = 8;
 }

@@ -235,11 +235,9 @@ final class ModalRenderer {
     void renderConfirmModal(Frame frame, Rect screen,
                                     String title, String message, Color borderColor,
                                     String confirmLabel, String confirmKey) {
-        int modalWidth = 54;
-        int innerWidth = modalWidth - 6;
-        var wrappedLines = wrapText(message, innerWidth);
-        int modalHeight = 2 + 1 + wrappedLines.size() + 1 + 2;
-        var modalArea = centerRect(screen, modalWidth, modalHeight);
+        var wrappedLines = confirmLines(message, screen);
+        int textWidth = wrappedLines.stream().mapToInt(String::length).max().orElse(0);
+        var modalArea = centerRect(screen, Math.max(CONFIRM_TEXT_WIDTH, textWidth) + 6, confirmModalHeight(wrappedLines.size()));
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
                 .title(styledTitle(title, borderColor))
@@ -270,6 +268,48 @@ final class ModalRenderer {
         addKey(btnSpans, confirmKey, confirmLabel);
         addKey(btnSpans, "any key", "Cancel");
         frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(rows.size() - 1));
+    }
+
+    /** The width of a confirm dialog's text: the dialog is six cells wider, for its frame and padding. */
+    static final int CONFIRM_TEXT_WIDTH = 48;
+
+    /** A confirm dialog's height for {@code textLines} of wrapped text: frame, spacing and buttons add six. */
+    static int confirmModalHeight(int textLines) {
+        return 2 + 1 + textLines + 1 + 2;
+    }
+
+    /**
+     * The confirm dialog's text, wrapped to {@link #CONFIRM_TEXT_WIDTH}; a word too long for that,
+     * or text too tall for the screen, widens it as far as the screen allows. Text that still does
+     * not fit keeps the buttons on screen and says how much is hidden, rather than clipping silently.
+     */
+    static List<String> confirmLines(String message, Rect screen) {
+        var lines = wrapText(message, CONFIRM_TEXT_WIDTH);
+        int widest = lines.stream().mapToInt(String::length).max().orElse(0);
+        int widestAllowed = screen.width() - 10;   // the frame and padding, and a margin each side
+        if ((widest > CONFIRM_TEXT_WIDTH || confirmModalHeight(lines.size()) > screen.height())
+                && widestAllowed > CONFIRM_TEXT_WIDTH) {
+            lines = wrapText(message, widestAllowed);
+        }
+        int room = screen.height() - confirmModalHeight(0);
+        if (lines.size() > room && room > 0) {
+            int hidden = lines.size() - room + 1;
+            lines = new ArrayList<>(lines.subList(0, room - 1));
+            lines.add("… " + hidden + " more lines: enlarge the terminal to see them");
+        }
+        return lines;
+    }
+
+    /**
+     * A confirm dialog's message naming every one of {@code names} (#1482): {@code heading} and a
+     * colon, then one name per line while the dialog fits {@code screenHeight}, else {@code heading}
+     * and the names wrapped as one list; never "and N more". {@code tail} follows as its own paragraph.
+     */
+    static String listMessage(String heading, List<String> names, String tail, int screenHeight) {
+        var after = tail.isEmpty() ? "" : "\n\n" + tail;
+        var oneLineEach = heading + ":\n  " + String.join("\n  ", names) + after;
+        if (confirmModalHeight(wrapText(oneLineEach, CONFIRM_TEXT_WIDTH).size()) <= screenHeight) return oneLineEach;
+        return heading + " " + String.join(", ", names) + "." + after;
     }
 
     /**
