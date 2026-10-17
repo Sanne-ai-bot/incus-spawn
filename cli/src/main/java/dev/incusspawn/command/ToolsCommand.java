@@ -153,9 +153,9 @@ public class ToolsCommand extends BaseCommand {
                     ? yaml.toolDef().getDownloads().stream().map(d -> d.getUrl()).toList() : List.of());
             var domains = new ArrayList<String>();
             var proxy = tool.proxy();
-            if (proxy != null && proxy.getAuth() != null) {
+            if (proxy != null) {
                 for (var auth : proxy.getAuth()) {
-                    if (auth.getDomains() != null) domains.addAll(auth.getDomains());
+                    domains.addAll(auth.getDomains());
                 }
             }
             record.put("proxy_domains", domains);
@@ -206,7 +206,7 @@ public class ToolsCommand extends BaseCommand {
                 if (p.getDescription() != null && !p.getDescription().isBlank()) {
                     line(out, "      " + p.getDescription());
                 }
-                if (p.getOptions() != null && !p.getOptions().isEmpty()) {
+                if (!p.getOptions().isEmpty()) {
                     line(out, "      options: " + String.join(", ", p.getOptions()));
                 }
             }
@@ -239,13 +239,11 @@ public class ToolsCommand extends BaseCommand {
             var proxy = tool.proxy();
             if (proxy == null) return;
             var auth = proxy.getAuth();
-            if (auth == null || auth.isEmpty()) return;
+            if (auth.isEmpty()) return;
             line(out, "  Proxy domains:");
             for (var a : auth) {
-                if (a.getDomains() != null) {
-                    for (var domain : a.getDomains()) {
-                        line(out, "    " + domain + " (" + a.getType() + ")");
-                    }
+                for (var domain : a.getDomains()) {
+                    line(out, "    " + domain + " (" + a.getType() + ")");
                 }
             }
         }

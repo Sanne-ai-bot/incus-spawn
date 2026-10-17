@@ -104,7 +104,7 @@ public final class ToolProxyResolver {
             var allConfigValues = resolveConfiguration(proxyDef, configTree, toolSetups, accountsByNamespace);
 
             for (var authEntry : proxyDef.getAuth()) {
-                if (authEntry.getDomains() == null || authEntry.getDomains().isEmpty()) continue;
+                if (authEntry.getDomains().isEmpty()) continue;
                 if (authEntry.getType() == null) continue;
 
                 boolean isAnthropic = "anthropic".equals(authEntry.getType());
@@ -230,10 +230,10 @@ public final class ToolProxyResolver {
             var proxyDef = tool.proxy();
             if (proxyDef == null || tool.placeholders().isEmpty()) return;
             for (var auth : proxyDef.getAuth()) {
-                if (auth.getDomains() == null || auth.getType() == null) continue;
+                if (auth.getType() == null) continue;
                 var spends = namespacesOf(proxyDef, auth);
                 for (var domain : auth.getDomains()) {
-                    if (domain != null && !domain.isBlank()) {
+                    if (!domain.isBlank()) {
                         result.add(new ResolvedToolProxy(toolName, domain, auth, Map.of(), spends));
                     }
                 }
@@ -335,7 +335,7 @@ public final class ToolProxyResolver {
             var unsupplied = new java.util.LinkedHashSet<String>();
             boolean anyServed = false;
             for (var auth : proxyDef.getAuth()) {
-                if (auth.getDomains() == null || auth.getDomains().isEmpty()) continue;
+                if (auth.getDomains().isEmpty()) continue;
                 if (auth.getType() == null || "anthropic".equals(auth.getType())) continue;
                 var missing = extractReferencedKeys(auth).stream()
                         .filter(key -> !resolved.containsKey(key) && suppliable(proxyDef, key)
