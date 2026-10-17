@@ -53,9 +53,10 @@ public final class ProxyOnlyAcl {
     }
 
     /**
-     * What an instance's egress may reach. DNS is also among the rules Incus adds ahead of any ACL;
-     * it is named here so that a change there does not cut it. ICMP echo is for the connectivity
-     * watchdog's {@code ping} of the gateway.
+     * What an instance's egress may reach. DNS, over UDP and TCP, is also among the rules Incus adds
+     * ahead of any ACL, so no ACL can narrow it; it is named here so that the ACL says what is in
+     * force, and a change there does not cut it. ICMP echo is for the connectivity watchdog's
+     * {@code ping} of the gateway.
      */
     static List<Map<String, String>> egressRules(String gateway) {
         var ports = ProxyConfig.CONTAINER_FACING_PORT + "," + ProxyConfig.DEFAULT_HEALTH_PORT;
@@ -98,10 +99,48 @@ public final class ProxyOnlyAcl {
                 + "Until then, use full network or --airgap.";
     }
 
-    /** Whether Incus would attach any NIC to the instance. */
+    /**
+     * Whether a device reaches a network: a NIC, or an InfiniBand device, which reaches one
+     * without any NIC.
+     */
+    private static boolean isNetworkDevice(JqValue device) {
+        return IncusClient.isNic(device) || "infiniband".equals(device.pathText("type", ""));
+    }
+
+    /** Whether Incus would attach any network device to the instance. */
     private static boolean hasNic(JqValue instance) {
         return instance.path("expanded_devices") instanceof io.hyperfoil.tools.jjq.value.JqObject devices
-                && devices.keys().stream().anyMatch(device -> IncusClient.isNic(devices.path(device)));
+                && devices.keys().stream().anyMatch(device -> isNetworkDevice(devices.path(device)));
+    }
+
+    /**
+     * The network devices Incus would attach to {@code instance} besides {@code restricted}, from
+     * its own devices or a profile's: NICs, and InfiniBand devices, which reach a network without
+     * any NIC. Only the one bridge NIC carries the ACL, so any other has full egress.
+     */
+    static List<String> otherNics(JqValue instance, String restricted) {
+        if (!(instance.path("expanded_devices") instanceof io.hyperfoil.tools.jjq.value.JqObject devices)) return List.of();
+        return devices.keys().stream()
+                .filter(device -> !device.equals(restricted) && isNetworkDevice(devices.path(device)))
+                .sorted().toList();
+    }
+
+    /**
+     * Refuse proxy-only for {@code instance} when Incus would attach a NIC besides the bridge one
+     * isx restricts. One with no bridge NIC is left to the callers, which refuse it themselves.
+     *
+     * @param subject how the refusal names it: the instance, or the branch to be made from it
+     * @param remedy what the user can do about it
+     * @throws NotEnforceableException when it would
+     */
+    static void requireOneNic(String subject, JqValue instance, String remedy) {
+        var nic = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
+        if (nic == null) return;
+        var others = otherNics(instance, nic);
+        if (others.isEmpty()) return;
+        throw new NotEnforceableException(subject + " has a network device besides the one on " + BridgeAddress.BRIDGE
+                + " that --proxy-only restricts (" + String.join(", ", others) + "), which would reach the network"
+                + " directly. " + remedy);
     }
 
     /** Whether a NIC's config has the ACL in force, exactly as isx sets it. */
@@ -135,6 +174,8 @@ public final class ProxyOnlyAcl {
             }
             return;
         }
+        requireOneNic("'" + name + "' is proxy-only, but it", instance, "isx will not use it until the device is"
+                + " removed from it or its profile; 'isx destroy " + name + "' removes it.");
         if (inForce(nic.config())) return;
         try {
             // The bridge's gateway, not the one the instance recorded: the ACL is every proxy-only
