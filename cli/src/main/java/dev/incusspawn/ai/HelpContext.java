@@ -7,6 +7,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.util.OutputFormat;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -124,23 +125,40 @@ public class HelpContext {
         for (var entry : allImages.entrySet().stream()
                 .sorted(java.util.Map.Entry.comparingByKey()).toList()) {
             var img = entry.getValue();
-            sb.append("# ").append(img.getName());
-            if (img.getDescription() != null && !img.getDescription().isBlank()) {
-                sb.append(" — ").append(img.getDescription());
-            }
+            sb.append("# ").append(field(img.getName()));
+            var description = field(img.getDescription());
+            if (!description.isEmpty()) sb.append(" — ").append(description);
             sb.append("\n");
-            if (img.getParent() != null) sb.append("  parent: ").append(img.getParent()).append("\n");
-            if (img.getType() != null) sb.append("  type: ").append(img.getType()).append("\n");
+            appendField(sb, "parent", img.getParent());
+            appendField(sb, "type", img.getType());
             if (!img.getPackages().isEmpty()) {
-                sb.append("  packages: ").append(String.join(", ", img.getPackages())).append("\n");
+                sb.append("  packages: ").append(field(String.join(", ", img.getPackages()))).append("\n");
             }
             if (!img.getTools().isEmpty()) {
-                sb.append("  tools: ").append(img.getTools().stream()
-                        .map(t -> t.getName()).collect(Collectors.joining(", "))).append("\n");
+                sb.append("  tools: ").append(field(img.getTools().stream()
+                        .map(t -> t.getName()).collect(Collectors.joining(", ")))).append("\n");
             }
             sb.append("\n");
         }
         return sb.toString();
+    }
+
+    /**
+     * A template field on one line, whitespace runs as one space, null as empty: a project's
+     * templates are whatever a cloned repository ships, and a line break would let their text pass
+     * for a {@code --- ... ---} section of the prompt.
+     */
+    private static String field(String value) {
+        if (value == null) return "";
+        return WHITESPACE_RUN.matcher(OutputFormat.oneLine(value)).replaceAll(" ").strip();
+    }
+
+    private static final Pattern WHITESPACE_RUN = Pattern.compile("(?U)\\s+");
+
+    /** {@code "  label: value"} on its own line, or nothing when the value is empty. */
+    private static void appendField(StringBuilder sb, String label, String value) {
+        var text = field(value);
+        if (!text.isEmpty()) sb.append("  ").append(label).append(": ").append(text).append("\n");
     }
 
     private static void appendResource(StringBuilder sb, String path, String label) {
