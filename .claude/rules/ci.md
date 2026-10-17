@@ -31,7 +31,9 @@ Key jobs:
 - **`build-native-proxy`**: builds the proxy native image, uploads artifact
 - **`integration-tests (x86_64)`, `integration-tests (aarch64)`**: a matrix.
   Each boots its arch's appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with host `socat` (standing in for vfkit) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below
-- **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`), then runs test scripts inside branched instances
+- **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`), then runs test scripts inside branched instances.
+  `test-proxy-only.sh` is the only real check of the proxy-only boundary (#1137): branches of `tpl-minimal` (no iptables) and `tpl-test-vm` must reach the proxy and nothing else after `isx branch`, after `incus restart`, and on a `--no-start` branch first started by `incus start`.
+  It needs Incus's nftables firewall driver on the runner
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
 The **`update-base-image-steps`** job in `test-integration.yml` runs `.github/scripts/test-update-base-image.sh`: `update-base-image.yml`'s three steps, as its `workflow_dispatch` backstop runs them, against a fake images release with `-vm-direct` and `SHA256SUMS.v2`, `gh`, `curl` and the remote faked (#1255).
