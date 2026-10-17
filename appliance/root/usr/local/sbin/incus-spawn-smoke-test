@@ -93,8 +93,19 @@ if ! nft add table bridge isx_smoke > /tmp/smoke-nft.log 2>&1; then
     cat /tmp/smoke-nft.log
     fail "kernel lacks the nft bridge family (CONFIG_NF_TABLES_BRIDGE); security.ipv4_filtering cannot be enforced"
 fi
-nft delete table bridge isx_smoke
 echo "  PASS: nft bridge family available (security.ipv4_filtering enforceable)"
+
+# --proxy-only is an Incus network ACL on the NIC (#1137), whose chains in that table match
+# "ct state", which the bridge family accepts only with bridge conntrack
+# (CONFIG_NF_CONNTRACK_BRIDGE). Without it every proxy-only start fails: closed, but unusable.
+if ! { nft add chain bridge isx_smoke acl '{ type filter hook input priority 0; }' \
+        && nft add rule bridge isx_smoke acl ct state established,related accept; } > /tmp/smoke-nft.log 2>&1; then
+    cat /tmp/smoke-nft.log
+    nft delete table bridge isx_smoke
+    fail "kernel lacks bridge conntrack (CONFIG_NF_CONNTRACK_BRIDGE); --proxy-only cannot be enforced"
+fi
+nft delete table bridge isx_smoke
+echo "  PASS: bridge conntrack available (--proxy-only enforceable)"
 
 # Filter to CONTAINER images — picking a VIRTUAL-MACHINE image would fail creation spuriously.
 IMAGE=$(incus image list --format csv --columns ft 2>/dev/null \
