@@ -96,6 +96,7 @@ Install from the main checkout, never from a worktree you will delete; `--native
 To check a change against a real Incus on a disposable Linux host, `scripts/local-incus.sh` sets one up the way CI's `isx-integration-tests-native` job does, and the `validate-on-real-incus` skill (`.claude/skills/`) covers what to exercise and inspect.
 
 Git preparation tests require `git daemon` (`git-daemon` on Fedora) and serve disposable loopback remotes.
+Tests that run `git credential` or log in over HTTPS configure Git with `HermeticGit` (common test-jar), so no developer credential helper, such as macOS's osxkeychain, receives a test proof (#1505).
 
 ## Tech Stack
 
@@ -110,7 +111,7 @@ Three Maven modules under a parent POM:
 
 - **`common`** (`incus-spawn-common`): shared code -- Incus client, proxy config, image/tool definitions, configuration loading.
   Not a Quarkus app; uses the Jandex Maven plugin to produce a `META-INF/jandex.idx` so Quarkus indexes its classes from dependent modules, including the `@RegisterForReflection` on `SpawnConfig.ClaudeAccountType`: without the index the native image binds every Claude account `type:` to null while every JVM test passes.
-  Its test classes are also published as a test-jar, which `cli` depends on in test scope, so `cli` tests drive commands against `FakeIncusDaemon`.
+  Its test classes are also published as a test-jar, which `cli` and `proxy` depend on in test scope, so `cli` tests drive commands against `FakeIncusDaemon` and `proxy` tests run Git through `HermeticGit`.
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`).
   Depends on common.
   Native image: serial GC, `-Os` (size-optimized), `-H:-AllowVMInternalThreads`, on x86_64 `-march=haswell` and on aarch64 `-march=armv8.1-a+aes` (arch-gated in `cli/pom.xml`, same as the proxy).
