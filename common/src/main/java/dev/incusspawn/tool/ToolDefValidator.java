@@ -273,6 +273,7 @@ public class ToolDefValidator {
             return "must not contain a query or fragment: scopes match the path alone";
         }
         if (path.contains("*")) return "is a literal prefix: wildcards are not supported";
+        if (path.contains(";")) return "must not contain ';': servers that drop path parameters serve another path";
         var segments = path.substring(1).split("/", -1);
         for (int i = 0; i < segments.length; i++) {
             var segment = segments[i];
@@ -281,9 +282,9 @@ public class ToolDefValidator {
             if (segment.isEmpty()) return "must not contain an empty segment ('//')";
             if (segment.equals(".") || segment.equals("..")) return "must not contain a '.' or '..' segment";
         }
+        // Covers the segment checks above too; those stay for their more specific messages
         if (ResolvedToolProxy.mayResolveElsewhere(path)) {
-            return "must be a path no upstream may read as another: no '\\', no ';' on an empty or dot segment,"
-                    + " no escape of an unreserved character, '/', '\\', ';' or '%', only UTF-8 escapes;"
+            return "must be a path no upstream may read as another (docs/TOOLS.md, \"Path-scoped injection\"):"
                     + " the proxy matches no request under such a prefix";
         }
         return null;
