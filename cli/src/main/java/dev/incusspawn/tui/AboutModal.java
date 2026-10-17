@@ -129,7 +129,7 @@ final class AboutModal {
                 shortcutRow("F3", "View details", null, null),
                 shortcutRow("F4", "Branch", null, null),
                 shortcutRow("F5", "Build menu", null, null),
-                shortcutRow("Space", "Mark for F5 build", "Esc", "Clear marks"),
+                shortcutRow("Space", "Mark for F5/F7/F8", "Esc", "Clear marks"),
                 shortcutRow("F6", "Rename instance", null, null),
                 shortcutRow("F7", "Stop instance", "⇧F7", "Restart"),
                 shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
