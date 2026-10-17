@@ -1377,6 +1377,7 @@ There is no upload size limit: a body passes as long as the host has disk for it
   When the ETag changes or the confirmation is too old, per-version shasum is checked — matching shasum updates the marker, mismatched shasum evicts and re-fetches.
   As for Maven/Gradle, when upstream answers its answer wins (#787): a version document that is gone (`404`/`410`: unpublished, or taken down as malware) evicts the tarball and the client gets upstream's answer, and any other answer without a usable shasum relays the tarball without serving the copy.
   Only an unreachable registry (no connection, `5xx` after its retry, `429`) serves the copy unconfirmed, and logs that it did.
+  `registry.npmjs.org` has the same 30s backoff as the Maven/Gradle domains ("Offline" below): during it a cached tarball is served unconfirmed without a lookup and no background confirmation starts, so an offline install does not wait on a refused connect per tarball.
   The ETag alone used to vouch for a tarball, but `npm ci` with a lockfile fetches no packument, so the ETag never changed and a version removed upstream stayed served indefinitely (#1466).
   The age check bounds that: at most `fresh` with no lookup, then the background confirmation evicts it for the next request.
   The per-version shasum is looked up asynchronously through `probeClient`, the same client and verification as Maven/Gradle checksums, so a cold install's lookups run concurrently over shared HTTP/2 connections (#960).
@@ -1494,7 +1495,7 @@ Only an unreachable upstream serves an older one.
   The backoff short-circuits only requests that have a cached copy to fall back on (a request without one still asks upstream, which it might answer).
   Only a response from the domain ends it.
   A request on a pooled connection is sent without any network I/O first, so getting the connection proves nothing about reachability now, and would let one request end a backoff a real connect failure started.
-  It is kept where every upstream connection is made (`requestWithAsyncDns`), so no fetch path can forget to update it.
+  It is kept where every upstream connection is made (`requestWithAsyncDns`), for every domain `Revalidation.keepsBackoff` names (the Maven/Gradle ones in `Revalidation` and the npm registry), so no fetch path can forget to update it.
 
 *Why only these domains.*
 With both tiers at zero an online serve does not depend on a repository's publishing rules, so `Revalidation`'s allowlist is not a claim of immutability.

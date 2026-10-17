@@ -858,11 +858,15 @@ class ArtifactCacheHandler {
             var packageEtag = etagFile.startsWith(cacheDir)
                     ? readFileOrNull(etagFile) : null;
             return npmCacheState(cacheFile, packageEtag, tiersFor(domain), Instant.now());
-        }).compose(state -> state.hit() != null
-                ? Future.succeededFuture(state.hit())
-                : fetchNpmVersion(domain, packageName, version, started).compose(answer -> vertx.executeBlocking(
-                        () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, answer)))
-        ).onSuccess(result -> {
+        }).compose(state -> {
+            if (state.hit() != null) return Future.succeededFuture(state.hit());
+            // A copy to fall back on is served at once during a backoff, as for Maven/Gradle; with none, the registry is still asked
+            var answer = state.cached() && inBackoff(domain)
+                    ? Future.succeededFuture(SidecarAnswer.UNREACHABLE)
+                    : fetchNpmVersion(domain, packageName, version, started);
+            return answer.compose(a -> vertx.executeBlocking(
+                    () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, a)));
+        }).onSuccess(result -> {
             if (result == null) {
                 // Said here, so a relay that fails points at the lookup that sent it there
                 ProxyLog.warn("No npm shasum for " + ref + "; relaying it uncached");
@@ -885,8 +889,11 @@ class ArtifactCacheHandler {
         });
     }
 
-    /** The package's stored ETag, and the cached tarball when that ETag and its last confirmation vouch for it without a lookup first. */
-    record NpmCacheState(String packageEtag, NpmVerifyResult hit) {}
+    /**
+     * The package's stored ETag, whether the tarball is cached, and the cached tarball when
+     * that ETag and its last confirmation vouch for it without a lookup first.
+     */
+    record NpmCacheState(String packageEtag, boolean cached, NpmVerifyResult hit) {}
 
     /**
      * A hit on the cached tarball when the package's ETag is the one it was verified under
@@ -896,13 +903,14 @@ class ArtifactCacheHandler {
     static NpmCacheState npmCacheState(Path cacheFile, String packageEtag, ArtifactCacheTiers tiers, Instant now)
             throws IOException {
         var tarball = VerifiedArtifactStore.attributesOrNull(cacheFile);
-        if (packageEtag == null || packageEtag.isEmpty() || tarball == null || !tarball.isRegularFile()
+        var cached = tarball != null && tarball.isRegularFile();
+        if (packageEtag == null || packageEtag.isEmpty() || !cached
                 || !packageEtag.equals(readFileOrNull(Path.of(cacheFile + ".etag")))) {
-            return new NpmCacheState(packageEtag, null);
+            return new NpmCacheState(packageEtag, cached, null);
         }
         var shasum = VerifiedArtifactStore.attributesOrNull(Path.of(cacheFile + ".shasum"));
         var tier = tiers.tierOf(shasum == null ? null : shasum.lastModifiedTime(), now);
-        return new NpmCacheState(packageEtag, tier == ArtifactCacheTiers.Tier.EXPIRED ? null
+        return new NpmCacheState(packageEtag, true, tier == ArtifactCacheTiers.Tier.EXPIRED ? null
                 : new NpmVerifyResult(true, tarball.size(), null, tier == ArtifactCacheTiers.Tier.STALE));
     }
 
@@ -1291,7 +1299,7 @@ class ArtifactCacheHandler {
     }
 
     // Artifacts with a background confirmation queued or in flight, so overlapping hits share one
-    private final Set<Path> backgroundConfirmations = ConcurrentHashMap.newKeySet();
+    final Set<Path> backgroundConfirmations = ConcurrentHashMap.newKeySet();
     // Past the limit they wait their turn here; guarded by itself, as is confirmationsInFlight
     private final java.util.ArrayDeque<Runnable> queuedConfirmations = new java.util.ArrayDeque<>();
     private int confirmationsInFlight;
