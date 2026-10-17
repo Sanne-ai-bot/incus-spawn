@@ -62,8 +62,9 @@ public class ToolDefValidator {
         }
 
         // The refusals tolerate bare keys; the checks below read the entries, so stop before them
-        errors.addAll(refusals(def));
-        if (!bareKeys(def).isEmpty()) return;
+        var bareKeys = bareKeys(def);
+        errors.addAll(refusals(def, bareKeys));
+        if (!bareKeys.isEmpty()) return;
 
         for (var entry : def.getParameters().entrySet()) {
             var name = entry.getKey();
@@ -194,17 +195,17 @@ public class ToolDefValidator {
 
     /** Why a definition is refused where definitions load, or null when it is not. */
     public static String refusal(ToolDef def) {
-        var refusals = refusals(def);
+        var refusals = refusals(def, bareKeys(def));
         return refusals.isEmpty() ? null : refusals.getFirst();
     }
 
     /**
      * Every reason a definition is refused where definitions load, in the order {@link #refusal}
      * names the first. Each check tolerates bare keys, so {@code validateDef} reports them all in
-     * one pass.
+     * one pass. {@code bareKeys} is what {@link #bareKeys} returns for {@code def}.
      */
-    private static List<String> refusals(ToolDef def) {
-        var refusals = new ArrayList<>(bareKeys(def));
+    private static List<String> refusals(ToolDef def, List<String> bareKeys) {
+        var refusals = new ArrayList<>(bareKeys);
         var invalidNamespace = invalidNamespace(def);
         if (invalidNamespace != null) refusals.add(invalidNamespace);
         refusals.addAll(invalidPathScopes(def));
@@ -311,7 +312,7 @@ public class ToolDefValidator {
             return isNamespace(own) ? null : notAnIdentifier(def, "config-namespace", own);
         }
         for (var entry : proxy.getConfiguration().values()) {
-            // A bare key ('token:') arrives as null; bareKeys reports it, and refusals needs this skip
+            // A bare key ('token:') arrives as null and must be tolerated: this runs on definitions that still hold one
             if (entry == null) continue;
             var borrowed = proxy.namespaceOf(entry);
             if (!borrowed.isEmpty() && !isNamespace(borrowed)) {
