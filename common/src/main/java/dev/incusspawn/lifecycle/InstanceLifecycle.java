@@ -132,6 +132,8 @@ public final class InstanceLifecycle {
             // Proxy-only is the host's ACL on this NIC, which BranchFlow.preflight has written. A
             // branch with full network of a proxy-only instance drops it.
             if (mode == NetworkMode.PROXY_ONLY) {
+                ProxyOnlyAcl.requireOneNic("'" + name + "' is proxy-only, but it", instance,
+                        "Remove the device from its source or profile, or use full network or --airgap.");
                 ProxyOnlyAcl.NIC_KEYS.forEach((key, value) -> update.device(nic.name(), key, value));
             } else if (ProxyOnlyAcl.anyKey(nic.config())) {
                 ProxyOnlyAcl.NIC_KEYS.keySet().forEach(key -> update.device(nic.name(), key, null));

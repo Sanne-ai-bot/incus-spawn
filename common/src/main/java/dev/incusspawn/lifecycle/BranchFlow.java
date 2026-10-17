@@ -16,6 +16,7 @@ import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
@@ -296,7 +297,14 @@ public final class BranchFlow {
         // Last, and before anything is created: a host that cannot enforce proxy-only on its side
         // gets no proxy-only instance at all (#1137)
         if (req.networkMode() == NetworkMode.PROXY_ONLY) {
+            // The branch copies its source's devices and profiles, so it would have the same NICs;
+            // an airgapped source's are masked, and the branch puts the profile's back. Outside the
+            // try: a profile that cannot be read is no firewall problem.
+            var asBranched = NetworkMode.isAirgapped(sourceInstance)
+                    ? InstanceNetwork.unmaskNics(incus, sourceInstance, new InstanceUpdate()) : sourceInstance;
             try {
+                ProxyOnlyAcl.requireOneNic("'" + req.source() + "', the source of this proxy-only branch,", asBranched,
+                        "Remove the device from it or its profile, or use full network or --airgap.");
                 ProxyOnlyAcl.ensure(incus, BridgeAddress.require(incus).gateway());
             } catch (ProxyOnlyAcl.NotEnforceableException e) {
                 throw new BranchException(e.getMessage());

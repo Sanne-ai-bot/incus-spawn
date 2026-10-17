@@ -249,4 +249,86 @@ class ProxyOnlyAclTest {
         assertEquals("true", nic(daemon, "dev-2").path("security.ipv4_filtering").asText());
         assertRestricted(nic(daemon, "dev-2"));
     }
+
+    /** Only the bridge NIC carries the ACL: a second one would have full egress (#1137). */
+    @Test
+    void aSourceWithASecondNicGetsNoProxyOnlyBranch() {
+        var daemon = template();
+        daemon.device("tpl-dev", "eth1", Map.of("type", "nic", "nictype", "macvlan", "parent", "enp1s0", "name", "eth1"));
+
+        var e = assertThrows(BranchFlow.BranchException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+        assertTrue(e.getMessage().contains("eth1"), e::getMessage);
+        assertFalse(daemon.requests().stream().anyMatch(r -> r.startsWith("POST /1.0/instances")),
+                () -> String.join("\n", daemon.requests()));
+    }
+
+    @Test
+    void aSourceWithASecondNicStillBranchesWithFullNetwork() {
+        var daemon = template();
+        daemon.device("tpl-dev", "eth1", Map.of("type", "nic", "nictype", "macvlan", "parent", "enp1s0", "name", "eth1"));
+
+        branch(daemon, "tpl-dev", NetworkMode.FULL);
+
+        var branched = daemon.instance("dev-2").path("expanded_devices");
+        assertEquals("macvlan", branched.path("eth1").path("nictype").asText(), branched::toString);
+        for (var key : ProxyOnlyAcl.NIC_KEYS.keySet()) assertTrue(branched.path("eth0").path(key).isMissingNode(), branched::toString);
+    }
+
+    @Test
+    void aProxyOnlyInstanceThatGainedASecondNicIsNotStarted() {
+        var daemon = new FakeIncusDaemon().instance("box", "container", "Stopped", Map.of(
+                Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name(), Metadata.PROXY_GATEWAY, GATEWAY));
+        var restricted = new HashMap<String, String>(ProxyOnlyAcl.NIC_KEYS);
+        restricted.putAll(Map.of("type", "nic", "network", "incusbr0", "name", "eth0"));
+        daemon.device("box", "eth0", restricted);
+        daemon.device("box", "eth1", Map.of("type", "nic", "network", "incusbr0", "name", "eth1"));
+
+        var e = assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
+                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+        assertTrue(e.getMessage().contains("eth1"), e::getMessage);
+        assertEquals(List.of(), daemon.stateActions());
+    }
+
+    /** An airgapped source's NICs are masked, but the branch puts the profile's back: both count. */
+    @Test
+    void anAirgappedSourceWhoseProfileHasASecondNicGetsNoProxyOnlyBranch() {
+        var daemon = new FakeIncusDaemon().profile("default", Map.of(
+                "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0"),
+                "eth1", Map.of("type", "nic", "nictype", "macvlan", "parent", "enp1s0", "name", "eth1"),
+                "root", Map.of("type", "disk", "path", "/", "pool", "default")));
+        daemon.container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev",
+                Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name()));
+        daemon.device("tpl-dev", "eth0", Map.of("type", "none"));
+        daemon.device("tpl-dev", "eth1", Map.of("type", "none"));
+
+        var e = assertThrows(BranchFlow.BranchException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+        assertTrue(e.getMessage().contains("eth1"), e::getMessage);
+        assertFalse(daemon.requests().stream().anyMatch(r -> r.startsWith("POST /1.0/instances")),
+                () -> String.join("\n", daemon.requests()));
+    }
+
+    /** An InfiniBand device reaches a network without any NIC, so it counts as a second one. */
+    @Test
+    void aSourceWithAnInfinibandDeviceGetsNoProxyOnlyBranch() {
+        var daemon = template();
+        daemon.device("tpl-dev", "ib0", Map.of("type", "infiniband", "nictype", "physical", "parent", "ibp1s0"));
+
+        var e = assertThrows(BranchFlow.BranchException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+        assertTrue(e.getMessage().contains("ib0"), e::getMessage);
+        assertFalse(daemon.requests().stream().anyMatch(r -> r.startsWith("POST /1.0/instances")),
+                () -> String.join("\n", daemon.requests()));
+    }
+
+    /** With no bridge NIC, an InfiniBand device is still a way out: the instance is not started. */
+    @Test
+    void aProxyOnlyInstanceWhoseOnlyNetworkIsInfinibandIsNotStarted() {
+        var daemon = new FakeIncusDaemon().instance("box", "container", "Stopped", Map.of(
+                Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name(), Metadata.PROXY_GATEWAY, GATEWAY));
+        daemon.device("box", "eth0", Map.of("type", "none"));
+        daemon.device("box", "ib0", Map.of("type", "infiniband", "nictype", "physical", "parent", "ibp1s0"));
+
+        assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
+                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+        assertEquals(List.of(), daemon.stateActions());
+    }
 }
