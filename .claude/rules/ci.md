@@ -199,7 +199,7 @@ This shipped once and failed on the very first PR.
 
 Each config carries its own `[allowlist]`, not shared via a common file.
 Test fixtures are allowlisted by **value**, never by path (#1484): a path entry hides every secret in that file from every rule, a real key pasted into a fixture included.
-The only path entry is `^\.gitleaks/` in both: the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
+The only path entry is `^\.gitleaks/leaktk-gitleaks-[0-9.]+\.toml$` in both, the vendored ruleset file alone, so a new file under `.gitleaks/` is still scanned: the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
 The value lists differ on purpose: each lists the fixture values that config's rules actually flag (leaktk's Generic Secret rule captures the short `sk-ant-api03-xyz`-style keys of the credential tests and the `config-compat/` YAMLs; the stock rules flag a fake PEM block and a short `ghp_` token in the redaction tests).
 Entries are exact values, or a shape no service issues (the `isx_` proof tokens); never a prefix net such as `sk-ant-api03-` plus a few characters, which would hide a short real secret in any file.
 A new test fixture with a fake credential needs its exact captured value (the report's `Secret`) added to whichever `.toml` file's scan flags it (run both scans locally; do not add a value a scan does not need), or it (rightly) fails the PR check the first time.
@@ -208,7 +208,7 @@ It plants one real-shaped key per credential shape the allowlists name exact val
 The header is required of leaktk only: its Authorization Header rule is what captures the value, and gitleaks' defaults have no such rule.
 They go at the top of every tracked `*/src/test/*` text file, and each config must report each key its rules capture, in each file, and nothing else.
 The one allowance is a file the vendored ruleset itself skips for the rule that reports the key (leaktk's Private Key rule skips `tests?/.*\.txt`, so the TUI snapshots); the script prints how many, and a key reported in no file gets none.
-It also fails on anything that suppresses outside the exact-value list: a path other than `^\.gitleaks/`, `stopwords`, `commits` or `regexTarget` in an allowlist, an inline allow comment in a tracked file, or a `.gitleaksignore`.
+It also fails on anything that suppresses outside the exact-value list: a path other than the vendored ruleset file, `stopwords`, `commits` or `regexTarget` in an allowlist, an inline allow comment in a tracked file, or a `.gitleaksignore`.
 So does anything that hides a whole rule: an `[extend]` other than `useDefault = true` or the vendored `.gitleaks/` file alone (no `disabledRules`, no wrapper file), or a `[[rules]]` id other than the two Anthropic rules below, which would replace a base rule.
 Keys are compared in any case, since gitleaks ignores the case of config keys.
 And every allowlist regex (global, `[[allowlists]]` or per rule) must be anchored as a whole: no top-level `|`, no escaped final `\$`, no `(?m)` or `(?s)` flag.

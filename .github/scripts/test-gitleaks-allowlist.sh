@@ -2,7 +2,7 @@
 # Checks that both gitleaks configs allowlist test fixtures by value, not by file (#1484): on a
 # copy of the tracked tree with real-shaped Anthropic API and OAuth keys, GitHub ghp_/gho_ tokens,
 # an RSA private key and a Basic auth header added to every tracked test file, a scan reports each
-# of them in every file and nothing else. Also checks that no path but the vendored .gitleaks/ is
+# of them in every file and nothing else. Also checks that no path but the vendored ruleset file is
 # allowlisted, that nothing suppresses by stopword, commit, inline allow comment or ignore file,
 # retargets the regexes, or disables or replaces a base rule, and holds every allowlist regex to
 # the ^...$ anchors .claude/rules/ci.md requires, with no unbounded repetition.
@@ -66,8 +66,8 @@ for rule in toml.get("rules", []):
 tables = [toml.get("allowlist", {}), *toml.get("allowlists", [])]
 for rule in toml.get("rules", []):
     tables += [rule.get("allowlist", {}), *rule.get("allowlists", [])]
-if [p for t in tables for p in t.get("paths", [])] != [r"^\.gitleaks/"]:
-    print(f"FAIL: {config}: a path allowlist other than ^\\.gitleaks/ hides every secret in its files")
+if [p for t in tables for p in t.get("paths", [])] != [r"^\.gitleaks/leaktk-gitleaks-[0-9.]+\.toml$"]:
+    print(f"FAIL: {config}: a path allowlist other than the vendored ruleset file hides every secret in its files")
     ok = False
 # stopwords and commits suppress outside the exact-value list; regexTarget makes the anchors
 # apply to the match or line instead of the secret.

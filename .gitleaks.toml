@@ -27,12 +27,12 @@ keywords = ["sk-ant-oat01-"]
 [allowlist]
   description = "Synthetic credentials in unit-test fixtures, plus exact false-positive values; never real secrets"
 
-  # Only the vendored leaktk/patterns ruleset is allowlisted by path: it is a pattern
+  # Only the vendored leaktk/patterns ruleset file is allowlisted by path: it is a pattern
   # database, and its own rule definitions and example strings look like credentials to a
   # scanner. Test fixtures are allowlisted by exact value below, never by file, so a real
   # key pasted into a fixture is still flagged.
   paths = [
-    '''^\.gitleaks/''',
+    '''^\.gitleaks/leaktk-gitleaks-[0-9.]+\.toml$''',
   ]
 
   # Each entry is anchored ^...$ to the whole captured secret: with regexTarget left at
