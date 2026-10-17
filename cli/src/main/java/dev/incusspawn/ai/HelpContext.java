@@ -193,6 +193,8 @@ public class HelpContext {
 
             // Redact secret configuration values
             for (var entry : proxy.getConfiguration().values()) {
+                // A bare key ('token:') arrives as null and holds nothing to redact
+                if (entry == null) continue;
                 if (!entry.getValue().isBlank() && (entry.isSecret() || isLikelyCredential(entry.getValue()))) {
                     content = redactYamlValue(content, entry.getValue());
                 }

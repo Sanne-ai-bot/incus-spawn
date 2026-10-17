@@ -94,6 +94,24 @@ class HelpContextTest {
                 "template references must be preserved");
     }
 
+    /** A bare configuration key arrives as null; the rest of the file is still redacted (#1475). */
+    @Test
+    void toolYamlWithABareConfigurationKeyIsStillRedacted(@TempDir Path dir) throws IOException {
+        var file = dir.resolve("my-tool.yaml");
+        Files.writeString(file, """
+                name: my-tool
+                proxy:
+                  configuration:
+                    bare:
+                    token:
+                      value: "ghp_realSecretTokenHere123"
+                      secret: true
+                """);
+
+        var sanitized = HelpContext.sanitizeToolYaml(file);
+        assertFalse(sanitized.contains("ghp_realSecretTokenHere123"), sanitized);
+    }
+
     @Test
     void toolYamlRedactsLiteralAuthCredentials(@TempDir Path dir) throws IOException {
         var yaml = """
