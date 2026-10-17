@@ -309,7 +309,12 @@ class ProxyHealthCheckTest {
 
         var oauth = new ProxyHealthCheck.ProxyInfo("1.0", "", "", "", false, true,
                 "Claude OAuth token rejected (HTTP 401).");
-        assertEquals("isx init", oauth.authRemediationHint());
+        assertEquals("isx account add claude", oauth.authRemediationHint());
+
+        // Neither: what it is not known, so the whole setup is offered, as before
+        var other = new ProxyHealthCheck.ProxyInfo("1.0", "", "", "", false, true,
+                "Vertex authentication check failed");
+        assertEquals("isx init", other.authRemediationHint());
     }
 
     @Test
