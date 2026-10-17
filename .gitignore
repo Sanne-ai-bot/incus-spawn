@@ -60,3 +60,7 @@ bench/results/
 _site/
 
 .cachebro/
+
+# Left behind if a HelpContextTest run is killed mid-test
+/cli/.incus-spawn/
+/.incus-spawn/images/help-project-marker-1454.yaml

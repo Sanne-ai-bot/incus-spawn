@@ -117,6 +117,7 @@ public class HelpContext {
         }
         sb.append("\n");
 
+        // Every layer, the project's included: the flag asks for templates (#1454).
         sb.append("--- Image Templates ---\n");
         sb.append("All resolved templates (built-in, user, search paths, project):\n\n");
         var allImages = ImageDef.loadAll(w -> {});
