@@ -4466,8 +4466,10 @@ It's the closest public equivalent to the internal Red Hat "Pattern Server" that
 Both rulesets miss one thing neither maintains: an Anthropic-key-specific rule.
 `.gitleaks.toml` and `.gitleaks-leaktk.toml` each add `anthropic-api-key`/`anthropic-oauth-token` rules for `sk-ant-api03-`/`sk-ant-oat01-`, gated on a 40+ character suffix rather than the prefix alone.
 Real keys run 90+ chars past the prefix, while this repo's own test fixtures (which legitimately need key-shaped strings to exercise `SpawnConfig`/`SecretRedactor` parsing) top out at 28, so the length gate catches a real leak without re-flagging a fake one.
-Each config's `[allowlist]` lists known-fixture paths outright (matching on path means it also covers commits from before the allowlist existed).
-Its few regexes are anchored at both ends and bounded in length, so none can widen to cover a real key; how gitleaks matches them is in `.claude/rules/ci.md`.
+Each config's `[allowlist]` names test fixtures by their exact values, never by file (#1484): a path entry hid every secret in that file from every rule, so a real key pasted into a fixture by mistake went unreported.
+The only path left is the vendored pattern database under `.gitleaks/`.
+The regexes are anchored at both ends and list exact values, or a shape no service issues; a prefix net (`sk-ant-api03-` plus a few characters) is refused because it would hide a short real secret in any file.
+`.github/scripts/test-gitleaks-allowlist.sh` checks that no fixture path comes back and that a real-shaped key in any test file is reported; how gitleaks matches the regexes is in `.claude/rules/ci.md`.
 
 ### Filesystem Isolation
 - Inbox mount is strictly read-only

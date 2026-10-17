@@ -28,30 +28,28 @@ keywords = ["sk-ant-oat01-"]
 [allowlist]
   description = "Synthetic credentials used by config/proxy unit tests, never real secrets"
 
+  # Only the vendored leaktk/patterns ruleset is allowlisted by path: it is a pattern
+  # database, and its own rule definitions and example strings look like credentials to a
+  # scanner. Test fixtures are allowlisted by exact value below, never by file, so a real
+  # key pasted into a fixture is still flagged.
   paths = [
-    # The vendored leaktk/patterns ruleset is a pattern database: its own rule
-    # definitions and example strings look like credentials to a scanner.
     '''^\.gitleaks/''',
-    '''common/src/test/java/dev/incusspawn/config/ClaudeLegacyConfigCompatTest\.java$''',
-    '''common/src/test/java/dev/incusspawn/config/ClaudeAccountsTest\.java$''',
-    '''common/src/test/java/dev/incusspawn/proxy/ProxyCredentialsAccountsTest\.java$''',
-    '''common/src/test/java/dev/incusspawn/config/SecretRedactorTest\.java$''',
-    '''common/src/test/java/dev/incusspawn/config/ExistingConfigCompatTest\.java$''',
-    # config.yaml files as a previous release wrote them (PreviousReleaseConfigCompatTest).
-    '''common/src/test/resources/config-compat/''',
-    '''common/src/test/java/dev/incusspawn/proxy/PerInstanceCredentialsTest\.java$''',
-    '''proxy/src/test/java/dev/incusspawn/proxy/PinnedAccountStateTest\.java$''',
-    '''cli/src/test/java/dev/incusspawn/command/SupportBundleTest\.java$''',
-    '''cli/src/test/java/dev/incusspawn/command/ClaudeAuthFlowTest\.java$''',
-    '''cli/src/test/java/dev/incusspawn/ai/HelpContextTest\.java$''',
   ]
 
   # Each entry is anchored ^...$ to the whole captured secret: with regexTarget left at
-  # its default, gitleaks matches these against the secret, not the line. Other fake keys
-  # pass on the paths above, or stay under the anthropic rules' 40-char length gate.
+  # its default, gitleaks matches these against the secret, not the line. Fixture entries
+  # list exact values, or shapes no service issues: a prefix net such as sk-ant-api03-
+  # plus a few characters would also hide a short real secret in any file. Other fake keys
+  # stay under the anthropic rules' 40-char length gate.
   regexes = [
     # Exact synthetic accounts in the #1107 proxy/passthrough regression tests.
     '''^(?:Bearer )?(?:tpt_placeholder|inner-account-B|sk-ant-oat01-outer)$''',
+    # Exact placeholder keys of the credential, account and config-compat tests, as leaktk's
+    # Generic Secret rule captures them from key: and token: lines.
+    '''^sk-ant-api03-(?:fixture|flat|found|good|old|personal|real|stale|work|xyz)$''',
+    '''^sk-ant-oat01-(?:fixture|legacy|real)$''',
+    # SecretRedactorTest's Basic auth header: base64 of the bare prefix "x-access-token:ghp_".
+    '''^eC1hY2Nlc3MtdG9rZW46Z2hwXw==$''',
     # Per-start proof tokens in the guest-script tests (#1108): a tool's placeholder prefix,
     # then isx_ and hex. Not a credential shape any service issues, and capped at 40 hex.
     '''^(?:gho_|sk-ant-|sk-|ya29\.)isx_[0-9a-f]{8,40}$''',

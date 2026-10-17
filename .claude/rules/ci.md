@@ -177,7 +177,7 @@ The `tpl-minimal` base image is Fedora with only git, curl, which, procps-ng, an
 
 # Secret Scanning
 
-`.github/workflows/gitleaks.yml` runs on every push and on PRs targeting `main` with `gitleaks/gitleaks-action@v3`, in two independent jobs.
+`.github/workflows/gitleaks.yml` runs on every push and on PRs targeting `main` in three independent jobs: two scans with `gitleaks/gitleaks-action@v3`, and a test of the allowlists themselves.
 It scans **the commits in that push or PR**, not the repository's full history -- the `fetch-depth: 0` checkout is there so the action can resolve the range, not so it re-scans everything.
 The difference matters: a credential committed before this workflow existed, or in any range it did not scan, is not caught by it.
 The stock ruleset's `generic-api-key` captures the type name after a Java `PrivateKey` parameter (`PrivateKey key, X509Certificate cert` in `CertificateAuthority.java`) as if it were a secret, so the root `.gitleaks.toml` allowlists the exact captured value `^X509Certificate$`.
@@ -190,6 +190,7 @@ Nothing re-scans history on a schedule.
 - **`scan-stock`**: reads the root `.gitleaks.toml`, which sets `[extend] useDefault = true` to pull in gitleaks' own built-in rules.
 - **`scan-leaktk`**: reads `.gitleaks-leaktk.toml` via `GITLEAKS_CONFIG`, which extends the vendored `.gitleaks/leaktk-gitleaks-8.27.0.toml` (unmodified copy of [leaktk/patterns](https://github.com/leaktk/patterns)' generated gitleaks config -- see the header comment in that file for the source commit and refresh instructions).
   `GITLEAKS_VERSION` is pinned to `8.27.0` to match the version leaktk generated the ruleset for.
+- **`allowlist-test`**: runs `.github/scripts/test-gitleaks-allowlist.sh` with gitleaks 8.27.0, checksum-pinned, and only `contents: read`, since it runs a script from the PR itself.
 
 gitleaks' `[extend]` table is mutually exclusive between `path` and `useDefault` (one config file can only pick one base ruleset to extend), which is why these are two separate config files and two separate scan passes rather than one merged ruleset.
 They must be two **jobs**, not two steps in one job.
@@ -197,11 +198,26 @@ They must be two **jobs**, not two steps in one job.
 This shipped once and failed on the very first PR.
 
 Each config carries its own `[allowlist]`, not shared via a common file.
-The path lists differ on purpose: each lists the fixtures whose strings that config's rules actually flag.
-They cover unit tests that legitimately need key-shaped strings to exercise parsing and redaction logic (`ClaudeLegacyConfigCompatTest`, `ClaudeAccountsTest`, `ProxyCredentialsAccountsTest`, `SecretRedactorTest`, `ExistingConfigCompatTest`, `PerInstanceCredentialsTest`, `SupportBundleTest`, `ClaudeAuthFlowTest`, `HelpContextTest`, the leaktk-only `PinnedAccountStateTest`, and the previous-release fixtures under `common/src/test/resources/config-compat/`).
-Both also list `^\.gitleaks/`: the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
-Path-based allowlist entries apply across all historical commits gitleaks scans, since matching is on file path, not commit content -- so this also covers commits that predate the allowlist.
-A new test fixture with a fake credential needs its path added to whichever `.toml` file's scan flags it (run both scans locally; do not add a path a scan does not need, since a path entry also hides a real key pasted into that file), or it (rightly) fails the PR check the first time.
+Test fixtures are allowlisted by **value**, never by path (#1484): a path entry hides every secret in that file from every rule, a real key pasted into a fixture included.
+The only path entry is `^\.gitleaks/` in both: the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
+The value lists differ on purpose: each lists the fixture values that config's rules actually flag (leaktk's Generic Secret rule captures the short `sk-ant-api03-xyz`-style keys of the credential tests and the `config-compat/` YAMLs; the stock rules flag a fake PEM block and a short `ghp_` token in the redaction tests).
+Entries are exact values, or a shape no service issues (the `isx_` proof tokens); never a prefix net such as `sk-ant-api03-` plus a few characters, which would hide a short real secret in any file.
+A new test fixture with a fake credential needs its exact captured value (the report's `Secret`) added to whichever `.toml` file's scan flags it (run both scans locally; do not add a value a scan does not need), or it (rightly) fails the PR check the first time.
+`.github/scripts/test-gitleaks-allowlist.sh` (job **`allowlist-test`**) holds both configs to this, on a copy of the tracked tree.
+It plants one real-shaped key per credential shape the allowlists name exact values under: `sk-ant-api03-` and `sk-ant-oat01-` keys, 36-character `ghp_` and `gho_` tokens, an RSA private key block, and a Basic auth header carrying a `ghp_` token, each at real length with a mixed-case body.
+The header is required of leaktk only: its Authorization Header rule is what captures the value, and gitleaks' defaults have no such rule.
+They go at the top of every tracked `*/src/test/*` text file, and each config must report each key its rules capture, in each file, and nothing else.
+The one allowance is a file the vendored ruleset itself skips for the rule that reports the key (leaktk's Private Key rule skips `tests?/.*\.txt`, so the TUI snapshots); the script prints how many, and a key reported in no file gets none.
+It also fails on anything that suppresses outside the exact-value list: a path other than `^\.gitleaks/`, `stopwords`, `commits` or `regexTarget` in an allowlist, an inline allow comment in a tracked file, or a `.gitleaksignore`.
+So does anything that hides a whole rule: an `[extend]` other than `useDefault = true` or the vendored `.gitleaks/` file alone (no `disabledRules`, no wrapper file), or a `[[rules]]` id other than the two Anthropic rules below, which would replace a base rule.
+Keys are compared in any case, since gitleaks ignores the case of config keys.
+And every allowlist regex (global, `[[allowlists]]` or per rule) must be anchored as a whole: no top-level `|`, no escaped final `\$`, no `(?m)` or `(?s)` flag.
+Nor may it repeat without bound (`*`, `+` or `{n,}` outside a character class): such a regex is a net for real lengths whatever its anchors, as an indented PEM header followed by `(?:.*\n)*` would be.
+Run it locally with a gitleaks binary as its argument, once with 8.27.0 and once with the action's default that `scan-stock` runs (8.24.3 in `gitleaks-action@v3`): they flag different fixture values.
+It reads configs and fixtures from the index, so stage your change first.
+A net that widens a value entry to real lengths fails it; a bounded one that stays below them (`sk-ant-api03-[a-z]{1,30}`) does not, so keeping short prefix nets out is left to review.
+A fixture value under a new credential prefix needs a planted key of that shape added to the script.
+The vendored `.gitleaks/` ruleset's own allowlists are upstream data and not checked; review a refresh of it like any other allowlist change.
 Allowlist `regexes` carry both anchors, `^…$`, around the whole captured secret.
 Neither config sets `regexTarget`, so gitleaks tests them against the secret, not the line: a regex with surrounding context (a trailing quote) matches nothing.
 A regex missing either anchor suppresses every longer secret that contains its match, a real key included.
