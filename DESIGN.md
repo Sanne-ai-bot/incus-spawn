@@ -2020,7 +2020,8 @@ The optional template and tool definitions are presented as an *attachment* with
 The word itself says they leave the machine with the question, which matters because they include the user's own YAML files.
 User and search-path tool YAML comes from `ToolDefLoader.userAndSearchPathToolDirs()`, the loader's own list of its layers, so the attachment lists the same directories the loader reads (#1173).
 That list leaves out a project's `.incus-spawn/tools/` because the flag is named `--with-templates`; it may later be widened to project tools.
-A project's templates' names, descriptions and tool lists do go in, through `ImageDef.loadAll`.
+A project's templates' names, descriptions and tool lists do go in, through `ImageDef.loadAll`: the flag asks for templates, all of them (#1454).
+Both lines follow from what the flag names, not from how far a layer is trusted: the help assistant has no tools, so a project's text in its prompt cannot act; it can shape an answer, commands and links included, which the user still reads before acting on it.
 `HelpContext.definitions()` is built once per opening of the dialog, so the size shown is exactly what gets sent.
 **Prompt caching:** every question carries the whole README, the `docs/` pages and DESIGN.md (~725 KB, the bulk of the cost; kept because answers are markedly less complete without the design rationale).
 So `HelpContext.systemBlocks()` returns the prompt as two blocks -- the fixed documentation, then the attached definitions -- and `AiHelpClient.cachedSystem()` puts a 5-minute `cache_control` breakpoint on each for Anthropic and Vertex.

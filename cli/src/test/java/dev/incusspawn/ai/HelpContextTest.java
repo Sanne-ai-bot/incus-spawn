@@ -1,7 +1,11 @@
 package dev.incusspawn.ai;
 
+import dev.incusspawn.FileTrees;
+import dev.incusspawn.command.IsolatedHome;
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
@@ -192,6 +196,37 @@ class HelpContextTest {
         } finally {
             if (realHome == null) System.clearProperty("user.home");
             else System.setProperty("user.home", realHome);
+        }
+    }
+
+    /**
+     * A project's templates go in: the flag asks for templates, all of them (#1454). The working
+     * directory's {@code .incus-spawn/images/} is the project layer, so the test adds one file there
+     * and removes only what it created.
+     */
+    @Test
+    @ExtendWith(IsolatedHome.class)
+    void definitionsIncludeProjectLocalTemplates() throws IOException {
+        var projectImages = ImageDef.projectImagesDir().toAbsolutePath();
+        // The outermost directory this test creates, or null when the project layer already exists
+        Path created = null;
+        for (var dir = projectImages; !Files.exists(dir); dir = dir.getParent()) created = dir;
+        var marker = projectImages.resolve("help-project-marker-1454.yaml");
+        assertFalse(Files.exists(marker), "left behind by an earlier run: " + marker);
+        try {
+            Files.createDirectories(projectImages);
+            Files.writeString(marker, """
+                    name: help-project-marker-1454
+                    description: a template only this project ships
+                    parent: minimal
+                    """);
+
+            var definitions = HelpContext.definitions();
+            assertTrue(definitions.contains("# help-project-marker-1454 — a template only this project ships\n"),
+                    definitions);
+        } finally {
+            if (created != null) FileTrees.deleteQuietly(created);
+            else Files.deleteIfExists(marker);
         }
     }
 }
