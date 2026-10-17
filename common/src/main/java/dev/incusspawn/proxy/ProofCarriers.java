@@ -36,7 +36,6 @@ public final class ProofCarriers {
             var proxy = tool.proxy();
             if (proxy == null) continue;
             for (var auth : proxy.getAuth()) {
-                if (auth.getDomains() == null) continue;
                 var namespaces = ToolProxyResolver.namespacesOf(proxy, auth);
                 var headers = switch (String.valueOf(auth.getType())) {
                     case "anthropic" -> List.of("Authorization", "x-api-key");
