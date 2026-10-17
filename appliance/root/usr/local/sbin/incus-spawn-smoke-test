@@ -84,6 +84,13 @@ INOTIFY_INSTANCES=$(cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null || e
     || fail "fs.inotify.max_user_instances is $INOTIFY_INSTANCES (99-incus-spawn.conf did not apply)"
 echo "  PASS: inotify instance limit raised ($INOTIFY_INSTANCES)"
 
+# With bridge netfilter calling iptables, the gateway's :443 DNAT happens before the per-NIC
+# chains, and the --proxy-only ACL drops every connection to the proxy (#1137).
+BRIDGE_NF=$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo 0)
+[ "$BRIDGE_NF" = 0 ] \
+    || fail "net.bridge.bridge-nf-call-iptables is $BRIDGE_NF: the --proxy-only ACL would drop the proxy's DNAT'd connections"
+echo "  PASS: bridged frames skip iptables (the gateway's DNAT runs after the --proxy-only ACL)"
+
 # security.ipv4_filtering is what makes the proxy's source-IP identity unforgeable, and Incus's
 # nftables driver enforces it in an nft "bridge"-family table. A kernel without that family
 # accepts the setting and fails only when an instance starts, and isx then starts it with
