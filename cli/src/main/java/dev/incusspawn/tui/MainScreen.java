@@ -239,7 +239,9 @@ final class MainScreen {
                         .style(Style.EMPTY.bold().fg(focused ? tui.theme.panelBorderFocused() : tui.theme.panelBorderUnfocused())))
                 .rows(tui.templateRows)
                 .widths(Constraint.min(14), Constraint.length(20), Constraint.length(8), Constraint.fill())
-                .highlightSymbol(focused ? "\u25b8 " : "  ");
+                .highlightSymbol(focused ? "\u25b8 " : "  ")
+                // Always reserved, so renderMarks can draw into it
+                .highlightSpacing(Table.HighlightSpacing.ALWAYS);
 
         if (focused) {
             var highlightStyle = Style.EMPTY.bg(tui.theme.highlightBg()).fg(tui.theme.highlightFg());
@@ -259,6 +261,7 @@ final class MainScreen {
         }
 
         frame.renderStatefulWidget(tableBuilder.build(), actualTableArea, tui.templateTableState);
+        renderMarks(frame, actualTableArea, tui.templateTableState.offset(), tui.templateRows.size(), tui::templateRowMarked);
 
         if (scrollArea != null) {
             var scrollbar = Scrollbar.builder()
@@ -271,6 +274,24 @@ final class MainScreen {
                     .viewportContentLength(visibleRows)
                     .position(tui.templateTableState.offset());
             frame.renderStatefulWidget(scrollbar, scrollArea, scrollState);
+        }
+    }
+
+    /**
+     * Draws {@code ●} on each visible marked row (#1131, #1482) in the second cell of the cursor's
+     * gutter, which is always reserved and otherwise blank, so marking a row moves nothing else.
+     * The table has one header line and single-line rows.
+     */
+    private void renderMarks(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect tableArea, int offset,
+                             int rows, java.util.function.IntPredicate marked) {
+        var buffer = frame.buffer();
+        int x = tableArea.left() + 1;
+        for (int row = offset; row < rows; row++) {
+            int y = tableArea.top() + 1 + row - offset;
+            if (y >= tableArea.bottom()) break;
+            if (!marked.test(row)) continue;
+            var style = buffer.get(x, y).style().patch(Style.EMPTY.fg(tui.theme.contextAccentFg()));
+            buffer.setString(x, y, "\u25cf", style);
         }
     }
 
@@ -334,7 +355,9 @@ final class MainScreen {
                 .widths(Constraint.min(10), Constraint.min(7),
                         Constraint.min(11), Constraint.min(10),
                         Constraint.length(10), Constraint.min(8), Constraint.length(6))
-                .highlightSymbol(focused ? "\u25b8 " : "  ");
+                .highlightSymbol(focused ? "\u25b8 " : "  ")
+                // Always reserved, so renderMarks can draw into it
+                .highlightSpacing(Table.HighlightSpacing.ALWAYS);
 
         if (focused) {
             var highlightStyle = Style.EMPTY.bg(tui.theme.highlightBg()).fg(tui.theme.highlightFg());
@@ -354,6 +377,7 @@ final class MainScreen {
         }
 
         frame.renderStatefulWidget(tableBuilder.build(), actualArea, tableState);
+        renderMarks(frame, actualArea, tableState.offset(), tui.tableRows.size(), tui::instanceRowMarked);
 
         if (scrollArea != null) {
             var scrollbar = Scrollbar.builder()
@@ -390,8 +414,10 @@ final class MainScreen {
         items.add(makeKey("F4", "Branch\u2026", onTemplates ? !isBuilt : !hasInstance));
         items.add(makeKey("F5", "Build…", !hasTemplate || !onTemplates));
         items.add(makeKey("F6", "Rename\u2026", !hasInstance || onTemplates));
-        items.add(makeKey("F7", "Stop", !running || onTemplates));
-        items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !isBuilt : !hasInstance));
+        // With marks, F7 and F8 act on the marked rows rather than the cursor's
+        boolean instanceMarks = !tui.markedInstances().isEmpty();
+        items.add(makeKey("F7", "Stop", onTemplates || !(running || instanceMarks)));
+        items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !(isBuilt || !tui.markedTemplates().isEmpty()) : !hasInstance));
         boolean hasActions = hasInstance && !onTemplates && tui.hasActionsForInstance(selected);
         items.add(makeKey("F9", "Actions", !hasActions));
         items.add(makeKey("F10", "Quit", false));
@@ -479,17 +505,10 @@ final class MainScreen {
                     hasWarning = true;
                 }
             }
-            // The key bar has no room left at 80 columns: the marks are counted here, after the warnings
-            // (which say why the template needs a build), and Space is hinted last, so it is cut first
-            int marked = tui.markedTemplates().size();
-            if (marked > 0) {
-                spans.add(Span.styled("  ● " + marked + " marked, Esc clears", Style.EMPTY.fg(tui.theme.contextAccentFg()).bg(bg)));
-            }
             if (!hasWarning && template.description() != null && !template.description().isEmpty()) {
                 spans.add(Span.styled("  " + template.description(), Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
             }
-            spans.add(Span.styled("  Space", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(bg)));
-            spans.add(Span.styled(" Mark", Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
+            addMarkHints(spans, tui.markedTemplates().size(), bg);
             return Line.from(spans);
         }
         if (!onTemplates && instance != null) {
@@ -505,9 +524,22 @@ final class MainScreen {
                 spans.add(Span.styled("  [" + instance.networkMode().toLowerCase() + "]",
                         Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
             }
+            addMarkHints(spans, tui.markedInstances().size(), bg);
             return Line.from(spans);
         }
         return Line.styled("", Style.EMPTY);
+    }
+
+    /**
+     * The key bar has no room left at 80 columns, so Space is hinted at the end of the context line,
+     * and the marks are counted after it: a mark only adds to the end of the line and moves nothing.
+     */
+    private void addMarkHints(List<Span> spans, int marked, Color bg) {
+        spans.add(Span.styled("  Space", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(bg)));
+        spans.add(Span.styled(" Mark", Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
+        if (marked > 0) {
+            spans.add(Span.styled("  ● " + marked + " marked, Esc clears", Style.EMPTY.fg(tui.theme.contextAccentFg()).bg(bg)));
+        }
     }
 
     private void renderContextLine(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Line line) {

@@ -222,6 +222,14 @@ One named target behaves as it always did.
 In the TUI, Space marks templates on the templates table (#1131), and F5 then offers to rebuild the marked ones with their parents, with their descendants, or alone, as one `isx build` of several names.
 The menu describes each batch with the chain `isx build` computes (`BuildCommand.withParentsChain`, `withDescendantsChain`), so a shared parent shows once.
 The marks are TUI state only, kept by name: a refresh keeps them, drops those of templates that are gone, and Esc or a build launched from them clears them.
+Space marks instances the same way (#1482).
+While the focused table has marks, the keys that change state act on the marked rows and leave the row under the cursor alone, as a file manager with this F-key layout does.
+F8 destroys the marked templates or instances after one confirmation that names them: only the built templates, and anything derived from another marked row before it.
+F7 stops and Shift+F7 restarts the marked running instances.
+The keys that open one thing (F2, F3, F4, F6, F9, `a`, Enter) keep acting on the cursor's row, since for several rows each would be a shell or a dialog.
+Shift+F8 still means all.
+A batch is refused while any marked row has an operation under way, as F5's are.
+A mark moves nothing on the screen: it is drawn in the cursor gutter's blank second cell, and counted at the end of the context line.
 
 **Base image**: The root image (`tpl-minimal`) uses a custom Fedora base image from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images) instead of linuxcontainers.org.
 This image is a pre-baked systemd rootfs with agentuser, systemd-networkd, a connectivity watchdog, container-specific service masking, and a tmpfiles override for device node permissions — all the static setup that `buildFromScratch` would otherwise perform on every build.

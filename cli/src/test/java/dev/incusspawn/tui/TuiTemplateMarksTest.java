@@ -33,11 +33,14 @@ class TuiTemplateMarksTest {
 
     private static final KeyEvent SPACE = KeyEvent.ofChar(' ');
     private static final KeyEvent DOWN = KeyEvent.ofKey(KeyCode.DOWN);
+    private static final KeyEvent UP = KeyEvent.ofKey(KeyCode.UP);
     private static final String VERSION = "1.2.3";
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
     private TuiRunner runner;
     private final FakeIncusDaemon daemon = new FakeIncusDaemon();
+    /** Submitted background tasks wait here until the test runs them. */
+    private final java.util.Queue<Runnable> queued = new java.util.ArrayDeque<>();
 
     @BeforeEach
     void runner() throws Exception {
@@ -98,7 +101,7 @@ class TuiTemplateMarksTest {
 
     private void startSession(Tui tui, Map<String, ImageDef> defs) {
         tui.useDefinitions(defs, new ToolDefLoader(List.of()), List.of());
-        tui.startSession(daemon.client(), new BackgroundTaskManager(), new FlockInstanceLockManager(),
+        tui.startSession(daemon.client(), new BackgroundTaskManager(queued::add), new FlockInstanceLockManager(),
                 InstanceListing.collectEntries(daemon.client().listJson()));
     }
 
@@ -214,6 +217,34 @@ class TuiTemplateMarksTest {
         assertEquals("Operation in progress for tpl-a", tui.statusMessage);
         assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
         assertEquals(List.of("tpl-a", "tpl-b"), List.copyOf(tui.markedTemplates()));
+    }
+
+    @Test
+    void destroyingWithMarksDestroysTheMarkedBuiltTemplatesDerivedFirst() {
+        var tui = tui();
+        // All three marked, the cursor left on tpl-b, which is not built.
+        press(tui, SPACE, DOWN, SPACE, DOWN, SPACE);
+        press(tui, KeyEvent.ofKey(KeyCode.F8));
+        assertEquals(Tui.Mode.CONFIRM_DELETE, tui.mode());
+        var dialog = TuiSnapshot.toText(TuiSnapshot.render(80, 24, tui::render));
+        assertTrue(dialog.contains("Destroy 2 templates"), dialog);
+        assertTrue(dialog.contains("tpl-a, tpl-minimal"), dialog);
+        press(tui, KeyEvent.ofChar('y'));
+        assertTrue(tui.markedTemplates().isEmpty(), "a destroy launched from the marks clears them");
+        daemon.clearRequests();
+        while (!queued.isEmpty()) queued.remove().run();
+
+        var deletes = daemon.requests().stream().filter(r -> r.startsWith("DELETE /1.0/instances/")).toList();
+        assertEquals(List.of("DELETE /1.0/instances/tpl-a", "DELETE /1.0/instances/tpl-minimal"), deletes);
+    }
+
+    @Test
+    void destroyingMarksNoneOfWhichIsBuiltSaysSo() {
+        var tui = tui();
+        press(tui, DOWN, DOWN, SPACE, UP);
+        press(tui, KeyEvent.ofKey(KeyCode.F8));
+        assertEquals("No marked template is built", tui.statusMessage);
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
 
     @Test

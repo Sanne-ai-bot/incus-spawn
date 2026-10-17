@@ -251,9 +251,6 @@ public class Tui {
     Map<String, dev.incusspawn.config.ImageDef> imageDefs;
     List<TemplateInfo> templateEntries;
     List<Row> templateRows;
-    /** The template rows' cells after the name, kept so a mark redraws them without assessing staleness again. */
-    private List<TemplateRowCells> templateRowCells = List.of();
-    private record TemplateRowCells(String name, String status, String disk, String description, Style style) {}
     boolean anyTemplateOutdated;
     boolean anyDefinitionChanged;
     boolean anyParentRebuilt;
@@ -270,6 +267,11 @@ public class Tui {
      * template that is gone, and clear on Esc or once a build is launched from them.
      */
     private final java.util.SequencedSet<String> markedTemplates = new java.util.LinkedHashSet<>();
+    /**
+     * Instances marked with Space (#1482), kept like {@link #markedTemplates}: F8 destroys them, F7
+     * stops and Shift+F7 restarts the running ones, and launching any of those clears them.
+     */
+    private final java.util.SequencedSet<String> markedInstances = new java.util.LinkedHashSet<>();
     TableState templateTableState;
 
     // Instance panel data (bottom)
@@ -567,6 +569,7 @@ public class Tui {
     void publishRows() {
         var names = templateEntries.stream().map(TemplateInfo::name).collect(java.util.stream.Collectors.toSet());
         markedTemplates.retainAll(names);
+        markedInstances.retainAll(entries.stream().map(InstanceInfo::name).collect(java.util.stream.Collectors.toSet()));
         allTemplateEntries = new ArrayList<>(templateEntries);
         allEntries = new ArrayList<>(entries);
         rebuildRowData();
@@ -635,12 +638,13 @@ public class Tui {
         }
         statusMessage = null;
 
-        // Esc has no other meaning in browse mode: it drops the marks
-        if (key.isKey(KeyCode.ESCAPE) && !markedTemplates.isEmpty()) {
-            // Said, since from the instances panel the marks are easy to miss
-            statusMessage = "Cleared " + markedTemplates.size() + (markedTemplates.size() == 1 ? " mark" : " marks");
+        // Esc has no other meaning in browse mode: it drops the marks on both tables
+        int marks = markedTemplates.size() + markedInstances.size();
+        if (key.isKey(KeyCode.ESCAPE) && marks > 0) {
+            // Said, since the other table's marks are easy to miss
+            statusMessage = "Cleared " + marks + (marks == 1 ? " mark" : " marks");
             markedTemplates.clear();
-            markTemplateRows();
+            markedInstances.clear();
             return true;
         }
         if (key.isKey(KeyCode.F1)) {
@@ -738,7 +742,6 @@ public class Tui {
         // Space: mark or unmark the template for a build of several from F5
         if (key.isChar(' ')) {
             if (!markedTemplates.remove(template.name())) markedTemplates.add(template.name());
-            markTemplateRows();
             return true;
         }
 
@@ -754,6 +757,12 @@ public class Tui {
         if (key.isKey(KeyCode.F5) && !markedTemplates.isEmpty()) {
             if (showProxyError()) return true;
             openBuildMenu(template);
+            return true;
+        }
+
+        // F8 with marks: destroy the marked built templates, whatever the row under the cursor
+        if (isDestroyKey(key) && !key.hasShift() && !markedTemplates.isEmpty()) {
+            confirmDestroyMarkedTemplates();
             return true;
         }
 
@@ -783,7 +792,7 @@ public class Tui {
         }
 
         // Shift+F8 or Shift+Delete: Destroy all built templates
-        if ((key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) && key.hasShift()) {
+        if (isDestroyKey(key) && key.hasShift()) {
             var anyBuilt = templateEntries.stream()
                     .anyMatch(t -> !"not built".equals(t.buildStatus()));
             if (!anyBuilt) {
@@ -795,7 +804,7 @@ public class Tui {
         }
 
         // F8 or Delete: Destroy template
-        if (key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) {
+        if (isDestroyKey(key)) {
             if ("not built".equals(template.buildStatus())) {
                 statusMessage = "Template is not built.";
                 return true;
@@ -826,6 +835,17 @@ public class Tui {
         var selected = selectedEntry(tableState);
         if (selected == null) return false;
 
+        // Space: mark or unmark the instance for F8, F7 or Shift+F7 on several
+        if (key.isChar(' ')) {
+            if (!markedInstances.remove(selected.name())) markedInstances.add(selected.name());
+            return true;
+        }
+        // With marks, F8, F7 and Shift+F7 act on the marked instances and leave the cursor row alone
+        if (!markedInstances.isEmpty() && ((isDestroyKey(key) && !key.hasShift()) || key.isKey(KeyCode.F7))) {
+            actOnMarkedInstances(key);
+            return true;
+        }
+
         // F3: Show instance details (always accessible, even during operations)
         if (key.isKey(KeyCode.F3)) {
             instanceDetail.open();
@@ -836,7 +856,7 @@ public class Tui {
         }
 
         // Shift+F8 or Shift+Delete: Destroy all instances
-        if ((key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) && key.hasShift()) {
+        if (isDestroyKey(key) && key.hasShift()) {
             if (entries.isEmpty()) {
                 statusMessage = "No instances to destroy.";
                 return true;
@@ -845,14 +865,14 @@ public class Tui {
             return true;
         }
         // Block actions that mutate the selected instance if there's a pending operation
-        if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name())) {
+        if (isBusy(selected)) {
             statusMessage = "Operation in progress for " + selected.name();
             return true;
         }
         if (isInstanceActionKey(key, selected) && vanished(selected.name())) return true;
 
         // F8 or Delete: Destroy instance
-        if (key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) {
+        if (isDestroyKey(key)) {
             openDeleteConfirm(selected.name());
             return true;
         }
@@ -877,23 +897,9 @@ public class Tui {
             openBranchModal(selected.name());
             return true;
         }
-        if (key.isKey(KeyCode.F7) && !key.hasShift() && isRunning(selected)) {
-            execInBackground("Stopping " + selected.name(),
-                    "Stopped " + selected.name(),
-                    selected.name(),
-                    "Stopped " + selected.name(),
-                    Metadata.OP_STOPPING,
-                    () -> incus.stop(selected.name()));
-            return true;
-        }
-        if (key.isKey(KeyCode.F7) && key.hasShift() && isRunning(selected)) {
-            execInBackground("Restarting " + selected.name(),
-                    "Restarted " + selected.name(),
-                    selected.name(),
-                    "Restarted " + selected.name(),
-                    Metadata.OP_RESTARTING,
-                    () -> InstanceLifecycle.restartForUse(incus, selected.name(), selected.machineType(),
-                            selected.mcpCaller(), selected.metadata()));
+        if (key.isKey(KeyCode.F7) && isRunning(selected)) {
+            if (key.hasShift()) restartInBackground(selected);
+            else stopInBackground(selected);
             return true;
         }
         if (key.isKey(KeyCode.F6)) {
@@ -921,9 +927,101 @@ public class Tui {
         return false;
     }
 
+    private static boolean isDestroyKey(KeyEvent key) {
+        return key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE);
+    }
+
+    /**
+     * {@code names} with each one after everything derived from it, by the parents the rows record
+     * (a template's, or the template or instance an instance was branched from), so a CoW source is
+     * destroyed after its copies; otherwise in the order given.
+     */
+    List<String> derivedFirst(List<String> names) {
+        var parentOf = new java.util.HashMap<String, String>();
+        for (var t : allTemplateEntries != null ? allTemplateEntries : templateEntries) parentOf.put(t.name(), t.parent());
+        for (var i : allEntries != null ? allEntries : entries) parentOf.put(i.name(), i.parent());
+        var depth = new java.util.HashMap<String, Integer>();
+        for (var name : names) {
+            var ancestors = new java.util.HashSet<String>();
+            var parent = parentOf.get(name);
+            while (parent != null && !parent.isEmpty() && ancestors.add(parent)) parent = parentOf.get(parent);
+            depth.put(name, ancestors.size());
+        }
+        var ordered = new ArrayList<>(names);
+        ordered.sort(java.util.Comparator.comparing(depth::get, java.util.Comparator.reverseOrder()));
+        return ordered;
+    }
+
+    /** Opens the destroy confirmation for the marked built templates, derived ones first. */
+    private void confirmDestroyMarkedTemplates() {
+        var templates = allTemplateEntries != null ? allTemplateEntries : templateEntries;
+        var marked = templates.stream().filter(t -> markedTemplates.contains(t.name())).toList();
+        var busy = marked.stream().filter(this::isBusy).findFirst();
+        if (busy.isPresent()) {
+            statusMessage = "Operation in progress for " + busy.get().name();
+            return;
+        }
+        var built = marked.stream().filter(TemplateInfo::isBuilt).map(TemplateInfo::name).toList();
+        if (built.isEmpty()) {
+            statusMessage = "No marked template is built";
+            return;
+        }
+        deleteConfirm = DeleteConfirm.ofSeveral(modal, derivedFirst(built), DeleteConfirm.Kind.TEMPLATE);
+        mode = Mode.CONFIRM_DELETE;
+    }
+
+    /** F8, F7 or Shift+F7 on the marked instances; refused while any of them has an operation under way. */
+    private void actOnMarkedInstances(KeyEvent key) {
+        var marked = (allEntries != null ? allEntries : entries).stream()
+                .filter(e -> markedInstances.contains(e.name())).toList();
+        var busy = marked.stream()
+                .filter(this::isBusy)
+                .findFirst();
+        if (busy.isPresent()) {
+            statusMessage = "Operation in progress for " + busy.get().name();
+            return;
+        }
+        if (marked.stream().anyMatch(e -> vanished(e.name()))) return;
+        if (isDestroyKey(key)) {
+            deleteConfirm = DeleteConfirm.ofSeveral(modal, derivedFirst(marked.stream().map(InstanceInfo::name).toList()),
+                    DeleteConfirm.Kind.INSTANCE);
+            mode = Mode.CONFIRM_DELETE;
+            return;
+        }
+        var running = marked.stream().filter(Tui::isRunning).toList();
+        if (running.isEmpty()) {
+            statusMessage = "No marked instance is running";
+            return;
+        }
+        markedInstances.clear();
+        for (var instance : running) {
+            if (key.hasShift()) restartInBackground(instance);
+            else stopInBackground(instance);
+        }
+    }
+
+    private void stopInBackground(InstanceInfo instance) {
+        execInBackground("Stopping " + instance.name(),
+                "Stopped " + instance.name(),
+                instance.name(),
+                "Stopped " + instance.name(),
+                Metadata.OP_STOPPING,
+                () -> incus.stop(instance.name()));
+    }
+
+    private void restartInBackground(InstanceInfo instance) {
+        execInBackground("Restarting " + instance.name(),
+                "Restarted " + instance.name(),
+                instance.name(),
+                "Restarted " + instance.name(),
+                Metadata.OP_RESTARTING,
+                () -> InstanceLifecycle.restartForUse(incus, instance.name(), instance.machineType(),
+                        instance.mcpCaller(), instance.metadata()));
+    }
+
     /** Keys that act on the selected instance (as opposed to navigating or viewing it). */
     private boolean isInstanceActionKey(KeyEvent key, InstanceInfo selected) {
-        return key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE) || key.isKey(KeyCode.F2)
+        return isDestroyKey(key) || key.isKey(KeyCode.F2)
                 || key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4) || key.isKey(KeyCode.F6)
                 || key.isKey(KeyCode.F9) || key.isChar('a') || (key.isKey(KeyCode.F7) && isRunning(selected));
     }
@@ -1133,105 +1231,16 @@ public class Tui {
             // replaced deleteConfirm (#1248).
             var target = deleteConfirm.name();
             mode = Mode.BROWSE;
-            if ("--all".equals(target)) {
+            if (!deleteConfirm.several().isEmpty()) {
+                if (deleteConfirm.kind() == DeleteConfirm.Kind.TEMPLATE) markedTemplates.clear();
+                else markedInstances.clear();
+                destroyBatch(deleteConfirm.several(), deleteConfirm.kind());
+            } else if ("--all".equals(target)) {
                 var allNames = new java.util.ArrayList<>(imageDefs.keySet());
                 java.util.Collections.reverse(allNames);
-                int count = allNames.size();
-                backgroundTasks.submit("Deleting " + count + " template(s)",
-                        "Deleted " + count + " template(s)", null, () -> {
-                    int destroyed = 0;
-                    int skipped = 0;
-                    for (var name : allNames) {
-                        if (!backgroundTasks.tryClaim(name)) {
-                            skipped++;
-                            continue;
-                        }
-                        Optional<InstanceLockManager.LockHandle> lockOpt;
-                        try {
-                            lockOpt = lockManager.tryAcquire(name, Metadata.OP_DELETING);
-                        } catch (java.io.UncheckedIOException e) {
-                            backgroundTasks.releaseClaim(name);
-                            setStatusMessage("Lock error for " + name + ": " + e.getCause().getMessage());
-                            break;
-                        }
-                        if (lockOpt.isEmpty()) {
-                            backgroundTasks.releaseClaim(name);
-                            skipped++;
-                            continue;
-                        }
-                        try (var lock = lockOpt.get()) {
-                            if (incus.exists(name)) {
-                                incus.setPendingOperation(name, Metadata.OP_DELETING);
-                                refreshDataAfterBackground();
-                                try {
-                                    incus.delete(name, true);
-                                    InstanceLifecycle.removeHostIntegration(name);
-                                    destroyed++;
-                                } catch (Exception e) {
-                                    setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
-                                    incus.clearPendingOperation(name);
-                                    refreshDataAfterBackground();
-                                    break;
-                                }
-                            }
-                        } finally {
-                            backgroundTasks.releaseClaim(name);
-                        }
-                    }
-                    if (destroyed > 0) InstanceDestroyer.refreshProxy();
-                    String msg = "Destroyed " + destroyed + " template(s)";
-                    if (skipped > 0) msg += " (" + skipped + " skipped, locked)";
-                    if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
-                    refreshDataAfterBackground();
-                });
+                destroyBatch(allNames, DeleteConfirm.Kind.TEMPLATE);
             } else if ("--all-instances".equals(target)) {
-                var allEntries = new java.util.ArrayList<>(entries);
-                int count = allEntries.size();
-                backgroundTasks.submit("Deleting " + count + " instance(s)",
-                        "Deleted " + count + " instance(s)", null, () -> {
-                    int destroyed = 0;
-                    int skipped = 0;
-                    for (var entry : allEntries) {
-                        if (!backgroundTasks.tryClaim(entry.name())) {
-                            skipped++;
-                            continue;
-                        }
-                        Optional<InstanceLockManager.LockHandle> lockOpt;
-                        try {
-                            lockOpt = lockManager.tryAcquire(entry.name(), Metadata.OP_DELETING);
-                        } catch (java.io.UncheckedIOException e) {
-                            backgroundTasks.releaseClaim(entry.name());
-                            setStatusMessage("Lock error for " + entry.name() + ": " + e.getCause().getMessage());
-                            break;
-                        }
-                        if (lockOpt.isEmpty()) {
-                            backgroundTasks.releaseClaim(entry.name());
-                            skipped++;
-                            continue;
-                        }
-                        try (var lock = lockOpt.get()) {
-                            incus.setPendingOperation(entry.name(), Metadata.OP_DELETING);
-                            refreshDataAfterBackground();
-                            try {
-                                incus.delete(entry.name(), true);
-                                InstanceLifecycle.removeHostIntegration(entry.name());
-                                destroyed++;
-                            } catch (Exception e) {
-                                setStatusMessage("Failed to destroy " + entry.name() + ": " + e.getMessage());
-                                incus.clearPendingOperation(entry.name());
-                                refreshDataAfterBackground();
-                                break;
-                            }
-                        } finally {
-                            backgroundTasks.releaseClaim(entry.name());
-                        }
-                    }
-                    if (destroyed > 0) InstanceDestroyer.refreshProxy();
-                    String msg = "Destroyed " + destroyed + " instance(s)";
-                    if (skipped > 0) msg += " (" + skipped + " skipped, locked)";
-                    if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
-                    refreshDataAfterBackground();
-                });
+                destroyBatch(entries.stream().map(InstanceInfo::name).toList(), DeleteConfirm.Kind.INSTANCE);
             } else if (!vanished(target)) {
                 execInBackground("Deleting " + target, "Deleted " + target, target, "Destroyed " + target,
                         Metadata.OP_DELETING,
@@ -1244,6 +1253,62 @@ public class Tui {
         }
         mode = Mode.BROWSE;
         return true;
+    }
+
+    /**
+     * Destroys {@code names} in order in one background task, skipping any that are gone or locked
+     * and stopping at the first failure; the proxy is refreshed once at the end.
+     */
+    private void destroyBatch(List<String> names, DeleteConfirm.Kind what) {
+        int count = names.size();
+        var kind = what.noun;
+        backgroundTasks.submit("Deleting " + count + " " + kind + "(s)",
+                "Deleted " + count + " " + kind + "(s)", null, () -> {
+            int destroyed = 0;
+            int skipped = 0;
+            for (var name : names) {
+                if (!backgroundTasks.tryClaim(name)) {
+                    skipped++;
+                    continue;
+                }
+                Optional<InstanceLockManager.LockHandle> lockOpt;
+                try {
+                    lockOpt = lockManager.tryAcquire(name, Metadata.OP_DELETING);
+                } catch (java.io.UncheckedIOException e) {
+                    backgroundTasks.releaseClaim(name);
+                    setStatusMessage("Lock error for " + name + ": " + e.getCause().getMessage());
+                    break;
+                }
+                if (lockOpt.isEmpty()) {
+                    backgroundTasks.releaseClaim(name);
+                    skipped++;
+                    continue;
+                }
+                try (var lock = lockOpt.get()) {
+                    if (incus.exists(name)) {
+                        incus.setPendingOperation(name, Metadata.OP_DELETING);
+                        refreshDataAfterBackground();
+                        try {
+                            incus.delete(name, true);
+                            InstanceLifecycle.removeHostIntegration(name);
+                            destroyed++;
+                        } catch (Exception e) {
+                            setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
+                            incus.clearPendingOperation(name);
+                            refreshDataAfterBackground();
+                            break;
+                        }
+                    }
+                } finally {
+                    backgroundTasks.releaseClaim(name);
+                }
+            }
+            if (destroyed > 0) InstanceDestroyer.refreshProxy();
+            String msg = "Destroyed " + destroyed + " " + kind + "(s)";
+            if (skipped > 0) msg += " (" + skipped + " skipped, locked)";
+            if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
+            refreshDataAfterBackground();
+        });
     }
 
     private void openBuildMenu(TemplateInfo template) {
@@ -1598,7 +1663,7 @@ public class Tui {
             case ACCOUNTS -> {
                 var selected = selectedEntry(instanceTableState);
                 if (selected == null || vanished(selected.name())) yield true;
-                if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name())) {
+                if (isBusy(selected)) {
                     statusMessage = "Operation in progress for " + selected.name();
                     yield true;
                 }
@@ -1973,6 +2038,22 @@ public class Tui {
         return markedTemplates;
     }
 
+    /** The marked instances, which the context line counts and a test reads. */
+    java.util.SequencedSet<String> markedInstances() {
+        return markedInstances;
+    }
+
+    /** Whether the template on row {@code row} of the templates table is marked. */
+    boolean templateRowMarked(int row) {
+        return row < templateEntries.size() && markedTemplates.contains(templateEntries.get(row).name());
+    }
+
+    /** Whether the instance on row {@code row} of the instances table is marked. */
+    boolean instanceRowMarked(int row) {
+        return row < rowToEntry.size() && rowToEntry.get(row) != null
+                && markedInstances.contains(rowToEntry.get(row).name());
+    }
+
     boolean dispatchAction(ToolAction action, ActionContext context) {
         var cmd = action.shellCommand(context);
         if (cmd.isPresent()) {
@@ -2020,6 +2101,10 @@ public class Tui {
     /** Whether an operation on {@code template} is under way, here or in another isx, so it must not be built now. */
     private boolean isBusy(TemplateInfo template) {
         return hasPendingOp(template) || backgroundTasks.hasRunningTask(template.name());
+    }
+
+    private boolean isBusy(InstanceInfo instance) {
+        return hasPendingOp(instance) || backgroundTasks.hasRunningTask(instance.name());
     }
 
     /**
@@ -2446,7 +2531,7 @@ public class Tui {
     // --- Data ---
 
     void buildTemplateRowData() {
-        var cells = new ArrayList<TemplateRowCells>();
+        templateRows = new ArrayList<>();
         anyTemplateOutdated = false;
         anyDefinitionChanged = false;
         anyParentRebuilt = false;
@@ -2502,24 +2587,11 @@ public class Tui {
                 }
             }
 
-            cells.add(new TemplateRowCells(t.name(), statusDisplay, diskCell(t.diskUsage()), desc, statusStyle));
+            templateRows.add(Row.from(t.name(), statusDisplay, diskCell(t.diskUsage()), desc).style(statusStyle));
         }
-        templateRowCells = cells;
-        markTemplateRows();
         templatesDefChanged = defChanged;
         templatesParentRebuilt = parentRebuilt;
         templatesOutOfSync = outOfSync;
-    }
-
-    /** The template rows from their cells, each name led by its mark while any template is marked (#1131). */
-    private void markTemplateRows() {
-        templateRows = new ArrayList<>();
-        for (var c : templateRowCells) {
-            // Every name moves over while anything is marked, so the names stay aligned
-            var name = markedTemplates.isEmpty() ? c.name()
-                    : (markedTemplates.contains(c.name()) ? "● " : "  ") + c.name();
-            templateRows.add(Row.from(name, c.status(), c.disk(), c.description()).style(c.style()));
-        }
     }
 
     private void buildRowData() {

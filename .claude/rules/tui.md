@@ -79,13 +79,22 @@ Tool setups come from the TUI's own `toolDefLoader` (`AccountSelection.namespace
 The F5 build menu is `BuildMenu` (`BuildMenuTest`): it builds its options from the template definitions, rows and out-of-sync set `Tui` passes in, owns their keys and its rendering, and hands the chosen option back, so `Tui` leaves the build pending and quits the runner.
 `Tui.markedTemplates` is the set Space marks on the templates table (#1131, `TuiTemplateMarksTest`); `BuildMenu` leads with options for it, and `Tui` clears it when one of those (`BuildMenuOption.marked`) is built.
 Each option names the templates it rebuilds (`BuildMenuOption.rebuilds`, a chain from `BuildCommand.withParentsChain`/`withDescendantsChain`), and `Tui` refuses it while any of them, or for an option not about the marks the row under the cursor, has an operation under way; so with marks set F5 opens even on a busy row.
-While any template is marked, every name is led by a two-cell prefix, `●` on the marked ones, and the context line counts them; the key bar has no room left at 80 columns, so `Space Mark` is hinted at the end of the templates' context line.
+`Tui.markedInstances` is the same set for the instances table (#1482, `TuiInstanceMarksTest`).
+With instance marks set, F8 opens `DeleteConfirm.ofSeveral` for them, and F7 / Shift+F7 stop or restart the marked running ones; both are handled before the cursor row's busy check.
+F8 on marked templates (`confirmDestroyMarkedTemplates`) destroys the built ones.
+`Tui.derivedFirst` orders either batch so a row goes after anything derived from it, by the parents the rows record.
+A batch is refused while any marked row is busy, and launching one clears its table's marks; Esc clears both sets.
+A mark must not move anything (Sanne, #1482).
+`MainScreen.renderMarks` draws `●` after the table renders, into the second cell of the cursor gutter (`▸ `), which `HighlightSpacing.ALWAYS` reserves on every row.
+`TuiInstanceMarksTest.markingMovesNothingElseOnTheScreen` pins it.
+The key bar has no room left at 80 columns, so `Space Mark` is hinted at the end of both tables' context lines.
+The count of marks comes after it, so a mark only adds to the end of the line.
 The F1 dialog (versions and keyboard shortcuts) is `AboutModal` (`AboutModalTest`): what it says about the build and the host comes through its `Source`, and it hands Esc and `?` (AI Help) back to `Tui`.
 The F9 actions dialog is `ActionsMenu` (`ActionsMenuTest`): it owns the list, the selection and its rendering, and hands Enter back, so `Tui` checks the instance still exists and runs the selected action through `dispatchAction`.
 The branch dialog is `BranchModal` (`BranchModalTest`): it owns its fields, their keys and its rendering, and hands Enter back, so `Tui` runs the proxy, credential and still-exists checks and creates the branch from `BranchModal.request` once the terminal is released.
 The rename dialog is `RenameDialog` (`RenameDialogTest`): it owns the name input, its keys and its rendering, and hands Enter back, so `Tui` keeps `renameSourceName` through the stop-first confirm and runs the checks and the rename.
 The new-template dialog is `NewTemplateModal` (`NewTemplateModalTest`): it owns the name, parent and location fields, their keys and its rendering, while `Tui` lists the locations (from `SpawnConfig`), checks the name and parent on Enter, and creates the template from `NewTemplateModal.parent` and `locationDir` once the terminal is released.
-The delete confirmation is `DeleteConfirm` (`DeleteConfirmTest`): it holds the target and the note `Tui.cowDeleteNote` worked out when it opened, its keys and its rendering, while `Tui` runs the destroy.
+The delete confirmation is `DeleteConfirm` (`DeleteConfirmTest`): it holds the target (one name, `--all` / `--all-instances`, or the marked names from `ofSeveral`) and the note `Tui.cowDeleteNote` worked out when it opened, its keys and its rendering, while `Tui` runs the destroy; every target of several goes through `Tui.destroyBatch`.
 **Branch dialog accounts** (`BranchAccountChoices`, snapshot-tested in `BranchAccountChoicesTest`): account rows follow the inbox field (`accountFieldBase()`), one per credential the template's tools use with more than one account.
 Each row is a dropdown the class draws itself (Tamboui has none): entry 0 is *inherit* (`BranchFlow.inheritedAccounts`, what `isx branch` without `--account` does), the rest explicit pins -- the inherited account included, since pinning the default is not following it.
 Space opens, ←→ cycles, Enter confirms the branch; while open it takes every key.

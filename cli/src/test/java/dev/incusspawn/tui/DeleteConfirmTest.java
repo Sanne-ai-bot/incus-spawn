@@ -4,6 +4,8 @@ import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The delete confirmation on its own: only y confirms, and what it says it will destroy. */
@@ -41,5 +43,22 @@ class DeleteConfirmTest {
         var dialog = dialog("--all-instances", "");
         TuiSnapshot.assertMatches("delete-confirm-all-instances-80x24",
                 TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+    }
+
+    @Test
+    void rendersTheMarkedInstances() {
+        var dialog = DeleteConfirm.ofSeveral(new ModalRenderer(TuiTheme.dark()), List.of("alpha", "gamma"), DeleteConfirm.Kind.INSTANCE);
+        assertNull(dialog.name(), "several names are not one target");
+        assertEquals(List.of("alpha", "gamma"), dialog.several());
+        TuiSnapshot.assertMatches("delete-confirm-several-80x24",
+                TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+    }
+
+    @Test
+    void listsAtMostEightNamesAndCountsTheRest() {
+        assertEquals("a, b", DeleteConfirm.listed(List.of("a", "b")));
+        var nine = List.of("a", "b", "c", "d", "e", "f", "g", "h", "i");
+        assertEquals("a, b, c, d, e, f, g and 2 more", DeleteConfirm.listed(nine));
+        assertEquals("a, b, c, d, e, f, g, h", DeleteConfirm.listed(nine.subList(0, 8)));
     }
 }
