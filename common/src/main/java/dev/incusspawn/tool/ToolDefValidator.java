@@ -214,7 +214,7 @@ public class ToolDefValidator {
                 var problem = pathScopeProblem(path);
                 if (problem != null) {
                     errors.add(OutputFormat.oneLine("auth entry for " + ae.getDomains() + " in '" + def.getName()
-                            + "': path '" + path + "' " + problem));
+                            + "': path '" + (path == null ? "" : path) + "' " + problem));
                 }
             }
         }
