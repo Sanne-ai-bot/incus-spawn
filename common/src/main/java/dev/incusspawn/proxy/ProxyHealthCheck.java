@@ -41,9 +41,14 @@ public final class ProxyHealthCheck {
         public boolean isLegacy() { return version == null || version.isEmpty(); }
         public boolean hasAuthError() { return authError != null && !authError.isEmpty(); }
         public String authRemediationHint() {
-            return authError != null && authError.contains("gcloud") ? "gcloud auth login" : "isx init";
+            if (authError == null) return "isx init";
+            if (authError.contains("gcloud")) return "gcloud auth login";
+            return authError.contains("OAuth") ? OAUTH_AUTH_HINT : "isx init";
         }
     }
+
+    /** What refreshes an expired Claude OAuth token: the one Claude credential step. */
+    public static final String OAUTH_AUTH_HINT = "isx account add " + dev.incusspawn.config.SpawnConfig.ClaudeConfig.NAMESPACE;
 
     private record HealthResult(boolean healthy, boolean dnsConfigured) {}
 

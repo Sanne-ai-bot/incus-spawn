@@ -114,7 +114,7 @@ public class MitmProxy {
     volatile String authError;
     // Remediation hint for the current authError, so the health endpoint knows
     // whether the failure is one it can re-check on its own (gcloud) or one that
-    // needs the user to re-run 'isx init' (OAuth).
+    // needs the user to paste a fresh token (OAuth, ProxyHealthCheck.OAUTH_AUTH_HINT).
     private String authErrorHint;
     private long authNotificationSentMs;
     private long authRevalidatedMs;
@@ -1982,8 +1982,8 @@ public class MitmProxy {
                 && !ctx.creds().oauthToken().isBlank() && ANTHROPIC_DOMAINS.contains(ctx.domain())) {
             if (upResp.statusCode() == 401) {
                 setAuthError("Claude OAuth token rejected (HTTP 401). "
-                        + "The token may have expired — run 'isx init' to refresh.",
-                        "isx init");
+                        + "The token may have expired — run '" + ProxyHealthCheck.OAUTH_AUTH_HINT + "' to refresh.",
+                        ProxyHealthCheck.OAUTH_AUTH_HINT);
             } else {
                 clearAuthError();
             }
@@ -2305,7 +2305,7 @@ public class MitmProxy {
      * right to do so. Declines when:
      * <ul>
      *   <li>Vertex is not in use — a non-Vertex setup must never fork gcloud at all;</li>
-     *   <li>the standing error is an OAuth rejection (hint {@code isx init}), which
+     *   <li>the standing error is an OAuth rejection (hint {@link ProxyHealthCheck#OAUTH_AUTH_HINT}), which
      *       only the user can resolve — running gcloud would prove nothing;</li>
      *   <li>nothing is wrong and the cached token is still valid, so a check would
      *       learn nothing (this is the steady state: it keeps the healthy path free,
