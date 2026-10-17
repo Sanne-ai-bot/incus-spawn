@@ -274,10 +274,22 @@ When path scopes overlap, the longest matching prefix wins: with `/api` and `/ap
 A prefix matches whole path segments, so `/api` does not match `/apis`.
 When two tools register unscoped entries for the same domain, the first one loaded wins and a warning is logged.
 Trailing slashes in prefixes are normalized (`/mcp/` is treated as `/mcp`), and a root scope of `/` matches every path.
-The request path is compared as sent, never normalized, so a path an upstream may serve as another path matches no scope but the root: a raw character outside RFC 3986 `pchar` and `/` (a backslash, `#`, a space, a control, any non-ASCII byte), a segment of only dots and spaces (`..`, `...`, `..%20`, `..+`, also as `..;`), an empty segment such as `//`, a percent-escape of an unreserved character, `/`, `\`, `;`, `%`, `?`, `#`, a control or DEL (`/mcp/%2e%2e/admin`, `/api/%61dmin`, `..%00`), a malformed escape, or escapes that are not strict UTF-8 (the overlong `%c0%ae`) or decode to a character other than a letter, digit or combining mark (`%e2%88%95`, `%e2%80%8b`) or one whose NFKC form holds ASCII (the fullwidth `%ef%bc%8e`).
-Such a request is served as if no scoped entry matched: an entry that serves every path, unscoped or scoped to `/` (on the domain, else on a wildcard covering it), injects its credential when the request proves its namespace, and otherwise the request is relayed with its own authentication.
-A prefix of that kind could never match, so a tool declaring one is skipped like one with a `..` segment, and so is one with a `;`, which servers that drop path parameters would serve as another path.
-Each prefix is a literal path starting with `/`, without a query, wildcard, whitespace, empty segment or `.`/`..` segment; a tool definition with any other is skipped with a warning when definitions load.
+The request path is compared as sent, never normalized.
+A path an upstream may serve as another path therefore matches no scope but the root.
+Such a path has any of these:
+- a raw character outside RFC 3986 `pchar` and `/`: a backslash, `#`, a space, a control, any non-ASCII byte
+- a segment of only dots and spaces (`..`, `...`, `..%20`, `..+`, also as `..;`), counted once every non-ASCII character is dropped (`..%CC%81`, so also `日.`)
+- a segment of only combining marks or Hangul fillers, or an empty segment such as `//`
+- a percent-escape of an unreserved character, `/`, `\`, `;`, `%`, `?`, `#`, a control or DEL (`/mcp/%2e%2e/admin`, `/api/%61dmin`, `..%00`), or a malformed one
+- escapes that are not strict UTF-8 (the overlong `%c0%ae`)
+- an escaped character other than a letter, digit or combining mark (`%e2%88%95`, `%e2%80%8b`), or a solidus overlay mark (`%cc%b8`)
+- escaped text whose NFKC form has other ASCII than its NFC form (the fullwidth `%ef%bc%8e`, the ligature `%ef%ac%81`)
+
+Such a request is served as if no scoped entry matched.
+An entry that serves every path (unscoped, or scoped to `/`, on the domain or else on a wildcard covering it) injects its credential when the request proves its namespace.
+Otherwise the request is relayed with its own authentication.
+Each prefix is a literal path starting with `/`, without a query, wildcard, whitespace, `;`, empty segment, `.`/`..` segment or any other form listed above.
+A tool definition with any other prefix is skipped with a warning when definitions load: such a prefix could never match, and servers that drop `;` path parameters would serve another path.
 When tools with different credential namespaces share a domain, a request needs only the proof of the entry its path selects; a proof it does carry for another namespace must still be valid.
 This needs distinct placeholder prefixes: when two such tools send their proofs in the same header under the same prefix, the proxy cannot tell which namespace a proof is for, and a request must carry both.
 An entry is never injected for a request that did not prove its own namespace: with an `/mcp` request carrying only the other tool's proof, or one that falls back to an unscoped entry of another tool, the request is relayed with its own authentication and the proxy logs a warning.

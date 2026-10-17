@@ -2,7 +2,11 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.tool.ToolDef;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.Map;
 import java.util.Set;
 
@@ -93,39 +97,66 @@ public record ResolvedToolProxy(
      * {@code \}, {@code ;}, {@code %} (a second decoding), {@code ?}, {@code #}, a control or DEL ({@code %2e},
      * {@code %2f}, {@code %5c}, {@code %3b}, {@code %61}, {@code %25}, {@code %00});</li>
      * <li>escaped bytes that are not strict UTF-8 (the overlong {@code %c0%ae}), or decode to a
-     * character other than a letter, digit or mark, or one whose NFKC form holds ASCII (the
-     * fullwidth {@code %ef%bc%8e});</li>
-     * <li>a segment of only dots and spaces ({@code .}, {@code ..}, {@code ...}, {@code ..%20},
-     * {@code ..+}),
-     * also before a {@code ;} parameter ({@code ..;}), which servers that trim read as {@code ..};
-     * or an empty segment other than a trailing slash, which some servers collapse.</li>
+     * character other than a letter, digit or mark, to a solidus overlay mark ({@code U+0338}), or
+     * to text whose NFKC form has other ASCII than its NFC form (the fullwidth {@code %ef%bc%8e});</li>
+     * <li>a segment whose ASCII, once every non-ASCII character is dropped and {@code +} (also
+     * {@code %2B}) read as a space, is only dots and spaces ({@code ..}, {@code ...},
+     * {@code ..%20}, {@code ..+}, {@code ..%CC%81}), also before a {@code ;} parameter
+     * ({@code ..;}), which servers that trim or drop marks read as {@code ..};</li>
+     * <li>a segment of only combining marks or Hangul fillers, or an empty segment other than a
+     * trailing slash, which some servers collapse.</li>
      * </ul>
      */
     public static boolean mayResolveElsewhere(String path) {
         if (path.chars().anyMatch(c -> PATH_CHARS.indexOf(c) < 0)) return true;
-        boolean nonAscii = false;
         for (int i = path.indexOf('%'); i >= 0; i = path.indexOf('%', i + 3)) {
             int c = escapedByte(path, i);
-            if (c < 0) return true;
-            if (c >= 0x80) {
-                nonAscii = true;
-            } else if (ESCAPABLE.indexOf(c) < 0) {
-                return true;
-            }
+            if (c < 0 || (c < 0x80 && ESCAPABLE.indexOf(c) < 0)) return true;
         }
-        if (nonAscii && !decodesToItself(path)) return true;
-        var segments = path.split("/", -1);
+        String decoded;
+        try {
+            decoded = decode(path);
+        } catch (CharacterCodingException e) {
+            return true;
+        }
+        if (!decoded.codePoints().filter(c -> c >= 0x80).allMatch(ResolvedToolProxy::isLiteral)) return true;
+        // Compatibility mappings fold into ASCII ('．' to '.', 'ﬁ' to "fi"); composition alone never does
+        if (!ascii(Normalizer.normalize(decoded, Normalizer.Form.NFKC))
+                .equals(ascii(Normalizer.normalize(decoded, Normalizer.Form.NFC)))) {
+            return true;
+        }
+        // No escape decodes to '/' or ';', so the decoded path splits as the raw one does
+        var segments = decoded.split("/", -1);
         for (int i = 1; i < segments.length; i++) {
             var segment = segments[i];
             int semicolon = segment.indexOf(';');
-            var name = (semicolon >= 0 ? segment.substring(0, semicolon) : segment).replace("%20", " ").replace('+', ' ');
+            var name = semicolon >= 0 ? segment.substring(0, semicolon) : segment;
             if (name.isEmpty()) {
                 if (semicolon >= 0 || i < segments.length - 1) return true;
-            } else if (name.chars().allMatch(c -> c == '.' || c == ' ')) {
+            } else if (isDotLike(name)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Whether an upstream that drops marks and fillers, trims, and reads {@code +} as a space may
+     * see a segment of dots or nothing: its ASCII is only dots and spaces ({@code ..%CC%81},
+     * {@code ..+}), or it has no ASCII and renders as nothing. Any other non-ASCII is dropped too,
+     * so an invisible letter no list names fails closed.
+     */
+    private static boolean isDotLike(String name) {
+        var ascii = ascii(name);
+        return ascii.isEmpty()
+                ? name.codePoints().allMatch(ResolvedToolProxy::isInvisible)
+                : ascii.chars().allMatch(c -> c == '.' || c == ' ' || c == '+');
+    }
+
+    private static String ascii(String text) {
+        var ascii = new StringBuilder(text.length());
+        text.chars().filter(c -> c < 0x80).forEach(c -> ascii.append((char) c));
+        return ascii.toString();
     }
 
     /** RFC 3986 {@code pchar} and {@code /}: unreserved, sub-delims, {@code :}, {@code @}, {@code %}. */
@@ -146,23 +177,10 @@ public record ResolvedToolProxy(
         return low < 0 ? -1 : high << 4 | low;
     }
 
-    /**
-     * A letter, digit or combining mark: no whitespace, control, format character, symbol a
-     * best-fit conversion turns into a separator ({@code U+2215}) or punctuation.
-     */
-    private static boolean isLetterDigitOrMark(int c) {
-        int type = Character.getType(c);
-        return Character.isLetterOrDigit(c) || type == Character.NON_SPACING_MARK
-                || type == Character.ENCLOSING_MARK || type == Character.COMBINING_SPACING_MARK;
-    }
-
-    /**
-     * Whether the ASCII path, its escapes decoded, is UTF-8 the JDK's strict decoder accepts whose
-     * non-ASCII characters are letters, digits or marks with no ASCII in their NFKC form: a
-     * normalizing, trimming or best-fit upstream reads none as another.
-     */
-    private static boolean decodesToItself(String path) {
-        var bytes = new java.io.ByteArrayOutputStream(path.length());
+    /** The ASCII path with its escapes decoded as strict UTF-8, which refuses overlong forms. */
+    private static String decode(String path) throws CharacterCodingException {
+        if (path.indexOf('%') < 0) return path;
+        var bytes = new ByteArrayOutputStream(path.length());
         for (int i = 0; i < path.length(); i++) {
             if (path.charAt(i) == '%') {
                 bytes.write(escapedByte(path, i));
@@ -171,14 +189,30 @@ public record ResolvedToolProxy(
                 bytes.write(path.charAt(i));
             }
         }
-        String decoded;
-        try {
-            decoded = StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes.toByteArray())).toString();
-        } catch (java.nio.charset.CharacterCodingException e) {
-            return false;
-        }
-        return decoded.codePoints().filter(c -> c >= 0x80).allMatch(c -> isLetterDigitOrMark(c) && java.text.Normalizer
-                .normalize(Character.toString(c), java.text.Normalizer.Form.NFKC).chars().allMatch(n -> n >= 0x80));
+        return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes.toByteArray())).toString();
+    }
+
+    /**
+     * Whether a trimming or best-fit upstream reads the decoded non-ASCII {@code c} as itself: a
+     * letter, digit or combining mark, never whitespace, a control, a format character, a symbol
+     * a best-fit conversion turns into a separator ({@code U+2215}) or a solidus overlay.
+     */
+    private static boolean isLiteral(int c) {
+        return (Character.isLetterOrDigit(c) || isMark(c)) && SOLIDUS_OVERLAYS.indexOf(c) < 0;
+    }
+
+    /** The combining overlays that render as {@code /} or {@code \} over a letter. */
+    private static final String SOLIDUS_OVERLAYS = "\u0337\u0338\u20e5\u20eb";
+
+    /** A combining mark or a Hangul filler: an upstream that drops what renders as nothing drops it. */
+    private static boolean isInvisible(int c) {
+        return isMark(c) || c == 0x115f || c == 0x1160 || c == 0x3164 || c == 0xffa0;
+    }
+
+    private static boolean isMark(int c) {
+        int type = Character.getType(c);
+        return type == Character.NON_SPACING_MARK || type == Character.ENCLOSING_MARK
+                || type == Character.COMBINING_SPACING_MARK;
     }
 
     /**
