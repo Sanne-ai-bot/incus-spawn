@@ -291,8 +291,8 @@ public class ActionResolver {
             return repos;
         }
 
-        // A clone's repos are those it was built with, like its tools: one added to the YAML since
-        // is a directory the clone does not have (#1445).
+        // A clone's repos are those it was built with, by the same type test as its tools: one
+        // added to the YAML since is a directory the clone does not have (#1445).
         var chain = getInheritanceChain(parentTemplate, buildSourceJson, !Metadata.TYPE_BASE.equals(type));
         // One per destination, as the build clones them (#1394).
         var seen = new java.util.HashSet<String>();
@@ -483,8 +483,8 @@ public class ActionResolver {
                 }
             } else {
                 def = imageDefs.get(current);
-                if (def == null && stored == null) {
-                    stored = recordedDefinitions(buildSourceJson);
+                if (def == null) {
+                    if (stored == null) stored = recordedDefinitions(buildSourceJson);
                     def = stored.get(current);
                     fromRecord = def != null;
                 }

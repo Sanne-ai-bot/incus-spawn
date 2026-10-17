@@ -46,10 +46,9 @@ class ActionResolverReposTest {
 
     private static List<String> repoPaths(String type, Map<String, ImageDef> built, Map<String, ImageDef> onDisk) {
         var name = Metadata.TYPE_BASE.equals(type) ? TEMPLATE : CLONE;
-        var daemon = new FakeIncusDaemon().container(name, Map.of(
-                Metadata.TYPE, type,
-                Metadata.PROFILE, TEMPLATE,
-                Metadata.BUILD_SOURCE, new BuildSource(built, Map.of(), Map.of(), Map.of()).toJson()));
+        var config = new java.util.HashMap<>(Map.of(Metadata.TYPE, type, Metadata.PROFILE, TEMPLATE));
+        if (built != null) config.put(Metadata.BUILD_SOURCE, new BuildSource(built, Map.of(), Map.of(), Map.of()).toJson());
+        var daemon = new FakeIncusDaemon().container(name, config);
         var resolver = new ActionResolver(daemon.client(), new ToolDefLoader(List.of()), List.of(), onDisk);
         return resolver.buildActionContext(name, resolver.readInstance(name), TEMPLATE).repos().stream()
                 .map(ActionContext.RepoInfo::path).toList();
@@ -71,5 +70,27 @@ class ActionResolverReposTest {
     void aTemplateWhoseYamlWasDeletedOffersTheReposItWasBuiltWith() {
         assertEquals(List.of("/home/agentuser/base", "/home/agentuser/a"),
                 repoPaths(Metadata.TYPE_BASE, chain("~/a"), Map.of()));
+    }
+
+    @Test
+    void aCloneWithoutABuildRecordOffersTheReposItsYamlNames() {
+        assertEquals(List.of("/home/agentuser/base", "/home/agentuser/a", "/home/agentuser/b"),
+                repoPaths(Metadata.TYPE_CLONE, null, chain("~/a", "~/b")));
+    }
+
+    @Test
+    void aCloneWhoseRecordLacksItsTemplateOffersTheReposItsYamlNames() {
+        assertEquals(List.of("/home/agentuser/base", "/home/agentuser/a", "/home/agentuser/b"),
+                repoPaths(Metadata.TYPE_CLONE, Map.of("tpl-other", def("tpl-other", null, "~/x")),
+                        chain("~/a", "~/b")));
+    }
+
+    @Test
+    void aLayerTheRecordLacksComesFromTheYamlAndItsDeletedParentFromTheRecord() {
+        // The clone's record has tpl-agent and tpl-base but not tpl-mid; tpl-base's YAML is gone.
+        var built = Map.of(BASE, def(BASE, null, "~/base"), TEMPLATE, def(TEMPLATE, "tpl-mid", "~/a"));
+        var onDisk = Map.of("tpl-mid", def("tpl-mid", BASE, "~/mid"), TEMPLATE, def(TEMPLATE, "tpl-mid", "~/a", "~/b"));
+        assertEquals(List.of("/home/agentuser/base", "/home/agentuser/mid", "/home/agentuser/a"),
+                repoPaths(Metadata.TYPE_CLONE, built, onDisk));
     }
 }
