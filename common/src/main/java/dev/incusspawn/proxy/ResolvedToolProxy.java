@@ -84,39 +84,60 @@ public record ResolvedToolProxy(
     }
 
     /**
-     * Whether an upstream may serve {@code path} as another path than its literal text: a
-     * {@code .} or {@code ..} segment, also before a {@code ;} parameter ({@code ..;}); an empty
-     * segment other than a trailing slash, which some servers collapse; a backslash, which some
-     * read as {@code /}; or a percent-escape that decodes to one of those, to {@code ;}, to an
-     * unreserved character ({@code %2e}, {@code %2f}, {@code %5c}, {@code %3b}, {@code %61}) or to
-     * {@code %} (a second decoding), that is malformed, or whose bytes are not strict UTF-8 (an
-     * overlong {@code %c0%ae} is a lenient decoder's {@code .}).
+     * Whether an upstream may serve {@code path} as another path than its literal text:
+     * <ul>
+     * <li>a raw character outside RFC 3986 {@code pchar} and {@code /}: a backslash some read as
+     * {@code /}, a {@code #} some drop with what follows, a control, a space, any byte above
+     * ASCII (a raw overlong {@code .});</li>
+     * <li>a percent-escape that is malformed, or decodes to an unreserved character, {@code /},
+     * {@code \}, {@code ;}, {@code %} (a second decoding), {@code ?}, {@code #}, a control or DEL ({@code %2e},
+     * {@code %2f}, {@code %5c}, {@code %3b}, {@code %61}, {@code %25}, {@code %00});</li>
+     * <li>escaped bytes that are not strict UTF-8 (the overlong {@code %c0%ae}), or decode to a
+     * character other than a letter, digit or mark, or one whose NFKC form holds ASCII (the
+     * fullwidth {@code %ef%bc%8e});</li>
+     * <li>a segment of only dots and spaces ({@code .}, {@code ..}, {@code ...}, {@code ..%20},
+     * {@code ..+}),
+     * also before a {@code ;} parameter ({@code ..;}), which servers that trim read as {@code ..};
+     * or an empty segment other than a trailing slash, which some servers collapse.</li>
+     * </ul>
      */
     public static boolean mayResolveElsewhere(String path) {
-        if (path.indexOf('\\') >= 0) return true;
+        if (path.chars().anyMatch(c -> PATH_CHARS.indexOf(c) < 0)) return true;
         boolean nonAscii = false;
         for (int i = path.indexOf('%'); i >= 0; i = path.indexOf('%', i + 3)) {
             int c = escapedByte(path, i);
             if (c < 0) return true;
             if (c >= 0x80) {
                 nonAscii = true;
-            } else if (Character.isLetterOrDigit(c) || "-._~/\\%;".indexOf(c) >= 0) {
+            } else if (ESCAPABLE.indexOf(c) < 0) {
                 return true;
             }
         }
-        if (nonAscii && !isStrictUtf8(path)) return true;
+        if (nonAscii && !decodesToItself(path)) return true;
         var segments = path.split("/", -1);
         for (int i = 1; i < segments.length; i++) {
             var segment = segments[i];
             int semicolon = segment.indexOf(';');
-            var name = semicolon >= 0 ? segment.substring(0, semicolon) : segment;
-            if (name.equals(".") || name.equals("..")
-                    || name.isEmpty() && (semicolon >= 0 || i < segments.length - 1)) {
+            var name = (semicolon >= 0 ? segment.substring(0, semicolon) : segment).replace("%20", " ").replace('+', ' ');
+            if (name.isEmpty()) {
+                if (semicolon >= 0 || i < segments.length - 1) return true;
+            } else if (name.chars().allMatch(c -> c == '.' || c == ' ')) {
                 return true;
             }
         }
         return false;
     }
+
+    /** RFC 3986 {@code pchar} and {@code /}: unreserved, sub-delims, {@code :}, {@code @}, {@code %}. */
+    private static final String PATH_CHARS =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~!$&'()*+,;=:@%/";
+
+    /**
+     * The ASCII an escape may decode to: printable characters that are not unreserved, {@code /},
+     * {@code \}, {@code ;}, {@code %}, or the {@code ?} and {@code #} a second parse would end the
+     * path at. A control, DEL or anything else is refused.
+     */
+    private static final String ESCAPABLE = " !\"$&'()*+,:<=>@[]^`{|}";
 
     /** The byte the escape at {@code i} encodes, or -1 when it is not {@code %} and two hex digits. */
     private static int escapedByte(String path, int i) {
@@ -125,23 +146,39 @@ public record ResolvedToolProxy(
         return low < 0 ? -1 : high << 4 | low;
     }
 
-    /** Whether the path, its escapes decoded, is UTF-8 the JDK's strict decoder accepts. */
-    private static boolean isStrictUtf8(String path) {
+    /**
+     * A letter, digit or combining mark: no whitespace, control, format character, symbol a
+     * best-fit conversion turns into a separator ({@code U+2215}) or punctuation.
+     */
+    private static boolean isLetterDigitOrMark(int c) {
+        int type = Character.getType(c);
+        return Character.isLetterOrDigit(c) || type == Character.NON_SPACING_MARK
+                || type == Character.ENCLOSING_MARK || type == Character.COMBINING_SPACING_MARK;
+    }
+
+    /**
+     * Whether the ASCII path, its escapes decoded, is UTF-8 the JDK's strict decoder accepts whose
+     * non-ASCII characters are letters, digits or marks with no ASCII in their NFKC form: a
+     * normalizing, trimming or best-fit upstream reads none as another.
+     */
+    private static boolean decodesToItself(String path) {
         var bytes = new java.io.ByteArrayOutputStream(path.length());
         for (int i = 0; i < path.length(); i++) {
             if (path.charAt(i) == '%') {
                 bytes.write(escapedByte(path, i));
                 i += 2;
             } else {
-                bytes.writeBytes(String.valueOf(path.charAt(i)).getBytes(StandardCharsets.UTF_8));
+                bytes.write(path.charAt(i));
             }
         }
+        String decoded;
         try {
-            StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes.toByteArray()));
-            return true;
+            decoded = StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes.toByteArray())).toString();
         } catch (java.nio.charset.CharacterCodingException e) {
             return false;
         }
+        return decoded.codePoints().filter(c -> c >= 0x80).allMatch(c -> isLetterDigitOrMark(c) && java.text.Normalizer
+                .normalize(Character.toString(c), java.text.Normalizer.Form.NFKC).chars().allMatch(n -> n >= 0x80));
     }
 
     /**
