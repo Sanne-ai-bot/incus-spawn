@@ -166,11 +166,19 @@ class ProofCarriersTest {
                   auth:
                     - domains:
                         -
+                        - api.p.example
                       type: bearer
                       token: '${key}'
                 """));
         var carriers = new ProofCarriers(List.of(tool));
-        assertTrue(carriers.warnings().stream().noneMatch(w -> w.contains("null")), carriers.warnings().toString());
-        assertFalse(carriers.read("p.example", name -> List.of("Bearer " + GH)).claimsProof());
+        assertEquals(1, carriers.warnings().size(), carriers.warnings().toString());
+        var warning = carriers.warnings().getFirst();
+        assertTrue(warning.contains("api.p.example"), warning);
+        assertFalse(warning.contains("null"), warning);
+        // The declared domain keeps its carrier, which accepts no proof: an empty placeholder item
+        // declares no prefix, so even a bare 'isx_' token for the namespace neither proves nor claims
+        var presented = carriers.read("api.p.example", name -> List.of("Bearer isx_" + ProofToken.derive(SECRET, "p")));
+        assertEquals(List.of(), presented.digests().get("p"));
+        assertFalse(presented.claimsProof());
     }
 }
