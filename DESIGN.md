@@ -1186,6 +1186,15 @@ All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge 
 Airgapped branches skip the check, and building a template needs none, since only the proxy spends them at runtime.
 A build still says what branching will refuse, before its time is spent (#1438): every build path warns once per credential that a template it may build lacks, naming those templates (`CredentialCheck.missingByCredential`, from each template's own `accounts:`), and goes ahead.
 `isx init`'s closing box makes the same check of every current (non-deprecated) template, naming for each missing credential only the topmost templates that need it and counting the rest, because a credential init skipped or failed to verify otherwise surfaces at the first branch.
+The refusal, the warning and the box name `isx account add <namespace>` for each missing credential (#1469).
+It runs the one step `isx init` runs for that credential, account menu included, and nothing else, so fixing one token costs no sudo and no other step.
+It takes the namespace, as `isx account set` does, or the tool that owns it (`gh` for `github`); a namespace wins over a tool of the same name (`CredentialCheck.credentialTool`).
+A missing secret names its namespace's owner, the first tool with a step that declares it.
+A tool that borrows the key without a step (Copilot's `github.token`) is sent there too.
+A tool with a step of its own that is not the owner is named itself, since the owner's step never asks for another tool's key.
+With no step on either side, the remedy falls back to `isx init`.
+An `isx init <step>` selector was the alternative.
+It was not taken because init's other steps are host setup, and `isx account` already names credentials by namespace.
 `CredentialCheck` answers for the accounts the branch will *actually* be stamped with -- the template chain's `accounts:`, the source instance's own pins and any `--account` or TUI account row, merged exactly as `BranchFlow` stamps them -- and against the leaf template recorded on the source.
 So a branch of a branch is checked too (#793).
 What a tool needs is declared, not listed.

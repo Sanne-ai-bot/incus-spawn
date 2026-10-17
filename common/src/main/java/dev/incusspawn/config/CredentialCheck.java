@@ -5,6 +5,7 @@ import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.util.OutputFormat;
 import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.ArrayList;
@@ -30,6 +31,79 @@ import java.util.Map;
 public final class CredentialCheck {
 
     private CredentialCheck() {}
+
+    /**
+     * A credential that is not configured, and the command that configures it: {@code isx
+     * account add <namespace>} when one step owns it (#1469), else {@code isx init}.
+     */
+    public record Missing(String credential, String command) {}
+
+    /**
+     * Whether {@code tool} has a credential step of its own, as {@code isx init}'s credential
+     * menu and {@code isx account add} offer: a proxy configuration that is its own, not one it
+     * borrows from another tool (Copilot spends {@code github.token}).
+     */
+    public static boolean hasCredentialStep(ToolSetup tool) {
+        var proxy = tool.proxy();
+        return tool.hasOwnCredentials() && proxy != null && !proxy.getConfiguration().isEmpty();
+    }
+
+    /**
+     * The tool whose credential step configures {@code name}, given as a credential namespace
+     * ({@code github}) or as the tool itself ({@code gh}); {@code null} when no step does. The
+     * namespace wins, so a tool named after another tool's namespace cannot take it over.
+     */
+    public static String credentialTool(String name, Map<String, ToolSetup> allTools) {
+        var owner = namespaceOwner(name, allTools);
+        if (owner != null) return owner;
+        var tool = allTools.get(name);
+        return tool != null && hasCredentialStep(tool) ? name : null;
+    }
+
+    /** The tool whose step owns {@code namespace}: the first with a step that declares it, or {@code null}. */
+    private static String namespaceOwner(String namespace, Map<String, ToolSetup> allTools) {
+        if (namespace.isBlank()) return null;
+        var withStep = new LinkedHashMap<String, ToolSetup>();
+        allTools.forEach((toolName, tool) -> { if (hasCredentialStep(tool)) withStep.put(toolName, tool); });
+        var owner = AccountSelection.byNamespace(withStep).get(namespace);
+        return owner == null ? null : owner.name();
+    }
+
+    /**
+     * The command that runs {@code toolName}'s own credential step: {@code isx account add} with
+     * its namespace when it owns that, else with its name when that resolves to it, else
+     * {@code isx init}, whose menu lists every step.
+     */
+    public static String stepCommand(String toolName, Map<String, ToolSetup> allTools) {
+        var tool = allTools.get(toolName);
+        var namespace = tool == null || tool.proxy() == null ? "" : tool.proxy().getConfigNamespace();
+        if (toolName.equals(namespaceOwner(namespace, allTools))) return "isx account add " + namespace;
+        if (toolName.equals(credentialTool(toolName, allTools))) return "isx account add " + toolName;
+        return "isx init";
+    }
+
+    /** {@code Run '<command>' to configure it.}, naming each distinct command in {@code missing}. */
+    public static String remedy(Collection<Missing> missing) {
+        var commands = missing.stream().map(m -> "'" + m.command() + "'").distinct().toList();
+        return "Run " + OutputFormat.andList(commands) + " to configure " + (missing.size() == 1 ? "it." : "them.");
+    }
+
+    /**
+     * {@code credential} of {@code namespace}, declared by {@code toolName}, with the command that
+     * configures it. The namespace's owner configures it, unless the declaring tool has a step of
+     * its own and is not that owner: the owner's step never asks for another tool's key, so the
+     * declaring tool's step is named instead, provided its name resolves to it. A tool that
+     * borrows the key without a step (Copilot) is sent to the owner; with neither, to init.
+     */
+    private static Missing missing(String credential, String namespace, String toolName,
+                                   Map<String, ToolSetup> allTools) {
+        var owner = namespaceOwner(namespace, allTools);
+        var tool = allTools.get(toolName);
+        if (tool != null && hasCredentialStep(tool) && !toolName.equals(owner)) {
+            return new Missing(credential, stepCommand(toolName, allTools));
+        }
+        return new Missing(credential, owner != null ? "isx account add " + namespace : "isx init");
+    }
 
     /**
      * A message naming what is missing, or {@code ""} when everything is configured.
@@ -61,7 +135,8 @@ public final class CredentialCheck {
                 return InheritedProof.notNestedMessage(gaps.inherited().getFirst());
             }
             if (gaps.missing().isEmpty()) return "";
-            return "Missing credentials: " + String.join(", ", gaps.missing()) + ". Run 'isx init' to configure.";
+            return "Missing credentials: " + String.join(", ", gaps.missing().stream().map(Missing::credential).toList())
+                    + ". " + remedy(gaps.missing());
         } catch (AccountResolver.UnknownAccountException e) {
             // Callers validate the selection first; this only keeps a stale one from escaping.
             return e.getMessage();
@@ -75,8 +150,8 @@ public final class CredentialCheck {
      * build or at the end of init, what {@code isx branch} will refuse (#1438). A template whose
      * selection is invalid or inherited is left to the build and the branch to report.
      */
-    public static Map<String, List<String>> missingByCredential(SpawnConfig config, Collection<String> templates,
-                                                                Map<String, ImageDef> allDefs, ToolDefLoader loader) {
+    public static Map<Missing, List<String>> missingByCredential(SpawnConfig config, Collection<String> templates,
+                                                                 Map<String, ImageDef> allDefs, ToolDefLoader loader) {
         return missingByCredential(config, templates, allDefs, loader.allToolSetups(),
                 ToolProxyResolver.proxyToolSetups(config, loader));
     }
@@ -85,14 +160,14 @@ public final class CredentialCheck {
      * As {@link #missingByCredential(SpawnConfig, Collection, Map, ToolDefLoader)}, from the tool
      * setups a caller already resolved.
      */
-    public static Map<String, List<String>> missingByCredential(SpawnConfig config, Collection<String> templates,
-                                                                Map<String, ImageDef> allDefs,
-                                                                Map<String, ToolSetup> allTools,
-                                                                Map<String, ToolSetup> served) {
+    public static Map<Missing, List<String>> missingByCredential(SpawnConfig config, Collection<String> templates,
+                                                                 Map<String, ImageDef> allDefs,
+                                                                 Map<String, ToolSetup> allTools,
+                                                                 Map<String, ToolSetup> served) {
         // Once for every template: the tree serializes the whole config
         var tree = config.tree();
         var owners = AccountSelection.byNamespace(served);
-        var byCredential = new LinkedHashMap<String, List<String>>();
+        var byCredential = new LinkedHashMap<Missing, List<String>>();
         for (var name : templates) {
             var template = allDefs.get(name);
             if (template == null) continue;
@@ -109,7 +184,7 @@ public final class CredentialCheck {
     }
 
     /** What is missing, and the namespaces that are the parent instance's instead. */
-    private record Gaps(List<String> missing, List<String> inherited) {}
+    private record Gaps(List<Missing> missing, List<String> inherited) {}
 
     private static Gaps gaps(JqValue tree, Map<String, ToolSetup> owners, SpawnConfig config, ImageDef template, Map<String, ImageDef> allDefs,
                              Map<String, String> selection, Map<String, ToolSetup> allTools,
@@ -123,7 +198,7 @@ public final class CredentialCheck {
         toolRefs.keySet().forEach(name -> ToolSetup.addWithRequires(name, allTools, tools));
 
         var secretsOf = new LinkedHashSet<>(tools);
-        var missing = new LinkedHashSet<String>();
+        var missing = new LinkedHashSet<Missing>();
         // An inherited credential is the parent instance's, whatever this config holds: its
         // tool's own check is not asked, and there must be a parent instead
         var inherited = new LinkedHashSet<String>();
@@ -136,19 +211,20 @@ public final class CredentialCheck {
             var params = dev.incusspawn.tool.ParameterResolver.resolve(tool.parameters(),
                     ref == null ? Map.of() : ref.getParams()).resolvedValues();
             var namespaces = tool.credentialNamespaces(params);
-            var own = 0;
+            var own = "";
             for (var namespace : namespaces) {
                 var owner = owners.get(namespace);
                 if (owner != null) secretsOf.add(owner.name());
                 if (AccountResolver.inherits(tree, namespace, selection.get(namespace))) inherited.add(namespace);
-                else own++;
+                else if (own.isEmpty()) own = namespace;
             }
-            if (own == 0 && !namespaces.isEmpty()) continue;
+            if (own.isEmpty() && !namespaces.isEmpty()) continue;
             var problem = tool.credentialProblem(config, params, selection);
-            if (!problem.isEmpty()) missing.add(problem);
+            if (!problem.isEmpty()) missing.add(missing(problem, own, name, allTools));
         }
         for (var secret : ToolProxyResolver.missingSecrets(tree, served, secretsOf, selection)) {
-            missing.add(secret.description().isBlank() ? secret.path() : secret.description());
+            missing.add(missing(secret.description().isBlank() ? secret.path() : secret.description(),
+                    secret.namespace(), secret.tool(), allTools));
         }
         return new Gaps(List.copyOf(missing), List.copyOf(inherited));
     }

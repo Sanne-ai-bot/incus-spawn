@@ -296,8 +296,12 @@ public final class ToolProxyResolver {
         return result;
     }
 
-    /** A configuration entry some tool needs that resolves to nothing; {@code path} is its flat config path. */
-    public record MissingSecret(String path, String description) {}
+    /**
+     * A configuration entry some tool needs that resolves to nothing; {@code path} is its flat
+     * config path, {@code namespace} the credential namespace it belongs to, or {@code ""}, and
+     * {@code tool} the tool whose proxy declares it.
+     */
+    public record MissingSecret(String path, String description, String namespace, String tool) {}
 
     /**
      * Whether the generic resolution applies: {@code type: anthropic} is served by MitmProxy's own
@@ -351,7 +355,7 @@ public final class ToolProxyResolver {
             for (var key : unsupplied) {
                 var entry = proxyDef.getConfiguration().get(key);
                 var path = proxyDef.fullConfigPath(entry);
-                result.putIfAbsent(path, new MissingSecret(path, entry.getDescription()));
+                result.putIfAbsent(path, new MissingSecret(path, entry.getDescription(), proxyDef.namespaceOf(entry), toolName));
             }
         }
         return List.copyOf(result.values());

@@ -23,6 +23,10 @@ Account values: `isx account list --completion` (names only, never credentials) 
 Names holding a control character are skipped.
 Keep it free of Incus and secrets: it runs on every TAB.
 
+`isx account add [<ns>|<tool>]` is `InitCommand.addCredential`: init's step for that one credential, or with no argument its Credential Setup menu, under the same `[n/N]` headers (#1469).
+The credential steps read `InitCommand.credentialPrompts()`, which tests override.
+Every message naming a missing credential's remedy takes it from `CredentialCheck.Missing.command()`, so it names `isx account add <ns>` only when a step owns that namespace.
+
 **`isx mcp`** is a normal (visible) command, but it is started by an agent, not typed: it serves MCP on stdin/stdout until end of input.
 See `.claude/rules/mcp.md`.
 

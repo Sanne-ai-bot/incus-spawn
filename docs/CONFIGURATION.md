@@ -77,6 +77,7 @@ Everything in `acme-42` now runs as Acme's accounts. For a one-off, choose per b
 
 ```shell
 isx account list                        # accounts, and which instances use each
+isx account add github                  # add or replace a GitHub token or account
 isx account show review-1               # what review-1 uses, and why
 isx account set review-1 github=acme-bot
 isx account unset review-1 github       # follow the default again

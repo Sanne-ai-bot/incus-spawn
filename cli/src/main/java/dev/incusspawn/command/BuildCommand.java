@@ -2249,7 +2249,7 @@ public class BuildCommand extends BaseCommand {
      * configured: the build goes ahead, but {@code isx branch} refuses its instances (#1438).
      */
     private void warnUnbranchable(Collection<String> templates, Map<String, ImageDef> defs) {
-        Map<String, List<String>> missing;
+        Map<CredentialCheck.Missing, List<String>> missing;
         try {
             missing = CredentialCheck.missingByCredential(SpawnConfig.load(), templates, defs, toolDefLoader);
         } catch (RuntimeException e) {
@@ -2257,8 +2257,9 @@ public class BuildCommand extends BaseCommand {
             ClientLog.warn("Missing-credential check skipped: " + e);
             return;
         }
-        missing.forEach((credential, names) -> BuildOutput.warn("Missing credential: " + credential
-                + ". 'isx branch' will refuse " + OutputFormat.andList(names) + " until it is configured with 'isx init'."));
+        missing.forEach((credential, names) -> BuildOutput.warn("Missing credential: " + credential.credential()
+                + ". 'isx branch' will refuse " + OutputFormat.andList(names)
+                + " until it is configured with '" + credential.command() + "'."));
     }
 
     /**
