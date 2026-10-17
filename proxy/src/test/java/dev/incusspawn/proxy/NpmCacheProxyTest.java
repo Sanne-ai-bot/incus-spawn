@@ -18,6 +18,7 @@ import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.SocketAddress;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -187,6 +188,16 @@ class NpmCacheProxyTest {
         }
         online();
         proxy.upstream.clearUnreachable();
+    }
+
+    /**
+     * A test's own await can end before its confirmation leaves the set, which the next test reads (#1496):
+     * drained here, against this test's own fixture, and charged to it if it never ends.
+     */
+    @AfterEach
+    void awaitBackgroundConfirmations() throws Exception {
+        ArtifactCacheProxyTest.await("this test's background confirmations to finish",
+                proxy.artifactCache.backgroundConfirmations::isEmpty);
     }
 
     static void online() {
@@ -427,8 +438,10 @@ class NpmCacheProxyTest {
         online();
         assertEquals(new Response(200, "tarball of backoff-expired"), get(expired, 10));
         assertEquals(new Response(200, "tarball of backoff-stale"), get(stale, 10));
-        // Queued in the same callback that served it, and the registry asked before it is dequeued
-        assertTrue(proxy.artifactCache.backgroundConfirmations.isEmpty(), "no background confirmation is queued");
+        // The response can reach the client before the callback that served it queues the stale hit's
+        // confirmation, so it is awaited rather than sampled; had it asked the registry, that counts below (#1496)
+        ArtifactCacheProxyTest.await("the background confirmation to finish",
+                proxy.artifactCache.backgroundConfirmations::isEmpty);
         assertEquals(1, hits.get("/backoff-expired/1.0.0").get(), "the expired hit is served unconfirmed");
         assertEquals(1, hits.get("/backoff-stale/1.0.0").get(), "the stale hit is not confirmed in the background");
     }
