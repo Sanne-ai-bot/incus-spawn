@@ -56,7 +56,7 @@ final class VerifiedArtifactStore {
         for (int i = 0; i < LOCKS.length; i++) LOCKS[i] = new Object();
     }
 
-    private static Object lockFor(Path artifact) {
+    static Object lockFor(Path artifact) {
         return LOCKS[Math.floorMod(artifact.hashCode(), LOCKS.length)];
     }
 

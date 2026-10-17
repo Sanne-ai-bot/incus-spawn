@@ -13,6 +13,9 @@ import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -412,6 +415,42 @@ class NpmCacheTest {
 
         assertEquals(NEW_SHASUM, Files.readString(Path.of(cacheFile + ".shasum")));
         assertEquals("\"new\"", Files.readString(Path.of(cacheFile + ".etag")));
+    }
+
+    @Test
+    void backgroundConfirmationWaitsForTheArtifactsLock(@TempDir Path tmp) throws Exception {
+        // The foreground's evict-and-write holds the same lock, so neither acts on a copy the other replaced
+        var cacheFile = cachedUnderEtag(tmp, Duration.ofHours(3));
+
+        assertWaitsForLock(cacheFile, () -> {
+            ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(NEW_SHASUM));
+            return null;
+        });
+
+        assertFalse(Files.exists(cacheFile));
+    }
+
+    @Test
+    void foregroundSettleWaitsForTheArtifactsLock(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedUnderEtag(tmp, Duration.ofDays(8));
+
+        var result = assertWaitsForLock(cacheFile, () ->
+                ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"abc\"", "ref", found(NEW_SHASUM)));
+
+        assertFalse(result.cacheHit());
+        assertEquals(NEW_SHASUM, Files.readString(Path.of(cacheFile + ".shasum")));
+    }
+
+    /** Run {@code work} while the test holds the artifact's lock: it must block on it, touching nothing, until released. */
+    static <T> T assertWaitsForLock(Path cacheFile, Callable<T> work) throws Exception {
+        var task = new FutureTask<>(work);
+        var thread = new Thread(task);
+        synchronized (VerifiedArtifactStore.lockFor(cacheFile)) {
+            thread.start();
+            ArtifactCacheProxyTest.await("the work to block on the lock", () -> thread.getState() == Thread.State.BLOCKED);
+            assertTrue(Files.exists(cacheFile), "nothing is evicted while the lock is held");
+        }
+        return task.get(5, TimeUnit.SECONDS);
     }
 
     @Test

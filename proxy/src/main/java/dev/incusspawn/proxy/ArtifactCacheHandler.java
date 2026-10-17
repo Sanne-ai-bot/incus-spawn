@@ -939,20 +939,27 @@ class ArtifactCacheHandler {
      * Reconcile a cached tarball with upstream's (reachable) answer, for a background
      * confirmation. It only ever renews, expires or evicts the copy there is, and never
      * writes a sidecar: a foreground request may have evicted the copy meanwhile and be
-     * fetching it again, and its sidecars are not this one's to touch.
+     * fetching it again, and its sidecars are not this one's to touch. The check and what
+     * follows hold {@link VerifiedArtifactStore}'s per-artifact lock, which the foreground's
+     * evict-and-write ({@link #checkNpmTarballCache}) holds too, so neither runs in the middle
+     * of the other. The answer was fetched before the lock, though: a copy the foreground
+     * replaced and committed meanwhile can still be evicted on it, which costs a re-download.
      */
     static void reconcileNpmCopy(Path cacheFile, String ref, SidecarAnswer answer) throws IOException {
-        if (!Files.isRegularFile(cacheFile)) return;
-        var storedShasum = Path.of(cacheFile + ".shasum");
         var shasum = answer.status() == 200 ? npmShasum(answer.body()) : null;
-        if (shasum != null && shasum.equals(readFileOrNull(storedShasum))) {
-            VerifiedArtifactStore.renewConfirmation(cacheFile, storedShasum);
-        } else if (shasum != null || answer.gone()) {
-            System.out.println("npm cache: " + ref + (shasum != null ? " changed upstream"
-                    : " is gone upstream (" + answer.status() + ")") + ", evicting");
-            evictNpmTarball(cacheFile);
-        } else {
-            VerifiedArtifactStore.expireConfirmation(cacheFile, storedShasum);
+        // Under the artifact's lock, as is the foreground's evict-and-write (checkNpmTarballCache)
+        synchronized (VerifiedArtifactStore.lockFor(cacheFile)) {
+            if (!Files.isRegularFile(cacheFile)) return;
+            var storedShasum = Path.of(cacheFile + ".shasum");
+            if (shasum != null && shasum.equals(readFileOrNull(storedShasum))) {
+                VerifiedArtifactStore.renewConfirmation(cacheFile, storedShasum);
+            } else if (shasum != null || answer.gone()) {
+                System.out.println("npm cache: " + ref + (shasum != null ? " changed upstream"
+                        : " is gone upstream (" + answer.status() + ")") + ", evicting");
+                evictNpmTarball(cacheFile);
+            } else {
+                VerifiedArtifactStore.expireConfirmation(cacheFile, storedShasum);
+            }
         }
     }
 
@@ -969,39 +976,42 @@ class ArtifactCacheHandler {
     static NpmVerifyResult checkNpmTarballCache(Path cacheFile, String packageEtag,
                                                  String ref, SidecarAnswer answer)
             throws IOException {
-        var cached = Files.isRegularFile(cacheFile);
+        // Parsed before taking the lock, which other artifacts share
         var shasum = answer.status() == 200 ? npmShasum(answer.body()) : null;
+        synchronized (VerifiedArtifactStore.lockFor(cacheFile)) {
+            var cached = Files.isRegularFile(cacheFile);
 
-        if (shasum == null) {
-            if (!cached) return null;
-            if (answer.unreachable()) {
-                System.out.println("npm: serving " + ref + " unconfirmed, the registry "
-                        + (answer.status() > 0 ? "answered " + answer.status() : "is unreachable"));
-                return new NpmVerifyResult(true, Files.size(cacheFile), null);
+            if (shasum == null) {
+                if (!cached) return null;
+                if (answer.unreachable()) {
+                    System.out.println("npm: serving " + ref + " unconfirmed, the registry "
+                            + (answer.status() > 0 ? "answered " + answer.status() : "is unreachable"));
+                    return new NpmVerifyResult(true, Files.size(cacheFile), null);
+                }
+                if (answer.gone()) {
+                    System.out.println("npm cache: " + ref + " is gone upstream (" + answer.status() + "), evicting");
+                    evictNpmTarball(cacheFile);
+                }
+                return null;
             }
-            if (answer.gone()) {
-                System.out.println("npm cache: " + ref + " is gone upstream (" + answer.status() + "), evicting");
+
+            if (cached) {
+                var storedShasum = Path.of(cacheFile + ".shasum");
+                if (shasum.equals(readFileOrNull(storedShasum))) {
+                    VerifiedArtifactStore.renewConfirmation(cacheFile, storedShasum);
+                    if (packageEtag != null) {
+                        Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
+                    }
+                    return new NpmVerifyResult(true, Files.size(cacheFile), null);
+                }
+                System.out.println("npm cache stale: " + ref +
+                        " (shasum changed), evicting");
                 evictNpmTarball(cacheFile);
             }
-            return null;
-        }
 
-        if (cached) {
-            var storedShasum = Path.of(cacheFile + ".shasum");
-            if (shasum.equals(readFileOrNull(storedShasum))) {
-                VerifiedArtifactStore.renewConfirmation(cacheFile, storedShasum);
-                if (packageEtag != null) {
-                    Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
-                }
-                return new NpmVerifyResult(true, Files.size(cacheFile), null);
-            }
-            System.out.println("npm cache stale: " + ref +
-                    " (shasum changed), evicting");
-            evictNpmTarball(cacheFile);
+            writeNpmSidecarFiles(cacheFile, shasum, packageEtag);
+            return new NpmVerifyResult(false, 0, "sha1:" + shasum);
         }
-
-        writeNpmSidecarFiles(cacheFile, shasum, packageEtag);
-        return new NpmVerifyResult(false, 0, "sha1:" + shasum);
     }
 
     private static void evictNpmTarball(Path cacheFile) throws IOException {
