@@ -113,6 +113,12 @@ class TuiInstanceMarksTest {
         for (var key : keys) tui.handleEvent(key, runner);
     }
 
+    /** Reloads the listing as a live refresh does, leaving the open dialog as it is. */
+    private void reload(Tui tui) {
+        tui.loader.mergeInstances(InstanceListing.collectEntries(daemon.client().listJson()));
+        tui.publishRows();
+    }
+
     private void runQueued() {
         while (!queued.isEmpty()) queued.remove().run();
     }
@@ -244,13 +250,29 @@ class TuiInstanceMarksTest {
         assertEquals(Tui.Mode.CONFIRM_MARKED_STOP, tui.mode());
         // alpha stops elsewhere; the listing the dialog acts on is reloaded
         daemon.instance("alpha", "container", "Stopped", branch());
-        tui.loader.mergeInstances(InstanceListing.collectEntries(daemon.client().listJson()));
-        tui.publishRows();
+        reload(tui);
         press(tui, KeyEvent.ofChar('y'));
         runQueued();
         assertTrue(daemon.stateActions().isEmpty(), daemon.stateActions().toString());
-        assertEquals("No marked instance is running", tui.statusMessage);
+        assertTrue(screen(tui).contains("Not stopped, 1 no longer running or gone: alpha"), screen(tui));
         assertEquals(List.of("alpha", "gamma"), List.copyOf(tui.markedInstances()), "the marks are kept");
+    }
+
+    @Test
+    void confirmingNamesTheListedInstancesItNoLongerStops() {
+        var tui = tui();
+        press(tui, TAB, SPACE, DOWN, SPACE, KeyEvent.ofKey(KeyCode.F7));
+        assertTrue(screen(tui).contains("  beta "), screen(tui));
+        // beta stops elsewhere while the dialog lists it
+        daemon.instance("beta", "container", "Stopped", branch());
+        reload(tui);
+        press(tui, KeyEvent.ofChar('y'));
+        // The warning log announces it on the status line, and keeps it after the stops' messages
+        assertTrue(screen(tui).contains("Not stopped, 1 no longer running or gone: beta"), screen(tui));
+        assertTrue(tui.warningLog.entries().stream()
+                .anyMatch(e -> e.message().equals("Not stopped, 1 no longer running or gone: beta")));
+        runQueued();
+        assertEquals(List.of("alpha stop"), daemon.stateActions());
     }
 
     @Test

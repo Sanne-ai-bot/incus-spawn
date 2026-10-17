@@ -295,9 +295,14 @@ final class ModalRenderer {
         if (lines.size() > room && room > 0) {
             int hidden = lines.size() - room + 1;
             lines = new ArrayList<>(lines.subList(0, room - 1));
-            lines.add("… " + hidden + " more lines: enlarge the terminal to see them");
+            lines.add(moreLinesHint(hidden));
         }
         return lines;
+    }
+
+    /** Within {@link #CONFIRM_TEXT_WIDTH}, so it is not cut on a screen too narrow to widen the dialog. */
+    static String moreLinesHint(int hidden) {
+        return "… " + hidden + " more lines; enlarge the terminal";
     }
 
     /**
