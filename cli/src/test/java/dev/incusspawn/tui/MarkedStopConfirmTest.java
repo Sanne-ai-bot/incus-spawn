@@ -52,9 +52,11 @@ class MarkedStopConfirmTest {
         var names = new java.util.ArrayList<String>();
         for (int i = 1; i <= 60; i++) names.add("mcp-tpl-isx-agent-vm-1482-implement-" + i);
         var dialog = dialog(names, List.of(), false);
-        var screen = TuiSnapshot.toText(TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
-        assertTrue(screen.contains("y Stop"), screen);
-        assertTrue(screen.contains("more lines: enlarge the terminal to see them"), screen);
+        // The buttons stay, and the last text line says how much is hidden
+        TuiSnapshot.assertMatches("marked-stop-confirm-truncated-80x24",
+                TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+        // Even a thousand hidden lines leave the hint within the dialog's narrowest text
+        assertTrue(ModalRenderer.moreLinesHint(1000).length() <= ModalRenderer.CONFIRM_TEXT_WIDTH);
         // A tall enough terminal shows every one
         var tall = TuiSnapshot.toText(TuiSnapshot.render(80, 80, f -> dialog.render(f, f.area())));
         for (var n : names) assertTrue(tokens(tall).contains(n), n + ":\n" + tall);

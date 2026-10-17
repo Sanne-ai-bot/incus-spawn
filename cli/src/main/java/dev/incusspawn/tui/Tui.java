@@ -1013,10 +1013,16 @@ public class Tui {
             statusMessage = "Operation in progress for " + busy.get().name();
             return true;
         }
-        if (targets.isEmpty()) {
-            statusMessage = "No marked instance is running";
-            return true;
+        // The user confirmed a longer list: the warning log announces which of it is left out, and
+        // keeps it once the stops' own messages replace the status line
+        var targetNames = targets.stream().map(InstanceInfo::name).collect(java.util.stream.Collectors.toSet());
+        var dropped = names.stream().filter(n -> !targetNames.contains(n)).toList();
+        if (!dropped.isEmpty()) {
+            statusMessage = null;   // else an older message keeps the announcement off the line
+            warningLog.add((markedStopConfirm.restart() ? "Not restarted" : "Not stopped") + ", "
+                    + dropped.size() + " no longer running or gone: " + String.join(", ", dropped));
         }
+        if (targets.isEmpty()) return true;   // the marks stay, for another try
         markedInstances.clear();
         for (var instance : targets) {
             if (markedStopConfirm.restart()) restartInBackground(instance);
