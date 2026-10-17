@@ -5,6 +5,8 @@ import dev.incusspawn.proxy.VerifiedArtifactStore.Outcome;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -305,5 +307,29 @@ class VerifiedArtifactStoreTest {
         try (var leftovers = Files.list(artifact().getParent())) {
             assertEquals(0, leftovers.count(), "no temp files left behind");
         }
+    }
+
+    @Test
+    void renewOfAChecksumEvictedMeanwhileIsSilent() throws Exception {
+        // A renew that lost the race to an eviction has nothing to stamp, and nothing to warn about
+        var artifact = dir.resolve("pkg-1.0.0.tgz");
+        var storedChecksum = Path.of(artifact + ".shasum");
+        var originalErr = System.err;
+        var originalHome = System.getProperty("user.home");
+        var err = new ByteArrayOutputStream();
+        // A warning would go to stderr, which another test may have suppressed, and to the home's log file
+        var suppressed = ProxyLog.setSuppressStderr(false);
+        System.setProperty("user.home", dir.toString());
+        System.setErr(new PrintStream(err, true));
+        try {
+            VerifiedArtifactStore.renewConfirmation(artifact, storedChecksum);
+        } finally {
+            System.setErr(originalErr);
+            System.setProperty("user.home", originalHome);
+            ProxyLog.setSuppressStderr(suppressed);
+        }
+
+        assertFalse(Files.exists(storedChecksum));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 }
