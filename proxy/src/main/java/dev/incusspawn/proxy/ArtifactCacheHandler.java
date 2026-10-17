@@ -923,15 +923,16 @@ class ArtifactCacheHandler {
      */
     private void confirmNpmInBackground(String domain, Path cacheFile, String ref, String packageName,
                                         String version) {
-        if (inBackoff(domain)) return;
-        // Timed from when it runs, not from the request it followed: no client waits on it
-        inBackground(cacheFile, () -> fetchNpmVersion(domain, packageName, version, System.nanoTime())
-                .compose(answer -> answer.unreachable() ? Future.succeededFuture() : vertx.executeBlocking(() -> {
-                    reconcileNpmCopy(cacheFile, ref, answer);
-                    return null;
-                }))
-                .onFailure(err -> System.err.println("npm background confirmation error for " + ref
-                        + ": " + err.getMessage())));
+        // Checked when it runs, not when it is queued: past the cap it may start after a backoff began.
+        // Timed from then too, not from the request it followed: no client waits on it.
+        inBackground(cacheFile, () -> inBackoff(domain) ? Future.succeededFuture()
+                : fetchNpmVersion(domain, packageName, version, System.nanoTime())
+                        .compose(answer -> answer.unreachable() ? Future.succeededFuture() : vertx.executeBlocking(() -> {
+                            reconcileNpmCopy(cacheFile, ref, answer);
+                            return null;
+                        }))
+                        .onFailure(err -> System.err.println("npm background confirmation error for " + ref
+                                + ": " + err.getMessage())));
     }
 
     /**
@@ -1378,7 +1379,9 @@ class ArtifactCacheHandler {
                 return;
             }
         }
-        next.run();
+        // On a later turn of the event loop, not this stack: a confirmation can complete at once (in a
+        // backoff), and a long queue drained that way would nest a run per entry.
+        vertx.runOnContext(v -> next.run());
     }
 
     /** Ask upstream for the artifact's current checksum, the way the domain allows. */
