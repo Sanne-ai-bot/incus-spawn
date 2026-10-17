@@ -115,6 +115,8 @@ class ArtifactCacheProxyTest {
     /** The connection the last HEAD arrived on, and the one the first stalled HEAD was left waiting on. */
     static volatile HttpConnection lastHeadConnection;
     static volatile HttpConnection stalledConnection;
+    /** Every connection a request was left waiting on: a stalled HEAD, an ignored GET, a cut or stalled body. */
+    static final Set<HttpConnection> heldConnections = ConcurrentHashMap.newKeySet();
     /** HEADs left to receive but never answer, like a connection that died silently. */
     static final AtomicInteger headsToStall = new AtomicInteger();
     static volatile long headDelayMs;
@@ -207,7 +209,7 @@ class ArtifactCacheProxyTest {
             headVersions.add(req.version());
             headConnections.add(req.connection());
             lastHeadConnection = req.connection();
-            if (headsToStall.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            if (hold(headsToStall, req)) {
                 if (stalledConnection == null) stalledConnection = req.connection();
                 return;
             }
@@ -216,7 +218,7 @@ class ArtifactCacheProxyTest {
                 return;
             }
         }
-        if (req.method() == HttpMethod.GET && getsToIgnore.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+        if (req.method() == HttpMethod.GET && hold(getsToIgnore, req)) {
             return;
         }
         var delay = req.method() == HttpMethod.GET ? nextGetDelayMs : 0;
@@ -226,6 +228,13 @@ class ArtifactCacheProxyTest {
             return;
         }
         reply(req, key);
+    }
+
+    /** Whether {@code req} is one of the {@code budget} left to hold, its connection then closed before the drain. */
+    static boolean hold(AtomicInteger budget, HttpServerRequest req) {
+        if (budget.getAndUpdate(n -> Math.max(0, n - 1)) == 0) return false;
+        heldConnections.add(req.connection());
+        return true;
     }
 
     static void reply(HttpServerRequest req, String key) {
@@ -280,7 +289,7 @@ class ArtifactCacheProxyTest {
                     .putHeader("Content-Range", "bytes " + from + "-" + (body.length - 1) + "/" + body.length);
             if (rangeEncoding != null) resp.putHeader("Content-Encoding", rangeEncoding);
             if (rangeExtraBytes > 0) rest = java.util.Arrays.copyOf(rest, rest.length + rangeExtraBytes);
-            if (getsToCut.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            if (hold(getsToCut, req)) {
                 // Stalls again, halfway through the rest
                 resp.putHeader("Content-Length", String.valueOf(rest.length))
                         .write(Buffer.buffer(java.util.Arrays.copyOf(rest, rest.length / 2)));
@@ -295,7 +304,7 @@ class ArtifactCacheProxyTest {
             return;
         }
         if (req.method() == HttpMethod.GET && reply.status() >= 400
-                && errorsToStall.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                && hold(errorsToStall, req)) {
             resp.putHeader("Content-Length", String.valueOf(body.length))
                     .write(Buffer.buffer(java.util.Arrays.copyOf(body, body.length / 2)));
             return;
@@ -312,6 +321,8 @@ class ArtifactCacheProxyTest {
             }
             var cutAt = cutBeforeBody ? 0 : body.length / 2;
             var pause = cutPauseMs;
+            // Held only if neither closed nor resumed
+            if (!cutByClosing && pause == 0) heldConnections.add(req.connection());
             resp.write(Buffer.buffer(java.util.Arrays.copyOf(body, cutAt)))
                     .onComplete(written -> {
                         if (cutByClosing) req.connection().close();
@@ -342,11 +353,10 @@ class ArtifactCacheProxyTest {
         headConnections.clear();
         lastHeadConnection = null;
         stalledConnection = null;
-        headsToStall.set(0);
+        resetHoldBudgets();
         headDelayMs = 0;
         slowRedirectBody = false;
         headsAnswered.set(0);
-        getsToCut.set(0);
         cutByClosing = false;
         honourRange = true;
         rangesAsked.clear();
@@ -360,12 +370,10 @@ class ArtifactCacheProxyTest {
         rangeEncoding = null;
         encoding = null;
         rangeExtraBytes = 0;
-        getsToIgnore.set(0);
         nextGetDelayMs = 0;
         cutBeforeBody = false;
         cutPauseMs = 0;
         rangesToRefuse.set(0);
-        errorsToStall.set(0);
         proxy.artifactCache.downloadIdleSeconds = 20;
         proxy.upstream.clientSilenceBudgetSeconds = 110;
         proxy.artifactCache.maxBackgroundConfirmations = 16;
@@ -384,15 +392,29 @@ class ArtifactCacheProxyTest {
     /**
      * A test's own await can end before its confirmation leaves the set; left there, its key makes the next
      * test's confirmation of the same path a no-op (#1499). Drained against this test's own fixture, and
-     * charged to it if it never ends. A stalled HEAD is closed first, so a confirmation waiting on it ends now,
-     * and no HEAD is left to stall, so its retry is answered.
+     * charged to it if it never ends. Every held request is released first, nothing is left to hold its retry,
+     * so a test that fails while one is held reports that failure, not this drain's timeout as well.
+     * The drain sees only keys in the set. In a backoff a confirmation completes at once, its add and remove one
+     * synchronous call, so its key is there only while the serving callback runs; one that callback has yet to
+     * queue is not waited for.
      */
     @AfterEach
     void drainBackgroundConfirmations() throws Exception {
-        headsToStall.set(0);
-        var stalled = stalledConnection;
-        if (stalled != null) stalled.close();
+        resetHoldBudgets();
+        var closing = heldConnections.stream().map(HttpConnection::close).toList();
+        heldConnections.clear();
+        // Joined, not all(): one already closed by the proxy is as good as closed here
+        Future.join(closing).toCompletionStage().toCompletableFuture().handle((ok, err) -> null)
+                .get(5, TimeUnit.SECONDS);
         awaitBackgroundConfirmations(proxy);
+    }
+
+    /** No request is left to hold: what {@link #hold} counts down. */
+    static void resetHoldBudgets() {
+        headsToStall.set(0);
+        getsToIgnore.set(0);
+        getsToCut.set(0);
+        errorsToStall.set(0);
     }
 
     /** Every background confirmation queued or in flight has finished, for a class sharing one proxy. */
