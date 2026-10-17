@@ -192,6 +192,38 @@ class TuiInstanceMarksTest {
         assertTrue(tui.markedInstances().isEmpty());
     }
 
+    /** Whether the key bar shows F7 enabled: its key is drawn in the disabled colour when it is not. */
+    private static boolean f7Enabled(Tui tui) {
+        var buffer = TuiSnapshot.render(80, 24, tui::render);
+        var bar = TuiSnapshot.toText(buffer).split("\n")[23];
+        // The labels before F7 are one cell per character
+        assertTrue(bar.contains("F7Stop"), bar);
+        var cell = buffer.get(bar.indexOf("F7"), 23);
+        return !cell.style().fg().equals(java.util.Optional.of(tui.theme.barDisabledFg()));
+    }
+
+    @Test
+    void withMarksF7IsEnabledOnlyWhenAMarkedInstanceIsRunning() {
+        var tui = tui();
+        press(tui, TAB, DOWN, DOWN, SPACE);
+        // Only the stopped gamma is marked: F7 would stop nothing, even on a running cursor row
+        press(tui, UP);
+        assertFalse(f7Enabled(tui));
+        press(tui, SPACE);
+        assertTrue(f7Enabled(tui), "beta, marked now, is running");
+    }
+
+    @Test
+    void withMarksF7IsDisabledWhenTheSearchHidesEveryInstance() {
+        var tui = tui();
+        press(tui, TAB, SPACE);
+        assertTrue(f7Enabled(tui));
+        press(tui, KeyEvent.ofChar('/'));
+        for (var c : "zzz".toCharArray()) press(tui, KeyEvent.ofChar(c));
+        // While the search is open it can hide every row, the marked one too
+        assertFalse(f7Enabled(tui), "with no row shown, F7 is shown disabled, as F8 is");
+    }
+
     @Test
     void stoppingMarksThatAreAllStoppedSaysSo() {
         var tui = tui();

@@ -84,6 +84,7 @@ With instance marks set, F8 opens `DeleteConfirm.ofSeveral` for them, and F7 / S
 F8 on marked templates (`confirmDestroyMarkedTemplates`) destroys the built ones.
 `Tui.derivedFirst` orders either batch so a row goes after anything derived from it, by the parents the rows record.
 A batch is refused while any marked row is busy, and launching one clears its table's marks; Esc clears both sets.
+With instance marks set, the key bar enables F7 only while a marked instance is running (`Tui.anyMarkedInstanceRunning`), since then F7 ignores the cursor row.
 A mark must not move anything (Sanne, #1482).
 `MainScreen.renderMarks` draws `●` after the table renders, into the second cell of the cursor gutter (`▸ `), which `HighlightSpacing.ALWAYS` reserves on every row.
 `TuiInstanceMarksTest.markingMovesNothingElseOnTheScreen` pins it.

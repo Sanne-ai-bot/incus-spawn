@@ -972,8 +972,7 @@ public class Tui {
 
     /** F8, F7 or Shift+F7 on the marked instances; refused while any of them has an operation under way. */
     private void actOnMarkedInstances(KeyEvent key) {
-        var marked = (allEntries != null ? allEntries : entries).stream()
-                .filter(e -> markedInstances.contains(e.name())).toList();
+        var marked = markedInstanceEntries();
         var busy = marked.stream()
                 .filter(this::isBusy)
                 .findFirst();
@@ -2041,6 +2040,17 @@ public class Tui {
     /** The marked instances, which the context line counts and a test reads. */
     java.util.SequencedSet<String> markedInstances() {
         return markedInstances;
+    }
+
+    /** Whether F7 on the marked instances would stop or restart any: one of them is running. */
+    boolean anyMarkedInstanceRunning() {
+        return markedInstanceEntries().stream().anyMatch(Tui::isRunning);
+    }
+
+    /** The rows of the marked instances, whether the search shows them or not. */
+    private List<InstanceInfo> markedInstanceEntries() {
+        return (allEntries != null ? allEntries : entries).stream()
+                .filter(e -> markedInstances.contains(e.name())).toList();
     }
 
     /** Whether the template on row {@code row} of the templates table is marked. */
