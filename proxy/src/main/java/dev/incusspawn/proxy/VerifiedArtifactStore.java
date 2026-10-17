@@ -243,7 +243,7 @@ final class VerifiedArtifactStore {
     /** Record that upstream confirmed the artifact's stored checksum just now (npm's {@code .shasum}). */
     static void renewConfirmation(Path artifact, Path storedChecksum) {
         synchronized (lockFor(artifact)) {
-            stampConfirmation(storedChecksum, Instant.now());
+            if (Files.isRegularFile(storedChecksum)) stampConfirmation(storedChecksum, Instant.now());
         }
     }
 
