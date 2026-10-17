@@ -434,6 +434,37 @@ class NpmCacheProxyTest {
     }
 
     @Test
+    void queuedConfirmationAsksNothingOnceABackoffBegan() throws Exception {
+        var first = cacheUnderEtag("queued-first", Duration.ofHours(3));
+        var second = cacheUnderEtag("queued-second", Duration.ofHours(3));
+        var cap = proxy.artifactCache.maxBackgroundConfirmations;
+        proxy.artifactCache.maxBackgroundConfirmations = 1;
+        try {
+            // The first confirmation's lookup is held, so the second waits past the cap
+            stalledLookup = "/queued-first/1.0.0";
+            assertEquals(new Response(200, "tarball of queued-first"), get(first, 10));
+            ArtifactCacheProxyTest.await("the first confirmation's lookup", () -> stalled.size() == 1);
+            assertEquals(new Response(200, "tarball of queued-second"), get(second, 10));
+            ArtifactCacheProxyTest.await("the second to be queued", () -> proxy.artifactCache.backgroundConfirmations.size() == 2);
+
+            // A backoff begins while it waits. The held lookup's connection then breaks (an answer would
+            // end the backoff), and its retry's too, so the queue moves on with the backoff still on.
+            proxy.upstream.unreachableSince.put(REGISTRY, System.nanoTime());
+            ArtifactCacheProxyTest.await("the queue to drain", () -> {
+                for (var req : stalled) req.connection().close();
+                stalled.clear();
+                return proxy.artifactCache.backgroundConfirmations.isEmpty();
+            });
+        } finally {
+            proxy.artifactCache.maxBackgroundConfirmations = cap;
+        }
+
+        assertEquals(1, hits.get("/queued-second/1.0.0").get(), "the queued confirmation asks a registry in backoff nothing");
+        assertTrue(proxy.artifactCache.inBackoff(REGISTRY), "and so gets no answer that would end it");
+        assertTrue(Files.exists(cached(second)));
+    }
+
+    @Test
     void unreachableRegistryStillServesCache() throws Exception {
         var path = publishAndCache("offline");
         routes.remove(path);
