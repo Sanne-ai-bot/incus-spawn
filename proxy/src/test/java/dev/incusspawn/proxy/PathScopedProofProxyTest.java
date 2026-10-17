@@ -194,6 +194,14 @@ class PathScopedProofProxyTest {
     }
 
     @Test
+    void aDotSegmentNeverCarriesAScopedCredentialOutOfItsScope() throws Exception {
+        var docs = "Bearer " + proof("docs");
+        assertEquals(docs, send(SHARED, "/mcp/../cache/blob", docs), "relayed unchanged");
+        assertEquals("Bearer broad-real", send(SHARED, "/mcp/../api", "Bearer " + proof("broad")),
+                "the unscoped entry serves every path, whatever the upstream resolves it to");
+    }
+
+    @Test
     void aWebSocketNeedsOnlyItsEntrysProof() throws Exception {
         assertEquals("Bearer docs-real", connect("/mcp/ws", "Bearer " + proof("docs")));
         var docs = "Bearer " + proof("docs");

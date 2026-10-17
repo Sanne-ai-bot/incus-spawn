@@ -176,6 +176,39 @@ class ResolvedToolProxyTest {
     }
 
     @Test
+    void aScopeNeverMatchesAPathAnUpstreamMayResolveElsewhere() {
+        var auth = new ToolDef.AuthDef();
+        auth.setType("bearer");
+        auth.setToken("tok");
+        auth.setPaths(List.of("/mcp", "/api"));
+        var proxy = new ResolvedToolProxy("test", "example.com", auth, Map.of());
+
+        for (var path : List.of("/mcp/../admin", "/mcp/./x", "/mcp/..", "/mcp/x/../../admin",
+                "/mcp/%2e%2e/admin", "/mcp/.%2E/admin", "/mcp%2f..%2fadmin", "/mcp/%5c../admin",
+                "/mcp\\..\\admin", "/mcp/..;/admin", "/mcp/.;x/y", "/api/%61dmin/users",
+                "/api//admin", "/api/;/admin", "/api/%25%32%65", "/mcp/%", "/mcp/%2", "/mcp/%zz",
+                "/mcp/%c0%ae%c0%ae/admin", "/mcp/%e0%80%ae/admin", "/mcp/%f0%80%80%ae/admin",
+                "/mcp/..%3b/admin", "/mcp/%ff", "/mcp/../admin?x=1")) {
+            assertEquals(-1, proxy.pathMatchLength(path), path);
+        }
+        assertTrue(proxy.matchesPath("/mcp/x?next=/../admin"), "the query is not part of the path");
+        assertTrue(proxy.matchesPath("/mcp/my%20file"), "an escape no upstream reads as a path character");
+        assertTrue(proxy.matchesPath("/mcp/caf%C3%A9"), "UTF-8 is no other path");
+        assertTrue(proxy.matchesPath("/mcp/a..b/.c/x."), "dots inside a segment are literal");
+        assertTrue(proxy.matchesPath("/mcp/"), "a trailing slash is no empty segment");
+    }
+
+    @Test
+    void aPathAnUpstreamMayResolveElsewhereStillMatchesEveryPath() {
+        var root = new ToolDef.AuthDef();
+        root.setType("bearer");
+        root.setToken("tok");
+        root.setPaths(List.of("/", "/mcp"));
+        assertEquals(1, new ResolvedToolProxy("test", "example.com", root, Map.of()).pathMatchLength("/mcp/../admin"),
+                "a root scope covers whatever the upstream resolves it to");
+    }
+
+    @Test
     void invalidPrefixesMatchNothing() {
         var auth = new ToolDef.AuthDef();
         auth.setType("bearer");

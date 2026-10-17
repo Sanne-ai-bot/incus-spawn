@@ -274,6 +274,9 @@ When path scopes overlap, the longest matching prefix wins: with `/api` and `/ap
 A prefix matches whole path segments, so `/api` does not match `/apis`.
 When two tools register unscoped entries for the same domain, the first one loaded wins and a warning is logged.
 Trailing slashes in prefixes are normalized (`/mcp/` is treated as `/mcp`), and a root scope of `/` matches every path.
+The request path is compared as sent, never normalized, so a path an upstream may serve as another path matches no scope but the root: a `.` or `..` segment (also as `..;`), an empty segment such as `//`, a backslash, a percent-escape of an unreserved character, `/`, `\`, `;` or `%` (`/mcp/%2e%2e/admin`, `/api/%61dmin`), a malformed escape, or escapes that are not strict UTF-8 (the overlong `%c0%ae`).
+Such a request is served as if no scoped entry matched: an entry that serves every path, unscoped or scoped to `/` (on the domain, else on a wildcard covering it), injects its credential when the request proves its namespace, and otherwise the request is relayed with its own authentication.
+A prefix of that kind could never match, so a tool declaring one is skipped like one with a `..` segment.
 Each prefix is a literal path starting with `/`, without a query, wildcard, whitespace, empty segment or `.`/`..` segment; a tool definition with any other is skipped with a warning when definitions load.
 When tools with different credential namespaces share a domain, a request needs only the proof of the entry its path selects; a proof it does carry for another namespace must still be valid.
 This needs distinct placeholder prefixes: when two such tools send their proofs in the same header under the same prefix, the proxy cannot tell which namespace a proof is for, and a request must carry both.
