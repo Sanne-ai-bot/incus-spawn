@@ -106,6 +106,14 @@ public class Tui {
             warningChannel::forgetReported);
     /** The status line last set by a warning announcement, which a newer one may replace. */
     private String warningAnnouncement;
+    /**
+     * Whether the status line is held until the next key (#1497): set when a confirmed batch stop
+     * names the instances it no longer acts on, which the batch's own messages, often posted before
+     * the next frame, would otherwise replace before anyone saw it.
+     */
+    private boolean holdingStatus;
+    /** The latest status message that arrived while {@link #holdingStatus}; shown after the next key. */
+    private String deferredStatus;
     private final TemplateDetailView templateDetail = new TemplateDetailView(modal, theme,
             new TemplateDetailView.Source() {
                 @Override public Map<String, dev.incusspawn.config.ImageDef> imageDefs() { return imageDefs; }
@@ -335,13 +343,28 @@ public class Tui {
         }
     }
 
+    /** Puts the warnings that arrived since the last announcement on the status line; false if none did. */
+    private boolean announceWarnings() {
+        var announced = WarningLog.statusLine(warningLog.takeUnannounced());
+        if (announced != null) statusMessage = warningAnnouncement = announced;
+        return announced != null;
+    }
+
+    /** A key has been pressed, so the held line was seen: what waited behind it takes the line (#1497). */
+    private void releaseHeldStatus() {
+        statusMessage = deferredStatus;
+        holdingStatus = false;
+        deferredStatus = null;
+    }
+
     /**
      * Whether the status line is free for a warning announcement: it is empty, or holds an older
-     * announcement. An action's result (a failed build, a created template) is not replaced; the
-     * warnings wait, counted in the header, until the next key clears the line.
+     * announcement, and is not held. An action's result (a failed build, a created template) is not
+     * replaced; the warnings wait, counted in the header, until the next key clears the line.
      */
+
     private boolean canAnnounceWarnings() {
-        return statusMessage == null || statusMessage.equals(warningAnnouncement);
+        return !holdingStatus && (statusMessage == null || statusMessage.equals(warningAnnouncement));
     }
 
     /** The TUI has closed: warnings nobody opened the dialog for must not vanish with it. */
@@ -602,6 +625,8 @@ public class Tui {
                     || (helpChat != null && helpChat.isLoading());
         }
         if (!(event instanceof KeyEvent key)) return false;
+        // Browse mode releases the hold itself, before the key sets its own message
+        if (holdingStatus && (searchActive || mode != Mode.BROWSE)) releaseHeldStatus();
         if (searchActive) return handleSearchEvent(key, tableState);
         return switch (mode) {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
@@ -639,7 +664,9 @@ public class Tui {
             tui.quit();
             return true;
         }
-        statusMessage = null;
+        // A held line has been seen now: what waited behind it takes the line, until this key sets its own
+        if (holdingStatus) releaseHeldStatus();
+        else statusMessage = null;
 
         // Esc has no other meaning in browse mode: it drops the marks on both tables
         int marks = markedTemplates.size() + markedInstances.size();
@@ -1013,14 +1040,15 @@ public class Tui {
             statusMessage = "Operation in progress for " + busy.get().name();
             return true;
         }
-        // The user confirmed a longer list: the warning log announces which of it is left out, and
-        // keeps it once the stops' own messages replace the status line
+        // The user confirmed a longer list: say which of it is left out, on the status line until the
+        // next key, and in the warning log
         var targetNames = targets.stream().map(InstanceInfo::name).collect(java.util.stream.Collectors.toSet());
         var dropped = names.stream().filter(n -> !targetNames.contains(n)).toList();
         if (!dropped.isEmpty()) {
-            statusMessage = null;   // else an older message keeps the announcement off the line
             warningLog.add((markedStopConfirm.restart() ? "Not restarted" : "Not stopped") + ", "
                     + dropped.size() + " no longer running or gone: " + String.join(", ", dropped));
+            // Announced now and held until the next key, so the stops' own messages wait behind it
+            holdingStatus = announceWarnings();
         }
         if (targets.isEmpty()) return true;   // the marks stay, for another try
         markedInstances.clear();
@@ -1484,15 +1512,13 @@ public class Tui {
         }
         String pending = pendingStatusMessage.getAndSet(null);
         if (pending != null) {
-            statusMessage = pending;
+            if (holdingStatus) deferredStatus = pending;
+            else statusMessage = pending;
         }
         // Announce warnings that arrived since the last frame, from whichever thread raised them.
         // Unless the dialog is open, which shows them already.
         if (mode != Mode.WARNINGS) {
-            if (canAnnounceWarnings()) {
-                var announced = WarningLog.statusLine(warningLog.takeUnannounced());
-                if (announced != null) statusMessage = warningAnnouncement = announced;
-            }
+            if (canAnnounceWarnings()) announceWarnings();
         } else {
             warningLog.markRead();
             warningLog.takeUnannounced();
