@@ -30,6 +30,13 @@ public final class Metadata {
         return template.isBlank() ? null : template;
     }
     public static final String NETWORK_MODE = PREFIX + "network-mode";
+    /**
+     * The devices airgap masked with {@code type: none}, comma-separated ({@code ","} when it
+     * masked none), so a branch with network lifts those masks and no {@code type: none} the
+     * template set itself. Absent on an instance airgapped before it existed, which masked NICs
+     * only (#1507).
+     */
+    public static final String AIRGAP_MASKED = PREFIX + "airgap-masked";
     public static final String PROXY_GATEWAY = PREFIX + "proxy-gateway";
     public static final String BUILD_VERSION = PREFIX + "build-version";
     public static final String BUILD_SHA = PREFIX + "build-sha";

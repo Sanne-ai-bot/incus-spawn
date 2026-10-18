@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -213,26 +214,64 @@ public final class InstanceNetwork {
      * network it is on and wherever it comes from. Removing an instance device only drops the
      * instance's own copy: a NIC the {@code default} profile provides, or one the instance
      * overrides from it (a clone's static IP), applies again. A {@code type: none} device of the
-     * same name masks it.
+     * same name masks it. The masked names are stamped ({@link Metadata#AIRGAP_MASKED}), with
+     * those of an airgapped source, whose masks the copy carried.
      */
-    static void maskNics(JqValue instance, InstanceUpdate update) {
+    static void maskNics(IncusClient incus, JqValue instance, InstanceUpdate update) {
+        var masked = new LinkedHashSet<String>();
+        if (NetworkMode.isAirgapped(instance)) {
+            var stamped = stampedMasks(instance);
+            masked.addAll(stamped != null ? stamped : preStampMasks(instance, profileDevices(incus, instance)));
+        }
         var expanded = instance.getField("expanded_devices");
         if (expanded instanceof JqObject devices) {
             devices.forEach((name, device) -> {
-                if (IncusClient.isNetworkDevice(device)) update.replaceDevice(name, MASKED_DEVICE);
+                if (IncusClient.isNetworkDevice(device)) {
+                    update.replaceDevice(name, MASKED_DEVICE);
+                    masked.add(name);
+                }
             });
         }
+        update.config(Metadata.AIRGAP_MASKED, masked.isEmpty() ? "," : String.join(",", masked));
+    }
+
+    /** The devices airgap stamped as masked, or null when it predates the stamp. */
+    private static Set<String> stampedMasks(JqValue instance) {
+        var stamp = instance.path("config").pathText(Metadata.AIRGAP_MASKED, "");
+        if (stamp.isEmpty()) return null;
+        var names = new LinkedHashSet<String>();
+        for (var name : stamp.split(",")) if (!name.isEmpty()) names.add(name);
+        return names;
+    }
+
+    /**
+     * What airgap masked before it stamped the names: NICs only, so its {@code type: none}
+     * devices over a profile NIC.
+     */
+    private static Set<String> preStampMasks(JqValue instance, Map<String, JqValue> profileDevices) {
+        var names = new LinkedHashSet<String>();
+        if (instance.getField("devices") instanceof JqObject declared) {
+            declared.forEach((name, device) -> {
+                var profileDevice = profileDevices.get(name);
+                if ("none".equals(device.pathText("type", ""))
+                        && profileDevice != null && IncusClient.isNic(profileDevice)) names.add(name);
+            });
+        }
+        return names;
     }
 
     /**
      * Put back the profile network devices {@link #maskNics} masked, as instance devices
      * overwriting the masks: a PATCH replaces a device whole, so this needs no separate removal.
      * Returns the instance as it will then expand, so the static IP is set on the NIC that comes
-     * back. Only masks of a profile network device are touched: a {@code type: none} device the
-     * template set itself stays.
+     * back. Only the masks airgap wrote ({@link #stampedMasks}, {@link #preStampMasks}) are
+     * touched: a {@code type: none} device the template set itself stays, even over a profile
+     * network device.
      */
     static JqValue unmaskNics(IncusClient incus, JqValue instance, InstanceUpdate update) {
         var profileDevices = profileDevices(incus, instance);
+        var stamped = stampedMasks(instance);
+        var masks = stamped != null ? stamped : preStampMasks(instance, profileDevices);
         var expanded = JqObject.builder(8);
         var current = instance.getField("expanded_devices");
         if (current instanceof JqObject currentObj) currentObj.forEach(expanded::put);
@@ -240,7 +279,7 @@ public final class InstanceNetwork {
         if (declared instanceof JqObject declaredObj) {
             declaredObj.forEach((name, device) -> {
                 var profileDevice = profileDevices.get(name);
-                if ("none".equals(device.pathText("type", ""))
+                if (masks.contains(name) && "none".equals(device.pathText("type", ""))
                         && profileDevice != null && IncusClient.isNetworkDevice(profileDevice)) {
                     expanded.put(name, profileDevice);
                     // A changed device is sent whole from the expanded view: the profile's device

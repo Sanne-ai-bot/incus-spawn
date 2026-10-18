@@ -1101,11 +1101,13 @@ Root in the guest could still flush the first, and an `incus restart` or autosta
 The second needs root on the host for every branch and a boot-time restore ordered before Incus, and there is no host nftables on macOS outside the appliance.
 Incus already does all of that for its own per-NIC rules.
 
-**Airgapped** (`--airgap`): Every network device, each NIC and InfiniBand device (which reaches a network without any NIC, #1507), is masked with a `type: none` device of the same name, and the instance is stamped `network-mode=AIRGAP`.
+**Airgapped** (`--airgap`): Every network device, each NIC and InfiniBand device (which reaches a network without any NIC, #1507), is masked with a `type: none` device of the same name, and the instance is stamped `network-mode=AIRGAP` and `airgap-masked=<the masked devices>`.
 Complete network isolation — no egress at all.
 Masking is the only way: Incus cannot remove a profile device from one instance, and removing an instance device that overrides one only drops the override, so the profile's device applies again.
 That is how airgap branches kept full network access until #813.
-A branch with network from an airgapped instance writes the profiles' network devices back over the masks.
+A branch with network from an airgapped instance writes the profiles' network devices back over the masks named in `airgap-masked`, and no other: a `type: none` the template set itself over a profile device is its own choice and stays.
+An instance airgapped before that stamp existed masked NICs only, so without the stamp only masks over a profile NIC are lifted.
+Airgapping an airgapped instance keeps its source's names in the stamp, since the copy carries those masks.
 
 ### Auth & Security: MITM TLS Proxy
 
@@ -2389,6 +2391,7 @@ user.incus-spawn.ca-fingerprint=AB:CD:EF:... # CA certificate fingerprint
 user.incus-spawn.build-source={...}          # (JSON, full image + tool defs for out-of-scope visibility)
 user.incus-spawn.network-mode=PROXY_ONLY     # (proxy-only branches only)
 user.incus-spawn.proxy-gateway=10.166.11.1   # (proxy-only branches only)
+user.incus-spawn.airgap-masked=eth0,ib0      # (airgapped branches only, the devices airgap masked; "," for none)
 user.incus-spawn.static-ip=10.166.11.2       # (branches only, assigned at creation)
 user.incus-spawn.host-resources=[...]        # (JSON, when host-resources declared)
 ```
@@ -3627,7 +3630,7 @@ The source address is what identifies an instance to the proxy, so a first failu
 Both extra writes happen only on the failure path.
 
 Airgap rides in the same write: it masks each network device with `type: none` (`InstanceUpdate.replaceDevice`), which a PATCH can carry since it replaces a device whole.
-Branching with network from an airgapped instance reads the profiles and writes their network devices over the masks, in that same write.
+Branching with network from an airgapped instance reads the profiles and writes their network devices over the masks airgap stamped, in that same write.
 Enabling GUI or KVM passthrough and host resources still add their own devices afterwards.
 
 ### Build-time initialization must not capture host paths
