@@ -435,6 +435,18 @@ class TuiCharacterisationTest {
     }
 
     @Test
+    void thePickerJoinsNothingWhileTheInstanceIsBusy() {
+        var tui = mcpTui("task t1-abcd finished 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /a\n"
+                + "task t2-abcd finished 1700000000\nsid t2-abcd sess-2\ncwd t2-abcd /b\n");
+        press(tui, TAB, SHIFT_F2);
+        assertEquals(Tui.Mode.TASK_PICKER, tui.mode());
+        assertTrue(tui.backgroundTasks.tryClaim("mcp-box"), "a stop or destroy started meanwhile");
+        press(tui, ENTER);
+        assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
+        assertEquals("Operation in progress for mcp-box", tui.statusMessage);
+    }
+
+    @Test
     void thePickerOpenedFromDetailsClosesBackToThem() {
         var tui = mcpTui("task t1-abcd finished 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /a\n"
                 + "task t2-abcd finished 1700000000\nsid t2-abcd sess-2\ncwd t2-abcd /b\n");
