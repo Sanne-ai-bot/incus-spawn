@@ -1058,9 +1058,13 @@ security.acls.default.ingress.action=allow   # the host reaches the instance ove
 
 The ACL's egress rules allow, to the gateway's address only: tcp 443 and 18080, udp and tcp 53, and ICMP echo (the connectivity watchdog pings the gateway).
 DNS over TCP is wider than the in-guest rules, which allowed udp 53 only, but no NIC ACL can take it away: Incus puts its own `udp dport 53` and `tcp dport 53 accept` to the gateway in the same chains ahead of the ACL's rules, so the ACL lists both to say what is in force.
+That is accepted: DNS reaches only the gateway's resolver either way, and blocking TCP would take a host nftables table isx owns, the state the ACL exists to avoid.
 A proxy-only instance has one network device, the bridge NIC that carries the ACL: any other NIC or InfiniBand device, its own or from a profile, would reach the network directly.
 A branch whose source has one (an airgapped source's, as unmasking would bring it back) is refused before anything is created, and isx refuses to start or use an instance that has gained one.
 A start outside isx (`incus start`, autostart) cannot be refused and starts it with that NIC unrestricted.
+A `pci` passthrough device is not refused, though a passed-through network card reaches the network outside the ACL: refusing every `pci` device would refuse GPUs too.
+That is accepted *because* isx never adds such a device; only a user who adds one by hand gets it.
+If isx ever adds `pci` devices itself, or a template can bring a network card that way, revisit this.
 Incus installs it as per-NIC chains in the host's nftables `bridge` family, the table that also enforces `security.ipv4_filtering`, at every start of the instance, whoever starts it: `isx`, `incus restart`, autostart after a host reboot, `isx doctor`'s subnet move.
 A start whose ACL cannot be installed fails.
 Those chains match in the bridge family, before the host's PREROUTING redirect, so they see port 443 rather than the proxy's 18443.
