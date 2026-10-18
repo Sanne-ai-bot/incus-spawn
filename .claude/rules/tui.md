@@ -83,7 +83,8 @@ Each option names the templates it rebuilds (`BuildMenuOption.rebuilds`, a chain
 With instance marks set, F8 opens `DeleteConfirm.ofSeveral` for them, and F7 / Shift+F7 open `MarkedStopConfirm` (`MarkedStopConfirmTest`) for the marked running ones; both are handled before the cursor row's busy check.
 Both list every name they act on through `ModalRenderer.listMessage`: one per line while the dialog fits the screen, wrapped otherwise, never "and N more" (Sanne, #1482).
 On y, `Tui` checks them again, since a refresh may have stopped or busied them while the dialog was open, and stops or restarts those still running.
-Any listed instance it no longer acts on is named, with their count, in the warning log, which announces it on the status line and keeps it after the stops' own messages replace that line.
+Any listed instance it no longer acts on is named, with their count, in the warning log, and announced at once, holding the line (`Tui.holdingStatus`, #1497).
+A held notice keeps the status line until the next key: status messages that arrive meanwhile (a stop failing before the next frame) wait in `deferredStatus` and show after that key, and new warnings wait to be announced.
 `ModalRenderer.confirmLines` widens any confirm dialog for a word too long or text too tall for it; text that still does not fit keeps the buttons and says how many lines are hidden.
 F8 on marked templates (`confirmDestroyMarkedTemplates`) destroys the built ones.
 `Tui.derivedFirst` orders either batch so a row goes after anything derived from it, by the parents the rows record.

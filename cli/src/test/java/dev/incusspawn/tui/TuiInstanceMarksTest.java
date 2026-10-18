@@ -275,6 +275,28 @@ class TuiInstanceMarksTest {
         assertEquals(List.of("alpha stop"), daemon.stateActions());
     }
 
+    /**
+     * A stop that fails before the next frame does not take the line from the "Not stopped …"
+     * notice (#1497): the notice holds it until the next key, and the failure shows after that.
+     */
+    @Test
+    void aStopThatFailsAtOnceWaitsBehindTheNotStoppedNotice() {
+        var tui = tui();
+        press(tui, TAB, SPACE, DOWN, SPACE, KeyEvent.ofKey(KeyCode.F7));
+        daemon.instance("beta", "container", "Stopped", branch());
+        daemon.ignoreShutdown("alpha");
+        reload(tui);
+        press(tui, KeyEvent.ofChar('y'));
+        // alpha's stop fails and posts its message before any frame is drawn
+        runQueued();
+        assertTrue(screen(tui).contains("Not stopped, 1 no longer running or gone: beta"), screen(tui));
+        assertTrue(screen(tui).contains("Not stopped, 1 no longer running or gone: beta"), "still, a frame later");
+        press(tui, DOWN);
+        var after = screen(tui);
+        assertFalse(after.contains("no longer running or gone"), after);
+        assertTrue(after.contains("Failed: Failed to stop alpha"), "the failure shows after the next key:\n" + after);
+    }
+
     @Test
     void anyOtherKeyCancelsTheStopAndKeepsTheMarks() {
         var tui = withAlphaAndGammaMarked();
