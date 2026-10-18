@@ -5,7 +5,8 @@
 # of them in every file and nothing else. Also checks that no path but the vendored ruleset file is
 # allowlisted, that nothing suppresses by stopword, commit, inline allow comment or ignore file,
 # retargets the regexes, or disables or replaces a base rule, and holds every allowlist regex to
-# the ^...$ anchors .claude/rules/ci.md requires, with no unbounded repetition.
+# the ^...$ anchors .claude/rules/ci.md requires, with no unbounded repetition, and that
+# gitleaks.yml sets GITLEAKS_VERSION once, at the top, to the gitleaks this runs with.
 # Needs bash, git, python3 (3.11+, for tomllib) and gitleaks, given as $1 or found on PATH.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -31,6 +32,43 @@ if git -C "$REPO" ls-files --cached | grep -E '(^|/)\.gitleaksignore$'; then
     echo "FAIL: a .gitleaksignore suppresses findings by fingerprint; allowlist the exact value instead"
     fail=1
 fi
+
+# Versions flag different values (8.24.3 reports a fixture 8.27.0 does not, #1495), so this test
+# only vouches for the scans if gitleaks.yml sets the version it runs with once, at the top, and
+# names no other.
+tested="$("$GITLEAKS" version)"  # an assignment, so a missing binary stops the script here
+python3 -I - .github/workflows/gitleaks.yml "$tested" <<'EOF' || fail=1
+import re, sys
+# Comment lines dropped, and the tag comment of a SHA-pinned action (@<sha> # v6.0.0), which is not
+# a version. Other trailing " #" stay: in a run: script they can be shell text, a version after them included.
+lines = [re.sub(r"^(\s*(?:- )?uses: *\S+)\s+#.*", r"\1", l)
+         for l in open(sys.argv[1]).read().splitlines() if not re.match(r"\s*#", l)]
+tested, ok = sys.argv[2].strip().removeprefix("v"), True
+# The pin: one line in the top-level env block, which every job and step inherits.
+start = next((i + 1 for i, l in enumerate(lines) if re.fullmatch(r"env: *(?:#.*)?", l)), len(lines))
+end = next((i for i in range(start, len(lines)) if lines[i] and not lines[i].startswith(" ")), len(lines))
+# A bare x.y.z: the install URL and gitleaks-action both add their own "v".
+pin = r"""\s+GITLEAKS_VERSION: *(['"]?)([0-9.]+)\1 *(?:#.*)?"""
+pins = {i: m[2] for i in range(start, end) if (m := re.fullmatch(pin, lines[i]))}
+if len(pins) != 1:
+    print("FAIL: gitleaks.yml must set GITLEAKS_VERSION once in its top-level env, as x.y.z with no leading v")
+    ok = False
+elif list(pins.values()) != [tested]:
+    print(f"FAIL: gitleaks.yml pins gitleaks {list(pins.values())[0]}, but this test runs {tested}")
+    ok = False
+# Anywhere else it may only be read; a job-level env, a $GITHUB_ENV line or a hardcoded release
+# number would run some job on a version this test never ran.
+for i, l in enumerate(lines):
+    if i in pins:
+        continue
+    if "GITLEAKS_VERSION" in re.sub(r"env\.GITLEAKS_VERSION|\$\{?GITLEAKS_VERSION\b\}?", "", l):
+        print(f"FAIL: gitleaks.yml sets GITLEAKS_VERSION outside its top-level env: {l.strip()}")
+        ok = False
+    if re.search(r"(?<![0-9.])[0-9]+\.[0-9]+\.[0-9]+(?![0-9.])", l):
+        print(f"FAIL: gitleaks.yml names a version outside its top-level GITLEAKS_VERSION: {l.strip()}")
+        ok = False
+sys.exit(0 if ok else 1)
+EOF
 
 for config in "${CONFIGS[@]}"; do
     python3 -I - "$config" "$WORK/upstream-$config.json" <<'EOF' || fail=1

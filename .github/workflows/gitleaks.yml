@@ -20,6 +20,14 @@ concurrency:
   group: gitleaks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# One gitleaks version for every job, set here rather than left to gitleaks-action's default:
+# versions flag different values (#1495), so allowlist-test only vouches for the scans if it runs
+# the version they do. 8.27.0 is the version the vendored leaktk ruleset was generated for. A bump
+# changes both lines: the checksum is of that release's linux_x64 tarball, which allowlist-test installs.
+env:
+  GITLEAKS_VERSION: '8.27.0'
+  GITLEAKS_SHA256: 'ba75459d765ebc9e940c0123a2d41a29e87be674b5ecaaacd5f82f26009255d5'
+
 jobs:
   # gitleaks' [extend] table can't set both useDefault and path at once, so the
   # leaktk/patterns ruleset (vendored at .gitleaks/leaktk-gitleaks-8.27.0.toml) lives in its
@@ -55,7 +63,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks-leaktk.toml
-          GITLEAKS_VERSION: '8.27.0'
 
   # The scans above check the commits in the push or PR. This checks the allowlists themselves:
   # they must hide fixture values, not fixture files (#1484), so a real-shaped key planted in every
@@ -72,10 +79,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install gitleaks 8.27.0
+      - name: Install gitleaks ${{ env.GITLEAKS_VERSION }}
         run: |
-          curl -sSfL -o /tmp/gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.27.0/gitleaks_8.27.0_linux_x64.tar.gz
-          echo 'ba75459d765ebc9e940c0123a2d41a29e87be674b5ecaaacd5f82f26009255d5  /tmp/gitleaks.tar.gz' | sha256sum -c -
+          curl -sSfL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
 
       - name: Check the allowlists against planted keys

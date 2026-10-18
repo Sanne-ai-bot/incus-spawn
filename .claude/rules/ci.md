@@ -191,8 +191,15 @@ Nothing re-scans history on a schedule.
 
 - **`scan-stock`**: reads the root `.gitleaks.toml`, which sets `[extend] useDefault = true` to pull in gitleaks' own built-in rules.
 - **`scan-leaktk`**: reads `.gitleaks-leaktk.toml` via `GITLEAKS_CONFIG`, which extends the vendored `.gitleaks/leaktk-gitleaks-8.27.0.toml` (unmodified copy of [leaktk/patterns](https://github.com/leaktk/patterns)' generated gitleaks config -- see the header comment in that file for the source commit and refresh instructions).
-  `GITLEAKS_VERSION` is pinned to `8.27.0` to match the version leaktk generated the ruleset for.
-- **`allowlist-test`**: runs `.github/scripts/test-gitleaks-allowlist.sh` with gitleaks 8.27.0, checksum-pinned, and only `contents: read`, since it runs a script from the PR itself.
+- **`allowlist-test`**: runs `.github/scripts/test-gitleaks-allowlist.sh` with the pinned `GITLEAKS_VERSION`, checksum-checked, and only `contents: read`, since it runs a script from the PR itself.
+
+All three run one gitleaks version, `8.27.0` (the one leaktk generated its ruleset for), set once as `GITLEAKS_VERSION` in the workflow's top-level `env` beside its tarball's `GITLEAKS_SHA256`.
+The scans read it and `allowlist-test` downloads it; a bump changes both lines.
+It is not left to the action's default (8.24.3 in `gitleaks-action@v3`), because versions flag different fixture values (#1495).
+8.24.3 reports the alphabet-run `ghp_` token of `SecretRedactorTest` and `SupportBundleTest` as `github-pat`, 8.27.0 does not, so the allowlist test vouched for nothing `scan-stock` ran, and a default bump in the action would have changed the scan with no change here.
+The `github-pat` rule is the same in both: 8.27.0 hides the token through the default config's global stopword `abcdefghijklmnopqrstuvwxyz`, matched in any case, and 8.24.3 drops that default allowlist once a config extends the defaults with `useDefault`.
+The test fails unless the workflow sets the version there and nowhere else, to the version the test runs.
+Since it also scans the whole tracked tree, a bump to a version that flags another fixture fails it at once, in the PR making the bump.
 
 gitleaks' `[extend]` table is mutually exclusive between `path` and `useDefault` (one config file can only pick one base ruleset to extend), which is why these are two separate config files and two separate scan passes rather than one merged ruleset.
 They must be two **jobs**, not two steps in one job.
@@ -215,7 +222,7 @@ So does anything that hides a whole rule: an `[extend]` other than `useDefault =
 Keys are compared in any case, since gitleaks ignores the case of config keys.
 And every allowlist regex (global, `[[allowlists]]` or per rule) must be anchored as a whole: no top-level `|`, no escaped final `\$`, no `(?m)` or `(?s)` flag.
 Nor may it repeat without bound (`*`, `+` or `{n,}` outside a character class): such a regex is a net for real lengths whatever its anchors, as an indented PEM header followed by `(?:.*\n)*` would be.
-Run it locally with a gitleaks binary as its argument, once with 8.27.0 and once with the action's default that `scan-stock` runs (8.24.3 in `gitleaks-action@v3`): they flag different fixture values.
+Run it locally with the pinned gitleaks binary (8.27.0) as its argument; another version fails the pin check.
 It reads configs and fixtures from the index, so stage your change first.
 A net that widens a value entry to real lengths fails it; a bounded one that stays below them (`sk-ant-api03-[a-z]{1,30}`) does not, so keeping short prefix nets out is left to review.
 A fixture value under a new credential prefix needs a planted key of that shape added to the script.
