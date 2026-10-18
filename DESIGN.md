@@ -3032,7 +3032,7 @@ A review that builds a PR once and then runs several specialist reviewers wants 
 `create_instance(from_instance)` is `isx branch --from <instance>` through the same `BranchFlow`, which already resolves a branch of a branch: the leaf template from `PROFILE`, the source's account pins on top of the template's, credentials checked against the source's recorded build.
 So the trust boundary does not move: the source must be held by this session, its lineage must still be approved and trusted (`TemplatePolicy.requireLineage`, which, like adoption, does not need the template built: a fork copies the instance, not the image), and network mode and accounts are still never arguments.
 The source must be **stopped**.
-A running container can be copied, but only crash-consistently (a half-written `target/`, a live lock in `.m2`), and a running VM not at all.
+A running instance can be copied, but only crash-consistently (a half-written `target/`, a live lock in `.m2`).
 So `stop_instance` and `start_instance` exist, and `stop_instance` is refused while a task runs unless `force`, which cancels the tasks first so none stays recorded as running in an instance nobody can ask.
 Having the fork stop and restart the source by itself would pay a restart per fork and hide a state change from the client.
 A fork is stamped, counted against `max-instances`, orphaned and reaped like any instance; `configureBranch` drops the `mcp-*` keys it copied, so a fork of a kept instance is not kept.
