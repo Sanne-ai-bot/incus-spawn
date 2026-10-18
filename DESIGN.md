@@ -2960,10 +2960,15 @@ A conversation a person is already in is refused too: the same read runs the `Pr
 That read is a snapshot seconds before the agent starts, so the guest command decides again in the shell that then execs the agent (`TaskScripts.joinGuard`).
 It refuses, and exits rather than falling back to a login shell, while any unit of the task is active, systemd cannot say, or an agent isx did not start holds the session or the directory.
 Every unit is asked about, whatever `current` says, because `current` is written only after `systemd-run` has started a run.
-A refusal waits for Enter on a terminal, so the TUI does not redraw over it; the host does not see the shell's exit status, so `isx shell --task` still exits 0 then.
-What is guaranteed is that no run, and no other person's agent, existed a moment before the exec; it is not a lock.
-A window of milliseconds remains on both sides: a `send_message` checks for a person before its agent process exists, and two joins started within the same instant can both pass the guard.
-Closing it would take a lock both `send_message` and the join hold, which the coordinator's relaying of one command per task makes not worth its cost.
+A refusal waits for Enter on a terminal, so the TUI does not redraw over it.
+The host cannot see the shell's exit status (the PTY session ends without waiting for Incus to finalize the exec, about 8 s), so the guard leaves its reason in the task directory under a nonce the host chose (`TaskScripts.joinRefusal`), and `isx shell --task` reads it after the session and exits 1.
+These checks are snapshots: on the VM, a `send_message` started 0-0.2 s after a join ran its turn beside the person's agent in 4 of 8 trials, because its presence check comes 170-250 ms before `systemd-run`.
+So the conversation has a lock: every run and every joined agent starts under `flock -n -o` on the task directory (`TaskScripts.CONVERSATION_LOCK`), and the second of two that coincide does not start.
+A run that finds a person there exits 213 (a value no agent gives, unlike 75) with a line saying why, which `task_status` shows as its stderr; a join that finds the lock taken is refused like any other.
+A guest without flock (util-linux) holds no lock, so its runs and joins refuse with that reason rather than run unlocked.
+`-o` keeps the lock with flock itself while the agent runs, not with what the agent starts, which could outlive it and hold the conversation after it.
+The lock is on the directory, which cannot be swapped for a FIFO that would hold the open (#1080).
+A person who resumes by hand (`claude --resume` in an `isx shell`) takes no lock; for them the `Presence` check at `send_message` is all there is, as before.
 The read is bounded (10 s, `IncusClient.execProbe`), so a guest that never answers cannot freeze the TUI at the keypress.
 The joined command runs outside the instance's tmux or zmx session (`ShellPrep.withCommandOnly`), since attaching to one that already exists would enter it instead.
 Plain `isx shell` on an instance with the `isx mcp` stamp prints one hint line with the command, at the cost of one guest exec; other instances pay nothing.

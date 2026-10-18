@@ -54,6 +54,33 @@ final class TaskScripts {
      */
     static final String TASK_ENV = "ISX_MCP_TASK";
 
+    /**
+     * The exit {@link #CONVERSATION_LOCK} gives when someone else holds the conversation: a value
+     * no agent, shell or common tool gives (not 75, EX_TEMPFAIL), so the agent's own exit is not
+     * mistaken for it.
+     */
+    static final int CONVERSATION_TAKEN = 213;
+
+    /** In a run or a join: flock (util-linux) is there, else {@code then} runs; a guest without it can hold no lock. */
+    static String requireFlock(String then) {
+        return "command -v flock >/dev/null 2>&1 || { " + then + "; }";
+    }
+
+    /** What a run or a join says when the guest has no flock. */
+    static final String NO_FLOCK = "isx: flock (util-linux) is missing in this instance, and without it a run and a person "
+            + "could both write to one conversation; install util-linux in the template";
+
+    /**
+     * Who may write to a task's conversation: whoever holds this lock, on the task directory
+     * {@code $D} itself (a directory cannot be swapped for a FIFO that would hold the open). A run
+     * and a person's joined agent each run under {@code flock -n}, so the second of two that
+     * coincide does not start ({@link #CONVERSATION_TAKEN}) -- the checks before each are a
+     * snapshot, this is not. {@code -o}: the lock is held by flock while the agent runs, and is not
+     * inherited by what the agent starts, which could outlive it.
+     */
+    static final String CONVERSATION_LOCK = "flock -n -o -E " + CONVERSATION_TAKEN + " \"$D\" ";
+
+
     private TaskScripts() {}
 
     static String dir(String taskId) {
@@ -178,14 +205,17 @@ final class TaskScripts {
             sb.append("echo ").append(chosen.maxTurns().intValue()).append(" > \"$D/max-turns\"\n");
         }
         if (agent == DelegateAgent.CODEX) {
-            sb.append("node -e ").append(ExecScript.quote(CodexEvents.runner()))
+            sb.append(requireFlock("echo '" + NO_FLOCK + "' >&4; " + recordExit(String.valueOf(run), "127") + "; exit 0")).append('\n');
+            sb.append(CONVERSATION_LOCK).append("node -e ").append(ExecScript.quote(CodexEvents.runner()))
                     .append(" \"$D\" ").append(run).append(' ').append(ExecScript.quote(permissionMode))
                     .append(' ').append(ExecScript.quote(chosen.model() == null ? "" : chosen.model()))
                     .append(" 2>&4\n");
-            sb.append("rc=$?\n").append(recordExit(String.valueOf(run), "$rc")).append('\n');
+            sb.append("rc=$?\n").append(TAKEN_NOTE).append(" >&4\n").append(recordExit(String.valueOf(run), "$rc")).append('\n');
             return sb.toString();
         }
-        sb.append("claude -p --output-format stream-json --verbose")
+        sb.append(requireFlock("echo '" + NO_FLOCK + "' >> \"$D/stderr-" + run + ".log\"; "
+                + recordExit(String.valueOf(run), "127") + "; exit 0")).append('\n');
+        sb.append(CONVERSATION_LOCK).append("claude -p --output-format stream-json --verbose")
                 .append(" --append-system-prompt \"$(cat \"$D/brief.md\")\"");
         if (chosen.model() != null) sb.append(" --model ").append(ExecScript.quote(chosen.model()));
         if (maxTurns != null) sb.append(" --max-turns ").append(maxTurns.intValue());
@@ -195,12 +225,17 @@ final class TaskScripts {
         sb.append(" < \"$D/prompt-").append(run).append(".md\" > \"$D/events-").append(run)
                 .append(".jsonl\" 2> \"$D/stderr-").append(run).append(".log\"\n");
         sb.append("rc=$?\n");
+        sb.append(TAKEN_NOTE).append(" >> \"$D/stderr-").append(run).append(".log\"\n");
         sb.append("sid=$(sed -n 's/.*\"session_id\" *: *\"\\([^\"]*\\)\".*/\\1/p' \"$D/events-").append(run)
                 .append(".jsonl\" | head -n 1)\n");
         sb.append("[ -n \"$sid\" ] && printf '%s' \"$sid\" > \"$D/session_id\"\n");
         sb.append(recordExit(String.valueOf(run), "$rc")).append('\n');
         return sb.toString();
     }
+
+    /** What a run that did not start, because a person holds the conversation, says on its stderr. */
+    private static final String TAKEN_NOTE = "[ $rc != " + CONVERSATION_TAKEN + " ] || echo 'isx: a person is in this "
+            + "conversation (isx shell --task), so this turn did not start; send it again once they leave.'";
 
     /**
      * Record run {@code run}'s exit code. Whether a run finished is whether its {@code exit-<run>}
@@ -406,13 +441,15 @@ final class TaskScripts {
      * is active, whatever {@code current} says ({@code current} is written only after
      * {@code systemd-run} has started a run), or systemd cannot be asked; or while a coding agent
      * isx did not start holds the conversation ({@link Presence#holderScript}). A
-     * {@code send_message} launched after this check is not seen: it narrows the window to the
-     * exec itself, it is not a lock.
+     * {@code send_message} launched after this check is not seen by it; {@link #CONVERSATION_LOCK},
+     * which the agent then starts under, is what keeps that one from running beside the person.
+     * With a {@code nonce}, a refusal also leaves its reason for {@link #joinRefusal}.
      */
-    static String joinGuard(String taskId, DelegateAgent agent, String sessionId, String cwd) {
+    static String joinGuard(String taskId, DelegateAgent agent, String sessionId, String cwd, String nonce) {
         if (!Tasks.SESSION_ID.matcher(sessionId).matches()) throw new IllegalArgumentException("not a session id: " + sessionId);
+        var mark = nonce == null ? "" : writeAside(REFUSED + requireNonce(nonce), "printf '%s\\n' \"$1\"") + "; ";
         // A refusal waits for Enter on a terminal, so it is read before the session closes (the TUI redraws at once).
-        return "isx_refuse() { echo \"isx: $1, so not joining " + taskId + ".\" >&2; "
+        return "D=" + dir(taskId) + "; isx_refuse() { echo \"isx: $1, so not joining " + taskId + ".\" >&2; " + mark
                 + "if [ -t 0 ] && [ -t 2 ]; then printf 'Press Enter to go back. ' >&2; read -r _; fi; exit 1; }; "
                 // Every unit of the task, whatever current says: one systemctl, and no answer refuses too.
                 + "u=$(sudo -n systemctl list-units --plain --no-legend --state=active,activating,deactivating,reloading '"
@@ -420,6 +457,28 @@ final class TaskScripts {
                 + "[ -z \"$u\" ] || isx_refuse 'a run of it is going'; "
                 + Presence.holderScript(agent, sessionId, cwd)
                 + "[ -z \"$h\" ] || isx_refuse \"a person is already in its conversation (agent pid $h)\"; ";
+    }
+
+    /** Where in {@code $D} a refused join leaves its reason for the host ({@link #joinRefusal}). */
+    private static final String REFUSED = ".join-refused-";
+
+    private static final java.util.regex.Pattern NONCE = java.util.regex.Pattern.compile("[a-z0-9]{8,32}");
+
+    private static String requireNonce(String nonce) {
+        if (!NONCE.matcher(nonce).matches()) throw new IllegalArgumentException("not a join nonce: " + nonce);
+        return nonce;
+    }
+
+    /**
+     * Why the join with {@code nonce} was refused in the guest, then forgotten: empty when it was
+     * not. How {@code isx shell --task} learns of a refusal, as the shell's exit status does not
+     * reach the host.
+     */
+    static String joinRefusal(String taskId, String nonce) {
+        var f = "$D/" + REFUSED + requireNonce(nonce);
+        // Markers of joins nobody asked about (the host gone, interrupted) go after an hour.
+        return "D=" + dir(taskId) + "; " + readFile(f) + "; rm -f \"" + f + "\"; "
+                + "find \"$D\" -maxdepth 1 -name '" + REFUSED + "*' -mmin +60 -delete 2>/dev/null; exit 0";
     }
 
     /**

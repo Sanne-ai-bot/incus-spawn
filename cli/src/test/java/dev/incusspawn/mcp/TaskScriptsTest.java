@@ -72,7 +72,7 @@ class TaskScriptsTest {
                       if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then [ -n "$q" ] || echo active; else [ -n "$q" ] || echo inactive; rc=3; fi
                     done; exit $rc;;
                   list-units) for f in "$HOME"/units/*; do [ -f "$f" ] || continue; u=${f##*/}
-                      case $u in ${@: -1}) kill -0 "$(cat "$f")" 2>/dev/null && echo "$u.service loaded active running";; esac; done;;
+                      case $u in ${@: -1}) kill -0 "$(cat "$f")" 2>/dev/null && echo "$u.service loaded active running";; esac; done; true;;
                   stop) [ -n "$p" ] && kill -TERM -- -"$p" 2>/dev/null; sleep 0.5;;
                 esac
                 """);
@@ -1281,24 +1281,21 @@ class TaskScriptsTest {
             // (bash -c's script is argv[2], and the first argument after it is still in argv: no $0 of its own.)
             var ready = home.resolve("join-ready");
             Files.deleteIfExists(ready);
-            stub(agent.id, "exec -a " + agent.id + " bash -c ': > \"$HOME/join-ready\"; while read -r line; do :; done' \"$@\"");
+            stub(agent.id, "exec -a " + agent.id + " bash -c " + JOINED_AGENT + " \"$@\"");
             var person = start(join.entry().guestCommand());
             try {
-                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-                while (!Files.exists(ready) && person.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
-                assertTrue(Files.exists(ready), "the joined agent did not start");
+                var agentPid = joinedAgent(ready, person);
                 var status = Tasks.parse(sh(TaskScripts.status(id, 0), ""));
                 assertEquals("attached", status.state(), agent.id);
-                assertEquals(person.pid(), status.attachedPid());
+                assertEquals(agentPid, status.attachedPid());
                 var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
-                assertEquals(person.pid(), who.holderOf(agent, sessionId(), "/elsewhere"), "found by the session it resumes");
-                assertEquals(person.pid(), who.holderOf(agent, null, cwd), "and by the directory it works in");
+                assertEquals(agentPid, who.holderOf(agent, sessionId(), "/elsewhere"), "found by the session it resumes");
+                assertEquals(agentPid, who.holderOf(agent, null, cwd), "and by the directory it works in");
                 var again = TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), null);
                 var busy = assertInstanceOf(TaskJoin.Outcome.Busy.class, again, "a second person is not let in");
-                assertEquals(person.pid(), busy.entry().attachedPid());
+                assertEquals(agentPid, busy.entry().attachedPid());
             } finally {
-                person.destroy();
-                assertTrue(person.waitFor(5, TimeUnit.SECONDS));
+                stopAll(person);
             }
             Files.walk(d).sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
         }
@@ -1314,7 +1311,7 @@ class TaskScriptsTest {
         Files.writeString(d.resolve("cwd"), cwd + "\n");
         var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
         var ready = home.resolve("join-ready");
-        stub("claude", "exec -a claude bash -c ': > \"$HOME/join-ready\"; while read -r line; do :; done' \"$@\"");
+        stub("claude", "exec -a claude bash -c " + JOINED_AGENT + " \"$@\"");
 
         // A send_message turn launched after the read: its unit runs, and current still names the finished run,
         // as between systemd-run and current being written. Any run of the task counts, not only the next.
@@ -1347,17 +1344,14 @@ class TaskScriptsTest {
         // Nothing in the way: the first person gets in; a second one, who read before the first started, does not.
         var first = start(join.entry().guestCommand());
         try {
-            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (!Files.exists(ready) && first.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
-            assertTrue(Files.exists(ready), "the first join did not start its agent");
+            var agentPid = joinedAgent(ready, first);
             Files.delete(ready);
             var second = joinAs(join.entry().guestCommand());
             assertEquals(1, second.exit(), second.stderr());
-            assertTrue(second.stderr().contains("a person is already in its conversation (agent pid " + first.pid() + ")"), second.stderr());
+            assertTrue(second.stderr().contains("a person is already in its conversation (agent pid " + agentPid + ")"), second.stderr());
             assertFalse(Files.exists(ready));
         } finally {
-            first.destroy();
-            assertTrue(first.waitFor(5, TimeUnit.SECONDS));
+            stopAll(first);
         }
 
         sh("kill -TERM -- -" + Files.readString(home.resolve("units/" + TaskScripts.unit("t12-other", "1"))).strip(), "");
@@ -1366,6 +1360,76 @@ class TaskScriptsTest {
         assertEquals(1, unknown.exit(), unknown.stderr());
         assertTrue(unknown.stderr().contains("systemd cannot say whether a run is going"), unknown.stderr());
         assertFalse(Files.exists(ready));
+    }
+
+    @Test
+    @Timeout(60)
+    void aRunAndAJoinedAgentNeverBothHoldTheConversation() throws Exception {
+        var cwd = work.toRealPath().toString();
+        var id = "t13-lock";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        Files.writeString(d.resolve("cwd"), cwd + "\n");
+        var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
+        var ready = home.resolve("join-ready");
+
+        // The join first: a turn send_message starts after its checks, but before the person's agent is
+        // there to be seen, does not run beside it.
+        stub("claude", "exec -a claude bash -c " + JOINED_AGENT + " \"$@\"");
+        var person = start(join.entry().guestCommand());
+        try {
+            joinedAgent(ready, person);
+            Files.delete(ready);
+            Files.writeString(d.resolve("current"), "2\n");
+            sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, cwd, Tasks.Profile.NONE, null, "default")), "go on");
+            var status = awaitFinished(id);
+            assertEquals(TaskScripts.CONVERSATION_TAKEN, status.exit());
+            assertTrue(Files.readString(d.resolve("stderr-2.log")).contains("a person is in this conversation"), "the run says why");
+            assertFalse(Files.exists(ready), "the turn's agent never started");
+        } finally {
+            stopAll(person);
+        }
+
+        // The run first: a join whose checks passed before it, refused when it comes to start, and the
+        // host learns of the refusal through the nonce.
+        var locked = home.resolve("run-locked");
+        var holder = start("D=" + TaskScripts.dir(id) + "; " + TaskScripts.CONVERSATION_LOCK + "bash -c ': > \"$HOME/run-locked\"; sleep 300'");
+        try {
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (!Files.exists(locked) && holder.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertTrue(Files.exists(locked), "the run did not take the lock");
+            var nonce = TaskJoin.nonce();
+            var refused = joinAs(join.entry().guestCommand(nonce));
+            assertEquals(1, refused.exit(), refused.stderr());
+            assertTrue(refused.stderr().contains("a run of it, or another person, took its conversation first"), refused.stderr());
+            assertFalse(Files.exists(ready));
+            assertEquals("a run of it, or another person, took its conversation first\n", sh(TaskScripts.joinRefusal(id, nonce), ""));
+            assertEquals("", sh(TaskScripts.joinRefusal(id, nonce), ""), "read once");
+        } finally {
+            stopAll(holder);
+        }
+        assertEquals("", sh(TaskScripts.joinRefusal(id, TaskJoin.nonce()), ""), "a join that was not refused leaves nothing");
+    }
+
+    /**
+     * A joined agent's stand-in: writes its pid where the test waits for it, then waits on stdin. Its
+     * argv is the agent's own (bash -c's script is argv[2]; the first argument after it is still in argv).
+     */
+    private static final String JOINED_AGENT = "'echo $$ > \"$HOME/join-ready\"; while read -r line; do :; done'";
+
+    /** The pid the {@link #JOINED_AGENT} {@code person} started reported, once it has. */
+    private static long joinedAgent(Path ready, Process person) throws Exception {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while ((!Files.exists(ready) || Files.readString(ready).isBlank()) && person.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+        assertTrue(Files.exists(ready) && !Files.readString(ready).isBlank(), "the joined agent did not start");
+        return Long.parseLong(Files.readString(ready).strip());
+    }
+
+    /** Stop {@code p} and what it started (a join's flock and agent are its children). */
+    private static void stopAll(Process p) throws InterruptedException {
+        p.descendants().forEach(ProcessHandle::destroy);
+        p.destroy();
+        assertTrue(p.waitFor(5, TimeUnit.SECONDS));
     }
 
     private record Joined(int exit, String stderr) {}

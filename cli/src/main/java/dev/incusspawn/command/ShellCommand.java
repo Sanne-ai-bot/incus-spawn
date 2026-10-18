@@ -51,8 +51,11 @@ public class ShellCommand extends BaseCommand {
         }
 
         // Resolved before the shell is prepared: a refusal needs none of it.
-        var command = task ? joinCommand(incus) : null;
-        if (task && command == null) return CommandResult.valueOf(1);
+        var joined = task ? toJoin(incus) : null;
+        if (task && joined == null) return CommandResult.valueOf(1);
+        // Names this join, so a refusal in the guest can be told from the conversation ending.
+        var nonce = joined != null ? TaskJoin.nonce() : null;
+        var command = joined != null ? joined.guestCommand(nonce) : null;
         var config = incus.configByPrefix(name, "");
         var prep = IncusClient.ShellPrep.fromConfig(incus, config);
         if (command != null) {
@@ -71,11 +74,13 @@ public class ShellCommand extends BaseCommand {
                     .shellMenu(name, prep.templateName(), prep.workdir());
         }
         incus.interactiveShell(name, "agentuser", prep, menu);
+        // The guest said why on the terminal already; its exit status does not reach the host.
+        if (joined != null && TaskJoin.refusedInGuest(incus, name, joined.id(), nonce)) return CommandResult.valueOf(1);
         return CommandResult.SUCCESS;
     }
 
-    /** The command resuming the task {@code --task} names, or null after saying why there is none. */
-    private String joinCommand(IncusClient incus) {
+    /** The task {@code --task} names, or null after saying why there is none to join. */
+    private TaskJoin.Entry toJoin(IncusClient incus) {
         List<TaskJoin.Entry> entries;
         try {
             entries = TaskJoin.read(incus, name);
@@ -86,7 +91,7 @@ public class ShellCommand extends BaseCommand {
         var outcome = TaskJoin.resolve(entries, taskId);
         if (outcome instanceof TaskJoin.Outcome.Join join) {
             System.out.println("Joining " + join.entry().id() + " (" + join.entry().agent() + ") in " + name + ".");
-            return join.entry().guestCommand();
+            return join.entry();
         }
         explain(outcome, name, Instant.now(), System.err);
         if (outcome instanceof TaskJoin.Outcome.Busy busy && busy.entry().running()) {

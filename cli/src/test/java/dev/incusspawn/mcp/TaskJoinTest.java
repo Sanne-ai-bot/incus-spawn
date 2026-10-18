@@ -32,9 +32,9 @@ class TaskJoinTest {
         var join = assertInstanceOf(TaskJoin.Outcome.Join.class, TaskJoin.resolve(entries, null));
         assertEquals("t1-abcd", join.entry().id());
         var command = join.entry().guestCommand();
-        assertTrue(command.startsWith("cd '/home/agentuser/incus-spawn' || exit 1; "), command);
-        assertTrue(command.contains(TaskScripts.joinGuard("t1-abcd", DelegateAgent.CLAUDE, "sess-1", "/home/agentuser/incus-spawn")), command);
-        assertTrue(command.endsWith("; exec claude --resume sess-1"), command);
+        assertTrue(command.startsWith(TaskScripts.joinGuard("t1-abcd", DelegateAgent.CLAUDE, "sess-1", "/home/agentuser/incus-spawn", null)), command);
+        assertTrue(command.contains("cd '/home/agentuser/incus-spawn' || isx_refuse 'its directory is gone'; "), command);
+        assertTrue(command.contains(TaskScripts.CONVERSATION_LOCK + "claude --resume sess-1; rc=$?"), command);
         assertEquals("Fix the flaky test", join.entry().instruction());
         assertEquals(join, TaskJoin.resolve(entries, " t1-abcd "));
         assertEquals("A delegated task's conversation is here; to join it: isx shell box --task t1-abcd", TaskJoin.hint("box", entries));
@@ -45,8 +45,9 @@ class TaskJoinTest {
         var entries = TaskJoin.parse("identity t2-abcd 1 codex\n" + finished("t2-abcd", "019a-thread", "/w o'k"));
         var join = assertInstanceOf(TaskJoin.Outcome.Join.class, TaskJoin.resolve(entries, null));
         assertEquals("codex", join.entry().agent());
-        assertTrue(join.entry().guestCommand().startsWith("cd '/w o'\"'\"'k' || exit 1; "), join.entry().guestCommand());
-        assertTrue(join.entry().guestCommand().endsWith("; exec codex resume 019a-thread"), join.entry().guestCommand());
+        var command = join.entry().guestCommand();
+        assertTrue(command.contains("cd '/w o'\"'\"'k' || isx_refuse"), command);
+        assertTrue(command.contains(TaskScripts.CONVERSATION_LOCK + "codex resume 019a-thread; rc=$?"), command);
     }
 
     @Test
@@ -99,7 +100,7 @@ class TaskJoinTest {
         var join = assertInstanceOf(TaskJoin.Outcome.Join.class, TaskJoin.resolve(entries, null));
         assertEquals("t5-abcd", join.entry().id());
         assertInstanceOf(TaskJoin.Outcome.NotFound.class, TaskJoin.resolve(entries, "t2-abcd"));
-        assertThrows(IllegalArgumentException.class, () -> TaskJoin.guestCommand("t1-abcd", DelegateAgent.CLAUDE, "/a", "x; rm -rf ~"));
+        assertThrows(IllegalArgumentException.class, () -> TaskJoin.guestCommand("t1-abcd", DelegateAgent.CLAUDE, "/a", "x; rm -rf ~", null));
     }
 
     @Test
