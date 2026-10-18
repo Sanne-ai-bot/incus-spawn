@@ -2941,10 +2941,28 @@ So an adoption that still finds the sweep's `stopping` mark after the wait holds
 Nothing an agent can call changed: the stop is the sweep's, an instance write like its delete.
 
 **A person in the box is a task state.**
-Taking over a worker's conversation (`isx shell`, then `claude --resume`) is how a person steers a design, so it must not race the coordinator's `send_message`, which runs `claude -p --resume` on the same session.
+Taking over a worker's conversation (`isx shell <instance> --task`, below) is how a person steers a design, so it must not race the coordinator's `send_message`, which runs `claude -p --resume` on the same session.
 The task status script runs the same probe and reports the Claude Code that resumes the task's `session_id`, or works in its recorded `cwd` (where `--continue` or the resume picker would find the conversation), excluding processes that carry a task's `ISX_MCP_TASK` marker.
 `task_status` then says `attached`, and `send_message` refuses.
 The check is made when a message is sent, so a person joining in the following seconds is not seen; the alternative was every client racing its own `pgrep` before each wake.
+
+**Joining a task is a mode of `isx shell`.**
+`isx shell <instance> --task [<id>]` opens the task's conversation instead of a login shell (#1509).
+It is the same path as `isx shell` (instance start, container or VM, `agentuser`), with the login shell replaced by `cd <recorded cwd> && exec claude --resume <session_id>`, or `codex resume <session_id>`.
+That is the argv and physical `cwd` `Presence` looks for, so `attached` holds by construction while the person is in it, and `send_message` stays refused.
+A test runs the built command and asserts the probe finds it, so the two cannot drift apart.
+`TaskJoin` reads every task directory in one exec as agentuser (`TaskScripts.joinable()`), with no `isx mcp` session, so an orphan's task can be joined; joining changes no ownership and no TTL.
+A new verb (`isx join`) was rejected: the task is a property of the instance, and `shell` is already the door a person uses.
+`isx mcp join` was rejected too: `isx mcp` is the stdio server an agent runs, and mixing a person's interactive action into it blurs the two audiences.
+With several resumable tasks and no id, it prints a table, each row with its ready command, and exits 1: guessing the newest would sometimes land in the wrong conversation.
+A task mid-turn, or one systemd cannot say is over, is refused with the last things it did; waiting for the turn to end would race the owner's next `send_message`.
+A conversation a person is already in is refused too: the same read runs the `Presence` probe, so two people never write to one session.
+The read is bounded (10 s, `IncusClient.execProbe`), so a guest that never answers cannot freeze the TUI at the keypress.
+The joined command runs outside the instance's tmux or zmx session (`ShellPrep.withCommandOnly`), since attaching to one that already exists would enter it instead.
+Plain `isx shell` on an instance with the `isx mcp` stamp prints one hint line with the command, at the cost of one guest exec; other instances pay nothing.
+`task_status.join_command` holds the same host command, so a coordinator relays it verbatim.
+The TUI's Shift+F2 does the same, reading the tasks on the keypress rather than while rendering, with a picker for several.
+Guest text (the instruction's first line, an agent's recent activity) is printed through `OutputFormat.oneLine`.
 
 **Results stay small.**
 The coordinator's context is the scarce resource.

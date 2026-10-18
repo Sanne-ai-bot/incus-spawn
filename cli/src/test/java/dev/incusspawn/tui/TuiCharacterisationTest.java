@@ -376,6 +376,84 @@ class TuiCharacterisationTest {
         assertFalse(runner.isRunning());
     }
 
+    /** A running instance an isx mcp session made, whose guest lists {@code tasks} ({@code TaskScripts.joinable}). */
+    private Tui mcpTui(String tasks) {
+        var config = branch("tpl-minimal", 30);
+        config.put(Metadata.MCP_OWNER, "alice");
+        config.put(Metadata.MCP_SESSION, "1-1");
+        return tui(false, new FakeIncusDaemon().instance("mcp-box", "container", "Running", config)
+                .execOutput("prompt-1.md", tasks));
+    }
+
+    private static final KeyEvent SHIFT_F2 = KeyEvent.ofKey(KeyCode.F2, KeyModifiers.SHIFT);
+
+    @Test
+    void shiftF2JoinsTheOnlyTaskAndF2IsStillAShell() {
+        var tui = mcpTui("task t1-abcd finished 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /home/agentuser/w\nprompt t1-abcd Fix it\n");
+        press(tui, TAB, SHIFT_F2);
+        assertEquals(Tui.PendingAction.SHELL_WITH_COMMAND, tui.pendingAction());
+        assertEquals("cd '/home/agentuser/w' && exec claude --resume sess-1", tui.pendingShellCommand());
+        assertFalse(runner.isRunning());
+
+        tui = mcpTui("");
+        press(tui, TAB, KeyEvent.ofKey(KeyCode.F2));
+        assertEquals(Tui.PendingAction.SHELL, tui.pendingAction());
+    }
+
+    @Test
+    void shiftF2OffersSeveralTasksAndRefusesOneMidTurn() {
+        var tui = mcpTui("task t1-abcd running 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /a\n"
+                + "task t2-abcd finished 1700000000\nsid t2-abcd sess-2\ncwd t2-abcd /b\n");
+        press(tui, TAB, SHIFT_F2);
+        assertEquals(Tui.Mode.TASK_PICKER, tui.mode());
+        assertTrue(runner.isRunning());
+        press(tui, ENTER);
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        assertTrue(tui.statusMessage.startsWith("t1-abcd is mid-turn"), tui.statusMessage);
+        assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
+        press(tui, SHIFT_F2, DOWN, ENTER);
+        assertEquals("cd '/b' && exec claude --resume sess-2", tui.pendingShellCommand());
+        assertFalse(runner.isRunning());
+    }
+
+    @Test
+    void thePickerJoinsWhatTheTaskIsNowNotWhatItWasWhenItOpened() {
+        var daemon = new FakeIncusDaemon();
+        var config = branch("tpl-minimal", 30);
+        config.put(Metadata.MCP_OWNER, "alice");
+        config.put(Metadata.MCP_SESSION, "1-1");
+        var tui = tui(false, daemon.instance("mcp-box", "container", "Running", config)
+                .execOutput("prompt-1.md", "task t1-abcd finished 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /a\n"
+                        + "task t2-abcd finished 1700000000\nsid t2-abcd sess-2\ncwd t2-abcd /b\n"));
+        press(tui, TAB, SHIFT_F2);
+        assertEquals(Tui.Mode.TASK_PICKER, tui.mode());
+        daemon.execOutput("prompt-1.md", "task t1-abcd running 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /a\n");
+        press(tui, ENTER);
+        assertEquals(Tui.PendingAction.NONE, tui.pendingAction(), "a turn started since it opened");
+        assertTrue(tui.statusMessage.startsWith("t1-abcd is mid-turn"), tui.statusMessage);
+    }
+
+    @Test
+    void thePickerOpenedFromDetailsClosesBackToThem() {
+        var tui = mcpTui("task t1-abcd finished 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /a\n"
+                + "task t2-abcd finished 1700000000\nsid t2-abcd sess-2\ncwd t2-abcd /b\n");
+        press(tui, TAB, KeyEvent.ofKey(KeyCode.F3), SHIFT_F2);
+        assertEquals(Tui.Mode.TASK_PICKER, tui.mode());
+        press(tui, ESC);
+        assertEquals(Tui.Mode.INSTANCE_DETAIL, tui.mode());
+    }
+
+    @Test
+    void shiftF2OnAnInstanceWithoutTasksSaysSo() {
+        var tui = mcpTui("");
+        press(tui, TAB, SHIFT_F2);
+        assertEquals("No delegated task to join in mcp-box.", tui.statusMessage);
+        var plain = tui();
+        press(plain, TAB, SHIFT_F2);
+        assertEquals(Tui.PendingAction.NONE, plain.pendingAction());
+        assertEquals("work-1 was not made by isx mcp: it has no delegated task to join", plain.statusMessage);
+    }
+
     @Test
     void aShellOnAStoppedHostFirewallLogsTheAdvisoryIsxShellPrints() {
         stoppedFirewall = "firewalld is not running:";

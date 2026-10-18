@@ -116,10 +116,15 @@ final class ShellLaunch {
     }
 
     void shellInto(ActionContext target) {
-        shellInto(target, null);
+        shellInto(target, null, false);
     }
 
-    void shellInto(ActionContext target, String commandOverride) {
+    /**
+     * A shell running {@code commandOverride} instead of the login shell when not null; with
+     * {@code commandOnly} outside the instance's tmux or zmx session, which would otherwise be
+     * entered instead (a joined task's conversation, #1509).
+     */
+    void shellInto(ActionContext target, String commandOverride, boolean commandOnly) {
         var name = target.name();
         var machineType = target.machineType();
         // Read after repairBeforeUse, so a VM it just reassigned is seen to owe its file
@@ -145,7 +150,7 @@ final class ShellLaunch {
         var titleMonitor = startAuthTitleMonitor(name);
         try {
             var prep = IncusClient.ShellPrep.from(tui.incus, name);
-            if (commandOverride != null) prep = prep.withActionCommand(commandOverride);
+            if (commandOverride != null) prep = commandOnly ? prep.withCommandOnly(commandOverride) : prep.withActionCommand(commandOverride);
             tui.incus.interactiveShell(name, "agentuser", prep, shellMenu(name, prep));
         } finally {
             titleMonitor.interrupt();

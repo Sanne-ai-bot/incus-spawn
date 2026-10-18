@@ -97,6 +97,9 @@ The key bar has no room left at 80 columns, so `Space Mark` is hinted at the end
 The count of marks comes after it, so a mark only adds to the end of the line.
 The F1 dialog (versions and keyboard shortcuts) is `AboutModal` (`AboutModalTest`): what it says about the build and the host comes through its `Source`, and it hands Esc and `?` (AI Help) back to `Tui`.
 The F9 actions dialog is `ActionsMenu` (`ActionsMenuTest`): it owns the list, the selection and its rendering, and hands Enter back, so `Tui` checks the instance still exists and runs the selected action through `dispatchAction`.
+Shift+F2 (in the table and in F3 details) joins a delegated task's conversation as `isx shell --task` does (`TaskJoin`, #1509).
+`Tui.joinTask` reads the tasks on the keypress, never while rendering, and only for a running instance with the `isx mcp` stamp; the context line hints `⇧F2 Join task` for such an instance alone.
+One task leaves `SHELL_WITH_COMMAND` pending with `pendingCommandOnly`, so the command runs outside the instance's tmux or zmx session; several open `TaskPicker`; anything else is a status line.
 The branch dialog is `BranchModal` (`BranchModalTest`): it owns its fields, their keys and its rendering, and hands Enter back, so `Tui` runs the proxy, credential and still-exists checks and creates the branch from `BranchModal.request` once the terminal is released.
 The rename dialog is `RenameDialog` (`RenameDialogTest`): it owns the name input, its keys and its rendering, and hands Enter back, so `Tui` keeps `renameSourceName` through the stop-first confirm and runs the checks and the rename.
 The new-template dialog is `NewTemplateModal` (`NewTemplateModalTest`): it owns the name, parent and location fields, their keys and its rendering, while `Tui` lists the locations (from `SpawnConfig`), checks the name and parent on Enter, and creates the template from `NewTemplateModal.parent` and `locationDir` once the terminal is released.

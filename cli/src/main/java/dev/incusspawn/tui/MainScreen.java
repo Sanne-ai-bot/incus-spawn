@@ -525,6 +525,11 @@ final class MainScreen {
                 spans.add(Span.styled("  [" + instance.networkMode().toLowerCase() + "]",
                         Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
             }
+            // Only an isx mcp instance can hold a delegated task to join (#1509); the key bar has no room.
+            if (instance.mcp() != null) {
+                spans.add(Span.styled("  ⇧F2", Style.EMPTY.bold().fg(tui.theme.contextAccentFg()).bg(bg)));
+                spans.add(Span.styled(" Join task", Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));
+            }
             addMarkHints(spans, tui.markedInstances().size(), bg);
             return Line.from(spans);
         }

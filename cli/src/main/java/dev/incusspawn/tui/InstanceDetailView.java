@@ -31,7 +31,7 @@ import static dev.incusspawn.tui.Tui.isRunning;
 public final class InstanceDetailView {
 
     /** What a key did: a scroll key, one the view does not own, or one the TUI must act on. */
-    enum Outcome { HANDLED, UNHANDLED, CLOSE, ACCOUNTS, SHELL, DEFAULT_ACTION }
+    enum Outcome { HANDLED, UNHANDLED, CLOSE, ACCOUNTS, SHELL, JOIN_TASK, DEFAULT_ACTION }
 
     private final ModalRenderer modal;
     private final TuiTheme theme;
@@ -60,7 +60,7 @@ public final class InstanceDetailView {
             return Outcome.ACCOUNTS;
         }
         if (key.isKey(KeyCode.F2)) {
-            return Outcome.SHELL;
+            return key.hasShift() ? Outcome.JOIN_TASK : Outcome.SHELL;
         }
         if (key.isKey(KeyCode.ENTER)) {
             return Outcome.DEFAULT_ACTION;
@@ -90,6 +90,7 @@ public final class InstanceDetailView {
         var contentLines = buildInstanceDetailLines(selected, detailAccountUses);
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F2", "Shell");
+        if (selected.mcp() != null) modal.addKey(hintSpans, "⇧F2", "Join task");
         modal.addKey(hintSpans, "a", "Accounts");
         modal.addKey(hintSpans, "F3/Esc", "Close");
 
