@@ -683,6 +683,26 @@ jobs:
       - name: Test proxy-only branches
         run: sg incus-admin -c "bash .github/scripts/test-proxy-only.sh"
 
+      # Again as on a host running Docker or Kubernetes: bridged frames go through iptables, so
+      # the gateway's :443 redirect runs before the proxy-only ACL sees the connection (#1503).
+      # Afterwards the host is put back as it was, module and all three settings (loading the
+      # module turns -ip6tables and -arptables on too), so the later steps run on the host they
+      # were written for.
+      - name: Test proxy-only branches with bridge netfilter on
+        run: |
+          keys="net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.bridge.bridge-nf-call-arptables"
+          # The settings exist whenever bridge netfilter is there, as a module or built in.
+          # A restore that fails fails the step, rather than leave the later steps on another host.
+          if [ -d /proc/sys/net/bridge ]; then
+            saved=$(for k in $keys; do echo "$k=$(sysctl -n "$k")"; done)
+            trap 'rc=$?; for kv in $saved; do sudo sysctl -w "$kv" || rc=1; done; exit $rc' EXIT
+          else
+            trap 'rc=$?; sudo modprobe -r br_netfilter || rc=1; exit $rc' EXIT
+          fi
+          sudo modprobe br_netfilter
+          sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
+          sg incus-admin -c "bash .github/scripts/test-proxy-only.sh"
+
       - name: Test container
         run: |
           sg incus-admin -c "isx branch test-container --from tpl-minimal"
