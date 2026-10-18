@@ -4,6 +4,7 @@ import dev.incusspawn.FileTrees;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.incus.DeviceNames;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OwnSession;
@@ -288,7 +289,7 @@ public class YamlToolSetup implements ToolSetup {
         var absoluteCached = cached.toAbsolutePath();
         var stagingDir = Files.createTempDirectory(absoluteCached.getParent(), "isx-mount-");
         var staged = stagingDir.resolve(absoluteCached.getFileName());
-        var deviceName = "dl-file-" + def.getName();
+        var deviceName = DeviceNames.hotplug("dl-file-" + def.getName());
         var mountPath = "/mnt/isx-download-file";
         try {
             Files.copy(absoluteCached, staged);
@@ -338,7 +339,7 @@ public class YamlToolSetup implements ToolSetup {
     private void extractOnHostAndMountCopy(ToolDef.DownloadEntry dl, Path cached, Container container)
             throws IOException {
         var extractDir = Files.createTempDirectory("isx-extract-");
-        var deviceName = "dl-" + def.getName();
+        var deviceName = DeviceNames.hotplug("dl-" + def.getName());
         var mountPath = "/mnt/isx-download";
         try {
             extractOnHost(cached, extractDir);

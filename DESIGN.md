@@ -2681,6 +2681,8 @@ So the clone from a reference first polls `mountpoint -q` for at most `MOUNT_WAI
 A container's disk is mounted by the add itself, so there the loop ends at its first check.
 A guest without `mountpoint` is not waited on: the clone runs at once, as it did before.
 A reference that does not appear in time fails that exec with a status of its own, so its line says it was not mounted rather than quoting git.
+Two references never appeared at all, whatever the wait: Incus shares a VM disk as the virtiofs tag `incus_<device name>`, hashes a tag longer than its 36-byte limit, and on a hot-plug still asks incus-agent to mount the unhashed tag (#1513, Incus 6.23).
+So every device hot-plugged into a running VM has a name of at most 30 characters (`DeviceNames`): a reference keeps `ref-`, the start of the repo name and the URL hash that keeps it distinct.
 Every way a repo ends up on the network clone instead of its reference says why on its line: no slot, no mount, or the git error of a failed clone from the reference.
 Before the fallback the failed attempt's destination is removed, but only one it created: the clone from the reference first checks that its destination does not exist or is an empty directory (`freshDestination`, exiting 3), and a destination already there is left alone, so the network clone then fails on it rather than a checkout another layer made being deleted (#1394).
 The latch the primes wait on counts *planned raw shallow* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached.

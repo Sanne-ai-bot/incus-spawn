@@ -24,7 +24,7 @@ import java.util.Map;
  * network, network lease and profile GET, network ACL GET/PUT/POST/DELETE, a running guest's address in its state, file push and async-operation waits. Anything else answers 404, so an unexpected request still shows up in
  * {@link #requests()}. Exec is among them: every instance behaves as one whose agent never
  * answers. A running VM refuses a disk device beyond its PCI hotplug slots, as Incus does
- * ({@link #hotplugSlots}).
+ * ({@link #hotplugSlots}), and one whose name it could not mount (#1513), which Incus does not.
  *
  * <p>Every request, setter and read of its state holds one lock, so a stubbed exec may inspect or
  * change the daemon while other threads' requests write it (#1478).
@@ -731,7 +731,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             var aclRefusal = aclRefusal(replacement);
             if (aclRefusal != null) return badRequest(aclRefusal);
             var refused = hotplug(name, instance, replacement);
-            if (refused != null) return noHotplugSlot(refused);
+            if (refused != null) return refused;
             instance.set("config", replacement.path("config").deepCopy());
             instance.set("devices", replacement.path("devices").deepCopy());
             var plugged = hotplugged.get(name);
@@ -747,7 +747,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             if (aclRefusal == null) aclRefusal = keptAclRefusal(instance, patch, "Invalid devices: Device validation failed");
             if (aclRefusal != null) return badRequest(aclRefusal);
             var refused = hotplug(name, instance, patch);
-            if (refused != null) return noHotplugSlot(refused);
+            if (refused != null) return refused;
             applyPatch(instance, patch);
             expand(name);
             return sync(JSON.createObjectNode());
@@ -944,21 +944,27 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /**
-     * Take a hotplug slot for each disk device a PATCH or PUT adds to a running VM, or return the first
-     * device none is left for, taking nothing.
+     * Take a hotplug slot for each disk device a PATCH or PUT adds to a running VM, or refuse the
+     * request, taking nothing: for the first device no slot is left for, as Incus does, or for a name
+     * too long to mount. Incus accepts that one, but the guest never mounts it (#1513), so refusing it
+     * here makes a long name fail a test instead of silently costing a VM its share.
      */
-    private String hotplug(String name, ObjectNode instance, JsonNode patch) {
+    private RawResponse hotplug(String name, ObjectNode instance, JsonNode patch) {
         if (!"virtual-machine".equals(instance.path("type").asText())
                 || !holdsLiveState(instance.path("status").asText())) return null;
         var plugged = hotplugged.computeIfAbsent(name, n -> new java.util.LinkedHashSet<>());
         var adding = new ArrayList<String>();
         for (var e : patch.path("devices").properties()) {
             if ("disk".equals(e.getValue().path("type").asText()) && !instance.get("devices").has(e.getKey())) {
+                if (e.getKey().length() > DeviceNames.VM_HOTPLUG_MAX_LENGTH) {
+                    return badRequest("Disk device \"" + e.getKey() + "\" is longer than "
+                            + DeviceNames.VM_HOTPLUG_MAX_LENGTH + " characters: a running VM would never mount it");
+                }
                 adding.add(e.getKey());
             }
         }
         int free = hotplugSlots - plugged.size();
-        if (adding.size() > free) return adding.get(Math.max(free, 0));
+        if (adding.size() > free) return noHotplugSlot(adding.get(Math.max(free, 0)));
         plugged.addAll(adding);
         return null;
     }

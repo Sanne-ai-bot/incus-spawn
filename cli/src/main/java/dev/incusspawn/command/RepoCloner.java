@@ -9,6 +9,7 @@ import dev.incusspawn.git.GitCommandException;
 import dev.incusspawn.git.GitPreparation;
 import dev.incusspawn.git.HostRepoSources;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.incus.DeviceNames;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
@@ -269,7 +270,7 @@ class RepoCloner {
                     // Two entries for one URL can prepare different revisions concurrently.
                     // They must not PATCH the same device or remove each other's mount.
                     var r = refs[i];
-                    refs[i] = new RepoReference(r.deviceName() + "-" + i, r.containerPath() + "-" + i,
+                    refs[i] = new RepoReference(DeviceNames.hotplug(r.deviceName(), "-" + i), r.containerPath() + "-" + i,
                             r.source(), r.skipReason(), r.request(), r.prepared());
                 }
             }

@@ -1,6 +1,7 @@
 package dev.incusspawn.git;
 
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.DeviceNames;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -367,8 +368,25 @@ class GitRemoteUtilsTest {
     void referenceDeviceNameTruncatesLongNames() {
         var longName = "a".repeat(100);
         var result = GitRemoteUtils.referenceDeviceName(longName, QUARKUS_URL);
-        assertTrue(result.length() <= 64);
+        assertTrue(result.length() <= DeviceNames.VM_HOTPLUG_MAX_LENGTH, result);
         assertTrue(result.startsWith("ref-"));
+    }
+
+    @Test
+    void referenceDeviceNameFitsAVmHotplugMount() {
+        // Longer names get a hashed virtiofs tag that a hot-plugged mount never finds (#1513).
+        for (var name : List.of("incus-spawn-templates", "incus-spawn-images", "isx-presentations")) {
+            var result = GitRemoteUtils.referenceDeviceName(name, "https://github.com/Sanne/" + name + "/");
+            assertTrue(result.length() <= DeviceNames.VM_HOTPLUG_MAX_LENGTH, result);
+            assertTrue(result.startsWith("ref-" + name.substring(0, 10)), result);
+        }
+    }
+
+    @Test
+    void referenceDeviceNamesDifferingOnlyAfterTheCutStayDistinct() {
+        var nameA = GitRemoteUtils.referenceDeviceName("incus-spawn-templates", "https://github.com/Sanne/incus-spawn-templates/");
+        var nameB = GitRemoteUtils.referenceDeviceName("incus-spawn-templatez", "https://github.com/Sanne/incus-spawn-templatez/");
+        assertNotEquals(nameA, nameB);
     }
 
     @Test
