@@ -1853,6 +1853,13 @@ public class Tui {
      * (only now: a refusal needs no proxy); whether it is pending.
      */
     private boolean joinPending(TaskJoin.Entry entry, ActionContext target) {
+        // Again here, for the picker: a stop or destroy may have started since it opened.
+        var instance = (allEntries != null ? allEntries : entries).stream()
+                .filter(e -> e.name().equals(target.instanceName())).findFirst().orElse(null);
+        if (instance != null && isBusy(instance)) {
+            statusMessage = "Operation in progress for " + instance.name();
+            return false;
+        }
         if (showProxyErrorIfNeeded(target)) return false;
         pendingAction = PendingAction.SHELL_WITH_COMMAND;
         pendingShellCommand = entry.guestCommand();
