@@ -415,7 +415,7 @@ final class McpTools {
     }
 
     private static StreamJsonEvents.Summary summarize(Tasks.Task task, String output, int keep) {
-        return task.agent() == DelegateAgent.CODEX ? CodexEvents.summarize(output, keep) : StreamJsonEvents.summarize(output, keep);
+        return StreamJsonEvents.summarize(task.agent(), output, keep);
     }
 
     private ToolResult codexResult(Tasks.Task task, Tasks.Status status, JqObject.Builder node, int limit, String question, boolean events) {
@@ -1104,9 +1104,15 @@ final class McpTools {
         if (status.exit() != null) node.put("exit_code", status.exit());
         node.put("run", status.run());
         if (status.attachedPid() != null) node.put("attached_pid", status.attachedPid());
+        String joinCommand = null;
         if (Tasks.AGENT.equals(task.kind())) {
             if (status.sessionId() != null) node.put("session_id", status.sessionId());
-            node.put("resumable", status.sessionId() != null && task.agent() != DelegateAgent.UNKNOWN);
+            var resumable = status.sessionId() != null && task.agent() != DelegateAgent.UNKNOWN;
+            node.put("resumable", resumable);
+            if (resumable) {
+                joinCommand = TaskJoin.hostCommand(task.instance(), task.id());
+                node.put("join_command", joinCommand);
+            }
         }
         if (status.startedAt() != null) node.put("started_at", status.startedAt().toString());
         if (status.lastActivity() != null) node.put("last_activity", status.lastActivity().toString());
@@ -1121,6 +1127,7 @@ final class McpTools {
         if (Tasks.AGENT.equals(task.kind())) {
             var summary = summarize(task, status.output(), 8);
             sb.append("\nturn: ").append(status.run());
+            if (joinCommand != null) sb.append("\njoin_command: ").append(joinCommand);
             if (task.profile().model() != null) {
                 sb.append("\nmodel: ").append(task.profile().model());
                 node.put("model", task.profile().model());

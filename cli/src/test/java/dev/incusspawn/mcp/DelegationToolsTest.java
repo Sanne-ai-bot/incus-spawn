@@ -621,6 +621,21 @@ class DelegationToolsTest {
     }
 
     @Test
+    void taskStatusGivesTheCommandThatJoinsTheConversation() throws Exception {
+        var task = delegateFresh();
+        taskState = "running";
+        var running = structured(call("task_status", "{\"task_id\":\"" + task + "\"}"));
+        assertFalse(((io.hyperfoil.tools.jjq.value.JqObject) running).keys().contains("join_command"), "nothing saved to join yet");
+        taskState = "finished";
+        attached = true;
+        var result = call("task_status", "{\"task_id\":\"" + task + "\"}");
+        var expected = TaskJoin.hostCommand(structured(result).path("instance").asText(), task);
+        assertEquals("isx shell " + structured(result).path("instance").asText() + " --task " + task, expected);
+        assertEquals(expected, structured(result).path("join_command").asText());
+        assertTrue(text(result).contains("\njoin_command: " + expected + "\n"), text(result));
+    }
+
+    @Test
     void waitAnyReturnsWhenATaskFinishes() throws Exception {
         assertTrue(text(call("wait_any", "{}")).contains("No task"));
         var task = delegateFresh();

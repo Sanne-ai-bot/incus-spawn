@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -1250,6 +1251,55 @@ class TaskScriptsTest {
         } finally {
             managed.destroy();
             assertTrue(managed.waitFor(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    @Timeout(60)
+    void theJoinCommandIsWhatPresenceTakesForAPersonInTheConversation() throws Exception {
+        var cwd = work.toRealPath().toString();
+        for (var agent : List.of(DelegateAgent.CLAUDE, DelegateAgent.CODEX)) {
+            var id = "t9-" + agent.id;
+            var d = finishedTaskFiles(id, Tasks.AGENT);
+            if (agent == DelegateAgent.CODEX) Files.writeString(d.resolve("identity"), "1 codex\n");
+            Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+            Files.writeString(d.resolve("cwd"), cwd + "\n");
+            Files.writeString(d.resolve("prompt-1.md"), "\n  Fix the flaky test\nand say why\n");
+            recordedTask("t10-cmd", Tasks.COMMAND, false);
+            var entries = TaskJoin.parse(sh(TaskScripts.joinable(), ""));
+            assertEquals(List.of(id), entries.stream().map(TaskJoin.Entry::id).toList(), "only agent tasks, and the other agent's was removed");
+            var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(entries, null);
+            assertEquals(agent.id, join.entry().agent());
+            assertEquals("Fix the flaky test", join.entry().instruction());
+
+            // The agent as a person's shell runs it: its argv is the agent's own, from wherever the shell starts.
+            // (bash -c's script is argv[2], and the first argument after it is still in argv: no $0 of its own.)
+            var ready = home.resolve("join-ready");
+            Files.deleteIfExists(ready);
+            stub(agent.id, "exec -a " + agent.id + " bash -c ': > \"$HOME/join-ready\"; while read -r line; do :; done' \"$@\"");
+            var pb = new ProcessBuilder("bash", "-c", join.entry().guestCommand()).directory(home.toFile());
+            pb.environment().put("HOME", home.toString());
+            pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+            pb.environment().remove(TaskScripts.TASK_ENV);
+            var person = pb.start();
+            try {
+                var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (!Files.exists(ready) && person.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+                assertTrue(Files.exists(ready), "the joined agent did not start");
+                var status = Tasks.parse(sh(TaskScripts.status(id, 0), ""));
+                assertEquals("attached", status.state(), agent.id);
+                assertEquals(person.pid(), status.attachedPid());
+                var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
+                assertEquals(person.pid(), who.holderOf(agent, sessionId(), "/elsewhere"), "found by the session it resumes");
+                assertEquals(person.pid(), who.holderOf(agent, null, cwd), "and by the directory it works in");
+                var again = TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), null);
+                var busy = assertInstanceOf(TaskJoin.Outcome.Busy.class, again, "a second person is not let in");
+                assertEquals(person.pid(), busy.entry().attachedPid());
+            } finally {
+                person.destroy();
+                assertTrue(person.waitFor(5, TimeUnit.SECONDS));
+            }
+            Files.walk(d).sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
         }
     }
 

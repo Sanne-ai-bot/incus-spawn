@@ -52,6 +52,11 @@ final class StreamJsonEvents {
 
     private StreamJsonEvents() {}
 
+    /** {@link #summarize(String, int)}, or Codex's for a Codex task's events. */
+    static Summary summarize(DelegateAgent agent, String tail, int keep) {
+        return agent == DelegateAgent.CODEX ? CodexEvents.summarize(tail, keep) : summarize(tail, keep);
+    }
+
     static Summary summarize(String tail, int keep) {
         var recent = new ArrayList<String>();
         int assistant = 0;

@@ -94,6 +94,9 @@ final class Tasks {
         }
     }
 
+    /** A session id as a task may record it: anything else is not resumed, and never reaches a shell. */
+    static final java.util.regex.Pattern SESSION_ID = java.util.regex.Pattern.compile("[A-Za-z0-9][A-Za-z0-9_-]{0,127}");
+
     private final McpSession session;
     private final InstanceBackend backend;
     private final Supplier<McpConfig> config;
@@ -264,7 +267,7 @@ final class Tasks {
             try {
                 var recovered = run(task.instance(), "node -e " + ExecScript.quote(CodexEvents.runner()) + " \""
                         + TaskScripts.dir(task.id()) + "\" recover '' ''", null).strip();
-                if (!recovered.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,127}"))
+                if (!SESSION_ID.matcher(recovered).matches())
                     throw new ToolError(ToolError.Code.WRONG_STATE, "no valid recovered thread ID");
                 attached = status(task, 0).attachedPid();
             } catch (ToolError e) {
@@ -908,7 +911,7 @@ final class Tasks {
                 outputBytes, parseLong(header.getOrDefault("stderr_bytes", "0")),
                 output.endsWith("\n") ? output.substring(0, output.length() - 1) : output, stderr, attached,
                 epochSeconds(header.get("started")), epochSeconds(header.get("activity")),
-                header.getOrDefault("session_id", "").matches("[A-Za-z0-9][A-Za-z0-9_-]{0,127}") ? header.get("session_id") : null);
+                SESSION_ID.matcher(header.getOrDefault("session_id", "")).matches() ? header.get("session_id") : null);
     }
 
     /** A time the guest reported in seconds since the epoch; null if it reported none. */
