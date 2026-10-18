@@ -307,6 +307,24 @@ class ProxyOnlyAclTest {
                 () -> String.join("\n", daemon.requests()));
     }
 
+    /** Unmasking puts a profile's InfiniBand device back too, so it counts as a second one. */
+    @Test
+    void anAirgappedSourceWhoseProfileHasInfinibandGetsNoProxyOnlyBranch() {
+        var daemon = new FakeIncusDaemon().profile("default", Map.of(
+                "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0"),
+                "ib0", Map.of("type", "infiniband", "nictype", "physical", "parent", "ibp1s0"),
+                "root", Map.of("type", "disk", "path", "/", "pool", "default")));
+        daemon.container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev",
+                Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name()));
+        daemon.device("tpl-dev", "eth0", Map.of("type", "none"));
+        daemon.device("tpl-dev", "ib0", Map.of("type", "none"));
+
+        var e = assertThrows(BranchFlow.BranchException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+        assertTrue(e.getMessage().contains("ib0"), e::getMessage);
+        assertFalse(daemon.requests().stream().anyMatch(r -> r.startsWith("POST /1.0/instances")),
+                () -> String.join("\n", daemon.requests()));
+    }
+
     /** An InfiniBand device reaches a network without any NIC, so it counts as a second one. */
     @Test
     void aSourceWithAnInfinibandDeviceGetsNoProxyOnlyBranch() {

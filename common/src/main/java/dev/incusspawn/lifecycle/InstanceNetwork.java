@@ -209,26 +209,27 @@ public final class InstanceNetwork {
     private static final Map<String, String> MASKED_DEVICE = Map.of("type", "none");
 
     /**
-     * Take every NIC away from the instance, whichever network it is on and wherever it comes
-     * from. Removing an instance device only drops the instance's own copy: a NIC the {@code
-     * default} profile provides, or one the instance overrides from it (a clone's static IP),
-     * applies again. A {@code type: none} device of the same name masks it.
+     * Take every network device away from the instance (NICs and InfiniBand devices), whichever
+     * network it is on and wherever it comes from. Removing an instance device only drops the
+     * instance's own copy: a NIC the {@code default} profile provides, or one the instance
+     * overrides from it (a clone's static IP), applies again. A {@code type: none} device of the
+     * same name masks it.
      */
     static void maskNics(JqValue instance, InstanceUpdate update) {
         var expanded = instance.getField("expanded_devices");
         if (expanded instanceof JqObject devices) {
             devices.forEach((name, device) -> {
-                if (IncusClient.isNic(device)) update.replaceDevice(name, MASKED_DEVICE);
+                if (IncusClient.isNetworkDevice(device)) update.replaceDevice(name, MASKED_DEVICE);
             });
         }
     }
 
     /**
-     * Put back the profile NICs {@link #maskNics} masked, as instance devices overwriting the
-     * masks: a PATCH replaces a device whole, so this needs no separate removal. Returns the
-     * instance as it will then expand, so the static IP is set on the NIC that comes back. Only
-     * masks of a profile NIC are touched: a {@code type: none} device the template set itself
-     * stays.
+     * Put back the profile network devices {@link #maskNics} masked, as instance devices
+     * overwriting the masks: a PATCH replaces a device whole, so this needs no separate removal.
+     * Returns the instance as it will then expand, so the static IP is set on the NIC that comes
+     * back. Only masks of a profile network device are touched: a {@code type: none} device the
+     * template set itself stays.
      */
     static JqValue unmaskNics(IncusClient incus, JqValue instance, InstanceUpdate update) {
         var profileDevices = profileDevices(incus, instance);
@@ -240,10 +241,10 @@ public final class InstanceNetwork {
             declaredObj.forEach((name, device) -> {
                 var profileDevice = profileDevices.get(name);
                 if ("none".equals(device.pathText("type", ""))
-                        && profileDevice != null && IncusClient.isNic(profileDevice)) {
+                        && profileDevice != null && IncusClient.isNetworkDevice(profileDevice)) {
                     expanded.put(name, profileDevice);
-                    // A changed device is sent whole from the expanded view: the profile's NIC
-                    update.device(name, "type", "nic");
+                    // A changed device is sent whole from the expanded view: the profile's device
+                    update.device(name, "type", profileDevice.pathText("type", ""));
                 }
             });
         }

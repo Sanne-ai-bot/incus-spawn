@@ -1221,6 +1221,14 @@ public class IncusClient {
         return "nic".equals(device.pathText("type", ""));
     }
 
+    /**
+     * Whether a device reaches a network: a NIC, or an InfiniBand device, which reaches one
+     * without any NIC.
+     */
+    public static boolean isNetworkDevice(JqValue device) {
+        return isNic(device) || "infiniband".equals(device.pathText("type", ""));
+    }
+
     /** As {@link #findNicDeviceName}, from an instance representation already read. */
     public static String nicDeviceName(JqValue instanceMetadata, String networkName) {
         var expandedDevices = instanceMetadata.getField("expanded_devices");

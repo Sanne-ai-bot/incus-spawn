@@ -99,18 +99,10 @@ public final class ProxyOnlyAcl {
                 + "Until then, use full network or --airgap.";
     }
 
-    /**
-     * Whether a device reaches a network: a NIC, or an InfiniBand device, which reaches one
-     * without any NIC.
-     */
-    private static boolean isNetworkDevice(JqValue device) {
-        return IncusClient.isNic(device) || "infiniband".equals(device.pathText("type", ""));
-    }
-
     /** Whether Incus would attach any network device to the instance. */
     private static boolean hasNic(JqValue instance) {
         return instance.path("expanded_devices") instanceof io.hyperfoil.tools.jjq.value.JqObject devices
-                && devices.keys().stream().anyMatch(device -> isNetworkDevice(devices.path(device)));
+                && devices.keys().stream().anyMatch(device -> IncusClient.isNetworkDevice(devices.path(device)));
     }
 
     /**
@@ -121,7 +113,7 @@ public final class ProxyOnlyAcl {
     static List<String> otherNics(JqValue instance, String restricted) {
         if (!(instance.path("expanded_devices") instanceof io.hyperfoil.tools.jjq.value.JqObject devices)) return List.of();
         return devices.keys().stream()
-                .filter(device -> !device.equals(restricted) && isNetworkDevice(devices.path(device)))
+                .filter(device -> !device.equals(restricted) && IncusClient.isNetworkDevice(devices.path(device)))
                 .sorted().toList();
     }
 
