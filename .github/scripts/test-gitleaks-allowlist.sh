@@ -11,6 +11,7 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 GITLEAKS="${1:-gitleaks}"
+[[ "$GITLEAKS" != */* ]] || GITLEAKS="$(realpath "$GITLEAKS")"  # the scans run from a copy of the tree
 WORK="$(mktemp -d)"
 mkdir "$WORK/tree"  # the scan root; reports and lists stay outside it
 trap 'rm -rf "$WORK"' EXIT
