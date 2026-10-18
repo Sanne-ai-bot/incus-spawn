@@ -2948,8 +2948,8 @@ The check is made when a message is sent, so a person joining in the following s
 
 **Joining a task is a mode of `isx shell`.**
 `isx shell <instance> --task [<id>]` opens the task's conversation instead of a login shell (#1509).
-It is the same path as `isx shell` (instance start, container or VM, `agentuser`), with the login shell replaced by `cd <recorded cwd> && exec claude --resume <session_id>`, or `codex resume <session_id>`.
-That is the argv and physical `cwd` `Presence` looks for, so `attached` holds by construction while the person is in it, and `send_message` stays refused.
+It is the same path as `isx shell` (instance start, container or VM, `agentuser`), with the login shell replaced by the guard below, a `cd` to the recorded cwd, and the resume under the conversation's lock: `flock -n -o -E 213 "$D" claude --resume <session_id>`, or `codex resume <session_id>`, with no `exec`, so the shell stays to report a lock it did not get.
+The agent it starts has the argv and physical `cwd` `Presence` looks for, so `attached` holds by construction while the person is in it, and `send_message` stays refused.
 A test runs the built command and asserts the probe finds it, so the two cannot drift apart.
 `TaskJoin` reads every task directory in one exec as agentuser (`TaskScripts.joinable()`), with no `isx mcp` session, so an orphan's task can be joined; joining changes no ownership and no TTL.
 A new verb (`isx join`) was rejected: the task is a property of the instance, and `shell` is already the door a person uses.
