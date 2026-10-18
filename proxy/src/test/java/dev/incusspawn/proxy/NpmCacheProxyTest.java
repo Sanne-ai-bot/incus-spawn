@@ -483,8 +483,10 @@ class NpmCacheProxyTest {
             // end the backoff), and its retry's too, so the queue moves on with the backoff still on.
             proxy.upstream.unreachableSince.put(REGISTRY, System.nanoTime());
             ArtifactCacheProxyTest.await("the queue to drain", () -> {
-                for (var req : stalled) req.connection().close();
-                stalled.clear();
+                for (var req : stalled) {
+                    stalled.remove(req);
+                    req.connection().close();
+                }
                 return proxy.artifactCache.backgroundConfirmations.isEmpty();
             });
         } finally {
