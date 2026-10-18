@@ -1043,6 +1043,10 @@ A branch gets it with `--gui`, or by default when its template sets `gui: true` 
 - GPU device passed through for hardware-accelerated rendering
 - The host's Wayland socket and, where present, its PipeWire and PulseAudio sockets are each bind-mounted on their own under `/mnt/host-xdg`, at the path they hold in the host's `XDG_RUNTIME_DIR`
 - The whole `XDG_RUNTIME_DIR` is not mounted: it also holds the host user's session D-Bus, podman, ssh-agent and keyring sockets, which the guest, sharing that user's uid, would otherwise reach
+- A GUI instance made by an isx before #1521 keeps its whole-directory `xdg-runtime` mount on every start, so its guest still reaches those sockets.
+  An affected instance lists an `xdg-runtime` device in `incus config device list <name>`.
+  A start does not rewrite it (#1523: a release note, not a start-time repair).
+  A branch of it, GUI or not, drops the device (`GUI_DEVICES`), so the remedy is to branch it again and destroy the old instance
 - Environment variables written to `/etc/profile.d/wayland.sh` (`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, toolkit backends)
 
 ### Network Modes
