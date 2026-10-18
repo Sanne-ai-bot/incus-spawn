@@ -135,6 +135,12 @@ public final class FakeIncusDaemon implements IncusTransport {
                 new com.fasterxml.jackson.core.type.TypeReference<Map<String, Map<String, String>>>() {});
     }
 
+    /** An instance's own devices as they are now, device name to config. */
+    public synchronized Map<String, Map<String, String>> instanceDevices(String name) {
+        return JSON.convertValue(instances.get(name).get("devices"),
+                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Map<String, String>>>() {});
+    }
+
     /** Add a device to an existing instance, as if it had been configured or copied over. */
     public synchronized FakeIncusDaemon device(String instanceName, String deviceName, Map<String, String> config) {
         ((ObjectNode) instances.get(instanceName).get("devices")).set(deviceName, JSON.valueToTree(config));

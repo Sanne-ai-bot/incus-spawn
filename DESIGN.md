@@ -720,7 +720,7 @@ The modal only collects inputs.
 The branch itself is made by `BranchFlow`, the same `preflight()`/`create()` as `isx branch`.
 So a TUI branch gets the template's and source's account selection, the proxy refresh before start, and the CA, `resolv.conf` and identity repairs after it.
 It used to be a hand-kept copy of the flow that skipped all of those, so a branch reusing a destroyed instance's static IP could be served that instance's credential account (#800).
-Its initial values come from `BranchFlow.defaultsFor()` too -- the one rule `create()` applies to whatever a request leaves null: GUI and KVM on when the source's definition sets `gui: true` / `type: kvm` or the source itself has GUI or KVM (GUI only for a container, since passthrough's GPU device would keep a VM from starting; only from a Wayland session, by the checks `configureGui` makes; and never from a project-local definition or a source built with one, since GUI hands over the host's GPU and whole `XDG_RUNTIME_DIR`.
+Its initial values come from `BranchFlow.defaultsFor()` too -- the one rule `create()` applies to whatever a request leaves null: GUI and KVM on when the source's definition sets `gui: true` / `type: kvm` or the source itself has GUI or KVM (GUI only for a container, since passthrough's GPU device would keep a VM from starting; only from a Wayland session, by the checks `configureGui` makes; and never from a project-local definition or a source built with one, since GUI hands over the host's GPU and its Wayland and audio sockets.
 Where the source asks for GUI but does not get it by default, a note says why -- printed by `create()` with the branch's progress, for the dialog too, which leaves an untouched GUI box to the default -- rather than errors; `Request.defaults()`, `isx mcp`'s request, pins GUI off whatever the template says, which `BranchDefaultsTest` holds), and the adaptive CPU, memory and disk limits for its machine type, worked out only when asked for (on macOS the memory default forks `sysctl`).
 The dialog used to compute its own, and its KVM rule already differed from the CLI's, which ignored the definition (#869).
 For KVM, "the source itself" means a template's (built or project) `instance-mode: kvm`, but any other source's own `kvm-enabled` stamp: a branch inherits its template's `instance-mode` even when made with `--no-kvm`, which would otherwise hand `/dev/kvm` back to that branch's own branches (#1034).
@@ -1035,7 +1035,8 @@ Enables GUI applications and audio inside containers.
 A branch gets it with `--gui`, or by default when its template sets `gui: true` (or its source has it) and it is a container branched from a Wayland session; `--no-gui` opts out.
 `isx mcp`'s branches never get it.
 - GPU device passed through for hardware-accelerated rendering
-- Host `XDG_RUNTIME_DIR` bind-mounted, exposing the Wayland socket and PipeWire/PulseAudio socket
+- The host's Wayland socket and, where present, its PipeWire and PulseAudio sockets are each bind-mounted on their own under `/mnt/host-xdg`, at the path they hold in the host's `XDG_RUNTIME_DIR`
+- The whole `XDG_RUNTIME_DIR` is not mounted: it also holds the host user's session D-Bus, podman, ssh-agent and keyring sockets, which the guest, sharing that user's uid, would otherwise reach
 - Environment variables written to `/etc/profile.d/wayland.sh` (`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, toolkit backends)
 
 ### Network Modes
@@ -2297,7 +2298,7 @@ Trusted layers (user, search paths, built-in) are unaffected, and so are a proje
 - **Covers `file://` base images too.**
   `image_url`/`vm_image_url` accept `file://` (the incus-spawn-images local-testing workflow), so the build preflight applies the same `HostResourceSetup.projectEscape()` check to a project-local template's resolved base image URL.
 - **No GUI by default.**
-  A branch's GUI passthrough mounts the host's whole `XDG_RUNTIME_DIR` (user bus, agent and podman sockets) and hands over its GPU, so a project-local `gui: true` -- the definition's own, or any the source was built from (`BuildSource.usedProjectLocal()`) -- does not turn it on by default.
+  A branch's GUI passthrough mounts the host's Wayland and audio sockets and hands over its GPU, so a project-local `gui: true` -- the definition's own, or any the source was built from (`BuildSource.usedProjectLocal()`) -- does not turn it on by default.
   `BranchFlow.defaultsFor()` leaves it off with a note, and `--gui` still turns it on (#869).
 - **Survives rebuilds from metadata.**
   `BuildSource` records `projectRoots` alongside `sources`, so a template rebuilt out of scope from `build-source` stays confined.
