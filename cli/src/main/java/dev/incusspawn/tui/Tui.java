@@ -26,6 +26,7 @@ import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.RuntimeSetup;
+import dev.incusspawn.mcp.TaskJoin;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -133,6 +134,8 @@ public class Tui {
 
     private final ActionsMenu actionsMenu = new ActionsMenu(modal, theme);
 
+    private final TaskPicker taskPicker = new TaskPicker(modal, theme);
+
     private final AboutModal about = new AboutModal(modal, theme, new AboutModal.Source() {
         @Override public String version() { return Tui.this.currentVersion(); }
         @Override public String gitSha() { return BuildInfo.instance().gitSha(); }
@@ -202,7 +205,7 @@ public class Tui {
                                 IncusClient.PoolUsage poolUsage, RuntimeException error) {}
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_MARKED_STOP, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT, WARNINGS }
+    enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_MARKED_STOP, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT, WARNINGS, TASK_PICKER }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     /** The delete confirmation; set when it opens, and read again by the destroy it confirms. */
@@ -246,6 +249,8 @@ public class Tui {
     private PendingAction pendingAction = PendingAction.NONE;
     private ActionContext pendingActionTarget;
     private String pendingShellCommand;
+    /** Whether {@link #pendingShellCommand} runs outside the instance's tmux or zmx session: a joined task's does. */
+    private boolean pendingCommandOnly;
     private ToolAction pendingToolAction;
     // After returning from a shell/branch, focus this instance in the instances panel
     private String returnToInstance;
@@ -446,7 +451,7 @@ public class Tui {
                 }
                 case SHELL_WITH_COMMAND -> {
                     returnToInstance = pendingActionTarget.name();
-                    shellLaunch.shellInto(pendingActionTarget, pendingShellCommand);
+                    shellLaunch.shellInto(pendingActionTarget, pendingShellCommand, pendingCommandOnly);
                 }
                 case BRANCH -> {
                     returnToInstance = pendingActionTarget.name();
@@ -654,6 +659,7 @@ public class Tui {
             case CLEAN_CONFIRM -> handleCleanConfirmEvent(key, tui, tableState);
             case CLEAN_RESULT -> { mode = Mode.BROWSE; yield true; }
             case ACTIONS -> handleActionsEvent(key, tui);
+            case TASK_PICKER -> handleTaskPickerEvent(key, tui);
         };
     }
 
@@ -904,6 +910,10 @@ public class Tui {
         // F8 or Delete: Destroy instance
         if (isDestroyKey(key)) {
             openDeleteConfirm(selected.name());
+            return true;
+        }
+        if (key.isKey(KeyCode.F2) && key.hasShift()) {
+            if (joinTask(selected)) tui.quit();
             return true;
         }
         if (key.isKey(KeyCode.F2)) {
@@ -1674,6 +1684,7 @@ public class Tui {
             case WARNINGS -> warningsModal.render(frame, screen);
             case HELP_CHAT -> helpChat.render(frame, screen);
             case ACTIONS -> actionsMenu.render(frame, screen);
+            case TASK_PICKER -> taskPicker.render(frame, screen);
             case ERROR -> modal.renderErrorModal(frame, screen, errorMessage);
             case CLEAN_CONFIRM -> clean.renderCleanConfirmModal(frame, screen);
             case CLEAN_RESULT -> clean.renderCleanResultModal(frame, screen);
@@ -1726,6 +1737,19 @@ public class Tui {
                     yield true;
                 }
                 openAccountsModal(selected.name(), Mode.INSTANCE_DETAIL);
+                yield true;
+            }
+            case JOIN_TASK -> {
+                var selected = selectedEntry(instanceTableState);
+                if (selected == null || vanished(selected.name())) yield true;
+                if (isBusy(selected)) {
+                    statusMessage = "Operation in progress for " + selected.name();
+                    yield true;
+                }
+                if (joinTask(selected)) {
+                    mode = Mode.BROWSE;
+                    tui.quit();
+                }
                 yield true;
             }
             case SHELL -> {
@@ -1788,6 +1812,86 @@ public class Tui {
         });
         helpChat = chat;
         mode = Mode.HELP_CHAT;
+    }
+
+    /**
+     * Shift+F2: join the delegated task in {@code selected} (#1509), as {@code isx shell --task}
+     * does. One task leaves its conversation pending (true: the caller quits the runner), several
+     * open the picker, and anything else says why on the status line. The tasks are read here, on
+     * the keypress, never while rendering the table.
+     */
+    private boolean joinTask(InstanceInfo selected) {
+        if (selected.mcp() == null) {
+            statusMessage = selected.name() + " was not made by isx mcp: it has no delegated task to join";
+            return false;
+        }
+        if (!isRunning(selected)) {
+            statusMessage = selected.name() + " is stopped; isx shell " + selected.name() + " --task starts it and joins its task";
+            return false;
+        }
+        var target = new ActionContext(selected.name(), selected.machineType());
+        List<TaskJoin.Entry> tasks;
+        try {
+            tasks = TaskJoin.read(incus, selected.name());
+        } catch (RuntimeException e) {
+            statusMessage = e.getMessage();
+            return false;
+        }
+        var outcome = TaskJoin.resolve(tasks, null);
+        if (outcome instanceof TaskJoin.Outcome.Join join) return joinPending(join.entry(), target);
+        if (outcome instanceof TaskJoin.Outcome.Several several) {
+            taskPicker.open(several.entries(), target, mode);
+            mode = Mode.TASK_PICKER;
+        } else {
+            statusMessage = TaskJoin.refusal(outcome, selected.name());
+        }
+        return false;
+    }
+
+    /**
+     * Leave {@code entry}'s conversation pending in {@code target}, once the proxy check passes
+     * (only now: a refusal needs no proxy); whether it is pending.
+     */
+    private boolean joinPending(TaskJoin.Entry entry, ActionContext target) {
+        if (showProxyErrorIfNeeded(target)) return false;
+        pendingAction = PendingAction.SHELL_WITH_COMMAND;
+        pendingShellCommand = entry.guestCommand();
+        pendingCommandOnly = true;
+        pendingActionTarget = target;
+        return true;
+    }
+
+    private boolean handleTaskPickerEvent(KeyEvent key, TuiRunner tui) {
+        return switch (taskPicker.handleKey(key)) {
+            case HANDLED -> true;
+            case UNHANDLED -> false;
+            case CLOSE -> {
+                mode = taskPicker.returnMode();
+                yield true;
+            }
+            case JOIN -> {
+                var target = taskPicker.target();
+                if (vanished(target.instanceName())) yield true;
+                mode = taskPicker.returnMode();
+                // Read again: a turn may have started since the picker opened.
+                TaskJoin.Outcome outcome;
+                try {
+                    outcome = TaskJoin.resolve(TaskJoin.read(incus, target.instanceName()), taskPicker.selected().id());
+                } catch (RuntimeException e) {
+                    statusMessage = e.getMessage();
+                    yield true;
+                }
+                if (outcome instanceof TaskJoin.Outcome.Join join) {
+                    if (joinPending(join.entry(), target)) {
+                        mode = Mode.BROWSE;
+                        tui.quit();
+                    }
+                } else {
+                    statusMessage = TaskJoin.refusal(outcome, target.instanceName());
+                }
+                yield true;
+            }
+        };
     }
 
     private boolean handleActionsEvent(KeyEvent key, TuiRunner tui) {
@@ -2086,6 +2190,11 @@ public class Tui {
         return pendingAction;
     }
 
+    /** The command a pending {@link PendingAction#SHELL_WITH_COMMAND} runs, for a test to read. */
+    String pendingShellCommand() {
+        return pendingShellCommand;
+    }
+
     /** The {@code isx build} arguments a build left pending will run with, for a test to read. */
     String[] pendingBuildArgs() {
         return pendingBuildArgs;
@@ -2128,6 +2237,7 @@ public class Tui {
         if (cmd.isPresent()) {
             pendingAction = PendingAction.SHELL_WITH_COMMAND;
             pendingShellCommand = cmd.get();
+            pendingCommandOnly = false;
             pendingActionTarget = context;
             return true;
         }
@@ -2548,6 +2658,7 @@ public class Tui {
             case INSTANCE_DETAIL -> detailInstanceName;
             case ACCOUNTS -> accountsModal != null ? accountsModal.instance() : null;
             case ACTIONS -> actionsMenu.context() != null ? actionsMenu.context().instanceName() : null;
+            case TASK_PICKER -> taskPicker.target() != null ? taskPicker.target().instanceName() : null;
             default -> null;
         };
     }

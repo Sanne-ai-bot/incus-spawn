@@ -84,6 +84,8 @@ A stopped orphan with a `mcp-dormant` naming its holder (`Orphans.dormantSince`)
 `start_instance` and `stop_instance` clear a leftover `mcp-dormant` (`McpTools.notDormant`), so an instance its holder started or stopped on purpose is never woken by a later adoption.
 Task ids carry a random per-session tag (they outlive the session); `Tasks.adopt()` rebuilds them from `TaskScripts.list()`.
 A task is `attached` when `Presence` finds its agent resuming its `session_id`, or either agent working in its recorded physical `cwd`; `send_message` refuses then.
+`isx shell <instance> --task [<id>]`, the TUI's Shift+F2 and `task_status.join_command` go through `TaskJoin`, whose guest command (`cd <cwd> && exec claude --resume <id>` or `codex resume <id>`) is what `Presence` matches; `TaskScriptsTest` runs it against the probe, so change both together.
+`TaskJoin` reads the task directories in one exec (`TaskScripts.joinable()`) without a session, never guesses among several, and refuses a task whose run is not over or that a person is already in (the same exec runs the `Presence` probe).
 Codex resume parsing skips options and their values before reading the positional session ID, even when the person launches from another directory.
 A delegate's `model`/`max_turns` (`Tasks.Profile`) live on the task and in its directory, so later runs and adopting sessions keep them.
 `max_turns` never exceeds `delegate-max-turns` in `mcp.yaml` (refused at the call, clamped for a recorded one).
