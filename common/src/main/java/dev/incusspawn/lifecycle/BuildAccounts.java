@@ -72,7 +72,8 @@ public final class BuildAccounts {
 
     /**
      * Remove managed tool caches of the build's temporary proof before publishing its rootfs, and
-     * the build's machine-id, which every branch would otherwise boot with ({@link MachineId#CLEAR_SCRIPT}).
+     * the build's machine-id, which a container branch whose push failed, or a VM branch on an image
+     * that commits its ID, would otherwise boot with ({@link MachineId#CLEAR_SCRIPT}).
      */
     public static void clearGuestProofs(dev.incusspawn.incus.Container container) {
         container.runAsUserQuiet("agentuser", """

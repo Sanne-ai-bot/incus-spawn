@@ -29,7 +29,9 @@ set -euo pipefail
 #                   systemd-networkd-wait-online (no .network matches the test
 #                   NIC, so the boot would never finish; it is not part of
 #                   basic.target), and adds a unit that reports systemd-analyze
-#                   on the console and powers off.
+#                   on the console and powers off;
+#                 - it also empties /etc/machine-id and masks
+#                   systemd-machine-id-commit, as the VM image does (#1483).
 #
 #   RUNS=n           boots to time (default 1); each starts from the same copy
 #                    (QEMU snapshot), and with several the median is printed too
@@ -47,8 +49,9 @@ set -euo pipefail
 #   userspace  PID 1 to basic.target
 #   ready      QEMU launch to basic.target
 #
-# Exits non-zero if any boot did not reach basic.target, or had a virtio
-# device on a legacy interrupt line.
+# Exits non-zero if any boot did not reach basic.target, had a virtio device on
+# a legacy interrupt line, or did not take its machine-id from the SMBIOS UUID
+# it was given (each boot gets a new one, as each Incus copy does: #1483).
 
 KERNEL="${1:?usage: test-vm-kernel.sh <vmlinuz> <disk.raw> [arch]}"
 DISK="${2:?usage: test-vm-kernel.sh <vmlinuz> <disk.raw> [arch]}"
@@ -161,6 +164,9 @@ echo "ISX-VM-BASIC uptime=\$up kernel_us=\$(systemctl show -P UserspaceTimestamp
 # PCI_MSI puts every virtio device on one shared legacy line.
 echo "ISX-VM-IRQ virtio=\$(grep -c virtio /proc/interrupts) legacy_virtio=\$(grep virtio /proc/interrupts | grep -vc MSI)"
 grep virtio /proc/interrupts | sed 's/^/ISX-VM-IRQ-LINE /'
+# Still mounted over the file: PID 1 never wrote it to the (snapshot) disk.
+mountpoint -q /etc/machine-id && transient=yes || transient=no
+echo "ISX-VM-MACHINE-ID \$(cat /etc/machine-id) transient=\$transient"
 # critical-chain and plot need the boot finished; this unit is Type=simple, so
 # its own start does not hold that up.
 until systemd-analyze time >/dev/null 2>&1; do sleep 0.1; done
@@ -181,6 +187,8 @@ After=basic.target
 Type=simple
 ExecStart=/etc/isx-vm-boot-report.sh
 EOF
+: > "$WORK/machine-id"
+chmod 444 "$WORK/machine-id"
 chmod 644 "$WORK/fstab" "$WORK/report.service"
 chmod 755 "$WORK/report.sh"
 
@@ -203,6 +211,12 @@ rm /etc/systemd/system/default.target
 symlink /etc/systemd/system/default.target /usr/lib/systemd/system/basic.target
 rm /etc/systemd/system/systemd-networkd-wait-online.service
 symlink /etc/systemd/system/systemd-networkd-wait-online.service /dev/null
+rm /etc/machine-id
+write $WORK/machine-id /etc/machine-id
+sif /etc/machine-id uid 0
+sif /etc/machine-id gid 0
+rm /etc/systemd/system/systemd-machine-id-commit.service
+symlink /etc/systemd/system/systemd-machine-id-commit.service /dev/null
 EOF
 debugfs -R "stat /etc/isx-vm-boot-report.sh" "$ROOT" >/dev/null 2>&1 \
     || { echo "ERROR: could not write into the root" >&2; cat "$WORK/debugfs.log" >&2; exit 1; }
@@ -217,10 +231,12 @@ FAILED=0
 for run in $(seq 1 "$RUNS"); do
     LOG="$WORK/console-$run.log"
     cp "$FIRMWARE_VARS" "$WORK/vars.fd"
+    UUID=$(cat /proc/sys/kernel/random/uuid)
     T0=$EPOCHREALTIME
     set +e
     timeout "$TIMEOUT" "$QEMU" "${MACHINE[@]}" "${ACCEL[@]}" -smp 8 -m 4096 \
         -nodefaults -display none -no-reboot -serial stdio \
+        -smbios type=1,uuid="$UUID" \
         -drive if=pflash,format=raw,unit=0,readonly=on,file="$FIRMWARE_CODE" \
         -drive if=pflash,format=raw,unit=1,file="$WORK/vars.fd" \
         -drive if=none,id=root,format=raw,snapshot=on,file="$IMG" \
@@ -257,6 +273,16 @@ for run in $(seq 1 "$RUNS"); do
         sed -n 's/.* ISX-VM-IRQ-LINE /    /p' "$LOG"
         FAILED=1
     fi
+    # Needs DMI in the kernel; without it systemd picks a random ID.
+    read -r MACHINE_ID TRANSIENT < <(sed -n 's/.* ISX-VM-MACHINE-ID \([0-9a-f]*\) transient=\([a-z]*\).*/\1 \2/p' "$LOG" | head -n 1) || true
+    if [ "$MACHINE_ID" != "${UUID//-/}" ]; then
+        echo "FAIL: boot $run has machine-id '${MACHINE_ID}', not its SMBIOS UUID ${UUID//-/}"
+        FAILED=1
+    fi
+    if [ "${TRANSIENT:-}" != yes ]; then
+        echo "FAIL: boot $run has no transient /etc/machine-id mount at basic.target (mountpoint said no): PID 1 likely wrote the ID to disk, where every copy would share it"
+        FAILED=1
+    fi
     echo "$TIMES" >> "$RESULTS"
     read -r FW K U READY <<<"$TIMES"
     printf 'boot %d: firmware %.2fs  kernel %.3fs  userspace %.2fs  ready %.2fs\n' "$run" "$FW" "$K" "$U" "$READY"
@@ -277,4 +303,4 @@ if [ "$RUNS" -gt 1 ] && [ -s "$RESULTS" ]; then
         "$(wc -l < "$RESULTS")" "$(median 1)" "$(median 2)" "$(median 3)" "$(median 4)"
 fi
 
-if [ "$FAILED" = 0 ]; then echo "PASS: reached basic.target"; else echo "FAIL"; exit 1; fi
+if [ "$FAILED" = 0 ]; then echo "PASS: reached basic.target, machine-id from SMBIOS"; else echo "FAIL"; exit 1; fi
