@@ -280,9 +280,10 @@ Key design:
   Used by Codex CLI for `api.openai.com`
 - Caches OCI blobs by SHA256, Maven/Gradle artifacts by repository path (confirmed with upstream per `ArtifactCacheTiers`, see below), and npm tarballs from `registry.npmjs.org` with ETag-based packument verification.
   The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot inject a credential; keep it that way.
-  npm's per-version shasum lookups go through `probeClient` (`fetchNpmVersion` → `fetchSmallBody`) like Maven/Gradle checksums.
+  npm's per-version digest lookups go through `probeClient` (`fetchNpmVersion` → `fetchSmallBody`) like Maven/Gradle checksums.
   A `5xx` is asked once more (while over half the client's budget is left), since a failed lookup relays the tarball uncached and unresumable (#925).
-  A cached tarball whose lookup gives no shasum is served only when the registry is unreachable (`SidecarAnswer.unreachable()`); a `404`/`410` evicts it and anything else relays (`checkNpmTarballCache`, #787).
+  The digest is `dist.integrity`'s SHA-512, else its SHA-1, else `dist.shasum`; SHA-1 only when the integrity is absent or lists only `sha1-` hashes (algorithms compared case-insensitively), never for any other integrity that gives no readable SHA-512 (`npmDigest`, #1465).
+  A cached tarball whose lookup gives no digest is served only when the registry is unreachable (`SidecarAnswer.unreachable()`); a `404`/`410` evicts it and anything else relays (`checkNpmTarballCache`, #787).
   An unchanged packument ETag is not enough to skip the lookup: `npm ci` fetches no packument, so a hit also needs its confirmation (the `.shasum` mtime) within `ArtifactCacheTiers`, and is confirmed in the background past `fresh` (`npmCacheState`, #1466).
   The npm registry keeps the unreachable backoff like the `Revalidation` domains (`keepsBackoff`, read by `requestWithAsyncDns`): during it a cached tarball skips its lookup and its background confirmation.
   Never wait on the network inside an ordered `executeBlocking` (the default): every MITM connection shares one context and so one ordered queue, and a raw-socket lookup there ran every cold-install lookup one at a time (#960).

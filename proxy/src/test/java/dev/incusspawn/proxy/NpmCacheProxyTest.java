@@ -28,9 +28,11 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -209,14 +211,15 @@ class NpmCacheProxyTest {
         proxy.overrideUpstream(REGISTRY, refused.getHostString(), refused.getPort());
     }
 
-    /** Publish {@code name@1.0.0}: its tarball, and the version document carrying its shasum. */
+    /** Publish {@code name@1.0.0}: its tarball, and the version document carrying its shasum and integrity. */
     static String publish(String name) throws Exception {
         var tarball = ("tarball of " + name).getBytes(StandardCharsets.UTF_8);
         var shasum = ArtifactCacheProxyTest.hex("SHA-1", tarball);
+        var integrity = "sha512-" + Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-512").digest(tarball));
         var tarballPath = "/" + name + "/-/" + name + "-1.0.0.tgz";
         routes.put(tarballPath, tarball);
         routes.put("/" + name + "/1.0.0", ("{\"name\":\"" + name + "\",\"version\":\"1.0.0\",\"dist\":{\"shasum\":\""
-                + shasum + "\"}}").getBytes(StandardCharsets.UTF_8));
+                + shasum + "\",\"integrity\":\"" + integrity + "\"}}").getBytes(StandardCharsets.UTF_8));
         return tarballPath;
     }
 
@@ -338,6 +341,14 @@ class NpmCacheProxyTest {
         assertEquals(new Response(200, "tarball of " + name), get(path, 10));
         awaitCached(path);
         return path;
+    }
+
+    @Test
+    void tarballIsVerifiedOnItsIntegrity() throws Exception {
+        var path = publishAndCache("integrity");
+
+        assertEquals("sha512:" + ArtifactCacheProxyTest.hex("SHA-512", "tarball of integrity".getBytes(StandardCharsets.UTF_8)),
+                Files.readString(Path.of(cached(path) + ".shasum")), "the SHA-512 it was verified on, not the SHA-1");
     }
 
     @Test
