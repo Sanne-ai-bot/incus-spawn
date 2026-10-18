@@ -85,7 +85,7 @@ class ProxyOnlyAclTest {
         branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY);
 
         assertRestricted(nic(daemon, "dev-2"));
-        assertEquals(List.of("tcp " + GATEWAY + " 443,18080", "udp " + GATEWAY + " 53",
+        assertEquals(List.of("tcp " + GATEWAY + " 443,18443,18080", "udp " + GATEWAY + " 53",
                 "tcp " + GATEWAY + " 53", "icmp4 " + GATEWAY + " 8"), allowed(daemon));
         // In the branch's one write, not a write of its own
         assertEquals(1, daemon.requests().stream().filter(r -> r.equals("PATCH /1.0/instances/dev-2")).count(),

@@ -1067,7 +1067,7 @@ security.acls.default.egress.action=drop     # anything the ACL does not allow, 
 security.acls.default.ingress.action=allow   # the host reaches the instance over SSH
 ```
 
-The ACL's egress rules allow, to the gateway's address only: tcp 443 and 18080, udp and tcp 53, and ICMP echo (the connectivity watchdog pings the gateway).
+The ACL's egress rules allow, to the gateway's address only: tcp 443, 18443 and 18080, udp and tcp 53, and ICMP echo (the connectivity watchdog pings the gateway).
 DNS over TCP is wider than the in-guest rules, which allowed udp 53 only, but no NIC ACL can take it away: Incus puts its own `udp dport 53` and `tcp dport 53 accept` to the gateway in the same chains ahead of the ACL's rules, so the ACL lists both to say what is in force.
 That is accepted: DNS reaches only the gateway's resolver either way, and blocking TCP would take a host nftables table isx owns, the state the ACL exists to avoid.
 A proxy-only instance has one network device, the bridge NIC that carries the ACL: any other NIC or InfiniBand device, its own or from a profile, would reach the network directly.
@@ -1078,7 +1078,10 @@ That is accepted *because* isx never adds such a device; only a user who adds on
 If isx ever adds `pci` devices itself, or a template can bring a network card that way, revisit this.
 Incus installs it as per-NIC chains in the host's nftables `bridge` family, the table that also enforces `security.ipv4_filtering`, at every start of the instance, whoever starts it: `isx`, `incus restart`, autostart after a host reboot, `isx doctor`'s subnet move.
 A start whose ACL cannot be installed fails.
-Those chains match in the bridge family, before the host's PREROUTING redirect, so they see port 443 rather than the proxy's 18443.
+Those chains match in the bridge family, which on most hosts is before the host's PREROUTING redirect, so they see port 443 rather than the proxy's 18443.
+On a host with bridge netfilter on (`net.bridge.bridge-nf-call-iptables=1`, which Docker and Kubernetes set), iptables runs during the bridge's prerouting, so the redirect comes first and the chains see 18443 (#1503).
+The ACL allows both ports, which makes nothing new reachable, since every connection to 443 already lands on that socket; isx neither refuses such a host nor asks for the sysctl off, which Docker's own bridge filtering needs.
+The appliance still turns it off: its DNAT goes to the host's proxy, not the gateway's 18443 (`appliance/DESIGN.md`).
 A rule set there also stops traffic to other instances on the bridge, which a rule on the host's INPUT chain would not see.
 
 *Where it is set.*

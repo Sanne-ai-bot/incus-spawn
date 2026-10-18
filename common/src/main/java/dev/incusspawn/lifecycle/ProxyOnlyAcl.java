@@ -57,9 +57,13 @@ public final class ProxyOnlyAcl {
      * ahead of any ACL, so no ACL can narrow it; it is named here so that the ACL says what is in
      * force, and a change there does not cut it. ICMP echo is for the connectivity watchdog's
      * {@code ping} of the gateway.
+     *
+     * <p>The proxy's listening port is allowed too: with bridge netfilter on (Docker, Kubernetes),
+     * the host's redirect of 443 to it runs before the ACL's chains (#1503, DESIGN.md).
      */
     static List<Map<String, String>> egressRules(String gateway) {
-        var ports = ProxyConfig.CONTAINER_FACING_PORT + "," + ProxyConfig.DEFAULT_HEALTH_PORT;
+        var ports = ProxyConfig.CONTAINER_FACING_PORT + "," + ProxyConfig.DEFAULT_MITM_PORT + ","
+                + ProxyConfig.DEFAULT_HEALTH_PORT;
         return List.of(
                 allow(gateway, "tcp", "destination_port", ports, "the isx proxy and its health check"),
                 allow(gateway, "udp", "destination_port", "53", "DNS"),
