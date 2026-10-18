@@ -627,17 +627,16 @@ class InstanceLifecycleRequestBudgetTest {
         assertEquals("work", daemon.instance(NAME).path("config")
                 .path(Metadata.accountKey("github")).asText());
     }
-
-    /** Every NIC Incus would attach at start, whatever it comes from. */
+    /** Every network device Incus would attach at start, whatever it comes from, by name. */
     private static List<String> attachedNics(FakeIncusDaemon daemon) {
         var expanded = JacksonTrees.fromJsonNode(daemon.instance(NAME)).getField("expanded_devices");
         var nics = new java.util.ArrayList<String>();
         if (expanded instanceof io.hyperfoil.tools.jjq.value.JqObject devices) {
             devices.forEach((name, device) -> {
-                if (IncusClient.isNic(device)) nics.add(name);
+                if (IncusClient.isNetworkDevice(device)) nics.add(name);
             });
         }
-        return nics;
+        return nics.stream().sorted().toList();
     }
 
     @Test
@@ -663,6 +662,49 @@ class InstanceLifecycleRequestBudgetTest {
         var after = daemon.instance(NAME);
         assertEquals("none", after.path("devices").path("eth0").path("type").asText());
         assertEquals(NetworkMode.AIRGAP.name(), after.path("config").path(Metadata.NETWORK_MODE).asText());
+    }
+
+    /** The default profile with an InfiniBand device beside its bridge NIC. */
+    private static FakeIncusDaemon withProfileInfiniband(FakeIncusDaemon daemon) {
+        return daemon.profile("default", Map.of(
+                "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0"),
+                "ib0", Map.of("type", "infiniband", "nictype", "physical", "parent", "ibp1s0"),
+                "root", Map.of("type", "disk", "path", "/", "pool", "default")));
+    }
+
+    @Test
+    void anAirgappedBranchKeepsNoInfinibandDevice() {
+        // #1507: an InfiniBand device reaches a network without any NIC, so airgap masks it too
+        var daemon = withProfileInfiniband(new FakeIncusDaemon()).container(NAME, Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+
+        assertEquals(List.of(), attachedNics(daemon));
+        assertEquals("none", daemon.instance(NAME).path("devices").path("ib0").path("type").asText());
+    }
+
+    @Test
+    void anAirgappedBranchMasksAnInfinibandDeviceOfItsOwn() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of())
+                .device(NAME, "ib0", Map.of("type", "infiniband", "nictype", "physical", "parent", "ibp1s0"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+
+        assertEquals(List.of(), attachedNics(daemon));
+    }
+
+    @Test
+    void branchingWithNetworkFromAnAirgappedInstanceRestoresItsInfinibandDevice() {
+        var daemon = withProfileInfiniband(new FakeIncusDaemon())
+                .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name()))
+                .device(NAME, "eth0", Map.of("type", "none"))
+                .device(NAME, "ib0", Map.of("type", "none"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+
+        assertEquals(List.of("eth0", "ib0"), attachedNics(daemon));
+        var ib = daemon.instance(NAME).path("devices").path("ib0");
+        assertEquals("infiniband", ib.path("type").asText());
+        assertEquals("ibp1s0", ib.path("parent").asText());
     }
 
     @Test
