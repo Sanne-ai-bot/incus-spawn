@@ -392,8 +392,8 @@ class ArtifactCacheProxyTest {
     /**
      * A test's own await can end before its confirmation leaves the set; left there, its key makes the next
      * test's confirmation of the same path a no-op (#1499). Drained against this test's own fixture, and
-     * charged to it if it never ends. Every held request is released first, nothing is left to hold its retry,
-     * so a test that fails while one is held reports that failure, not this drain's timeout as well.
+     * charged to it if it never ends. The drain releases every held request each time it checks. Nothing is left
+     * to hold a retry, so a test that fails while one is held reports that failure, not this drain's timeout as well.
      * The drain sees only keys in the set. In a backoff a confirmation completes at once, its add and remove one
      * synchronous call, so its key is there only while the serving callback runs; one that callback has yet to
      * queue is not waited for.
@@ -401,12 +401,14 @@ class ArtifactCacheProxyTest {
     @AfterEach
     void drainBackgroundConfirmations() throws Exception {
         resetHoldBudgets();
-        var closing = heldConnections.stream().map(HttpConnection::close).toList();
-        heldConnections.clear();
-        // Joined, not all(): one already closed by the proxy is as good as closed here
-        Future.join(closing).toCompletionStage().toCompletableFuture().handle((ok, err) -> null)
-                .get(5, TimeUnit.SECONDS);
-        awaitBackgroundConfirmations(proxy);
+        // Closed and removed in one pass, on every check: the event loop can still add a cut it began serving,
+        // which a clear() after a snapshot, or a single pass, would leave open to hold this drain until it times out
+        awaitBackgroundConfirmations(proxy, () -> {
+            for (var held = heldConnections.iterator(); held.hasNext(); ) {
+                held.next().close();
+                held.remove();
+            }
+        });
     }
 
     /** No request is left to hold: what {@link #hold} counts down. */
@@ -419,7 +421,15 @@ class ArtifactCacheProxyTest {
 
     /** Every background confirmation queued or in flight has finished, for a class sharing one proxy. */
     static void awaitBackgroundConfirmations(MitmProxy proxy) throws Exception {
-        await("this test's background confirmations to finish", proxy.artifactCache.backgroundConfirmations::isEmpty);
+        awaitBackgroundConfirmations(proxy, () -> {});
+    }
+
+    /** As {@link #awaitBackgroundConfirmations(MitmProxy)}, running {@code release} before every check. */
+    static void awaitBackgroundConfirmations(MitmProxy proxy, Runnable release) throws Exception {
+        await("this test's background confirmations to finish", () -> {
+            release.run();
+            return proxy.artifactCache.backgroundConfirmations.isEmpty();
+        });
     }
 
     /**
