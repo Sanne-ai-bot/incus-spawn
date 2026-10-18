@@ -97,8 +97,12 @@ jobs:
 
       # A test failure in common must not stop cli and proxy from running (-fae would still skip
       # them, as modules depending on a failed one), so failures are counted from the reports after.
+      # KeychainTrustMacTest changes the System keychain's trust settings, which only a runner
+      # that is discarded after the job may do (#1467)
       - name: Test
         run: mvn -B -ntp -Dmaven.test.failure.ignore=true test
+        env:
+          ISX_TEST_MUTATE_SYSTEM_KEYCHAIN: '1'
 
       - name: Fail on test failures
         run: |

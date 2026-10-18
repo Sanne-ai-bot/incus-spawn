@@ -1,11 +1,13 @@
 package dev.incusspawn.util;
 
 import dev.incusspawn.ClientLog;
+import dev.incusspawn.Platform;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +16,8 @@ import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -27,6 +31,10 @@ import java.util.List;
  * workaround before this) keeps working, and a bundle that cannot be read leaves the JDK store as
  * before. Nothing is cached: this class is initialized at image build time, and the store may
  * change while a long-running isx is up.
+ * <p>
+ * On macOS an inspection CA is in the Keychain, not in {@code /etc/ssl/cert.pem}, so the
+ * certificates an administrator trusts for SSL there are added too, and those an administrator
+ * denied are taken out of every source, the JDK store included ({@link MacKeychainTrust}, #1467).
  */
 public final class SystemTrust {
 
@@ -54,14 +62,14 @@ public final class SystemTrust {
      * {@code HTTPS} on it before the handshake, as {@code DumpProxy.openUpstream} does.
      */
     public static SSLContext sslContext() {
-        return sslContext(findBundle());
+        return sslContext(findBundle(), keychain());
     }
 
-    /** A TLS context trusting the JDK store plus the certificates in {@code bundle}, which may be null. */
-    static SSLContext sslContext(Path bundle) {
+    /** A TLS context trusting {@link #anchors}: {@code bundle} may be null. */
+    static SSLContext sslContext(Path bundle, MacKeychainTrust.Trust keychain) {
         try {
             var tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-            tmf.init(anchors(bundle));
+            tmf.init(anchors(bundle, keychain));
             var tls = SSLContext.getInstance("TLS");
             tls.init(null, tmf.getTrustManagers(), null);
             return tls;
@@ -70,30 +78,88 @@ public final class SystemTrust {
         }
     }
 
-    /** The JDK store's anchors, then the bundle's; the bundle's are left out if it cannot be read. */
-    static KeyStore anchors(Path bundle) throws GeneralSecurityException {
+    /** On macOS the Keychain's admin trust settings, read now; elsewhere none. */
+    public static MacKeychainTrust.Trust keychain() {
+        if (!Platform.isMacOS()) return MacKeychainTrust.Trust.NONE;
+        var trust = MacKeychainTrust.read();
+        if (trust.problem() != null) {
+            ClientLog.warn("Keychain not fully read, its CAs left out" + (trust.denied().isEmpty() && !trust.defaultRootsDenied()
+                    ? "" : " (its denies still apply)") + ": " + trust.problem());
+        }
+        return trust;
+    }
+
+    /**
+     * The proxy's upstream trust when the Keychain adds or denies something: the bundle, or the JDK
+     * store when there is none or it cannot be read (the proxy's rule without a Keychain), then the
+     * Keychain's admin-trusted certificates, less what an administrator denied. Throws when nothing
+     * is left, as the CLI's empty trust store does.
+     */
+    public static List<X509Certificate> upstreamAnchors(Path bundle, MacKeychainTrust.Trust keychain) throws GeneralSecurityException {
+        var base = bundleCertificates(bundle);
+        var anchors = withKeychain(base != null ? base : jdkAnchors(), keychain);
+        // Empty would leave the proxy with Vert.x's default, the JDK store, denied roots included
+        if (anchors.isEmpty()) {
+            throw new GeneralSecurityException("the Keychain's admin trust settings deny every CA and trust none "
+                    + "(see `security dump-trust-settings -d`)");
+        }
+        return anchors;
+    }
+
+    /** The JDK store's anchors, then the bundle's and the Keychain's, less what an administrator denied. */
+    static KeyStore anchors(Path bundle, MacKeychainTrust.Trust keychain) throws GeneralSecurityException {
         var anchors = KeyStore.getInstance("PKCS12");
         try {
             anchors.load(null, null);
         } catch (IOException e) {
             throw new KeyStoreException(e);
         }
+        var certs = jdkAnchors();
+        var bundled = bundleCertificates(bundle);
+        if (bundled != null) certs.addAll(bundled);
+        int i = 0;
+        for (var cert : withKeychain(certs, keychain)) anchors.setCertificateEntry("anchor-" + i++, cert);
+        return anchors;
+    }
+
+    /**
+     * {@code base} with the Keychain applied: its admin-trusted certificates added, what an
+     * administrator denied removed, and {@code base} dropped whole when one denied the default roots.
+     */
+    private static List<X509Certificate> withKeychain(List<X509Certificate> base, MacKeychainTrust.Trust keychain) {
+        var certs = new ArrayList<X509Certificate>();
+        if (!keychain.defaultRootsDenied()) certs.addAll(base);
+        certs.addAll(keychain.trusted());
+        certs.removeIf(keychain::denies);
+        return certs;
+    }
+
+    /** The JDK store's anchors: on a JVM the one {@code javax.net.ssl.trustStore} names, in a native binary the one baked in. */
+    private static List<X509Certificate> jdkAnchors() throws GeneralSecurityException {
         var jdk = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         jdk.init((KeyStore) null);
-        int i = 0;
+        var certs = new ArrayList<X509Certificate>();
         for (var tm : jdk.getTrustManagers()) {
-            if (tm instanceof X509TrustManager x509) {
-                for (var cert : x509.getAcceptedIssuers()) anchors.setCertificateEntry("jdk-" + i++, cert);
-            }
+            if (tm instanceof X509TrustManager x509) certs.addAll(List.of(x509.getAcceptedIssuers()));
         }
-        if (bundle == null) return anchors;
+        return certs;
+    }
+
+    /** The bundle's certificates, or null when there is none or it cannot be read. */
+    private static List<X509Certificate> bundleCertificates(Path bundle) {
+        if (bundle == null) return null;
         try (var in = Files.newInputStream(bundle)) {
-            for (var cert : CertificateFactory.getInstance("X.509").generateCertificates(in)) {
-                anchors.setCertificateEntry("system-" + i++, cert);
-            }
+            return certificates(in);
         } catch (IOException | CertificateException e) {
-            ClientLog.warn("System CA bundle " + bundle + " not usable, trusting the JDK's alone: " + e.getMessage());
+            ClientLog.warn("System CA bundle " + bundle + " not usable, leaving it out: " + e.getMessage());
+            return null;
         }
-        return anchors;
+    }
+
+    /** The certificates in a PEM stream, text between them ignored; none when it is empty. */
+    public static List<X509Certificate> certificates(InputStream pem) throws CertificateException {
+        var certs = new ArrayList<X509Certificate>();
+        for (var cert : CertificateFactory.getInstance("X.509").generateCertificates(pem)) certs.add((X509Certificate) cert);
+        return certs;
     }
 }

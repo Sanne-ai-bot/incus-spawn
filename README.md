@@ -261,6 +261,8 @@ isx runs on Linux, and on macOS 15 (Sequoia) or later; Windows is not supported.
 
 On macOS isx runs containers only. VM instances (`type: vm`, `--type vm`), KVM passthrough (`--kvm`, `type: kvm`), GUI and audio passthrough (Wayland + PipeWire) and the `overlay` mode for host resources are Linux-only: use `readonly` or `copy` host resources instead. isx refuses a VM or `--kvm` on macOS before it creates anything, and branches a `type: kvm` template without KVM.
 
+Behind TLS inspection (a corporate proxy that re-signs HTTPS), isx trusts the host's CA store for its own downloads and for the proxy's upstream connections. On Linux that is the system bundle (`/etc/pki/ca-trust`, `/etc/ssl/certs`). On macOS it is `/etc/ssl/cert.pem` plus every certificate an administrator or MDM trusts for SSL in the System keychain, which is where inspection agents install their CA; a root CA an administrator denied there is not trusted from any source (a denied intermediate or server certificate, and a certificate denied only in a login keychain, are still accepted: #1552). A CA trusted only in your login keychain is not used, because trusting a CA for isx should take an administrator: trust it system-wide with `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.pem`, then `isx proxy restart`. `isx doctor` lists the Keychain CAs isx trusts.
+
 | Installed with ([Quick Start](#quick-start)) | Update with |
 |----------------|-------------|
 | Homebrew | `brew upgrade incus-spawn` |

@@ -1,5 +1,7 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.DerEncoder;
+import dev.incusspawn.util.MacKeychainTrust;
 import dev.incusspawn.util.SystemTrust;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -17,6 +19,9 @@ import io.vertx.core.http.RequestOptions;
 import io.vertx.core.net.SocketAddress;
 
 import java.net.UnknownHostException;
+import java.nio.file.Path;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.X509Certificate;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -637,14 +642,39 @@ class Upstream {
 
     // --- SSL trust ---
 
-    /** The system CA bundle, plus a benchmark stub's certificate when one is configured. */
+    /**
+     * The system CA bundle, plus a benchmark stub's certificate when one is configured. On macOS
+     * the Keychain's admin-trusted certificates join the bundle's, less what an administrator
+     * denied ({@link SystemTrust#upstreamAnchors}, #1467); they are read once, so a Keychain change
+     * takes a proxy restart, as a bundle change does.
+     */
     private io.vertx.core.net.PemTrustOptions upstreamTrust() {
-        var systemCaBundle = SystemTrust.findBundle();
-        if (systemCaBundle == null && extraUpstreamTrustPem == null) return null;
+        return upstreamTrust(SystemTrust.findBundle(), SystemTrust.keychain(), extraUpstreamTrustPem);
+    }
+
+    /** With nothing from the Keychain, the bundle as a file, as always; otherwise its certificates with the Keychain's. */
+    static io.vertx.core.net.PemTrustOptions upstreamTrust(Path systemCaBundle, MacKeychainTrust.Trust keychain,
+                                                          String extraUpstreamTrustPem) {
         var trust = new io.vertx.core.net.PemTrustOptions();
-        if (systemCaBundle != null) trust.addCertPath(systemCaBundle.toString());
+        if (keychain.isEmpty()) {
+            if (systemCaBundle != null) trust.addCertPath(systemCaBundle.toString());
+        } else {
+            try {
+                for (var cert : SystemTrust.upstreamAnchors(systemCaBundle, keychain)) trust.addCertValue(pem(cert));
+            } catch (java.security.GeneralSecurityException e) {
+                throw new IllegalStateException("No upstream trust: " + e.getMessage(), e);
+            }
+        }
         if (extraUpstreamTrustPem != null) trust.addCertPath(extraUpstreamTrustPem);
-        return trust;
+        return trust.getCertPaths().isEmpty() && trust.getCertValues().isEmpty() ? null : trust;
+    }
+
+    private static Buffer pem(X509Certificate cert) {
+        try {
+            return Buffer.buffer(DerEncoder.toPem("CERTIFICATE", cert.getEncoded()));
+        } catch (CertificateEncodingException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     // --- Vert.x helpers ---

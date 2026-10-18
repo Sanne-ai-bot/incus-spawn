@@ -27,8 +27,12 @@ import java.security.cert.Certificate;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -90,12 +94,12 @@ class SystemTrustTest {
         // Shaped like Fedora's tls-ca-bundle.pem: a comment before each certificate, ours not first
         var bundle = Files.writeString(temp.resolve("tls-ca-bundle.pem"),
                 "# Other CA\n" + pem(otherCa) + "\n# Inspecting CA\n" + pem(inspectingCa));
-        assertEquals(204, get(SystemTrust.sslContext(bundle)));
+        assertEquals(204, get(SystemTrust.sslContext(bundle, MacKeychainTrust.Trust.NONE)));
     }
 
     @Test
     void withoutABundleTheJdkStoreApplies() {
-        assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(null)));
+        assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(null, MacKeychainTrust.Trust.NONE)));
     }
 
     @Test
@@ -107,18 +111,72 @@ class SystemTrustTest {
         var expected = new HashSet<Certificate>(List.of(((X509TrustManager) jdk.getTrustManagers()[0]).getAcceptedIssuers()));
         expected.add(otherCa.caCert());
 
-        var anchors = SystemTrust.anchors(bundle);
+        var anchors = SystemTrust.anchors(bundle, MacKeychainTrust.Trust.NONE);
         var actual = new HashSet<Certificate>();
         for (var alias : Collections.list(anchors.aliases())) actual.add(anchors.getCertificate(alias));
         assertEquals(expected, actual);
-        assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(bundle)));
+        assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(bundle, MacKeychainTrust.Trust.NONE)));
     }
 
     @Test
     void anUnreadableBundleLeavesTheJdkStore() throws Exception {
         var garbage = Files.writeString(temp.resolve("garbage.pem"), "not a certificate\n");
-        assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(garbage)));
-        assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(temp.resolve("missing.pem"))));
+        assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(garbage, MacKeychainTrust.Trust.NONE)));
+        assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(temp.resolve("missing.pem"), MacKeychainTrust.Trust.NONE)));
+    }
+
+    @Test
+    void trustsACaTheKeychainTrusts() throws Exception {
+        // macOS: the inspection CA is in the System keychain, not in /etc/ssl/cert.pem (#1467)
+        var bundle = Files.writeString(temp.resolve("cert.pem"), pem(otherCa));
+        var keychain = new MacKeychainTrust.Trust(List.of(inspectingCa.caCert()), Set.of(), null);
+        assertEquals(204, get(SystemTrust.sslContext(bundle, keychain)));
+        assertEquals(List.of(otherCa.caCert(), inspectingCa.caCert()), SystemTrust.upstreamAnchors(bundle, keychain));
+    }
+
+    @Test
+    void whatAnAdministratorDeniedIsTrustedFromNoSource() throws Exception {
+        var bundle = Files.writeString(temp.resolve("cert.pem"), pem(inspectingCa));
+        var deniedInspecting = new MacKeychainTrust.Trust(List.of(), Set.of(MacKeychainTrust.sha1(inspectingCa.caCert())), null);
+        assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(bundle, deniedInspecting)));
+        // Nothing left for the proxy: refused, not an empty set Vert.x would replace with the JDK store
+        assertThrows(java.security.GeneralSecurityException.class, () -> SystemTrust.upstreamAnchors(bundle, deniedInspecting));
+
+        // The JDK store's roots too
+        var jdk = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        jdk.init((KeyStore) null);
+        var aJdkRoot = ((X509TrustManager) jdk.getTrustManagers()[0]).getAcceptedIssuers()[0];
+        var deniedRoot = new MacKeychainTrust.Trust(List.of(), Set.of(MacKeychainTrust.sha1(aJdkRoot)), null);
+        var anchors = SystemTrust.anchors(null, deniedRoot);
+        for (var alias : Collections.list(anchors.aliases())) {
+            assertNotEquals(aJdkRoot, anchors.getCertificate(alias));
+        }
+        assertEquals(((X509TrustManager) jdk.getTrustManagers()[0]).getAcceptedIssuers().length - 1, anchors.size());
+    }
+
+    @Test
+    void withoutABundleTheProxyKeepsTheJdkStoreBesideTheKeychain() throws Exception {
+        // The proxy trusts the JDK store when there is no bundle: the Keychain must add to it, not replace it
+        var jdkRoots = List.of(((X509TrustManager) jdkTrustManager()).getAcceptedIssuers());
+        var keychain = new MacKeychainTrust.Trust(List.of(inspectingCa.caCert()), Set.of(MacKeychainTrust.sha1(jdkRoots.getFirst())), null);
+        var anchors = SystemTrust.upstreamAnchors(null, keychain);
+        assertEquals(jdkRoots.size(), anchors.size());
+        assertTrue(anchors.contains(inspectingCa.caCert()));
+        assertFalse(anchors.contains(jdkRoots.getFirst()), "an administrator denied it");
+    }
+
+    @Test
+    void aDenyOfTheDefaultRootsLeavesOnlyWhatAnAdministratorTrusts() throws Exception {
+        var bundle = Files.writeString(temp.resolve("cert.pem"), pem(otherCa));
+        var keychain = new MacKeychainTrust.Trust(List.of(inspectingCa.caCert()), Set.of(), true, null);
+        assertEquals(List.of(inspectingCa.caCert()), SystemTrust.upstreamAnchors(bundle, keychain));
+        assertEquals(1, SystemTrust.anchors(bundle, keychain).size());
+    }
+
+    private static javax.net.ssl.TrustManager jdkTrustManager() throws Exception {
+        var jdk = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        jdk.init((KeyStore) null);
+        return jdk.getTrustManagers()[0];
     }
 
     private int get(SSLContext tls) throws Exception {

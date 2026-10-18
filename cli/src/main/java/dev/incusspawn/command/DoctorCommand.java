@@ -30,7 +30,9 @@ import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.MacKeychainTrust;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.SystemTrust;
 import dev.incusspawn.vm.VmAgentClient;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
@@ -60,6 +62,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Runs a battery of health checks across the host, VM, and vsock tunnel and reports a
@@ -220,6 +223,7 @@ public class DoctorCommand extends BaseCommand {
 
         // Layer 1: Host configuration
         findings.addAll(checkHostConfig());
+        findings.add(keychainTrustFinding(SystemTrust.keychain()));
         // Said here so nobody has to find it out from a failed build or branch (#1254)
         findings.add(Finding.note("VM instances and KVM", "(not available on macOS: isx runs containers only)"));
 
@@ -299,6 +303,26 @@ public class DoctorCommand extends BaseCommand {
         findings.add(checkCaCertificate());
         findings.addAll(checkCredentials());
         return findings;
+    }
+
+    /** What macOS's Keychain adds to isx's own TLS trust (#1467), so a user can tell why an inspection CA is or is not used. */
+    static Finding keychainTrustFinding(MacKeychainTrust.Trust trust) {
+        if (trust.problem() != null) {
+            var trusts = trust.defaultRootsDenied()
+                    ? "isx trusts no CA: an administrator denied the default roots and no Keychain CA could be read"
+                    : "isx trusts /etc/ssl/cert.pem and the CA list it was built with, no Keychain CA"
+                        + (trust.denied().isEmpty() ? "" : ", less the " + trust.denied().size() + " an administrator denied");
+            return Finding.warn("Keychain trust settings unreadable", "(" + trust.problem() + "; " + trusts + ")", null);
+        }
+        var denied = trust.denied().isEmpty() ? "" : "; " + trust.denied().size() + " denied by an administrator";
+        if (trust.trusted().isEmpty()) {
+            return Finding.note("Keychain CAs trusted for TLS", "(none" + denied + "; a CA trusted only in a login keychain is not used: "
+                    + "trust it system-wide with sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain <ca.pem>)");
+        }
+        var cas = trust.trusted().stream()
+                .map(c -> c.getSubjectX500Principal().getName() + " sha256:" + CertificateAuthority.fingerprintOf(c))
+                .collect(Collectors.joining("; "));
+        return Finding.ok("Keychain CAs trusted for TLS", "(" + cas + denied + ")");
     }
 
     // ---- Layer 1b: Inside an instance ----
