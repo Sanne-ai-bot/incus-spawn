@@ -363,8 +363,9 @@ class ProxyOnlyAclTest {
         daemon.device("box", "eth0", Map.of("type", "none"));
         daemon.device("box", "ib0", Map.of("type", "infiniband", "nictype", "physical", "parent", "ibp1s0"));
 
-        assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
+        var e = assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
                 daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+        assertTrue(e.getMessage().contains("a network device that is not on incusbr0 (ib0)"), e::getMessage);
         assertEquals(List.of(), daemon.stateActions());
     }
 }

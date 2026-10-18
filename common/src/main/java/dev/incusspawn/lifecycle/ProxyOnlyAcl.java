@@ -99,27 +99,26 @@ public final class ProxyOnlyAcl {
                 + "Until then, use full network or --airgap.";
     }
 
-    /** Whether Incus would attach any network device to the instance. */
-    private static boolean hasNic(JqValue instance) {
-        return instance.path("expanded_devices") instanceof io.hyperfoil.tools.jjq.value.JqObject devices
-                && devices.keys().stream().anyMatch(device -> IncusClient.isNetworkDevice(devices.path(device)));
-    }
-
     /**
-     * The network devices Incus would attach to {@code instance} besides {@code restricted}, from
-     * its own devices or a profile's: NICs, and InfiniBand devices, which reach a network without
-     * any NIC. Only the one bridge NIC carries the ACL, so any other has full egress.
+     * The network devices Incus would attach to {@code instance}, from its own devices or a
+     * profile's: NICs, and InfiniBand devices, which reach a network without any NIC.
      */
-    static List<String> otherNics(JqValue instance, String restricted) {
+    private static List<String> networkDevices(JqValue instance) {
         if (!(instance.path("expanded_devices") instanceof io.hyperfoil.tools.jjq.value.JqObject devices)) return List.of();
-        return devices.keys().stream()
-                .filter(device -> !device.equals(restricted) && IncusClient.isNetworkDevice(devices.path(device)))
-                .sorted().toList();
+        return devices.keys().stream().filter(device -> IncusClient.isNetworkDevice(devices.path(device))).sorted().toList();
     }
 
     /**
-     * Refuse proxy-only for {@code instance} when Incus would attach a NIC besides the bridge one
-     * isx restricts. One with no bridge NIC is left to the callers, which refuse it themselves.
+     * The {@linkplain #networkDevices network devices} of {@code instance} besides {@code restricted}.
+     * Only the one bridge NIC carries the ACL, so any other has full egress.
+     */
+    static List<String> otherNetworkDevices(JqValue instance, String restricted) {
+        return networkDevices(instance).stream().filter(device -> !device.equals(restricted)).toList();
+    }
+
+    /**
+     * Refuse proxy-only for {@code instance} when Incus would attach a network device besides the
+     * bridge NIC isx restricts. One with no bridge NIC is left to the callers, which refuse it themselves.
      *
      * @param subject how the refusal names it: the instance, or the branch to be made from it
      * @param remedy what the user can do about it
@@ -128,7 +127,7 @@ public final class ProxyOnlyAcl {
     static void requireOneNic(String subject, JqValue instance, String remedy) {
         var nic = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
         if (nic == null) return;
-        var others = otherNics(instance, nic);
+        var others = otherNetworkDevices(instance, nic);
         if (others.isEmpty()) return;
         throw new NotEnforceableException(subject + " has a network device besides the one on " + BridgeAddress.BRIDGE
                 + " that --proxy-only restricts (" + String.join(", ", others) + "), which would reach the network"
@@ -158,10 +157,16 @@ public final class ProxyOnlyAcl {
         if (!NetworkMode.isProxyOnly(instance)) return;
         var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
         if (nic == null) {
-            // No NIC at all is no network, which is within the mode; a NIC elsewhere is unrestricted
-            if (hasNic(instance)) {
-                throw new NotEnforceableException("'" + name + "' is proxy-only, but its network is not on "
-                        + BridgeAddress.BRIDGE + ", where isx restricts it; isx will not use it."
+            // No network device at all is no network, which is within the mode; a network device
+            // elsewhere is unrestricted
+            var devices = networkDevices(instance);
+            if (!devices.isEmpty()) {
+                var one = devices.size() == 1;
+                throw new NotEnforceableException("'" + name + "' is proxy-only, but it has "
+                        + (one ? "a network device that is" : "network devices that are") + " not on "
+                        + BridgeAddress.BRIDGE + " (" + String.join(", ", devices) + "), where isx restricts its network;"
+                        + " isx will not use it until " + (one ? "it is" : "they are")
+                        + " removed from the instance or its profile."
                         + " 'isx destroy " + name + "' removes it.");
             }
             return;
