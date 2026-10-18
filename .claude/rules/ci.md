@@ -19,6 +19,7 @@ Key jobs:
 
 - **`unit-tests`**: `mvn package` (no Incus required)
 - **`unit-tests-macos`**: `mvn test` on `macos-15` (a standard arm64 runner), so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970). arm64 only, by decision (#974); the reasoning is in DESIGN.md "Testing".
+  It sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`, which enables `KeychainTrustMacTest`: it adds CAs to the runner's System keychain, which only a discarded runner may do (#1467).
   Test failures are counted from the surefire reports after the run, so a failure in `common` does not skip `cli` and `proxy` (`-fae` would: they depend on it), and the reports are uploaded when it fails, since few contributors have a Mac to reproduce on
 - **Test JVM flags**: the root pom's `argLine` property keeps `com.sun.crypto.provider.AESCrypt::makeSessionKey` out of the JIT, a GraalVM 25 JIT bug that made the proxy tests flake with `bad_record_mac` (#940, upstream: [oracle/graal#14599](https://github.com/oracle/graal/issues/14599), DESIGN.md "Testing").
   Add to that property and never set surefire's `<argLine>`, which would drop both the flag and the arguments the Quarkus plugin adds; `-DargLine=` on the command line replaces it too.
@@ -27,6 +28,7 @@ Key jobs:
   That the excluded method still exists is checked only on a Graal-JIT JVM (`UseJVMCICompiler`), since other JDKs need no exclude and JDK 27 has no `AESCrypt` at all (#1050)
 - **`uber-jar-smoke`**: builds `-Prelease` and runs both uber-jars on a JVM -- what JBang users get.
   Nothing else in CI executes them, which is how the JBang channel broke unnoticed (issue #701); it also asserts that `proxy start` without an `isx-proxy` sibling exits 78 with install instructions rather than looping
+- **`macos-keychain-trust.yml`** (`native-keychain-smoke`, `macos-15`): builds the native CLI on macOS weekly, by hand and on a PR touching `MacKeychainTrust`/`SystemTrust`, and runs `.github/scripts/macos-keychain-smoke.sh`, which `release.yml` also runs on each macOS binary: a CA trusted in the System keychain must appear in `isx doctor --format=json`, and one denied there must not (#1467)
 - **`build-native-cli`**: builds the CLI native image, uploads artifact
 - **`build-native-proxy`**: builds the proxy native image, uploads artifact
 - **`integration-tests (x86_64)`, `integration-tests (aarch64)`**: a matrix.

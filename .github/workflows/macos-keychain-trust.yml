@@ -1,0 +1,54 @@
+name: macOS Keychain trust (native)
+
+# The native CLI is built on macOS only by release.yml, so a native-only break in how isx reads
+# the Keychain's trust settings (#1467) would otherwise surface at release time. This builds it
+# weekly, on a change to that code, and by hand, and runs the Keychain smoke against it.
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'common/src/main/java/dev/incusspawn/util/MacKeychainTrust.java'
+      - 'common/src/main/java/dev/incusspawn/util/SystemTrust.java'
+      # What the smoke reads the result through
+      - 'cli/src/main/java/dev/incusspawn/command/DoctorCommand.java'
+      - '.github/scripts/macos-keychain-smoke.sh'
+      - '.github/workflows/macos-keychain-trust.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-keychain-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-keychain-smoke:
+    # A GitHub-hosted runner is discarded after the job, so the smoke may change its System keychain
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Oracle GraalVM 25.4
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.4'
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.m2/repository
+          key: macos-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: macos-maven-
+
+      - name: Build CLI native image
+        run: mvn -B -ntp package -Dnative -DskipTests -Dnative.optimization=-Ob -pl cli -am
+
+      - name: Keychain trust smoke
+        run: .github/scripts/macos-keychain-smoke.sh cli/target/incus-spawn-*-runner

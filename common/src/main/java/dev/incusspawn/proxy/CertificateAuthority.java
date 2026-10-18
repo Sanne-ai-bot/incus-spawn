@@ -361,9 +361,14 @@ public class CertificateAuthority {
         }
     }
 
-    private static String fingerprintOf(X509Certificate cert) throws Exception {
-        return java.util.HexFormat.of().formatHex(
-                MessageDigest.getInstance("SHA-256").digest(cert.getEncoded()));
+    /** SHA-256 of the certificate's encoding, lower-case hex: what names an {@code isx-<fp>.crt} anchor. */
+    public static String fingerprintOf(X509Certificate cert) {
+        try {
+            return java.util.HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(cert.getEncoded()));
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /**

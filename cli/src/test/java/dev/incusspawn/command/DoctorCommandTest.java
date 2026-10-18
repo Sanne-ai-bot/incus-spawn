@@ -7,6 +7,7 @@ import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.proxy.BridgeDns;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ToolProxyResolver;
+import dev.incusspawn.util.MacKeychainTrust;
 import dev.incusspawn.vm.VmManager;
 import org.junit.jupiter.api.Test;
 
@@ -25,6 +26,30 @@ import java.util.function.Supplier;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DoctorCommandTest {
+
+    @Test
+    void keychainTrustSaysWhichCasAreTrustedAndHowToTrustOneSystemWide(@org.junit.jupiter.api.io.TempDir Path temp) {
+        var savedHome = System.getProperty("user.home");
+        java.security.cert.X509Certificate ca;
+        try {
+            System.setProperty("user.home", temp.toString());
+            ca = dev.incusspawn.proxy.CertificateAuthority.loadOrCreate().caCert();
+        } finally {
+            System.setProperty("user.home", savedHome);
+        }
+        var trusted = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(ca), Set.of("AB"), null));
+        assertEquals(DoctorCommand.Status.OK, trusted.status());
+        assertTrue(trusted.detail().contains("sha256:" + dev.incusspawn.proxy.CertificateAuthority.fingerprintOf(ca)), trusted.detail());
+        assertTrue(trusted.detail().contains("1 denied"), trusted.detail());
+
+        var none = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), null));
+        assertEquals(DoctorCommand.Status.NOTE, none.status());
+        assertTrue(none.detail().contains("sudo security add-trusted-cert -d"), none.detail());
+
+        var failed = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), "timed out"));
+        assertEquals(DoctorCommand.Status.WARN, failed.status());
+        assertTrue(failed.detail().contains("timed out"), failed.detail());
+    }
 
     @Test
     void unmeasurableCountIsOkAndOffersNoFix() {

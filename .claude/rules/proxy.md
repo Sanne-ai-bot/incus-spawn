@@ -5,6 +5,7 @@ paths:
   - "common/src/main/java/dev/incusspawn/DerEncoder.java"
   - "common/src/main/java/dev/incusspawn/util/HttpValidator.java"
   - "common/src/main/java/dev/incusspawn/util/SystemTrust.java"
+  - "common/src/main/java/dev/incusspawn/util/MacKeychainTrust.java"
   - "cli/src/main/java/dev/incusspawn/command/Proxy*Command.java"
 ---
 
@@ -45,6 +46,12 @@ Key design:
   Every other TLS client starts from `SystemTrust.httpClient()` or `SystemTrust.sslContext()`, which add the bundle to the JDK store rather than replace it, so a CA a JVM user imported into `cacerts` keeps working; an unreadable bundle leaves the JDK store alone.
   A raw socket from `SystemTrust.sslContext()` checks the chain but not the host name, so it sets endpoint identification to `HTTPS` before the handshake (`DumpProxy.openUpstream`).
   Without it a native binary trusts only the JDK store baked in at build time, and fails behind TLS inspection where curl and the proxy succeed.
+  On macOS `MacKeychainTrust` adds what an administrator trusts for SSL in the Keychain's admin domain and removes what one denied, from every source (#1467, DESIGN.md "Host trust on macOS: the admin domain only").
+  It runs `/usr/bin/security` by absolute path; a failure adds nothing.
+  When only the System keychain's certificates cannot be read (exit status, timeout or unparseable output), the export's denies still apply; a failed login-keychain read only loses the bodies stored there; nothing is denied only when the trust settings themselves cannot be read.
+  An unreadable entry (not a dict, a result that is not an integer, a policy that is not data) decides nothing and stops any later entry from trusting; a later deny still denies, and so does a deny on an entry whose policy is not data, and a `<real>` result of 3.
+  The user domain (login keychain) is deliberately not read.
+  Two documented deviations trust more than macOS: a denied intermediate or server certificate is still accepted (a deny only removes anchors), and user-domain denies are ignored (#1552).
   `SystemTrustGateTest` (in `cli`) fails on a plain `HttpClient.newBuilder()`, a default `SSLContext`/socket factory or an `HttpsURLConnection` in any module's main sources; a plain HTTP client says so with a `// plain HTTP:` comment on that line.
   Nothing is cached: the class is initialized at image build time, and the store may change under a long-running isx.
 - **Host CA propagation** (opt-in, `host-ca: { propagate: true }` in config.yaml): `CertificateAuthority.collectTrustAnchors()` builds one trust set -- the MITM CA plus host anchors from `/etc/pki/ca-trust/source/anchors/`, every certificate in each `.crt`/`.pem` file (PEM bundles and DER alike) re-encoded as PEM from its DER and keyed by its SHA-256 fingerprint (`isx-<fp>.crt`).

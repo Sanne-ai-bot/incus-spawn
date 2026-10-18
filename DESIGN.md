@@ -1164,7 +1164,54 @@ What lands outside those directories, or whose bundled file appears only after t
      Anthropic auth is hardcoded in `MitmProxy` (three auth modes with complex routing)
    - Tool-contributed domains (GitHub, OpenAI, Bob, and user-defined tools) — credential injection is declared in YAML tool definitions via `proxy:` entries (see "Tool-contributed proxy definitions" below)
    - Container registry, Maven, and npm domains — relayed transparently with caching (no auth injection)
-5. The proxy re-encrypts and forwards to the real upstream over TLS, trusting the host's system CA bundle (`SystemTrust.findBundle()`) alone, or the JDK store when there is none; the CLI's own TLS clients add that bundle to the JDK store instead (`SystemTrust.httpClient()`), so both work behind TLS inspection whose CA is in the system store, and the CLI run on a JVM also keeps a CA imported into that JVM's `cacerts` (a native binary's JDK store is fixed at build time)
+5. The proxy re-encrypts and forwards to the real upstream over TLS, trusting the host's system CA bundle (`SystemTrust.findBundle()`) alone, or the JDK store when there is none; the CLI's own TLS clients add that bundle to the JDK store instead (`SystemTrust.httpClient()`), so both work behind TLS inspection whose CA is in the system store, and the CLI run on a JVM also keeps a CA imported into that JVM's `cacerts` (a native binary's JDK store is fixed at build time).
+   On macOS the Keychain's admin trust joins the bundle for both (`MacKeychainTrust`, #1467); see "Host trust on macOS: the admin domain only" below.
+
+**Host trust on macOS: the admin domain only.**
+On a Mac, a TLS-inspection CA is installed into the Keychain by MDM or `sudo security add-trusted-cert -d`, never into `/etc/ssl/cert.pem`, so without the Keychain the proxy and the native CLI fail with PKIX where Safari succeeds (#1467).
+`MacKeychainTrust` runs `/usr/bin/security` (by absolute path) for the admin domain's trust settings (`trust-settings-export -d`) and the certificates of the System and login keychains (`find-certificate -a -p`), and pairs them by SHA-1.
+The runs start together and share one 5 s deadline, so a hung `security` delays a proxy start or a download by 5 s at most; each took about 10 ms on a GitHub runner.
+The login keychain is read by a run of its own, so one a user-level process broke cannot fail the System keychain's read: whatever its failure, a timeout or output that does not parse included, it only loses the bodies stored there.
+The login keychain supplies certificate bodies only, since `add-trusted-cert -d` without `-k` stores the certificate there; what is trusted is decided by the admin domain alone.
+A body is bound to its admin record by SHA-1 and by the issuer and serial number the record carries, so a certificate planted in a keychain the user can write must match all three.
+It evaluates each certificate's settings as macOS does for a TLS server certificate: the first entry for SSL or for every policy decides, an empty or absent list or an entry with no result trusts as root, and Unspecified passes to the next entry.
+A result of an unknown value or type, a policy that is not data, and an entry that is not a dictionary, decide nothing and pass to the next entry.
+The one exception is a deny on an entry whose policy is not data: it still denies, since macOS may read that policy as SSL's.
+An unreadable entry also taints the list: a later deny still denies, but a later trust does not trust, since macOS may have read that entry as a deny.
+A `<real>` result of 3 is a deny, as macOS reads any number.
+An entry restricted to a host name, an application or a key usage is skipped when it trusts and decides when it denies, so a constraint only ever narrows what isx trusts.
+`SystemTrust` adds the admin-trusted certificates to the CLI's JDK store and bundle, and `Upstream.upstreamTrust()` gives the proxy the bundle's and the Keychain's as values.
+A certificate an administrator denied for SSL is removed from every source, the JDK store and the bundle included, which only narrows.
+This does not match macOS in two places, where isx still trusts what macOS refuses (#1552).
+Neither is a regression, since isx applied no denies at all before #1467.
+
+- *A denied intermediate or server certificate*: a deny removes a certificate from the anchors, and neither an intermediate nor a server (leaf) certificate is ever one, so a chain holding either to a trusted root still validates; macOS rejects a deny anywhere in the chain.
+  Fixing it takes a trust manager that checks every certificate of a validated chain, in the CLI and in the proxy's Vert.x clients.
+- *User-domain denies*: macOS gives the user's own trust settings precedence over the admin domain's, so a root a user marked "Never Trust" is refused there; isx does not read the user domain, so it keeps trusting that root.
+  Reading only the user domain's denies would only narrow, but it would let any process running as the user break isx's TLS by denying roots.
+
+A deny of the default roots as a whole (`kSecTrustSettingsDefaultRootCertSetting`) drops the JDK store and the bundle, which stand for them, leaving only what an administrator trusts.
+Without a bundle the proxy keeps the JDK store, as before, with the Keychain's certificates added to it.
+Any failure, a timeout or a plist that does not parse adds nothing, is logged to the client log, and `isx doctor` reports it.
+When only the System keychain's certificates cannot be read, by an exit status, a timeout or output that does not parse alike, the export's denies still apply, since they need no certificate bodies.
+When the Keychain's denies leave the proxy nothing to trust, it refuses to start rather than fall back to the JDK store, which would trust the denied roots again.
+The plist is parsed with its DOCTYPE dropped and any other refused, so no DTD or entity is ever resolved.
+The proxy reads the Keychain once, at start: a Keychain change takes `isx proxy restart`, as a bundle change does.
+The CLI reads it for each TLS context it builds, which only network commands do (up to three `security` runs at once, tens of milliseconds), never branch, start or shell.
+
+Why not the alternatives:
+- *The user domain too* (a CA a user marked "Always Trust" in their login keychain): anything running as the user can ask for that trust, while the admin domain takes root, as the Linux system store does.
+  A CA isx trusts can read every credential the proxy injects, so trusting one should take an administrator.
+  Corporate inspection agents and MDM install into the System keychain; a user whose CA is only in the login keychain gets the `sudo security add-trusted-cert -d` remedy from `isx doctor` and the README.
+- *Every certificate in the System keychain* (`find-certificate -a` alone): it holds certificates nobody trusted, and some an administrator distrusted.
+- *The system domain* (Apple's roots, `SystemRootCertificates.keychain`): they overlap `/etc/ssl/cert.pem` and the JDK store, and an inspection CA is never among them.
+- *The JDK's `KeychainStore`*: whether a native image can use it is unproven, and its reading of trust settings is the JDK's, not one isx can test on Linux.
+- *A `config.yaml` file of extra CAs*: a manual step for every user, which the Keychain already records; it stays open if a need appears.
+
+`KeychainTrustMacTest` checks this against the real Keychain on the `unit-tests-macos` runner, which is discarded after the job (it runs only when the job sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`).
+`macos-keychain-trust.yml` builds the native CLI on macOS weekly and on a change to this code, and `release.yml` smoke-tests each released macOS binary, through `isx doctor --format=json`.
+MDM-delivered CAs cannot be reproduced on a runner, since a configuration profile cannot be installed headless.
+Each check uses a CA of its own and never changes or removes a trust setting: on a runner that waited for an authorization nobody gives (#1515), as user-domain trust always does, so the user domain is left out of the checks too.
 
 **Redirect rule cleanup:** `isx proxy uninstall` removes the systemd service **and** cleans up the PREROUTING redirect rule and bridge DNS overrides unconditionally — even if the service removal itself fails.
 `ProxyConfig.clearRedirectRules()` attempts both firewalld and UFW independently (not else-if) so that a system with firewalld installed but inactive still reaches UFW cleanup.
