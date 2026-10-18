@@ -51,9 +51,6 @@ keywords = ["sk-ant-oat01-"]
     # and a "ghp_" token with 16 characters where a GitHub token has 36.
     '''^-----BEGIN RSA PRIVATE KEY-----\n {16}MIIEowIBAAKCAQEAxyz\n {16}more base64 here\n {16}-----END RSA PRIVATE KEY-----$''',
     '''^ghp_abcdef1234567890$''',
-    # The alphabet-run token of SecretRedactorTest and SupportBundleTest. Real length, so gitleaks
-    # 8.24.3, which scan-stock runs (the action's default), reports it as github-pat; 8.27.0 does not.
-    '''^ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789$''',
     # Not a fixture: generic-api-key captures the parameter type after a Java
     # PrivateKey parameter ("PrivateKey key, X509Certificate cert"). Anchored to
     # the whole captured secret, so a value that only starts with it is still flagged.
