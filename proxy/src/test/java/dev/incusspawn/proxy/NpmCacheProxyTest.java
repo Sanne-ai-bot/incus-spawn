@@ -129,6 +129,8 @@ class NpmCacheProxyTest {
         hits.computeIfAbsent(path, k -> new AtomicInteger()).incrementAndGet();
         if (path.equals(stalledLookup)) {
             stalled.add(req);
+            // The drain may have ended the stall between the check and the add, and missed this one
+            if (!path.equals(stalledLookup)) release(req);
             return;
         }
         var failures = unavailable.get(path);
@@ -150,6 +152,14 @@ class NpmCacheProxyTest {
             return;
         }
         reply(req);
+    }
+
+    /** Answers a held lookup, once: whichever of the drain and {@link #answer} removes it. */
+    static void release(HttpServerRequest req) {
+        // A test may have closed or answered it already
+        if (stalled.remove(req) && !req.response().closed() && !req.response().ended()) {
+            req.response().setStatusCode(404).end();
+        }
     }
 
     static void reply(HttpServerRequest req) {
@@ -176,13 +186,9 @@ class NpmCacheProxyTest {
         routes.clear();
         hits.clear();
         lookupsToGather = 0;
-        stalledLookup = null;
         unavailable.clear();
         unavailableStatus = 503;
         unavailableDelayMillis = 0;
-        // Answered now, so a stall cannot outlive its test on the shared probe connection
-        stalled.forEach(req -> req.response().setStatusCode(404).end());
-        stalled.clear();
         synchronized (gathered) {
             gathered.clear();
         }
@@ -192,12 +198,16 @@ class NpmCacheProxyTest {
 
     /**
      * A test's own await can end before its confirmation leaves the set, which the next test reads (#1496):
-     * drained here, against this test's own fixture, and charged to it if it never ends.
+     * drained here, against this test's own fixture, and charged to it if it never ends. Held lookups are
+     * answered before the wait, so a stall cannot outlive its test on the shared probe connection, and a test that
+     * fails while one is held reports that failure, not this drain's timeout as well.
      */
     @AfterEach
-    void awaitBackgroundConfirmations() throws Exception {
-        ArtifactCacheProxyTest.await("this test's background confirmations to finish",
-                proxy.artifactCache.backgroundConfirmations::isEmpty);
+    void drainBackgroundConfirmations() throws Exception {
+        // Stopped before the answers: a lookup already past the check is answered by answer() itself
+        stalledLookup = null;
+        stalled.forEach(NpmCacheProxyTest::release);
+        ArtifactCacheProxyTest.awaitBackgroundConfirmations(proxy);
     }
 
     static void online() {
@@ -438,12 +448,21 @@ class NpmCacheProxyTest {
         online();
         assertEquals(new Response(200, "tarball of backoff-expired"), get(expired, 10));
         assertEquals(new Response(200, "tarball of backoff-stale"), get(stale, 10));
-        // The response can reach the client before the callback that served it queues the stale hit's
-        // confirmation, so it is awaited rather than sampled; had it asked the registry, that counts below (#1496)
-        ArtifactCacheProxyTest.await("the background confirmation to finish",
-                proxy.artifactCache.backgroundConfirmations::isEmpty);
+        // In a backoff the stale hit's confirmation is queued and done in one synchronous call, so its key is in
+        // the set only while the serving callback runs: this await cannot see one that callback has yet to
+        // queue, only one that asked the registry and is still waiting on it, which counts below (#1496)
+        ArtifactCacheProxyTest.awaitBackgroundConfirmations(proxy);
         assertEquals(1, hits.get("/backoff-expired/1.0.0").get(), "the expired hit is served unconfirmed");
         assertEquals(1, hits.get("/backoff-stale/1.0.0").get(), "the stale hit is not confirmed in the background");
+    }
+
+    /** Ends with its confirmation's lookup still held: the drain answers it, rather than timing out on it. */
+    @Test
+    void aTestEndingWhileALookupIsHeldIsNotChargedTheDrain() throws Exception {
+        var held = cacheUnderEtag("held-at-the-end", Duration.ofHours(3));
+        stalledLookup = "/held-at-the-end/1.0.0";
+        assertEquals(new Response(200, "tarball of held-at-the-end"), get(held, 10));
+        ArtifactCacheProxyTest.await("the confirmation's lookup to be held", () -> stalled.size() == 1);
     }
 
     @Test
