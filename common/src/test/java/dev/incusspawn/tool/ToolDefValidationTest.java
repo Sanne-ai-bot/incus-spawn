@@ -14,16 +14,8 @@ class ToolDefValidationTest {
 
     private static final Pattern SHA256_PATTERN = Pattern.compile("^[a-fA-F0-9]{64}$");
 
-    private static final String[] BUILTIN_TOOLS = {
-            "tools/maven-3.yaml",
-            "tools/mvnd.yaml",
-            "tools/idea-backend.yaml",
-            "tools/starship.yaml",
-            "tools/podman.yaml",
-            "tools/sshd.yaml",
-            "tools/tmux.yaml",
-            "tools/typesafe.yaml"
-    };
+    private static final java.util.List<String> BUILTIN_TOOLS = ToolDefLoader.BUILTIN_TOOLS.stream()
+            .map(f -> "tools/" + f).toList();
 
     @Test
     void allBuiltInToolsHaveValidSha256() throws IOException {
