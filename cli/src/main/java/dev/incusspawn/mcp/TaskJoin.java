@@ -3,6 +3,9 @@ package dev.incusspawn.mcp;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.OutputFormat;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -59,9 +62,17 @@ public final class TaskJoin {
             return "running".equals(state);
         }
 
-        /** The command, run as agentuser in the instance, that resumes this conversation. */
+        /**
+         * The command, run as agentuser in the instance, that resumes this conversation; with a
+         * {@code nonce} ({@link #nonce}), a refusal in the guest is left for {@link #refusedInGuest}.
+         */
+        public String guestCommand(String nonce) {
+            return TaskJoin.guestCommand(id, DelegateAgent.parse(agent), cwd, sessionId, nonce);
+        }
+
+        /** {@link #guestCommand(String)} for a caller that does not ask afterwards whether it was refused. */
         public String guestCommand() {
-            return TaskJoin.guestCommand(id, DelegateAgent.parse(agent), cwd, sessionId);
+            return guestCommand(null);
         }
     }
 
@@ -87,17 +98,16 @@ public final class TaskJoin {
      * {@link #READ_LIMIT} so a guest that never answers cannot hold the caller.
      */
     public static List<Entry> read(IncusClient incus, String instance) {
-        var out = new java.io.ByteArrayOutputStream();
+        var out = new ByteArrayOutputStream();
         int exit;
         try {
-            exit = incus.execProbe(instance, IncusInstanceBackend.AGENT_UID, IncusInstanceBackend.AGENT_HOME,
-                    TaskScripts.joinable(), out, READ_LIMIT);
+            exit = probe(incus, instance, TaskScripts.joinable(), out);
         } catch (RuntimeException e) {
             throw new IllegalStateException("Could not read the tasks in " + instance + ": "
                     + OutputFormat.oneLine(String.valueOf(e.getMessage())), e);
         }
         if (exit != 0) throw new IllegalStateException("Could not read the tasks in " + instance + " (exit " + exit + ")");
-        return parse(out.toString(java.nio.charset.StandardCharsets.UTF_8));
+        return parse(out.toString(StandardCharsets.UTF_8));
     }
 
     /** {@link TaskScripts#joinable}'s output, in the order the guest listed the tasks. */
@@ -161,15 +171,49 @@ public final class TaskJoin {
      * the shell rather than falling back to a login shell. {@code sessionId} must be
      * {@link #SESSION_ID}-shaped, as {@link Entry} and {@link Tasks.Status} only carry such.
      */
-    static String guestCommand(String taskId, DelegateAgent agent, String cwd, String sessionId) {
+    static String guestCommand(String taskId, DelegateAgent agent, String cwd, String sessionId, String nonce) {
         if (!SESSION_ID.matcher(sessionId).matches()) throw new IllegalArgumentException("not a session id: " + sessionId);
         var resume = switch (agent) {
             case CLAUDE -> "claude --resume ";
             case CODEX -> "codex resume ";
             case UNKNOWN -> throw new IllegalArgumentException("unsupported task agent");
         };
-        return "cd " + ExecScript.quote(cwd) + " || exit 1; " + TaskScripts.joinGuard(taskId, agent, sessionId, cwd)
-                + "exec " + resume + sessionId;
+        // Under the conversation's lock, so a run that starts in the meantime and the person's
+        // agent cannot both run; the shell stays, to say so if the lock was taken first.
+        return TaskScripts.joinGuard(taskId, agent, sessionId, cwd, nonce)
+                + "cd " + ExecScript.quote(cwd) + " || isx_refuse 'its directory is gone'; "
+                + TaskScripts.requireFlock("isx_refuse 'flock (util-linux) is missing in this instance'") + "; "
+                + TaskScripts.CONVERSATION_LOCK + resume + sessionId + "; rc=$?; [ $rc != " + TaskScripts.CONVERSATION_TAKEN
+                + " ] || isx_refuse 'a run of it, or another person, took its conversation first'; exit $rc";
+    }
+
+    /** A fresh token naming one join, for {@link Entry#guestCommand} and {@link #refusedInGuest}. */
+    public static String nonce() {
+        return McpSession.randomSuffix(12);
+    }
+
+    /**
+     * Whether the guest refused the join {@code nonce} named, asked after its shell ended (false
+     * when it cannot be asked): one more exec, after the session, never before it.
+     */
+    public static boolean refusedInGuest(IncusClient incus, String instance, String taskId, String nonce) {
+        try {
+            var out = new ByteArrayOutputStream();
+            // Briefly: it runs after every join, and the person is waiting for their prompt.
+            return probe(incus, instance, TaskScripts.joinRefusal(taskId, nonce), out, Duration.ofSeconds(3)) == 0
+                    && !out.toString(StandardCharsets.UTF_8).isBlank();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** {@code script} as agentuser, bounded by {@link #READ_LIMIT}; its exit, its stdout in {@code out}. */
+    private static int probe(IncusClient incus, String instance, String script, ByteArrayOutputStream out) {
+        return probe(incus, instance, script, out, READ_LIMIT);
+    }
+
+    private static int probe(IncusClient incus, String instance, String script, ByteArrayOutputStream out, Duration limit) {
+        return incus.execProbe(instance, IncusInstanceBackend.AGENT_UID, IncusInstanceBackend.AGENT_HOME, script, out, limit);
     }
 
     /** The host command a person runs to join {@code taskId} in {@code instance}. */
