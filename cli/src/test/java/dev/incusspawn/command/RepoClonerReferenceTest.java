@@ -59,15 +59,21 @@ class RepoClonerReferenceTest {
     }
 
     private Build build(int count, int hotplugSlots, boolean mountAppears, boolean sameUrl) throws IOException {
+        return build(count, hotplugSlots, mountAppears, sameUrl, "repo");
+    }
+
+    /** As above, with repos named {@code <name><i>}, or all {@code <name>0} with {@code sameUrl}. */
+    private Build build(int count, int hotplugSlots, boolean mountAppears, boolean sameUrl, String name)
+            throws IOException {
         IsolatedHome.seed("host-paths:\n  - " + checkouts + "\n");
         var repos = new ArrayList<ImageDef.RepoEntry>();
         for (int i = 0; i < count; i++) {
-            var url = "https://github.com/owner/repo" + (sameUrl ? 0 : i) + ".git";
-            var git = Files.createDirectories(checkouts.resolve("repo" + i).resolve(".git"));
+            var url = "https://github.com/owner/" + name + (sameUrl ? 0 : i) + ".git";
+            var git = Files.createDirectories(checkouts.resolve(name + i).resolve(".git"));
             Files.writeString(git.resolve("config"), "[remote \"origin\"]\n\turl = " + url + "\n");
             var repo = new ImageDef.RepoEntry();
             repo.setUrl(url);
-            repo.setPath("~/repo" + i);
+            repo.setPath("~/" + name + i);
             repo.setPrime("echo primed");
             repos.add(repo);
         }
@@ -136,6 +142,22 @@ class RepoClonerReferenceTest {
         assertEquals(3, viaReference(build), build.output());
         assertEquals(3, new java.util.HashSet<>(build.deviceNames()).size());
         assertEquals(List.of(), referenceDevices(build));
+    }
+
+    @Test
+    void longRepoNamesCloneFromTheirReference() throws IOException {
+        // A hot-plugged share whose device name is over 30 characters never mounts in a VM (#1513).
+        var build = build(2, 8, true, false, "incus-spawn-templates");
+        assertEquals(2, viaReference(build), build.output());
+        assertEquals(List.of(), referenceDevices(build));
+    }
+
+    @Test
+    void twoEntriesForOneLongNamedUrlBothCloneFromTheirReference() throws IOException {
+        // The suffix that keeps their devices apart must not take the name past the limit.
+        var build = build(2, 8, true, true, "incus-spawn-templates");
+        assertEquals(2, viaReference(build), build.output());
+        assertEquals(2, new java.util.HashSet<>(build.deviceNames()).size());
     }
 
     private static long viaReference(Build build) {

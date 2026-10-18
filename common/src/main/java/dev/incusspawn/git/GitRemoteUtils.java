@@ -4,6 +4,7 @@ import dev.incusspawn.config.GitTransferConfig;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.DeviceNames;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 
@@ -446,12 +447,8 @@ public final class GitRemoteUtils {
             throw new IllegalArgumentException("Repo name must not be blank");
         }
         var urlHash = Integer.toHexString(normalizeGitUrl(cloneUrl).hashCode() & 0x7fffffff);
-        var base = "ref-" + repoName.replaceAll("[^a-zA-Z0-9]", "-");
-        var suffix = "-" + urlHash;
-        if (base.length() + suffix.length() > 64) {
-            base = base.substring(0, 64 - suffix.length());
-        }
-        return base + suffix;
+        // Hot-plugged into a running VM, so the repo name is cut to keep the URL hash (#1513).
+        return DeviceNames.hotplug("ref-" + repoName.replaceAll("[^a-zA-Z0-9]", "-"), "-" + urlHash);
     }
 
     public static String referenceContainerPath(String repoName, String cloneUrl) {
