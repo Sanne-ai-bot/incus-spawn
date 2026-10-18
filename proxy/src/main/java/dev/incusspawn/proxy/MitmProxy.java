@@ -1912,14 +1912,8 @@ public class MitmProxy {
         var clientResp = clientReq.response();
         if (watchdog.gone()) return;
         requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
-            if (watchdog.gone()) {
-                upReq.exceptionHandler(ignored -> {}).reset();
-                return;
-            }
-            watchdog.upReq = upReq;
-            // Now, not once the head is set: a cut while the token is fetched resets this request, and
-            // without a handler Vert.x would log that unprefixed
-            upReq.exceptionHandler(ignored -> {});
+            // The token may take seconds, and a cut or a client that leaves resets the request then
+            if (!watchdog.adopt(upReq)) return;
             Future<Boolean> head;
             try {
                 head = prepareApiHead(clientReq, upReq, ctx, requestOptions.getHost(), true, exchange);

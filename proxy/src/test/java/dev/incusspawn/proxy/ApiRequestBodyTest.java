@@ -66,6 +66,8 @@ class ApiRequestBodyTest {
     static volatile String rewriterFails;
     /** The response upstream streams on for a {@code hold-open} model call, until a test ends it. */
     static volatile CompletableFuture<io.vertx.core.http.HttpServerResponse> heldOpen = new CompletableFuture<>();
+    /** The response upstream never sends for a {@code no-answer} call, once the body is in. */
+    static volatile CompletableFuture<io.vertx.core.http.HttpServerResponse> unanswered = new CompletableFuture<>();
     /** Model calls upstream has refused once with a 401, by path. */
     static final java.util.Set<String> refusedOnce = ConcurrentHashMap.newKeySet();
     /** The body each refused model call carried, by path. */
@@ -171,6 +173,7 @@ class ApiRequestBodyTest {
         if (req.path().contains("no-answer")) {
             // Takes the body, then never answers, like a connection that died silently
             req.handler(ignored -> {});
+            req.endHandler(v -> unanswered.complete(req.response()));
             return;
         }
         if (req.path().contains("hold-open")) {
@@ -683,6 +686,40 @@ class ApiRequestBodyTest {
                 assertTrue(reply.contains("Upstream timed out"), reply);
             }
         }));
+    }
+
+    /**
+     * A client that leaves before its relay ends resets the upstream request, as a cut does: while
+     * the head is awaited, or partway through a streamed answer. Otherwise upstream generates, and
+     * bills for, an answer nobody reads, until it ends or the read-idle timeout fires (#1448).
+     */
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,no-answer", "false,hold-open", "true,no-answer", "true,hold-open", "false,get-no-answer"})
+    void aClientThatLeavesResetsTheUpstreamRequest(boolean vertex, String model) throws Exception {
+        heldOpen = new CompletableFuture<>();
+        unanswered = new CompletableFuture<>();
+        var uri = vertex
+                ? "/v1/projects/proj/locations/us-east5/publishers/anthropic/models/" + model + ":streamRawPredict"
+                : "/v1/" + model;
+        var body = "{\"anthropic_version\":\"vertex-2023-10-16\",\"messages\":[]}";
+        var socket = connect(vertex ? vertexProxy : proxy, "api.anthropic.com");
+        var streaming = new CompletableFuture<Void>();
+        var bytes = new StringBuilder();
+        socket.handler(b -> {
+            bytes.append(b.toString(StandardCharsets.UTF_8));
+            if (bytes.indexOf("message_start") >= 0) streaming.complete(null);
+        });
+        if (model.startsWith("get")) socket.write(head("GET", "api.anthropic.com", uri));
+        else socket.write(head("POST", "api.anthropic.com", uri, "Content-Length: " + body.length()) + body);
+        var upstream = (model.equals("hold-open") ? heldOpen : unanswered).get(5, TimeUnit.SECONDS);
+        try {
+            if (model.equals("hold-open")) streaming.get(5, TimeUnit.SECONDS);
+            socket.close();
+            ArtifactCacheProxyTest.await("upstream's request to be reset", upstream::closed);
+        } finally {
+            // Not left streaming into the next test's pool when this one fails
+            if (!upstream.closed()) upstream.reset();
+        }
     }
 
     static String waitForLog(Path dir, String marker) throws Exception {
