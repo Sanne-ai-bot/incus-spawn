@@ -13,6 +13,50 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ToolDefValidatorTest {
 
+    @Test void lingeringThroughLoginctlWarnsAndTheLingerFileDoesNot(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("lingers.yaml");
+        Files.writeString(file, """
+                name: lingers
+                packages: [dbus-broker, systemd-pam]
+                run_as_user:
+                  - sudo loginctl --no-ask-password enable-linger agentuser
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertFalse(result.hasErrors(), result.errors().toString());
+        assertEquals(1, result.warnings().size(), result.warnings().toString());
+        assertTrue(result.warnings().getFirst().contains("/var/lib/systemd/linger/"), result.warnings().getFirst());
+
+        Files.writeString(file, """
+                name: lingers
+                run:
+                  - |
+                    loginctl --no-ask-password \\
+                      enable-linger agentuser
+                """);
+        assertEquals(1, ToolDefValidator.validate(file).warnings().size(), "a continued line is the same command");
+
+        Files.writeString(file, """
+                name: lingers
+                parameters:
+                  flavour:
+                run:
+                  - loginctl enable-linger agentuser
+                """);
+        var withBareKey = ToolDefValidator.validate(file);
+        assertTrue(withBareKey.hasErrors(), "the bare key is refused");
+        assertEquals(1, withBareKey.warnings().size(), "a bare key does not hide it");
+
+        Files.writeString(file, """
+                name: lingers
+                packages: [dbus-broker, systemd-pam]
+                run:
+                  - |
+                    # not 'loginctl enable-linger', which needs logind running
+                    mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/agentuser
+                """);
+        assertFalse(ToolDefValidator.validate(file).hasWarnings());
+    }
+
     @Test void borrowedNamespaceDoesNotNeedItsOwnPlaceholderDeclaration(@TempDir Path dir) throws Exception {
         var file = dir.resolve("borrowed.yaml");
         Files.writeString(file, """

@@ -3,11 +3,16 @@ description: Headroom context optimization for Claude Code
 requires:
   - claude
 
+# The base image ships no system bus, and without one logind never starts the user
+# manager that runs headroom-proxy.service: bring the bus, as the podman tool does.
 packages:
   - python3-pip
+  - systemd-pam
+  - dbus-broker
 
 run:
-  - loginctl enable-linger agentuser
+  # What 'loginctl enable-linger' writes, without needing logind running during the build
+  - mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/agentuser
   - |
     mkdir -p /etc/systemd/system/user@.service.d
     cat > /etc/systemd/system/user@.service.d/xdg-runtime.conf << 'EOF'

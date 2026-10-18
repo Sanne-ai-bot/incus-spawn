@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 public class ToolDefValidator {
 
@@ -26,6 +27,9 @@ public class ToolDefValidator {
             "string", "integer", "boolean", "enum");
     private static final Set<String> VALID_AUTH_TYPES = Set.of(
             "basic", "bearer", "header");
+
+    /** {@code loginctl}, any options, then {@code enable-linger}, within one command. */
+    private static final Pattern ENABLE_LINGER = Pattern.compile("\\bloginctl\\b[^\\n;&|]*\\benable-linger\\b");
 
     public static ValidationResult validate(Path file) {
         var errors = new ArrayList<String>();
@@ -63,6 +67,9 @@ public class ToolDefValidator {
         }
 
         // The refusals tolerate bare keys; the checks below read the entries, so stop before them
+        // Reads only the steps, so a bare key elsewhere does not hide it
+        warnings.addAll(lingersThroughLoginctl(def));
+
         var bareKeys = bareKeys(def);
         errors.addAll(refusals(def, bareKeys));
         if (!bareKeys.isEmpty()) return;
@@ -192,6 +199,25 @@ public class ToolDefValidator {
                         .warningsForNamespace(proxyDef.getConfigNamespace()));
             }
         }
+    }
+
+    /**
+     * A warning for a tool that enables lingering with {@code loginctl}, which needs logind, and so
+     * a system bus, running during the build: a box being built has neither, and the build fails
+     * at that step (#1520). Reported by the loader too, since user tools reach no other check.
+     */
+    public static List<String> lingersThroughLoginctl(ToolDef def) {
+        // A backslash-newline continues the command on the next line; a comment runs nothing
+        if (buildSteps(def).flatMap(step -> step.replace("\\\n", " ").lines())
+                .noneMatch(line -> !line.strip().startsWith("#") && ENABLE_LINGER.matcher(line).find())) return List.of();
+        return List.of(OutputFormat.oneLine("a build step in '" + def.getName() + "' runs 'loginctl enable-linger',"
+                + " which fails without logind running during the build: write /var/lib/systemd/linger/<user> instead,"
+                + " and list dbus-broker and systemd-pam in 'packages' so logind starts at boot"));
+    }
+
+    /** The tool's shell steps, root's and the user's. */
+    static Stream<String> buildSteps(ToolDef def) {
+        return Stream.of(def.getRun(), def.getRunAsUser()).flatMap(List::stream);
     }
 
     /** Why a definition is refused where definitions load, or null when it is not. */
@@ -356,7 +382,7 @@ public class ToolDefValidator {
         var proxy = def.getProxy();
         if (proxy == null || proxy.getAuth().isEmpty()) return List.of();
         var warnings = new ArrayList<String>();
-        var steps = java.util.stream.Stream.of(def.getRun(), def.getRunAsUser()).flatMap(List::stream).toList();
+        var steps = buildSteps(def).toList();
         // The variables the proxy checks, where the tool declares them (#1106); else a guess
         var declared = proxy.getPlaceholders().stream().map(ToolDef.PlaceholderDef::getEnv).toList();
         for (var env : def.getEnv()) {

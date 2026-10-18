@@ -333,6 +333,12 @@ One did, until #931, and it walked the whole home, cloned repos included, on eve
 A verify often depends on another tool: Maven's `mvn --version` needs the `JAVA_HOME` a JDK tool declares, and verifying it right after its own install (before the JDK, without the env file) failed in an image where Maven works.
 A failed verify's warning keeps every line of the reason, joined and capped, since messages such as Maven's wrap mid-sentence.
 
+**logind is opt-in per tool** (#1520): the container base image ships no system bus (`install_weak_deps=False`), and since incus-spawn-images#31 its logind is condition-skipped until one is installed.
+So a tool that relies on logind (lingering, a user unit under `~/.config/systemd/user`) lists `dbus-broker` and `systemd-pam` in `packages:`, as podman and headroom do: the bus lets logind start at boot and start the lingering user's manager, and `systemd-pam` ships the `systemd-user` PAM stack `user@.service` runs.
+It enables lingering by writing `/var/lib/systemd/linger/<user>`, which is what `loginctl enable-linger` writes, because `loginctl` needs logind running during the build, which a box being built never has; `ToolDefValidator.lingersThroughLoginctl` warns on a `loginctl enable-linger` step, when tools load as well as in validation.
+A tool declares its own bus even when another tool in the template brings one, so any combination of tools works; dnf installs a package once.
+**Alternatives:** a bus in the base image (every box carries a broker that only a few tools use); a `requires: podman` for the bus (a container runtime, and its `DOCKER_HOST`, for a dependency it does not need); a validator warning for a lingering tool whose `packages:` lacks a bus (warns on valid templates where another tool brings it).
+
 **Environment variable system** (`EnvEntry` + `EnvResolver`): Env entries from the full template parent chain and all tools are collected by `GuestProvisioning.writeEnvFile()` into a single `/etc/profile.d/isx-env.sh`.
 Four strategies: `set` (unconditional), `set-if-unset` (conditional default), `prepend`/`append` (additive with separator).
 Conflict detection: two `set` entries for the same variable with different values fail the build with both sources named.
