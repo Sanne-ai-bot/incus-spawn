@@ -360,11 +360,7 @@ class Upstream {
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
             // A client that left while its body was paused has no handler yet to say so
-            if (watchdog.gone()) {
-                upReq.exceptionHandler(ignored -> {}).reset();
-                return;
-            }
-            watchdog.upReq = upReq;
+            if (!watchdog.adopt(upReq)) return;
             Future<Boolean> head;
             try {
                 head = hooks.prepare().apply(upReq);
@@ -378,7 +374,7 @@ class Upstream {
                     return;
                 }
                 // Nothing of the request has left: let the connection go back to the pool
-                upReq.exceptionHandler(ignored -> {}).reset();
+                upReq.reset();
                 if (prepared.failed() && !watchdog.gone()) {
                     System.err.println("Relay error (" + domain + "): " + prepared.cause().getMessage());
                     sendError(clientReq.response(), 502, "Proxy error");
@@ -424,9 +420,6 @@ class Upstream {
     private static void pipeRequest(HttpServerRequest clientReq, HttpClientRequest upReq, RelayWatchdog watchdog,
                                     java.util.function.Consumer<Buffer> tap) {
         if (clientReq.getHeader("Content-Length") == null) upReq.setChunked(true);
-        // An upstream that drops mid-upload fails the response, which logs it and answers: without a
-        // handler of its own, Vert.x would log the same failure again, unprefixed
-        upReq.exceptionHandler(ignored -> {});
         io.vertx.core.Handler<Buffer> pump = chunk -> {
             if (tap != null) tap.accept(chunk);
             upReq.write(chunk);
@@ -459,7 +452,7 @@ class Upstream {
             upReq.end();
             watchdog.uploading(false);
         });
-        clientReq.exceptionHandler(err -> upReq.exceptionHandler(ignored -> {}).reset());
+        clientReq.exceptionHandler(err -> upReq.reset());
         clientReq.resume();
     }
 
@@ -480,7 +473,7 @@ class Upstream {
         private final HttpServerRequest clientReq;
         private final String domain;
         private final boolean streaming;
-        HttpClientRequest upReq;
+        private HttpClientRequest upReq;
         HttpClientResponse upResp;
         boolean cut;
         // The request body streams; not while the DNS lookup and connect wait, nor while a paused
@@ -518,13 +511,34 @@ class Upstream {
                     clientResp.close();
                     // An upstream that answered early may read no more: a half-sent request would
                     // hold its pooled connection until the read-idle timeout
-                    if (upReq != null) upReq.exceptionHandler(ignored -> {}).reset();
+                    if (upReq != null) upReq.reset();
                 }
             });
-            clientResp.closeHandler(ended);
+            clientResp.closeHandler(v -> {
+                ended.handle(null);
+                // The client left before its answer ended: upstream would go on generating it, and
+                // a model call billing for it, until it ends or the read-idle timeout fires (#1448)
+                if (!clientResp.ended()) letUpstreamGo();
+            });
             // It may have left during the lookups before the relay, with no handler yet to tell
             if (clientResp.closed()) stop();
             check();
+        }
+
+        /**
+         * Takes the request this relay sends upstream; resets it and answers false when the client
+         * has gone already. Its errors are left to the response it fails, which logs and answers:
+         * without a handler, Vert.x would log them again, unprefixed, and a reset from
+         * {@link #letUpstreamGo} may come at any time, while the head is prepared too.
+         */
+        boolean adopt(HttpClientRequest upReq) {
+            upReq.exceptionHandler(ignored -> {});
+            if (gone()) {
+                upReq.reset();
+                return false;
+            }
+            this.upReq = upReq;
+            return true;
         }
 
         /** Cut, or the client has left: nothing is to be sent to it any more. */
@@ -572,8 +586,15 @@ class Upstream {
                     // A head in hand is an answer, though Vert.x only writes it with the first chunk
                     + (clientResp.headWritten() || upResp != null ? "no data from upstream" : "no answer from upstream")
                     + " for the client in " + clientSilenceBudgetSeconds + "s");
-            if (upResp != null) upResp.handler(null).endHandler(null).exceptionHandler(ignored -> {});
             sendError(clientResp, 502, "Upstream timed out");
+            letUpstreamGo();
+        }
+
+        /** Ends the upstream request, and hears no more of its answer: nothing is to be relayed. */
+        private void letUpstreamGo() {
+            if (upResp != null) upResp.handler(null).endHandler(null).exceptionHandler(ignored -> {});
+            // A plain reset: an ended request refuses a new exception handler. One still sending has
+            // adopt()'s; one ended, as a response in hand's is, fails only its silenced response
             if (upReq != null) upReq.reset();
         }
     }

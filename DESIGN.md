@@ -1542,6 +1542,7 @@ Only an unreachable upstream serves an older one.
   So an upload is never cut while the client sends, and nothing is ended that the 120s timeout would have let live: while upstream holds the body back the client is paused too, and its connection idle.
   An early answer can stream while the upload still does, so the watchdog keeps the two waits apart: the end of one never ends the other.
   A head that never comes is a logged 502, a body that stops a logged reset, and the upstream request is let go rather than left for its 300s read-idle timeout.
+  A client that leaves before its answer ends is treated the same way: the upstream request is reset, not left streaming into a closed response, so a model call stops generating an answer nobody reads (#1448).
   The cache path's own relays get the same watchdog (`relayResponse` and `relayBody`, #1192): an error answered to a fetch or after a redirect, and a download relayed uncached after a cache write error.
   Their clock starts at the client's request, or its last byte, not when the relay begins, since the head wait already spent part of the budget.
   So does every plain relay (#1059): one a cache handler falls back to after lookups of its own, such as the npm tarball whose shasum lookup failed, and an API request that first waited for its caller's proof to be checked.
