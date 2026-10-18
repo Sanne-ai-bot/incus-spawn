@@ -653,14 +653,24 @@ The base image (from `Sanne/incus-spawn-images`) provides `systemd-networkd` and
 A copy carries its source's, and without this every branch of a template would be one host to the journal, to a DHCP server's DUID and to anything derived with `systemd-id128`.
 `BranchFlow` pushes a stopped container branch a fresh ID (`MachineId.giveOwn`) right after the copy, a random v4 UUID without dashes, as systemd writes it.
 A failed push only warns: the branch works, and shares its source's ID unless that was cleared.
-A stopped VM takes no file push, so a VM gets its own from its template instead: every template build and project build empties the file in the guest before its last stop (`BuildAccounts.clearGuestProofs`).
+A VM takes its ID from its SMBIOS UUID instead, at every boot (#1483).
+systemd does that in a VM (KVM, and QEMU under TCG) whenever `/etc/machine-id` is empty, and the VM image keeps it empty: it ships the file empty and masks `systemd-machine-id-commit`, so the ID systemd mounts over the file is never written to disk.
+That also rests on the root being read-only when PID 1 sets the ID up (the kernel's built-in `ro`): on a writable root PID 1 writes the ID straight into the file, and every copy would share it again.
+The VM kernel has DMI for it (`appliance/kernel/vm.config`); without DMI systemd falls back to a random ID.
+Incus makes a new `volatile.uuid` for every copy and keeps it across restarts, so each VM's ID is its own and stable, whatever it was copied from (a branch that has booted too) and however.
+An instance that keeps its `volatile.uuid` (restored from a backup or an export beside the original) keeps the original's ID too, as it would any disk image of the same machine.
+`appliance/test-vm-kernel.sh` boots the kernel with a new SMBIOS UUID each time and checks the guest's ID is that UUID, still mounted over the file rather than written to it.
+**Why not a fresh ID and a reboot at a VM branch's first start**: a stopped VM takes no file push, and the guest runs nothing before PID 1 reads the file, so isx could only write a new ID once the agent answers and then reboot.
+That adds a second boot (about 12 s under nested KVM, where a VM branch takes about 15 s), needs a stamp saying which sources were cleared and a pending mark for `--no-start` and for VMs started outside isx, and the first boot still sends DHCP and writes the journal under the source's ID.
+A per-branch `systemd.machine_id=` would need no reboot, but this kernel's command line is built in; `systemd.machine_id=firmware` and the `system.machine_id` credential apply only while the file is empty.
+**Why not the same for containers**: a container's systemd sees no per-copy UUID (PID 1 gets only `container=lxc` and its credentials directory), so isx would still have to make the ID up, and the push into the stopped copy costs about 15 ms and no boot.
+Every template build and project build still empties the file in the guest before its last stop (`BuildAccounts.clearGuestProofs`), for a container branch whose push fails, and for VM images that commit the ID: those from before this, and the stock-based `-vm.tar.xz` for older isx.
+Their branches of a template get an ID of their own (random without DMI), but a VM branched from another branch or a kept failed build still shares its source's until its template is rebuilt on the current image.
 It unmounts the file first, since a transient ID systemd never committed is mounted over the one on disk, and is best effort like the push: a template that keeps its ID still works.
-Each copy's first start then finds none, and systemd generates one and commits it, from the VM's SMBIOS UUID (which Incus makes anew for a copy) or at random.
 An empty file boots as any other boot.
 `uninitialized`, the other value machine-id(5) offers for images, makes the boot a first boot.
 On Fedora a first boot runs a full `preset-all`, which disables every unit the image and the template build enabled against Fedora's presets: `systemd-networkd`, its sockets, `systemd-networkd-wait-online` and the image's network watchdog timer (checked by booting the base image's rootfs with each value).
 So `ConditionFirstBoot` units do not run again in a branch; on the base image those are only `systemd-firstboot` and `systemd-homed-firstboot`, which it masks, and `first-boot-complete.target`.
-A VM branched from a template built before this, from a kept failed build or from another branch still shares its source's ID.
 
 **VM deferred file pushes**: File push to a stopped VM is not possible (it requires the running `incus-agent` inside the VM).
 For VMs, `BranchFlow` (behind both `isx branch` and the TUI) skips pre-start file pushes (network config, SSH keys, terminfo) and instead call `InstanceNetwork.pushDeferredVmFiles()` after starting the VM and waiting for the agent to become ready.

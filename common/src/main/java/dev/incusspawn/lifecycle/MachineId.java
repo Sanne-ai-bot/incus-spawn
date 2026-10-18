@@ -21,9 +21,10 @@ public final class MachineId {
     static final String PATH = "/etc/machine-id";
 
     /**
-     * Run in a finished template's guest before its last stop: each copy's first start finds no ID
-     * and systemd generates one, from the VM's SMBIOS UUID (which Incus makes anew for a copy) or at
-     * random. The only way a VM branch gets its own, since a stopped VM takes no file push.
+     * Run in a finished template's guest before its last stop, so each copy's first start finds no
+     * ID and systemd generates its own. Still needed by a container branch whose {@link #giveOwn}
+     * push failed, and by a VM on an image that commits its ID (older than #1483); the current VM
+     * image never does, and takes each boot's from the SMBIOS UUID (DESIGN.md "Branching").
      * Unmounted first: a transient ID systemd never committed is mounted over the file on disk.
      * Best effort, like {@link #giveOwn}: a template whose ID stays is still a working template.
      */
