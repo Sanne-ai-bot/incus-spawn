@@ -959,7 +959,8 @@ class ToolDefTest {
             assertEquals("headroom", def.getName());
             assertEquals(List.of("claude"),
                     def.getRequires().stream().map(ToolDef.ToolRef::getName).toList());
-            assertEquals(List.of("python3-pip"), def.getPackages());
+            // The bus logind needs to start headroom-proxy's user manager; the base image has none (#1520)
+            assertEquals(List.of("python3-pip", "systemd-pam", "dbus-broker"), def.getPackages());
             assertNotNull(def.getRun());
             assertFalse(def.getRun().isEmpty());
             assertNotNull(def.getRunAsUser());

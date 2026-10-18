@@ -264,6 +264,7 @@ public class ToolDefLoader {
                             continue;
                         }
                         warnings.addAll(ToolDefValidator.embeddedTokens(def));
+                        warnings.addAll(ToolDefValidator.lingersThroughLoginctl(def));
                         defs.put(def.getName(), new YamlToolSetup(def), source);
                     }
                 } catch (IOException e) {

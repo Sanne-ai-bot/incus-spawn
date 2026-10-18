@@ -80,6 +80,8 @@ Each download must set `extract`, `destination_file`, or both. Setting both pres
 
 Execution order during `install()`: packages → downloads → `run` → `run_as_user` → `files`. Environment variables are collected from all tools and the template chain after install, then written centrally; each tool's `verify` runs after that. Resolution follows the same order as templates (see [Configuration](CONFIGURATION.md#configuration)).
 
+A tool that needs logind, to linger or to run a systemd user unit, lists `dbus-broker` and `systemd-pam` in `packages`: the base image ships no system bus, and without one logind does not start. Enable lingering with `mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/agentuser` in `run`, not `loginctl enable-linger`, which fails during the build; isx warns about the latter when it loads the tool. The built-in `podman` and `headroom` tools do both.
+
 #### Environment Variables
 
 Environment variables support four merge strategies:

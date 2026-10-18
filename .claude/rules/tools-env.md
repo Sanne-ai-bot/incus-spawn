@@ -12,6 +12,8 @@ paths:
   Download entries may set `extract`, `destination_file`, or both; `~/` destinations resolve under `/home/agentuser`.
   Execution order: packages -> downloads -> run -> run_as_user -> files, then `ToolVerifier` runs each `verify` after `writeEnvFile()` -- as `agentuser` in a login shell unless the tool sets `verify_as_root: true` (root-only checks such as `sshd -t`), which then run in root's own environment (`env -i`, `HOME=/root`, root's default `PATH`) **without** `isx-env.sh`, so nothing they do lands in agentuser's home.
   There is no ownership repair afterwards; do not add one back (#931).
+  The base image ships no system bus, so logind is opt-in per tool (#1520): a tool that lingers or installs a systemd user unit lists `dbus-broker` and `systemd-pam` in `packages:` and writes `/var/lib/systemd/linger/agentuser` directly (podman, headroom); `loginctl enable-linger` fails at build time, and `ToolDefValidator.lingersThroughLoginctl` warns on it, from the loader too.
+  `ToolDefValidationTest` checks the built-ins.
   Environment variables are declared via `env:` entries and collected centrally by `GuestProvisioning.writeEnvFile()`.
 - **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `CopilotSetup`, `GhSetup`, `PiSetup`, `BobSetup`, `GeminiSetup`).
   Declare env vars via `envEntries(Map<String,String>)` method.

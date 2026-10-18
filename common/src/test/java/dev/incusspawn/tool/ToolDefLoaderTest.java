@@ -511,6 +511,26 @@ class ToolDefLoaderTest {
         }
     }
 
+    /** A user tool reaches no other check, so the loader warns that this step fails the build (#1520). */
+    @Test
+    void aToolLingeringThroughLoginctlIsWarned(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("lingers.yaml"), """
+                name: lingers
+                run:
+                  - loginctl enable-linger agentuser
+                """);
+        var reported = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+            assertNotNull(loader.find("lingers"), "a warning, not a refusal");
+
+            assertEquals(1, loader.warnings().size(), loader.warnings().toString());
+            assertTrue(loader.warnings().get(0).contains("/var/lib/systemd/linger/"), loader.warnings().get(0));
+            assertEquals(loader.warnings(), reported);
+        }
+    }
+
     /**
      * The token a tool presents to the proxy changes on every start (#1108): a tool that copies
      * its placeholder into a file at build time presents a stale one after the next start.
