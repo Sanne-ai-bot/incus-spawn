@@ -67,7 +67,12 @@ class TaskScriptsTest {
         stub("systemctl", """
                 p=$(cat "$HOME/units/${@: -1}" 2>/dev/null)
                 case "$1" in
-                  is-active) if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then [ "$2" = -q ] || echo active; else [ "$2" = -q ] || echo inactive; exit 3; fi;;
+                  is-active) shift; q=; [ "$1" = -q ] && { q=1; shift; }; rc=0
+                    for u in "$@"; do p=$(cat "$HOME/units/$u" 2>/dev/null)
+                      if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then [ -n "$q" ] || echo active; else [ -n "$q" ] || echo inactive; rc=3; fi
+                    done; exit $rc;;
+                  list-units) for f in "$HOME"/units/*; do [ -f "$f" ] || continue; u=${f##*/}
+                      case $u in ${@: -1}) kill -0 "$(cat "$f")" 2>/dev/null && echo "$u.service loaded active running";; esac; done;;
                   stop) [ -n "$p" ] && kill -TERM -- -"$p" 2>/dev/null; sleep 0.5;;
                 esac
                 """);
@@ -1277,11 +1282,7 @@ class TaskScriptsTest {
             var ready = home.resolve("join-ready");
             Files.deleteIfExists(ready);
             stub(agent.id, "exec -a " + agent.id + " bash -c ': > \"$HOME/join-ready\"; while read -r line; do :; done' \"$@\"");
-            var pb = new ProcessBuilder("bash", "-c", join.entry().guestCommand()).directory(home.toFile());
-            pb.environment().put("HOME", home.toString());
-            pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
-            pb.environment().remove(TaskScripts.TASK_ENV);
-            var person = pb.start();
+            var person = start(join.entry().guestCommand());
             try {
                 var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
                 while (!Files.exists(ready) && person.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
@@ -1301,6 +1302,92 @@ class TaskScriptsTest {
             }
             Files.walk(d).sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
         }
+    }
+
+    @Test
+    @Timeout(60)
+    void theJoinChecksAgainInTheShellThatStartsTheAgent() throws Exception {
+        var cwd = work.toRealPath().toString();
+        var id = "t11-join";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        Files.writeString(d.resolve("cwd"), cwd + "\n");
+        var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
+        var ready = home.resolve("join-ready");
+        stub("claude", "exec -a claude bash -c ': > \"$HOME/join-ready\"; while read -r line; do :; done' \"$@\"");
+
+        // A send_message turn launched after the read: its unit runs, and current still names the finished run,
+        // as between systemd-run and current being written. Any run of the task counts, not only the next.
+        for (var run : List.of("2", "4")) {
+            sh("systemd-run --unit=" + TaskScripts.unit(id, run) + " -- sleep 300", "");
+            var refused = joinAs(join.entry().guestCommand());
+            assertEquals(1, refused.exit(), refused.stderr());
+            assertTrue(refused.stderr().contains("isx: a run of it is going, so not joining t11-join."), refused.stderr());
+            assertFalse(Files.exists(ready), "the agent never started");
+            sh("kill -TERM -- -" + Files.readString(home.resolve("units/" + TaskScripts.unit(id, run))).strip(), "");
+        }
+        sh("systemd-run --unit=" + TaskScripts.unit("t12-other", "1") + " -- sleep 300", "");
+        // Another task's run is not this one's; the person who resumed this session from elsewhere is.
+        var elsewhere = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'while read -r line; do :; done' --resume " + sessionId())
+                .directory(home.toFile());
+        elsewhere.environment().remove(TaskScripts.TASK_ENV);
+        var resumer = elsewhere.start();
+        try {
+            var seen = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (Presence.parse(sh(Presence.script(""), "").lines().toList()).holderOf(DelegateAgent.CLAUDE, sessionId(), "/x") == null
+                    && System.nanoTime() < seen) Thread.sleep(10);
+            var held = joinAs(join.entry().guestCommand());
+            assertEquals(1, held.exit(), held.stderr());
+            assertTrue(held.stderr().contains("a person is already in its conversation (agent pid " + resumer.pid() + ")"), held.stderr());
+        } finally {
+            resumer.destroy();
+            assertTrue(resumer.waitFor(5, TimeUnit.SECONDS));
+        }
+
+        // Nothing in the way: the first person gets in; a second one, who read before the first started, does not.
+        var first = start(join.entry().guestCommand());
+        try {
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (!Files.exists(ready) && first.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertTrue(Files.exists(ready), "the first join did not start its agent");
+            Files.delete(ready);
+            var second = joinAs(join.entry().guestCommand());
+            assertEquals(1, second.exit(), second.stderr());
+            assertTrue(second.stderr().contains("a person is already in its conversation (agent pid " + first.pid() + ")"), second.stderr());
+            assertFalse(Files.exists(ready));
+        } finally {
+            first.destroy();
+            assertTrue(first.waitFor(5, TimeUnit.SECONDS));
+        }
+
+        sh("kill -TERM -- -" + Files.readString(home.resolve("units/" + TaskScripts.unit("t12-other", "1"))).strip(), "");
+        stub("systemctl", "exit 1"); // systemd cannot be asked: that is not "nothing is running"
+        var unknown = joinAs(join.entry().guestCommand());
+        assertEquals(1, unknown.exit(), unknown.stderr());
+        assertTrue(unknown.stderr().contains("systemd cannot say whether a run is going"), unknown.stderr());
+        assertFalse(Files.exists(ready));
+    }
+
+    private record Joined(int exit, String stderr) {}
+
+    /** {@code command} as a person's {@code isx shell} runs it, with no terminal and nothing on stdin. */
+    private Process start(String command) throws IOException {
+        var pb = new ProcessBuilder("bash", "-c", command).directory(home.toFile());
+        pb.environment().put("HOME", home.toString());
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        pb.environment().remove(TaskScripts.TASK_ENV);
+        return pb.start();
+    }
+
+    /** {@link #start}, waited for: how a refused join ends. */
+    private Joined joinAs(String command) throws Exception {
+        var p = start(command);
+        p.getOutputStream().close();
+        if (!p.waitFor(20, TimeUnit.SECONDS)) {
+            p.destroyForcibly();
+            throw new AssertionError("the join neither refused nor started");
+        }
+        return new Joined(p.exitValue(), new String(p.getErrorStream().readAllBytes(), StandardCharsets.UTF_8));
     }
 
     /** A sleeping process with Codex's argv, ready before the probe scans /proc. */

@@ -61,7 +61,7 @@ public final class TaskJoin {
 
         /** The command, run as agentuser in the instance, that resumes this conversation. */
         public String guestCommand() {
-            return TaskJoin.guestCommand(DelegateAgent.parse(agent), cwd, sessionId);
+            return TaskJoin.guestCommand(id, DelegateAgent.parse(agent), cwd, sessionId);
         }
     }
 
@@ -155,18 +155,21 @@ public final class TaskJoin {
     }
 
     /**
-     * The command that resumes a conversation in the guest: its recorded directory, then the agent's
-     * resume, as {@link Presence} recognises it (argv and physical cwd). {@code sessionId} must be
+     * The command that resumes task {@code taskId}'s conversation in the guest: its recorded
+     * directory, {@link TaskScripts#joinGuard} again in the same shell, then the agent's resume, as
+     * {@link Presence} recognises it (argv and physical cwd). A failed {@code cd} or guard exits
+     * the shell rather than falling back to a login shell. {@code sessionId} must be
      * {@link #SESSION_ID}-shaped, as {@link Entry} and {@link Tasks.Status} only carry such.
      */
-    static String guestCommand(DelegateAgent agent, String cwd, String sessionId) {
+    static String guestCommand(String taskId, DelegateAgent agent, String cwd, String sessionId) {
         if (!SESSION_ID.matcher(sessionId).matches()) throw new IllegalArgumentException("not a session id: " + sessionId);
         var resume = switch (agent) {
             case CLAUDE -> "claude --resume ";
             case CODEX -> "codex resume ";
             case UNKNOWN -> throw new IllegalArgumentException("unsupported task agent");
         };
-        return "cd " + ExecScript.quote(cwd) + " && exec " + resume + sessionId;
+        return "cd " + ExecScript.quote(cwd) + " || exit 1; " + TaskScripts.joinGuard(taskId, agent, sessionId, cwd)
+                + "exec " + resume + sessionId;
     }
 
     /** The host command a person runs to join {@code taskId} in {@code instance}. */
