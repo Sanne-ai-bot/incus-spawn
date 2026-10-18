@@ -185,6 +185,10 @@ class NpmCacheTest {
 
     // --- digest verification (OCI blobs, npm tarballs) ---
 
+    /** {@code sha512:} of "hello". */
+    static final String HELLO_SHA512 = "sha512:9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca7"
+            + "2323c3d99ba5c11d7c7acc6e14b8c5da0c4663475c2e5c3adef46f73bcdec043";
+
     /** Whether a download of "hello" is committed under the given digest, as fetchCacheAndServe would. */
     static boolean commits(Path tmp, String digest) throws Exception {
         var download = tmp.resolve("download");
@@ -205,6 +209,12 @@ class NpmCacheTest {
     void digestSha1(@TempDir Path tmp) throws Exception {
         assertTrue(commits(tmp, "sha1:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"));
         assertFalse(commits(tmp, "sha1:0000000000000000000000000000000000000000"));
+    }
+
+    @Test
+    void digestSha512(@TempDir Path tmp) throws Exception {
+        assertTrue(commits(tmp, HELLO_SHA512));
+        assertFalse(commits(tmp, "sha512:" + "0".repeat(128)));
     }
 
     @Test
@@ -308,12 +318,120 @@ class NpmCacheTest {
         }
     }
 
-    static final String SHASUM = "a".repeat(40);
-    static final String NEW_SHASUM = "b".repeat(40);
+    /** Digests of documents with a shasum and no integrity, as stored in the {@code .shasum} sidecar. */
+    static final String SHA1_DIGEST = "sha1:" + "a".repeat(40);
+    static final String NEW_SHA1_DIGEST = "sha1:" + "b".repeat(40);
 
-    /** Upstream's version document, carrying {@code shasum}. */
-    static SidecarAnswer found(String shasum) {
-        return new SidecarAnswer(200, ("{\"dist\":{\"shasum\":\"" + shasum + "\"}}").getBytes(StandardCharsets.UTF_8));
+    /** Upstream's version document, carrying {@code digest}'s hex as its shasum and no integrity. */
+    static SidecarAnswer found(String digest) {
+        return document("{\"shasum\":\"" + digest.substring("sha1:".length()) + "\"}");
+    }
+
+    /** Upstream's version document with {@code dist} as its dist object. */
+    static SidecarAnswer document(String dist) {
+        return new SidecarAnswer(200, ("{\"dist\":" + dist + "}").getBytes(StandardCharsets.UTF_8));
+    }
+
+    // --- npmDigest: dist.integrity before dist.shasum (#1465) ---
+
+    static final String HELLO_INTEGRITY = "sha512-m3HSJL1i83hdltRq0+o9czGb+8KJDKra4t/3JRlnPKcjI8PZm6XBHXx6zG4UuMXaDEZjR1wuXDre9G9zvN7AQw==";
+
+    static final String HELLO_SHA1_INTEGRITY = "sha1-qvTGHdzF6KLavt4PO0gs2a6pQ00=";
+
+    static String npmDigest(String dist) {
+        return ArtifactCacheHandler.npmDigest(document(dist).body());
+    }
+
+    /** The dist of a document with {@link #SHA1_DIGEST}'s shasum and {@code integrity}, raw JSON. */
+    static String withShasum(String integrity) {
+        return "{\"shasum\":\"" + "a".repeat(40) + "\",\"integrity\":" + integrity + "}";
+    }
+
+    static String quoted(String text) {
+        return "\"" + text + "\"";
+    }
+
+    @Test
+    void integrityIsPreferredOverTheShasum(@TempDir Path tmp) throws Exception {
+        var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
+
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
+                document(withShasum(quoted(HELLO_INTEGRITY))));
+
+        assertEquals(HELLO_SHA512, result.digest(), "the tarball is verified on its SHA-512");
+        assertEquals(HELLO_SHA512, Files.readString(Path.of(cacheFile + ".shasum")));
+    }
+
+    @Test
+    void shasumIsTheFallbackWithoutAnIntegrity() {
+        assertEquals(SHA1_DIGEST, npmDigest("{\"shasum\":\"" + "A".repeat(40) + "\"}"));
+    }
+
+    @Test
+    void integrityMayListSeveralHashes() {
+        assertEquals(HELLO_SHA512, npmDigest("{\"integrity\":" + quoted(HELLO_SHA1_INTEGRITY + " sha512-bad " + HELLO_INTEGRITY + "?opt") + "}"));
+    }
+
+    @Test
+    void unusableStrongIntegrityDoesNotFallBackToTheShasum() {
+        for (var integrity : List.of("sha512-not*base64", "sha512-" + "A".repeat(84), "sha512-",
+                "sha384-" + "A".repeat(64), "sha256-" + "A".repeat(43) + "=", "sha3-" + "A".repeat(88),
+                "SHA512-" + "A".repeat(84), HELLO_SHA1_INTEGRITY + " SHA3-" + "A".repeat(88),
+                HELLO_SHA1_INTEGRITY + " sha512-bad", "nodash")) {
+            assertNull(npmDigest(withShasum(quoted(integrity))), integrity);
+        }
+        // Not a string at all
+        for (var integrity : List.of("42", "{}", "[" + quoted(HELLO_INTEGRITY) + "]", "true")) {
+            assertNull(npmDigest(withShasum(integrity)), integrity);
+        }
+    }
+
+    @Test
+    void integrityAlgorithmIsReadWhateverItsCase() {
+        assertEquals(HELLO_SHA512, npmDigest("{\"integrity\":\"SHA512-" + HELLO_INTEGRITY.substring("sha512-".length()) + "\"}"));
+        assertEquals("sha1:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d", npmDigest(withShasum(quoted("SHA1-" + HELLO_SHA1_INTEGRITY.substring("sha1-".length())))));
+    }
+
+    @Test
+    void absentIntegrityFallsBackToTheShasum() {
+        for (var integrity : List.of("null", quoted(""), quoted("  "))) {
+            assertEquals(SHA1_DIGEST, npmDigest(withShasum(integrity)), integrity);
+        }
+    }
+
+    @Test
+    void sha1IntegrityIsTheOneNpmChecks() {
+        var hello = "sha1:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
+        assertEquals(hello, npmDigest(withShasum(quoted(HELLO_SHA1_INTEGRITY))), "before a shasum that disagrees");
+        assertEquals(hello, npmDigest("{\"integrity\":" + quoted(HELLO_SHA1_INTEGRITY) + "}"), "without a shasum");
+        assertEquals(SHA1_DIGEST, npmDigest(withShasum(quoted("sha1-bad"))), "an unreadable one leaves the shasum");
+    }
+
+    @Test
+    void copyStoredUnderABareSha1BeforeIntegrityStillMatchesItsShasum(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedTarball(tmp);
+        Files.writeString(Path.of(cacheFile + ".shasum"), "a".repeat(40));
+
+        assertTrue(ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref", found(SHA1_DIGEST)).cacheHit());
+    }
+
+    @Test
+    void copyStoredUnderABareSha1IsVerifiedAgainOnTheIntegrity(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedTarball(tmp);
+        Files.writeString(Path.of(cacheFile + ".shasum"), "a".repeat(40));
+
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
+                document(withShasum(quoted(HELLO_INTEGRITY))));
+
+        assertFalse(result.cacheHit(), "a SHA-1 match does not stand in for the SHA-512");
+        assertEquals(HELLO_SHA512, result.digest());
+        assertFalse(Files.exists(cacheFile));
+    }
+
+    @Test
+    void documentWithNeitherHasNoDigest() {
+        assertNull(npmDigest("{}"));
+        assertNull(npmDigest("{\"shasum\":\"short\",\"integrity\":42}"));
     }
 
     // --- npmCacheState: ETag and confirmation age ---
@@ -392,10 +510,10 @@ class NpmCacheTest {
         var cacheFile = cachedUnderEtag(tmp, Duration.ofDays(8));
         var shasum = Path.of(cacheFile + ".shasum");
         var aged = Files.getLastModifiedTime(shasum);
-        Files.writeString(shasum, SHASUM);
+        Files.writeString(shasum, SHA1_DIGEST);
         Files.setLastModifiedTime(shasum, aged);
 
-        assertTrue(ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"abc\"", "ref", found(SHASUM)).cacheHit());
+        assertTrue(ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"abc\"", "ref", found(SHA1_DIGEST)).cacheHit());
 
         assertNotNull(ArtifactCacheHandler.npmCacheState(cacheFile, "\"abc\"", ArtifactCacheTiers.DEFAULT,
                 Instant.now()).hit(), "fresh again after the match");
@@ -408,12 +526,12 @@ class NpmCacheTest {
         // A foreground request evicted it and is fetching it again; its sidecars are not ours to touch
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
         Files.createDirectories(cacheFile.getParent());
-        Files.writeString(Path.of(cacheFile + ".shasum"), NEW_SHASUM);
+        Files.writeString(Path.of(cacheFile + ".shasum"), NEW_SHA1_DIGEST);
         Files.writeString(Path.of(cacheFile + ".etag"), "\"new\"");
 
-        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(SHASUM));
+        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(SHA1_DIGEST));
 
-        assertEquals(NEW_SHASUM, Files.readString(Path.of(cacheFile + ".shasum")));
+        assertEquals(NEW_SHA1_DIGEST, Files.readString(Path.of(cacheFile + ".shasum")));
         assertEquals("\"new\"", Files.readString(Path.of(cacheFile + ".etag")));
     }
 
@@ -423,7 +541,7 @@ class NpmCacheTest {
         var cacheFile = cachedUnderEtag(tmp, Duration.ofHours(3));
 
         assertWaitsForLock(cacheFile, () -> {
-            ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(NEW_SHASUM));
+            ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(NEW_SHA1_DIGEST));
             return null;
         });
 
@@ -435,10 +553,10 @@ class NpmCacheTest {
         var cacheFile = cachedUnderEtag(tmp, Duration.ofDays(8));
 
         var result = assertWaitsForLock(cacheFile, () ->
-                ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"abc\"", "ref", found(NEW_SHASUM)));
+                ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"abc\"", "ref", found(NEW_SHA1_DIGEST)));
 
         assertFalse(result.cacheHit());
-        assertEquals(NEW_SHASUM, Files.readString(Path.of(cacheFile + ".shasum")));
+        assertEquals(NEW_SHA1_DIGEST, Files.readString(Path.of(cacheFile + ".shasum")));
     }
 
     /** Run {@code work} while the test holds the artifact's lock: it must block on it, touching nothing, until released. */
@@ -456,10 +574,10 @@ class NpmCacheTest {
     @Test
     void backgroundConfirmationMatchRenews(@TempDir Path tmp) throws Exception {
         var cacheFile = cachedUnderEtag(tmp, Duration.ofHours(3));
-        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHA1_DIGEST);
         Files.setLastModifiedTime(Path.of(cacheFile + ".shasum"), FileTime.from(NOW.minus(Duration.ofHours(3))));
 
-        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(SHASUM));
+        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(SHA1_DIGEST));
 
         assertTrue(Files.getLastModifiedTime(Path.of(cacheFile + ".shasum")).toInstant().isAfter(NOW));
     }
@@ -468,7 +586,7 @@ class NpmCacheTest {
     void backgroundConfirmationChangeEvictsAndWritesNoSidecar(@TempDir Path tmp) throws Exception {
         var cacheFile = cachedUnderEtag(tmp, Duration.ofHours(3));
 
-        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(NEW_SHASUM));
+        ArtifactCacheHandler.reconcileNpmCopy(cacheFile, "ref", found(NEW_SHA1_DIGEST));
 
         assertFalse(Files.exists(cacheFile));
         assertFalse(Files.exists(Path.of(cacheFile + ".shasum")));
@@ -501,17 +619,17 @@ class NpmCacheTest {
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "");
-        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHA1_DIGEST);
 
         assertNull(state(cacheFile, "").hit(), "an empty ETag vouches for nothing");
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "", "ref",
-                found(SHASUM));
+                found(SHA1_DIGEST));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
     }
 
-    // --- checkNpmTarballCache: ETag mismatch, shasum unchanged ---
+    // --- checkNpmTarballCache: ETag mismatch, digest unchanged ---
 
     @Test
     void cacheHitEtagChangedShasumSameUpdatesEtag(@TempDir Path tmp) throws Exception {
@@ -519,10 +637,10 @@ class NpmCacheTest {
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
-        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHA1_DIGEST);
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
-                found(SHASUM));
+                found(SHA1_DIGEST));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -537,10 +655,10 @@ class NpmCacheTest {
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
-        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHA1_DIGEST);
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
-                found(SHASUM));
+                found(SHA1_DIGEST));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -548,7 +666,7 @@ class NpmCacheTest {
                 "tarball ETag should NOT be updated when package ETag is null");
     }
 
-    // --- checkNpmTarballCache: ETag mismatch, shasum changed (eviction) ---
+    // --- checkNpmTarballCache: ETag mismatch, digest changed (eviction) ---
 
     @Test
     void cacheHitShasumChangedEvictsAndRefetches(@TempDir Path tmp) throws Exception {
@@ -559,13 +677,13 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old-etag\"");
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new-etag\"", "ref",
-                found(NEW_SHASUM));
+                found(NEW_SHA1_DIGEST));
 
         assertNotNull(result);
         assertFalse(result.cacheHit());
-        assertEquals("sha1:" + NEW_SHASUM, result.digest());
+        assertEquals(NEW_SHA1_DIGEST, result.digest());
         assertFalse(Files.exists(cacheFile), "stale tarball should be deleted");
-        assertEquals(NEW_SHASUM,
+        assertEquals(NEW_SHA1_DIGEST,
                 Files.readString(Path.of(cacheFile + ".shasum")).strip(),
                 "sidecar should be written with new shasum");
     }
@@ -579,21 +697,21 @@ class NpmCacheTest {
         // no .shasum file
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
-                found(NEW_SHASUM));
+                found(NEW_SHA1_DIGEST));
 
         assertNotNull(result);
         assertFalse(result.cacheHit(), "missing stored shasum should trigger eviction");
-        assertEquals("sha1:" + NEW_SHASUM, result.digest());
+        assertEquals(NEW_SHA1_DIGEST, result.digest());
     }
 
-    // --- checkNpmTarballCache: no shasum (#787: only an unreachable registry serves the copy) ---
+    // --- checkNpmTarballCache: no digest (#787: only an unreachable registry serves the copy) ---
 
     static Path cachedTarball(Path tmp) throws Exception {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
-        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHA1_DIGEST);
         return cacheFile;
     }
 
@@ -642,11 +760,11 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
-        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHA1_DIGEST);
         // no .etag files at all
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
-                found(SHASUM));
+                found(SHA1_DIGEST));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -657,10 +775,10 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
-        Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
+        Files.writeString(Path.of(cacheFile + ".shasum"), SHA1_DIGEST);
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
-                found(SHASUM));
+                found(SHA1_DIGEST));
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -673,12 +791,12 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
-                found(SHASUM));
+                found(SHA1_DIGEST));
 
         assertNotNull(result);
         assertFalse(result.cacheHit());
-        assertEquals("sha1:" + SHASUM, result.digest());
-        assertEquals(SHASUM,
+        assertEquals(SHA1_DIGEST, result.digest());
+        assertEquals(SHA1_DIGEST,
                 Files.readString(Path.of(cacheFile + ".shasum")).strip());
         assertEquals("\"etag\"",
                 Files.readString(Path.of(cacheFile + ".etag")).strip());
@@ -699,7 +817,7 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
-                found(SHASUM));
+                found(SHA1_DIGEST));
 
         assertNotNull(result);
         assertFalse(result.cacheHit());

@@ -23,6 +23,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -736,7 +739,7 @@ class ArtifactCacheHandler {
      *   <li><b>Tarball</b> ({@code GET /<pkg>/-/<name>-<ver>.tgz}): served from cache when
      *       the package's ETag hasn't changed since the tarball was verified and that
      *       confirmation is still trusted ({@link #artifactCacheTiers}). Otherwise the
-     *       tarball's shasum is re-verified against per-version metadata. Cache misses
+     *       tarball's digest is re-verified against per-version metadata. Cache misses
      *       are verified on store.</li>
      *   <li><b>Packument</b> ({@code GET /<pkg>}): relayed fresh to upstream. The response's
      *       ETag header is stored so tarball cache hits can be served without re-verification
@@ -838,19 +841,19 @@ class ArtifactCacheHandler {
      * removed upstream would be served forever (#1466).
      * <p>
      * <b>Cache hit + ETag changed/missing, or confirmation too old</b>: fetch per-version metadata, compare
-     * the upstream shasum with the stored sidecar. Same shasum → update the tarball's
-     * ETag marker and serve. Different shasum → evict and re-fetch. No shasum: see
+     * the upstream digest with the stored sidecar. Same digest → update the tarball's
+     * ETag marker and serve. Different digest → evict and re-fetch. No digest: see
      * {@link #checkNpmTarballCache}; only an unreachable registry serves the copy.
      * <p>
-     * <b>Cache miss</b>: fetch per-version shasum, download with digest verification,
-     * write shasum + ETag sidecar files alongside the cached tarball.
+     * <b>Cache miss</b>: fetch the per-version digest, download with digest verification,
+     * write digest + ETag sidecar files alongside the cached tarball.
      */
     private void fetchNpmTarballAndServe(HttpServerRequest clientReq, long started, String domain,
                                           Path cacheFile, String ref,
                                           String packageName, String version) {
         // The disk work stays ordered, behind the packument's ETag write (relayNpmPackument) and
         // other tarballs' sidecar writes. That queue is the one every request on this server
-        // shares, so the shasum lookup waits outside it: inside, a cold install's lookups ran
+        // shares, so the digest lookup waits outside it: inside, a cold install's lookups ran
         // one at a time (#960).
         vertx.executeBlocking(() -> {
             var cacheDir = npmCacheDir();
@@ -869,7 +872,7 @@ class ArtifactCacheHandler {
         }).onSuccess(result -> {
             if (result == null) {
                 // Said here, so a relay that fails points at the lookup that sent it there
-                ProxyLog.warn("No npm shasum for " + ref + "; relaying it uncached");
+                ProxyLog.warn("No npm digest for " + ref + "; relaying it uncached");
                 upstream.relayRequest(clientReq, domain, started);
             } else if (result.cacheHit()) {
                 System.out.println("npm cache hit: " + ref +
@@ -946,19 +949,20 @@ class ArtifactCacheHandler {
      * replaced and committed meanwhile can still be evicted on it, which costs a re-download.
      */
     static void reconcileNpmCopy(Path cacheFile, String ref, SidecarAnswer answer) throws IOException {
-        var shasum = answer.status() == 200 ? npmShasum(answer.body()) : null;
+        var digest = answer.status() == 200 ? npmDigest(answer.body()) : null;
         // Under the artifact's lock, as is the foreground's evict-and-write (checkNpmTarballCache)
         synchronized (VerifiedArtifactStore.lockFor(cacheFile)) {
             if (!Files.isRegularFile(cacheFile)) return;
-            var storedShasum = Path.of(cacheFile + ".shasum");
-            if (shasum != null && shasum.equals(readFileOrNull(storedShasum))) {
-                VerifiedArtifactStore.renewConfirmation(cacheFile, storedShasum);
-            } else if (shasum != null || answer.gone()) {
-                System.out.println("npm cache: " + ref + (shasum != null ? " changed upstream"
+            var storedDigest = Path.of(cacheFile + ".shasum");
+            var stored = storedNpmDigest(storedDigest);
+            if (digest != null && digest.equals(stored)) {
+                VerifiedArtifactStore.renewConfirmation(cacheFile, storedDigest);
+            } else if (digest != null || answer.gone()) {
+                System.out.println("npm cache: " + ref + (digest != null ? npmMismatch(stored, digest)
                         : " is gone upstream (" + answer.status() + ")") + ", evicting");
                 evictNpmTarball(cacheFile);
             } else {
-                VerifiedArtifactStore.expireConfirmation(cacheFile, storedShasum);
+                VerifiedArtifactStore.expireConfirmation(cacheFile, storedDigest);
             }
         }
     }
@@ -968,20 +972,20 @@ class ArtifactCacheHandler {
      * {@code answer} for its version document. Null means relay it uncached.
      * <p>
      * When upstream answers, its answer wins, as for Maven/Gradle (#555): a cached copy is
-     * served only on a matching shasum, and a version that is gone (404/410: unpublished,
+     * served only on a matching digest, and a version that is gone (404/410: unpublished,
      * or taken down as malware) is evicted so the client gets upstream's answer. Any other
-     * answer without a shasum confirms nothing and relays. Only an unreachable registry
+     * answer without a digest confirms nothing and relays. Only an unreachable registry
      * (no connection, 5xx, 429) serves the copy unconfirmed (#787).
      */
     static NpmVerifyResult checkNpmTarballCache(Path cacheFile, String packageEtag,
                                                  String ref, SidecarAnswer answer)
             throws IOException {
         // Parsed before taking the lock, which other artifacts share
-        var shasum = answer.status() == 200 ? npmShasum(answer.body()) : null;
+        var digest = answer.status() == 200 ? npmDigest(answer.body()) : null;
         synchronized (VerifiedArtifactStore.lockFor(cacheFile)) {
             var cached = Files.isRegularFile(cacheFile);
 
-            if (shasum == null) {
+            if (digest == null) {
                 if (!cached) return null;
                 if (answer.unreachable()) {
                     System.out.println("npm: serving " + ref + " unconfirmed, the registry "
@@ -996,21 +1000,21 @@ class ArtifactCacheHandler {
             }
 
             if (cached) {
-                var storedShasum = Path.of(cacheFile + ".shasum");
-                if (shasum.equals(readFileOrNull(storedShasum))) {
-                    VerifiedArtifactStore.renewConfirmation(cacheFile, storedShasum);
+                var storedDigest = Path.of(cacheFile + ".shasum");
+                var stored = storedNpmDigest(storedDigest);
+                if (digest.equals(stored)) {
+                    VerifiedArtifactStore.renewConfirmation(cacheFile, storedDigest);
                     if (packageEtag != null) {
                         Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
                     }
                     return new NpmVerifyResult(true, Files.size(cacheFile), null);
                 }
-                System.out.println("npm cache stale: " + ref +
-                        " (shasum changed), evicting");
+                System.out.println("npm cache: " + ref + npmMismatch(stored, digest) + ", evicting");
                 evictNpmTarball(cacheFile);
             }
 
-            writeNpmSidecarFiles(cacheFile, shasum, packageEtag);
-            return new NpmVerifyResult(false, 0, "sha1:" + shasum);
+            writeNpmSidecarFiles(cacheFile, digest, packageEtag);
+            return new NpmVerifyResult(false, 0, digest);
         }
     }
 
@@ -1020,11 +1024,31 @@ class ArtifactCacheHandler {
         Files.deleteIfExists(Path.of(cacheFile + ".etag"));
     }
 
-    static void writeNpmSidecarFiles(Path cacheFile, String shasum,
+    /**
+     * The {@link #npmDigest} a tarball was verified against, from its {@code .shasum} sidecar.
+     * Before #1465 that held a bare SHA-1, read here as {@code sha1:<hex>}: it still matches a
+     * version that has no SHA-512 integrity, and a version that has one is downloaded once
+     * more and verified on it.
+     */
+    static String storedNpmDigest(Path storedDigest) {
+        var stored = readFileOrNull(storedDigest);
+        return stored == null || stored.indexOf(':') >= 0 ? stored : "sha1:" + stored;
+    }
+
+    /** Why a cached tarball stored under {@code stored} does not match upstream's {@code digest}. */
+    private static String npmMismatch(String stored, String digest) {
+        var was = stored == null ? null : stored.substring(0, Math.max(stored.indexOf(':'), 0));
+        var now = digest.substring(0, digest.indexOf(':'));
+        return was == null || was.equals(now) ? " changed upstream"
+                : " was verified on " + was + ", re-verifying on " + now;
+    }
+
+    /** The {@code .shasum} sidecar holds the {@link #npmDigest} the tarball was verified against. */
+    static void writeNpmSidecarFiles(Path cacheFile, String digest,
                                               String packageEtag) {
         try {
             Files.createDirectories(cacheFile.getParent());
-            Files.writeString(Path.of(cacheFile + ".shasum"), shasum);
+            Files.writeString(Path.of(cacheFile + ".shasum"), digest);
             if (packageEtag != null) {
                 Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
             }
@@ -1033,17 +1057,20 @@ class ArtifactCacheHandler {
         }
     }
 
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final Pattern SHA1_HEX = Pattern.compile("[a-f0-9]{40}");
+
     // A version document is a few KB; old ones can carry their readme
     private static final int MAX_NPM_VERSION_BYTES = 1024 * 1024;
 
     /**
      * Fetch an npm package version's metadata document ({@code /<package>/<version>}),
-     * which carries its shasum, through {@code probeClient} like every other checksum, so
+     * which carries its digests, through {@code probeClient} like every other checksum, so
      * lookups run concurrently on shared connections. Never fails; see {@link SidecarAnswer}
-     * for what comes back instead. {@link #npmShasum} parses it, on a worker thread.
+     * for what comes back instead. {@link #npmDigest} parses it, on a worker thread.
      * <p>
      * A 5xx is asked once more while over half the client's silence budget is left, so the
-     * tarball's head still has time: without a shasum the tarball is relayed uncached, and a
+     * tarball's head still has time: without a digest the tarball is relayed uncached, and a
      * relayed body that stalls cannot be resumed (#925, #929). A 429 is not: asked again at
      * once, it would only be refused again.
      */
@@ -1056,17 +1083,58 @@ class ArtifactCacheHandler {
                         : Future.succeededFuture(answer));
     }
 
-    /** The {@code dist.shasum} of a version document, or null when it has none we can use. */
-    static String npmShasum(byte[] body) {
+    /**
+     * The digest a version document vouches for its tarball with: {@code sha512:<hex>} from
+     * {@code dist.integrity}, else {@code sha1:<hex>} from its {@code sha1-} hash (which npm
+     * checks), else from {@code dist.shasum}; or null when it has none we can use. SHA-1 is
+     * used only when the integrity is absent or every hash it lists is SHA-1: any other
+     * integrity that gives no SHA-512 we can read (malformed, not a string, or only another
+     * algorithm) gives null rather than SHA-1 (#1465).
+     */
+    static String npmDigest(byte[] body) {
         if (body == null) return null;
         try {
-            var dist = JqValues.parseStrict(body).getField("dist").getField("shasum");
-            if (dist.isString()) {
-                var hex = dist.asText().trim().toLowerCase();
-                if (hex.matches("[a-f0-9]{40}")) return hex;
+            var dist = JqValues.parseStrict(body).getField("dist");
+            var integrity = dist.getField("integrity");
+            if (!integrity.isNull()) {
+                if (!integrity.isString()) return null;
+                // An SRI string: whitespace-separated <algorithm>-<base64>[?options]
+                var sha1Only = true;
+                String sha1 = null;
+                var text = integrity.asText().trim();
+                for (var entry : text.isEmpty() ? new String[0] : WHITESPACE.split(text)) {
+                    var dash = entry.indexOf('-');
+                    var algorithm = dash < 0 ? "" : entry.substring(0, dash).toLowerCase(Locale.ROOT);
+                    if (algorithm.equals("sha512")) {
+                        var hash = sriHash(entry.substring(dash + 1), 64);
+                        if (hash != null) return "sha512:" + HexFormat.of().formatHex(hash);
+                    } else if (algorithm.equals("sha1") && sha1 == null) {
+                        var hash = sriHash(entry.substring(dash + 1), 20);
+                        if (hash != null) sha1 = "sha1:" + HexFormat.of().formatHex(hash);
+                    }
+                    sha1Only &= algorithm.equals("sha1");
+                }
+                if (!sha1Only) return null;
+                if (sha1 != null) return sha1;
+            }
+            var shasum = dist.getField("shasum");
+            if (shasum.isString()) {
+                var hex = shasum.asText().trim().toLowerCase(Locale.ROOT);
+                if (SHA1_HEX.matcher(hex).matches()) return "sha1:" + hex;
             }
         } catch (Exception e) { /* JSON parse error */ }
         return null;
+    }
+
+    /** The {@code length}-byte hash an SRI entry's {@code <base64>[?options]} carries, or null if it is not one. */
+    private static byte[] sriHash(String value, int length) {
+        var options = value.indexOf('?');
+        try {
+            var hash = Base64.getDecoder().decode(options < 0 ? value : value.substring(0, options));
+            return hash.length == length ? hash : null;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     // --- Maven/Gradle artifact caching ---
@@ -1133,7 +1201,7 @@ class ArtifactCacheHandler {
                         boolean storeSidecar,
                         BiConsumer<HttpServerResponse, HttpClientResponse> responseHeaders) {
 
-        /** A content digest known up front, {@code sha256:<hex>} or {@code sha1:<hex>} (OCI blobs, npm tarballs). */
+        /** A content digest known up front, {@code sha256:<hex>} (OCI blobs), {@code sha512:<hex>} or {@code sha1:<hex>} (npm tarballs). */
         static Verification ofDigest(String digest) {
             var checksum = digestAlgorithm(digest);
             // An algorithm we cannot check is never cached
@@ -1154,12 +1222,13 @@ class ArtifactCacheHandler {
             });
         }
 
-        /** The checksum type a {@code sha256:}/{@code sha1:} digest names, or null for any other. */
+        /** The checksum type a {@code sha256:}/{@code sha512:}/{@code sha1:} digest names, or null for any other. */
         static Sidecar digestAlgorithm(String digest) {
             var colon = digest.indexOf(':');
             return colon < 0 ? null : switch (digest.substring(0, colon)) {
                 case "sha256" -> Sidecar.SHA256;
                 case "sha1" -> Sidecar.SHA1;
+                case "sha512" -> Sidecar.SHA512;
                 default -> null;
             };
         }
