@@ -380,6 +380,25 @@ final class TaskScripts {
     }
 
     /**
+     * What a person needs to join a delegated agent's conversation ({@link TaskJoin}), for every
+     * agent task: {@code task <id> <state> <started>} ({@link #RUN_STATE}, and the current run's
+     * start in seconds since the epoch), then {@code identity <id> <identity>} when it recorded
+     * one, {@code sid <id> <session>}, {@code cwd <id> <path>} and {@code prompt <id> <first non-blank
+     * line of the first instruction>}, each value one line, so none can pass for another task's; then,
+     * if there was any agent task, the {@link Presence} probe once, each line prefixed {@code presence }.
+     * One exec, read without an {@code isx mcp} session.
+     */
+    static String joinable() {
+        return "p=; " + EACH_TASK + AGENTS_ONLY + RUN_STATE + "p=1; "
+                + "echo \"task $id $s $(stat -c %Y \"$D/current\" 2>/dev/null)\"; "
+                + "{ [ ! -e \"$D/identity\" ] && [ ! -L \"$D/identity\" ]; } || echo \"identity $id $(" + ifFile("$D/identity", "head -c 200") + " | head -n 1)\"; "
+                + "echo \"sid $id $(" + ifFile("$D/session_id", "head -c 200") + " | head -n 1)\"; "
+                + "echo \"cwd $id $(" + ifFile("$D/cwd", "head -c 4096") + " | head -n 1)\"; "
+                + "echo \"prompt $id $(" + ifFile("$D/prompt-1.md", "head -c 400") + " | grep -m 1 '[^[:space:]]')\"; done; "
+                + "[ -n \"$p\" ] && " + Presence.script("presence ") + "; exit 0";
+    }
+
+    /**
      * {@code task <id> running|unknown} for every delegated agent whose current run has not
      * finished, as systemd sees it; {@code unknown} when systemd could not be asked. What keeps
      * an orphan's working delegate, and its unpushed work, from being destroyed with it. Not
