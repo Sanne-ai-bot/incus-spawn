@@ -392,7 +392,8 @@ class TuiCharacterisationTest {
         var tui = mcpTui("task t1-abcd finished 1700000000\nsid t1-abcd sess-1\ncwd t1-abcd /home/agentuser/w\nprompt t1-abcd Fix it\n");
         press(tui, TAB, SHIFT_F2);
         assertEquals(Tui.PendingAction.SHELL_WITH_COMMAND, tui.pendingAction());
-        assertEquals("cd '/home/agentuser/w' && exec claude --resume sess-1", tui.pendingShellCommand());
+        assertTrue(tui.pendingShellCommand().startsWith("cd '/home/agentuser/w' || exit 1; "), tui.pendingShellCommand());
+        assertTrue(tui.pendingShellCommand().endsWith("; exec claude --resume sess-1"), tui.pendingShellCommand());
         assertFalse(runner.isRunning());
 
         tui = mcpTui("");
@@ -412,7 +413,7 @@ class TuiCharacterisationTest {
         assertTrue(tui.statusMessage.startsWith("t1-abcd is mid-turn"), tui.statusMessage);
         assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
         press(tui, SHIFT_F2, DOWN, ENTER);
-        assertEquals("cd '/b' && exec claude --resume sess-2", tui.pendingShellCommand());
+        assertTrue(tui.pendingShellCommand().endsWith("; exec claude --resume sess-2"), tui.pendingShellCommand());
         assertFalse(runner.isRunning());
     }
 

@@ -98,6 +98,20 @@ final class Presence {
         return linePrefix.isEmpty() ? probe : probe + " | sed 's/^/" + linePrefix + "/'";
     }
 
+    /**
+     * {@link #holderOf} in the guest, for a check that must run where the agent then starts
+     * ({@link TaskScripts#joinGuard}): sets {@code h} to the pid of the coding agent that holds the
+     * conversation, empty for none, from one run of the probe. Same rule, so change both together.
+     */
+    static String holderScript(DelegateAgent agent, String sessionId, String cwd) {
+        // POSIX, as the login shell running it need not be bash; the probe brings its own.
+        return "h=$(" + script("") + " | { h=; a=' '; while read -r k p rest; do "
+                + "case $k in " + agent.id + ") a=\"$a$p \";; esac; "
+                + "case $k in claude|codex) [ \"$rest\" = " + ExecScript.quote(cwd) + " ] && h=$p;; "
+                + "resume) case $a in *\" $p \"*) [ \"$rest\" = " + ExecScript.quote(sessionId) + " ] && h=$p;; esac;; esac; "
+                + "done; echo \"$h\"; }); ";
+    }
+
     static Presence parse(List<String> lines) {
         var terminals = new HashSet<Long>();
         var agents = new LinkedHashMap<Long, AgentProcess>();

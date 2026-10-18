@@ -399,6 +399,30 @@ final class TaskScripts {
     }
 
     /**
+     * The last check before a person's agent resumes {@code taskId}'s conversation, run by the
+     * shell that then execs it ({@link TaskJoin#guestCommand}), so the refusal {@link TaskJoin}
+     * decided seconds earlier is decided again a moment before the agent starts. It refuses (a line
+     * on stderr, then {@code exit 1}, which leaves no login shell behind) while any unit of the task
+     * is active, whatever {@code current} says ({@code current} is written only after
+     * {@code systemd-run} has started a run), or systemd cannot be asked; or while a coding agent
+     * isx did not start holds the conversation ({@link Presence#holderScript}). A
+     * {@code send_message} launched after this check is not seen: it narrows the window to the
+     * exec itself, it is not a lock.
+     */
+    static String joinGuard(String taskId, DelegateAgent agent, String sessionId, String cwd) {
+        if (!Tasks.SESSION_ID.matcher(sessionId).matches()) throw new IllegalArgumentException("not a session id: " + sessionId);
+        // A refusal waits for Enter on a terminal, so it is read before the session closes (the TUI redraws at once).
+        return "isx_refuse() { echo \"isx: $1, so not joining " + taskId + ".\" >&2; "
+                + "if [ -t 0 ] && [ -t 2 ]; then printf 'Press Enter to go back. ' >&2; read -r _; fi; exit 1; }; "
+                // Every unit of the task, whatever current says: one systemctl, and no answer refuses too.
+                + "u=$(sudo -n systemctl list-units --plain --no-legend --state=active,activating,deactivating,reloading '"
+                + unit(taskId, "*") + "' 2>/dev/null) || isx_refuse 'systemd cannot say whether a run is going'; "
+                + "[ -z \"$u\" ] || isx_refuse 'a run of it is going'; "
+                + Presence.holderScript(agent, sessionId, cwd)
+                + "[ -z \"$h\" ] || isx_refuse \"a person is already in its conversation (agent pid $h)\"; ";
+    }
+
+    /**
      * {@code task <id> running|unknown} for every delegated agent whose current run has not
      * finished, as systemd sees it; {@code unknown} when systemd could not be asked. What keeps
      * an orphan's working delegate, and its unpushed work, from being destroyed with it. Not
