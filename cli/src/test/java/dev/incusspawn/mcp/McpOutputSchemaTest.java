@@ -98,7 +98,8 @@ class McpOutputSchemaTest {
     void theSchemasEqualTheGoldenCopy() throws Exception {
         var actual = JqObject.builder();
         tools().forEach(t -> actual.put(t.name(), t.outputSchema()));
-        var text = JqValues.toPrettyJsonString(actual.build()) + "\n";
+        // In the golden copy's own style, so accepting a change shows only that change.
+        var text = dev.incusspawn.util.OutputFormat.toPrettyJson(actual.build()) + "\n";
         if (Boolean.getBoolean("mcp.output-schemas.update")) {
             Files.createDirectories(GOLDEN.getParent());
             Files.writeString(GOLDEN, text);
