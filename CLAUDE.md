@@ -232,7 +232,7 @@ See DESIGN.md "Support bundles: redaction by construction" and `.claude/rules/co
 Their host-resources and `file://` base images are confined to the project on real paths (`HostResourceSetup.collectEffective()`, re-checked at build, branch and start).
 Their `image_url` may only replace an image their own project imported (the `incus-spawn.project` image stamp, which fails closed).
 Their repos never get host checkout mounts or host-side clones.
-Their `gui: true` is never a branch default (GUI hands over the host's GPU and `XDG_RUNTIME_DIR`; `--gui` still can).
+Their `gui: true` is never a branch default (GUI hands over the host's GPU and its Wayland and audio sockets; `--gui` still can).
 For every definition, `DownloadCache.download()` is `http(s)`-only and refuses loopback and link-local hosts on every redirect hop, and no `prime` runs while any host checkout is mounted.
 A new capability that reaches host state outside the project needs the same gate.
 See DESIGN.md "Project-local templates are confined to their project" and `.claude/rules/config.md`.
