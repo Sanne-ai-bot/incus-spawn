@@ -64,6 +64,12 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 Open a shell in an existing instance.
 
     isx shell <instance>
+    isx shell <instance> --task [<task-id>]
+
+With `--task`, it opens the conversation of a task an agent [delegated over MCP](MCP.md) instead of a shell: the agent resumes it in the directory it worked in, and leaving it ends the session.
+Without an id it joins the only task in the instance; with several it lists them, each with the command that joins it, and exits.
+A task in the middle of a turn is refused until the turn ends.
+Plain `isx shell` into an instance `isx mcp` made prints that command before the prompt.
 
 When the `shell-status-bar` feature is enabled, a two-line status bar is pinned at the bottom of the terminal showing the instance name, template, IP address, and network mode. Press **F12** to open a quick-action menu with shortcuts from tool actions that set `shell_menu: true`. Enable with:
 

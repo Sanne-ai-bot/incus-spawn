@@ -544,6 +544,16 @@ public class IncusClient {
                     subnetDiagnostic, terminfoHandled, templateName);
         }
 
+        /**
+         * {@code command} instead of the login shell, outside any tmux or zmx session: attaching
+         * to one the instance already has would enter that session rather than run
+         * {@code command}. Joining a delegated task's conversation must land in it (#1509).
+         */
+        public ShellPrep withCommandOnly(String command) {
+            return new ShellPrep(workdir, command, false, false,
+                    subnetDiagnostic, terminfoHandled, templateName);
+        }
+
         public static ShellPrep from(IncusClient incus, String container) {
             // One instance read for every key: configGet costs a round trip per key.
             return fromConfig(incus, incus.configByPrefix(container, ""));
@@ -554,7 +564,8 @@ public class IncusClient {
             return fromConfig(incus, configByPrefix(instance, ""));
         }
 
-        private static ShellPrep fromConfig(IncusClient incus, Map<String, String> config) {
+        /** {@link #from(IncusClient, String)} from the config {@link #configByPrefix} already read. */
+        public static ShellPrep fromConfig(IncusClient incus, Map<String, String> config) {
             return fromPrefetched(config.get(Metadata.WORKDIR), config.get(Metadata.SHELL_COMMAND),
                     config.get(Metadata.BUILD_SOURCE),
                     BridgeSubnetCheck.detectConflictDiagnostic(incus), false,

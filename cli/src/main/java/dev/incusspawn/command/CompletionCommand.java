@@ -236,7 +236,9 @@ public class CompletionCommand extends BaseCommand {
             _isx_shell() {
               _arguments \\
                 '(-h --help)'{-h,--help}'[Show help]' \\
-                '1:clone name:_isx_instances'
+                '--task[Join a delegated task'"'"'s agent conversation]' \\
+                '1:clone name:_isx_instances' \\
+                '2::task id:'
             }
 
             _isx_run() {
@@ -632,10 +634,10 @@ public class CompletionCommand extends BaseCommand {
                 shell)
                   case "$prev" in
                     shell)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
+                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help --task" -- "$cur") )
                       return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help --task" -- "$cur") )
                   ;;
                 run)
                   case "$prev" in
@@ -940,6 +942,7 @@ public class CompletionCommand extends BaseCommand {
             # ── shell ────────────────────────────────────────────────────────────────────
 
             complete -c isx -f -n '__isx_using_subcommand shell' -a '(__isx_instances)' -d 'Clone name'
+            complete -c isx -f -n '__isx_using_subcommand shell' -l task -d "Join a delegated task's agent conversation"
 
             # ── run ─────────────────────────────────────────────────────────────────────
 
