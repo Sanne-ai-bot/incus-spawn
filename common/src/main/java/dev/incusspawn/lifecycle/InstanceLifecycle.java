@@ -116,12 +116,13 @@ public final class InstanceLifecycle {
         // Full internet is the absence of a mode, not whatever the source was copied with
         update.config(Metadata.NETWORK_MODE, mode == NetworkMode.FULL ? null : mode.name());
         if (mode == NetworkMode.AIRGAP) {
-            InstanceNetwork.maskNics(instance, update);
+            InstanceNetwork.maskNics(incus, instance, update);
             // No address: the copy request already removed its source's (IncusClient.copy), and an
             // airgapped instance must not keep one the proxy could take for another's.
             update.unset(Metadata.STATIC_IP);
             update.unset(Metadata.STATIC_GATEWAY);
         } else {
+            update.unset(Metadata.AIRGAP_MASKED);
             var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
             if (nic == null) {
                 throw new IncusException("No NIC device for " + BridgeAddress.BRIDGE + " found on " + name);

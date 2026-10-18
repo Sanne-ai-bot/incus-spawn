@@ -315,7 +315,7 @@ class ProxyOnlyAclTest {
                 "ib0", Map.of("type", "infiniband", "nictype", "physical", "parent", "ibp1s0"),
                 "root", Map.of("type", "disk", "path", "/", "pool", "default")));
         daemon.container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev",
-                Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name()));
+                Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name(), Metadata.AIRGAP_MASKED, "eth0,ib0"));
         daemon.device("tpl-dev", "eth0", Map.of("type", "none"));
         daemon.device("tpl-dev", "ib0", Map.of("type", "none"));
 
@@ -323,6 +323,24 @@ class ProxyOnlyAclTest {
         assertTrue(e.getMessage().contains("ib0"), e::getMessage);
         assertFalse(daemon.requests().stream().anyMatch(r -> r.startsWith("POST /1.0/instances")),
                 () -> String.join("\n", daemon.requests()));
+    }
+
+    /** A mask the template set itself is not airgap's, so unmasking leaves it and it does not count. */
+    @Test
+    void anAirgappedSourceWhoseTemplateMasksTheProfilesInfinibandGetsAProxyOnlyBranch() {
+        var daemon = new FakeIncusDaemon().profile("default", Map.of(
+                "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0"),
+                "ib0", Map.of("type", "infiniband", "nictype", "physical", "parent", "ibp1s0"),
+                "root", Map.of("type", "disk", "path", "/", "pool", "default")));
+        daemon.container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev",
+                Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name(), Metadata.AIRGAP_MASKED, "eth0"));
+        daemon.device("tpl-dev", "eth0", Map.of("type", "none"));
+        daemon.device("tpl-dev", "ib0", Map.of("type", "none"));
+
+        branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY);
+
+        assertRestricted(nic(daemon, "dev-2"));
+        assertEquals("none", daemon.instance("dev-2").path("devices").path("ib0").path("type").asText());
     }
 
     /** An InfiniBand device reaches a network without any NIC, so it counts as a second one. */

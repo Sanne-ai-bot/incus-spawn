@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.Platform;
 
 import dev.incusspawn.config.NetworkMode;
@@ -15,6 +16,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -627,6 +629,7 @@ class InstanceLifecycleRequestBudgetTest {
         assertEquals("work", daemon.instance(NAME).path("config")
                 .path(Metadata.accountKey("github")).asText());
     }
+
     /** Every network device Incus would attach at start, whatever it comes from, by name. */
     private static List<String> attachedNics(FakeIncusDaemon daemon) {
         var expanded = JacksonTrees.fromJsonNode(daemon.instance(NAME)).getField("expanded_devices");
@@ -680,6 +683,56 @@ class InstanceLifecycleRequestBudgetTest {
         assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
 
         assertEquals(List.of(), attachedNics(daemon));
+        var after = daemon.instance(NAME);
+        assertEquals("none", after.path("devices").path("ib0").path("type").asText());
+        assertEquals("eth0,ib0", sortedStamp(after));
+    }
+
+    /** The devices airgap stamped as its own masks, sorted. */
+    private static String sortedStamp(JsonNode instance) {
+        return String.join(",", Arrays.stream(
+                instance.path("config").path(Metadata.AIRGAP_MASKED).asText().split(",")).sorted().toList());
+    }
+
+    @Test
+    void reAirgappingKeepsTheSourcesMasks() {
+        // The copy carries the source's masks, which no longer expand to a network device
+        var daemon = withProfileInfiniband(new FakeIncusDaemon())
+                .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name(),
+                        Metadata.AIRGAP_MASKED, "eth0,ib0"))
+                .device(NAME, "eth0", Map.of("type", "none"))
+                .device(NAME, "ib0", Map.of("type", "none"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+        assertBudget(2, daemon, "configureBranch (airgap, from an airgapped instance)");
+        assertEquals("eth0,ib0", sortedStamp(daemon.instance(NAME)));
+    }
+
+    @Test
+    void aBranchWithNetworkKeepsAnInfinibandMaskTheTemplateSetItself() {
+        // Only the masks airgap stamped are lifted: the template hid the profile's ib0 itself
+        var daemon = withProfileInfiniband(new FakeIncusDaemon())
+                .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name(),
+                        Metadata.AIRGAP_MASKED, "eth0"))
+                .device(NAME, "eth0", Map.of("type", "none"))
+                .device(NAME, "ib0", Map.of("type", "none"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+
+        assertEquals(List.of("eth0"), attachedNics(daemon));
+        var after = daemon.instance(NAME);
+        assertEquals("none", after.path("devices").path("ib0").path("type").asText());
+        assertFalse(after.path("config").has(Metadata.AIRGAP_MASKED));
+    }
+
+    @Test
+    void aBranchWithNetworkFromAnInstanceAirgappedBeforeTheStampRestoresNicsOnly() {
+        // Airgap then masked NICs only, so any other mask is the template's own
+        var daemon = withProfileInfiniband(new FakeIncusDaemon())
+                .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name()))
+                .device(NAME, "eth0", Map.of("type", "none"))
+                .device(NAME, "ib0", Map.of("type", "none"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+
+        assertEquals(List.of("eth0"), attachedNics(daemon));
         assertEquals("none", daemon.instance(NAME).path("devices").path("ib0").path("type").asText());
     }
 
@@ -695,7 +748,8 @@ class InstanceLifecycleRequestBudgetTest {
     @Test
     void branchingWithNetworkFromAnAirgappedInstanceRestoresItsInfinibandDevice() {
         var daemon = withProfileInfiniband(new FakeIncusDaemon())
-                .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name()))
+                .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name(),
+                        Metadata.AIRGAP_MASKED, "eth0,ib0"))
                 .device(NAME, "eth0", Map.of("type", "none"))
                 .device(NAME, "ib0", Map.of("type", "none"));
         InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
