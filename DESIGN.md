@@ -1244,7 +1244,7 @@ Using Vertex mode in the container ensures the `/model` picker matches what's av
 The proxy routes requests to `api.anthropic.com` through one of three paths based on the URL:
 
 1. **Vertex passthrough** (`/v1/projects/...`): Requests already in Vertex format (from the container's Vertex SDK).
-   The proxy strips `@date` model version suffixes from the URL (the global endpoint rejects them), removes the `anthropic-beta` header, injects a GCP Bearer token, and forwards to the real Vertex endpoint.
+   The proxy strips `@date` model version suffixes from the URL path (the global endpoint rejects them), keeping the query string as sent, removes the `anthropic-beta` header, injects a GCP Bearer token, and forwards to the real Vertex endpoint.
    The body is forwarded as sent, but for `strict` in each tool definition, which is dropped as on the translation path (#1568).
    An object body also loses its insignificant whitespace, between tokens and before the object with a byte order mark; the Vertex SDK already formats the rest correctly.
    `VertexBodyRewriter` does this as the body arrives, with the parser the translation uses, and the body is held like a translated one (see "A body the proxy must hold").
