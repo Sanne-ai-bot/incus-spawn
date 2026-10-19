@@ -194,7 +194,7 @@ Three modes are available:
 
 `readonly` and `overlay` resources can't be mounted into system directories such as `/`, `/etc`, `/usr`, `/var` or `/tmp`. Use `/home/agentuser`, `/opt`, `/srv` or `/mnt` instead, or `mode: copy`.
 
-If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. Missing host paths are skipped with a warning, so templates remain portable. Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
+If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. An entry takes only `source`, `path` and `mode`; any other key (such as `target:`) is ignored with a warning. Missing host paths are skipped with a warning, so templates remain portable. Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
 
 **Project-local templates** (`.incus-spawn/images/`) come from whatever repository you cloned, so they can't reach outside it: host resources and `file://` images must point inside the project directory, and their `repos` are always cloned from the network, never from your host checkouts. To give a template you trust wider access, move it to `~/.config/incus-spawn/images/`.
 
