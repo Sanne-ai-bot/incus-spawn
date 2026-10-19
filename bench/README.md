@@ -7,9 +7,11 @@ Performance benchmarks for the native image build of the MITM proxy. Use these t
 `GitPreparationBench.java` exercises the production host preparation code three times with a fresh cache, reporting phase timings as JSON lines and removing its cache afterward:
 
 ```sh
-mvn -q -pl common compile
-java --class-path common/target/classes bench/GitPreparationBench.java <remote-url> <matching-checkout>
+mvn -q -pl common compile dependency:build-classpath -Dmdep.outputFile=target/bench.classpath -Dmdep.includeScope=runtime
+java --class-path common/target/classes:$(cat common/target/bench.classpath) bench/GitPreparationBench.java <remote-url> <matching-checkout>
 ```
+
+The dependencies are needed: without them the thread reading Git's output dies on its first progress line, and the measurement continues with nobody draining Git's stderr.
 
 Omit the checkout to measure a first clone seeded entirely from the remote. The checkout is read only; its configured remote should match the URL so its remote-tracking refs can supply fetch negotiation hints. Use a local transport fixture to separate CPU and disk cost from WAN transfer. These figures exclude Incus mounts, guest checkout and priming; normal build diagnostics report the host phases, attach, guest and detach times.
 
