@@ -108,6 +108,14 @@ class GitPreparationTest {
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
     }
 
+    @Test void anUnchangedRemoteWithAnotherRefEndingInHeadIsACacheHit() throws Exception {
+        // ls-remote's HEAD pattern also matches refs/remotes/origin/HEAD, which mirrors advertise.
+        git(remote, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/stable");
+        start();
+        try (var first = prepare(null, null)) { assertEquals("new clean snapshot", first.strategy()); }
+        try (var second = prepare(null, null)) { assertEquals("cached clean snapshot", second.strategy()); }
+    }
+
     @Test void mixedPacksExcludePrivateBranchesStashesAndUnreachableObjects() throws Exception {
         start();
         commitBinary(host, "private commit");
