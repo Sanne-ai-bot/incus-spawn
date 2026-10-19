@@ -196,12 +196,17 @@ class NpmCacheTest {
 
     /** Whether a download of "hello" is committed as {@code target} under {@code verification}, as finalizeCacheFile would. */
     static boolean commits(Path target, ArtifactCacheHandler.Verification verification) throws Exception {
+        return commit(target, verification) == VerifiedArtifactStore.Commit.COMMITTED;
+    }
+
+    /** What becomes of a download of "hello" as {@code target} under {@code verification}; null when nothing is expected. */
+    static VerifiedArtifactStore.Commit commit(Path target, ArtifactCacheHandler.Verification verification) throws Exception {
         Files.createDirectories(target.getParent());
         var download = Files.createTempFile(target.getParent(), "dl-", ".tmp");
         Files.writeString(download, "hello");
         var expected = verification.expected().apply(null).result();
-        return expected != null && VerifiedArtifactStore.verifyAndCommit(download, target, verification.checksum(),
-                expected, verification.storeSidecar(), verification.alongside());
+        return expected == null ? null : VerifiedArtifactStore.verifyAndCommit(download, target, verification.checksum(),
+                expected, verification.storeSidecar(), verification.alongside(), verification.lookedUp());
     }
 
     @Test
@@ -252,7 +257,7 @@ class NpmCacheTest {
     // --- sidecar files, committed with the tarball ---
 
     static boolean commitsTarball(Path cacheFile, String digest, String packageEtag) throws Exception {
-        return commits(cacheFile, ArtifactCacheHandler.Verification.ofNpmTarball(digest, packageEtag));
+        return commits(cacheFile, ArtifactCacheHandler.Verification.ofNpmTarball(digest, packageEtag, Instant.now()));
     }
 
     @Test
@@ -278,6 +283,25 @@ class NpmCacheTest {
 
         assertEquals(HELLO_SHA512, Files.readString(Path.of(cacheFile + ".shasum")));
         assertFalse(Files.exists(Path.of(cacheFile + ".etag")), "the old copy's ETag does not vouch for this one");
+    }
+
+    @Test
+    void tarballFromAnOlderLookupKeepsTheCopyConfirmedAfterIt(@TempDir Path tmp) throws Exception {
+        var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
+        Files.createDirectories(cacheFile.getParent());
+        Files.writeString(cacheFile, "republished");
+        var shasum = Path.of(cacheFile + ".shasum");
+        Files.writeString(shasum, NEW_SHA1_DIGEST);
+        Files.writeString(Path.of(cacheFile + ".etag"), "\"new-etag\"");
+        var lookedUp = Instant.now().minus(Duration.ofMinutes(1));
+        Files.setLastModifiedTime(shasum, FileTime.from(lookedUp.plusSeconds(30)));
+
+        assertEquals(VerifiedArtifactStore.Commit.SUPERSEDED,
+                commit(cacheFile, ArtifactCacheHandler.Verification.ofNpmTarball(HELLO_SHA512, "\"etag\"", lookedUp)));
+
+        assertEquals("republished", Files.readString(cacheFile));
+        assertEquals(NEW_SHA1_DIGEST, Files.readString(shasum));
+        assertEquals("\"new-etag\"", Files.readString(Path.of(cacheFile + ".etag")));
     }
 
     @Test

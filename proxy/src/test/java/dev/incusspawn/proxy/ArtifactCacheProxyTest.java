@@ -36,6 +36,7 @@ import java.net.NetworkInterface;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
@@ -440,16 +441,29 @@ class ArtifactCacheProxyTest {
      */
     static boolean deleteOnceIdle(Path dir) {
         try {
-            if (Files.isDirectory(dir)) {
-                try (var files = Files.walk(dir)) {
-                    if (files.anyMatch(f -> f.getFileName().toString().endsWith(".tmp"))) return false;
-                }
-            }
+            if (!noDownloadInFlight(dir)) return false;
             FileTrees.delete(dir);
         } catch (IOException | UncheckedIOException e) {
             return false;
         }
         return !Files.exists(dir);
+    }
+
+    /**
+     * Whether no download (or sidecar write) has a temp file under {@code dir}: each one ends by renaming or
+     * deleting it. A file that vanishes mid-walk means something is still moving there, so that answers no
+     * (ask again) rather than failing.
+     */
+    static boolean noDownloadInFlight(Path dir) throws IOException {
+        if (!Files.isDirectory(dir)) return true;
+        try (var files = Files.walk(dir)) {
+            return files.noneMatch(f -> f.getFileName().toString().endsWith(".tmp"));
+        } catch (NoSuchFileException e) {
+            return false;
+        } catch (UncheckedIOException e) {
+            if (e.getCause() instanceof NoSuchFileException) return false;
+            throw e;
+        }
     }
 
     // --- helpers ---

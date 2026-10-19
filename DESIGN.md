@@ -1482,7 +1482,7 @@ How recent is configurable; with both durations at zero, every hit is confirmed 
 Only an unreachable upstream serves an older one.
 
 - *Confirmation tiers* (`ArtifactCacheTiers`, `artifact-cache:` in config.yaml).
-  The stored checksum's modification time is when upstream last confirmed the artifact: set when both are committed, and renewed by a match only from an answer that could have evicted (on Central a client's own `.sha1` request matching confirms nothing, since the header outranks it).
+  The stored checksum's modification time is when upstream last confirmed the artifact: set to the time of the lookup the commit was verified on (not when its download finished), and renewed by a match only from an answer that could have evicted (on Central a client's own `.sha1` request matching confirms nothing, since the header outranks it).
   Renewal is best-effort: a checksum file the proxy may not re-stamp (another owner) just ages into being confirmed first.
   Younger than `fresh` (default 2h), a hit is served from disk with no upstream request.
   Younger than `max-stale` (default 7 days), it is served at once and confirmed again in the background: a match renews the confirmation, a change or withdrawal evicts the copy so the *next* request fetches it, and an answer that settles neither (a 403, an unusable sidecar) expires the confirmation, so the next hit gets the confirm-first path's handling.
@@ -1602,6 +1602,8 @@ SNAPSHOTs stay relayed because no cached domain serves them, and were one to, si
 
 `VerifiedArtifactStore` owns the on-disk half and serializes commit, reconcile and evict per artifact with a striped lock, so a store racing an eviction cannot leave a sidecar beside an artifact it does not describe.
 A commit is ordered for crashes as well: the download is flushed to disk before it is renamed into place, sidecars of a previous copy are dropped before the rename, and the new checksum is written after it, so an interrupted commit never leaves a checksum beside bytes it does not describe (an artifact without one is hashed before it is trusted).
+A commit never replaces a copy upstream confirmed after the commit's own lookup: under the lock, a cached copy whose stored checksum (npm's `.shasum`) is newer than that lookup stays, and the download, already served to its client, is dropped (#1538).
+Since the stored checksum carries the lookup's time, two downloads racing a republish keep the copy from the later lookup whichever finishes last; ordered by finish instead, a slow download from before a republish replaced the republished copy, which a lockfile install then served without a lookup for up to `fresh`.
 Checksums are fetched through a Vert.x client of their own (`probeClient`: hostname verification, the proxy's truststore, async DNS, pooled keep-alive connections), npm's version lookups included, never a raw socket.
 A separate pool keeps a cache hit's confirmation from queueing behind large downloads.
 Since every hit waits on one, that client is tuned for round trips.

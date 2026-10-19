@@ -698,12 +698,13 @@ class ArtifactCacheHandler {
             if (expected == null) {
                 System.out.println("No usable " + checksum.extension + " for " + ref + ", not caching");
                 Files.deleteIfExists(tempFile);
-            } else if (VerifiedArtifactStore.verifyAndCommit(tempFile, cacheFile, checksum,
-                    expected, verification.storeSidecar(), verification.alongside())) {
-                System.out.println("Cached: " + ref + " (" + checksum.extension + " verified, " +
+            } else switch (VerifiedArtifactStore.verifyAndCommit(tempFile, cacheFile, checksum, expected,
+                    verification.storeSidecar(), verification.alongside(), verification.lookedUp())) {
+                case COMMITTED -> System.out.println("Cached: " + ref + " (" + checksum.extension + " verified, " +
                         formatSize(Files.size(cacheFile)) + ")");
-            } else {
-                System.err.println("Cache: " + checksum.extension + " mismatch for " +
+                case SUPERSEDED -> System.out.println("Not caching " + ref
+                        + ": upstream confirmed the cached copy after this download's lookup");
+                case REJECTED -> System.err.println("Cache: " + checksum.extension + " mismatch for " +
                         ref + ", not caching");
             }
         } catch (Exception e) {
@@ -864,6 +865,8 @@ class ArtifactCacheHandler {
         // other tarballs' settling. That queue is the one every request on this server
         // shares, so the digest lookup waits outside it: inside, a cold install's lookups ran
         // one at a time (#960).
+        // Before the digest lookup, which a miss's commit is ordered by (#1538)
+        var lookedUp = Instant.now();
         vertx.executeBlocking(() -> {
             var cacheDir = npmCacheDir();
             var etagFile = cacheDir.resolve(packageName).resolve(".etag").normalize();
@@ -892,7 +895,7 @@ class ArtifactCacheHandler {
                 }
             } else {
                 fetchCacheAndServe(clientReq, started, domain, cacheFile, ref,
-                        Verification.ofNpmTarball(result.digest(), result.packageEtag()));
+                        Verification.ofNpmTarball(result.digest(), result.packageEtag(), lookedUp));
             }
         }).onFailure(err -> {
             System.err.println("npm integrity check error for " + ref +
@@ -1190,52 +1193,62 @@ class ArtifactCacheHandler {
      * {@code checksum}'s algorithm, found once the response is in hand. With
      * {@code storeSidecar} the checksum is committed beside the artifact as that
      * sidecar, and {@code alongside} is committed with it (see
-     * {@link VerifiedArtifactStore#verifyAndCommit(Path, Path, Sidecar, byte[], boolean, SequencedMap)}).
+     * {@link VerifiedArtifactStore#verifyAndCommit(Path, Path, Sidecar, byte[], boolean, SequencedMap, Instant)}).
+     * {@code lookedUp} is no later than the moment upstream was asked for the checksum.
      * {@code responseHeaders} adds what this kind of cache tells the client.
      */
     record Verification(Sidecar checksum,
                         Function<HttpClientResponse, Future<byte[]>> expected,
                         boolean storeSidecar,
                         SequencedMap<String, byte[]> alongside,
+                        Instant lookedUp,
                         BiConsumer<HttpServerResponse, HttpClientResponse> responseHeaders) {
 
-        /** A content digest known up front, {@code sha256:<hex>} (OCI blobs), {@code sha512:<hex>} or {@code sha1:<hex>} (npm tarballs). */
+        /**
+         * A content digest known up front, {@code sha256:<hex>} (OCI blobs). Content-addressed,
+         * so nothing beside the blob vouches for it, and when it was looked up does not matter.
+         */
         static Verification ofDigest(String digest) {
-            return ofDigest(digest, VerifiedArtifactStore.NOTHING_ALONGSIDE);
+            return ofDigest(digest, VerifiedArtifactStore.NOTHING_ALONGSIDE, Instant.now());
         }
 
         /**
          * An npm tarball, committed with its sidecars: the {@link #npmDigest} it is verified
          * against as {@code .shasum}, and the package ETag it was looked up under as {@code .etag}.
          * Written with the tarball, under its lock, so a concurrent miss for the same tarball
-         * whose lookup found another digest cannot leave its digest beside these bytes (#1464).
+         * whose lookup found another digest cannot leave its digest beside these bytes (#1464),
+         * and not over a copy confirmed after {@code lookedUp}, the digest's lookup (#1538).
          */
-        static Verification ofNpmTarball(String digest, String packageEtag) {
+        static Verification ofNpmTarball(String digest, String packageEtag, Instant lookedUp) {
             var alongside = new LinkedHashMap<String, byte[]>();
             // Without one, a previous copy's is still dropped: it vouched for other bytes
             alongside.put(".etag", packageEtag == null ? null : packageEtag.getBytes(StandardCharsets.UTF_8));
             alongside.put(".shasum", digest.getBytes(StandardCharsets.US_ASCII));
-            return ofDigest(digest, alongside);
+            return ofDigest(digest, alongside, lookedUp);
         }
 
-        private static Verification ofDigest(String digest, SequencedMap<String, byte[]> alongside) {
+        private static Verification ofDigest(String digest, SequencedMap<String, byte[]> alongside, Instant lookedUp) {
             var checksum = digestAlgorithm(digest);
             // An algorithm we cannot check is never cached
             byte[] expected = checksum == null ? null : digestHex(digest).getBytes(StandardCharsets.US_ASCII);
             return new Verification(checksum == null ? Sidecar.SHA256 : checksum,
-                    resp -> Future.succeededFuture(expected), false, alongside,
+                    resp -> Future.succeededFuture(expected), false, alongside, lookedUp,
                     (clientResp, upResp) -> clientResp.putHeader("Docker-Content-Digest", digest));
         }
 
-        /** A Maven/Gradle artifact, committed with the checksum it was verified against. */
+        /**
+         * A Maven/Gradle artifact, committed with the checksum it was verified against. That
+         * checksum comes with or after the download, so the download's start is its lookup.
+         */
         static Verification ofArtifact(Sidecar checksum, Function<HttpClientResponse, Future<byte[]>> expected) {
-            return new Verification(checksum, expected, true, VerifiedArtifactStore.NOTHING_ALONGSIDE, (clientResp, upResp) -> {
-                // Pass on the checksums upstream sent with these bytes (Maven smart checksums)
-                for (var header : new String[] {"X-Checksum-SHA1", "X-Checksum-MD5"}) {
-                    var value = upResp.getHeader(header);
-                    if (value != null) clientResp.putHeader(header, value);
-                }
-            });
+            return new Verification(checksum, expected, true, VerifiedArtifactStore.NOTHING_ALONGSIDE, Instant.now(),
+                    (clientResp, upResp) -> {
+                        // Pass on the checksums upstream sent with these bytes (Maven smart checksums)
+                        for (var header : new String[] {"X-Checksum-SHA1", "X-Checksum-MD5"}) {
+                            var value = upResp.getHeader(header);
+                            if (value != null) clientResp.putHeader(header, value);
+                        }
+                    });
         }
 
         /** The checksum type a {@code sha256:}/{@code sha512:}/{@code sha1:} digest names, or null for any other. */
@@ -1330,8 +1343,9 @@ class ArtifactCacheHandler {
                 }
             } else if (local.hostCopy() && !inBackoff(domain)) {
                 // The checksum is needed before deciding whether to download at all
+                var lookedUp = Instant.now();
                 probe(domain, clientReq.path(), revalidation, target.checksum()).onSuccess(answer ->
-                        importOrDownload(clientReq, started, domain, revalidation, target, ref, answer));
+                        importOrDownload(clientReq, started, domain, revalidation, target, ref, answer, lookedUp));
             } else {
                 // No copy to fall back on, so even in a backoff upstream is asked
                 download(clientReq, started, domain, revalidation, target, ref);
@@ -1539,7 +1553,7 @@ class ArtifactCacheHandler {
     }
 
     private void importOrDownload(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
-                                  ArtifactTarget target, String ref, SidecarAnswer answer) {
+                                  ArtifactTarget target, String ref, SidecarAnswer answer, Instant lookedUp) {
         if (answer == SidecarAnswer.UNREACHABLE) {
             // Downloading would only wait out the same failed connection
             upstream.sendError(clientReq.response(), 502, "Upstream unreachable");
@@ -1550,15 +1564,16 @@ class ArtifactCacheHandler {
             download(clientReq, started, domain, revalidation, target, ref);
             return;
         }
+        // Superseded too goes to upstream: the copy confirmed meanwhile may not be what this answer describes
         vertx.executeBlocking(() -> VerifiedArtifactStore.importCopy(
-                target.hostCopy(), target.artifact(), checksum, answer.body())
-                ? Files.size(target.artifact()) : -1L, false
+                target.hostCopy(), target.artifact(), checksum, answer.body(), lookedUp)
+                == VerifiedArtifactStore.Commit.COMMITTED ? Files.size(target.artifact()) : -1L, false
         ).onSuccess(importedSize -> {
             if (importedSize >= 0) {
                 recordHit(ArtifactCacheStats.Hit.HOST_COPY, importedSize);
                 serveConfirmed(clientReq, target.artifact(), revalidation, answer);
             } else {
-                System.out.println("Maven .m2 copy differs from upstream: " + ref);
+                System.out.println("Maven .m2 copy not imported (differs from upstream, or superseded): " + ref);
                 download(clientReq, started, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
