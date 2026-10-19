@@ -1663,7 +1663,7 @@ public class MitmProxy {
     private static boolean isVertexModelRequest(HttpServerRequest clientReq, RequestContext ctx) {
         var path = clientReq.path();
         return ctx.creds().useVertex() && ANTHROPIC_DOMAINS.contains(ctx.domain()) && path != null
-                && (path.startsWith("/v1/projects/") || path.startsWith("/v1/messages"));
+                && (isVertexFormat(path) || path.startsWith("/v1/messages"));
     }
 
     /**
@@ -1713,9 +1713,10 @@ public class MitmProxy {
     }
 
     /**
-     * A Vertex model call: its body is translated as it arrives if it is in the standard API's format,
-     * and held in a {@link BodySpool} until it has been sent for good, since the URL is known only at its end
-     * and a 401 sends it again. Paused here, before anything waits (#1164).
+     * A Vertex model call: its body is rewritten as it arrives, translated if it is in the standard API's
+     * format and otherwise only rid of each tool's {@code strict} (#1568), unless it is encoded
+     * ({@link #isEncodedVertexFormat}); and held in a {@link BodySpool} until it has been sent for good,
+     * since the URL is known only at its end and a 401 sends it again. Paused here, before anything waits (#1164).
      */
     private void retainVertexRequest(HttpServerRequest clientReq, RequestContext ctx) {
         clientReq.pause();
@@ -1736,7 +1737,7 @@ public class MitmProxy {
 
         var path = clientReq.path();
         VertexBodyRewriter rewriter = null;
-        if (!path.startsWith("/v1/projects/")) {
+        if (!isEncodedVertexFormat(clientReq)) {
             if (debug != null) debug.forwarded = new ApiTrafficLog.Capture();
             rewriter = vertexRewriter(path, credentials,
                     debug == null ? spool::write : chunk -> {
@@ -1789,11 +1790,7 @@ public class MitmProxy {
             String uri;
             try {
                 if (translator == null) {
-                    // Already Vertex-formatted (container running in Vertex mode with
-                    // ANTHROPIC_VERTEX_BASE_URL pointing here): forward to real Vertex.
-                    // The Vertex SDK uses @date suffixes (e.g. claude-haiku-4-5@20251001)
-                    // which the global endpoint rejects — strip them.
-                    uri = VERTEX_DATE_SUFFIX.matcher(path).replaceFirst("");
+                    uri = vertexFormatPath(path);
                 } else {
                     var result = translator.end();
                     uri = result.path();
@@ -1830,7 +1827,7 @@ public class MitmProxy {
     }
 
     /**
-     * Answers a body the rewriter would not translate: invalid JSON as before, with a 502; a refused
+     * Answers a body the rewriter would not rewrite: invalid JSON as before, with a 502; a refused
      * one with a 400; and anything unexpected with a 502, as the handler's catch-all always did.
      */
     private static void refuseTranslation(String path, Exception e, java.util.function.BiConsumer<Integer, String> answer) {
@@ -1839,7 +1836,7 @@ public class MitmProxy {
             e.printStackTrace(System.err);
             answer.accept(502, "Proxy error");
         } else if (e instanceof VertexBodyRewriter.InvalidBody) {
-            System.err.println("Failed to translate request body to Vertex format: " + e.getMessage());
+            System.err.println("Failed to rewrite a request body for Vertex: " + e.getMessage());
             answer.accept(502, "Proxy error");
         } else {
             ProxyLog.warn("Refusing a Vertex request (" + path + "): " + e.getMessage());
@@ -1858,17 +1855,48 @@ public class MitmProxy {
         }
     }
 
-    /** The translation of a Vertex request's body; overridable so tests can make it fail. */
+    /**
+     * The rewrite of a Vertex request's body: a translation from the standard API's format, or, for
+     * one already in Vertex's, the drop of each tool's {@code strict} (#1568); overridable so tests can
+     * make it fail.
+     */
     VertexBodyRewriter vertexRewriter(String path, ProxyCredentials credentials, Consumer<Buffer> output) {
+        if (isVertexFormat(path)) return VertexBodyRewriter.vertexFormat(vertexFormatPath(path), output);
         return new VertexBodyRewriter(path, credentials.vertexProjectId(), credentials.vertexRegion(), output);
+    }
+
+    /** Whether a model call is already in Vertex's format, rather than the standard API's. */
+    private static boolean isVertexFormat(String path) {
+        return path.startsWith("/v1/projects/");
+    }
+
+    /**
+     * Where a request already in Vertex's format (container running in Vertex mode with
+     * ANTHROPIC_VERTEX_BASE_URL pointing here) goes: its own path, but for the @date suffix the
+     * Vertex SDK uses (e.g. claude-haiku-4-5@20251001), which the global endpoint rejects.
+     */
+    private static String vertexFormatPath(String path) {
+        return VERTEX_DATE_SUFFIX.matcher(path).replaceFirst("");
+    }
+
+    /**
+     * Whether a request in Vertex's format has an encoded body (gzip, say), which the rewriter cannot
+     * read: it is forwarded unchanged, encoding and all, as before #1568, for Vertex to judge.
+     */
+    private static boolean isEncodedVertexFormat(HttpServerRequest clientReq) {
+        // Every coding of every Content-Encoding header: identity, once or in a list, alone is no coding
+        return isVertexFormat(clientReq.path()) && clientReq.headers().getAll("Content-Encoding").stream()
+                .flatMap(value -> java.util.Arrays.stream(value.split(",")))
+                .map(String::strip)
+                .anyMatch(coding -> !coding.isEmpty() && !"identity".equalsIgnoreCase(coding));
     }
 
     private void logDroppedFields(List<String> dropped) {
         if (dropped.isEmpty() || loggedStrippedFields.size() >= MAX_LOGGED_DROPPED_FIELDS) return;
         var fresh = dropped.stream().filter(loggedStrippedFields::add).toList();
-        if (!fresh.isEmpty()) System.err.println("Vertex translation: stripped unsupported fields: " + fresh);
+        if (!fresh.isEmpty()) System.err.println("Vertex rewrite: stripped unsupported fields: " + fresh);
         if (loggedStrippedFields.size() >= MAX_LOGGED_DROPPED_FIELDS) {
-            System.err.println("Vertex translation: " + MAX_LOGGED_DROPPED_FIELDS + " field names logged; no more will be");
+            System.err.println("Vertex rewrite: " + MAX_LOGGED_DROPPED_FIELDS + " field names logged; no more will be");
         }
     }
 

@@ -269,6 +269,8 @@ Key design:
   `ClaudeSetup`/`PiSetup` `envEntries(params, selection)` and `GhSetup.install(c, params, selection)` all take the **template's** account, not the global default.
 - Three auth modes for Anthropic domains (priority: Vertex > OAuth > API key): OAuth mode strips `x-api-key` and injects `Authorization: Bearer <token>` for Claude Pro/Max users.
   Vertex mode does three-way routing -- passthrough for Vertex-formatted requests, standard-to-Vertex translation for `/v1/messages` (`VertexBodyRewriter`: streaming, bounded memory, its departures from the old tree translation listed in DESIGN.md), and direct forwarding for non-messages endpoints.
+  A passthrough body loses only each tool's `strict` (`VertexBodyRewriter.vertexFormat`) and, for an object, insignificant whitespace; a non-empty one must be valid JSON (else 502) with well-formed top-level and tool names (else 400).
+  One whose `Content-Encoding` headers name any coding but `identity` is not read, and is forwarded unchanged.
   API key mode replaces `x-api-key` with the real key.
   Anthropic auth is declared via `ClaudeSetup.proxy()` with `type: anthropic` but remains hardcoded in `MitmProxy` (too complex for the generic tool proxy system); `buildRouting()` filters `type: anthropic` entries from domain maps
 - GitHub, Bob, and Codex/OpenAI credential injection is handled via tool-contributed proxy entries (see Tool System), not hardcoded.

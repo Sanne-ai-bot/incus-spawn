@@ -35,6 +35,11 @@ import java.util.function.Consumer;
  * malformed Unicode and number spelling in values are forwarded as sent, not re-encoded; and a name
  * the rewriter compares, or the {@code model} that goes into the URL, must be well-formed, or the
  * request is refused.
+ * <p>
+ * A body already in Vertex's format ({@link #vertexFormat}) is rewritten by the same rule for tool
+ * definitions and nothing else (#1568): every other member, {@code model}, {@code anthropic_version}
+ * and {@code cache_control}'s {@code scope} included, is copied as it is, and the path is left as it
+ * is. Only the names it compares, the top object's and a tool definition's, must be well-formed.
  */
 class VertexBodyRewriter {
 
@@ -87,6 +92,7 @@ class VertexBodyRewriter {
             ARR_FIRST = 6, STRING = 7, NUMBER = 8, LITERAL = 9, TRAIL = 10;
 
     private final String originalPath;
+    /** Where a translated body goes; null for a body already in Vertex's format, which is not translated. */
     private final String pathPrefix;
     private final Consumer<Buffer> output;
 
@@ -160,6 +166,21 @@ class VertexBodyRewriter {
         this.output = output;
     }
 
+    /** A rewriter of a body already in Vertex's format, for {@code path}: only a tool's {@code strict} goes. */
+    static VertexBodyRewriter vertexFormat(String path, Consumer<Buffer> output) {
+        return new VertexBodyRewriter(path, output);
+    }
+
+    private VertexBodyRewriter(String path, Consumer<Buffer> output) {
+        this.originalPath = path;
+        this.pathPrefix = null;
+        this.output = output;
+    }
+
+    private boolean translating() {
+        return pathPrefix != null;
+    }
+
     void accept(Buffer chunk) throws InvalidBody, RefusedBody {
         var bytes = chunk.getBytes();
         try {
@@ -183,6 +204,7 @@ class VertexBodyRewriter {
             }
             if (state != TRAIL) throw new InvalidBody("the body ends before its JSON does");
             if (passthrough) return new Result(originalPath, List.of());
+            if (!translating()) return new Result(originalPath, List.copyOf(dropped));
             var name = model == null ? DEFAULT_MODEL : model.replaceFirst("-\\d{8}$", "");
             var path = pathPrefix + name + (stream ? ":streamRawPredict" : ":rawPredict");
             if (path.getBytes(StandardCharsets.UTF_8).length > MAX_URL_PATH) {
@@ -340,7 +362,7 @@ class VertexBodyRewriter {
 
     private void closeContainer(int b) throws InvalidBody {
         var mode = modeAt(depth);
-        if (depth == 1 && !passthrough) {
+        if (depth == 1 && !passthrough && translating()) {
             if (bit(emittedAny, 1)) emit(',');
             emitAscii("\"anthropic_version\":\"" + ANTHROPIC_VERSION + "\"");
         }
@@ -382,8 +404,10 @@ class VertexBodyRewriter {
         var mode = modeAt(depth);
         inKey = true;
         // Names the rewriter compares: in the top object, in the objects it copies and transforms,
-        // and in a cache_control object; never below a skipped field or inside a copied value
-        keyInterpreted = mode == EMIT && (rawFrom == 0 || depth < rawFrom);
+        // and in a cache_control object; never below a skipped field or inside a copied value. A body
+        // in Vertex's format has its top object's names compared, and a tool definition's
+        keyInterpreted = mode == EMIT && (translating() ? rawFrom == 0 || depth < rawFrom
+                : depth == 1 || isToolDefinition());
         keyRawLen = 0;
         keyRawOverflow = false;
         keyStreaming = false;
@@ -415,6 +439,7 @@ class VertexBodyRewriter {
     /** Whether the member whose name is {@code name} (null: matches nothing) is written. */
     private boolean memberIsWritten(String name) {
         if (modeAt(depth) != EMIT) return false;
+        if (depth == 1 && !translating()) return true;
         if (depth == 1) return name != null && ALLOWED_FIELDS.contains(name) && !name.equals("anthropic_version");
         if (depth == ccDepth) return !"scope".equals(name);
         return true;
@@ -441,10 +466,10 @@ class VertexBodyRewriter {
         if (mode != EMIT) {
             valueMode = mode;
         } else if (depth == 1) {
-            if ("model".equals(name)) {
+            if (translating() && "model".equals(name)) {
                 if (++modelSeen > 1) throw new RefusedBody("the body names its model twice");
                 valueMode = MODEL;
-            } else if ("stream".equals(name)) {
+            } else if (translating() && "stream".equals(name)) {
                 if (++streamSeen > 1) throw new RefusedBody("the body sets stream twice");
                 valueMode = EMIT;
                 valueIsStream = true;
@@ -463,7 +488,7 @@ class VertexBodyRewriter {
             if (dropped.size() < MAX_DROPPED_NAMES) dropped.add(TOOL_STRICT);
         } else {
             valueMode = EMIT;
-            nextIsCacheControl = "cache_control".equals(name) && (rawFrom == 0);
+            nextIsCacheControl = translating() && "cache_control".equals(name) && (rawFrom == 0);
         }
         if (valueMode == EMIT && !keyStreaming) writeMemberStart();
         if (valueMode == EMIT) emit(':');
