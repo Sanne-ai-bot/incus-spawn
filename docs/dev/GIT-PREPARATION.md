@@ -215,6 +215,9 @@ A snapshot larger than the entire budget is usable for its current build but is 
 The default budget fits large repositories such as apache/camel, whose snapshot is about 1.5 GiB (#1548); with 1 GiB it was never kept, and every build took the full clone and fsck.
 When a snapshot is not retained, the build warns after its repository lines. With retention disabled the warning names the setting that is `0`; over the budget it gives the size, the limit and the setting to raise, for example `monorepo: Git snapshot (5324.8 MiB) exceeds git-cache.snapshot-max-mib (4096 MiB); it was used for this build but not kept`.
 The size is in the setting's unit, rounded up to a tenth of a MiB, so it always reads as larger than the limit.
+Snapshots that each fit but not together evict each other: building the repositories in turn then clones and verifies each in full every time (#1554).
+So when keeping a snapshot evicts others still within `max-age-days`, the build warns with their count, their size and the setting to raise, for example `docs: Git snapshot kept, but it evicted 1 other recently used snapshot (2500.1 MiB) to fit git-cache.snapshot-max-mib (4096 MiB); raise it, or repositories built in turn are cloned and verified in full every time`.
+Evicting an expired snapshot, or replacing a URL's own older generation, is not reported.
 Publishing an oversized replacement also retires the old generation for that URL, preventing repeated refreshes from a stale retained base.
 Existing readers keep their pinned files.
 Setting either limit to zero disables retention; malformed values use the defaults.

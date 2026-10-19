@@ -73,7 +73,7 @@ public final class GitPreparation {
         /** Relative to the bare repository; checked again on the guest's independent copy. */
         public Map<String, String> checksums() { return checksums; }
         public Map<String, Long> timingsMillis() { return Map.copyOf(timings); }
-        /** Why this build's snapshot was not kept for the next one, and what to change; null when it was kept. */
+        /** Whether this snapshot or others it evicted were not kept for later builds, why, and what to change; null when none was lost. */
         public String notRetained() { return notRetained; }
         public String timingSummary() {
             return timings.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue() + "ms")
