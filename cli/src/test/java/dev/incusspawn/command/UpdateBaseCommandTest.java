@@ -34,6 +34,13 @@ class UpdateBaseCommandTest {
         assertTrue(yaml.contains("vm_image_sha256:\n  aarch64: v2\n  x86_64: v1\n"), yaml);
     }
 
+    /** The pin replaces the built-in definition, so it must carry its masks too (#1561). */
+    @Test
+    void aPinKeepsTheBuiltinMaskedServices(@TempDir Path home) {
+        var yaml = pin(home, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
+        assertTrue(yaml.contains("mask_services: [tmp.mount]\n"), yaml);
+    }
+
     /** One arch's VM checksum is not a pin: the other arch would download the image unverified. */
     @Test
     void aPinWithTheVmImageForOneArchLeavesTheVmImageOut(@TempDir Path home) {
