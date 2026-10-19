@@ -201,8 +201,6 @@ public class ImageDef extends MappedDefinition {
     public MachineType machineType() { return "vm".equals(type) ? MachineType.VM : MachineType.CONTAINER; }
     public boolean isVm() { return "vm".equals(type); }
     public boolean isKvm() { return "kvm".equals(type); }
-    @Deprecated
-    public void setVm(boolean vm) { if (vm) this.type = "vm"; }
     public String getWorkdir() { return workdir; }
     public void setWorkdir(String workdir) { this.workdir = workdir; }
     public String getShellCommand() { return shellCommand; }
@@ -398,6 +396,18 @@ public class ImageDef extends MappedDefinition {
             return source != null && path == null && PATH_LIKE.contains(key.toLowerCase(Locale.ROOT).replace('_', '-'))
                     ? "use 'path:' to set where it goes in the instance" : null;
         }
+    }
+
+    /**
+     * {@code vm:} is the old spelling of {@code type: vm}, which no mapping reads. Only a root
+     * template with no {@code type:} is sure to build a container: a child's type may come from
+     * its parent, which this one file does not know.
+     */
+    @Override
+    protected String hint(String key) {
+        if (!"vm".equalsIgnoreCase(key)) return null;
+        var hint = "a virtual machine is 'type: vm'";
+        return type == null && isRoot() ? hint + "; without it this builds a container" : hint;
     }
 
     /** With {@code deprecated}, which the mapping writes only when it is set. */
