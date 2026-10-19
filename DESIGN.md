@@ -189,6 +189,10 @@ A definition sets `deprecated: true` or `deprecated: <what to use instead>` (#11
 `deprecated` is left out of the content fingerprint, so marking a template deprecated, or switching to a copy that is not, rebuilds nothing.
 Removing a template outright was the alternative: every template derived from it would stop building on upgrade, with no warning beforehand.
 
+**`/tmp` is on disk** (#1561): `tpl-minimal` masks `tmp.mount`; what that means for users is in `docs/FEDORA.md`.
+It is in the root template, not in one template (yrodiere/incus-spawn-templates#68 did it in `tpl-dev-base`), because the restarts that empty a tmpfs come from isx itself and hit every template.
+It is not in the base image either, which would put an isx choice in a Fedora image other tools could use.
+
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
 Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
 

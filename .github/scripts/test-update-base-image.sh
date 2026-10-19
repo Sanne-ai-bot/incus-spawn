@@ -91,6 +91,7 @@ BUILTIN="$WORK/stock-builtin.yaml"
 cat > "$BUILTIN" <<EOF
 name: tpl-minimal
 description: Base OS only
+mask_services: [tmp.mount]
 image: fedora-44-base
 image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}.tar.xz
 vm_image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}-vm.tar.xz
