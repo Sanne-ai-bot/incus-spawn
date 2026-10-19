@@ -6,6 +6,10 @@ import dev.incusspawn.baseimage.BaseImageReleases.Release;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqString;
+import io.hyperfoil.tools.jjq.yaml.JqYaml;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -17,7 +21,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @CommandDefinition(
         name = "update-base",
@@ -217,14 +220,15 @@ public class UpdateBaseCommand extends BaseCommand {
 
         var yaml = new StringBuilder();
         yaml.append("name: tpl-minimal\n");
-        yaml.append("description: ").append(current.getDescription()).append('\n');
         // The pin replaces the built-in definition, not only its image: keep what it removes and masks.
-        if (!current.getRemovePackages().isEmpty()) {
-            yaml.append("remove_packages: ").append(quotedList(current.getRemovePackages())).append('\n');
-        }
-        if (!current.getMaskServices().isEmpty()) {
-            yaml.append("mask_services: ").append(quotedList(current.getMaskServices())).append('\n');
-        }
+        // Through the YAML writer, which quotes what needs it: a dnf glob such as *-langpack-* bare
+        // is an alias, and a description may hold ": ", " #" or a newline.
+        var kept = JqObject.builder(3);
+        if (current.getDescription() != null) kept.put("description", JqString.of(current.getDescription()));
+        if (!current.getRemovePackages().isEmpty()) kept.put("remove_packages", strings(current.getRemovePackages()));
+        if (!current.getMaskServices().isEmpty()) kept.put("mask_services", strings(current.getMaskServices()));
+        var keptObject = kept.build();
+        if (keptObject.size() > 0) yaml.append(JqYaml.toYaml(keptObject));
         yaml.append("image: ").append(current.getImage()).append('\n');
         yaml.append("image_url: ").append(current.getImageUrl()).append('\n');
         // A VM image is only pinned with its checksums for every arch: without them it would
@@ -247,14 +251,10 @@ public class UpdateBaseCommand extends BaseCommand {
         BuildOutput.note("Wrote " + overridePath);
     }
 
-    /** Each item {@link #quoted}: a dnf glob such as {@code *-langpack-*} bare is a YAML alias. */
-    private static String quotedList(List<String> items) {
-        return items.stream().map(UpdateBaseCommand::quoted).collect(Collectors.joining(", ", "[", "]"));
-    }
-
-    /** A YAML double-quoted scalar, so an item reads back as written. */
-    private static String quoted(String text) {
-        return '"' + text.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
+    private static JqArray strings(List<String> items) {
+        var array = JqArray.arrayBuilder();
+        items.forEach(i -> array.add(JqString.of(i)));
+        return array.build();
     }
 
     private static void appendShaBlock(StringBuilder yaml, String key, Map<String, String> shas) {

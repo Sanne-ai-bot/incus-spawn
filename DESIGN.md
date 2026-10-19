@@ -194,7 +194,7 @@ It is in the root template, not in one template (yrodiere/incus-spawn-templates#
 It is not in the base image either, which would put an isx choice in a Fedora image other tools could use.
 `mask_services` is in the content fingerprint, as is `remove_packages`, each adding nothing when empty so other templates keep theirs; masking `tmp.mount` marks `tpl-minimal` and everything below it out of sync.
 What a step leaves in `/tmp` is now saved with the template, so every path that saves one empties `/tmp` and `/var/tmp` first, hidden files included (`GuestUpdate.EMPTY_TMP_SCRIPT`): the builds' `cleanCaches`, `isx update-all`, and `isx project create` and `update`.
-A pin of the base image (`isx update-base <tag>`) writes a user-level `minimal.yaml` that replaces the built-in definition, so it writes the pinned definition's `mask_services` too.
+A pin of the base image (`isx update-base <tag>`) writes a user-level `minimal.yaml` that replaces the built-in definition, so it also writes the pinned definition's description, `remove_packages` and `mask_services`, through the YAML writer so each reads back as written.
 A pin written before this change has none; `isx update-base --latest` and pinning again restores them.
 Pinning does not merge the built-in's masks back in, as a user may have removed one on purpose.
 
