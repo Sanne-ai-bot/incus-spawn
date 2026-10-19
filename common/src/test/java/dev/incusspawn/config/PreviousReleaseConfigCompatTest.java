@@ -5,6 +5,7 @@ import dev.incusspawn.proxy.ResolvedToolProxy;
 import io.hyperfoil.tools.jjq.yaml.JqYaml;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -12,10 +13,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -42,6 +46,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * that nothing a user of that release had configured changes meaning. {@code
  * test-previous-release-config.sh} makes the same claim in CI against real instances and the
  * real proxy.
+ *
+ * <p>What only some releases write has fixtures of its own, in {@link #RELEASE_FIXTURES}: the
+ * {@code accounts:} layout {@code isx init} writes since v0.3.9, the {@code mcp:} section of
+ * v0.3.10 to v0.3.12,
+ * which later releases refuse until it moves to {@code mcp.yaml}, and v0.4.0's hand-written
+ * sections.
  */
 class PreviousReleaseConfigCompatTest {
 
@@ -51,6 +61,30 @@ class PreviousReleaseConfigCompatTest {
     /** The fixtures every release has, as the generator names them. */
     private static final List<String> FIXTURES =
             List.of("full", "oauth", "vertex", "vertex-incomplete", "host-path", "empty");
+
+    /**
+     * Fixtures only some releases have, beyond {@link #FIXTURES}: what their own {@code isx init}
+     * or a person writes that the flat setters cannot. Each has its tests below.
+     */
+    private static final Map<String, List<String>> RELEASE_FIXTURES = Map.of(
+            "v0.3.12", List.of("accounts", "mcp"),
+            "v0.4.0", List.of("accounts", "sections"));
+
+    static Stream<String> releasesWith(String fixture) {
+        return RELEASES.stream().filter(r -> RELEASE_FIXTURES.getOrDefault(r, List.of()).contains(fixture));
+    }
+
+    static Stream<String> releasesWithAccounts() {
+        return releasesWith("accounts");
+    }
+
+    static Stream<String> releasesWithMcpSection() {
+        return releasesWith("mcp");
+    }
+
+    static Stream<String> releasesWithSections() {
+        return releasesWith("sections");
+    }
 
     static Stream<Arguments> everyFixture() {
         return RELEASES.stream().flatMap(r -> FIXTURES.stream().map(f -> Arguments.of(r, f)));
@@ -315,5 +349,138 @@ class PreviousReleaseConfigCompatTest {
         var saved = configFile();
         assertFalse(saved.contains("host-path:"), saved);
         assertEquals(List.of("~/src"), SpawnConfig.load().getHostPaths());
+    }
+
+    /**
+     * A committed fixture not declared here would be loaded by no test, and a release-specific
+     * one for a release not in {@link #RELEASES} would run none of its tests.
+     */
+    @Test
+    void everyCommittedFixtureIsDeclaredForAListedRelease() throws Exception {
+        assertTrue(RELEASES.containsAll(RELEASE_FIXTURES.keySet()), RELEASE_FIXTURES.keySet().toString());
+        var expected = RELEASES.stream()
+                .flatMap(r -> Stream.concat(FIXTURES.stream(), RELEASE_FIXTURES.getOrDefault(r, List.of()).stream())
+                        .map(f -> r + "-" + f + ".yaml"))
+                .collect(Collectors.toCollection(TreeSet::new));
+        // The source tree, not the classpath copy, which keeps a deleted fixture until a clean build.
+        var dir = Path.of("src/test/resources/config-compat");
+        try (var files = Files.list(dir)) {
+            assertEquals(expected, files.map(f -> f.getFileName().toString())
+                    .collect(Collectors.toCollection(TreeSet::new)));
+        }
+    }
+
+    /**
+     * What {@code isx init} writes since accounts: every credential under {@code accounts:},
+     * Claude and testProxyTool with a second account made the default. Listing, the default
+     * pointer and what each pin serves are as that release had them, and a save keeps them.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("releasesWithAccounts")
+    void accountsAndTheirDefaultsAreListedAndServedAsWritten(String release) throws Exception {
+        var config = install(release, "accounts");
+        assertAccountsAsWritten(config);
+        var before = servedByPin(config);
+        config.save();
+        var reloaded = SpawnConfig.load();
+        assertAccountsAsWritten(reloaded);
+        assertEquals(before, servedByPin(reloaded), configFile());
+    }
+
+    private static Map<String, Map<String, String>> servedByPin(SpawnConfig config) {
+        return Map.of(
+                "unpinned", served(config, Map.of()),
+                "all default", served(config, allDefault(NAMESPACES)),
+                "all work", served(config, Map.of("claude", "work", "github", "work", "testProxyTool", "work")));
+    }
+
+    private static void assertAccountsAsWritten(SpawnConfig config) {
+        var expected = Map.of(
+                "claude", List.of("default", "work"),
+                "github", List.of("default", "work"),
+                "bob", List.of("default"),
+                "openai", List.of("default"),
+                "testProxyTool", List.of("default", "work"));
+        var defaults = Map.of("claude", "work", "github", "default", "bob", "default",
+                "openai", "default", "testProxyTool", "work");
+        for (var namespace : NAMESPACES) {
+            var listing = AccountSelection.listAccounts(config, namespace);
+            assertEquals(expected.get(namespace), listing.names(), namespace);
+            assertEquals(defaults.get(namespace), listing.defaultName(), namespace);
+        }
+        assertThrows(AccountResolver.UnknownAccountException.class,
+                () -> AccountSelection.validate(config, Map.of("bob", "work")));
+
+        var unpinned = served(config, Map.of());
+        assertEquals("sk-ant-api03-work", unpinned.get("claude.apiKey"), "Claude's default is work");
+        assertEquals("{token=ghp_fixture}", unpinned.get("gh@github.com"));
+        assertEquals("{api-key=bob-fixture, license=true}", unpinned.get("bob@bob.ibm.com"));
+        assertEquals("{token=tpt-work}", unpinned.get("test-proxy-tool@echo.incus-spawn.test"));
+        assertTrue(unpinned.values().stream().anyMatch(v -> v.contains("sk-openai-fixture")), unpinned.toString());
+
+        var pinned = served(config, Map.of("claude", "default", "github", "work", "testProxyTool", "default"));
+        assertEquals("sk-ant-oat01-fixture", pinned.get("claude.oauthToken"));
+        assertEquals("{token=ghp_work}", pinned.get("gh@github.com"));
+        assertEquals("{token=tpt-fixture}", pinned.get("test-proxy-tool@echo.incus-spawn.test"));
+        assertEquals("me@work.example.com", AccountResolver.value(config, "github", "work", "email"),
+                "the email is per account");
+    }
+
+    /**
+     * v0.3.12 kept the {@code isx mcp} policy in config.yaml's {@code mcp:} section, which
+     * {@code isx init} wrote when approving a template. Since v0.4.0 the policy is
+     * {@code mcp.yaml}, and the section is refused, not silently ignored: without the file
+     * {@link McpConfig#load()} fails until the user moves it, since the defaults could widen what
+     * they wrote (#1447). The rest of the file loads and is served as before, and a save keeps
+     * the section, so nothing the user wrote is lost before they move it.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("releasesWithMcpSection")
+    void anMcpSectionInConfigYamlIsRefusedUntilMovedToMcpYaml(String release) throws Exception {
+        var config = install(release, "mcp");
+        assertEquals("{token=ghp_fixture}", served(config, Map.of()).get("gh@github.com"));
+        assertTrue(config.hasLegacyMcpSection());
+        assertNotNull(McpConfig.legacySectionNotice(config));
+        var refused = assertThrows(McpConfig.Invalid.class, McpConfig::load);
+        assertTrue(refused.getMessage().contains("mcp.yaml"), refused.getMessage());
+
+        config.save();
+        var saved = configFile();
+        assertTrue(SpawnConfig.load().hasLegacyMcpSection(), "a save keeps the section:\n" + saved);
+        assertTrue(saved.contains("tpl-java"), saved);
+
+        // Once moved, the file is the policy; the section is not read.
+        Files.writeString(McpConfig.file(), "templates: [tpl-dev]\n");
+        var mcp = McpConfig.load();
+        assertEquals(List.of("tpl-dev"), mcp.templates());
+        assertEquals(McpConfig.DEFAULT_MAX_INSTANCES, mcp.maxInstances(), "not the section's 4");
+    }
+
+    /** Sections a person adds by hand, as v0.4.0 saved them, and a Gemini account. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("releasesWithSections")
+    void handWrittenSectionsAndAGeminiAccountSurviveLoadingAndSaving(String release) throws Exception {
+        var config = install(release, "sections");
+        assertSectionsAsWritten(config);
+        config.save();
+        assertSectionsAsWritten(SpawnConfig.load());
+    }
+
+    private void assertSectionsAsWritten(SpawnConfig config) throws Exception {
+        var file = configFile();
+        assertTrue(config.hostCa().propagate(), file);
+        var timeouts = config.readyTimeouts();
+        assertNotNull(timeouts, file);
+        var resolved = timeouts.resolve();
+        assertEquals(Duration.ofSeconds(90), resolved.container(), file);
+        assertEquals(Duration.ofMinutes(4), resolved.vm(), file);
+        assertEquals(45, timeouts.proxySeconds(30), file);
+        assertEquals(1024L << 20, config.gitCache().snapshotBytes(), file);
+        assertEquals(Duration.ofDays(3), config.gitCache().maxAge(), file);
+        assertEquals(List.of("default"), AccountSelection.listAccounts(config, "gemini").names(), file);
+        assertEquals("gemini-fixture", AccountResolver.value(config, "gemini", "default", "apiKey"), file);
+        var served = served(config, Map.of());
+        assertTrue(served.values().stream().anyMatch(v -> v.contains("gemini-fixture")), served.toString());
+        assertEquals("{token=ghp_fixture}", served.get("gh@github.com"));
     }
 }

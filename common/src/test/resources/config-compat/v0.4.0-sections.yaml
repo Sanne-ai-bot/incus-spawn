@@ -1,0 +1,29 @@
+claude: {}
+github:
+  accounts:
+    default:
+      token: ghp_fixture
+  default: default
+bob:
+  licenseConsent: false
+openai: {}
+features: []
+searchPaths: []
+host-paths: []
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""
+git-cache:
+  snapshot-max-mib: 1024
+  max-age-days: 3
+ready-timeouts:
+  container: 90s
+  vm: 4m
+  proxy: 45s
+host-ca:
+  propagate: true
+gemini:
+  accounts:
+    default:
+      apiKey: gemini-fixture
+  default: default
