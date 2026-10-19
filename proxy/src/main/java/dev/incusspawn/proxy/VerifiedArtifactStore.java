@@ -204,52 +204,70 @@ final class VerifiedArtifactStore {
      */
     static Outcome reconcile(Path artifact, Sidecar checksum, Sidecar sidecar, int status, byte[] body,
                              boolean mayEvict, Instant lookedUp) throws IOException {
+        return reconcileCopy(artifact, checksum, sidecar, status, body, mayEvict, lookedUp).outcome();
+    }
+
+    /** What {@link #reconcile(Path, Sidecar, Sidecar, int, byte[], boolean, Instant)} decided, and about which copy. */
+    record Reconciled(Outcome outcome, FileState copy) {}
+
+    /**
+     * {@link #reconcile(Path, Sidecar, Sidecar, int, byte[], boolean, Instant)}, also returning the
+     * artifact it judged, read under the lock (null when no regular file was cached). After
+     * {@link Outcome#DISAGREES}, which leaves it in place, that is the copy a later step acting on the
+     * same answer must find still cached (#1555); after the other outcomes it may already be gone.
+     */
+    static Reconciled reconcileCopy(Path artifact, Sidecar checksum, Sidecar sidecar, int status, byte[] body,
+                                    boolean mayEvict, Instant lookedUp) throws IOException {
         var confirmation = checksum.storedFile(artifact);
         FileState before;
         synchronized (lockFor(artifact)) {
-            if (!Files.isRegularFile(artifact)) return Outcome.UNCHANGED;
-            if (confirmedAfter(confirmation, lookedUp)) return Outcome.SUPERSEDED;
+            var attrs = readableAttributesOrNull(artifact);
+            if (attrs == null || !attrs.isRegularFile()) return new Reconciled(Outcome.UNCHANGED, null);
+            before = FileState.of(attrs);
+            if (confirmedAfter(confirmation, lookedUp)) return new Reconciled(Outcome.SUPERSEDED, before);
             var storedFile = sidecar.storedFile(artifact);
             var stored = Files.isRegularFile(storedFile) ? Files.readAllBytes(storedFile) : null;
 
             if (status == 404 || status == 410) {
-                return stored == null ? Outcome.UNCHANGED : contradictedLocked(artifact, mayEvict);
+                var outcome = stored == null ? Outcome.UNCHANGED : contradictedLocked(artifact, mayEvict);
+                return new Reconciled(outcome, before);
             }
-            if (status != 200) return Outcome.UNCHANGED;
-            if (sidecar.isChecksum() && sidecar.hex(body) == null) return Outcome.UNCHANGED;
+            if (status != 200) return new Reconciled(Outcome.UNCHANGED, before);
+            if (sidecar.isChecksum() && sidecar.hex(body) == null) return new Reconciled(Outcome.UNCHANGED, before);
 
             if (stored != null) {
-                if (!sidecar.sameContent(stored, body)) return contradictedLocked(artifact, mayEvict);
+                if (!sidecar.sameContent(stored, body)) {
+                    return new Reconciled(contradictedLocked(artifact, mayEvict), before);
+                }
                 // Only an answer that could have evicted the copy may vouch for it (a .sha1
                 // on Central is outranked by the checksum header, and so confirms nothing)
                 if (mayEvict) renewConfirmation(artifact, storedFile, lookedUp);
-                return Outcome.MATCHED;
+                return new Reconciled(Outcome.MATCHED, before);
             }
             if (!sidecar.isChecksum()) {
                 writeAtomically(storedFile, body);
-                return Outcome.UNCHANGED;
+                return new Reconciled(Outcome.UNCHANGED, before);
             }
-            before = FileState.of(artifact);
         }
 
         String actual;
         try {
             actual = sidecar.hashOf(artifact);
         } catch (NoSuchFileException e) {
-            return Outcome.UNCHANGED;
+            return new Reconciled(Outcome.UNCHANGED, before);
         }
 
         synchronized (lockFor(artifact)) {
             // Replaced or evicted while it was being hashed: the hash describes nothing cached
-            if (!before.equals(FileState.of(artifact))) return Outcome.UNCHANGED;
+            if (!before.equals(FileState.of(artifact))) return new Reconciled(Outcome.UNCHANGED, before);
             // Confirmed by another answer while it was being hashed
-            if (confirmedAfter(confirmation, lookedUp)) return Outcome.SUPERSEDED;
+            if (confirmedAfter(confirmation, lookedUp)) return new Reconciled(Outcome.SUPERSEDED, before);
             if (sidecar.hex(body).equals(actual)) {
                 writeAtomically(sidecar.storedFile(artifact), body,
                         FileTime.from(mayEvict ? lookedUp : Instant.EPOCH));
-                return Outcome.MATCHED;
+                return new Reconciled(Outcome.MATCHED, before);
             }
-            return contradictedLocked(artifact, mayEvict);
+            return new Reconciled(contradictedLocked(artifact, mayEvict), before);
         }
     }
 
@@ -358,6 +376,18 @@ final class VerifiedArtifactStore {
         }
     }
 
+    /**
+     * {@link #attributesOrNull}, with a file whose attributes cannot be read (a symlink loop, no
+     * permission) taken as absent too, as {@link Files#isRegularFile} takes it.
+     */
+    private static BasicFileAttributes readableAttributesOrNull(Path file) {
+        try {
+            return Files.readAttributes(file, BasicFileAttributes.class);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     static BasicFileAttributes attributesOrNull(Path file) throws IOException {
         try {
             return Files.readAttributes(file, BasicFileAttributes.class);
@@ -376,8 +406,8 @@ final class VerifiedArtifactStore {
 
     /**
      * Whether the cached artifact is still the {@code answered} copy: the one a sidecar answer was
-     * reconciled against, read before that reconcile ({@link FileState#of(Path)}, null when none was
-     * cached). A header that settles the answer later may describe a copy committed since (#1555).
+     * reconciled against ({@link Reconciled#copy()}, null when none was cached). A header that
+     * settles the answer later may describe a copy committed since (#1555).
      */
     static boolean isCopy(Path artifact, FileState answered) {
         return answered != null && answered.equals(FileState.of(artifact));

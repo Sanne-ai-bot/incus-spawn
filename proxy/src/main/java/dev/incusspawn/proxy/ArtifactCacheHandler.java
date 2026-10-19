@@ -1682,11 +1682,9 @@ class ArtifactCacheHandler {
             }
             var artifactPath = sidecar.artifactPath(path);
             // Reconcile before answering, so the client's next request sees any eviction
-            vertx.executeBlocking(() -> {
-                var copy = VerifiedArtifactStore.FileState.of(artifact);
-                return new Reconciled(copy, VerifiedArtifactStore.reconcile(artifact, target.checksum(), sidecar,
-                        answer.status(), answer.body(), revalidation.sidecarsAuthoritative(), lookedUp));
-            }, false).compose(reconciled -> reconciled.outcome() == VerifiedArtifactStore.Outcome.DISAGREES
+            vertx.executeBlocking(() -> VerifiedArtifactStore.reconcileCopy(artifact, target.checksum(), sidecar,
+                    answer.status(), answer.body(), revalidation.sidecarsAuthoritative(), lookedUp), false
+            ).compose(reconciled -> reconciled.outcome() == VerifiedArtifactStore.Outcome.DISAGREES
                     ? settleWithHeader(domain, artifactPath, artifact, reconciled.copy(), revalidation, sidecar, answer)
                     : Future.succeededFuture(reconciled.outcome())
             ).onComplete(ar -> {
@@ -1704,9 +1702,6 @@ class ArtifactCacheHandler {
             });
         });
     }
-
-    /** A sidecar answer's outcome, and the copy it was reconciled against (read just before). */
-    private record Reconciled(VerifiedArtifactStore.FileState copy, VerifiedArtifactStore.Outcome outcome) {}
 
     /**
      * Answer a sidecar request whose upstream answer predates the cached copy's confirmation, and may
