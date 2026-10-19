@@ -683,6 +683,19 @@ class ImageDefTest {
     }
 
     @Test
+    void anotherSpellingOfConfinedToIsIsxsOwnKeyToo() throws Exception {
+        var def = ImageDef.parseYaml("""
+                name: tpl-x
+                host-resources:
+                  - source: ~/.m2
+                    confined_to: /
+                """);
+
+        assertEquals(List.of("unknown key 'host-resources[0].confined_to', ignored;"
+                + " 'confined-to' is set by isx, a file's value is ignored (#765)"), def.unknownKeyWarnings());
+    }
+
+    @Test
     void theOldVmKeySaysWhatBuildsAVirtualMachine() throws Exception {
         // No mapping reads 'vm:', so such a template builds a container.
         var def = ImageDef.parseYaml("name: tpl-x\nvm: true\n");

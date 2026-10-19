@@ -25,7 +25,6 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -360,6 +359,10 @@ public class ImageDef extends MappedDefinition {
         @JqName("confined-to")
         @JqInclude(JqInclude.Include.NON_NULL)
         private String confinedTo;
+        /** What a warning about a file's {@code confined-to} ends with. */
+        static final String SET_BY_ISX = ", a file's value is ignored (#765)";
+        private static final String CONFINED_TO_IS_ISXS = "'confined-to' is set by isx" + SET_BY_ISX;
+
         /** Keys that name where a resource goes, which is {@code path:}; lower case, '-' for '_'. */
         private static final Set<String> PATH_LIKE = Set.of("path", "target", "target-path", "dest", "dst",
                 "destination", "to", "mount", "mountpoint", "mount-point", "container", "container-path");
@@ -390,10 +393,15 @@ public class ImageDef extends MappedDefinition {
         @Override
         protected List<String> knownKeys() { return List.of("source", "path", "mode"); }
 
-        /** A key naming where the resource goes is {@code path:}, unless the entry already has one (#1543). */
+        /**
+         * A key naming where the resource goes is {@code path:}, unless the entry already has one
+         * (#1543). Another spelling of {@code confined-to} is isx's own key too (#765).
+         */
         @Override
         protected String hint(String key) {
-            return source != null && path == null && PATH_LIKE.contains(key.toLowerCase(Locale.ROOT).replace('_', '-'))
+            var normalized = normalized(key);
+            if (normalized.equals("confined-to")) return CONFINED_TO_IS_ISXS;
+            return source != null && path == null && PATH_LIKE.contains(normalized)
                     ? "use 'path:' to set where it goes in the instance" : null;
         }
     }
@@ -432,7 +440,7 @@ public class ImageDef extends MappedDefinition {
                 .part("skills", skills);
         for (int i = 0; i < hostResources.size(); i++) {
             if (hostResources.get(i).getConfinedTo() != null) {
-                walk.add("'host-resources[" + i + "].confined-to' is set by isx, a file's value is ignored (#765)");
+                walk.add("'host-resources[" + i + "].confined-to' is set by isx" + HostResource.SET_BY_ISX);
             }
         }
         return walk.warnings();

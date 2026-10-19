@@ -129,7 +129,7 @@ public abstract class MappedDefinition {
         return best;
     }
 
-    private static String normalized(String key) {
+    protected static String normalized(String key) {
         return key.toLowerCase(Locale.ROOT).replace('_', '-');
     }
 
