@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -69,16 +70,30 @@ class DownloadCacheTest {
 
     @Test
     void sha256MismatchInCacheRedownloads(@TempDir Path cacheDir) throws IOException {
-        var cache = new DownloadCache(cacheDir);
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var requests = new AtomicInteger();
+        server.createContext("/tool.tar.gz", ex -> {
+            requests.incrementAndGet();
+            ex.sendResponseHeaders(200, 3);
+            ex.getResponseBody().write("new".getBytes(StandardCharsets.UTF_8));
+            ex.close();
+        });
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/tool.tar.gz";
+            var cache = new DownloadCache(cacheDir, uri -> false);
 
-        // Pre-populate with wrong content
-        var fakeFile = cacheDir.resolve(
-                DownloadCache.cacheFilename("https://example.com/tool.tar.gz"));
-        Files.writeString(fakeFile, "wrong content");
+            // Pre-populate with wrong content
+            var fakeFile = cacheDir.resolve(DownloadCache.cacheFilename(url));
+            Files.writeString(fakeFile, "wrong content");
 
-        // Should attempt to re-download (and fail since there's no real server)
-        assertThrows(Exception.class,
-                () -> cache.download("https://example.com/tool.tar.gz", "0000000000000000"));
+            // Re-downloads, then rejects what it got since that does not match either
+            var e = assertThrows(IOException.class, () -> cache.download(url, "0000000000000000"));
+            assertTrue(e.getMessage().startsWith("SHA-256 mismatch for " + url), e.getMessage());
+            assertEquals(1, requests.get());
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
@@ -223,6 +238,34 @@ class DownloadCacheTest {
             assertEquals(DELAYS, paused);
             assertEquals(List.of("retrying HTTP 500 from 127.0.0.1 2/3", "retrying HTTP 500 from 127.0.0.1 3/3",
                     "received"), listener.events);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void defaultRetriesOutlastAnOutageOfMinutes(@TempDir Path cacheDir) throws IOException {
+        // A simulated clock: each attempt during the outage costs a connect timeout, each retry its
+        // pause. CI once timed out connecting to github.com for 100s, which outlasted a 2s + 8s
+        // schedule (#1572).
+        var outage = Duration.ofMinutes(3);
+        var clock = new AtomicReference<>(Duration.ZERO);
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/image", ex -> {
+            if (clock.get().compareTo(outage) < 0) {
+                clock.set(clock.get().plus(DownloadCache.CONNECT_TIMEOUT));
+                ex.sendResponseHeaders(503, -1);
+            } else {
+                ex.sendResponseHeaders(200, 2);
+                ex.getResponseBody().write("ok".getBytes(StandardCharsets.UTF_8));
+            }
+            ex.close();
+        });
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/image";
+            var cache = new DownloadCache(cacheDir, uri -> false, DownloadCache.RETRY_DELAYS, d -> clock.set(clock.get().plus(d)));
+            assertEquals("ok", Files.readString(cache.download(url, null)));
         } finally {
             server.stop(0);
         }
