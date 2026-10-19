@@ -11,6 +11,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
@@ -50,6 +51,11 @@ class VerifiedArtifactStoreTest {
         Files.write(download, content);
         return VerifiedArtifactStore.verifyAndCommit(download, prepareParent(), Sidecar.SHA1, sha1Of(verifiedOn),
                 true, lookedUp);
+    }
+
+    /** Reconcile with an answer whose probe was just made. */
+    static Outcome reconcile(Path artifact, Sidecar sidecar, int status, byte[] body, boolean mayEvict) throws Exception {
+        return VerifiedArtifactStore.reconcile(artifact, sidecar, status, body, mayEvict, Instant.now());
     }
 
     Path prepareParent() throws Exception {
@@ -115,7 +121,7 @@ class VerifiedArtifactStoreTest {
     @Test
     void commitOverAnotherCopyDropsSidecarsDescribingIt() throws Exception {
         var artifact = cached(OTHER);
-        VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, hex("MD5", OTHER).getBytes(), true);
+        reconcile(artifact, Sidecar.MD5, 200, hex("MD5", OTHER).getBytes(), true);
         assertTrue(Files.exists(Sidecar.MD5.storedFile(artifact)));
 
         cached(JAR);
@@ -171,15 +177,15 @@ class VerifiedArtifactStoreTest {
     void matchingSidecarConfirms() throws Exception {
         var artifact = cached(JAR);
         var body = (hex("SHA-1", JAR) + "  a-1.0.jar").getBytes();
-        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, body, true));
+        assertEquals(Outcome.MATCHED, reconcile(artifact, Sidecar.SHA1, 200, body, true));
         assertTrue(Files.exists(artifact));
     }
 
     @Test
     void changedSidecarEvictsArtifactAndAllSidecars() throws Exception {
         var artifact = cached(JAR);
-        VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig".getBytes(), true);
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(OTHER), true));
+        reconcile(artifact, Sidecar.ASC, 200, "sig".getBytes(), true);
+        assertEquals(Outcome.EVICTED, reconcile(artifact, Sidecar.SHA1, 200, sha1Of(OTHER), true));
         assertFalse(Files.exists(artifact));
         for (var s : Sidecar.values()) {
             assertFalse(Files.exists(s.storedFile(artifact)), s.name());
@@ -189,8 +195,8 @@ class VerifiedArtifactStoreTest {
     @Test
     void unparseableChecksumSaysNothing() throws Exception {
         var artifact = cached(JAR);
-        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, "<html>".getBytes(), true));
-        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, "garbage".getBytes(), true));
+        assertEquals(Outcome.UNCHANGED, reconcile(artifact, Sidecar.SHA1, 200, "<html>".getBytes(), true));
+        assertEquals(Outcome.UNCHANGED, reconcile(artifact, Sidecar.MD5, 200, "garbage".getBytes(), true));
         assertTrue(Files.exists(artifact), "a checksum we cannot read is no evidence the artifact changed");
         assertFalse(Files.exists(Sidecar.MD5.storedFile(artifact)));
     }
@@ -198,9 +204,9 @@ class VerifiedArtifactStoreTest {
     @Test
     void contradictionWithoutPermissionToEvictIsReported() throws Exception {
         var artifact = cached(JAR);
-        assertEquals(Outcome.DISAGREES, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(OTHER), false));
-        assertEquals(Outcome.DISAGREES, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 404, null, false));
-        assertEquals(Outcome.DISAGREES, VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, hex("MD5", OTHER).getBytes(), false));
+        assertEquals(Outcome.DISAGREES, reconcile(artifact, Sidecar.SHA1, 200, sha1Of(OTHER), false));
+        assertEquals(Outcome.DISAGREES, reconcile(artifact, Sidecar.SHA1, 404, null, false));
+        assertEquals(Outcome.DISAGREES, reconcile(artifact, Sidecar.MD5, 200, hex("MD5", OTHER).getBytes(), false));
         assertTrue(Files.exists(artifact));
         assertArrayEquals(sha1Of(JAR), Files.readAllBytes(Sidecar.SHA1.storedFile(artifact)));
         assertFalse(Files.exists(Sidecar.MD5.storedFile(artifact)), "a contradicting checksum is never stored");
@@ -230,31 +236,31 @@ class VerifiedArtifactStoreTest {
     void newChecksumTypeIsCheckedAgainstTheArtifactOnce() throws Exception {
         var artifact = cached(JAR);
         var md5 = hex("MD5", JAR).getBytes();
-        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, md5, true));
+        assertEquals(Outcome.MATCHED, reconcile(artifact, Sidecar.MD5, 200, md5, true));
         assertArrayEquals(md5, Files.readAllBytes(Sidecar.MD5.storedFile(artifact)));
 
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(
+        assertEquals(Outcome.EVICTED, reconcile(
                 cached(JAR), Sidecar.SHA256, 200, hex("SHA-256", OTHER).getBytes(), true));
     }
 
     @Test
     void signatureIsStoredThenCompared() throws Exception {
         var artifact = cached(JAR);
-        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig-1".getBytes(), true));
-        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig-1".getBytes(), true));
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig-2".getBytes(), true));
+        assertEquals(Outcome.UNCHANGED, reconcile(artifact, Sidecar.ASC, 200, "sig-1".getBytes(), true));
+        assertEquals(Outcome.MATCHED, reconcile(artifact, Sidecar.ASC, 200, "sig-1".getBytes(), true));
+        assertEquals(Outcome.EVICTED, reconcile(artifact, Sidecar.ASC, 200, "sig-2".getBytes(), true));
     }
 
     @Test
     void withdrawnSidecarWeHadEvicts() throws Exception {
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(cached(JAR), Sidecar.SHA1, 404, null, true));
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(cached(JAR), Sidecar.SHA1, 410, null, true));
+        assertEquals(Outcome.EVICTED, reconcile(cached(JAR), Sidecar.SHA1, 404, null, true));
+        assertEquals(Outcome.EVICTED, reconcile(cached(JAR), Sidecar.SHA1, 410, null, true));
     }
 
     @Test
     void missingSidecarWeNeverHadSaysNothing() throws Exception {
         var artifact = cached(JAR);
-        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA512, 404, null, true));
+        assertEquals(Outcome.UNCHANGED, reconcile(artifact, Sidecar.SHA512, 404, null, true));
         assertTrue(Files.exists(artifact));
     }
 
@@ -262,15 +268,71 @@ class VerifiedArtifactStoreTest {
     void otherStatusesSayNothing() throws Exception {
         var artifact = cached(JAR);
         for (int status : new int[] {401, 403, 429}) {
-            assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, status, null, true));
+            assertEquals(Outcome.UNCHANGED, reconcile(artifact, Sidecar.SHA1, status, null, true));
         }
         assertTrue(Files.exists(artifact));
     }
 
     @Test
     void nothingToReconcileWithoutAnArtifact() throws Exception {
-        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact(), Sidecar.SHA1, 200, sha1Of(JAR), true));
+        assertEquals(Outcome.UNCHANGED, reconcile(artifact(), Sidecar.SHA1, 200, sha1Of(JAR), true));
         assertFalse(Files.exists(Sidecar.SHA1.storedFile(artifact())));
+    }
+
+    @Test
+    void renewalFromAnOlderProbeDoesNotSupersedeANewerLookup() throws Exception {
+        // A probe made before the copy was committed answers after it: it must not pass for a
+        // confirmation newer than the commit, or a download looked up in between is superseded
+        var committed = Instant.now().minus(Duration.ofMinutes(3)).truncatedTo(ChronoUnit.SECONDS);
+        assertEquals(Commit.COMMITTED, commit(OTHER, OTHER, committed));
+
+        assertEquals(Outcome.SUPERSEDED, VerifiedArtifactStore.reconcile(
+                artifact(), Sidecar.SHA1, 200, sha1Of(OTHER), true, committed.minusSeconds(60)));
+        assertEquals(committed, Files.getLastModifiedTime(Sidecar.SHA1.storedFile(artifact())).toInstant());
+
+        assertEquals(Commit.COMMITTED, commit(JAR, JAR, committed.plusSeconds(60)));
+        assertArrayEquals(JAR, Files.readAllBytes(artifact()));
+    }
+
+    @Test
+    void matchIsStampedWithItsProbe() throws Exception {
+        cached(JAR);
+        var stored = Sidecar.SHA1.storedFile(artifact());
+        Files.setLastModifiedTime(stored, FileTime.from(Instant.now().minus(Duration.ofDays(3))));
+        var probed = Instant.now().minus(Duration.ofMinutes(1)).truncatedTo(ChronoUnit.SECONDS);
+
+        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact(), Sidecar.SHA1, 200, sha1Of(JAR), true, probed));
+        assertEquals(probed, Files.getLastModifiedTime(stored).toInstant(),
+                "upstream confirmed the copy when it was asked, not when its answer was applied");
+    }
+
+    @Test
+    void newlyStoredChecksumIsStampedWithItsProbe() throws Exception {
+        cached(JAR);
+        var stored = Sidecar.SHA1.storedFile(artifact());
+        Files.delete(stored);
+        var probed = Instant.now().minus(Duration.ofMinutes(1)).truncatedTo(ChronoUnit.SECONDS);
+
+        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact(), Sidecar.SHA1, 200, sha1Of(JAR), true, probed));
+        assertEquals(probed, Files.getLastModifiedTime(stored).toInstant());
+    }
+
+    @Test
+    void answerFromAnOlderProbeKeepsTheCopyConfirmedAfterIt() throws Exception {
+        var committed = Instant.now().minus(Duration.ofMinutes(3));
+        assertEquals(Commit.COMMITTED, commit(JAR, JAR, committed));
+        var older = committed.minusSeconds(60);
+
+        assertEquals(Outcome.SUPERSEDED, VerifiedArtifactStore.reconcile(artifact(), Sidecar.SHA1, 200, sha1Of(OTHER), true, older));
+        assertEquals(Outcome.SUPERSEDED, VerifiedArtifactStore.reconcile(artifact(), Sidecar.SHA1, 404, null, true, older));
+        assertEquals(Outcome.SUPERSEDED, VerifiedArtifactStore.reconcile(
+                artifact(), Sidecar.SHA1, Sidecar.MD5, 200, hex("MD5", OTHER).getBytes(), true, older),
+                "another sidecar is ordered against the artifact's own checksum");
+
+        assertArrayEquals(JAR, Files.readAllBytes(artifact()));
+        assertFalse(Files.exists(Sidecar.MD5.storedFile(artifact())));
+        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(
+                artifact(), Sidecar.SHA1, 404, null, true, committed.plusSeconds(1)), "a later takedown still evicts");
     }
 
     @Test
@@ -293,9 +355,9 @@ class VerifiedArtifactStoreTest {
         var old = java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(java.time.Duration.ofDays(3)));
         Files.setLastModifiedTime(stored, old);
 
-        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(JAR), false));
+        assertEquals(Outcome.MATCHED, reconcile(artifact, Sidecar.SHA1, 200, sha1Of(JAR), false));
         assertEquals(old, Files.getLastModifiedTime(stored), "a sidecar that could not evict vouches for nothing");
-        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(JAR), true));
+        assertEquals(Outcome.MATCHED, reconcile(artifact, Sidecar.SHA1, 200, sha1Of(JAR), true));
         assertTrue(Files.getLastModifiedTime(stored).compareTo(old) > 0, "renewed");
     }
 
@@ -304,7 +366,7 @@ class VerifiedArtifactStoreTest {
         var artifact = cached(JAR);
         var stored = Sidecar.SHA1.storedFile(artifact);
         Files.delete(stored);
-        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(JAR), false));
+        assertEquals(Outcome.MATCHED, reconcile(artifact, Sidecar.SHA1, 200, sha1Of(JAR), false));
         assertArrayEquals(sha1Of(JAR), Files.readAllBytes(stored));
         assertEquals(java.time.Instant.EPOCH, Files.getLastModifiedTime(stored).toInstant());
     }

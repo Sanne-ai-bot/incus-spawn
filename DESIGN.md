@@ -1484,6 +1484,9 @@ Only an unreachable upstream serves an older one.
 - *Confirmation tiers* (`ArtifactCacheTiers`, `artifact-cache:` in config.yaml).
   The stored checksum's modification time is when upstream last confirmed the artifact: set to the time of the lookup the commit was verified on (not when its download finished), and renewed by a match only from an answer that could have evicted (on Central a client's own `.sha1` request matching confirms nothing, since the header outranks it).
   Renewal is best-effort: a checksum file the proxy may not re-stamp (another owner) just ages into being confirmed first.
+  Every answer is ordered by its probe's time, taken before upstream was asked: a match stamps that time and never moves the confirmation back, and an answer from a probe made before the copy's last confirmation (a commit or another match after it) changes nothing (`Outcome.SUPERSEDED`), so a slow, older probe neither evicts a newer copy nor makes a download looked up after it look superseded (#1542).
+  The client then gets the copy, and for a sidecar request the copy's stored sidecar, else upstream's answer to one more ask made after that confirmation (a 502 if that one is superseded too), never the older answer's checksum beside the newer bytes.
+  That includes a 404/410: a takedown that reached upstream before the copy's confirmation was not in force when upstream confirmed it, and one after it is seen by the next probe.
   Younger than `fresh` (default 2h), a hit is served from disk with no upstream request.
   Younger than `max-stale` (default 7 days), it is served at once and confirmed again in the background: a match renews the confirmation, a change or withdrawal evicts the copy so the *next* request fetches it, and an answer that settles neither (a 403, an unusable sidecar) expires the confirmation, so the next hit gets the confirm-first path's handling.
   Older, it is confirmed before it is served, as below.

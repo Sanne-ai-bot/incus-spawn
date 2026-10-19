@@ -1468,7 +1468,8 @@ class ArtifactCacheHandler {
                 var outcome = ar.result().outcome();
                 logEviction(outcome, ref, target.checksum(), ar.result().answer());
                 if (outcome != null && outcome != VerifiedArtifactStore.Outcome.MATCHED
-                        && outcome != VerifiedArtifactStore.Outcome.EVICTED) {
+                        && outcome != VerifiedArtifactStore.Outcome.EVICTED
+                        && outcome != VerifiedArtifactStore.Outcome.SUPERSEDED) {
                     vertx.executeBlocking(() -> {
                         VerifiedArtifactStore.expireConfirmation(artifact, target.checksum());
                         return null;
@@ -1524,6 +1525,7 @@ class ArtifactCacheHandler {
 
     /** Ask upstream about a cached artifact and reconcile the copy with the answer. */
     private Future<Confirmed> confirm(String domain, String path, Revalidation revalidation, ArtifactTarget target) {
+        var lookedUp = Instant.now();
         var probed = inBackoff(domain)
                 ? Future.succeededFuture(SidecarAnswer.UNREACHABLE)
                 : probe(domain, path, revalidation, target.checksum());
@@ -1531,7 +1533,7 @@ class ArtifactCacheHandler {
                 ? Future.succeededFuture(new Confirmed(answer, null))
                 : vertx.executeBlocking(() -> new Confirmed(answer, VerifiedArtifactStore.reconcile(
                         target.artifact(), target.checksum(), answer.status(), answer.body(),
-                        answer.mayEvict(revalidation))), false));
+                        answer.mayEvict(revalidation), lookedUp)), false));
     }
 
     private void revalidateAndServe(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
@@ -1539,6 +1541,11 @@ class ArtifactCacheHandler {
         confirm(domain, clientReq.path(), revalidation, target).onSuccess(confirmed -> {
             if (confirmed.outcome() == null) {
                 recordHit(ArtifactCacheStats.Hit.UNCONFIRMED, size);
+                serveCachedFile(clientReq.response(), target.artifact(), null);
+            } else if (confirmed.outcome() == VerifiedArtifactStore.Outcome.SUPERSEDED) {
+                // Confirmed after this probe, which a slow answer can predate (#1542); the answer's
+                // checksum may describe other bytes, so none goes out with the copy
+                recordHit(ArtifactCacheStats.Hit.CONFIRMED, size);
                 serveCachedFile(clientReq.response(), target.artifact(), null);
             } else if (confirmed.outcome() == VerifiedArtifactStore.Outcome.MATCHED) {
                 recordHit(ArtifactCacheStats.Hit.CONFIRMED, size);
@@ -1644,17 +1651,22 @@ class ArtifactCacheHandler {
                 }
             } else {
                 // Without a stored copy, upstream may still answer even in a backoff
-                fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, artifact, stored);
+                fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, target, stored, false);
             }
         });
     }
 
-    /** {@code stored}: the stored copy, served in upstream's place when it cannot be reached. */
+    /**
+     * {@code stored}: the stored copy, served in upstream's place when it cannot be reached.
+     * {@code askedAgain}: this is the second ask, after the first answer predated the copy's confirmation.
+     */
     private void fetchAndServeSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                                      Sidecar sidecar, Path artifact, byte[] stored) {
+                                      Sidecar sidecar, ArtifactTarget target, byte[] stored, boolean askedAgain) {
         var path = clientReq.path();
         var clientResp = clientReq.response();
+        var artifact = target.artifact();
 
+        var lookedUp = Instant.now();
         fetchSidecar(domain, path).onSuccess(answer -> {
             if (answer.unreachable()) {
                 if (stored != null) {
@@ -1670,20 +1682,51 @@ class ArtifactCacheHandler {
             }
             var artifactPath = sidecar.artifactPath(path);
             // Reconcile before answering, so the client's next request sees any eviction
-            vertx.executeBlocking(() -> VerifiedArtifactStore.reconcile(artifact, sidecar,
-                    answer.status(), answer.body(), revalidation.sidecarsAuthoritative()), false
+            vertx.executeBlocking(() -> VerifiedArtifactStore.reconcile(artifact, target.checksum(), sidecar,
+                    answer.status(), answer.body(), revalidation.sidecarsAuthoritative(), lookedUp), false
             ).compose(outcome -> outcome == VerifiedArtifactStore.Outcome.DISAGREES
                     ? settleWithHeader(domain, artifactPath, artifact, revalidation, sidecar, answer)
                     : Future.succeededFuture(outcome)
             ).onComplete(ar -> {
                 if (ar.failed()) {
                     System.err.println("Sidecar check error for " + domain + path + ": " + ar.cause().getMessage());
+                } else if (ar.result() == VerifiedArtifactStore.Outcome.SUPERSEDED) {
+                    // Upstream confirmed the copy after this lookup (#1542): the copy's own sidecar
+                    // describes the bytes served, where the answer may describe others
+                    serveKeptSidecar(clientReq, domain, revalidation, sidecar, target, askedAgain);
+                    return;
                 } else {
                     logEviction(ar.result(), domain + artifactPath, sidecar, answer);
                 }
                 sendSidecar(clientResp, answer.status(), answer.body());
             });
         });
+    }
+
+    /**
+     * Answer a sidecar request whose upstream answer predates the cached copy's confirmation, and may
+     * describe other bytes: with the copy's stored sidecar, else by asking upstream once more, now
+     * after that confirmation. Never with the older answer.
+     */
+    private void serveKeptSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
+                                  Sidecar sidecar, ArtifactTarget target, boolean askedAgain) {
+        vertx.executeBlocking(() -> VerifiedArtifactStore.cachedCopy(target.artifact(), target.checksum(), sidecar), false)
+                .onComplete(ar -> {
+                    if (ar.failed()) {
+                        System.err.println("Stored sidecar read error for " + domain + clientReq.path() + ": "
+                                + ar.cause().getMessage());
+                    }
+                    var kept = ar.succeeded() && ar.result() != null ? ar.result().sidecar() : null;
+                    if (kept != null) {
+                        sendSidecar(clientReq.response(), 200, kept);
+                    } else if (!askedAgain) {
+                        fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, target, null, true);
+                    } else {
+                        // Superseded twice: the copy was committed or confirmed again during each ask, so
+                        // neither answer is known to describe it
+                        upstream.sendError(clientReq.response(), 502, "Upstream answers predate the cached copy");
+                    }
+                });
     }
 
     /**
@@ -1698,13 +1741,14 @@ class ArtifactCacheHandler {
     private Future<VerifiedArtifactStore.Outcome> settleWithHeader(String domain, String artifactPath, Path artifact,
                                                                    Revalidation revalidation, Sidecar sidecar,
                                                                    SidecarAnswer sidecarAnswer) {
+        var lookedUp = Instant.now();
         return fetchChecksumHeader(domain, artifactPath, revalidation).compose(header -> {
             if (!header.fromHeader()) {
                 return Future.succeededFuture(VerifiedArtifactStore.Outcome.UNCHANGED);
             }
             return vertx.executeBlocking(() -> {
                 var outcome = VerifiedArtifactStore.reconcile(
-                        artifact, revalidation.headerChecksum, header.status(), header.body(), true);
+                        artifact, revalidation.headerChecksum, header.status(), header.body(), true, lookedUp);
                 if (outcome == VerifiedArtifactStore.Outcome.MATCHED) {
                     if (sidecarAnswer.gone()) {
                         VerifiedArtifactStore.dropSidecar(artifact, sidecar);
