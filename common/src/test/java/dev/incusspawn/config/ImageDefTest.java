@@ -1070,8 +1070,24 @@ class ImageDefTest {
     }
 
     @Test
-    void aTemplateMaskingNothingKeepsTheFingerprintItWasBuiltWith() {
-        // Pinned to the value before mask_services was fingerprinted, so no other template rebuilds
+    void fingerprintChangesWhenAPackageToRemoveChanges() {
+        // Removed before installing, so the image differs: changing the list must mark it stale
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
+        b.setRemovePackages(List.of("nano"));
+        var c = makeDef("images:fedora/44", null, List.of(), List.of());
+        c.setRemovePackages(List.of("vim-minimal", "nano"));
+        var d = makeDef("images:fedora/44", null, List.of(), List.of());
+        d.setRemovePackages(List.of("nano", "vim-minimal", "nano"));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+        assertNotEquals(b.contentFingerprint(Map.of()), c.contentFingerprint(Map.of()));
+        assertEquals(c.contentFingerprint(Map.of()), d.contentFingerprint(Map.of()), "order and repeats do not matter");
+    }
+
+    @Test
+    void aTemplateMaskingAndRemovingNothingKeepsTheFingerprintItWasBuiltWith() {
+        // Pinned to the value before mask_services and remove_packages were fingerprinted: an empty
+        // list must add nothing, or every template ever built would rebuild
         var def = makeDef("images:fedora/44", null, List.of("alpha"), List.of());
         assertEquals("afe047add72648ed36bd18bd3aa817fa10828a41137c46724c865d3aac74c2a5", def.contentFingerprint(Map.of()));
     }

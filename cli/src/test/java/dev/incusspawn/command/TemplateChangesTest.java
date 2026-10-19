@@ -55,7 +55,13 @@ class TemplateChangesTest {
     }
 
     @Test
-    void settingsOutsidePackagesToolsAndReposListNothing() throws Exception {
+    void aChangedPackageToRemoveIsListed() throws Exception {
+        assertEquals(List.of("+ removed package nano"), TemplateChanges.definitionChanges(def("packages: [git]"),
+                def("packages: [git]\nremove_packages: [nano]"), java.util.Map.of()));
+    }
+
+    @Test
+    void settingsOutsidePackagesMasksRemovedPackagesToolsAndReposListNothing() throws Exception {
         assertEquals(List.of(), TemplateChanges.definitionChanges(def("packages: [git]\ngui: false"),
                 def("packages: [git]\ngui: true"), java.util.Map.of()));
     }

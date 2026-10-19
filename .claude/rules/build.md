@@ -121,7 +121,7 @@ Deliberately excluded: template/tool `description`, env vars (already in every l
 Do not "helpfully" add inventory back -- it costs context in every session and, for anything not fingerprinted, can assert something that stopped being true.
 
 **Names and paths, never descriptions**: `ImageDef.contentFingerprint()` covers tool names and repo url/path, so those can't drift from the built image; `description` is deliberately *not* fingerprinted.
-`mask_services` is fingerprinted as one line per unit, sorted and deduplicated, and adds nothing when empty, so a template masking nothing keeps its fingerprint (#1561); `TemplateChanges.definitionChanges` lists a changed mask.
+`mask_services` and `remove_packages` are fingerprinted as one line per item, sorted and deduplicated, and add nothing when empty, so a template with neither keeps its fingerprint (#1561); `TemplateChanges.definitionChanges` lists a change to either.
 `agent_note` **is** fingerprinted on both `ImageDef` and `ToolDef` -- a stale warning baked into an image is worse than an extra rebuild.
 
 The preamble must not assert anything conditionally true.

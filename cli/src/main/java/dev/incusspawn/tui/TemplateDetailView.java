@@ -389,7 +389,10 @@ final class TemplateDetailView {
         lines.add(Line.styled("", lineStyle()));
     }
 
-    /** Behind △: the packages, tools and repos as built versus now, and the command that applies them. */
+    /**
+     * Behind △: the packages, masked units, removed packages, tools and repos as built versus now,
+     * and the command that applies them.
+     */
     private void addDefinitionChanges(List<Line> lines, String name) {
         var now = source.imageDefs().get(name);
         var stamp = source.buildSource(name);

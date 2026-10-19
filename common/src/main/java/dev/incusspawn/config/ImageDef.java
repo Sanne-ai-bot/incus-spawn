@@ -470,6 +470,8 @@ public class ImageDef extends MappedDefinition {
                 .forEach(e -> sb.append("account.").append(e.getKey())
                         .append('=').append(e.getValue()).append('\n'));
         packages.stream().sorted().forEach(p -> sb.append("pkg=").append(p).append('\n'));
+        // Removed before installing, so baked in too; likewise no line when there is none.
+        removePackages.stream().distinct().sorted().forEach(p -> sb.append("rmpkg=").append(p).append('\n'));
         // Baked into the image; no line when none is masked, so such a template keeps its fingerprint.
         maskServices.stream().distinct().sorted().forEach(m -> sb.append("mask=").append(m).append('\n'));
         for (var t : tools.stream().sorted(java.util.Comparator.comparing(ToolDef.ToolRef::getName)).toList()) {
