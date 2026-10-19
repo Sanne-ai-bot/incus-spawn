@@ -2,7 +2,9 @@ package dev.incusspawn.proxy;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.RequestOptions;
 
+import java.net.ServerSocket;
 import java.net.UnknownHostException;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -39,7 +41,7 @@ class DnsCacheTest {
     static class GatedProxy extends MitmProxy {
         final AtomicInteger lookups = new AtomicInteger();
         final CountDownLatch release = new CountDownLatch(1);
-        volatile String answer = "192.0.2.1";
+        volatile List<String> answer = List.of("192.0.2.1");
         volatile boolean fail;
 
         GatedProxy() {
@@ -48,7 +50,7 @@ class DnsCacheTest {
         }
 
         @Override
-        String lookupHost(String host) throws Exception {
+        List<String> lookupHost(String host) throws Exception {
             lookups.incrementAndGet();
             assertTrue(release.await(5, TimeUnit.SECONDS), "lookup was never released");
             if (fail) throw new UnknownHostException(host);
@@ -108,5 +110,48 @@ class DnsCacheTest {
         proxy.fail = false;
         assertEquals("192.0.2.1", await(proxy.upstream.resolveHost("example.test")));
         assertEquals(2, proxy.lookups.get(), "A failure must be retried, not served from the cache");
+    }
+
+    @Test
+    void refreshKeepsTheAddressInUseWhileDnsStillListsIt() throws Exception {
+        var proxy = new GatedProxy();
+        proxy.upstream.dnsCacheTtlMillis = 0;
+        proxy.release.countDown();
+        proxy.answer = List.of("192.0.2.1", "192.0.2.2");
+        assertEquals("192.0.2.1", await(proxy.upstream.resolveHost("example.test")));
+
+        proxy.answer = List.of("192.0.2.2", "192.0.2.1");
+        assertEquals("192.0.2.1", await(proxy.upstream.resolveHost("example.test")),
+                "A reordered answer must not move the host off a warm connection");
+
+        proxy.answer = List.of("192.0.2.2", "192.0.2.3");
+        assertEquals("192.0.2.2", await(proxy.upstream.resolveHost("example.test")),
+                "Once DNS stops listing the address, the first one listed is taken");
+        assertEquals(3, proxy.lookups.get());
+    }
+
+    @Test
+    void failedConnectDropsTheCachedAddress() throws Exception {
+        var proxy = new GatedProxy();
+        proxy.release.countDown();
+        proxy.answer = List.of("127.0.0.1", "127.0.0.2");
+        assertEquals("127.0.0.1", await(proxy.upstream.resolveHost("example.test")));
+
+        int closedPort;
+        try (var socket = new ServerSocket(0)) {
+            closedPort = socket.getLocalPort();
+        }
+        proxy.upstream.createClients();
+        try {
+            var options = new RequestOptions().setHost("example.test").setPort(closedPort);
+            assertThrows(Exception.class, () -> await(proxy.upstream.requestWithAsyncDns(options)));
+        } finally {
+            proxy.upstream.closeClients();
+        }
+
+        proxy.answer = List.of("127.0.0.2", "127.0.0.1");
+        assertEquals("127.0.0.2", await(proxy.upstream.resolveHost("example.test")),
+                "An address that refused a connection must be resolved again, not kept");
+        assertEquals(2, proxy.lookups.get());
     }
 }

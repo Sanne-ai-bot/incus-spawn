@@ -1608,7 +1608,9 @@ It is not the client's read-idle timeout: Netty ticks that from the connection's
 Nor an all-idle timeout, which a request's write restarts: confirmations going out every few seconds would then keep a dead connection open.
 Without it an HTTP/2 connection would never be evicted: a timed-out exchange resets only its own stream, and every later confirmation would wait out 30s on the dead connection and be served unconfirmed.
 Up to four HTTP/2 connections per host (`setHttp2MaxPoolSize`): with one, Vert.x admits a single connect at a time, so a burst to a host that falls back to HTTP/1.1 (a nested isx's own proxy, the benchmark stub) ran one request at a time, and a burst to one that does not answer failed one connect timeout after another.
-Connections are pooled per resolved address, so reuse also ends when the DNS cache (60s) re-resolves a host to a different one.
+Connections are pooled per resolved address, so the DNS cache (60s) keeps a host's address across a refresh for as long as the answer still lists it, whatever order it comes in (#862).
+Central's and Gradle's CDNs answer with two addresses in a random order, which moved about half of all refreshes to the other one and its fresh TLS handshake.
+A failed connect drops the cached address (a connect timeout cut short to fit a client's budget does not), so the next request resolves again and takes the first one listed instead of staying on one that stopped answering.
 Hashing a large artifact happens outside the lock, re-checked under it against the file's identity, so it does not stall other artifacts in the same stripe.
 The benchmark (`bench/run.sh --load=maven`) points Central at a loopback stub through `ISX_BENCH_UPSTREAM`, since a confirmed hit makes a `HEAD` (with the default tiers, the benchmark's warm hits are fresh and make none).
 The end-to-end tests use the same hook.

@@ -16,6 +16,7 @@ import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.net.SocketAddress;
 
+import java.net.UnknownHostException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -34,9 +35,9 @@ import java.util.function.BiFunction;
  */
 class Upstream {
 
-    /** The blocking lookup behind {@link #resolveHost}. */
+    /** The blocking lookup behind {@link #resolveHost}: every address, in the resolver's order. */
     interface HostLookup {
-        String lookupHost(String host) throws Exception;
+        List<String> lookupHost(String host) throws Exception;
     }
 
     private final Vertx vertx;
@@ -48,16 +49,18 @@ class Upstream {
     HttpClient probeClient;
     HttpClient wsUpstreamClient;
 
-    private static final long DNS_CACHE_TTL_MS = 60_000;
+    // Overridable for tests
+    long dnsCacheTtlMillis = 60_000;
     private record DnsEntry(String ip, long expiresAt, Future<String> inflight) {
         static DnsEntry resolving(Future<String> f) { return new DnsEntry(null, 0, f); }
-        static DnsEntry resolved(String ip) {
-            return new DnsEntry(ip, System.currentTimeMillis() + DNS_CACHE_TTL_MS, null);
-        }
         boolean isValid() { return ip != null && System.currentTimeMillis() < expiresAt; }
         boolean isResolving() { return inflight != null; }
     }
     private final ConcurrentHashMap<String, DnsEntry> dns = new ConcurrentHashMap<>();
+
+    private DnsEntry resolved(String ip) {
+        return new DnsEntry(ip, System.currentTimeMillis() + dnsCacheTtlMillis, null);
+    }
 
     // Overridable for tests
     boolean upstreamTrustAll = false;
@@ -90,7 +93,7 @@ class Upstream {
     }
 
     void overrideDns(String host, String ip) {
-        dns.put(host, DnsEntry.resolved(ip));
+        dns.put(host, resolved(ip));
     }
 
     void clearUnreachable() {
@@ -223,7 +226,9 @@ class Upstream {
         } else {
             connected = resolveHost(host).compose(ip -> {
                 options.setServer(SocketAddress.inetSocketAddress(options.getPort(), ip));
-                return client.request(options);
+                return client.request(options).onFailure(e -> {
+                    if (!(cutShort && isTimeout(e))) forgetAddress(host, ip);
+                });
             });
         }
         if (!Revalidation.keepsBackoff(host)) return connected;
@@ -233,8 +238,7 @@ class Upstream {
         return connected.andThen(ar -> {
             if (ar.succeeded()) {
                 ar.result().response().onSuccess(resp -> unreachableSince.remove(host));
-            } else if (cutShort && (ar.cause() instanceof java.util.concurrent.TimeoutException
-                    || ar.cause() instanceof io.netty.channel.ConnectTimeoutException)) {
+            } else if (cutShort && isTimeout(ar.cause())) {
                 return;
             } else if (unreachableSince.put(host, System.nanoTime()) == null) {
                 ProxyLog.warn("Cannot reach " + host + " (" + ar.cause().getMessage() +
@@ -243,29 +247,42 @@ class Upstream {
         });
     }
 
+    private static boolean isTimeout(Throwable e) {
+        return e instanceof java.util.concurrent.TimeoutException || e instanceof io.netty.channel.ConnectTimeoutException;
+    }
+
     // JVM resolver is blocking (Quarkus use-async-dns=false); resolve on a worker thread.
     // compute() only claims the host with an inflight entry, so concurrent callers share one
     // lookup. The lookup itself starts after compute() returns: one that finishes before its
     // callback is attached runs that callback synchronously, and the callback's write to
     // this map from inside compute() throws "Recursive update".
+    // A refresh keeps the expired entry's address while the answer still lists it: upstream
+    // connections are pooled per address, and CDNs reorder their answers on every lookup (#862).
     Future<String> resolveHost(String host) {
         var claimed = new AtomicReference<Promise<String>>();
+        var previous = new AtomicReference<String>();
         var entry = dns.compute(host, (h, existing) -> {
             if (existing != null && (existing.isValid() || existing.isResolving()))
                 return existing;
+            if (existing != null) previous.set(existing.ip());
             var promise = Promise.<String>promise();
             claimed.set(promise);
             return DnsEntry.resolving(promise.future());
         });
         var promise = claimed.get();
         if (promise != null) {
-            vertx.<String>executeBlocking(() -> hostLookup.lookupHost(host), false)
+            vertx.<String>executeBlocking(() -> {
+                        var all = hostLookup.lookupHost(host);
+                        if (all.isEmpty()) throw new UnknownHostException(host);
+                        var kept = previous.get();
+                        return kept != null && all.contains(kept) ? kept : all.get(0);
+                    }, false)
                     .onComplete(ar -> {
                         // Update the cache before waking waiters, so none of them re-resolves.
                         // Only replace our own inflight entry: one written meanwhile (overrideDns)
                         // is newer than this lookup and must not be overwritten or dropped.
                         if (ar.succeeded()) {
-                            dns.replace(host, entry, DnsEntry.resolved(ar.result()));
+                            dns.replace(host, entry, resolved(ar.result()));
                         } else {
                             dns.remove(host, entry);
                         }
@@ -275,6 +292,12 @@ class Upstream {
         return entry.isValid()
                 ? Future.succeededFuture(entry.ip())
                 : entry.inflight();
+    }
+
+    // resolveHost keeps an address while DNS lists it, so one that failed to connect is dropped:
+    // the next request resolves again instead of staying on a dead address.
+    private void forgetAddress(String host, String ip) {
+        dns.computeIfPresent(host, (h, cached) -> ip.equals(cached.ip()) ? null : cached);
     }
 
     /** What is left of the client's silence budget, counted from {@code since}. */
