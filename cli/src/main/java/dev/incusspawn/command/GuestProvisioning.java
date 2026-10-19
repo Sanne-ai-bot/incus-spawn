@@ -512,7 +512,7 @@ public class GuestProvisioning {
                 "if mountpoint -q " + DNF_CACHE_PATH + "; then "
                         + "echo 'Warning: DNF cache volume still mounted, not cleaning it' >&2; "
                         + "else dnf clean all; rm -rf " + DNF_CACHE_PATH + "; fi; "
-                        + "rm -rf /tmp/* /var/tmp/*; true");
+                        + GuestUpdate.EMPTY_TMP_SCRIPT + "; true");
         BuildOutput.stepDone();
     }
 

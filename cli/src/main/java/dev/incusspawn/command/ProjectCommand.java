@@ -173,6 +173,7 @@ public class ProjectCommand extends BaseCommand {
                 }
 
                 if (!preBuild(incus, buildName, projectConfig.getPreBuild())) return false;
+                GuestUpdate.emptyTmp(incus, buildName);
 
                 InstanceLifecycle.tagMetadata(incus, buildName, Metadata.TYPE_PROJECT, parent);
                 incus.configSet(buildName, Metadata.PROJECT, imageName);
@@ -247,6 +248,7 @@ public class ProjectCommand extends BaseCommand {
                 if (projectConfig != null && !preBuild(incus, name, projectConfig.getPreBuild())) {
                     failedSteps.add("pre-build");
                 }
+                GuestUpdate.emptyTmp(incus, name);
             }
 
             if (!failedSteps.isEmpty()) {

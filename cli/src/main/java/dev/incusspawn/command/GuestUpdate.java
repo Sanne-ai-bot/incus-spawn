@@ -19,12 +19,35 @@ final class GuestUpdate {
             + " echo \"  Fetching $d\"; git -C \"$d\" fetch --all --quiet"
             + " || { echo \"git fetch failed in $d\" >&2; failed=1; }; fi; done; exit $failed";
 
+    /**
+     * Empties /tmp and /var/tmp, hidden files included, of a template about to be saved: /tmp is
+     * on disk (#1561), so what a step left there would reach every branch. {@code -xdev} keeps
+     * it on their own filesystem (isx mounts nothing there: host resources may not target /tmp).
+     */
+    static final String EMPTY_TMP_SCRIPT = "find /tmp /var/tmp -xdev -mindepth 1 -delete";
+
     private GuestUpdate() {
     }
 
     static boolean system(IncusClient incus, String name) {
         BuildOutput.stepStart("Running system updates...");
         return finish(incus.shellExec(name, "dnf", "update", "-y"), "dnf update -y");
+    }
+
+    /**
+     * Not a step that fails: a leftover it cannot remove is no reason to keep the old template,
+     * so it is only warned about.
+     */
+    static void emptyTmp(IncusClient incus, String name) {
+        try {
+            var result = incus.shellExec(name, "sh", "-c", EMPTY_TMP_SCRIPT);
+            if (!result.success()) {
+                BuildOutput.warn("Could not empty /tmp in " + name + "; what is left there stays in the template.",
+                        result.stderr().strip());
+            }
+        } catch (RuntimeException e) {
+            BuildOutput.warn("Could not empty /tmp in " + name + ": " + e.getMessage());
+        }
     }
 
     static boolean gitRepos(IncusClient incus, String name) {

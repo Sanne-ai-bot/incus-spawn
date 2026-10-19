@@ -192,6 +192,7 @@ Removing a template outright was the alternative: every template derived from it
 **`/tmp` is on disk** (#1561): `tpl-minimal` masks `tmp.mount`; what that means for users is in `docs/FEDORA.md`.
 It is in the root template, not in one template (yrodiere/incus-spawn-templates#68 did it in `tpl-dev-base`), because the restarts that empty a tmpfs come from isx itself and hit every template.
 It is not in the base image either, which would put an isx choice in a Fedora image other tools could use.
+What a step leaves in `/tmp` is now saved with the template, so every path that saves one empties `/tmp` and `/var/tmp` first, hidden files included (`GuestUpdate.EMPTY_TMP_SCRIPT`): the builds' `cleanCaches`, `isx update-all`, and `isx project create` and `update`.
 A pin of the base image (`isx update-base <tag>`) writes a user-level `minimal.yaml` that replaces the built-in definition, so it writes the pinned definition's `mask_services` too.
 A pin written before this change has none; `isx update-base --latest` and pinning again restores them.
 Pinning does not merge the built-in's masks back in, as a user may have removed one on purpose.

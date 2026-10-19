@@ -160,6 +160,24 @@ class UpdateAllCommandTest {
     }
 
     @Test
+    void anUpdateEmptiesTmpBeforeTheTemplateIsStopped() {
+        var incus = incus();
+        assertEquals(0, update(incus));
+        var order = inOrder(incus);
+        order.verify(incus).execInContainer(NAME, "agentuser", GuestUpdate.GIT_FETCH_SCRIPT);
+        order.verify(incus).shellExec(NAME, "sh", "-c", GuestUpdate.EMPTY_TMP_SCRIPT);
+        order.verify(incus).stop(NAME);
+    }
+
+    @Test
+    void aTmpThatCannotBeEmptiedDoesNotFailTheUpdate() {
+        var incus = incus();
+        when(incus.shellExec(NAME, "sh", "-c", GuestUpdate.EMPTY_TMP_SCRIPT)).thenThrow(new IncusException("exec failed"));
+        assertEquals(0, update(incus));
+        verify(incus).stop(NAME);
+    }
+
+    @Test
     void succeedsWhenEveryStepSucceeds() {
         assertEquals(0, update(incus()));
     }
