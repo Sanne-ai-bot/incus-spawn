@@ -312,8 +312,8 @@ class DownloadCacheTest {
             var paused = new ArrayList<Duration>();
             var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/busy";
             assertEquals("ok", Files.readString(retrying(cacheDir, paused).download(url, null)));
-            // Longer than the 2s schedule, so honoured; an hour is capped at 30s.
-            assertEquals(List.of(Duration.ofSeconds(5), Duration.ofSeconds(30)), paused);
+            // Longer than the 2s schedule, so honoured; an hour is capped at the longest default pause.
+            assertEquals(List.of(Duration.ofSeconds(5), Duration.ofSeconds(60)), paused);
         } finally {
             server.stop(0);
         }

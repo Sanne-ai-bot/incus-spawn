@@ -22,6 +22,7 @@ import java.time.Duration;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -60,8 +61,11 @@ public class DownloadCache {
     /** Statuses a later attempt may not get; other errors (501, 505, every other 4xx) are final. */
     private static final Set<Integer> RETRIED_STATUSES = Set.of(429, 500, 502, 503, 504);
 
-    /** The longest {@code Retry-After} honoured, so a server cannot park a build. */
-    private static final Duration MAX_RETRY_AFTER = Duration.ofSeconds(30);
+    /**
+     * The longest {@code Retry-After} honoured, so a server cannot park a build: the longest pause
+     * of the default schedule, so a server may stretch every wait up to it.
+     */
+    private static final Duration MAX_RETRY_AFTER = Collections.max(RETRY_DELAYS);
 
     static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
 
