@@ -232,9 +232,9 @@ public final class GitPreparation {
             // Read objects through fresh metadata, so source config (including promisor remotes,
             // hooks and replace refs) cannot fetch or change what the selected IDs mean.
             var objects = Path.of(git(source, "rev-parse", "--path-format=absolute", "--git-path", "objects"));
-            var alternate = result.resolve("objects/info/alternates");
-            Files.writeString(alternate, objects + "\n");
             if (!selected.isEmpty()) {
+                var alternate = result.resolve("objects/info/alternates");
+                Files.writeString(alternate, objects + "\n");
                 var roots = lease.path.resolve("roots");
                 Files.write(roots, selected.values());
                 var pack = result.resolve("objects/pack/export.pack");
@@ -244,12 +244,13 @@ public final class GitPreparation {
                 // Bitmaps stay off: they are the source's own claim about reachability, not our walk.
                 run(result, roots, pack, List.of("-c", "protocol.https.allow=never", "-c", "protocol.ssh.allow=never",
                         "-c", "protocol.git.allow=never", "pack-objects", "--stdout", "--revs", "--no-use-bitmap-index"));
-                // index-pack --stdin installs the standard pack-<hash> pair in our owned store.
+                // Without the alternate, index-pack --strict must resolve every link inside the export, which
+                // proves it self-contained. --stdin installs the standard pack-<hash> pair in our owned store.
+                Files.delete(alternate);
                 run(result, pack, null, List.of("index-pack", "--stdin", "--strict"));
                 Files.delete(pack);
                 Files.delete(roots);
             }
-            Files.delete(alternate);
             var refsInput = lease.path.resolve("refs");
             Files.write(refsInput, selected.entrySet().stream()
                     .map(e -> "update " + e.getKey() + " " + e.getValue()).toList());
@@ -277,7 +278,6 @@ public final class GitPreparation {
                 }
                 throw e;
             }
-            git(result, "fsck", "--full", "--no-dangling");
             git(result, "pack-refs", "--all");
             var timings = new LinkedHashMap<String, Long>();
             elapsed(timings, "export", start);

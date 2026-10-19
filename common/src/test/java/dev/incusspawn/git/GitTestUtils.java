@@ -72,6 +72,18 @@ public final class GitTestUtils {
         runGit(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message);
     }
 
+    /** Overwrite {@code repo}'s loose blob {@code id} with zeros of the same length, keeping its name. */
+    public static void corruptLooseBlob(Path repo, String id) throws IOException, InterruptedException {
+        var loose = repo.resolve(".git/objects").resolve(id.substring(0, 2)).resolve(id.substring(2));
+        assertTrue(Files.exists(loose));
+        assertTrue(loose.toFile().setWritable(true));
+        var wrong = new byte[Integer.parseInt(git(repo, "cat-file", "-s", id))];
+        try (var out = new java.util.zip.DeflaterOutputStream(Files.newOutputStream(loose))) {
+            out.write(("blob " + wrong.length + "\0").getBytes(StandardCharsets.US_ASCII));
+            out.write(wrong);
+        }
+    }
+
     /** Every object physically stored in {@code repo}, reachable or not. */
     public static Set<String> allObjects(Path repo) throws IOException, InterruptedException {
         return new HashSet<>(git(repo, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").lines().toList());
