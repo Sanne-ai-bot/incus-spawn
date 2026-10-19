@@ -305,7 +305,7 @@ final class VerifiedArtifactStore {
 
     /** Whether the artifact is still the file a {@link CachedCopy} was read from. */
     static boolean unchanged(Path artifact, CachedCopy copy) {
-        return copy.state().equals(FileState.of(artifact));
+        return isCopy(artifact, copy.state());
     }
 
     /**
@@ -374,17 +374,33 @@ final class VerifiedArtifactStore {
         }
     }
 
-    /** Store a sidecar beside a cached artifact, if it is still cached. */
-    static void storeSidecar(Path artifact, Sidecar sidecar, byte[] body) throws IOException {
+    /**
+     * Whether the cached artifact is still the {@code answered} copy: the one a sidecar answer was
+     * reconciled against, read before that reconcile ({@link FileState#of(Path)}, null when none was
+     * cached). A header that settles the answer later may describe a copy committed since (#1555).
+     */
+    static boolean isCopy(Path artifact, FileState answered) {
+        return answered != null && answered.equals(FileState.of(artifact));
+    }
+
+    /** Store a sidecar beside a cached artifact, if it is still the {@code answered} copy; returns whether it is. */
+    static boolean storeSidecar(Path artifact, FileState answered, Sidecar sidecar, byte[] body) throws IOException {
         synchronized (lockFor(artifact)) {
-            if (Files.isRegularFile(artifact)) writeAtomically(sidecar.storedFile(artifact), body);
+            if (!isCopy(artifact, answered)) return false;
+            writeAtomically(sidecar.storedFile(artifact), body);
+            return true;
         }
     }
 
-    /** Drop the stored copy of a sidecar upstream no longer publishes. */
-    static void dropSidecar(Path artifact, Sidecar sidecar) throws IOException {
+    /**
+     * Drop the stored copy of a sidecar upstream no longer publishes, if the artifact is still the
+     * {@code answered} copy; returns whether it is.
+     */
+    static boolean dropSidecar(Path artifact, FileState answered, Sidecar sidecar) throws IOException {
         synchronized (lockFor(artifact)) {
+            if (!isCopy(artifact, answered)) return false;
             Files.deleteIfExists(sidecar.storedFile(artifact));
+            return true;
         }
     }
 

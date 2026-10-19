@@ -1682,11 +1682,13 @@ class ArtifactCacheHandler {
             }
             var artifactPath = sidecar.artifactPath(path);
             // Reconcile before answering, so the client's next request sees any eviction
-            vertx.executeBlocking(() -> VerifiedArtifactStore.reconcile(artifact, target.checksum(), sidecar,
-                    answer.status(), answer.body(), revalidation.sidecarsAuthoritative(), lookedUp), false
-            ).compose(outcome -> outcome == VerifiedArtifactStore.Outcome.DISAGREES
-                    ? settleWithHeader(domain, artifactPath, artifact, revalidation, sidecar, answer)
-                    : Future.succeededFuture(outcome)
+            vertx.executeBlocking(() -> {
+                var copy = VerifiedArtifactStore.FileState.of(artifact);
+                return new Reconciled(copy, VerifiedArtifactStore.reconcile(artifact, target.checksum(), sidecar,
+                        answer.status(), answer.body(), revalidation.sidecarsAuthoritative(), lookedUp));
+            }, false).compose(reconciled -> reconciled.outcome() == VerifiedArtifactStore.Outcome.DISAGREES
+                    ? settleWithHeader(domain, artifactPath, artifact, reconciled.copy(), revalidation, sidecar, answer)
+                    : Future.succeededFuture(reconciled.outcome())
             ).onComplete(ar -> {
                 if (ar.failed()) {
                     System.err.println("Sidecar check error for " + domain + path + ": " + ar.cause().getMessage());
@@ -1702,6 +1704,9 @@ class ArtifactCacheHandler {
             });
         });
     }
+
+    /** A sidecar answer's outcome, and the copy it was reconciled against (read just before). */
+    private record Reconciled(VerifiedArtifactStore.FileState copy, VerifiedArtifactStore.Outcome outcome) {}
 
     /**
      * Answer a sidecar request whose upstream answer predates the cached copy's confirmation, and may
@@ -1736,9 +1741,13 @@ class ArtifactCacheHandler {
      * still confirms the artifact, the stored sidecar follows upstream: a fresh
      * signature is kept, and one upstream no longer has is dropped. A checksum
      * sidecar that contradicts the artifact is not stored, since stored checksums
-     * describe the artifact beside them.
+     * describe the artifact beside them. The sidecar answer changes nothing beside
+     * a copy other than the {@code answered} one it was reconciled against
+     * ({@link VerifiedArtifactStore.Outcome#SUPERSEDED}): the header may then have
+     * matched bytes committed after the sidecar was asked for (#1555).
      */
     private Future<VerifiedArtifactStore.Outcome> settleWithHeader(String domain, String artifactPath, Path artifact,
+                                                                   VerifiedArtifactStore.FileState answered,
                                                                    Revalidation revalidation, Sidecar sidecar,
                                                                    SidecarAnswer sidecarAnswer) {
         var lookedUp = Instant.now();
@@ -1749,14 +1758,16 @@ class ArtifactCacheHandler {
             return vertx.executeBlocking(() -> {
                 var outcome = VerifiedArtifactStore.reconcile(
                         artifact, revalidation.headerChecksum, header.status(), header.body(), true, lookedUp);
-                if (outcome == VerifiedArtifactStore.Outcome.MATCHED) {
-                    if (sidecarAnswer.gone()) {
-                        VerifiedArtifactStore.dropSidecar(artifact, sidecar);
-                    } else if (sidecarAnswer.status() == 200 && !sidecar.isChecksum()) {
-                        VerifiedArtifactStore.storeSidecar(artifact, sidecar, sidecarAnswer.body());
-                    }
+                if (outcome != VerifiedArtifactStore.Outcome.MATCHED) return outcome;
+                boolean answeredCopy;
+                if (sidecarAnswer.gone()) {
+                    answeredCopy = VerifiedArtifactStore.dropSidecar(artifact, answered, sidecar);
+                } else if (sidecarAnswer.status() == 200 && !sidecar.isChecksum()) {
+                    answeredCopy = VerifiedArtifactStore.storeSidecar(artifact, answered, sidecar, sidecarAnswer.body());
+                } else {
+                    answeredCopy = VerifiedArtifactStore.isCopy(artifact, answered);
                 }
-                return outcome;
+                return answeredCopy ? outcome : VerifiedArtifactStore.Outcome.SUPERSEDED;
             }, false);
         });
     }
