@@ -38,5 +38,62 @@
       "index-pack --stdin --strict (no-reuse pack)": 56.52,
       "fsck --full --no-dangling": 61.47
     }
+  },
+  "snapshot": {
+    "bench_trials_ms": {
+      "note": "bench over a local git daemon serving the checkout, after the advertisement fix; default 4096 MiB budget",
+      "trials": [
+        {
+          "strategy": "new clean snapshot",
+          "total_ms": 91589,
+          "phases_ms": {
+            "remote": 114,
+            "clone": 32385,
+            "verify": 59078,
+            "publish": 1
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 988,
+          "phases_ms": {
+            "remote": 89,
+            "check": 898
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 954,
+          "phases_ms": {
+            "remote": 90,
+            "check": 863
+          }
+        }
+      ],
+      "retained_bytes": 1597166101
+    },
+    "commands_s": {
+      "clone --bare --no-local --reference <checkout> --dissociate": 33.82,
+      "fsck --full --no-dangling": 62.51,
+      "fsck --connectivity-only --no-dangling": 8.18,
+      "index-pack --verify --strict <pack>": 42.66,
+      "verify-pack <pack>": 37.27,
+      "clone --bare --no-local (no reference)": 37.36,
+      "fsck --full --no-dangling (after the clone without reference)": 59.29,
+      "clone --bare --no-local (no reference) with transfer.fsckObjects=true": 36.94
+    },
+    "corruption_probe": {
+      "case": "checkout loose object with different content under a public object's name, borrowed by a reference clone with --dissociate",
+      "clone": "exit 0, one standalone pack, cat-file returns the wrong content",
+      "fsck --connectivity-only": "passes",
+      "index-pack --verify --strict": "fails (idx validation error)",
+      "fsck --full": "fails (packed object is corrupt)"
+    },
+    "missing_link_probe": {
+      "case": "single pack missing one blob that a tree references",
+      "index-pack --verify --strict": "fails (did not receive expected object)",
+      "fsck --connectivity-only": "fails",
+      "fsck --full": "fails"
+    }
   }
 }

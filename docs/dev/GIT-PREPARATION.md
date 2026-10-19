@@ -180,6 +180,22 @@ Using `--bare` avoids the historical in-process checkout failure in older Git's 
 [Upstream commit 3d8e4004](https://github.com/git/git/commit/3d8e4004c604b206d70240a087816907cce70a08) fixes the commit-graph lifetime bug; the research reproduces it on Git 2.54.0 and verifies bare dissociation there.
 The guest's later local clone checks out in a separate Git process from a repository containing no borrowed graph metadata.
 
+## Why a fresh snapshot keeps the full fsck
+
+On apache/camel (4.4 million objects, #1548) the reference clone takes about 34 s and `fsck --full` another 62 s.
+With retention working it runs only on a first build and on rebuilds, but those still matter for large repositories, so the cheaper checks were measured against what they catch ([measurements](../../bench/data/git-large-repositories-2026-10-19.json)).
+
+`--dissociate` repacks the borrowed objects with `pack-objects`, which copies them as stored and names them after the checkout's own index entries or loose file names without rehashing them; only packed entries get a CRC check against the checkout's index.
+A checkout whose loose object holds other content under a public object's name therefore produces a clone that succeeds, with one standalone pack serving the wrong content under that name.
+Clone's own connectivity check and `fsck --connectivity-only` (8 s on camel) accept that repository; `fsck --full` rejects it and the remote retry follows.
+`transfer.fsckObjects` would not help: it checks only objects received from the remote, and a reference clone borrows almost all of them.
+The test `aCheckoutObjectWhoseBytesDoNotMatchItsNameIsCaughtAfterDissociation` keeps this case covered.
+
+`index-pack --verify --strict` on the single pack also recomputes every object ID, checks each object's structure and fails on a missing link, which for a loose-free, single-pack repository covers fsck's object checks; it took 43 s on camel against 62 s.
+A clone without a reference gets every object from the transport, where `index-pack` computes each ID as it receives it; with `transfer.fsckObjects=true` it also checks structure and links, at no measurable cost on camel (37 s either way), which would leave the separate 59 s fsck with nothing new to find.
+Neither replacement is made: the full fsck is the single end-to-end check that this protection rests on, and narrowing it is a decision recorded on #1548.
+The same holds for host-source exports, where the fsck after removing the alternate is what proves that the export is self-contained (61 s on camel), and an `index-pack --stdin --strict` run without the alternate would prove it as well.
+
 ## Retention and readers
 
 The cache lives under `~/.cache/incus-spawn/git/`, private to the host user.

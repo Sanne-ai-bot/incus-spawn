@@ -521,6 +521,36 @@ class GitPreparationTest {
         }
     }
 
+    @Test void aCheckoutObjectWhoseBytesDoNotMatchItsNameIsCaughtAfterDissociation() throws Exception {
+        start();
+        // --dissociate copies borrowed objects without rehashing them, and clone's connectivity check
+        // and fsck --connectivity-only accept the result: only a check that rehashes catches this (#1548).
+        var objects = host.resolve(".git/objects");
+        var moved = Files.createDirectory(tmp.resolve("host-packs"));
+        for (var file : PreparationGit.children(objects.resolve("pack"))) Files.move(file, moved.resolve(file.getFileName()));
+        for (var pack : PreparationGit.children(moved)) {
+            if (pack.toString().endsWith(".pack")) PreparationGit.run(host, pack, null, List.of("unpack-objects", "-q"));
+        }
+        var publicId = git(remote, "rev-parse", "HEAD:isx.deb");
+        byte[] wrong = new byte[Files.readAllBytes(remote.resolve("isx.deb")).length];
+        var header = ("blob " + wrong.length + "\0").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        var loose = objects.resolve(publicId.substring(0, 2)).resolve(publicId.substring(2));
+        assertTrue(loose.toFile().setWritable(true));
+        try (var out = new java.util.zip.DeflaterOutputStream(Files.newOutputStream(loose))) {
+            out.write(header);
+            out.write(wrong);
+        }
+        var checks = new java.util.concurrent.atomic.AtomicInteger();
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
+            if (phase.equals("Verifying Git snapshot")) checks.incrementAndGet();
+        })) {
+            assertEquals(2, checks.get(), "the damaged reference clone must fail its check and be retried");
+            assertEquals("new clean snapshot (reference retry)", result.strategy());
+            sameObjects(remote, result.repository());
+            assertEquals("", git(result.repository(), "fsck", "--full", "--no-dangling"));
+        }
+    }
+
     @Test void aFailedRemoteRetryLeavesNoSnapshotOrWork() throws Exception {
         start();
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
