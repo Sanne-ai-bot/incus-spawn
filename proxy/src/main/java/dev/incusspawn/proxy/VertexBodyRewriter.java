@@ -19,7 +19,11 @@ import java.util.function.Consumer;
  *   <li>{@code model} is dropped and goes into the URL, with its date suffix stripped; {@code stream}
  *       is kept, and only a literal {@code true} asks for {@code :streamRawPredict};</li>
  *   <li>{@code scope} is dropped from every {@code cache_control} object below the top level, and
- *       the rest of that object is copied as it is.</li>
+ *       the rest of that object is copied as it is;</li>
+ *   <li>{@code strict} is dropped from every tool definition, an object in the top-level
+ *       {@code tools} array (#1556): Vertex treats it as the structured_outputs partner-model
+ *       feature, which an organization policy may disallow, and then refuses every request with
+ *       tools.</li>
  * </ul>
  * Its memory is bounded whatever the body: two bits per nesting level up to {@link #MAX_DEPTH}, a
  * field name up to {@link #MAX_NAME_CHARS} characters, and {@code model} up to the URL ceiling
@@ -46,6 +50,8 @@ class VertexBodyRewriter {
     static final int LOGGED_NAME_BYTES = 64;
     /** How many distinct dropped names one body reports: a body may drop any number of fields. */
     static final int MAX_DROPPED_NAMES = 16;
+    /** How a dropped tool {@code strict} is named among the dropped fields. */
+    static final String TOOL_STRICT = "tools[].strict";
 
     static final Set<String> ALLOWED_FIELDS = Set.of(
             "anthropic_version", "messages", "system", "max_tokens",
@@ -99,10 +105,13 @@ class VertexBodyRewriter {
     private int ccDepth;
     /** The depth from which everything is copied as it is, below a cache_control member (0: none). */
     private int rawFrom;
+    /** The array at depth 2 is the top-level tools, so an object at depth 3 is a tool definition. */
+    private boolean inTools;
 
     // The value starting next
     private int valueMode;
     private boolean nextIsCacheControl;
+    private boolean nextIsTools;
     private boolean valueIsStream;
 
     // Key being read
@@ -322,7 +331,9 @@ class VertexBodyRewriter {
         if (valueMode == SKIP && skipFrom == 0) skipFrom = depth;
         if (valueMode == EMIT && rawFrom == 0 && ccDepth != 0 && depth > ccDepth) rawFrom = depth;
         if (valueMode == EMIT && nextIsCacheControl && object && depth > 1) ccDepth = depth;
+        if (valueMode == EMIT && nextIsTools && !object) inTools = true;
         nextIsCacheControl = false;
+        nextIsTools = false;
         state = object ? OBJ_FIRST : ARR_FIRST;
         valueIsStream = false;
     }
@@ -337,6 +348,7 @@ class VertexBodyRewriter {
         if (skipFrom == depth) skipFrom = 0;
         if (rawFrom == depth) rawFrom = 0;
         if (ccDepth == depth) ccDepth = 0;
+        if (depth == 2) inTools = false;
         depth--;
         afterValue();
     }
@@ -351,6 +363,7 @@ class VertexBodyRewriter {
     private void afterValue() {
         valueIsStream = false;
         nextIsCacheControl = false;
+        nextIsTools = false;
         state = depth == 0 ? TRAIL : AFTER;
     }
 
@@ -407,6 +420,11 @@ class VertexBodyRewriter {
         return true;
     }
 
+    /** Whether the object whose members are being read is a tool definition. */
+    private boolean isToolDefinition() {
+        return inTools && depth == 3;
+    }
+
     private void writeMemberStart() {
         if (bit(emittedAny, depth)) emit(',');
         set(emittedAny, depth, true);
@@ -418,6 +436,7 @@ class VertexBodyRewriter {
         var name = keyNameMatchable ? keyName.toString() : null;
         var mode = modeAt(depth);
         nextIsCacheControl = false;
+        nextIsTools = false;
         valueIsStream = false;
         if (mode != EMIT) {
             valueMode = mode;
@@ -431,6 +450,7 @@ class VertexBodyRewriter {
                 valueIsStream = true;
             } else if (memberIsWritten(name)) {
                 valueMode = EMIT;
+                nextIsTools = "tools".equals(name);
             } else {
                 valueMode = SKIP;
                 if (dropped.size() < MAX_DROPPED_NAMES && !"anthropic_version".equals(name)) dropped.add(loggedName());
@@ -438,6 +458,9 @@ class VertexBodyRewriter {
         } else if (depth == ccDepth) {
             // Everything below a cache_control member is copied as it is (openContainer)
             valueMode = "scope".equals(name) ? SKIP : EMIT;
+        } else if (isToolDefinition() && "strict".equals(name)) {
+            valueMode = SKIP;
+            if (dropped.size() < MAX_DROPPED_NAMES) dropped.add(TOOL_STRICT);
         } else {
             valueMode = EMIT;
             nextIsCacheControl = "cache_control".equals(name) && (rawFrom == 0);

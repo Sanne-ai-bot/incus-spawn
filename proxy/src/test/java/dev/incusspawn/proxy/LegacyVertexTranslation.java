@@ -11,7 +11,8 @@ import java.util.Set;
 /**
  * The tree translation {@link VertexBodyRewriter} replaced (#1315), kept as the oracle its tests
  * compare against: copied from {@code MitmProxy.translateToVertex} as it was, with the field
- * logging left out.
+ * logging left out, and with the one rule added since: a tool definition's {@code strict} is
+ * dropped (#1556).
  */
 final class LegacyVertexTranslation {
 
@@ -37,7 +38,8 @@ final class LegacyVertexTranslation {
         root.forEach((field, value) -> {
             if (field.equals("model")) return;
             if (!VERTEX_ALLOWED_FIELDS.contains(field)) return;
-            rebuilt.put(field, stripCacheControlScope(value));
+            var stripped = stripCacheControlScope(value);
+            rebuilt.put(field, field.equals("tools") ? stripToolStrict(stripped) : stripped);
         });
         rebuilt.put("anthropic_version", "vertex-2023-10-16");
         var rewrittenBytes = rebuilt.build().toJsonString().getBytes(StandardCharsets.UTF_8);
@@ -45,6 +47,23 @@ final class LegacyVertexTranslation {
         var vertexPath = "/v1/projects/" + projectId + "/locations/" + region
                 + "/publishers/anthropic/models/" + model + endpoint;
         return new Translation(vertexPath, rewrittenBytes);
+    }
+
+    private static JqValue stripToolStrict(JqValue tools) {
+        if (!(tools instanceof JqArray array)) return tools;
+        var builder = JqArray.arrayBuilder();
+        array.asList().forEach(tool -> {
+            if (tool instanceof JqObject obj) {
+                var kept = JqObject.builder(obj.size());
+                obj.forEach((k, v) -> {
+                    if (!k.equals("strict")) kept.put(k, v);
+                });
+                builder.add(kept.build());
+            } else {
+                builder.add(tool);
+            }
+        });
+        return builder.build();
     }
 
     private static JqValue stripCacheControlScope(JqValue node) {

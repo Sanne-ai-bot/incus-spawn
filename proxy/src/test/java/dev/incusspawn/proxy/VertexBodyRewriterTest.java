@@ -144,6 +144,10 @@ class VertexBodyRewriterTest {
                 {"model":"claude-sonnet-4-6-20250929","max_tokens":32000,"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral","scope":"global"}}]}],"system":[{"type":"text","text":"You are","cache_control":{"type":"ephemeral","ttl":"1h","scope":"x"}}],"tools":[{"name":"Bash","input_schema":{"type":"object","properties":{"cache_control":{"scope":1}}}}],"metadata":{"user_id":"u"},"thinking":{"type":"enabled","budget_tokens":1024},"context_management":{"edits":[]},"stream":true}""");
         add(cases, "pi", """
                 {"model":"claude-opus-4-1","messages":[{"role":"user","content":"x"}],"max_tokens":5,"temperature":0.7,"top_p":1.0e0,"top_k":5,"stop_sequences":["\\n\\nHuman:"],"tool_choice":{"type":"auto"}}""");
+        add(cases, "strict tools", """
+                {"model":"claude-opus-4-6","messages":[{"role":"user","content":"x"}],"tools":[{"name":"read","description":"Read","strict":true,"input_schema":{"type":"object","properties":{"strict":{"type":"boolean"}},"additionalProperties":false}},{"name":"bash","str\\u0069ct":false,"input_schema":{"type":"object"},"cache_control":{"type":"ephemeral","scope":"g","strict":true}},"x",[{"strict":1}]],"stream":true}""");
+        add(cases, "tools not an array", """
+                {"tools":{"strict":true},"messages":[]}""");
         add(cases, "stream last, model last", """
                 {"messages":[],"max_tokens":1,"stream":false,"model":"m-20250101"}""");
         add(cases, "client anthropic_version", """
@@ -316,6 +320,32 @@ class VertexBodyRewriterTest {
                 + "\"anthropic_version\":\"vertex-2023-10-16\"}", out);
     }
 
+    /**
+     * A tool's {@code strict} is dropped (#1556): Vertex treats it as the structured_outputs partner
+     * feature, which an organization policy may disallow, failing every request with tools. Only the
+     * member of a tool definition goes; a {@code strict} in a schema or a message is the client's data.
+     */
+    @Test
+    void strictIsDroppedFromToolDefinitions() {
+        var out = body(rewrite("""
+                {"tools":[{"name":"a","strict":true,"input_schema":{"type":"object","properties":{"strict":{"type":"boolean"}}},
+                 "str\\u0069ct":false,"cache_control":{"type":"e","scope":"g"},"strict":null},{"strict":1},[{"strict":2}]],
+                 "messages":[{"role":"user","content":[{"type":"tool_result","strict":true}]}],"model":"m"}"""));
+        assertEquals("{\"tools\":[{\"name\":\"a\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"strict\":{\"type\":\"boolean\"}}},"
+                + "\"cache_control\":{\"type\":\"e\"}},{},[{\"strict\":2}]],"
+                + "\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"strict\":true}]}],"
+                + "\"anthropic_version\":\"vertex-2023-10-16\"}", out);
+    }
+
+    /** Only an array of tools holds tool definitions: {@code tools} in any other shape is copied as it is. */
+    @Test
+    void strictIsKeptOutsideAToolsArray() {
+        assertEquals("{\"tools\":{\"strict\":true},\"anthropic_version\":\"vertex-2023-10-16\"}",
+                body(rewrite("{\"tools\":{\"strict\":true}}")));
+        assertEquals("{\"tool_choice\":{\"strict\":true},\"anthropic_version\":\"vertex-2023-10-16\"}",
+                body(rewrite("{\"tool_choice\":{\"strict\":true}}")));
+    }
+
     @Test
     void malformedInterpretedNamesAreRefused() {
         var cases = new ArrayList<byte[]>();
@@ -394,6 +424,14 @@ class VertexBodyRewriterTest {
         assertTrue(dropped.get(1).endsWith("…"));
     }
 
+    @Test
+    void droppedToolStrictIsNamedOnce() throws Exception {
+        var out = new ByteArrayOutputStream();
+        var rewriter = new VertexBodyRewriter(PATH, PROJECT, REGION, b -> out.writeBytes(b.getBytes()));
+        rewriter.accept(Buffer.buffer("{\"tools\":[{\"strict\":true},{\"strict\":false}],\"messages\":[]}"));
+        assertEquals(List.of(VertexBodyRewriter.TOOL_STRICT), rewriter.end().droppedFields());
+    }
+
     /** A body may drop any number of fields; it reports a few distinct names, and holds no more. */
     @Test
     void droppedNamesAreBoundedWhateverTheBody() throws Exception {
@@ -442,7 +480,7 @@ class VertexBodyRewriterTest {
                 "metadata", "tools", "tool_choice", "thinking", "output_config", "anthropic_version",
                 "context_management", "betas", "container", "mcp_servers", "\\u006dodel_x", "top_k"};
         private static final String[] NAMES = {"type", "text", "role", "content", "cache_control", "scope", "ttl",
-                "name", "input_schema", "c\\u0061che_control", "sc\\u006fpe", "id", "data"};
+                "name", "input_schema", "c\\u0061che_control", "sc\\u006fpe", "id", "data", "strict", "str\\u0069ct"};
 
         Generator(Random random) {
             this.random = random;
@@ -494,6 +532,7 @@ class VertexBodyRewriterTest {
             // One spelling per name, so no object holds a duplicate once escapes are read
             names.removeIf(n -> n.startsWith("c\\u0061") && names.contains("cache_control"));
             names.removeIf(n -> n.startsWith("sc\\u006f") && names.contains("scope"));
+            names.removeIf(n -> n.startsWith("str\\u0069") && names.contains("strict"));
             var sb = new StringBuilder("{");
             var count = random.nextInt(4);
             for (int i = 0; i < count && i < names.size(); i++) {
