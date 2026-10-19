@@ -45,8 +45,8 @@ class TemplatesEditReportTest {
                     new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(err, true, StandardCharsets.UTF_8));
         }
 
-        assertEquals("  WARNING: host-resource '~/.claude/CLAUDE-isx.md': unknown key 'target', ignored"
-                + " (a host resource takes source, path and mode); use 'path:' to set where it goes in the instance"
+        assertEquals("  WARNING: unknown key 'host-resources[0].target', ignored; use 'path:' to set where it goes"
+                + " in the instance"
                 + System.lineSeparator(), out.toString(StandardCharsets.UTF_8));
         // The load also reads the working directory's project-local templates, so only these two are asserted.
         assertTrue(passedOn.contains("unnamed.yaml: no 'name:'; it is skipped, and isx build refuses until it is fixed"),

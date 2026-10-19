@@ -4,6 +4,7 @@ import dev.incusspawn.config.IntegerConverter;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.Jjq;
+import dev.incusspawn.config.MappedDefinition;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
@@ -27,7 +28,7 @@ import java.util.TreeMap;
  * environment variables to export.
  */
 @JqMapped
-public class ToolDef {
+public class ToolDef extends MappedDefinition {
 
     private String name;
     private String description = "";
@@ -107,8 +108,27 @@ public class ToolDef {
         return list == null ? List.of() : list.stream().filter(java.util.Objects::nonNull).toList();
     }
 
+    /** One warning per key isx ignores in this definition as read from its file, each named by where it is (#1546). */
+    public List<String> unknownKeyWarnings() {
+        var walk = new MappedDefinition.Walk().part("", this)
+                .each("downloads", downloads)
+                .each("files", files)
+                .each("env", env)
+                .each("actions", actions)
+                .each("package_repos", packageRepos)
+                .values("parameters", parameters)
+                .part("proxy", proxy)
+                .part("skills", skills);
+        if (proxy != null) {
+            walk.values("proxy.configuration", proxy.getConfiguration())
+                    .each("proxy.auth", proxy.getAuth())
+                    .each("proxy.placeholders", proxy.getPlaceholders());
+        }
+        return walk.warnings();
+    }
+
     @JqMapped
-    public static class DownloadEntry {
+    public static class DownloadEntry extends MappedDefinition {
         private String url;
         private String sha256;
         private String extract;
@@ -136,7 +156,7 @@ public class ToolDef {
     }
 
     @JqMapped
-    public static class FileEntry {
+    public static class FileEntry extends MappedDefinition {
         private String path;
         private String content;
         private String owner;
@@ -150,7 +170,7 @@ public class ToolDef {
     }
 
     @JqMapped
-    public static class ActionEntry {
+    public static class ActionEntry extends MappedDefinition {
         private String label;
         private String type;
         @JqName("requires_running")
@@ -218,7 +238,7 @@ public class ToolDef {
     }
 
     @JqMapped
-    public static class ParameterDef {
+    public static class ParameterDef extends MappedDefinition {
         private String type;  // "string", "integer", "boolean", "enum"
         @JqName("default")
         private String defaultValue;
@@ -253,7 +273,7 @@ public class ToolDef {
     }
 
     @JqMapped
-    public static class ProxyDef {
+    public static class ProxyDef extends MappedDefinition {
         @JqName("config-namespace")
         private String configNamespace = "";
         private Map<String, ConfigEntry> configuration = Map.of();
@@ -324,7 +344,7 @@ public class ToolDef {
     }
 
     @JqMapped
-    public static class ConfigEntry {
+    public static class ConfigEntry extends MappedDefinition {
         private String type = "string"; // "string" or "confirm"
         private String description = "";
         private boolean secret = false;
@@ -356,7 +376,7 @@ public class ToolDef {
      * is whatever the tool checks a credential's shape by, e.g. {@code gho_}.
      */
     @JqMapped
-    public static class PlaceholderDef {
+    public static class PlaceholderDef extends MappedDefinition {
         private String env = "";
         private String prefix = "";
 
@@ -373,7 +393,7 @@ public class ToolDef {
     }
 
     @JqMapped
-    public static class AuthDef {
+    public static class AuthDef extends MappedDefinition {
         private List<String> domains = List.of();
         private List<String> paths = List.of();
         private String type;       // "basic", "bearer", "header", "anthropic"

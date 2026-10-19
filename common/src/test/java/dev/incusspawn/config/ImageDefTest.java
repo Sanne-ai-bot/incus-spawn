@@ -607,17 +607,105 @@ class ImageDefTest {
         var defs = ImageDef.loadAll(List.of(tempDir.toString()), warnings::add);
 
         assertTrue(defs.containsKey("tpl-claude-md"), "a warning, not a refusal: " + defs.keySet());
-        var takes = "', ignored (a host resource takes source, path and mode)";
-        var usePath = "; use 'path:' to set where it goes in the instance";
+        var usePath = "', ignored; use 'path:' to set where it goes in the instance";
+        var takes = "', ignored (host-resources[%d] takes source, path and mode)";
         assertEquals(List.of(
-                        "claude.yaml: host-resource '~/.claude/CLAUDE-isx.md': unknown key 'target" + takes + usePath,
-                        "claude.yaml: host-resource '~/.gitconfig': unknown key 'Mount_Point" + takes + usePath,
+                        "claude.yaml: unknown key 'host-resources[0].target" + usePath,
+                        "claude.yaml: unknown key 'host-resources[1].Mount_Point" + usePath,
                         // path: is set, so it is not what the author is missing
-                        "claude.yaml: host-resource '~/.m2': unknown key 'dest" + takes,
-                        "claude.yaml: host-resource '~/.m2': 'confined-to' is set by isx, a file's value is ignored (#765)",
+                        "claude.yaml: unknown key 'host-resources[2].dest" + takes.formatted(2),
                         // without a source, 'target:' may as well have meant source: as path:
-                        "claude.yaml: a host-resource without a source: unknown key 'target" + takes),
+                        "claude.yaml: unknown key 'host-resources[3].target" + takes.formatted(3),
+                        "claude.yaml: 'host-resources[2].confined-to' is set by isx, a file's value is ignored (#765)"),
                 warnings);
+    }
+
+    @Test
+    void everyKeyIsxIgnoresIsWarnedAboutAtLoadWithWhereItIs(@TempDir Path tempDir) throws Exception {
+        // #1546: a misspelled key anywhere in a template was dropped without a word, so the build
+        // went ahead without the host resource and the repo.
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("x.yaml"), """
+                name: tpl-x
+                parent: tpl-minimal
+                host-resource:
+                  - source: ~/.gitconfig
+                repo:
+                  - url: https://github.com/a/b
+                repos:
+                  - url: https://github.com/a/c
+                    branch-name: main
+                package-repos:
+                  - type: copr
+                    name: a/b
+                    nmae: a/c
+                env:
+                  - name: A
+                    value: b
+                    strategey: append
+                skills:
+                  repo: a/skills
+                  lsit: [x]
+                Gui: true
+                deprecatd: true
+                frobnicate: 1
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()), warnings::add);
+
+        assertTrue(defs.containsKey("tpl-x"), "a warning, not a refusal: " + defs.keySet());
+        assertEquals(List.of(
+                        "x.yaml: unknown key 'host-resource', ignored; did you mean 'host-resources'?",
+                        "x.yaml: unknown key 'repo', ignored; did you mean 'repos'?",
+                        "x.yaml: unknown key 'package-repos', ignored; did you mean 'package_repos'?",
+                        "x.yaml: unknown key 'Gui', ignored; did you mean 'gui'?",
+                        "x.yaml: unknown key 'deprecatd', ignored; did you mean 'deprecated'?",
+                        "x.yaml: unknown key 'frobnicate', ignored",
+                        "x.yaml: unknown key 'repos[0].branch-name', ignored; did you mean 'branch'?",
+                        "x.yaml: unknown key 'env[0].strategey', ignored; did you mean 'strategy'?",
+                        "x.yaml: unknown key 'skills.lsit', ignored; did you mean 'list'?"),
+                warnings);
+    }
+
+    @Test
+    void aMisspelledKeyBehindARefusalIsNamed(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("x.yaml"), "nmae: tpl-x\nparent: tpl-minimal\n");
+        var warnings = new java.util.ArrayList<String>();
+
+        ImageDef.loadAll(List.of(tempDir.toString()), warnings::add);
+
+        assertEquals(List.of("x.yaml: unknown key 'nmae', ignored; did you mean 'name'?",
+                "x.yaml: no 'name:'; it is skipped, and isx build refuses until it is fixed"), warnings);
+    }
+
+    @Test
+    void aKeyWithNothingCloseNamesTheKeysItsEntryTakes() throws Exception {
+        var def = ImageDef.parseYaml("""
+                name: tpl-x
+                package_repos:
+                  - type: copr
+                    name: a/b
+                    channel: stable
+                """);
+
+        assertEquals(List.of("unknown key 'package_repos[0].channel', ignored (package_repos[0] takes type and name)"),
+                def.unknownKeyWarnings());
+    }
+
+    @Test
+    void theBuiltInTemplatesHoldNoKeyIsxIgnores() {
+        for (var file : ImageDef.BUILTIN_FILES) {
+            var def = ImageDef.loadBuiltinByName(builtinName(file));
+            assertEquals(List.of(), def.unknownKeyWarnings(), file);
+        }
+    }
+
+    private static String builtinName(String file) {
+        return "tpl-" + file.substring(0, file.length() - ".yaml".length());
     }
 
     @Test

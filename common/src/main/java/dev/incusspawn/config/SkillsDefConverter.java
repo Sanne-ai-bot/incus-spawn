@@ -30,6 +30,7 @@ public class SkillsDefConverter implements ValueConverter<SkillsDef> {
         if (value.isObject()) {
             String repo = null;
             List<String> list = List.of();
+            var unknown = new ArrayList<String>();
             for (var field : value.asMap().entrySet()) {
                 switch (field.getKey()) {
                     case "repo" -> repo = field.getValue().isNull() ? null : field.getValue().asText();
@@ -41,10 +42,12 @@ public class SkillsDefConverter implements ValueConverter<SkillsDef> {
                         }
                         list = items;
                     }
-                    default -> { /* ignoreUnknown, like Jackson */ }
+                    default -> unknown.add(field.getKey());
                 }
             }
-            return new SkillsDef(repo, list);
+            var skills = new SkillsDef(repo, list);
+            unknown.forEach(skills::addUnknownKey);
+            return skills;
         }
         throw new JqMapperException(
                 "Expected a skill list or a mapping with 'repo'/'list' for skills, got " + describe(value));

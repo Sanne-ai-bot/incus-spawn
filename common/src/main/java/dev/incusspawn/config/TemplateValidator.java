@@ -34,6 +34,8 @@ public class TemplateValidator {
             return new ValidationResult(errors, warnings);
         }
 
+        // Before the refusals: a misspelled key may be why one applies ('nmae:').
+        warnings.addAll(def.unknownKeyWarnings());
         if (def.getName() == null || def.getName().isBlank()) {
             errors.add("'name' field is required and must not be blank");
             return new ValidationResult(errors, warnings);
@@ -79,7 +81,6 @@ public class TemplateValidator {
         var imagesDir = projectImagesDir.toAbsolutePath().normalize();
         var projectLocal = imagesDir.equals(file.toAbsolutePath().normalize().getParent());
         for (var hr : def.getHostResources()) {
-            warnings.addAll(hr.unknownKeyWarnings());
             if (hr.getMode() != null && !VALID_HR_MODES.contains(hr.getMode())) {
                 warnings.add("host-resource mode '" + hr.getMode()
                         + "' is not valid — must be one of: readonly, overlay, copy");

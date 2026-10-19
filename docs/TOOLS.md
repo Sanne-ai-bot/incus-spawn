@@ -69,6 +69,8 @@ Tool schema fields (all optional except `name`):
 - `skills` -- skills to install alongside the tool, teaching an agent how to drive it; same forms as the image-level field, but bare names resolve against this tool's own `skills.repo`
 - `proxy` -- credential injection rules for the MITM proxy (see [Proxy Credentials](#proxy-credentials))
 
+A key isx does not know, here or in an entry, is ignored with a warning when the tool loads, naming where it is (`downloads[0].sha265`) and the key it probably meant.
+
 Download entry fields:
 - `url` (required) -- `http://` or `https://` download URL (local addresses such as `localhost` are refused)
 - `sha256` (recommended) -- SHA-256 checksum; enables cache reuse and verifies integrity

@@ -55,6 +55,7 @@ public class EnvEntryListConverter implements ValueConverter<List<EnvEntry>> {
         String entryValue = null;
         EnvEntry.Strategy strategy = EnvEntry.Strategy.SET;
         String separator = " ";
+        var unknown = new ArrayList<String>();
         for (var field : entry.asMap().entrySet()) {
             // Every field is a single value: a list or mapping is refused, never read as text.
             if (field.getValue().isContainer()) {
@@ -78,7 +79,7 @@ public class EnvEntryListConverter implements ValueConverter<List<EnvEntry>> {
                     // An empty 'separator:' is the default, as if it were absent
                     if (!field.getValue().isNull()) separator = Jjq.text(field.getValue());
                 }
-                default -> { /* ignoreUnknown, like Jackson */ }
+                default -> unknown.add(field.getKey());
             }
         }
         if (name == null || name.isBlank()) {
@@ -100,6 +101,7 @@ public class EnvEntryListConverter implements ValueConverter<List<EnvEntry>> {
             case PREPEND -> EnvEntry.prepend(name, entryValue, separator);
             case APPEND -> EnvEntry.append(name, entryValue, separator);
         };
+        unknown.forEach(result::addUnknownKey);
         return result;
     }
 

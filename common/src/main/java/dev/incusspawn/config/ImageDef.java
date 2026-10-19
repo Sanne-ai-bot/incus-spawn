@@ -6,7 +6,6 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolRefListConverter;
 import dev.incusspawn.util.OutputFormat;
-import io.hyperfoil.tools.jjq.mapper.JqAnySetter;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
@@ -46,7 +45,7 @@ import java.util.function.Consumer;
  * can refuse to build and insist the user disambiguate.
  */
 @JqMapped
-public class ImageDef {
+public class ImageDef extends MappedDefinition {
 
     private static final String RESOURCE_DIR = "images/";
 
@@ -255,7 +254,7 @@ public class ImageDef {
      *   - myorg/catalog
      * </pre>
      */
-    public static class SkillsDef {
+    public static class SkillsDef extends MappedDefinition {
         public static final SkillsDef EMPTY = new SkillsDef(null, List.of());
 
         private final String repo;
@@ -272,10 +271,12 @@ public class ImageDef {
         /** Skill sources declared in this image. */
         public List<String> getList() { return list; }
 
+        @Override
+        protected List<String> knownKeys() { return List.of("repo", "list"); }
     }
 
     @JqMapped
-    public static class RepoEntry {
+    public static class RepoEntry extends MappedDefinition {
         private String url;
         @JqName("host-source")
         private String hostSource;
@@ -331,7 +332,7 @@ public class ImageDef {
     }
 
     @JqMapped
-    public static class PackageRepo {
+    public static class PackageRepo extends MappedDefinition {
         private String type;
         private String name;
 
@@ -349,7 +350,7 @@ public class ImageDef {
     }
 
     @JqMapped
-    public static class HostResource {
+    public static class HostResource extends MappedDefinition {
         private String source;
         private String path;
         private String mode = "readonly";
@@ -361,10 +362,6 @@ public class ImageDef {
         @JqName("confined-to")
         @JqInclude(JqInclude.Include.NON_NULL)
         private String confinedTo;
-        // Keys isx does not know, only to warn about them (#1543): never written back.
-        @JqIgnore
-        private List<String> unknownKeys = List.of();
-
         /** Keys that name where a resource goes, which is {@code path:}; lower case, '-' for '_'. */
         private static final Set<String> PATH_LIKE = Set.of("path", "target", "target-path", "dest", "dst",
                 "destination", "to", "mount", "mountpoint", "mount-point", "container", "container-path");
@@ -391,34 +388,44 @@ public class ImageDef {
         public String getConfinedTo() { return confinedTo; }
         public void setConfinedTo(String confinedTo) { this.confinedTo = confinedTo; }
 
-        @JqAnySetter
-        public void setUnknown(String key, Object value) {
-            if (unknownKeys.isEmpty()) unknownKeys = new ArrayList<>();
-            unknownKeys.add(key);
-        }
+        /** Not {@code confined-to}, which is isx's own. */
+        @Override
+        protected List<String> knownKeys() { return List.of("source", "path", "mode"); }
 
-        /**
-         * One warning per key isx ignores in this entry as read from its file. An ignored key still
-         * changes what the build does -- a misnamed {@code path:} puts the resource at the source's
-         * path. {@code confined-to:} is isx's own, so a file's value is discarded too (#765).
-         */
-        public List<String> unknownKeyWarnings() {
-            var warnings = new ArrayList<String>();
-            var entry = source != null ? "host-resource '" + OutputFormat.oneLine(source) + "'"
-                    : "a host-resource without a source";
-            for (var key : unknownKeys) {
-                var warning = entry + ": unknown key '" + OutputFormat.oneLine(key)
-                        + "', ignored (a host resource takes source, path and mode)";
-                if (source != null && path == null && PATH_LIKE.contains(key.toLowerCase(Locale.ROOT).replace('_', '-'))) {
-                    warning += "; use 'path:' to set where it goes in the instance";
-                }
-                warnings.add(warning);
-            }
-            if (confinedTo != null) {
-                warnings.add(entry + ": 'confined-to' is set by isx, a file's value is ignored (#765)");
-            }
-            return warnings;
+        /** A key naming where the resource goes is {@code path:}, unless the entry already has one (#1543). */
+        @Override
+        protected String hint(String key) {
+            return source != null && path == null && PATH_LIKE.contains(key.toLowerCase(Locale.ROOT).replace('_', '-'))
+                    ? "use 'path:' to set where it goes in the instance" : null;
         }
+    }
+
+    /** With {@code deprecated}, which the mapping writes only when it is set. */
+    @Override
+    protected List<String> knownKeys() {
+        var keys = new ArrayList<>(super.knownKeys());
+        if (!keys.contains("deprecated")) keys.add("deprecated");
+        return keys;
+    }
+
+    /**
+     * One warning per key isx ignores in this definition as read from its file, each named by where
+     * it is (#1546). {@code confined-to:} in a host resource is isx's own, so a file's value is
+     * discarded too (#765).
+     */
+    public List<String> unknownKeyWarnings() {
+        var walk = new Walk().part("", this)
+                .each("repos", repos)
+                .each("package_repos", packageRepos)
+                .each("host-resources", hostResources)
+                .each("env", env)
+                .part("skills", skills);
+        for (int i = 0; i < hostResources.size(); i++) {
+            if (hostResources.get(i).getConfinedTo() != null) {
+                walk.add("'host-resources[" + i + "].confined-to' is set by isx, a file's value is ignored (#765)");
+            }
+        }
+        return walk.warnings();
     }
 
     public String contentFingerprint(Map<String, String> toolFingerprints) {
@@ -937,6 +944,8 @@ public class ImageDef {
     /** False when {@code def} cannot be a template at all, which it has then warned about. */
     private static boolean validate(ImageDef def, String source, Consumer<String> warnings) {
         var file = OutputFormat.oneLine(source);
+        // First: a misspelled key may be why the definition is refused below ('nmae:').
+        def.unknownKeyWarnings().forEach(w -> warnings.accept(file + ": " + w));
         if (def.getName() == null) {
             warnings.accept(file + ": no 'name:'; it is skipped, and isx build refuses until it is fixed");
             return false;
@@ -962,9 +971,6 @@ public class ImageDef {
                         + LayeredDefinitions.REFUSED);
                 return false;
             }
-        }
-        for (var hr : def.getHostResources()) {
-            hr.unknownKeyWarnings().forEach(w -> warnings.accept(file + ": " + w));
         }
         if (def.getDefaultAction() != null && def.getDefaultAction().isBlank()) {
             warnings.accept(file + ": 'default-action' is blank; remove it or set a valid tool reference");

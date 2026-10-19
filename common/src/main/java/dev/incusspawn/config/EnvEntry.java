@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
  * the entry {@link #expandingAtLogin()}; it keeps its name and strategy, so it is still
  * subject to conflict detection. YAML definitions cannot set that flag.
  */
-public class EnvEntry {
+public class EnvEntry extends MappedDefinition {
 
     public enum Strategy {
         @JqName("set") SET,
@@ -87,6 +87,10 @@ public class EnvEntry {
     public void setStrategy(Strategy strategy) { this.strategy = strategy; }
     public String getSeparator() { return separator; }
     public void setSeparator(String separator) { this.separator = separator; }
+
+    /** Read by {@link EnvEntryListConverter}, which has no generated mapping to list them. */
+    @Override
+    protected List<String> knownKeys() { return List.of("name", "value", "strategy", "separator"); }
 
     /**
      * Return a copy of this entry with parameter substitution applied.

@@ -254,11 +254,14 @@ public class ToolDefLoader {
             for (var path : paths) {
                 try (var is = Files.newInputStream(path)) {
                     var def = ToolDef.loadFromStream(is);
+                    // First: a misspelled key may be why the tool has no name or is refused ('nmae:').
+                    var file = OutputFormat.oneLine(path.getFileName().toString());
+                    def.unknownKeyWarnings().forEach(w -> warnings.add(file + ": " + w));
                     if (def.getName() != null) {
                         var source = path.toAbsolutePath().normalize();
                         var refused = ToolDefValidator.refusal(def);
                         if (refused != null) {
-                            warnings.add(OutputFormat.oneLine(path.getFileName().toString()) + ": " + refused
+                            warnings.add(file + ": " + refused
                                     + LayeredDefinitions.REFUSED);
                             // Like an unparsable file, it may have meant to replace a lower layer's.
                             defs.parseFailed(source);

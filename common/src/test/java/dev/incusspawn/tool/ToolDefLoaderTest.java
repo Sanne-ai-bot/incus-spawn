@@ -892,4 +892,89 @@ class ToolDefLoaderTest {
         assertNotEquals(fpBefore, fpAfter,
                 "reload() should surface the edited tool content in the fingerprint");
     }
+
+    /** #1546: a misspelled key anywhere in a tool was dropped without a word. */
+    @Test
+    void everyKeyIsxIgnoresInAToolIsWarnedAboutWithWhereItIs(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("typos.yaml"), """
+                name: typos
+                require: [maven-3]
+                downloads:
+                  - url: https://example.com/t.tar.gz
+                    sha265: abc
+                files:
+                  - path: ~/.t
+                    contents: x
+                env:
+                  - name: T
+                    value: x
+                    seperator: ":"
+                skills:
+                  repo: a/skills
+                  lists: [x]
+                actions:
+                  - label: Run
+                    type: command
+                    command: t
+                    lable: Run t
+                parameters:
+                  memory:
+                    type: string
+                    defualt: 4g
+                proxy:
+                  config-namespace: typos
+                  configuration:
+                    token:
+                      config-path: token
+                      secert: true
+                  placeholders:
+                    - env: T_TOKEN
+                      prefx: t-
+                  auth:
+                    - domain: [api.example.com]
+                      domains: [api.example.com]
+                      type: bearer
+                      token: "${token}"
+                """);
+        var reported = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+            assertNotNull(loader.find("typos"), "a warning, not a refusal");
+
+            assertEquals(List.of(
+                    "typos.yaml: unknown key 'require', ignored; did you mean 'requires'?",
+                    "typos.yaml: unknown key 'downloads[0].sha265', ignored; did you mean 'sha256'?",
+                    "typos.yaml: unknown key 'files[0].contents', ignored; did you mean 'content'?",
+                    "typos.yaml: unknown key 'env[0].seperator', ignored; did you mean 'separator'?",
+                    "typos.yaml: unknown key 'actions[0].lable', ignored; did you mean 'label'?",
+                    "typos.yaml: unknown key 'parameters.memory.defualt', ignored; did you mean 'default'?",
+                    "typos.yaml: unknown key 'skills.lists', ignored; did you mean 'list'?",
+                    "typos.yaml: unknown key 'proxy.configuration.token.secert', ignored; did you mean 'secret'?",
+                    "typos.yaml: unknown key 'proxy.auth[0].domain', ignored; did you mean 'domains'?",
+                    "typos.yaml: unknown key 'proxy.placeholders[0].prefx', ignored; did you mean 'prefix'?"),
+                    loader.warnings());
+            assertEquals(loader.warnings(), reported);
+        }
+    }
+
+    @Test
+    void aToolWithAMisspelledNameIsNotSkippedWithoutAWord(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("nameless.yaml"), "nmae: nameless\npackages: [git]\n");
+        try (var ignored = Warnings.redirect(new Warnings.Channel(w -> {}))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+
+            assertEquals(List.of("nameless.yaml: unknown key 'nmae', ignored; did you mean 'name'?"), loader.warnings());
+        }
+    }
+
+    @Test
+    void theBuiltInToolsHoldNoKeyIsxIgnores() throws Exception {
+        for (var file : ToolDefLoader.BUILTIN_TOOLS) {
+            try (var is = getClass().getClassLoader().getResourceAsStream("tools/" + file)) {
+                assertEquals(List.of(), ToolDef.loadFromStream(is).unknownKeyWarnings(), file);
+            }
+        }
+    }
 }
