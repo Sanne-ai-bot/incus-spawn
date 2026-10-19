@@ -1,18 +1,26 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.command.IsolatedHome;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.incus.Metadata;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * is the session, so what it made stays held across its restarts and is orphaned only once the
  * instance is gone or may no longer call.
  */
+@ExtendWith(IsolatedHome.class) // the audit log goes there
 class InstanceSessionTest {
 
     private static final String COORD = "coord";
@@ -98,7 +107,7 @@ class InstanceSessionTest {
         assertFalse(backend.instances.get(worker).containsKey(Metadata.MCP_ORPHANED));
 
         var next = connect();
-        assertEquals(List.of(worker), List.copyOf(next.resume().keySet()));
+        assertEquals(List.of(worker), List.copyOf(next.resumeIfPending().keySet()));
         next.requireOwned(worker);
         // The cap counts it from the start: one more fits, a third does not.
         create(next);
@@ -109,7 +118,7 @@ class InstanceSessionTest {
     void aCoordinatorRecreatedUnderTheSameNameDoesNotTakeTheOldOnesWorkers() {
         var worker = create(connect());
         var successor = connect(recreateCoordinator());
-        assertEquals(Map.of(), successor.resume(), "nothing of its predecessor's is held again");
+        assertEquals(Map.of(), successor.resumeIfPending(), "nothing of its predecessor's is held again");
         assertThrows(ToolError.class, () -> successor.requireOwned(worker));
         // The predecessor is gone: its worker is an orphan, on the clock and counted as such.
         var others = Orphans.othersOf(backend.mcpInstances(), "alice", new SessionId(1, 1), alive);
@@ -119,12 +128,172 @@ class InstanceSessionTest {
                 "the orphan still counts against the cap until it is reaped");
     }
 
+    /** The tools as {@code isx mcp} serves them to {@code session}, and the requests it answers. */
+    private final class Served {
+        final McpServerProtocolTest.Captured out = new McpServerProtocolTest.Captured();
+        final McpServer server;
+        final StructuredResults results;
+        int nextId = 1;
+
+        Served(McpSession session, Supplier<McpConfig> policy) {
+            var tasks = new Tasks(session, backend, policy);
+            var tools = McpMain.requireInitAndTakeBack(
+                    new McpTools(session, backend, new TemplatePolicy(backend, policy), tasks).all(),
+                    () -> true, () -> McpMain.takeBack(session, tasks));
+            server = new McpServer(out, tools, "1", null, null);
+            results = new StructuredResults(tools);
+        }
+
+        JqValue call(String tool, String args) throws Exception {
+            var id = nextId++;
+            server.handle("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"tools/call\",\"params\":{\"name\":\""
+                    + tool + "\",\"arguments\":" + args + "}}");
+            server.awaitIdle();
+            return results.check(tool, out.byId(id).path("result"));
+        }
+    }
+
+    /**
+     * A connection that could not take back what it held -- mcp.yaml refused, as after an upgrade
+     * left it to be created (#1514) -- takes it back on its next tool call once that is fixed:
+     * listed, counted against the cap and its own, not left to a reconnect or adopt_instance.
+     */
+    @Test
+    void aTakeBackThatFailedIsTriedAgainByTheNextCall() throws Exception {
+        var worker = create(connect());
+        var refused = new AtomicBoolean(true);
+        Supplier<McpConfig> policy = () -> {
+            if (refused.get()) throw new ToolError(ToolError.Code.REFUSED, "mcp.yaml does not exist yet");
+            return config;
+        };
+        var next = new McpSession(SELF, "alice", -1, null, backend, policy, alive);
+        var served = new Served(next, policy);
+        assertTrue(served.call("list_instances", "{}").path("isError").asBoolean(false));
+        assertFalse(next.holds(worker), "nothing is taken back while mcp.yaml is refused");
+
+        refused.set(false);
+        var listed = served.call("list_instances", "{}").path("structuredContent").path("instances");
+        assertEquals(1, listed.size(), listed.toString());
+        assertEquals(worker, listed.getElement(0).path("instance").asText());
+        assertEquals("ready", listed.getElement(0).path("state").asText(), "held by this session again");
+        next.requireOwned(worker);
+        // The cap counts it again: one more fits, a third does not.
+        create(next);
+        assertThrows(ToolError.class, () -> next.reserve(TEMPLATE, null, null, null, null));
+    }
+
+    /** No call goes ahead without what it could not take back: here, a create past the cap. */
+    @Test
+    void noCallRunsWithoutWhatItCouldNotTakeBack() throws Exception {
+        create(connect());
+        create(connect());
+        var next = connect();
+        var served = new Served(next, () -> config);
+        backend.onListing = () -> { throw new IllegalStateException("Incus is restarting"); };
+        // A call that lists nothing itself: only the take-back can refuse it.
+        var refused = served.call("list_templates", "{}");
+        assertTrue(refused.path("isError").asBoolean(false), refused.toString());
+        assertTrue(refused.toString().contains("Incus is restarting"), refused.toString());
+
+        backend.onListing = null;
+        var full = served.call("create_instance", "{\"template\":\"tpl-dev\"}");
+        assertTrue(full.toString().contains("max-instances"), "both are counted: " + full);
+        assertEquals(2, next.instances().size());
+    }
+
+    /** Calls that waited on a failing attempt share it: one listing, not one per call. */
+    @Test
+    void callsWaitingOnAFailedTakeBackShareItsFailure() throws Exception {
+        var next = connect();
+        var outcomes = whileOneWaits(next, () -> {
+            throw new IllegalStateException("Incus is restarting");
+        });
+        assertEquals("Incus is restarting", outcomes[0].getMessage());
+        assertEquals("Incus is restarting", outcomes[1].getMessage());
+        assertEquals(1, backend.listings.get(), "the waiting call did not list again");
+
+        backend.onListing = null;
+        next.resumeIfPending();
+        assertEquals(2, backend.listings.get(), "a later call tries again");
+    }
+
+    /** An attempt an Error ended has no failure to share: the call that waited makes its own. */
+    @Test
+    void aCallWaitingOnAnAttemptAnErrorEndedMakesItsOwn() throws Exception {
+        var next = connect();
+        var worker = create(connect());
+        var before = backend.listings.get();
+        var outcomes = whileOneWaits(next, () -> {
+            throw new AssertionError("a bug");
+        });
+        assertEquals("a bug", outcomes[0].getMessage());
+        assertNull(outcomes[1], "taken back by its own attempt");
+        assertEquals(before + 2, backend.listings.get());
+        next.requireOwned(worker);
+    }
+
+    /**
+     * Two calls to {@code session}'s take-back: the first fails in its listing by running {@code fail},
+     * which only that first listing does, once the second is waiting on it. What each threw, or null.
+     */
+    private Throwable[] whileOneWaits(McpSession session, Runnable fail) throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var first = new AtomicBoolean(true);
+        backend.onListing = () -> {
+            if (!first.getAndSet(false)) return;
+            entered.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            fail.run();
+        };
+        var outcomes = new Throwable[2];
+        var a = new Thread(() -> outcomes[0] = failureOf(session));
+        a.start();
+        assertTrue(entered.await(10, TimeUnit.SECONDS), "the first call never reached its listing");
+        var b = new Thread(() -> outcomes[1] = failureOf(session));
+        b.start();
+        var deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (b.getState() != Thread.State.BLOCKED) {
+            assertTrue(System.nanoTime() < deadline, "the second call never waited on the first");
+            Thread.sleep(1);
+        }
+        release.countDown();
+        a.join();
+        b.join();
+        return outcomes;
+    }
+
+    private static Throwable failureOf(McpSession session) {
+        try {
+            session.resumeIfPending();
+            return null;
+        } catch (Throwable e) {
+            return e;
+        }
+    }
+
+    /** One release that cannot be stamped does not hold up taking back the rest. */
+    @Test
+    void aReleaseThatFailsDoesNotFailTheTakeBack() {
+        var worker = create(connect());
+        backend.instance("mcp-other-unapproved", Map.of(Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, SELF.toString(),
+                Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-gone"));
+        backend.onStamp = () -> { throw new IllegalStateException("Incus is restarting"); };
+        var next = connect();
+        assertEquals(List.of(worker), List.copyOf(next.resumeIfPending().keySet()));
+        next.requireOwned(worker);
+    }
+
     @Test
     void resumeReleasesWhatIsNoLongerApprovedInsteadOfTakingItBack() {
         var worker = create(connect());
         config.setTemplates(List.of("tpl-other"));
         var next = connect();
-        assertEquals(Map.of(), next.resume());
+        assertEquals(Map.of(), next.resumeIfPending());
         assertThrows(ToolError.class, () -> next.requireOwned(worker));
         assertEquals(SELF.toString(), backend.instances.get(worker).get(Metadata.MCP_SESSION));
         assertTrue(Orphans.orphanedSince(backend.instances.get(worker)) != null, "its orphan clock runs");
@@ -141,7 +310,7 @@ class InstanceSessionTest {
         backend.stamp(worker, Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.now(), SELF.toString()));
         // And it stays released: approving the template again does not hand it back silently.
         config.setTemplates(List.of("tpl-dev"));
-        assertEquals(Map.of(), connect().resume());
+        assertEquals(Map.of(), connect().resumeIfPending());
     }
 
     @Test
@@ -151,14 +320,14 @@ class InstanceSessionTest {
         s.keep(kept);
         backend.instance("mcp-someone-elses", Map.of(Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, "instance:other:" + GRANT));
         backend.instance("mcp-other-user", Map.of(Metadata.MCP_OWNER, "bob", Metadata.MCP_SESSION, SELF.toString()));
-        assertEquals(Map.of(), connect().resume());
+        assertEquals(Map.of(), connect().resumeIfPending());
     }
 
     @Test
     void aProcessSessionResumesNothing() {
         connect();
         var stdio = new McpSession(new SessionId(1, 1), "alice", 1, "/w", backend, () -> config, alive);
-        assertEquals(Map.of(), stdio.resume());
+        assertEquals(Map.of(), stdio.resumeIfPending());
     }
 
     @Test

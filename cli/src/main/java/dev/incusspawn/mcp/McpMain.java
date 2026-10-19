@@ -98,7 +98,7 @@ public final class McpMain {
 
         var watcher = tasks.watcher();
         var server = new McpServer(new StdioTransport(guard.protocolIn, guard.protocolOut),
-                requireInit(tools.all(), initialized), McpPrompt.ALL, BuildInfo.instance().version(), INSTRUCTIONS,
+                requireInitAndTakeBack(tools.all(), initialized, () -> takeBack(session, tasks)), McpPrompt.ALL, BuildInfo.instance().version(), INSTRUCTIONS,
                 clientInfo -> {
                     session.clientName(clientInfo.path("name").asText(""));
                     if (initialized.getAsBoolean()) {
@@ -135,22 +135,30 @@ public final class McpMain {
         }
     }
 
+    /** {@link #takeBack} as the connection opens, logging a failure: the first tool call meets it again. */
+    private static void resume(McpSession session, Tasks tasks) {
+        try {
+            takeBack(session, tasks);
+        } catch (ToolError e) {
+            System.err.println("isx mcp: not taking back the instances this session held yet: " + e.getMessage());
+        }
+    }
+
     /**
      * Take back what this instance session held before, then the tasks of those running, in the
      * background: their ids work again once read, and a stopped one's are read by start_instance.
+     * Throws while it cannot (#1514): a tool call that went ahead without them would neither list
+     * them nor count them against {@code max-instances}.
      */
-    private static void resume(McpSession session, Tasks tasks) {
+    static void takeBack(McpSession session, Tasks tasks) {
         Map<String, Map<String, String>> resumed;
         try {
-            resumed = session.resume();
-        } catch (ToolError e) {
-            // Not retried in this process: the next connection takes them back.
-            System.err.println("isx mcp: not taking back the instances this session held: " + e.getMessage()
-                    + " Once it is fixed, reconnect to hold them again.");
-            return;
+            resumed = session.resumeIfPending();
         } catch (RuntimeException e) {
-            System.err.println("isx mcp: could not list the instances this session held: " + e.getMessage());
-            return;
+            // A ToolError says what to do (mcp.yaml refused: ask the user); anything else may not pass.
+            if (e instanceof ToolError) throw e;
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "could not take back the instances this session held ("
+                    + e.getMessage() + "); every call tries again until it can. If this persists, ask the user to look at it.");
         }
         if (resumed.isEmpty()) return;
         System.err.println("isx mcp: holding again " + String.join(", ", resumed.keySet()));
@@ -186,14 +194,19 @@ public final class McpMain {
         }
     }
 
-    /** Before {@code isx init} has run, every tool explains that instead of failing obscurely. */
-    private static List<McpTool> requireInit(List<McpTool> tools, BooleanSupplier initialized) {
+    /**
+     * Before {@code isx init} has run, every tool explains that instead of failing obscurely.
+     * After, each call first runs {@code takeBack}, failing with its error: what a session could
+     * not take back when it connected, it takes back on its next call (#1514).
+     */
+    static List<McpTool> requireInitAndTakeBack(List<McpTool> tools, BooleanSupplier initialized, Runnable takeBack) {
         return tools.stream().map(t -> new McpTool(t.name(), t.description(), t.inputSchema(), t.outputSchema(),
                 t.annotations(), (args, ctx) -> {
                     if (!initialized.getAsBoolean()) {
                         throw new ToolError(ToolError.Code.REFUSED, "isx is not set up on this machine yet. "
                                 + "Ask the user to run: isx init");
                     }
+                    takeBack.run();
                     return t.handler().call(args, ctx);
                 })).toList();
     }

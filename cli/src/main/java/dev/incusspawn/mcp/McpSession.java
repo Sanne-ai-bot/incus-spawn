@@ -65,6 +65,12 @@ final class McpSession {
     private final Map<String, Owned> owned = new LinkedHashMap<>();
     /** Why each instance this session held was let go of: what {@link #hold} says once it is. */
     private final Map<String, Hold> letGo = new java.util.HashMap<>();
+    /** Whether {@link #resume} ran to the end in this process; until it has, each call tries it again. */
+    private boolean resumed;
+    /** Attempts at {@link #resume} that failed, and how the last one did: shared with the calls that waited on it. */
+    private volatile int attemptsFailed;
+    private RuntimeException lastFailure;
+    private final Object resuming = new Object();
 
     McpSession(SessionId id, String owner, long clientPid, String cwd,
                InstanceBackend backend, Supplier<McpConfig> config, Predicate<SessionId> alive) {
@@ -617,9 +623,44 @@ final class McpSession {
     }
 
     /**
+     * {@link #resume}, unless it already ran to the end in this process. One that failed (mcp.yaml
+     * refused, Incus unreachable) is tried again by the next tool call (#1514): until then what
+     * this session's stamp names is neither listed, counted against the cap nor usable. Calls
+     * arriving meanwhile wait for the one attempt and share its outcome: none of them misses what
+     * it takes back, and a failure costs one listing, not one per waiting call. An attempt an
+     * Error ended has no outcome to share: each call that waited makes its own.
+     * Only {@code McpMain.takeBack} calls it: it also reads the tasks of what was taken back.
+     */
+    Map<String, Map<String, String>> resumeIfPending() {
+        if (!id.isInstance()) return Map.of();
+        // Not this: what reads the registry under it (the task watcher's hold check, say) must not wait on a listing.
+        var failed = attemptsFailed;
+        synchronized (resuming) {
+            if (resumed) return Map.of();
+            // An attempt failed while this call waited: this call fails with it -- a ToolError of
+            // its own, as each call's error is answered on its own thread. One an Error ended
+            // records nothing, so the call makes its own attempt.
+            if (attemptsFailed != failed) {
+                throw lastFailure instanceof ToolError e ? new ToolError(e.code, e.getMessage()) : lastFailure;
+            }
+            try {
+                var taken = resume();
+                resumed = true;
+                lastFailure = null;
+                return taken;
+            } catch (RuntimeException e) {
+                lastFailure = e;
+                attemptsFailed++;
+                throw e;
+            }
+        }
+    }
+
+    /**
      * Take back what an instance session held before this connection: the instances stamped
-     * with its id, not kept and not released. From one listing, and before the first tool call,
-     * so the cap counts them from the start. Returns their names and what the listing said of
+     * with its id, not kept and not released. From one listing, as the connection opens and
+     * again before each tool call until it succeeds ({@link #resumeIfPending}), so no call runs
+     * without them counted against the cap. Returns their names and what the listing said of
      * each, for the caller to adopt their tasks.
      *
      * <p>Only what {@link #adopt} would take: one whose template is no longer approved is
@@ -630,7 +671,7 @@ final class McpSession {
      * <p>Only for an instance session: a process session's id is new with every process, so
      * nothing can carry it yet.
      */
-    Map<String, Map<String, String>> resume() {
+    private Map<String, Map<String, String>> resume() {
         if (!id.isInstance()) return Map.of();
         var resumed = new LinkedHashMap<String, Map<String, String>>();
         var approved = config.get().templates();
@@ -641,7 +682,14 @@ final class McpSession {
                     || config.containsKey(Metadata.MCP_KEPT) || Orphans.releasedByHolder(config)) return;
             var template = templateOf(config);
             if (!approved.contains(template)) {
-                backend.stamp(name, Map.of(Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.now(), id.toString())));
+                // Never registered either way: a release that fails must not refuse every call (#1514).
+                try {
+                    backend.stamp(name, Map.of(Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.now(), id.toString())));
+                } catch (RuntimeException e) {
+                    System.err.println("isx mcp: could not release " + name + " (template '" + template
+                            + "' is no longer approved for agents): " + e.getMessage());
+                    return;
+                }
                 System.err.println("isx mcp: released " + name + ": template '" + template
                         + "' is no longer approved for agents");
                 return;
