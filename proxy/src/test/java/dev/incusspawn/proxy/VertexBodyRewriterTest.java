@@ -530,9 +530,9 @@ class VertexBodyRewriterTest {
             var names = new ArrayList<>(List.of(NAMES));
             java.util.Collections.shuffle(names, random);
             // One spelling per name, so no object holds a duplicate once escapes are read
-            names.removeIf(n -> n.startsWith("c\\u0061") && names.contains("cache_control"));
-            names.removeIf(n -> n.startsWith("sc\\u006f") && names.contains("scope"));
-            names.removeIf(n -> n.startsWith("str\\u0069") && names.contains("strict"));
+            names.remove(random.nextBoolean() ? "cache_control" : "c\\u0061che_control");
+            names.remove(random.nextBoolean() ? "scope" : "sc\\u006fpe");
+            names.remove(random.nextBoolean() ? "strict" : "str\\u0069ct");
             var sb = new StringBuilder("{");
             var count = random.nextInt(4);
             for (int i = 0; i < count && i < names.size(); i++) {
