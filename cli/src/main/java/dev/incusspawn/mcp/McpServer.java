@@ -212,25 +212,26 @@ final class McpServer {
             return;
         }
         workers.execute(() -> {
-            ToolResult result;
             try {
-                result = tool.handler().call(args, ctx);
-            } catch (ToolError e) {
-                result = ToolResult.error(e.code, e.getMessage(), args.node());
-            } catch (IncusException e) {
-                // Incus did not answer as asked: worth a retry, unlike a bug in isx.
-                result = ToolResult.error(ToolError.Code.UNAVAILABLE, "Incus failed during " + name + ": " + e.getMessage(),
-                        args.node());
-            } catch (Exception e) {
-                result = ToolResult.error(ToolError.Code.INTERNAL, "isx failed running " + name + ": " + e.getMessage(),
-                        args.node());
-                System.err.println("isx mcp: " + name + " failed:");
-                e.printStackTrace();
-            }
-            try {
+                ToolResult result;
+                try {
+                    result = tool.handler().call(args, ctx);
+                } catch (ToolError e) {
+                    result = ToolResult.error(e.code, e.getMessage(), args.node());
+                } catch (IncusException e) {
+                    // Incus did not answer as asked: worth a retry, unlike a bug in isx.
+                    result = ToolResult.error(ToolError.Code.UNAVAILABLE, "Incus failed during " + name + ": " + e.getMessage(),
+                            args.node());
+                } catch (Throwable e) {
+                    // Anything, an Error too (a failed assert, a stack overflow): unanswered, the call would hang.
+                    result = ToolResult.error(ToolError.Code.INTERNAL, "isx failed running " + name + ": "
+                            + java.util.Objects.requireNonNullElse(e.getMessage(), e.toString()), args.node());
+                    System.err.println("isx mcp: " + name + " failed:");
+                    e.printStackTrace();
+                }
                 if (!ctx.cancelled()) send(JsonRpc.response(id, result.toJson()));
             } finally {
-                // Only once answered: a call is in flight until its response is out.
+                // Only once answered, and whatever happened: a call is in flight until its response is out.
                 inFlight.remove(idKey);
             }
         });

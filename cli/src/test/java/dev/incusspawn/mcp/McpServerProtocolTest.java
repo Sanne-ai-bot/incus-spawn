@@ -6,6 +6,7 @@ import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -15,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class McpServerProtocolTest {
@@ -148,6 +150,22 @@ class McpServerProtocolTest {
         var mistyped = results.check("ok", out.byId(5).path("result"));
         assertEquals("invalid_argument", mistyped.path("_meta").path("dev.incusspawn/error").path("code").asText());
         assertTrue(mistyped.path("content").getElement(0).path("text").asText().contains("must be a string"));
+    }
+
+    /** An Error from a tool -- a failed assert, say -- is answered too, and the call leaves inFlight. */
+    @Test
+    void anErrorFromAToolIsAnsweredAsInternal() throws Exception {
+        tools.add(tool("bug", (args, ctx) -> { throw new AssertionError("a bug"); }));
+        tools.add(tool("deep", (args, ctx) -> { throw new StackOverflowError(); }));
+        var server = server();
+        server.handle(call(1, "bug", "{}"));
+        server.handle(call(2, "deep", "{}"));
+        assertTimeoutPreemptively(Duration.ofSeconds(10), server::awaitIdle, "the call is still in flight");
+        var error = new StructuredResults(tools).check("bug", out.byId(1).path("result")).path("_meta").path("dev.incusspawn/error");
+        assertEquals("internal", error.path("code").asText());
+        assertTrue(error.path("message").asText().contains("a bug"), error.toString());
+        var unnamed = new StructuredResults(tools).check("deep", out.byId(2).path("result")).path("_meta").path("dev.incusspawn/error");
+        assertTrue(unnamed.path("message").asText().endsWith("java.lang.StackOverflowError"), "named when it has no message: " + unnamed);
     }
 
     @Test
