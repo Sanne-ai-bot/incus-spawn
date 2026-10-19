@@ -15,6 +15,8 @@ The dependencies are needed: without them the thread reading Git's output dies o
 
 Omit the checkout to measure a first clone seeded entirely from the remote. The checkout is read only; its configured remote should match the URL so its remote-tracking refs can supply fetch negotiation hints. Use a local transport fixture to separate CPU and disk cost from WAN transfer. These figures exclude Incus mounts, guest checkout and priming; normal build diagnostics report the host phases, attach, guest and detach times.
 
+Pass `--host-source <repository>` instead of the URL to measure a `repos[].host-source:` export, which is never cached, so every trial is a full export.
+
 To measure changes to a disposable upstream fixture, pass `--cache /tmp/isx-measure-cache` before the URL and reuse that directory across invocations. The first invocation reports cold/warm preparation; advance the fixture's remote and invoke it again to measure incremental refresh and warm reuse. The explicit cache is retained until you remove it.
 
 The [incremental measurements](data/git-incremental-snapshots-2026-10-13.json) use the same Quarkus fixture size with direct borrowing: initial preparation takes 21.52 s, two successive one-commit advances take 0.80 s, and unchanged reuse takes 0.22–0.27 s. These commits leave the tree unchanged; larger updates add transfer and validation cost. The dataset records source fingerprints, pack counts and phase timings; physical inventory and full-fsck audits run outside the measurement.

@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-19",
+  "issue": "https://github.com/Sanne/incus-spawn/issues/1548",
+  "git": "git version 2.56.0",
+  "cpu": "AMD Ryzen 9 9950X3D2, 32 threads",
+  "filesystem": "btrfs on a loop device, warm page cache",
+  "fixture": {
+    "repository": "https://github.com/apache/camel.git",
+    "tip": "04333431a654883ffd1694ebe34b80ad2c393737",
+    "objects": 4427083,
+    "pack_bytes_gib": 1.52,
+    "local_heads_and_tags": 312
+  },
+  "scope": "Production JVM host preparation (bench/GitPreparationBench.java) and the individual Git commands it runs; excludes Incus, guest access checks, guest copying and priming. Single runs per command; trial-to-trial spread of the bench was up to 14%.",
+  "base_revision": "84952f2fd6b5ac29c61d8e28e8bc7bb96eb4ef11",
+  "host_source": {
+    "source_hashes": {
+      "before (--no-reuse-delta --no-reuse-object)": "212dd534903c54a5c3b943c1676c3b4d34326c0199573725832b4a3e69102aed",
+      "after (reuse)": "eafdd8b1d40d1c1a4e307885334429c64714d387aff62768c4dec6b2d2824d1e"
+    },
+    "file": "common/src/main/java/dev/incusspawn/git/GitPreparation.java",
+    "export_ms": {
+      "before": [
+        269105,
+        263029,
+        299163
+      ],
+      "after": [
+        128786,
+        129796,
+        126585
+      ]
+    },
+    "commands_s": {
+      "pack-objects --revs --no-use-bitmap-index (reuse)": 16.97,
+      "pack-objects --revs --no-reuse-delta --no-reuse-object --no-use-bitmap-index": 175.46,
+      "index-pack --stdin --strict (reuse pack)": 48.46,
+      "index-pack --stdin --strict (no-reuse pack)": 56.52,
+      "fsck --full --no-dangling": 61.47
+    }
+  }
+}

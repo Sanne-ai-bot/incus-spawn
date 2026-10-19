@@ -761,49 +761,8 @@ class GitPreparationTest {
 
     @Test void aPublicDeltaIsReencodedWhenItsOnlyStoredBaseIsPrivate() throws Exception {
         start();
-        byte[] publicBytes = Files.readAllBytes(remote.resolve("isx.deb"));
         var publicId = git(host, "rev-parse", "origin/main:isx.deb");
-        var privateFile = host.resolve("private-base");
-        Files.write(privateFile, publicBytes);
-        Files.writeString(privateFile, "PRIVATE BASE SUFFIX", java.nio.file.StandardOpenOption.APPEND);
-        var privateId = git(host, "hash-object", "-w", privateFile.toString());
-        var others = allObjects(host);
-        others.remove(publicId);
-        others.remove(privateId);
-        var objects = host.resolve(".git/new-objects");
-        var packs = Files.createDirectories(objects.resolve("pack"));
-        var input = tmp.resolve("other-objects");
-        Files.write(input, others);
-        PreparationGit.run(host, input, null, List.of("pack-objects", packs.resolve("pack").toString()));
-        var bytes = new java.io.ByteArrayOutputStream();
-        var stream = new java.io.DataOutputStream(bytes);
-        stream.writeBytes("PACK");
-        stream.writeInt(2);
-        stream.writeInt(2);
-        byte[] secret = Files.readAllBytes(privateFile);
-        header(bytes, 3, secret.length);
-        deflate(bytes, secret);
-        int distance = bytes.size() - 12;
-        var offset = new java.util.ArrayDeque<Integer>();
-        offset.addFirst(distance & 127);
-        while ((distance >>= 7) != 0) offset.addFirst(128 | (--distance & 127));
-        var delta = new java.io.ByteArrayOutputStream();
-        varint(delta, secret.length);
-        varint(delta, publicBytes.length);
-        delta.write(0xf0); // Copy from offset zero, with an explicit three-byte size.
-        for (int i = 0; i < 3; i++) delta.write((publicBytes.length >> (i * 8)) & 255);
-        header(bytes, 6, delta.size());
-        for (int n : offset) bytes.write(n);
-        deflate(bytes, delta.toByteArray());
-        byte[] checksum = java.security.MessageDigest.getInstance("SHA-1").digest(bytes.toByteArray());
-        bytes.write(checksum);
-        var pack = packs.resolve("pack-" + java.util.HexFormat.of().formatHex(checksum) + ".pack");
-        Files.write(pack, bytes.toByteArray());
-        git(host, "index-pack", pack.toString());
-        assertTrue(git(host, "verify-pack", "-v", pack.toString().replace(".pack", ".idx")).lines()
-                .anyMatch(s -> s.startsWith(publicId) && s.endsWith(privateId)), "fixture must force the private delta base");
-        PreparationGit.delete(host.resolve(".git/objects"));
-        Files.move(objects, host.resolve(".git/objects"));
+        var privateId = forcePrivateDeltaBase(host.resolve(".git"), publicId, Files.readAllBytes(remote.resolve("isx.deb")));
         try (var result = prepare(host, null)) {
             sameObjects(remote, result.repository());
             assertFalse(allObjects(result.repository()).contains(privateId));
@@ -846,38 +805,12 @@ class GitPreparationTest {
         }
     }
 
-    private static void header(java.io.ByteArrayOutputStream out, int kind, int size) {
-        int first = (kind << 4) | (size & 15);
-        size >>= 4;
-        out.write(first | (size == 0 ? 0 : 128));
-        while (size != 0) {
-            int n = size & 127;
-            size >>= 7;
-            out.write(n | (size == 0 ? 0 : 128));
-        }
-    }
-
-    private static void varint(java.io.ByteArrayOutputStream out, int size) {
-        while (size >= 128) { out.write((size & 127) | 128); size >>= 7; }
-        out.write(size);
-    }
-
-    private static void deflate(java.io.ByteArrayOutputStream out, byte[] bytes) throws IOException {
-        var compressed = new java.util.zip.DeflaterOutputStream(out);
-        compressed.write(bytes);
-        compressed.finish();
-    }
-
     private static void sameObjects(Path expected, Path actual) throws Exception {
         assertEquals(reachable(expected), allObjects(actual), "the physical object store must equal the selected remote closure");
     }
 
     private static java.util.Set<String> reachable(Path repo) throws Exception {
         return new HashSet<>(git(repo, "rev-list", "--objects", "--all", "--no-object-names").lines().toList());
-    }
-
-    private static java.util.Set<String> allObjects(Path repo) throws Exception {
-        return new HashSet<>(git(repo, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").lines().toList());
     }
 
     private static Map<String, String> contents(Path root) throws IOException {

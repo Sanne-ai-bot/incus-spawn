@@ -4,10 +4,16 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public final class GitTestUtils {
 
@@ -64,5 +70,85 @@ public final class GitTestUtils {
         Files.write(repo.resolve("isx.deb"), bytes);
         runGit(repo, "add", "isx.deb");
         runGit(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message);
+    }
+
+    /** Every object physically stored in {@code repo}, reachable or not. */
+    public static Set<String> allObjects(Path repo) throws IOException, InterruptedException {
+        return new HashSet<>(git(repo, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").lines().toList());
+    }
+
+    /**
+     * Repack {@code gitDir}'s objects so the only stored form of {@code publicId} is a delta against
+     * a new private blob that no ref reaches, and return that private blob's ID.
+     * Git never writes this layout itself; a copy of the source's packs would leak the private base.
+     */
+    public static String forcePrivateDeltaBase(Path gitDir, String publicId, byte[] publicBytes) throws Exception {
+        var suffix = "PRIVATE BASE SUFFIX".getBytes(StandardCharsets.US_ASCII);
+        byte[] secret = Arrays.copyOf(publicBytes, publicBytes.length + suffix.length);
+        System.arraycopy(suffix, 0, secret, publicBytes.length, suffix.length);
+        var privateFile = gitDir.resolve("private-base");
+        Files.write(privateFile, secret);
+        var privateId = git(gitDir, "hash-object", "-w", privateFile.toString());
+        Files.delete(privateFile);
+        var others = allObjects(gitDir);
+        others.remove(publicId);
+        others.remove(privateId);
+        var objects = gitDir.resolve("new-objects");
+        var packs = Files.createDirectories(objects.resolve("pack"));
+        var input = gitDir.resolve("other-objects");
+        Files.write(input, others);
+        PreparationGit.run(gitDir, input, null, List.of("pack-objects", packs.resolve("pack").toString()));
+        Files.delete(input);
+        var bytes = new java.io.ByteArrayOutputStream();
+        var stream = new java.io.DataOutputStream(bytes);
+        stream.writeBytes("PACK");
+        stream.writeInt(2);
+        stream.writeInt(2);
+        header(bytes, 3, secret.length);
+        deflate(bytes, secret);
+        int distance = bytes.size() - 12;
+        var offset = new ArrayDeque<Integer>();
+        offset.addFirst(distance & 127);
+        while ((distance >>= 7) != 0) offset.addFirst(128 | (--distance & 127));
+        var delta = new java.io.ByteArrayOutputStream();
+        varint(delta, secret.length);
+        varint(delta, publicBytes.length);
+        delta.write(0xf0); // Copy from offset zero, with an explicit three-byte size.
+        for (int i = 0; i < 3; i++) delta.write((publicBytes.length >> (i * 8)) & 255);
+        header(bytes, 6, delta.size());
+        for (int n : offset) bytes.write(n);
+        deflate(bytes, delta.toByteArray());
+        byte[] checksum = java.security.MessageDigest.getInstance("SHA-1").digest(bytes.toByteArray());
+        bytes.write(checksum);
+        var pack = packs.resolve("pack-" + HexFormat.of().formatHex(checksum) + ".pack");
+        Files.write(pack, bytes.toByteArray());
+        git(gitDir, "index-pack", pack.toString());
+        assertTrue(git(gitDir, "verify-pack", "-v", pack.toString().replace(".pack", ".idx")).lines()
+                .anyMatch(s -> s.startsWith(publicId) && s.endsWith(privateId)), "fixture must force the private delta base");
+        PreparationGit.delete(gitDir.resolve("objects"));
+        Files.move(objects, gitDir.resolve("objects"));
+        return privateId;
+    }
+
+    private static void header(java.io.ByteArrayOutputStream out, int kind, int size) {
+        int first = (kind << 4) | (size & 15);
+        size >>= 4;
+        out.write(first | (size == 0 ? 0 : 128));
+        while (size != 0) {
+            int n = size & 127;
+            size >>= 7;
+            out.write(n | (size == 0 ? 0 : 128));
+        }
+    }
+
+    private static void varint(java.io.ByteArrayOutputStream out, int size) {
+        while (size >= 128) { out.write((size & 127) | 128); size >>= 7; }
+        out.write(size);
+    }
+
+    private static void deflate(java.io.ByteArrayOutputStream out, byte[] bytes) throws IOException {
+        var compressed = new java.util.zip.DeflaterOutputStream(out);
+        compressed.write(bytes);
+        compressed.finish();
     }
 }
