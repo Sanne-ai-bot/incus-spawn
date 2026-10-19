@@ -149,7 +149,10 @@ class ArtifactCacheProxyTest {
     static volatile boolean changeOnCut;
     /** GETs left to receive but never answer. */
     static final AtomicInteger getsToIgnore = new AtomicInteger();
-    /** How long the next GET's head takes; a cut then comes before any of its body when {@link #cutBeforeBody}. */
+    /**
+     * How long the next GET's head takes, answered as its route was when it arrived; a cut then comes
+     * before any of its body when {@link #cutBeforeBody}.
+     */
     static volatile long nextGetDelayMs;
     static volatile boolean cutBeforeBody;
     /** When set, a cut GET is not left stalled: the rest follows after this pause. */
@@ -225,7 +228,8 @@ class ArtifactCacheProxyTest {
         var delay = req.method() == HttpMethod.GET ? nextGetDelayMs : 0;
         if (delay > 0) {
             nextGetDelayMs = 0;
-            vertx.setTimer(delay, t -> reply(req, key));
+            var held = routes.get(key);
+            vertx.setTimer(delay, t -> reply(req, key, held));
             return;
         }
         reply(req, key);
@@ -239,8 +243,11 @@ class ArtifactCacheProxyTest {
     }
 
     static void reply(HttpServerRequest req, String key) {
+        reply(req, key, routes.get(key));
+    }
+
+    static void reply(HttpServerRequest req, String key, Reply reply) {
         if (req.method() == HttpMethod.HEAD) headsAnswered.incrementAndGet();
-        var reply = routes.get(key);
         var resp = req.response();
         if (reply == null) {
             resp.setStatusCode(404).end("not found");
@@ -372,6 +379,7 @@ class ArtifactCacheProxyTest {
         encoding = null;
         rangeExtraBytes = 0;
         nextGetDelayMs = 0;
+        proxy.upstream.probeReadIdleSeconds = 1;
         cutBeforeBody = false;
         cutPauseMs = 0;
         rangesToRefuse.set(0);
@@ -1621,6 +1629,59 @@ class ArtifactCacheProxyTest {
         get(CENTRAL, JAR + ".sha1");
         get(CENTRAL, JAR + ".sha1");
         assertEquals(2, hitsOn(CENTRAL, JAR + ".sha1"));
+    }
+
+    /**
+     * Cache {@code v1}, then ask for its {@code sidecar} and commit {@code v2}, looked up after that ask,
+     * while upstream's answer to it is held (#1542). Upstream answers then with the route as it was
+     * when asked; {@code whileHeld} runs once the ask arrived, before the commit.
+     */
+    static Future<Response> sidecarAskedBeforeANewerCopy(String sidecar, Runnable whileHeld) throws Exception {
+        get(CENTRAL, JAR);
+        var artifact = cached(CENTRAL, JAR);
+        awaitFile(artifact, "v1");
+        VerifiedArtifactStore.expireConfirmation(artifact, Sidecar.SHA1);
+        hits.clear();
+
+        // Held past the class's 1 s probe timeout, the probe would be retried and miss the race
+        proxy.upstream.probeReadIdleSeconds = 5;
+        nextGetDelayMs = 2_000;
+        var response = getAsync(CENTRAL, JAR + sidecar);
+        await("the sidecar fetch", () -> hitsOn(CENTRAL, JAR + sidecar) == 1);
+        whileHeld.run();
+        var download = Files.createTempFile(artifact.getParent(), "dl-", ".tmp");
+        Files.writeString(download, "v2");
+        assertEquals(VerifiedArtifactStore.Commit.COMMITTED, VerifiedArtifactStore.verifyAndCommit(download, artifact,
+                Sidecar.SHA1, hex("SHA-1", V2).getBytes(StandardCharsets.US_ASCII), true, Instant.now()));
+        return response;
+    }
+
+    static final byte[] V2 = "v2".getBytes(StandardCharsets.UTF_8);
+
+    @Test
+    void sidecarFromAProbeBeforeTheCopysConfirmationServesTheCopysOwn() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        var response = sidecarAskedBeforeANewerCopy(".sha1", () -> {});
+
+        var answer = response.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        assertEquals(200, answer.status());
+        assertEquals(hex("SHA-1", V2), answer.text(), "the older answer's checksum describes other bytes than the cache serves");
+        assertEquals("v2", Files.readString(cached(CENTRAL, JAR)));
+    }
+
+    @Test
+    void sidecarTheCopyDoesNotStoreIsAskedAgainAfterItsConfirmation() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        var md5 = CENTRAL + " " + JAR + ".md5";
+        routes.put(md5, new Reply(200, hex("MD5", "v1".getBytes(StandardCharsets.UTF_8)).getBytes(), null));
+        var v2Md5 = new Reply(200, hex("MD5", V2).getBytes(), null);
+        var response = sidecarAskedBeforeANewerCopy(".md5", () -> routes.put(md5, v2Md5));
+
+        var answer = response.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        assertEquals(200, answer.status());
+        assertEquals(hex("MD5", V2), answer.text(), "the older answer's checksum describes other bytes than the cache serves");
+        assertEquals(2, hitsOn(CENTRAL, JAR + ".md5"), "asked again, once");
+        assertEquals("v2", Files.readString(cached(CENTRAL, JAR)));
     }
 
     @Test

@@ -52,7 +52,12 @@ final class VerifiedArtifactStore {
          */
         DISAGREES,
         /** Nothing was decided: no cached artifact, or an answer that says nothing about it. */
-        UNCHANGED
+        UNCHANGED,
+        /**
+         * Upstream confirmed the cached artifact after this answer's lookup, so the
+         * answer is older news; nothing was changed.
+         */
+        SUPERSEDED
     }
 
     private static final Object[] LOCKS = new Object[64];
@@ -186,14 +191,24 @@ final class VerifiedArtifactStore {
      *   <li>Anything else says nothing about the artifact.</li>
      * </ul>
      *
+     * An answer from a lookup made before upstream last confirmed the artifact (its
+     * stored {@code checksum}) changes nothing ({@link Outcome#SUPERSEDED}): a slow,
+     * older probe neither evicts a copy committed or confirmed after it, nor renews it.
+     * A match, or a checksum stored for the first time, is stamped with {@code lookedUp},
+     * never moving a confirmation back (#1542).
+     *
+     * @param checksum the artifact's checksum, whose stored copy records its confirmation
      * @param mayEvict whether this sidecar may evict on its own; if not, a
      *                 contradiction is reported as {@link Outcome#DISAGREES}
+     * @param lookedUp when upstream was asked for {@code body}
      */
-    static Outcome reconcile(Path artifact, Sidecar sidecar, int status, byte[] body,
-                             boolean mayEvict) throws IOException {
+    static Outcome reconcile(Path artifact, Sidecar checksum, Sidecar sidecar, int status, byte[] body,
+                             boolean mayEvict, Instant lookedUp) throws IOException {
+        var confirmation = checksum.storedFile(artifact);
         FileState before;
         synchronized (lockFor(artifact)) {
             if (!Files.isRegularFile(artifact)) return Outcome.UNCHANGED;
+            if (confirmedAfter(confirmation, lookedUp)) return Outcome.SUPERSEDED;
             var storedFile = sidecar.storedFile(artifact);
             var stored = Files.isRegularFile(storedFile) ? Files.readAllBytes(storedFile) : null;
 
@@ -207,7 +222,7 @@ final class VerifiedArtifactStore {
                 if (!sidecar.sameContent(stored, body)) return contradictedLocked(artifact, mayEvict);
                 // Only an answer that could have evicted the copy may vouch for it (a .sha1
                 // on Central is outranked by the checksum header, and so confirms nothing)
-                if (mayEvict) stampConfirmation(storedFile, Instant.now());
+                if (mayEvict) renewConfirmation(artifact, storedFile, lookedUp);
                 return Outcome.MATCHED;
             }
             if (!sidecar.isChecksum()) {
@@ -227,13 +242,21 @@ final class VerifiedArtifactStore {
         synchronized (lockFor(artifact)) {
             // Replaced or evicted while it was being hashed: the hash describes nothing cached
             if (!before.equals(FileState.of(artifact))) return Outcome.UNCHANGED;
+            // Confirmed by another answer while it was being hashed
+            if (confirmedAfter(confirmation, lookedUp)) return Outcome.SUPERSEDED;
             if (sidecar.hex(body).equals(actual)) {
-                writeAtomically(sidecar.storedFile(artifact), body);
-                if (!mayEvict) stampConfirmation(sidecar.storedFile(artifact), Instant.EPOCH);
+                writeAtomically(sidecar.storedFile(artifact), body,
+                        FileTime.from(mayEvict ? lookedUp : Instant.EPOCH));
                 return Outcome.MATCHED;
             }
             return contradictedLocked(artifact, mayEvict);
         }
+    }
+
+    /** {@link #reconcile(Path, Sidecar, Sidecar, int, byte[], boolean, Instant)} for the artifact's own checksum. */
+    static Outcome reconcile(Path artifact, Sidecar checksum, int status, byte[] body,
+                             boolean mayEvict, Instant lookedUp) throws IOException {
+        return reconcile(artifact, checksum, checksum, status, body, mayEvict, lookedUp);
     }
 
     /**
