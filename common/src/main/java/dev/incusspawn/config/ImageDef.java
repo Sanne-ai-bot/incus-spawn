@@ -6,6 +6,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolRefListConverter;
 import dev.incusspawn.util.OutputFormat;
+import io.hyperfoil.tools.jjq.mapper.JqAnySetter;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
@@ -25,8 +26,10 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -358,6 +361,13 @@ public class ImageDef {
         @JqName("confined-to")
         @JqInclude(JqInclude.Include.NON_NULL)
         private String confinedTo;
+        // Keys isx does not know, only to warn about them (#1543): never written back.
+        @JqIgnore
+        private List<String> unknownKeys = List.of();
+
+        /** Keys that name where a resource goes, which is {@code path:}; lower case, '-' for '_'. */
+        private static final Set<String> PATH_LIKE = Set.of("path", "target", "target-path", "dest", "dst",
+                "destination", "to", "mount", "mountpoint", "mount-point", "container", "container-path");
 
         public HostResource() {}
 
@@ -380,6 +390,34 @@ public class ImageDef {
         public void setMode(String mode) { this.mode = mode; }
         public String getConfinedTo() { return confinedTo; }
         public void setConfinedTo(String confinedTo) { this.confinedTo = confinedTo; }
+
+        @JqAnySetter
+        public void setUnknown(String key, Object value) {
+            if (unknownKeys.isEmpty()) unknownKeys = new ArrayList<>();
+            unknownKeys.add(key);
+        }
+
+        /**
+         * One warning per key isx ignores in this entry as read from its file. An ignored key still
+         * changes what the build does -- a misnamed {@code path:} puts the resource at the source's
+         * path. {@code confined-to:} is isx's own, so a file's value is discarded too (#765).
+         */
+        public List<String> unknownKeyWarnings() {
+            var warnings = new ArrayList<String>();
+            var entry = source != null ? "host-resource '" + OutputFormat.oneLine(source) + "'"
+                    : "a host-resource without a source";
+            var ignored = new ArrayList<>(unknownKeys);
+            if (confinedTo != null) ignored.add("confined-to");
+            for (var key : ignored) {
+                var warning = entry + ": unknown key '" + OutputFormat.oneLine(key)
+                        + "', ignored (a host resource takes source, path and mode)";
+                if (source != null && path == null && PATH_LIKE.contains(key.toLowerCase(Locale.ROOT).replace('_', '-'))) {
+                    warning += "; use 'path:' to set where it goes in the instance";
+                }
+                warnings.add(warning);
+            }
+            return warnings;
+        }
     }
 
     public String contentFingerprint(Map<String, String> toolFingerprints) {
@@ -923,6 +961,9 @@ public class ImageDef {
                         + LayeredDefinitions.REFUSED);
                 return false;
             }
+        }
+        for (var hr : def.getHostResources()) {
+            hr.unknownKeyWarnings().forEach(w -> warnings.accept(file + ": " + w));
         }
         if (def.getDefaultAction() != null && def.getDefaultAction().isBlank()) {
             warnings.accept(file + ": 'default-action' is blank; remove it or set a valid tool reference");

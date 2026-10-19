@@ -584,6 +584,43 @@ class ImageDefTest {
     }
 
     @Test
+    void anUnknownHostResourceKeyIsWarnedAboutAtLoad(@TempDir Path tempDir) throws Exception {
+        // #1543: 'target:' is not a key, so the file landed at the source's name without a word.
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("claude.yaml"), """
+                name: tpl-claude-md
+                parent: tpl-minimal
+                host-resources:
+                  - source: ~/.claude/CLAUDE-isx.md
+                    target: ~/.claude/CLAUDE.md
+                  - source: ~/.gitconfig
+                    Mount_Point: ~/.gitconfig-isx
+                  - source: ~/.m2
+                    path: ~/.m2
+                    dest: ~/.m2-isx
+                    confined-to: /
+                  - target: ~/.ssh
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()), warnings::add);
+
+        assertTrue(defs.containsKey("tpl-claude-md"), "a warning, not a refusal: " + defs.keySet());
+        var takes = "', ignored (a host resource takes source, path and mode)";
+        var usePath = "; use 'path:' to set where it goes in the instance";
+        assertEquals(List.of(
+                        "claude.yaml: host-resource '~/.claude/CLAUDE-isx.md': unknown key 'target" + takes + usePath,
+                        "claude.yaml: host-resource '~/.gitconfig': unknown key 'Mount_Point" + takes + usePath,
+                        // path: is set, so it is not what the author is missing
+                        "claude.yaml: host-resource '~/.m2': unknown key 'dest" + takes,
+                        "claude.yaml: host-resource '~/.m2': unknown key 'confined-to" + takes,
+                        // without a source, 'target:' may as well have meant source: as path:
+                        "claude.yaml: a host-resource without a source: unknown key 'target" + takes),
+                warnings);
+    }
+
+    @Test
     void aDefinitionWithoutANameIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
         var imagesDir = tempDir.resolve("images");
         Files.createDirectories(imagesDir);

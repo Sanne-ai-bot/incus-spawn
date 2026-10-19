@@ -2153,6 +2153,11 @@ This is the right mode for caches (Maven, OCI) where tools expect to write but y
 Supports local paths and URLs.
 No runtime dependency on the host.
 
+An entry takes `source`, `path` and `mode`; any other key, `confined-to` included (isx sets it, #765), is ignored with a warning when the template's file is loaded (#1543).
+Every command that reads definitions loads them, `isx templates edit` included, so that is the one place the check lives.
+It is a warning and not a refusal, so a template that built before still builds.
+It is a warning at all because an ignored key changes the build: a misnamed `path:` (`target:`, `dest:`) puts the resource at the source's path, and when `path` is unset the warning suggests it.
+
 #### Overlay internals
 
 For a host-resource with `mode: overlay` targeting `/home/agentuser/.m2/repository`:

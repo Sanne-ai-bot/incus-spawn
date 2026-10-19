@@ -1,11 +1,13 @@
 package dev.incusspawn.config;
 
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -189,6 +191,20 @@ class HostResourceSetupTest {
         assertEquals("overlay", deserialized.get(0).getMode());
         assertEquals("~/.gitconfig", deserialized.get(1).getSource());
         assertEquals("readonly", deserialized.get(1).getMode());
+    }
+
+    @Test
+    void anUnknownKeyIsNotStoredWithTheTemplate() throws Exception {
+        // Kept only to warn about at load (#1543): the template's metadata holds what isx read.
+        var def = ImageDef.parseYaml("""
+                name: tpl-test
+                host-resources:
+                  - source: ~/.gitconfig
+                    target: ~/.gitconfig-isx
+                """);
+
+        var stored = JqValues.parseStrict(HostResourceSetup.serialize(def.getHostResources())).asList();
+        assertEquals(Set.of("source", "path", "mode"), stored.getFirst().asMap().keySet());
     }
 
     @Test
