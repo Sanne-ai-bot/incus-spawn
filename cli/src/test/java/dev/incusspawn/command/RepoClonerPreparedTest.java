@@ -130,6 +130,25 @@ class RepoClonerPreparedTest {
         assertTrue(details.get(1).startsWith("  | fatal: "), details.toString());
     }
 
+    @Test void aSnapshotTooLargeToKeepIsReportedForTheWarning() throws Exception {
+        var cloner = new RepoCloner(incus, new GitPreparation(tmp.resolve("small-cache"),
+                new GitCacheConfig(1, java.time.Duration.ofDays(7)), GitTransferConfig.DEFAULT));
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl(server.url(remote));
+        var planned = new RepoCloner.RepoReference("ref", "/mnt/ref", host.toString(), null,
+                new GitPreparation.Request(repo.getUrl(), null, host), null);
+        var advertisement = git(tmp, "ls-remote", "--symref", "--", repo.getUrl(), "HEAD", "refs/heads/*", "refs/tags/*");
+        var ref = cloner.prepareReference(repo, planned, states, 0, advertisement);
+        assertNotNull(ref.prepared(), ref.skipReason());
+        try {
+            assertTrue(cloner.preparationNotRetained.get(0).endsWith(
+                    "exceeds git-cache.snapshot-max-mib (0 MiB); it was used for this build but not kept"),
+                    String.valueOf(cloner.preparationNotRetained));
+        } finally {
+            ref.prepared().close();
+        }
+    }
+
     @Test void differentGuestCredentialRefScopeUsesOnlyTheGuestRemote() throws Exception {
         var visible = tmp.resolve("visible.git");
         git(tmp, "clone", "--bare", remote.toString(), visible.toString());

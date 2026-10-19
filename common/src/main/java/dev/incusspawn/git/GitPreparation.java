@@ -51,14 +51,16 @@ public final class GitPreparation {
         private final String strategy;
         private final Map<String, String> checksums;
         private final Map<String, Long> timings;
+        private final String notRetained;
 
         private Prepared(PreparationCache.Lease lease, Path repository, String strategy,
-                         Map<String, String> checksums, Map<String, Long> timings) {
+                         Map<String, String> checksums, Map<String, Long> timings, String notRetained) {
             this.lease = lease;
             this.repository = repository;
             this.strategy = strategy;
             this.checksums = Map.copyOf(checksums);
             this.timings = new LinkedHashMap<>(timings);
+            this.notRetained = notRetained;
         }
 
         public Path repository() { return repository; }
@@ -71,6 +73,8 @@ public final class GitPreparation {
         /** Relative to the bare repository; checked again on the guest's independent copy. */
         public Map<String, String> checksums() { return checksums; }
         public Map<String, Long> timingsMillis() { return Map.copyOf(timings); }
+        /** Why this build's snapshot was not kept for the next one, and what to change; null when it was kept. */
+        public String notRetained() { return notRetained; }
         public String timingSummary() {
             return timings.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue() + "ms")
                     .collect(java.util.stream.Collectors.joining(", "));
@@ -119,7 +123,7 @@ public final class GitPreparation {
                 validatePin(previousRepo, request.branch());
                 elapsed(timings, "check", start);
                 success = true;
-                return new Prepared(lease, previousRepo, "cached clean snapshot", objectChecksums(manifest), timings);
+                return new Prepared(lease, previousRepo, "cached clean snapshot", objectChecksums(manifest), timings, null);
             }
             elapsed(timings, "check", start);
 
@@ -188,7 +192,7 @@ public final class GitPreparation {
             phase.accept("Publishing Git snapshot");
             // The lease pins immutable owned files before publication can move/evict the staging tree.
             PreparationCache.copyTree(result, clean, true);
-            cache.publishSnapshot(key, staged);
+            var notRetained = cache.publishSnapshot(key, staged);
             delete(staged);
             delete(previous);
             Files.deleteIfExists(tips);
@@ -197,7 +201,7 @@ public final class GitPreparation {
             return new Prepared(lease, clean, incremental ? "incremental clean snapshot"
                     : reference != null ? "reference-seeded clean snapshot"
                     : retried ? "new clean snapshot (reference retry)" : "new clean snapshot",
-                    objectChecksums(manifest), timings);
+                    objectChecksums(manifest), timings, notRetained);
         } finally {
             if (!success) lease.close();
         }
@@ -276,7 +280,7 @@ public final class GitPreparation {
             elapsed(timings, "export", start);
             var checksums = objectChecksums(manifest(result));
             success = true;
-            return new Prepared(lease, result, "host source", checksums, timings);
+            return new Prepared(lease, result, "host source", checksums, timings, null);
         } finally {
             if (!success) lease.close();
         }

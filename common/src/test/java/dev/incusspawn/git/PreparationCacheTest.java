@@ -29,6 +29,17 @@ class PreparationCacheTest {
         }
     }
 
+    @Test void anOversizedSnapshotIsReportedAsLargerThanTheLimitInTheLimitsUnit() throws Exception {
+        // Rounding to the nearest tenth, or into GiB, showed 4096.4 MiB as "4.0 GiB" against 4096 MiB.
+        var cache = new PreparationCache(root, new GitCacheConfig(1L << 20, Duration.ofDays(1)));
+        try (var lease = cache.lease()) {
+            assertEquals("Git snapshot (1.4 MiB) exceeds git-cache.snapshot-max-mib (1 MiB); it was used for this build but not kept",
+                    cache.publishSnapshot("repo", staged(lease.path, "over", (1 << 20) + (400 << 10))));
+            assertEquals("Git snapshot (1.1 MiB) exceeds git-cache.snapshot-max-mib (1 MiB); it was used for this build but not kept",
+                    cache.publishSnapshot("repo", staged(lease.path, "one-byte-over", (1 << 20) + 1)));
+        }
+    }
+
     @Test void anOversizedReplacementRetiresTheOldSnapshotWithoutInvalidatingReaders() throws Exception {
         var cache = new PreparationCache(root, new GitCacheConfig(20, Duration.ofDays(1)));
         try (var lease = cache.lease()) {

@@ -45,6 +45,8 @@ class RepoCloner {
     private final java.util.Map<Integer, String> preparationTimings = new java.util.concurrent.ConcurrentHashMap<>();
     /** By repo: why its Git preparation failed, isx's words then Git's quoted, for a warning after the group. */
     final java.util.Map<Integer, GitCommandException> preparationFailures = new java.util.concurrent.ConcurrentHashMap<>();
+    /** By repo: why its clean snapshot was used but not kept, so the next build clones it in full again. */
+    final java.util.Map<Integer, String> preparationNotRetained = new java.util.concurrent.ConcurrentHashMap<>();
 
     RepoCloner(IncusClient incus) {
         this.incus = incus;
@@ -233,6 +235,7 @@ class RepoCloner {
         if (repos.isEmpty()) return;
         preparationTimings.clear();
         preparationFailures.clear();
+        preparationNotRetained.clear();
 
         try (var reposGroup = BuildOutput.group("Repositories", repos.size() + " to prepare")) {
 
@@ -341,6 +344,7 @@ class RepoCloner {
             preparationFailures.forEach((idx, failed) -> BuildOutput.warn(repoDisplayName(repos.get(idx))
                     + ": " + failed.getMessage() + (repos.get(idx).isHostSource() ? "." : "; falling back to a clone in the guest."),
                     failed.details().toArray(String[]::new)));
+            preparationNotRetained.forEach((idx, why) -> BuildOutput.warn(repoDisplayName(repos.get(idx)) + ": " + why));
 
             assertNoStepFailures(repos, states, "prepare");
             if (!hostSources.isEmpty()) HostRepoSources.record(incus, container.name(), hostSources);
@@ -514,6 +518,7 @@ class RepoCloner {
                 }
                 var ready = new RepoReference(ref.deviceName(), ref.containerPath(),
                         HostResourceSetup.translateForVm(result.repository().toString()), null, null, result);
+                if (result.notRetained() != null) preparationNotRetained.put(idx, result.notRetained());
                 accepted = true;
                 return ready;
             } finally {

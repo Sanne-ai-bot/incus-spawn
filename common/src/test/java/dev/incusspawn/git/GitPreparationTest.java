@@ -711,6 +711,27 @@ class GitPreparationTest {
         }
     }
 
+    @Test void aSnapshotThatIsNotKeptSaysWhyAndWhichSettingToChange() throws Exception {
+        start();
+        try (var kept = prepare(null, null)) { assertNull(kept.notRetained()); }
+        try (var hit = prepare(null, null)) { assertNull(hit.notRetained()); }
+        var cases = Map.of(
+                new GitCacheConfig(1, Duration.ofDays(7)), "exceeds git-cache.snapshot-max-mib (0 MiB); it was used for this build but not kept",
+                new GitCacheConfig(0, Duration.ofDays(7)), "Git snapshot retention is disabled (git-cache.snapshot-max-mib: 0); it was used for this build but not kept",
+                new GitCacheConfig(1L << 30, Duration.ZERO), "Git snapshot retention is disabled (git-cache.max-age-days: 0); it was used for this build but not kept");
+        for (var entry : cases.entrySet()) {
+            var policy = new GitPreparation(tmp.resolve("cache-" + entry.getKey().snapshotBytes() + "-" + entry.getKey().maxAge().toDays()),
+                    entry.getKey(), GitTransferConfig.DEFAULT);
+            for (int build = 0; build < 2; build++) {
+                try (var result = policy.prepare(new GitPreparation.Request(server.url(remote), null, null), s -> {})) {
+                    assertEquals("new clean snapshot", result.strategy(), "nothing was kept for this build to reuse");
+                    assertNotNull(result.notRetained(), entry.getKey().toString());
+                    assertTrue(result.notRetained().endsWith(entry.getValue()), result.notRetained());
+                }
+            }
+        }
+    }
+
     @Test void concurrentWritersPublishCompleteGenerationsAndReadersHaveSeparateLeases() throws Exception {
         start();
         var ready = new CountDownLatch(3);

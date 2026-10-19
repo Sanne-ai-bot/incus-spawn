@@ -117,8 +117,24 @@ final class PreparationCache {
         }
     }
 
-    void publishSnapshot(String key, Path staged) throws IOException {
-        boolean retain = policy.snapshotBytes() > 0 && !policy.maxAge().isZero() && size(staged) <= policy.snapshotBytes();
+    /**
+     * Null when the snapshot was kept for later builds. Otherwise it stays usable in {@code staged},
+     * and the result says why it was not kept and which setting to change: every later build then
+     * clones and verifies it in full again.
+     */
+    String publishSnapshot(String key, Path staged) throws IOException {
+        String notRetained = null;
+        long bytes;
+        if (policy.snapshotBytes() == 0 || policy.maxAge().isZero()) {
+            notRetained = "Git snapshot retention is disabled (git-cache." + (policy.snapshotBytes() == 0
+                    ? "snapshot-max-mib" : "max-age-days") + ": 0); it was used for this build but not kept";
+        } else if ((bytes = size(staged)) > policy.snapshotBytes()) {
+            // In the setting's unit, rounded up to a tenth: never shown as equal to, or under, the limit.
+            var size = String.format(java.util.Locale.ROOT, "%.1f MiB", Math.ceil(bytes * 10.0 / (1L << 20)) / 10);
+            notRetained = "Git snapshot (" + size + ") exceeds git-cache.snapshot-max-mib ("
+                    + (policy.snapshotBytes() >> 20) + " MiB); it was used for this build but not kept";
+        }
+        boolean retain = notRetained == null;
         try (var ignored = catalogue()) {
             var parent = Files.createDirectories(root.resolve("snapshots"));
             Path target = null;
@@ -134,6 +150,7 @@ final class PreparationCache {
             }
             prune();
         }
+        return notRetained;
     }
 
     private void prune() throws IOException {
