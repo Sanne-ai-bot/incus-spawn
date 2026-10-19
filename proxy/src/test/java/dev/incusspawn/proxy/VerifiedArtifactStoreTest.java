@@ -238,7 +238,10 @@ class VerifiedArtifactStoreTest {
     @Test
     void sidecarAnsweredForAReplacedCopyChangesNothing() throws Exception {
         var artifact = cached(JAR);
-        var answered = FileState.of(artifact);
+        var reconciled = VerifiedArtifactStore.reconcileCopy(artifact, Sidecar.SHA1, Sidecar.ASC, 404, null,
+                false, Instant.now());
+        var answered = reconciled.copy();
+        assertEquals(FileState.of(artifact), answered, "the copy the answer was judged against");
         assertEquals(Commit.COMMITTED, commit(OTHER, OTHER, Instant.now()));
         Files.writeString(Sidecar.ASC.storedFile(artifact), "sig-2");
 
@@ -247,6 +250,20 @@ class VerifiedArtifactStoreTest {
         assertFalse(VerifiedArtifactStore.dropSidecar(artifact, answered, Sidecar.ASC));
         assertEquals("sig-2", Files.readString(Sidecar.ASC.storedFile(artifact)));
         assertFalse(VerifiedArtifactStore.isCopy(artifact, null), "nothing was cached when the answer was reconciled");
+        Files.delete(artifact);
+        assertNull(VerifiedArtifactStore.reconcileCopy(artifact, Sidecar.SHA1, Sidecar.ASC, 404, null, false,
+                Instant.now()).copy());
+    }
+
+    @Test
+    void artifactWhoseAttributesCannotBeReadIsNotCached() throws Exception {
+        // A symlink to itself: reading the artifact's attributes fails with ELOOP, not NoSuchFileException
+        var artifact = prepareParent();
+        Files.createSymbolicLink(artifact, artifact.getFileName());
+        var reconciled = VerifiedArtifactStore.reconcileCopy(artifact, Sidecar.SHA1, Sidecar.ASC, 404, null,
+                true, Instant.now());
+        assertEquals(Outcome.UNCHANGED, reconciled.outcome());
+        assertNull(reconciled.copy());
     }
 
     @Test
