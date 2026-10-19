@@ -965,7 +965,25 @@ class ToolDefLoaderTest {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 
-            assertEquals(List.of("nameless.yaml: unknown key 'nmae', ignored; did you mean 'name'?"), loader.warnings());
+            assertEquals(List.of("nameless.yaml: unknown key 'nmae', ignored; did you mean 'name'?",
+                    "nameless.yaml: no 'name:'; it is skipped, and isx build refuses until it is fixed"),
+                    loader.warnings());
+        }
+    }
+
+    @Test
+    void aToolFileWithoutANameIsNotSkippedWithoutAWord(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("nameless.yaml"), "packages: [git]\n");
+        Files.writeString(tempDir.resolve("empty.yaml"), "~\n");
+        Files.writeString(tempDir.resolve("blank.yaml"), "name: ''\npackages: [git]\n");
+        try (var ignored = Warnings.redirect(new Warnings.Channel(w -> {}))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+
+            var refused = "; it is skipped, and isx build refuses until it is fixed";
+            assertEquals(List.of("blank.yaml: a blank 'name:'" + refused, "empty.yaml: no 'name:'" + refused,
+                    "nameless.yaml: no 'name:'" + refused), loader.warnings());
+            assertEquals(3, loader.parseFailures().size(), loader.parseFailures().toString());
         }
     }
 

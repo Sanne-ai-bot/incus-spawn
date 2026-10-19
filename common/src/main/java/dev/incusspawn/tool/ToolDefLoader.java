@@ -257,7 +257,7 @@ public class ToolDefLoader {
                     // First: a misspelled key may be why the tool has no name or is refused ('nmae:').
                     var file = OutputFormat.oneLine(path.getFileName().toString());
                     def.unknownKeyWarnings().forEach(w -> warnings.add(file + ": " + w));
-                    if (def.getName() != null) {
+                    if (def.getName() != null && !def.getName().isBlank()) {
                         var source = path.toAbsolutePath().normalize();
                         var refused = ToolDefValidator.refusal(def);
                         if (refused != null) {
@@ -270,6 +270,11 @@ public class ToolDefLoader {
                         warnings.addAll(ToolDefValidator.embeddedTokens(def));
                         warnings.addAll(ToolDefValidator.lingersThroughLoginctl(def));
                         defs.put(def.getName(), new YamlToolSetup(def), source);
+                    } else {
+                        warnings.add(file + ": " + (def.getName() == null ? "no 'name:'" : "a blank 'name:'")
+                                + LayeredDefinitions.REFUSED);
+                        // Like a nameless template, it may have meant to replace a lower layer's.
+                        defs.parseFailed(path.toAbsolutePath().normalize());
                     }
                 } catch (IOException e) {
                     warnings.add(YamlErrors.friendly(path.getFileName().toString(), e));

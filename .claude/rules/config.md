@@ -75,6 +75,7 @@ Files that fail to parse are recorded too (`LayeredDefinitions.parseFailures()`,
 So are image definitions refused at load because their `name:` or `parent:` is not a valid Incus instance name (`InstanceNames`).
 So are image definitions on a parent cycle (#1443), found once every layer is loaded since an override can close one: one warning names the cycle and its files, and every template on it is dropped (`LayeredDefinitions.refuse`), so no chain walk (`ImageDef.ancestors`, `inheritTypes`) can loop.
 So are tool definitions refused at load because a credential namespace they name is not an identifier (`ToolDefValidator.invalidNamespace`).
+So are tool files with no `name:`, or a blank one, as a template without one is.
 `isx build` refuses while any exist.
 The skipped file's name is unknown or unusable, so building would silently fall back to a lower layer or the existing template's build-source snapshot.
 A build-source snapshot merged in after load (`isx build`, the TUI's `ListingLoader`) can still close one, so `ImageDef.ancestors` (and `chain`) also stops before a layer it has already seen, warning through `Warnings` once per cycle (named from its least template, so every walk into it gives the same line).
