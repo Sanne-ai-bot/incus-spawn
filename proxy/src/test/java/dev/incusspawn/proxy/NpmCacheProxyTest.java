@@ -223,7 +223,12 @@ class NpmCacheProxyTest {
 
     /** Publish {@code name@1.0.0}: its tarball, and the version document carrying its shasum and integrity. */
     static String publish(String name) throws Exception {
-        var tarball = ("tarball of " + name).getBytes(StandardCharsets.UTF_8);
+        return publish(name, "tarball of " + name);
+    }
+
+    /** {@link #publish(String)} with the tarball's contents, so a test can republish it. */
+    static String publish(String name, String contents) throws Exception {
+        var tarball = contents.getBytes(StandardCharsets.UTF_8);
         var shasum = ArtifactCacheProxyTest.hex("SHA-1", tarball);
         var integrity = "sha512-" + Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-512").digest(tarball));
         var tarballPath = "/" + name + "/-/" + name + "-1.0.0.tgz";
@@ -258,9 +263,11 @@ class NpmCacheProxyTest {
         return getAsync(path).toCompletionStage().toCompletableFuture().get(seconds, TimeUnit.SECONDS);
     }
 
+    /** Its digest is the last file a commit writes, after the tarball and its ETag. */
     static void awaitCached(String tarballPath) throws Exception {
         var file = cached(tarballPath);
-        ArtifactCacheProxyTest.await(file + " to be cached", () -> Files.isRegularFile(file));
+        var shasum = Path.of(file + ".shasum");
+        ArtifactCacheProxyTest.await(file + " to be cached", () -> Files.isRegularFile(shasum));
     }
 
     @Test
@@ -373,6 +380,42 @@ class NpmCacheProxyTest {
         assertFalse(Files.exists(Path.of(cached(path) + ".shasum")));
     }
 
+    @Test
+    void tarballCommittedAfterARepublishKeepsItsOwnDigest() throws Exception {
+        // Both downloads are held at the registry, each answered with the bytes its own lookup described
+        var path = publish("republished", "original");
+        stalledLookup = path;
+        var first = getAsync(path);
+        ArtifactCacheProxyTest.await("the first download to be held", () -> stalled.size() == 1);
+        var original = stalled.getFirst();
+
+        // A second miss for the same tarball sees the republished digest, and is cached first
+        publish("republished", "republished");
+        var second = getAsync(path);
+        ArtifactCacheProxyTest.await("the second download to be held", () -> stalled.size() == 2);
+        answerHeld(stalled.getLast(), "republished");
+        assertEquals(new Response(200, "republished"), second.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+        awaitCached(path);
+
+        // The first download then finishes, verified on the digest its own lookup found
+        answerHeld(original, "original");
+        assertEquals(new Response(200, "original"), first.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+        // The digest is the last file a commit writes, and the one that vouches for the tarball. The commit
+        // drops the previous copy's first, so it can be missing between two polls: read it as one step
+        var shasum = Path.of(cached(path) + ".shasum");
+        var digest = "sha512:" + ArtifactCacheProxyTest.hex("SHA-512", "original".getBytes(StandardCharsets.UTF_8));
+        ArtifactCacheProxyTest.await(shasum + " to hold " + digest, () -> digest.equals(ArtifactCacheHandler.readFileOrNull(shasum)));
+        assertEquals("original", Files.readString(cached(path)), "the stored digest describes the tarball beside it");
+        stalledLookup = null;
+        assertEquals(new Response(200, "republished"), get(path, 10), "the next request gets what upstream publishes now");
+    }
+
+    /** Answer a held request with {@code body}, taking it from the drain. */
+    static void answerHeld(HttpServerRequest req, String body) {
+        assertTrue(stalled.remove(req));
+        req.response().end(Buffer.buffer(body));
+    }
+
     /**
      * Cache {@code name@1.0.0} under a stored packument ETag, as after an install that fetched
      * the packument, then age its last confirmation by {@code age}. The next install from a
@@ -382,7 +425,7 @@ class NpmCacheProxyTest {
     static String cacheUnderEtag(String name, Duration age) throws Exception {
         ArtifactCacheHandler.storePackageEtag(name, "\"" + name + "-etag\"");
         var path = publishAndCache(name);
-        // Both sidecars are written before the tarball, which publishAndCache waits for
+        // Both sidecars are committed with the tarball, which publishAndCache waits for
         assertTrue(Files.isRegularFile(Path.of(cached(path) + ".etag")));
         ArtifactCacheProxyTest.confirmedAgo(Path.of(cached(path) + ".shasum"), age);
         return path;

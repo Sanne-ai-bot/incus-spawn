@@ -191,12 +191,17 @@ class NpmCacheTest {
 
     /** Whether a download of "hello" is committed under the given digest, as fetchCacheAndServe would. */
     static boolean commits(Path tmp, String digest) throws Exception {
-        var download = tmp.resolve("download");
+        return commits(tmp.resolve("blob"), ArtifactCacheHandler.Verification.ofDigest(digest));
+    }
+
+    /** Whether a download of "hello" is committed as {@code target} under {@code verification}, as finalizeCacheFile would. */
+    static boolean commits(Path target, ArtifactCacheHandler.Verification verification) throws Exception {
+        Files.createDirectories(target.getParent());
+        var download = Files.createTempFile(target.getParent(), "dl-", ".tmp");
         Files.writeString(download, "hello");
-        var verification = ArtifactCacheHandler.Verification.ofDigest(digest);
         var expected = verification.expected().apply(null).result();
-        return expected != null && VerifiedArtifactStore.verifyAndCommit(
-                download, tmp.resolve("blob"), verification.checksum(), expected, false);
+        return expected != null && VerifiedArtifactStore.verifyAndCommit(download, target, verification.checksum(),
+                expected, verification.storeSidecar(), verification.alongside());
     }
 
     @Test
@@ -244,46 +249,46 @@ class NpmCacheTest {
         assertEquals("", ArtifactCacheHandler.readFileOrNull(f));
     }
 
-    // --- sidecar file writing ---
+    // --- sidecar files, committed with the tarball ---
 
-    @Test
-    void writeNpmSidecarFilesCreatesShasumAndEtag(@TempDir Path tmp) throws Exception {
-        var cacheFile = tmp.resolve("express/-/express-4.18.2.tgz");
-        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "abc123def456", "\"etag-value\"");
-
-        assertEquals("abc123def456",
-                Files.readString(Path.of(cacheFile + ".shasum")).strip());
-        assertEquals("\"etag-value\"",
-                Files.readString(Path.of(cacheFile + ".etag")).strip());
+    static boolean commitsTarball(Path cacheFile, String digest, String packageEtag) throws Exception {
+        return commits(cacheFile, ArtifactCacheHandler.Verification.ofNpmTarball(digest, packageEtag));
     }
 
     @Test
-    void writeNpmSidecarFilesSkipsEtagWhenNull(@TempDir Path tmp) throws Exception {
-        var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
-        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "deadbeef", null);
-
-        assertTrue(Files.isRegularFile(Path.of(cacheFile + ".shasum")));
-        assertFalse(Files.exists(Path.of(cacheFile + ".etag")));
-    }
-
-    @Test
-    void writeNpmSidecarFilesOverwritesExisting(@TempDir Path tmp) throws Exception {
-        var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
-        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "old-shasum", "\"old-etag\"");
-        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "new-shasum", "\"new-etag\"");
-
-        assertEquals("new-shasum",
-                Files.readString(Path.of(cacheFile + ".shasum")).strip());
-        assertEquals("\"new-etag\"",
-                Files.readString(Path.of(cacheFile + ".etag")).strip());
-    }
-
-    @Test
-    void writeNpmSidecarFilesCreatesScopedPackageDirs(@TempDir Path tmp) throws Exception {
+    void committedTarballCarriesItsDigestAndEtag(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("@scope/name/-/name-1.0.0.tgz");
-        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "abc", "\"etag\"");
 
-        assertTrue(Files.isRegularFile(Path.of(cacheFile + ".shasum")));
+        assertTrue(commitsTarball(cacheFile, HELLO_SHA512, "\"etag-value\""));
+
+        assertEquals("hello", Files.readString(cacheFile));
+        assertEquals(HELLO_SHA512, Files.readString(Path.of(cacheFile + ".shasum")));
+        assertEquals("\"etag-value\"", Files.readString(Path.of(cacheFile + ".etag")));
+    }
+
+    @Test
+    void committedTarballReplacesThePreviousCopysSidecars(@TempDir Path tmp) throws Exception {
+        var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
+        Files.createDirectories(cacheFile.getParent());
+        Files.writeString(cacheFile, "old");
+        Files.writeString(Path.of(cacheFile + ".shasum"), "sha1:" + "b".repeat(40));
+        Files.writeString(Path.of(cacheFile + ".etag"), "\"old-etag\"");
+
+        assertTrue(commitsTarball(cacheFile, HELLO_SHA512, null));
+
+        assertEquals(HELLO_SHA512, Files.readString(Path.of(cacheFile + ".shasum")));
+        assertFalse(Files.exists(Path.of(cacheFile + ".etag")), "the old copy's ETag does not vouch for this one");
+    }
+
+    @Test
+    void rejectedDownloadWritesNoSidecars(@TempDir Path tmp) throws Exception {
+        var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
+
+        assertFalse(commitsTarball(cacheFile, "sha512:" + "0".repeat(128), "\"etag\""));
+
+        assertFalse(Files.exists(cacheFile));
+        assertFalse(Files.exists(Path.of(cacheFile + ".shasum")));
+        assertFalse(Files.exists(Path.of(cacheFile + ".etag")));
     }
 
     // --- storePackageEtag ---
@@ -359,7 +364,6 @@ class NpmCacheTest {
                 document(withShasum(quoted(HELLO_INTEGRITY))));
 
         assertEquals(HELLO_SHA512, result.digest(), "the tarball is verified on its SHA-512");
-        assertEquals(HELLO_SHA512, Files.readString(Path.of(cacheFile + ".shasum")));
     }
 
     @Test
@@ -556,7 +560,7 @@ class NpmCacheTest {
                 ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"abc\"", "ref", found(NEW_SHA1_DIGEST)));
 
         assertFalse(result.cacheHit());
-        assertEquals(NEW_SHA1_DIGEST, Files.readString(Path.of(cacheFile + ".shasum")));
+        assertFalse(Files.exists(Path.of(cacheFile + ".shasum")), "evicted with its tarball");
     }
 
     /** Run {@code work} while the test holds the artifact's lock: it must block on it, touching nothing, until released. */
@@ -683,9 +687,8 @@ class NpmCacheTest {
         assertFalse(result.cacheHit());
         assertEquals(NEW_SHA1_DIGEST, result.digest());
         assertFalse(Files.exists(cacheFile), "stale tarball should be deleted");
-        assertEquals(NEW_SHA1_DIGEST,
-                Files.readString(Path.of(cacheFile + ".shasum")).strip(),
-                "sidecar should be written with new shasum");
+        assertFalse(Files.exists(Path.of(cacheFile + ".shasum")), "its sidecars go with it");
+        assertFalse(Files.exists(Path.of(cacheFile + ".etag")));
     }
 
     @Test
@@ -796,10 +799,10 @@ class NpmCacheTest {
         assertNotNull(result);
         assertFalse(result.cacheHit());
         assertEquals(SHA1_DIGEST, result.digest());
-        assertEquals(SHA1_DIGEST,
-                Files.readString(Path.of(cacheFile + ".shasum")).strip());
-        assertEquals("\"etag\"",
-                Files.readString(Path.of(cacheFile + ".etag")).strip());
+        assertEquals("\"etag\"", result.packageEtag());
+        // Written with the download, not before it (#1464)
+        assertFalse(Files.exists(Path.of(cacheFile + ".shasum")));
+        assertFalse(Files.exists(Path.of(cacheFile + ".etag")));
     }
 
     @Test
@@ -813,7 +816,7 @@ class NpmCacheTest {
     }
 
     @Test
-    void cacheMissNoPackageEtagWritesShasumButNotEtag(@TempDir Path tmp) throws Exception {
+    void cacheMissNoPackageEtagCarriesNone(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
@@ -821,8 +824,6 @@ class NpmCacheTest {
 
         assertNotNull(result);
         assertFalse(result.cacheHit());
-        assertTrue(Files.isRegularFile(Path.of(cacheFile + ".shasum")));
-        assertFalse(Files.exists(Path.of(cacheFile + ".etag")),
-                "should not write ETag sidecar when package ETag is null");
+        assertNull(result.packageEtag());
     }
 }

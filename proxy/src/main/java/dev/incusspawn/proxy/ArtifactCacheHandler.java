@@ -25,7 +25,9 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.SequencedMap;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -697,7 +699,7 @@ class ArtifactCacheHandler {
                 System.out.println("No usable " + checksum.extension + " for " + ref + ", not caching");
                 Files.deleteIfExists(tempFile);
             } else if (VerifiedArtifactStore.verifyAndCommit(tempFile, cacheFile, checksum,
-                    expected, verification.storeSidecar())) {
+                    expected, verification.storeSidecar(), verification.alongside())) {
                 System.out.println("Cached: " + ref + " (" + checksum.extension + " verified, " +
                         formatSize(Files.size(cacheFile)) + ")");
             } else {
@@ -824,10 +826,17 @@ class ArtifactCacheHandler {
         }
     }
 
-    /** {@code confirmAgain}: a hit served on an aging confirmation, to be confirmed in the background. */
-    record NpmVerifyResult(boolean cacheHit, long size, String digest, boolean confirmAgain) {
-        NpmVerifyResult(boolean cacheHit, long size, String digest) {
-            this(cacheHit, size, digest, false);
+    /**
+     * {@code confirmAgain}: a hit served on an aging confirmation, to be confirmed in the background.
+     * A miss carries the digest to verify the download on and the package ETag to store with it.
+     */
+    record NpmVerifyResult(boolean cacheHit, long size, String digest, String packageEtag, boolean confirmAgain) {
+        static NpmVerifyResult hit(long size, boolean confirmAgain) {
+            return new NpmVerifyResult(true, size, null, null, confirmAgain);
+        }
+
+        static NpmVerifyResult miss(String digest, String packageEtag) {
+            return new NpmVerifyResult(false, 0, digest, packageEtag, false);
         }
     }
 
@@ -846,13 +855,13 @@ class ArtifactCacheHandler {
      * {@link #checkNpmTarballCache}; only an unreachable registry serves the copy.
      * <p>
      * <b>Cache miss</b>: fetch the per-version digest, download with digest verification,
-     * write digest + ETag sidecar files alongside the cached tarball.
+     * and commit the tarball with its digest + ETag sidecar files ({@link Verification#ofNpmTarball}).
      */
     private void fetchNpmTarballAndServe(HttpServerRequest clientReq, long started, String domain,
                                           Path cacheFile, String ref,
                                           String packageName, String version) {
         // The disk work stays ordered, behind the packument's ETag write (relayNpmPackument) and
-        // other tarballs' sidecar writes. That queue is the one every request on this server
+        // other tarballs' settling. That queue is the one every request on this server
         // shares, so the digest lookup waits outside it: inside, a cold install's lookups ran
         // one at a time (#960).
         vertx.executeBlocking(() -> {
@@ -883,7 +892,7 @@ class ArtifactCacheHandler {
                 }
             } else {
                 fetchCacheAndServe(clientReq, started, domain, cacheFile, ref,
-                        Verification.ofDigest(result.digest()));
+                        Verification.ofNpmTarball(result.digest(), result.packageEtag()));
             }
         }).onFailure(err -> {
             System.err.println("npm integrity check error for " + ref +
@@ -914,7 +923,7 @@ class ArtifactCacheHandler {
         var shasum = VerifiedArtifactStore.attributesOrNull(Path.of(cacheFile + ".shasum"));
         var tier = tiers.tierOf(shasum == null ? null : shasum.lastModifiedTime(), now);
         return new NpmCacheState(packageEtag, true, tier == ArtifactCacheTiers.Tier.EXPIRED ? null
-                : new NpmVerifyResult(true, tarball.size(), null, tier == ArtifactCacheTiers.Tier.STALE));
+                : NpmVerifyResult.hit(tarball.size(), tier == ArtifactCacheTiers.Tier.STALE));
     }
 
     /**
@@ -944,8 +953,8 @@ class ArtifactCacheHandler {
      * writes a sidecar: a foreground request may have evicted the copy meanwhile and be
      * fetching it again, and its sidecars are not this one's to touch. The check and what
      * follows hold {@link VerifiedArtifactStore}'s per-artifact lock, which the foreground's
-     * evict-and-write ({@link #checkNpmTarballCache}) holds too, so neither runs in the middle
-     * of the other. The answer was fetched before the lock, though: a copy the foreground
+     * settling ({@link #checkNpmTarballCache}) and a download's commit with its sidecars hold
+     * too, so neither runs in the middle of the other. The answer was fetched before the lock, though: a copy the foreground
      * replaced and committed meanwhile can still be evicted on it, which costs a re-download.
      */
     static void reconcileNpmCopy(Path cacheFile, String ref, SidecarAnswer answer) throws IOException {
@@ -990,7 +999,7 @@ class ArtifactCacheHandler {
                 if (answer.unreachable()) {
                     System.out.println("npm: serving " + ref + " unconfirmed, the registry "
                             + (answer.status() > 0 ? "answered " + answer.status() : "is unreachable"));
-                    return new NpmVerifyResult(true, Files.size(cacheFile), null);
+                    return NpmVerifyResult.hit(Files.size(cacheFile), false);
                 }
                 if (answer.gone()) {
                     System.out.println("npm cache: " + ref + " is gone upstream (" + answer.status() + "), evicting");
@@ -1007,14 +1016,14 @@ class ArtifactCacheHandler {
                     if (packageEtag != null) {
                         Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
                     }
-                    return new NpmVerifyResult(true, Files.size(cacheFile), null);
+                    return NpmVerifyResult.hit(Files.size(cacheFile), false);
                 }
                 System.out.println("npm cache: " + ref + npmMismatch(stored, digest) + ", evicting");
                 evictNpmTarball(cacheFile);
             }
 
-            writeNpmSidecarFiles(cacheFile, digest, packageEtag);
-            return new NpmVerifyResult(false, 0, digest);
+            // Its sidecars are committed with the download (Verification.ofNpmTarball)
+            return NpmVerifyResult.miss(digest, packageEtag);
         }
     }
 
@@ -1041,20 +1050,6 @@ class ArtifactCacheHandler {
         var now = digest.substring(0, digest.indexOf(':'));
         return was == null || was.equals(now) ? " changed upstream"
                 : " was verified on " + was + ", re-verifying on " + now;
-    }
-
-    /** The {@code .shasum} sidecar holds the {@link #npmDigest} the tarball was verified against. */
-    static void writeNpmSidecarFiles(Path cacheFile, String digest,
-                                              String packageEtag) {
-        try {
-            Files.createDirectories(cacheFile.getParent());
-            Files.writeString(Path.of(cacheFile + ".shasum"), digest);
-            if (packageEtag != null) {
-                Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
-            }
-        } catch (IOException e) {
-            System.err.println("npm: failed to write sidecar files: " + e.getMessage());
-        }
     }
 
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
@@ -1194,26 +1189,47 @@ class ArtifactCacheHandler {
      * What a download must match before it is committed to the cache: a checksum in
      * {@code checksum}'s algorithm, found once the response is in hand. With
      * {@code storeSidecar} the checksum is committed beside the artifact as that
-     * sidecar. {@code responseHeaders} adds what this kind of cache tells the client.
+     * sidecar, and {@code alongside} is committed with it (see
+     * {@link VerifiedArtifactStore#verifyAndCommit(Path, Path, Sidecar, byte[], boolean, SequencedMap)}).
+     * {@code responseHeaders} adds what this kind of cache tells the client.
      */
     record Verification(Sidecar checksum,
                         Function<HttpClientResponse, Future<byte[]>> expected,
                         boolean storeSidecar,
+                        SequencedMap<String, byte[]> alongside,
                         BiConsumer<HttpServerResponse, HttpClientResponse> responseHeaders) {
 
         /** A content digest known up front, {@code sha256:<hex>} (OCI blobs), {@code sha512:<hex>} or {@code sha1:<hex>} (npm tarballs). */
         static Verification ofDigest(String digest) {
+            return ofDigest(digest, VerifiedArtifactStore.NOTHING_ALONGSIDE);
+        }
+
+        /**
+         * An npm tarball, committed with its sidecars: the {@link #npmDigest} it is verified
+         * against as {@code .shasum}, and the package ETag it was looked up under as {@code .etag}.
+         * Written with the tarball, under its lock, so a concurrent miss for the same tarball
+         * whose lookup found another digest cannot leave its digest beside these bytes (#1464).
+         */
+        static Verification ofNpmTarball(String digest, String packageEtag) {
+            var alongside = new LinkedHashMap<String, byte[]>();
+            // Without one, a previous copy's is still dropped: it vouched for other bytes
+            alongside.put(".etag", packageEtag == null ? null : packageEtag.getBytes(StandardCharsets.UTF_8));
+            alongside.put(".shasum", digest.getBytes(StandardCharsets.US_ASCII));
+            return ofDigest(digest, alongside);
+        }
+
+        private static Verification ofDigest(String digest, SequencedMap<String, byte[]> alongside) {
             var checksum = digestAlgorithm(digest);
             // An algorithm we cannot check is never cached
             byte[] expected = checksum == null ? null : digestHex(digest).getBytes(StandardCharsets.US_ASCII);
             return new Verification(checksum == null ? Sidecar.SHA256 : checksum,
-                    resp -> Future.succeededFuture(expected), false,
+                    resp -> Future.succeededFuture(expected), false, alongside,
                     (clientResp, upResp) -> clientResp.putHeader("Docker-Content-Digest", digest));
         }
 
         /** A Maven/Gradle artifact, committed with the checksum it was verified against. */
         static Verification ofArtifact(Sidecar checksum, Function<HttpClientResponse, Future<byte[]>> expected) {
-            return new Verification(checksum, expected, true, (clientResp, upResp) -> {
+            return new Verification(checksum, expected, true, VerifiedArtifactStore.NOTHING_ALONGSIDE, (clientResp, upResp) -> {
                 // Pass on the checksums upstream sent with these bytes (Maven smart checksums)
                 for (var header : new String[] {"X-Checksum-SHA1", "X-Checksum-MD5"}) {
                     var value = upResp.getHeader(header);
