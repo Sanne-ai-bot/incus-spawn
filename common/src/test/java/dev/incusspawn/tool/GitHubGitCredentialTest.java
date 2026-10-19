@@ -136,7 +136,12 @@ class GitHubGitCredentialTest {
         var stdin = Files.createTempFile(root, "stdin", null);
         Files.writeString(stdin, input);
         var process = pb.redirectInput(stdin.toFile()).start();
-        assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Git must never wait for a terminal prompt");
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            // Git runs the helper in a child shell; leave neither running after the test.
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+            fail("Git must never wait for a terminal prompt");
+        }
         return new Result(process.exitValue(), new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8),
                 new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8));
     }
