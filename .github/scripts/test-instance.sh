@@ -1,6 +1,8 @@
 #!/bin/bash
 # Functional integration tests for incus-spawn instances.
-# Exercises end-to-end behavior: proxy interception, git, sudo, systemd.
+# Exercises end-to-end behavior, one numbered section each: proxy interception,
+# git, sudo, systemd, /tmp on disk, DNS, login shell, agent context, npm, TLS
+# certificates, trust variables and tool proxy credentials.
 #
 # Usage: incus file push test-instance.sh <instance>/tmp/
 #        incus exec <instance> -- bash /tmp/test-instance.sh
@@ -98,6 +100,13 @@ assert "service produced its side effect" test -f /tmp/isx-service-ran
 assert "systemctl reports service as inactive (finished)" \
     bash -c "systemctl is-active isx-test 2>&1 | grep -q inactive"
 rm -f /tmp/isx-service-ran /etc/systemd/system/isx-test.service
+echo ""
+
+# --- 4b. /tmp on disk (#1561) ---
+# tpl-minimal masks tmp.mount, so /tmp survives a restart instead of being a tmpfs.
+echo "[4b] /tmp on disk"
+assert_eq "tmp.mount is masked" "masked" systemctl is-enabled tmp.mount
+assert "/tmp is not a tmpfs" bash -c '[ "$(findmnt -n -o FSTYPE --target /tmp)" != tmpfs ]'
 echo ""
 
 # --- 5. DNS interception ---

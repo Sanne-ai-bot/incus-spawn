@@ -720,6 +720,12 @@ jobs:
           sg incus-admin -c "incus file push .github/scripts/proof-curl.sh test-container/tmp/"
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-container/tmp/"
           sg incus-admin -c "incus exec test-container -- bash /tmp/test-instance.sh"
+          # /tmp is on disk (#1561): a file there survives a restart.
+          sg incus-admin -c "incus exec test-container -- touch /tmp/isx-survives-restart"
+          sg incus-admin -c "incus restart test-container"
+          sg incus-admin -c "incus exec test-container -- bash -c '
+            timeout 60 sh -c \"until systemctl is-active -q local-fs.target; do sleep 0.2; done\" &&
+            test -f /tmp/isx-survives-restart'"
 
       - name: Test per-instance credential accounts
         run: |

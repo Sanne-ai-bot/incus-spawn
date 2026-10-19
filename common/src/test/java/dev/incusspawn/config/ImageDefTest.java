@@ -35,6 +35,14 @@ class ImageDefTest {
     }
 
     @Test
+    void minimalKeepsTmpOnDisk() {
+        // Fedora's tmpfs /tmp would lose an agent's clones on every restart (#1561)
+        var minimal = ImageDef.loadAll().get("tpl-minimal");
+        assertTrue(minimal.getMaskServices().contains("tmp.mount"),
+                "tpl-minimal should mask tmp.mount, but masks: " + minimal.getMaskServices());
+    }
+
+    @Test
     void devExtendsMinimal() {
         var defs = ImageDef.loadAll();
         var dev = defs.get("tpl-dev");

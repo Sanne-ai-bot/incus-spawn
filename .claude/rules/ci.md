@@ -127,8 +127,9 @@ The `isx-integration-tests` job exercises five environments: a container (from `
 The accounts scripts below branch two further instances of their own.
 Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use awk (the base image has none; grep, sed and bash do the job):
 
-- **`test-instance.sh`**: pushed into containers and VMs, tests proxy interception (Maven/GitHub HTTPS), git clone, passwordless sudo, systemd lifecycle, DNS interception (A to the gateway, no `::` or real AAAA answer, #814), login shell env vars, TLS certificate quality, and tool-contributed proxy credential injection (section 9 verifies bearer token injection via a test fixture tool `.github/test-fixtures/tools/test-proxy-tool.yaml` and a local HTTPS echo server at `echo.incus-spawn.test`).
+- **`test-instance.sh`**: pushed into containers and VMs, tests proxy interception (Maven/GitHub HTTPS), git clone, passwordless sudo, systemd lifecycle, `/tmp` on disk (#1561), DNS interception (A to the gateway, no `::` or real AAAA answer, #814), login shell env vars, TLS certificate quality, and tool-contributed proxy credential injection (section 9 verifies bearer token injection via a test fixture tool `.github/test-fixtures/tools/test-proxy-tool.yaml` and a local HTTPS echo server at `echo.incus-spawn.test`).
   Uses `assert()` / `assert_eq()` shell helpers.
+  After it, the "Test container" step writes a file to `/tmp`, runs `incus restart` and checks the file is still there, waiting at most 60 s for `local-fs.target`.
 - **`test-airgap.sh`**: runs on the host.
   Branches `tpl-minimal` with `--airgap` and asserts on the *expanded* devices (no `nic` at all), the `network-mode` stamp, and from inside that the started branch has no interface but loopback and cannot reach the internet.
   Then branches it again without `--airgap` and asserts the NIC and an address come back.
