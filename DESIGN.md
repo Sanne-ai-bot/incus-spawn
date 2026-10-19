@@ -1206,6 +1206,9 @@ The proxy routes requests to `api.anthropic.com` through one of three paths base
 - Body: adds `"anthropic_version": "vertex-2023-10-16"` (required by Vertex rawPredict)
 - Body: strips all top-level fields not in the Vertex allowlist (beta features like `context_management` cause "Extra inputs" rejections)
 - Body: recursively strips `scope` from nested `cache_control` objects (beta feature unsupported by Vertex); a `cache_control` object's other members are copied as they are
+- Body: strips `strict` from each tool definition, an object in the top-level `tools` array (#1556).
+  Vertex treats a strict tool schema as the `structured_outputs` partner-model feature, which an organization policy (`constraints/vertexai.allowedPartnerModelFeatures`) can disallow, and then refuses every request with tools.
+  A `strict` anywhere else, such as a property in an `input_schema`, is the client's data and is kept; the dropped member is logged once as `tools[].strict`
 - Header: removes `anthropic-beta` (Vertex rejects beta feature flags; features are enabled via `anthropic_version`)
 - Host: rewrites to the Vertex endpoint hostname for the configured region
 
