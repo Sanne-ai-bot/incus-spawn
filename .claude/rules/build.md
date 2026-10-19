@@ -160,6 +160,9 @@ Fast-forwards, merged branch deletions and HEAD changes can therefore reuse old 
 Removed history, a fetch/verification failure, an advertisement mismatch or more than 32 packs uses a fresh `clone --bare --no-local --reference … --dissociate` instead.
 Failed staging is discarded before the rebuild; it never becomes a reference.
 Bare dissociation avoids older Git's commit-graph/checkout bug, and rebuilt output passes full fsck before publication.
+A clone without a reference skips that fsck only when its `GIT_TRACE` shows every pack came from `index-pack --strict` (`fetch.fsckObjects`) and no object is loose; dumb HTTP, packfile URIs, bundles and user `fetch.fsck.*` settings still get it.
+When that strict receive rejects an object (it makes fsck warnings fatal), the clone is repeated without it and the fsck runs.
+A host-source export is indexed with `--strict` after its source alternate is removed, which proves it self-contained without a fsck.
 `PreparationCache` uses per-URL writer locks with a two-hour wait for slow preparation, coordinates leased readers, publishes complete generations atomically, and bounds retained snapshots even when a host checkout exists.
 Only the clean prepared bare repository is mounted for `clone --no-hardlinks`; guest SHA-256 checks precede priming, and a failed check falls back to the remote.
 Both prepared and network full clones start with all advertised branches and tags and a broad future-fetch refspec.

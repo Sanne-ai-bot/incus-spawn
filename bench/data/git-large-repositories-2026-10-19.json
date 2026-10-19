@@ -95,5 +95,162 @@
       "fsck --connectivity-only": "fails",
       "fsck --full": "fails"
     }
+  },
+  "fsck_removal": {
+    "issue": "https://github.com/Sanne/incus-spawn/issues/1557",
+    "note": "Same machine, Git and filesystem as above. Before and after run interleaved on one fixture, a newer camel clone than the one above. Snapshots: bench over a local git daemon, no checkout, so no reference; each invocation's first trial is cold and the next two are cached. Host source: three full exports per revision.",
+    "fixture": {
+      "repository": "https://github.com/apache/camel.git",
+      "tip": "52e3a5fb73d929c8dfa54328caff1f12404dfcb4",
+      "objects": 4428100,
+      "pack_bytes_gib": 1.53,
+      "local_heads_and_tags": 434
+    },
+    "source_hashes": {
+      "file": "common/src/main/java/dev/incusspawn/git/GitPreparation.java",
+      "before (origin/main 96f0f42e)": "6227eb43a3e7bdfc7f71df87b34a17d9393141b67e0522b9009212b5e4142680",
+      "after (d25cd1e2)": "ef05f1fbf4dcc123ca31ef8914734e6c7f2add44ee3159b09ea198f3203f3829"
+    },
+    "snapshot_without_reference": {
+      "before": [
+        {
+          "strategy": "new clean snapshot",
+          "total_ms": 90303,
+          "phases_ms": {
+            "check": 0,
+            "clone": 31503,
+            "publish": 1,
+            "reference": 0,
+            "remote": 117,
+            "verify": 58669
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 1028,
+          "phases_ms": {
+            "check": 938,
+            "remote": 89
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 995,
+          "phases_ms": {
+            "check": 908,
+            "remote": 86
+          }
+        },
+        {
+          "strategy": "new clean snapshot",
+          "total_ms": 89577,
+          "phases_ms": {
+            "check": 0,
+            "clone": 30972,
+            "publish": 1,
+            "reference": 0,
+            "remote": 115,
+            "verify": 58477
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 1030,
+          "phases_ms": {
+            "check": 941,
+            "remote": 88
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 990,
+          "phases_ms": {
+            "check": 901,
+            "remote": 88
+          }
+        }
+      ],
+      "after": [
+        {
+          "strategy": "new clean snapshot",
+          "total_ms": 33597,
+          "phases_ms": {
+            "check": 0,
+            "clone": 32473,
+            "publish": 1,
+            "reference": 0,
+            "remote": 114,
+            "verify": 998
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 1027,
+          "phases_ms": {
+            "check": 938,
+            "remote": 88
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 988,
+          "phases_ms": {
+            "check": 900,
+            "remote": 87
+          }
+        },
+        {
+          "strategy": "new clean snapshot",
+          "total_ms": 33668,
+          "phases_ms": {
+            "check": 0,
+            "clone": 32537,
+            "publish": 1,
+            "reference": 0,
+            "remote": 114,
+            "verify": 1003
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 1025,
+          "phases_ms": {
+            "check": 936,
+            "remote": 88
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 988,
+          "phases_ms": {
+            "check": 900,
+            "remote": 87
+          }
+        }
+      ]
+    },
+    "host_source_export_ms": {
+      "before": [
+        129473,
+        128891,
+        133531
+      ],
+      "after": [
+        41296,
+        41448,
+        53079
+      ]
+    },
+    "commands_s": {
+      "index-pack --stdin --strict of the export pack, source alternate attached": 50.39,
+      "index-pack --stdin --strict of the export pack, alternate removed": 27.75
+    },
+    "why_index_pack_is_faster_without_the_alternate": "With the source attached, every incoming object already exists, so index-pack reads it back and compares the bytes (its collision check). In an empty store there is nothing to compare against.",
+    "dumb_http_probe": {
+      "case": "a tree with duplicate entries, served by a static HTTP server (dumb HTTP) and cloned with -c fetch.fsckObjects=true",
+      "clone": "exit 0: the walker indexes downloaded packs with plain index-pack --stdin",
+      "fsck --full": "fails (duplicateEntries)",
+      "same tree over git daemon (smart)": "clone fails: index-pack --strict reports duplicateEntries"
+    }
   }
 }

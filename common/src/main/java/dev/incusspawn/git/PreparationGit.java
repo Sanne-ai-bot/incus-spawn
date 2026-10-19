@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -42,6 +43,12 @@ final class PreparationGit {
     /** {@code progress} sees Git's progress only when {@code args} ask for it ({@code --progress}). */
     static String run(Path repo, Path input, Path output, List<String> args, GitTransferConfig limits,
                       Consumer<GitProcess.Progress> progress) throws IOException {
+        return run(repo, input, output, args, limits, progress, Map.of());
+    }
+
+    /** {@code environment} is set after the inherited {@code GIT_*} variables are removed. */
+    static String run(Path repo, Path input, Path output, List<String> args, GitTransferConfig limits,
+                      Consumer<GitProcess.Progress> progress, Map<String, String> environment) throws IOException {
         var command = new ArrayList<>(List.of("git", "--no-replace-objects", "-c", "gc.auto=0",
                 "-c", "maintenance.auto=false", "-c", "core.hooksPath=/dev/null",
                 "-c", "pack.writeReverseIndex=false",
@@ -60,6 +67,7 @@ final class PreparationGit {
             builder.environment().put("GIT_OPTIONAL_LOCKS", "0");
             if (limits == LOCAL) builder.environment().put("GIT_NO_LAZY_FETCH", "1");
             builder.environment().put("LC_ALL", "C");
+            builder.environment().putAll(environment);
             builder.redirectInput(input == null ? Path.of("/dev/null").toFile() : input.toFile());
             builder.redirectOutput(stdout.toFile());
             // Local steps use no SSH, so they skip reading core.sshCommand.

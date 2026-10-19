@@ -14,6 +14,8 @@ import java.util.regex.Pattern;
  * output can hold a URL, so it is forwarded in {@link #details()}, scrubbed, never in the message.
  */
 public class GitCommandException extends IOException {
+    /** What {@link #details()} puts before each of Git's own lines. */
+    static final String QUOTE = "  | ";
     private static final Pattern HTTP_USERINFO = Pattern.compile("(?i)\\b(https?://)[^/?#@\\s'\"]+@");
     private final List<String> details;
 
@@ -34,7 +36,7 @@ public class GitCommandException extends IOException {
             // Bounded and cleaned like a transfer's tail, whichever command it came from.
             var said = gitOutput.lines().map(GitProcess.Tail::clean).filter(l -> !l.isEmpty()).toList();
             lines.add("Git's output:");
-            said.subList(Math.max(0, said.size() - GitProcess.TAIL_LINES), said.size()).forEach(l -> lines.add("  | " + l));
+            said.subList(Math.max(0, said.size() - GitProcess.TAIL_LINES), said.size()).forEach(l -> lines.add(QUOTE + l));
         }
         return lines;
     }

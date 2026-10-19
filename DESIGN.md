@@ -2821,7 +2821,7 @@ This permits ordinary merges, new branches/tags and deletion of merged branches 
 An advertisement/fetch mismatch, removed history, failed incremental validation or growth beyond 32 packs discards staging and uses a fresh `clone --bare --no-local --reference … --dissociate` instead.
 The rebuild prefers the previous snapshot as its reference, never the failed staging tree.
 Git's dissociation repack selects the current closure, excluding private reference objects and objects belonging only to deleted refs; bare cloning avoids the historical commit-graph/checkout failure in older Git's dissociation path.
-Initial and rebuilt snapshots pass full fsck, while incremental snapshots reuse the object validation of exactly matching old bytes and validate new objects and their links.
+Reference-seeded snapshots pass full fsck; one cloned without a reference relies instead on `fetch.fsckObjects` checking every object it receives, when the clone's `GIT_TRACE` shows that only strict receives wrote objects (dumb HTTP still gets the fsck, #1557); incremental snapshots reuse the object validation of exactly matching old bytes and validate new objects and their links.
 Only selected pack/index pairs and freshly written refs enter the minimal bare repository mounted read-only into the guest.
 The guest copies them with `clone --no-hardlinks`, checks their SHA-256 digests, and sets the real remote URL; no full-history guest repack remains.
 A failed preparation, mount or verification falls back to a fresh remote clone before priming.
