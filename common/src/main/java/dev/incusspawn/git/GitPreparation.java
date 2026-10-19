@@ -463,7 +463,9 @@ public final class GitPreparation {
             if (parts.length != 2) throw new IOException("Invalid Git advertisement");
             if (parts[0].startsWith("ref: ")) {
                 if (parts[1].equals("HEAD")) head = parts[0];
-            } else if (!parts[1].endsWith("^{}")) {
+            } else if (!parts[1].endsWith("^{}") && (parts[1].equals("HEAD")
+                    || parts[1].startsWith("refs/heads/") || parts[1].startsWith("refs/tags/"))) {
+                // The HEAD pattern also matches the tail of other refs, such as a mirror's refs/remotes/origin/HEAD.
                 if (!parts[0].matches("[0-9a-f]{40}(?:[0-9a-f]{24})?")) throw new IOException("Invalid Git object ID");
                 refs.put(parts[1], parts[0]);
             }
