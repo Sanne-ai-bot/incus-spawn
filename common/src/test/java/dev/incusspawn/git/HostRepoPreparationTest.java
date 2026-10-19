@@ -88,6 +88,16 @@ class HostRepoPreparationTest {
         }
     }
 
+    @Test void aSourceObjectWhoseBytesDoNotMatchItsNameFailsWhileIndexingTheExport() throws Exception {
+        // pack-objects copies the loose object under the source's name; index-pack names it by its bytes,
+        // so the tree's link to the original name must resolve inside the export, without the source.
+        var host = releasesFixture(tmp);
+        corruptLooseBlob(host, git(host, "rev-parse", "main:isx.deb"));
+        var failure = assertThrows(GitCommandException.class, () -> preparation().prepareHost(host, null, phase -> {}));
+        assertEquals("Git preparation failed: index-pack", failure.getMessage());
+        assertEquals(java.util.List.of(), PreparationGit.children(tmp.resolve("cache/work")));
+    }
+
     @Test void supportsWorktreesAndBareRepositories() throws Exception {
         var host = releasesFixture(tmp);
         var worktree = tmp.resolve("worktree");

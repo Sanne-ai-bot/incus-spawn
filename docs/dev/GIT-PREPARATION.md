@@ -23,9 +23,10 @@ Guest-side `file://` URLs retain their existing meaning and never select this pa
 The walk from those object IDs alone decides what enters the export, so no extra source objects enter it.
 Stored objects and deltas are reused: without `--thin`, `pack-objects` reuses a delta only when its base is selected too, and otherwise writes the object whole or against a selected object, so a private object never enters as a delta base.
 Bitmap selection stays disabled: a bitmap is the source's own record of reachability, and trusting it would let a stale or damaged one add objects that the walk would not select.
-Reused bytes are not trusted either: `index-pack --strict` recomputes every object ID and checks its structure, and the fsck below follows every link.
+Reused bytes are not trusted either: `index-pack --strict` recomputes every object ID, checks its structure and follows every link.
 On apache/camel (4.4 million objects) reuse cut the export from 263–300 s to 127–131 s; recomputing every delta had taken 175 s of it (#1548, [measurements](../../bench/data/git-large-repositories-2026-10-19.json)).
-Only the resulting pack/index pair, exported heads/tags and chosen HEAD remain; fsck runs after removing the alternate.
+The pack is written to a file and the alternate removed before `index-pack` reads it, so every link must resolve inside the export: that proves it self-contained, and no separate fsck runs.
+Only the resulting pack/index pair, exported heads/tags and chosen HEAD remain.
 Source hooks, configuration, worktree files and reflogs are never copied.
 The source is never fetched into or maintained, and no remote advertisement or network fallback is involved.
 These exports use the existing preparation lease and guest checksum verification but are ephemeral, with no retained network-cache entry.
