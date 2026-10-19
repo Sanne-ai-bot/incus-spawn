@@ -3,7 +3,7 @@
 #
 # Runs on the host. Swaps in the committed fixture for <release> -- produced by that
 # release's own serializer, so every namespace is in the flat, pre-accounts
-# layout, empty strings and stray keys included -- and checks, against real
+# layout, with empty strings and stray keys up to v0.3.8 -- and checks, against real
 # instances and the real proxy, that nothing its user configured changed meaning:
 #
 #   - every configured credential is listed, as its account 'default' (#773:

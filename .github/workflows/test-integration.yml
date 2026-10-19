@@ -861,9 +861,10 @@ jobs:
         run: |
           # Swaps in each release's committed config.yaml fixture (every credential flat, as
           # that release wrote it) and checks it is listed, pinnable and served as before.
-          # v0.3.7 is kept because users are still on it; v0.3.12 and v0.4.0 keep a file from
-          # before accounts flat, without the empty strings and stray keys (their accounts:
-          # layout is pinned by PreviousReleaseConfigCompatTest). The script restores the
+          # v0.3.7 is kept because users are still on it. v0.3.12 and v0.4.0 are here because
+          # users are on them too: each saves a flat file from before accounts as the same flat
+          # file, without the empty strings and stray keys. The accounts: layout their isx init
+          # writes is pinned by PreviousReleaseConfigCompatTest. The script restores the
           # original config on exit, so later steps are unaffected.
           for release in v0.3.7 v0.3.8 v0.3.12 v0.4.0; do
             sg incus-admin -c "bash .github/scripts/test-previous-release-config.sh $release"
