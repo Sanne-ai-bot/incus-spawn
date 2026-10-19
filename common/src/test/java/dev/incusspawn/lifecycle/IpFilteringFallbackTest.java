@@ -2,6 +2,8 @@ package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.Metadata;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -111,6 +113,19 @@ class IpFilteringFallbackTest {
 
         verify(incus).start(NAME);
         verify(incus, never()).findNic(any(), any());
+    }
+
+    /** Only a template starts without {@link InstanceLifecycle#startForUse}'s repairs and secret (#1457). */
+    @Test
+    void startTemplateRefusesAnInstance() {
+        var incus = mock(IncusClient.class);
+        var instance = JqObject.builder(1)
+                .put("config", JqObject.builder(1)
+                        .put(Metadata.TYPE, Metadata.TYPE_CLONE).build()).build();
+
+        assertThrows(IllegalArgumentException.class,
+                () -> InstanceLifecycle.startTemplate(incus, NAME, instance, msg -> {}));
+        verify(incus, never()).start(any());
     }
 
     @Test
