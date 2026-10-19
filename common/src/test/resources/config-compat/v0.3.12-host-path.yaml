@@ -1,0 +1,13 @@
+claude: {}
+github:
+  token: ghp_fixture
+bob:
+  licenseConsent: false
+openai: {}
+features: []
+searchPaths: []
+host-paths:
+  - ~/src
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""

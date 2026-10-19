@@ -1,0 +1,13 @@
+claude:
+  oauthToken: sk-ant-oat01-fixture
+github:
+  token: ghp_fixture
+bob:
+  licenseConsent: false
+openai: {}
+features: []
+searchPaths: []
+host-paths: []
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""

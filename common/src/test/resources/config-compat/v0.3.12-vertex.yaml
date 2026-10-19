@@ -1,0 +1,14 @@
+claude:
+  useVertex: true
+  cloudMlRegion: us-east5
+  vertexProjectId: my-project
+github: {}
+bob:
+  licenseConsent: false
+openai: {}
+features: []
+searchPaths: []
+host-paths: []
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""
