@@ -217,6 +217,10 @@ public class UpdateBaseCommand extends BaseCommand {
         var yaml = new StringBuilder();
         yaml.append("name: tpl-minimal\n");
         yaml.append("description: ").append(current.getDescription()).append('\n');
+        // The pin replaces the built-in definition, not only its image: keep the units it masks.
+        if (!current.getMaskServices().isEmpty()) {
+            yaml.append("mask_services: [").append(String.join(", ", current.getMaskServices())).append("]\n");
+        }
         yaml.append("image: ").append(current.getImage()).append('\n');
         yaml.append("image_url: ").append(current.getImageUrl()).append('\n');
         // A VM image is only pinned with its checksums for every arch: without them it would
