@@ -12,7 +12,7 @@ import java.util.Set;
  * The tree translation {@link VertexBodyRewriter} replaced (#1315), kept as the oracle its tests
  * compare against: copied from {@code MitmProxy.translateToVertex} as it was, with the field
  * logging left out, and with the one rule added since: a tool definition's {@code strict} is
- * dropped (#1556).
+ * dropped (#1556), also from a body already in Vertex's format (#1568, {@link #vertexFormat}).
  */
 final class LegacyVertexTranslation {
 
@@ -47,6 +47,17 @@ final class LegacyVertexTranslation {
         var vertexPath = "/v1/projects/" + projectId + "/locations/" + region
                 + "/publishers/anthropic/models/" + model + endpoint;
         return new Translation(vertexPath, rewrittenBytes);
+    }
+
+    /** A body already in Vertex's format, as it is forwarded: only a tool definition's {@code strict} goes. */
+    static Translation vertexFormat(String path, byte[] bodyBytes) {
+        var tree = bodyBytes.length > 0 ? JqValues.parseStrict(bodyBytes) : null;
+        if (!(tree instanceof JqObject root)) {
+            return new Translation(path, bodyBytes);
+        }
+        var rebuilt = JqObject.builder(root.size());
+        root.forEach((field, value) -> rebuilt.put(field, field.equals("tools") ? stripToolStrict(value) : value));
+        return new Translation(path, rebuilt.build().toJsonString().getBytes(StandardCharsets.UTF_8));
     }
 
     private static JqValue stripToolStrict(JqValue tools) {

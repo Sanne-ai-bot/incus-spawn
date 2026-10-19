@@ -1245,7 +1245,13 @@ The proxy routes requests to `api.anthropic.com` through one of three paths base
 
 1. **Vertex passthrough** (`/v1/projects/...`): Requests already in Vertex format (from the container's Vertex SDK).
    The proxy strips `@date` model version suffixes from the URL (the global endpoint rejects them), removes the `anthropic-beta` header, injects a GCP Bearer token, and forwards to the real Vertex endpoint.
-   The body is passed through unmodified — the Vertex SDK already formats it correctly.
+   The body is forwarded as sent, but for `strict` in each tool definition, which is dropped as on the translation path (#1568).
+   An object body also loses its insignificant whitespace, between tokens and before the object with a byte order mark; the Vertex SDK already formats the rest correctly.
+   `VertexBodyRewriter` does this as the body arrives, with the parser the translation uses, and the body is held like a translated one (see "A body the proxy must hold").
+   A body that is not empty must be valid JSON within the depth limit, or it is refused with a 502.
+   Of its names, only the top object's and a tool definition's must be well-formed, since those are the only ones it compares, and a malformed one is refused with a 400.
+   The translation's other checks, a duplicate `model` or `stream` and the characters `model` may hold, do not apply: the model is in the URL the client chose.
+   A body with a `Content-Encoding` other than `identity` (gzip, say) is not JSON the rewriter can read, so it is forwarded unchanged, `strict` included, for Vertex to judge.
 
 2. **Standard-to-Vertex translation** (`/v1/messages`): Requests in standard Anthropic API format.
    The proxy translates the body to Vertex `rawPredict` format as it arrives, and holds the result until it has been sent for good (see translation details below, and "A body the proxy must hold").
@@ -1264,7 +1270,8 @@ The proxy routes requests to `api.anthropic.com` through one of three paths base
 - Body: recursively strips `scope` from nested `cache_control` objects (beta feature unsupported by Vertex); a `cache_control` object's other members are copied as they are
 - Body: strips `strict` from each tool definition, an object in the top-level `tools` array (#1556).
   Vertex treats a strict tool schema as the `structured_outputs` partner-model feature, which an organization policy (`constraints/vertexai.allowedPartnerModelFeatures`) can disallow, and then refuses every request with tools.
-  A `strict` anywhere else, such as a property in an `input_schema`, is the client's data and is kept; the dropped member is logged once as `tools[].strict`
+  A `strict` anywhere else, such as a property in an `input_schema`, is the client's data and is kept; the dropped member is logged once as `tools[].strict`.
+  The passthrough path (1) applies the same rule to bodies already in Vertex's format (#1568)
 - Header: removes `anthropic-beta` (Vertex rejects beta feature flags; features are enabled via `anthropic_version`)
 - Host: rewrites to the Vertex endpoint hostname for the configured region
 
@@ -1279,7 +1286,7 @@ It parts from the tree translation where #1315 decided:
 - a name the rewriter compares (every key outside a dropped field and outside a copied `cache_control` value) must be well-formed: valid UTF-8 without overlong forms, no lone surrogate escapes; and `model`, which goes into the URL, must also hold no control or invisible (format) character, whitespace, `/`, `\`, `?`, `#` or `%`, and fit the URL ceiling, or the request is refused with a 400, since a lenient decoder upstream could read a name or a route the proxy did not;
 - values it keeps are forwarded as sent: malformed Unicode stays as it is (the tree re-encoded `\ud800` as `?`), and so does number spelling (`1.0e2`, not `100`);
 - whitespace before a body that is not an object is not forwarded.
-Each is a named case in `VertexBodyRewriterTest`, which also checks the rewriter against the tree translation (`LegacyVertexTranslation`, kept as the test's oracle) for a corpus and generated bodies, split into chunks every way.
+Each is a named case in `VertexBodyRewriterTest`, which also checks the rewriter against the tree translation (`LegacyVertexTranslation`, kept as the test's oracle) for a corpus and generated bodies, split into chunks every way, in both its modes.
 Everything else is dropped.
 This is more robust than blocklisting individual beta fields, since new Claude Code beta features are automatically stripped without proxy changes.
 

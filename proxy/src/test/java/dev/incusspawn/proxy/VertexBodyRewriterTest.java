@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -29,6 +30,7 @@ class VertexBodyRewriterTest {
     static final String PATH = "/v1/messages";
     static final String PROJECT = "proj";
     static final String REGION = "us-east5";
+    static final String VERTEX_PATH = "/v1/projects/proj/locations/us-east5/publishers/anthropic/models/m@20251001:rawPredict";
 
     /** What the rewriter made of a body: its path and output, or the refusal it threw. */
     record Outcome(String path, byte[] body, Exception refusal) {
@@ -38,8 +40,15 @@ class VertexBodyRewriterTest {
     }
 
     static Outcome rewrite(byte[] body, int... splits) {
+        return rewrite(false, body, splits);
+    }
+
+    /** {@code vertexFormat}: the body is already in Vertex's format, sent to {@link #VERTEX_PATH}. */
+    static Outcome rewrite(boolean vertexFormat, byte[] body, int... splits) {
         var out = new ByteArrayOutputStream();
-        var rewriter = new VertexBodyRewriter(PATH, PROJECT, REGION, b -> out.writeBytes(b.getBytes()));
+        Consumer<Buffer> output = b -> out.writeBytes(b.getBytes());
+        var rewriter = vertexFormat ? VertexBodyRewriter.vertexFormat(VERTEX_PATH, output)
+                : new VertexBodyRewriter(PATH, PROJECT, REGION, output);
         try {
             int from = 0;
             for (var split : splits) {
@@ -55,8 +64,13 @@ class VertexBodyRewriterTest {
     }
 
     static Outcome legacy(byte[] body) {
+        return legacy(false, body);
+    }
+
+    static Outcome legacy(boolean vertexFormat, byte[] body) {
         try {
-            var t = LegacyVertexTranslation.translate(PATH, body, PROJECT, REGION);
+            var t = vertexFormat ? LegacyVertexTranslation.vertexFormat(VERTEX_PATH, body)
+                    : LegacyVertexTranslation.translate(PATH, body, PROJECT, REGION);
             return new Outcome(t.path(), t.body(), null);
         } catch (RuntimeException e) {
             return Outcome.of(e);
@@ -101,7 +115,11 @@ class VertexBodyRewriterTest {
 
     /** The rewriter agrees with the tree translation on {@code body}, whole and split anywhere. */
     static void assertParity(String label, byte[] body) {
-        var expected = legacy(body);
+        assertParity(false, label, body);
+    }
+
+    static void assertParity(boolean vertexFormat, String label, byte[] body) {
+        var expected = legacy(vertexFormat, body);
         var splits = new ArrayList<int[]>();
         splits.add(new int[0]);
         for (int i = 1; i < body.length && body.length <= 400; i++) splits.add(new int[] {i});
@@ -115,7 +133,7 @@ class VertexBodyRewriterTest {
             splits.add(each);
         }
         for (var split : splits) {
-            var got = rewrite(body, split);
+            var got = rewrite(vertexFormat, body, split);
             var where = label + " split at " + java.util.Arrays.toString(split).substring(0, Math.min(40, java.util.Arrays.toString(split).length()));
             if (expected.refusal() != null) {
                 assertInstanceOf(VertexBodyRewriter.InvalidBody.class, got.refusal(),
@@ -124,7 +142,7 @@ class VertexBodyRewriterTest {
             }
             assertNull(got.refusal(), () -> where + ": refused " + got.refusal());
             assertEquals(expected.path(), got.path(), where);
-            if (expected.path().equals(PATH)) {
+            if (!withoutLeadingWhitespace(expected.body()).startsWith("{")) {
                 // Not an object: forwarded as it was, but for whitespace before it
                 assertEquals(withoutLeadingWhitespace(expected.body()), withoutLeadingWhitespace(got.body()), where);
             } else {
@@ -248,6 +266,62 @@ class VertexBodyRewriterTest {
             var body = new Generator(random).body().getBytes(StandardCharsets.UTF_8);
             assertParity("generated #" + i + " " + new String(body, StandardCharsets.UTF_8), body);
         }
+    }
+
+    /** A body already in Vertex's format loses only its tools' {@code strict}, as the tree does it (#1568). */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("corpus")
+    void vertexFormatMatchesTheTree(String label, byte[] body) {
+        assertParity(true, label, body);
+    }
+
+    @Test
+    void vertexFormatMatchesTheTreeOnGeneratedBodies() {
+        var random = new Random(1568);
+        for (int i = 0; i < 400; i++) {
+            var body = new Generator(random).body().getBytes(StandardCharsets.UTF_8);
+            assertParity(true, "generated #" + i + " " + new String(body, StandardCharsets.UTF_8), body);
+        }
+    }
+
+    /**
+     * A body already in Vertex's format keeps its path and every member but a tool's {@code strict}:
+     * its {@code model}, {@code anthropic_version}, fields the translation drops, a {@code cache_control}'s
+     * {@code scope}, and duplicates, which only the translation reads.
+     */
+    @Test
+    void vertexFormatDropsOnlyToolStrict() throws Exception {
+        var longName = "n".repeat(VertexBodyRewriter.MAX_NAME_CHARS * 7);
+        var outcome = rewrite(true, ("{\"anthropic_version\":\"vertex-2023-10-16\",\"model\":\"a\",\"model\":\"b\",\"stream\":true,"
+                + "\"stream\":false,\"context_management\":{},\"" + longName + "\":1,"
+                + "\"tools\":[{\"name\":\"a\",\"strict\":true,\"str\\u0069ct\":false,\"input_schema\":{\"strict\":1},"
+                + "\"cache_control\":{\"type\":\"e\",\"scope\":\"g\"}}],"
+                + "\"messages\":[{\"content\":[{\"cache_control\":{\"scope\":\"g\"}}]}]}").getBytes(StandardCharsets.UTF_8));
+        assertEquals(VERTEX_PATH, outcome.path());
+        assertEquals("{\"anthropic_version\":\"vertex-2023-10-16\",\"model\":\"a\",\"model\":\"b\",\"stream\":true,"
+                + "\"stream\":false,\"context_management\":{},\"" + longName + "\":1,"
+                + "\"tools\":[{\"name\":\"a\",\"input_schema\":{\"strict\":1},"
+                + "\"cache_control\":{\"type\":\"e\",\"scope\":\"g\"}}],"
+                + "\"messages\":[{\"content\":[{\"cache_control\":{\"scope\":\"g\"}}]}]}", body(outcome));
+
+        var out = new ByteArrayOutputStream();
+        var rewriter = VertexBodyRewriter.vertexFormat(VERTEX_PATH, b -> out.writeBytes(b.getBytes()));
+        rewriter.accept(Buffer.buffer("{\"tools\":[{\"strict\":true}],\"context_management\":{}}"));
+        assertEquals(new VertexBodyRewriter.Result(VERTEX_PATH, List.of(VertexBodyRewriter.TOOL_STRICT)), rewriter.end());
+    }
+
+    /** A body already in Vertex's format has only the names it compares checked: the top object's and a tool's. */
+    @Test
+    void vertexFormatChecksOnlyTheNamesItCompares() {
+        for (var body : new byte[][] {
+                bytes("{\"a", 0xFF, "\":1}"),
+                bytes("{\"tools\":[{\"str", 0xFF, "ict\":true}]}"),
+                bytes("{\"tools\":[{\"\\ud800\":true}]}")}) {
+            assertInstanceOf(VertexBodyRewriter.RefusedBody.class, rewrite(true, body).refusal(),
+                    new String(body, StandardCharsets.ISO_8859_1));
+        }
+        var unread = bytes("{\"messages\":[{\"a", 0xFF, "\":1,\"\\ud800\":2}],\"tools\":[{\"input_schema\":{\"b", 0xFF, "\":3}}]}");
+        assertArrayEquals(unread, rewrite(true, unread).body());
     }
 
     /** Bodies broken a byte at a time: refused exactly when the tree translation refused them. */

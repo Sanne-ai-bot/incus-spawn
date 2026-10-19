@@ -414,6 +414,61 @@ class ApiRequestBodyTest {
         assertEquals(body, new String(got.body(), StandardCharsets.UTF_8));
     }
 
+    /**
+     * A body already in Vertex's format loses a tool's {@code strict}, as a translated one does
+     * (#1568): an organization policy may disallow it, and Vertex then refuses every request with
+     * tools. Everything else, the client's {@code anthropic_version} and {@code model} included, is
+     * forwarded as sent. A {@code Content-Encoding} that names no coding but identity, in any
+     * spelling, or none at all ({@code encodings} empty), does not spare the body the rewrite.
+     */
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"", "identity", " IDENTITY ", "identity, identity", "identity|"})
+    void vertexFormatBodiesLoseToolStrict(String encodings) throws Exception {
+        var path = "/v1/projects/proj/locations/us-east5/publishers/anthropic/models/claude-opus-5-5:streamRawPredict";
+        var body = "{\"anthropic_version\":\"vertex-2023-10-16\",\"model\":\"m\",\"context_management\":{},"
+                + "\"tools\":[{\"name\":\"read\",\"strict\":true,\"input_schema\":{\"properties\":{\"strict\":{}}},"
+                + "\"cache_control\":{\"type\":\"ephemeral\",\"scope\":\"global\"}}],\"messages\":[],\"stream\":true}";
+        var reply = exchange(vertexProxy, "api.anthropic.com",
+                head("POST", "api.anthropic.com", path, encodedHeaders(encodings, body.length())) + body);
+        assertTrue(reply.startsWith("HTTP/1.1 200"), reply);
+        var got = received.get(VERTEX_HOST).get(5, TimeUnit.SECONDS);
+        assertEquals(path, got.path());
+        assertEquals(body.replace("\"strict\":true,", ""), new String(got.body(), StandardCharsets.UTF_8));
+        assertEquals(String.valueOf(got.body().length), got.header("Content-Length"));
+    }
+
+    /**
+     * A Vertex-format body with a {@code Content-Encoding} is not JSON the rewriter can read: it is
+     * forwarded unchanged, encoding and all, as before #1568, not refused. An identity among the
+     * codings hides none of the others.
+     */
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"gzip", "identity, gzip", "identity|gzip", "|gzip"})
+    void encodedVertexFormatBodiesAreForwardedUnchanged(String encodings) throws Exception {
+        var path = "/v1/projects/proj/locations/us-east5/publishers/anthropic/models/claude-opus-5-5@20251001:rawPredict";
+        var body = RelayRequestBodyTest.gzip("{\"tools\":[{\"name\":\"a\",\"strict\":true}],\"messages\":[]}");
+        var request = Buffer.buffer(head("POST", "api.anthropic.com", path, encodedHeaders(encodings, body.length)))
+                .appendBytes(body);
+        var reply = exchange(vertexProxy, "api.anthropic.com", request);
+        assertTrue(reply.startsWith("HTTP/1.1 200"), reply);
+        var got = received.get(VERTEX_HOST).get(5, TimeUnit.SECONDS);
+        assertEquals(path.replace("@20251001", ""), got.path());
+        assertArrayEquals(body, got.body());
+    }
+
+    /**
+     * A {@code Content-Encoding} header per {@code |}-separated value of {@code encodings}, an empty
+     * value included (none at all if {@code encodings} is empty), and the length.
+     */
+    private static String[] encodedHeaders(String encodings, int length) {
+        var headers = new java.util.ArrayList<String>();
+        if (!encodings.isEmpty()) {
+            for (var value : encodings.split("\\|", -1)) headers.add("Content-Encoding: " + value);
+        }
+        headers.add("Content-Length: " + length);
+        return headers.toArray(String[]::new);
+    }
+
     // --- Vertex model calls: held in a bounded spool until their exchange ends ---
 
     /** A body of {@code size} bytes or so, as Claude Code sends: one large message, model and stream last. */
@@ -746,6 +801,10 @@ class ApiRequestBodyTest {
 
     /** Sends the request in one write and returns everything the proxy answers until it closes. */
     static String exchange(MitmProxy p, String host, String request) throws Exception {
+        return exchange(p, host, Buffer.buffer(request));
+    }
+
+    static String exchange(MitmProxy p, String host, Buffer request) throws Exception {
         received.clear();
         var socket = connect(p, host);
         var answer = RelayRequestBodyTest.collectUntilClose(socket);
