@@ -191,6 +191,29 @@ class TemplateValidatorTest {
     }
 
     @Test
+    void unknownHostResourceKeysAreWarnings(@TempDir Path dir) throws Exception {
+        // #1543: so `isx templates edit` does not call the file valid while a key is ignored.
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                parent: tpl-dev
+                host-resources:
+                  - source: ~/.claude/CLAUDE-isx.md
+                    target: ~/.claude/CLAUDE.md
+                  - source: ~/.gitconfig
+                    confined-to: /
+                """);
+        var result = TemplateValidator.validate(file, knownTemplates());
+        assertFalse(result.hasErrors(), result.errors().toString());
+        assertEquals(List.of(
+                "host-resource '~/.claude/CLAUDE-isx.md': unknown key 'target', ignored"
+                        + " (a host resource takes source, path and mode); use 'path:' to set where it goes"
+                        + " in the instance",
+                "host-resource '~/.gitconfig': 'confined-to' is set by isx, a file's value is ignored (#765)"),
+                result.warnings());
+    }
+
+    @Test
     void projectLocalTemplateReportsEachRefusalOnce(@TempDir Path dir) throws Exception {
         // collectEffective re-checks the targets validateHostResources already reported: neither
         // a forbidden mount nor a path Path.of refuses may escape as an exception, or twice. A

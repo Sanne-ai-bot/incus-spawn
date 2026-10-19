@@ -614,7 +614,7 @@ class ImageDefTest {
                         "claude.yaml: host-resource '~/.gitconfig': unknown key 'Mount_Point" + takes + usePath,
                         // path: is set, so it is not what the author is missing
                         "claude.yaml: host-resource '~/.m2': unknown key 'dest" + takes,
-                        "claude.yaml: host-resource '~/.m2': unknown key 'confined-to" + takes,
+                        "claude.yaml: host-resource '~/.m2': 'confined-to' is set by isx, a file's value is ignored (#765)",
                         // without a source, 'target:' may as well have meant source: as path:
                         "claude.yaml: a host-resource without a source: unknown key 'target" + takes),
                 warnings);

@@ -79,6 +79,7 @@ public class TemplateValidator {
         var imagesDir = projectImagesDir.toAbsolutePath().normalize();
         var projectLocal = imagesDir.equals(file.toAbsolutePath().normalize().getParent());
         for (var hr : def.getHostResources()) {
+            warnings.addAll(hr.unknownKeyWarnings());
             if (hr.getMode() != null && !VALID_HR_MODES.contains(hr.getMode())) {
                 warnings.add("host-resource mode '" + hr.getMode()
                         + "' is not valid — must be one of: readonly, overlay, copy");

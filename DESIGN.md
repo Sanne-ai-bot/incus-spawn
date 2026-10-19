@@ -2153,8 +2153,9 @@ This is the right mode for caches (Maven, OCI) where tools expect to write but y
 Supports local paths and URLs.
 No runtime dependency on the host.
 
-An entry takes `source`, `path` and `mode`; any other key, `confined-to` included (isx sets it, #765), is ignored with a warning when the template's file is loaded (#1543).
-Every command that reads definitions loads them, `isx templates edit` included, so that is the one place the check lives.
+An entry takes `source`, `path` and `mode`; any other key is ignored with a warning when the template's file is loaded (#1543), and so is a `confined-to` the file sets, which isx sets itself (#765).
+`isx templates edit` also reports them in its check of the edited file (`TemplateValidator`), so a file with one is never called valid.
+The edit flow loads every definition again after the edit, so it leaves that load's warnings about the edited file to the report, and a key added in the edit is named once.
 It is a warning and not a refusal, so a template that built before still builds.
 It is a warning at all because an ignored key changes the build: a misnamed `path:` (`target:`, `dest:`) puts the resource at the source's path, and when `path` is unset the warning suggests it.
 
