@@ -1800,6 +1800,9 @@ public class MitmProxy {
                 refuseTranslation(path, e, refuse);
                 return;
             }
+            // A request already in Vertex's format keeps its query; a translation's URI is its own (#1576)
+            var query = clientReq.query();
+            if (query != null && isVertexFormat(path)) uri += "?" + query;
             var requestOptions = new RequestOptions()
                     .setMethod(clientReq.method())
                     .setPort(443)

@@ -79,7 +79,7 @@ class ApiRequestBodyTest {
     /** Completed once a {@code /stream/} upload has brought upstream its first 10 bytes. */
     static volatile CompletableFuture<Buffer> streamStarted = new CompletableFuture<>();
 
-    record Received(String path, Map<String, String> head, byte[] body) {
+    record Received(String uri, Map<String, String> head, byte[] body) {
         String header(String name) {
             return head.get(name.toLowerCase());
         }
@@ -192,7 +192,7 @@ class ApiRequestBodyTest {
         });
         req.endHandler(v -> {
             received.computeIfAbsent(host, h -> new CompletableFuture<>())
-                    .complete(new Received(req.path(), head, body.getBytes()));
+                    .complete(new Received(req.uri(), head, body.getBytes()));
             req.response().putHeader("Connection", "close").putHeader("Content-Type", "application/json")
                     .end("{\"got\":" + body.length() + "}");
         });
@@ -380,17 +380,17 @@ class ApiRequestBodyTest {
 
     // --- Vertex model calls: translated, so still read whole before they are sent ---
 
-    /** A standard Messages request is translated into Vertex's rawPredict, with the GCP token. */
+    /** A standard Messages request is translated into Vertex's rawPredict, with the GCP token, and none of its query. */
     @Test
     void vertexMessagesAreTranslated() throws Exception {
         var body = "{\"model\":\"claude-sonnet-4-6-20250929\",\"max_tokens\":5,\"messages\":[],"
                 + "\"context_management\":{},\"stream\":true}";
-        var reply = exchange(vertexProxy, "api.anthropic.com", head("POST", "api.anthropic.com", "/v1/messages",
+        var reply = exchange(vertexProxy, "api.anthropic.com", head("POST", "api.anthropic.com", "/v1/messages?beta=true",
                 "anthropic-beta: claude-code-20250219", "Content-Length: " + body.length()) + body);
         assertTrue(reply.startsWith("HTTP/1.1 200"), reply);
         var got = received.get(VERTEX_HOST).get(5, TimeUnit.SECONDS);
         assertEquals("/v1/projects/proj/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-6:streamRawPredict",
-                got.path());
+                got.uri());
         assertTrue(got.header("Authorization").startsWith("Bearer ya29."), got.header("Authorization"));
         assertNull(got.header("x-api-key"));
         assertNull(got.header("anthropic-beta"));
@@ -409,7 +409,7 @@ class ApiRequestBodyTest {
                 "Content-Length: " + body.length()) + body);
         assertTrue(reply.startsWith("HTTP/1.1 200"), reply);
         var got = received.get(VERTEX_HOST).get(5, TimeUnit.SECONDS);
-        assertEquals(path.replace("@20251001", ""), got.path());
+        assertEquals(path.replace("@20251001", ""), got.uri());
         assertEquals("Bearer ya29.fresh", got.header("Authorization"));
         assertEquals(body, new String(got.body(), StandardCharsets.UTF_8));
     }
@@ -432,7 +432,7 @@ class ApiRequestBodyTest {
                 head("POST", "api.anthropic.com", path, encodedHeaders(encodings, body.length())) + body);
         assertTrue(reply.startsWith("HTTP/1.1 200"), reply);
         var got = received.get(VERTEX_HOST).get(5, TimeUnit.SECONDS);
-        assertEquals(path, got.path());
+        assertEquals(path, got.uri());
         assertEquals(body.replace("\"strict\":true,", ""), new String(got.body(), StandardCharsets.UTF_8));
         assertEquals(String.valueOf(got.body().length), got.header("Content-Length"));
     }
@@ -452,7 +452,28 @@ class ApiRequestBodyTest {
         var reply = exchange(vertexProxy, "api.anthropic.com", request);
         assertTrue(reply.startsWith("HTTP/1.1 200"), reply);
         var got = received.get(VERTEX_HOST).get(5, TimeUnit.SECONDS);
-        assertEquals(path.replace("@20251001", ""), got.path());
+        assertEquals(path.replace("@20251001", ""), got.uri());
+        assertArrayEquals(body, got.body());
+    }
+
+    /**
+     * A request already in Vertex's format reaches Vertex with its query string, rewritten body or
+     * encoded, and again on a 401: only the path's {@code @date} suffix goes (#1576).
+     */
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"", "gzip"})
+    void vertexFormatRequestsKeepTheirQuery(String encodings) throws Exception {
+        var path = "/v1/projects/proj/locations/us-east5/publishers/anthropic/models/refuse-once-query-"
+                + encodings + "@20251001:streamRawPredict";
+        var json = "{\"anthropic_version\":\"vertex-2023-10-16\",\"tools\":[{\"name\":\"a\"}],\"messages\":[]}";
+        var body = encodings.isEmpty() ? json.getBytes(StandardCharsets.UTF_8) : RelayRequestBodyTest.gzip(json);
+        var request = Buffer.buffer(head("POST", "api.anthropic.com", path + "?alt=sse",
+                encodedHeaders(encodings, body.length))).appendBytes(body);
+        var reply = exchange(vertexProxy, "api.anthropic.com", request);
+        assertTrue(reply.startsWith("HTTP/1.1 200"), reply);
+        var got = received.get(VERTEX_HOST).get(5, TimeUnit.SECONDS);
+        assertTrue(refusedOnce.contains(path.replace("@20251001", "")), "the first attempt was refused");
+        assertEquals(path.replace("@20251001", "") + "?alt=sse", got.uri());
         assertArrayEquals(body, got.body());
     }
 
@@ -513,7 +534,7 @@ class ApiRequestBodyTest {
                     "Content-Length: " + body.length()) + body);
             assertTrue(reply.startsWith("HTTP/1.1 200"), reply.substring(0, Math.min(200, reply.length())));
             var got = received.get(VERTEX_HOST).get(5, TimeUnit.SECONDS);
-            assertEquals("/v1/projects/proj/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-6:streamRawPredict", got.path());
+            assertEquals("/v1/projects/proj/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-6:streamRawPredict", got.uri());
             assertArrayEquals(translated(body), got.body());
             assertFalse(new String(got.body(), StandardCharsets.UTF_8).contains("scope"));
             assertEquals(String.valueOf(got.body().length), got.header("Content-Length"));
