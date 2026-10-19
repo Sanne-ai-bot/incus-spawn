@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -14,11 +15,14 @@ import static org.junit.jupiter.api.Assertions.*;
 class UpdateBaseCommandTest {
 
     private static String pin(Path home, Checksums sums) {
+        return pin(home, ImageDef.loadBuiltinByName("tpl-minimal"), sums);
+    }
+
+    private static String pin(Path home, ImageDef def, Checksums sums) {
         var out = new String[1];
         InitCommandTest.withHome(home, () -> {
             try {
-                var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
-                new UpdateBaseCommand().writeUserOverride(builtin, "fedora-44-20261020", sums);
+                new UpdateBaseCommand().writeUserOverride(def, "fedora-44-20261020", sums);
                 out[0] = Files.readString(ImageDef.userImagesDir().resolve("minimal.yaml"));
             } catch (java.io.IOException e) {
                 throw new AssertionError(e);
@@ -36,9 +40,23 @@ class UpdateBaseCommandTest {
 
     /** The pin replaces the built-in definition, so it must carry its masks too (#1561). */
     @Test
-    void aPinKeepsTheBuiltinMaskedServices(@TempDir Path home) {
+    void aPinKeepsTheBuiltinMaskedServices(@TempDir Path home) throws Exception {
         var yaml = pin(home, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
-        assertTrue(yaml.contains("mask_services: [tmp.mount]\n"), yaml);
+        assertEquals(List.of("tmp.mount"), ImageDef.parseYaml(yaml).getMaskServices(), yaml);
+    }
+
+    /** Quoted: a dnf glob such as {@code *-langpack-*} unquoted is a YAML alias, and the pin would not load. */
+    @Test
+    void aPinKeepsWhatItsDefinitionRemovesAndMasksGlobsIncluded(@TempDir Path home) throws Exception {
+        var removed = List.of("*-langpack-*", "nano", "a \"quoted\" name");
+        var masked = List.of("tmp.mount", "getty@*.service", "&anchor");
+        var def = ImageDef.loadBuiltinByName("tpl-minimal");
+        def.setRemovePackages(removed);
+        def.setMaskServices(masked);
+        var yaml = pin(home, def, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of()));
+        var pinned = ImageDef.parseYaml(yaml);
+        assertEquals(removed, pinned.getRemovePackages(), yaml);
+        assertEquals(masked, pinned.getMaskServices(), yaml);
     }
 
     /** One arch's VM checksum is not a pin: the other arch would download the image unverified. */

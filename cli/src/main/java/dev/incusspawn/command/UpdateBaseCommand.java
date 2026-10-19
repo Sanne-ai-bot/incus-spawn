@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @CommandDefinition(
         name = "update-base",
@@ -217,9 +218,12 @@ public class UpdateBaseCommand extends BaseCommand {
         var yaml = new StringBuilder();
         yaml.append("name: tpl-minimal\n");
         yaml.append("description: ").append(current.getDescription()).append('\n');
-        // The pin replaces the built-in definition, not only its image: keep the units it masks.
+        // The pin replaces the built-in definition, not only its image: keep what it removes and masks.
+        if (!current.getRemovePackages().isEmpty()) {
+            yaml.append("remove_packages: ").append(quotedList(current.getRemovePackages())).append('\n');
+        }
         if (!current.getMaskServices().isEmpty()) {
-            yaml.append("mask_services: [").append(String.join(", ", current.getMaskServices())).append("]\n");
+            yaml.append("mask_services: ").append(quotedList(current.getMaskServices())).append('\n');
         }
         yaml.append("image: ").append(current.getImage()).append('\n');
         yaml.append("image_url: ").append(current.getImageUrl()).append('\n');
@@ -241,6 +245,16 @@ public class UpdateBaseCommand extends BaseCommand {
 
         Files.writeString(overridePath, yaml.toString());
         BuildOutput.note("Wrote " + overridePath);
+    }
+
+    /** Each item {@link #quoted}: a dnf glob such as {@code *-langpack-*} bare is a YAML alias. */
+    private static String quotedList(List<String> items) {
+        return items.stream().map(UpdateBaseCommand::quoted).collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    /** A YAML double-quoted scalar, so an item reads back as written. */
+    private static String quoted(String text) {
+        return '"' + text.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
     }
 
     private static void appendShaBlock(StringBuilder yaml, String key, Map<String, String> shas) {

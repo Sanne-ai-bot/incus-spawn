@@ -23,7 +23,7 @@ public final class TemplateChanges {
     private TemplateChanges() {}
 
     /**
-     * The hash inputs people edit, as built versus now: packages, masked units, tools and their
+     * The hash inputs people edit, as built versus now: packages, masked units, removed packages, tools and their
      * parameters, and repos, one line each ({@code + package htop}, {@code − tool claude},
      * {@code ~ tool jdk (version: 21)}). Empty when none of them differ, which leaves the settings
      * and tool definitions that {@link ImageDef#contentFingerprint} also covers.
@@ -34,6 +34,8 @@ public final class TemplateChanges {
                 p -> p, p -> p, (x, y) -> null, k -> "");
         addChanges(changes, "masked unit", list(built.getMaskServices()), list(now.getMaskServices()),
                 m -> m, m -> m, (x, y) -> null, k -> "");
+        addChanges(changes, "removed package", list(built.getRemovePackages()), list(now.getRemovePackages()),
+                p -> p, p -> p, (x, y) -> null, k -> "");
         addChanges(changes, "tool", list(built.getTools()), list(now.getTools()), ToolDef.ToolRef::getName,
                 TemplateChanges::toolLabel, (x, y) -> x.getParams().equals(y.getParams()) ? null
                         : toolLabel(x) + " → " + toolLabel(y),
