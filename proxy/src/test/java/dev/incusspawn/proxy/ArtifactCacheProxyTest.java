@@ -1649,11 +1649,16 @@ class ArtifactCacheProxyTest {
         var response = getAsync(CENTRAL, JAR + sidecar);
         await("the sidecar fetch", () -> hitsOn(CENTRAL, JAR + sidecar) == 1);
         whileHeld.run();
+        commitV2(artifact, Instant.now());
+        return response;
+    }
+
+    /** Commit "v2" as the cached copy, as a download looked up at {@code lookedUp} would. */
+    static void commitV2(Path artifact, Instant lookedUp) throws Exception {
         var download = Files.createTempFile(artifact.getParent(), "dl-", ".tmp");
         Files.writeString(download, "v2");
         assertEquals(VerifiedArtifactStore.Commit.COMMITTED, VerifiedArtifactStore.verifyAndCommit(download, artifact,
-                Sidecar.SHA1, hex("SHA-1", V2).getBytes(StandardCharsets.US_ASCII), true, Instant.now()));
-        return response;
+                Sidecar.SHA1, hex("SHA-1", V2).getBytes(StandardCharsets.US_ASCII), true, lookedUp));
     }
 
     static final byte[] V2 = "v2".getBytes(StandardCharsets.UTF_8);
@@ -1779,6 +1784,60 @@ class ArtifactCacheProxyTest {
         get(CENTRAL, JAR + ".asc");
         assertTrue(Files.exists(cached(CENTRAL, JAR)));
         assertEquals("sig-2", Files.readString(Sidecar.ASC.storedFile(cached(CENTRAL, JAR))));
+    }
+
+    /**
+     * A signature request on Central whose answer disagrees with the stored "sig-1", so the checksum
+     * header settles it, while a newer copy "v2" with its own "sig-2" is committed during that
+     * header's HEAD (#1555). The commit's lookup comes after the sidecar's, but before the HEAD's,
+     * so the header matches the new copy; the sidecar answer, which described the old one, must not
+     * change what is stored beside it. Returns the stored signature once the client has its answer.
+     */
+    static Path signatureSettledAcrossANewerCopy(Reply ascAnswer) throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        var asc = CENTRAL + " " + JAR + ".asc";
+        routes.put(asc, new Reply(200, "sig-1".getBytes(), null));
+        get(CENTRAL, JAR);
+        var artifact = cached(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR + ".asc");
+        var storedAsc = Sidecar.ASC.storedFile(artifact);
+        awaitFile(storedAsc, "sig-1");
+        VerifiedArtifactStore.expireConfirmation(artifact, Sidecar.SHA1);
+        if (ascAnswer == null) routes.remove(asc); else routes.put(asc, ascAnswer);
+        hits.clear();
+
+        // Held past the class's 1 s probe timeout, the HEAD would be retried and miss the race
+        proxy.upstream.probeReadIdleSeconds = 5;
+        nextGetDelayMs = 500;
+        headDelayMs = 2_000;
+        var response = getAsync(CENTRAL, JAR + ".asc");
+        await("the sidecar fetch", () -> hitsOn(CENTRAL, JAR + ".asc") == 1);
+        var committedLookup = Instant.now();
+        await("the header's HEAD", () -> headsOn(CENTRAL, JAR) == 1);
+        publishJar(CENTRAL, JAR, "v2");
+        commitV2(artifact, committedLookup);
+        Files.writeString(storedAsc, "sig-2");
+
+        var answer = response.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        assertEquals(1, headsOn(CENTRAL, JAR), "settled by the header");
+        assertEquals("v2", Files.readString(artifact));
+        assertEquals(200, answer.status());
+        assertEquals("sig-2", answer.text(), "the copy's own signature, not the answer about the old one");
+        return storedAsc;
+    }
+
+    @Test
+    void withdrawnSignatureOfAnOlderCopyKeepsTheNewerCopysOwn() throws Exception {
+        var storedAsc = signatureSettledAcrossANewerCopy(null);
+        assertTrue(Files.exists(storedAsc), "the 404 was about the old copy, not the one now cached");
+        assertEquals("sig-2", Files.readString(storedAsc));
+    }
+
+    @Test
+    void signatureOfAnOlderCopyIsNotStoredBesideANewerOne() throws Exception {
+        var storedAsc = signatureSettledAcrossANewerCopy(new Reply(200, "sig-0".getBytes(), null));
+        assertEquals("sig-2", Files.readString(storedAsc), "sig-0 was fetched before the copy it would describe");
     }
 
     @Test

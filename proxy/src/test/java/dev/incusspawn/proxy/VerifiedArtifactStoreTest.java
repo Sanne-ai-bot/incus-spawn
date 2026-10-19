@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.proxy.VerifiedArtifactStore.Commit;
+import dev.incusspawn.proxy.VerifiedArtifactStore.FileState;
 import dev.incusspawn.proxy.VerifiedArtifactStore.Outcome;
 
 import org.junit.jupiter.api.Test;
@@ -215,8 +216,9 @@ class VerifiedArtifactStoreTest {
     @Test
     void dropSidecarRemovesOnlyThatSidecar() throws Exception {
         var artifact = cached(JAR);
-        VerifiedArtifactStore.storeSidecar(artifact, Sidecar.ASC, "sig".getBytes());
-        VerifiedArtifactStore.dropSidecar(artifact, Sidecar.ASC);
+        var copy = FileState.of(artifact);
+        assertTrue(VerifiedArtifactStore.storeSidecar(artifact, copy, Sidecar.ASC, "sig".getBytes()));
+        assertTrue(VerifiedArtifactStore.dropSidecar(artifact, copy, Sidecar.ASC));
         assertFalse(Files.exists(Sidecar.ASC.storedFile(artifact)));
         assertTrue(Files.exists(Sidecar.SHA1.storedFile(artifact)));
         assertTrue(Files.exists(artifact));
@@ -225,11 +227,26 @@ class VerifiedArtifactStoreTest {
     @Test
     void storeSidecarNeedsItsArtifact() throws Exception {
         var artifact = cached(JAR);
-        VerifiedArtifactStore.storeSidecar(artifact, Sidecar.ASC, "sig".getBytes());
+        var copy = FileState.of(artifact);
+        assertTrue(VerifiedArtifactStore.storeSidecar(artifact, copy, Sidecar.ASC, "sig".getBytes()));
         assertArrayEquals("sig".getBytes(), Files.readAllBytes(Sidecar.ASC.storedFile(artifact)));
         Files.delete(artifact);
-        VerifiedArtifactStore.storeSidecar(artifact, Sidecar.MD5, "x".getBytes());
+        assertFalse(VerifiedArtifactStore.storeSidecar(artifact, copy, Sidecar.MD5, "x".getBytes()));
         assertFalse(Files.exists(Sidecar.MD5.storedFile(artifact)));
+    }
+
+    @Test
+    void sidecarAnsweredForAReplacedCopyChangesNothing() throws Exception {
+        var artifact = cached(JAR);
+        var answered = FileState.of(artifact);
+        assertEquals(Commit.COMMITTED, commit(OTHER, OTHER, Instant.now()));
+        Files.writeString(Sidecar.ASC.storedFile(artifact), "sig-2");
+
+        assertFalse(VerifiedArtifactStore.isCopy(artifact, answered));
+        assertFalse(VerifiedArtifactStore.storeSidecar(artifact, answered, Sidecar.ASC, "sig-0".getBytes()));
+        assertFalse(VerifiedArtifactStore.dropSidecar(artifact, answered, Sidecar.ASC));
+        assertEquals("sig-2", Files.readString(Sidecar.ASC.storedFile(artifact)));
+        assertFalse(VerifiedArtifactStore.isCopy(artifact, null), "nothing was cached when the answer was reconciled");
     }
 
     @Test
