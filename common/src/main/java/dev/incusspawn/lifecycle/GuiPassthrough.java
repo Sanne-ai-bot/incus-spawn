@@ -49,10 +49,16 @@ public final class GuiPassthrough {
     private static final String WAYLAND_DEVICE = "xdg-wayland";
 
     /**
-     * An audio socket GUI mounts when the host has it: its device name and its path in
-     * {@code XDG_RUNTIME_DIR}.
+     * An audio socket GUI mounts when the host has it: its device name, its path in
+     * {@code XDG_RUNTIME_DIR}, and the variable that points clients at it. Clients look for their
+     * socket in the guest's own {@code XDG_RUNTIME_DIR}, so without the variable they never find the
+     * one mounted under {@code /mnt/host-xdg}.
      */
-    record AudioSocket(String device, String relPath) {}
+    record AudioSocket(String device, String relPath, String envKey, String envPrefix) {
+        String envValue() {
+            return envPrefix + MOUNT_ROOT + "/" + relPath;
+        }
+    }
 
     /**
      * The audio sockets GUI mounts when the host has them. Only these and the Wayland display are
@@ -63,8 +69,8 @@ public final class GuiPassthrough {
      * nodes, rerouting), which playback does not need.
      */
     private static final List<AudioSocket> AUDIO_SOCKETS = List.of(
-            new AudioSocket("xdg-pipewire", "pipewire-0"),
-            new AudioSocket("xdg-pulse", "pulse/native"));
+            new AudioSocket("xdg-pipewire", "pipewire-0", "PIPEWIRE_REMOTE", ""),
+            new AudioSocket("xdg-pulse", "pulse/native", "PULSE_SERVER", "unix:"));
 
     /**
      * Every device {@link #configureGui} may set, so {@link #removeGui} and {@link #hasGui} clear
@@ -96,6 +102,7 @@ public final class GuiPassthrough {
         keys.add("WAYLAND_DISPLAY");
         keys.add("XDG_RUNTIME_DIR");
         keys.addAll(WAYLAND_ENV.keySet());
+        AUDIO_SOCKETS.forEach(socket -> keys.add(socket.envKey()));
         return List.copyOf(keys);
     }
 
@@ -176,7 +183,8 @@ public final class GuiPassthrough {
             mountSocket(update, mounted, xdgRuntimeDir, socket.device(), socket.relPath());
         }
         // Env via container config (seen by init and direct exec); profileScript repeats it for
-        // login shells, which su - resets.
+        // login shells, which su - resets. A key not set this time is unset: an audio variable a
+        // source carried over for a socket the host now lacks would point clients at nothing.
         var env = guiEnv(waylandDisplay, uid, audio);
         GUI_ENV_KEYS.forEach(key -> update.config("environment." + key, env.get(key)));
         GUI_DEVICES.stream().filter(device -> !mounted.contains(device)).forEach(update::removeDevice);
@@ -206,6 +214,7 @@ public final class GuiPassthrough {
         env.put("WAYLAND_DISPLAY", MOUNT_ROOT + "/" + waylandDisplay);
         env.put("XDG_RUNTIME_DIR", "/run/user/" + uid);
         env.putAll(WAYLAND_ENV);
+        audio.forEach(socket -> env.put(socket.envKey(), socket.envValue()));
         return env;
     }
 

@@ -107,4 +107,62 @@ class GuiPassthroughTest {
         // One read and one write (a PUT, since the carried-over device is removed).
         assertEquals(2, daemon.requests().size(), "GUI config should be a single read-modify-write");
     }
+
+    private static String profileScript(Path xdg) {
+        return GuiPassthrough.profileScript(GuiPassthrough.guiEnv("wayland-0", "1000",
+                GuiPassthrough.presentAudioSockets(xdg.toString())));
+    }
+
+    @Test
+    void detectsAudioEnvironmentKeys() {
+        assertTrue(GuiPassthrough.hasGui(instance("{}",
+                "{\"environment.PIPEWIRE_REMOTE\":\"/mnt/host-xdg/pipewire-0\"}")));
+        assertTrue(GuiPassthrough.hasGui(instance("{}",
+                "{\"environment.PULSE_SERVER\":\"unix:/mnt/host-xdg/pulse/native\"}")));
+    }
+
+    /**
+     * Audio clients look for their socket under the guest's own {@code XDG_RUNTIME_DIR}, not under
+     * {@code /mnt/host-xdg}: each mounted audio socket needs its client variable pointing at it, or
+     * playback never reaches the host.
+     */
+    @Test
+    void pointsAudioClientsAtMountedSockets(@TempDir Path xdg) throws IOException {
+        Files.createFile(xdg.resolve("wayland-0"));
+        Files.createFile(xdg.resolve("pipewire-0"));
+        Files.createDirectory(xdg.resolve("pulse"));
+        Files.createFile(xdg.resolve("pulse/native"));
+
+        var daemon = new FakeIncusDaemon().container("gui", Map.of());
+        daemon.client().updateFresh("gui", GuiPassthrough.guiUpdate(xdg.toString(), "wayland-0", "1000",
+                GuiPassthrough.presentAudioSockets(xdg.toString())));
+
+        var config = daemon.instance("gui").get("config");
+        assertEquals("/mnt/host-xdg/pipewire-0", config.path("environment.PIPEWIRE_REMOTE").asText());
+        assertEquals("unix:/mnt/host-xdg/pulse/native", config.path("environment.PULSE_SERVER").asText());
+
+        var profile = profileScript(xdg);
+        assertTrue(profile.contains("export PIPEWIRE_REMOTE=/mnt/host-xdg/pipewire-0\n"), profile);
+        assertTrue(profile.contains("export PULSE_SERVER=unix:/mnt/host-xdg/pulse/native\n"), profile);
+    }
+
+    /**
+     * A socket the host lacks is not mounted, so nothing may point at it: a client variable a source
+     * carried over would send audio to a path that is not there instead of the guest's own daemon.
+     */
+    @Test
+    void dropsAudioVariableForMissingSocket(@TempDir Path xdg) throws IOException {
+        Files.createFile(xdg.resolve("wayland-0"));
+        Files.createFile(xdg.resolve("pipewire-0"));
+
+        var daemon = new FakeIncusDaemon().container("gui",
+                Map.of("environment.PULSE_SERVER", "unix:/mnt/host-xdg/pulse/native"));
+        daemon.client().updateFresh("gui", GuiPassthrough.guiUpdate(xdg.toString(), "wayland-0", "1000",
+                GuiPassthrough.presentAudioSockets(xdg.toString())));
+
+        var config = daemon.instance("gui").get("config");
+        assertEquals("/mnt/host-xdg/pipewire-0", config.path("environment.PIPEWIRE_REMOTE").asText());
+        assertFalse(config.has("environment.PULSE_SERVER"), "a variable for an unmounted socket was kept");
+        assertFalse(profileScript(xdg).contains("PULSE_SERVER"));
+    }
 }

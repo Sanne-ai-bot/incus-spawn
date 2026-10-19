@@ -1047,7 +1047,7 @@ A branch gets it with `--gui`, or by default when its template sets `gui: true` 
   An affected instance lists an `xdg-runtime` device in `incus config device list <name>`.
   A start does not rewrite it (#1523: a release note, not a start-time repair).
   A branch of it, GUI or not, drops the device (`GUI_DEVICES`), so the remedy is to branch it again and destroy the old instance
-- Environment variables written to `/etc/profile.d/wayland.sh` (`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, toolkit backends)
+- Environment variables set on the instance and written to `/etc/profile.d/wayland.sh` (`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, toolkit backends, and `PIPEWIRE_REMOTE` / `PULSE_SERVER` for each audio socket mounted, since clients look for theirs in the guest's own `XDG_RUNTIME_DIR`)
 
 ### Network Modes
 
