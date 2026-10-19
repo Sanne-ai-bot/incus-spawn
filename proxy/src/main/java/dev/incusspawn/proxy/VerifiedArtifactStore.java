@@ -123,10 +123,8 @@ final class VerifiedArtifactStore {
         // artifact beside an intact checksum
         force(download);
         synchronized (lockFor(artifact)) {
-            var current = vouching == null ? null : attributesOrNull(vouching);
             // A vouching file left without its artifact vouches for nothing
-            if (current != null && current.lastModifiedTime().compareTo(confirmedAt) > 0
-                    && Files.isRegularFile(artifact)) {
+            if (vouching != null && confirmedAfter(vouching, lookedUp) && Files.isRegularFile(artifact)) {
                 Files.deleteIfExists(download);
                 return Commit.SUPERSEDED;
             }
@@ -302,11 +300,29 @@ final class VerifiedArtifactStore {
         }
     }
 
-    /** Record that upstream confirmed the artifact's stored checksum just now (npm's {@code .shasum}). */
-    static void renewConfirmation(Path artifact, Path storedChecksum) {
+    /**
+     * Record that upstream confirmed the artifact's stored checksum (npm's {@code .shasum}) on a
+     * lookup made at {@code lookedUp}. A confirmation already newer than that lookup stays.
+     */
+    static void renewConfirmation(Path artifact, Path storedChecksum, Instant lookedUp) throws IOException {
         synchronized (lockFor(artifact)) {
-            if (Files.isRegularFile(storedChecksum)) stampConfirmation(storedChecksum, Instant.now());
+            if (Files.isRegularFile(storedChecksum) && !confirmedAfter(storedChecksum, lookedUp)) {
+                stampConfirmation(storedChecksum, lookedUp);
+            }
         }
+    }
+
+    /**
+     * Whether upstream confirmed a stored checksum after a lookup made at {@code lookedUp}, so
+     * that lookup's answer is older than what the copy already knows. Call it under the lock.
+     * A confirmation in the future (the clock stepped back) is never newer: it must not outrank
+     * an answer that would evict, such as a takedown.
+     */
+    static boolean confirmedAfter(Path storedChecksum, Instant lookedUp) throws IOException {
+        var attrs = attributesOrNull(storedChecksum);
+        if (attrs == null) return false;
+        var confirmed = attrs.lastModifiedTime().toInstant();
+        return confirmed.isAfter(lookedUp) && !confirmed.isAfter(Instant.now());
     }
 
     // Best-effort (see the class invariants): a file owned by another user can be
