@@ -1053,6 +1053,30 @@ class ImageDefTest {
     }
 
     @Test
+    void fingerprintChangesWhenAMaskedServiceChanges() {
+        // A mask is baked into the image: changing one must mark the template stale (#1561)
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
+        b.setMaskServices(List.of("tmp.mount"));
+        var c = makeDef("images:fedora/44", null, List.of(), List.of());
+        c.setMaskServices(List.of("tmp.mount", "sshd.service"));
+        var d = makeDef("images:fedora/44", null, List.of(), List.of());
+        d.setMaskServices(List.of("sshd.service", "tmp.mount"));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+        assertNotEquals(b.contentFingerprint(Map.of()), c.contentFingerprint(Map.of()));
+        assertEquals(c.contentFingerprint(Map.of()), d.contentFingerprint(Map.of()), "order does not matter");
+        d.setMaskServices(List.of("sshd.service", "tmp.mount", "tmp.mount"));
+        assertEquals(c.contentFingerprint(Map.of()), d.contentFingerprint(Map.of()), "nor does a repeat");
+    }
+
+    @Test
+    void aTemplateMaskingNothingKeepsTheFingerprintItWasBuiltWith() {
+        // Pinned to the value before mask_services was fingerprinted, so no other template rebuilds
+        var def = makeDef("images:fedora/44", null, List.of("alpha"), List.of());
+        assertEquals("afe047add72648ed36bd18bd3aa817fa10828a41137c46724c865d3aac74c2a5", def.contentFingerprint(Map.of()));
+    }
+
+    @Test
     void fingerprintChangesWhenImageChanges() {
         var a = makeDef("images:fedora/44", null, List.of(), List.of());
         var b = makeDef("images:fedora/43", null, List.of(), List.of());
