@@ -58,6 +58,7 @@ v0.3.7 still writes the old `host-path` key, beside `host-paths` naming the same
 
 **The new-template skeleton is the format's reference** (#1386): `TemplatesCommand.SKELETON`, which `isx templates new` and the TUI write, shows every field `ImageDef` reads, each with a one-line note.
 A new `ImageDef` field, or a new key in one of its entries, gets a line there; `TemplateSkeletonTest` takes the field names the mappings bind (`@JqName`, else the field's own) and the env and skills converters' keys, and fails without it.
+It also goes in `ImageDefTest`'s `FINGERPRINTED`, with a value that must change `contentFingerprint()` (added only when set, so no existing template rebuilds: the test pins the fingerprint of a definition without it), or in `NOT_FINGERPRINTED` with the reason it never reaches the image; `everyDefinitionKeyIsFingerprintedOrDeliberatelyLeftOut` fails without either (#1571).
 The skeleton's examples, uncommented, must stay a valid template.
 
 **Unknown keys warn, wherever they are** (#1546): every class a template or tool definition maps to, entries included, extends `MappedDefinition`, so a key isx does not read is collected and `ImageDef.unknownKeyWarnings()` / `ToolDef.unknownKeyWarnings()` name it with its place (`repos[0].branch-name`) and the key it probably meant.

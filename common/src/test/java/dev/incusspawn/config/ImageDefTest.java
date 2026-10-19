@@ -1,13 +1,20 @@
 package dev.incusspawn.config;
 
 import dev.incusspawn.tool.ToolDef;
+import io.hyperfoil.tools.jjq.mapper.JqName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.lang.reflect.ParameterizedType;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -1090,6 +1097,129 @@ class ImageDefTest {
         // list must add nothing, or every template ever built would rebuild
         var def = makeDef("images:fedora/44", null, List.of("alpha"), List.of());
         assertEquals("afe047add72648ed36bd18bd3aa817fa10828a41137c46724c865d3aac74c2a5", def.contentFingerprint(Map.of()));
+    }
+
+    /**
+     * Keys of a definition that are deliberately not in {@link ImageDef#contentFingerprint}, each
+     * with why: changing one must not rebuild anything. Every other key is in {@link #FINGERPRINTED}.
+     */
+    private static final Map<String, String> NOT_FINGERPRINTED = Map.of(
+            "name", "the template's identity, not its content: a rename keeps the image",
+            "description", "shown in listings, never reaches the image",
+            "pinned", "protects the instance from removal, never reaches the image",
+            "default-action", "what the TUI does on Enter, never reaches the image",
+            "deprecated", "a warning at build time: marking a template deprecated must not rebuild it");
+
+    /** A minimal definition holding one entry of each nested part, so each nested key can vary. */
+    private static final Map<String, String> GUARD_BASE = Map.of(
+            "name", "name: tpl-guard\n",
+            "repos", "repos:\n  - url: https://example.com/a.git\n",
+            "host-resources", "host-resources:\n  - source: /tmp/a\n    path: /a\n",
+            "env", "env:\n  - name: A\n    value: one\n    strategy: append\n",
+            "package_repos", "package_repos:\n  - type: copr\n    name: x/y\n",
+            "tools", "tools: [podman]\n",
+            "accounts", "accounts:\n  github: acme-bot\n",
+            "image_sha256", "image_sha256:\n  x86_64: aaa\n",
+            "vm_image_sha256", "vm_image_sha256:\n  x86_64: aaa\n");
+
+    /**
+     * For each fingerprinted key ({@code part.key} for a nested one), its top-level section set to
+     * something other than in {@link #GUARD_BASE}, replacing that section there or adding it.
+     */
+    private static final Map<String, String> FINGERPRINTED = Map.ofEntries(
+            Map.entry("image", "image: images:fedora/43\n"),
+            Map.entry("image_url", "image_url: https://example.com/f.tar.xz\n"),
+            Map.entry("image_tag", "image_tag: t1\n"),
+            Map.entry("image_sha256", "image_sha256:\n  x86_64: bbb\n"),
+            Map.entry("vm_image_url", "vm_image_url: https://example.com/v.tar.xz\n"),
+            Map.entry("vm_image_sha256", "vm_image_sha256:\n  x86_64: bbb\n"),
+            Map.entry("parent", "parent: tpl-minimal\n"),
+            Map.entry("packages", "packages: [nano]\n"),
+            Map.entry("remove_packages", "remove_packages: [nano]\n"),
+            Map.entry("tools", "tools:\n  - podman:\n      compose: \"true\"\n"),
+            Map.entry("skills", "skills: [security-review]\n"),
+            Map.entry("skills.repo", "skills:\n  repo: myorg/catalog\n"),
+            Map.entry("skills.list", "skills:\n  list: [security-review]\n"),
+            Map.entry("mask_services", "mask_services: [tmp.mount]\n"),
+            Map.entry("gui", "gui: true\n"),
+            Map.entry("type", "type: vm\n"),
+            Map.entry("workdir", "workdir: ~/a\n"),
+            Map.entry("shell-command", "shell-command: zsh\n"),
+            Map.entry("agent_note", "agent_note: careful\n"),
+            Map.entry("accounts", "accounts:\n  github: other-bot\n"),
+            Map.entry("repos", "repos: []\n"),
+            Map.entry("repos.url", "repos:\n  - url: https://example.com/b.git\n"),
+            Map.entry("repos.host-source", "repos:\n  - url: https://example.com/a.git\n    host-source: ~/a\n"),
+            Map.entry("repos.path", "repos:\n  - url: https://example.com/a.git\n    path: ~/b\n"),
+            Map.entry("repos.branch", "repos:\n  - url: https://example.com/a.git\n    branch: dev\n"),
+            Map.entry("repos.depth", "repos:\n  - url: https://example.com/a.git\n    depth: 1\n"),
+            Map.entry("repos.prime", "repos:\n  - url: https://example.com/a.git\n    prime: make\n"),
+            Map.entry("host-resources", "host-resources: []\n"),
+            Map.entry("host-resources.source", "host-resources:\n  - source: /tmp/b\n    path: /a\n"),
+            Map.entry("host-resources.path", "host-resources:\n  - source: /tmp/a\n    path: /b\n"),
+            Map.entry("host-resources.mode",
+                    "host-resources:\n  - source: /tmp/a\n    path: /a\n    mode: overlay\n"),
+            Map.entry("env", "env: []\n"),
+            Map.entry("env.name", "env:\n  - name: B\n    value: one\n    strategy: append\n"),
+            Map.entry("env.value", "env:\n  - name: A\n    value: two\n    strategy: append\n"),
+            Map.entry("env.strategy", "env:\n  - name: A\n    value: one\n    strategy: prepend\n"),
+            Map.entry("env.separator",
+                    "env:\n  - name: A\n    value: one\n    strategy: append\n    separator: ':'\n"),
+            Map.entry("package_repos", "package_repos: []\n"),
+            Map.entry("package_repos.type", "package_repos:\n  - type: dnf\n    name: x/y\n"),
+            Map.entry("package_repos.name", "package_repos:\n  - type: copr\n    name: x/z\n"));
+
+    private static String guardYaml(Map<String, String> sections) {
+        return String.join("", new TreeMap<>(sections).values());
+    }
+
+    @Test
+    void everyDefinitionKeyIsFingerprintedOrDeliberatelyLeftOut() throws Exception {
+        // A key affecting the image but left out of the fingerprint never marks a template stale (#1571):
+        // a new key goes in FINGERPRINTED, with a variation, or in NOT_FINGERPRINTED, with a reason
+        var parts = Map.of(
+                "skills", new ImageDef.SkillsDef(null, List.of()),
+                "repos", new ImageDef.RepoEntry(),
+                "host-resources", new ImageDef.HostResource(),
+                "env", new EnvEntry(),
+                "package_repos", new ImageDef.PackageRepo());
+        assertEquals(nestedParts(), parts.keySet(), "the parts of a definition whose keys are checked too");
+        var keys = new TreeSet<String>(new ImageDef().knownKeys());
+        parts.forEach((part, entry) -> entry.knownKeys().forEach(k -> keys.add(part + "." + k)));
+        var unlisted = new TreeSet<>(keys);
+        unlisted.removeAll(FINGERPRINTED.keySet());
+        unlisted.removeAll(NOT_FINGERPRINTED.keySet());
+        assertEquals(Set.of(), unlisted, "fingerprint these, or say why not");
+        var stale = new TreeSet<>(FINGERPRINTED.keySet());
+        stale.addAll(NOT_FINGERPRINTED.keySet());
+        stale.removeAll(keys);
+        assertEquals(Set.of(), stale, "no longer keys of a definition");
+        assertTrue(NOT_FINGERPRINTED.keySet().stream().noneMatch(FINGERPRINTED::containsKey), "listed as both");
+
+        var base = ImageDef.parseYaml(guardYaml(GUARD_BASE)).contentFingerprint(Map.of());
+        // Pinned: a new key adds to the fingerprint only when set, or every template would rebuild
+        assertEquals("5692efd0f8eff120fba6885f5655aa9d6d066b3114aeecdc7f1fec2dd57c094f", base);
+        for (var e : new TreeMap<>(FINGERPRINTED).entrySet()) {
+            var sections = new HashMap<>(GUARD_BASE);
+            sections.put(e.getKey().split("\\.")[0], e.getValue());
+            var variant = ImageDef.parseYaml(guardYaml(sections));
+            assertEquals(List.of(), variant.unknownKeyWarnings(), e.getKey() + " must be set by a key isx reads");
+            assertNotEquals(base, variant.contentFingerprint(Map.of()), "changing " + e.getKey() + " must change the fingerprint");
+        }
+    }
+
+    /** The keys of a definition holding a part with keys of its own, itself or as a list's element. */
+    private static Set<String> nestedParts() {
+        var parts = new HashSet<String>();
+        for (var field : ImageDef.class.getDeclaredFields()) {
+            var type = field.getGenericType() instanceof ParameterizedType p
+                    ? p.getActualTypeArguments()[p.getActualTypeArguments().length - 1] : field.getType();
+            if (type instanceof Class<?> c && MappedDefinition.class.isAssignableFrom(c)) {
+                var name = field.getAnnotation(JqName.class);
+                parts.add(name != null ? name.value() : field.getName());
+            }
+        }
+        return parts;
     }
 
     @Test
