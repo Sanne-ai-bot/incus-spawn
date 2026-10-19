@@ -86,7 +86,8 @@ class GuiPassthroughTest {
         daemon.device("gui", "xdg-runtime",
                 Map.of("type", "disk", "source", "/run/user/1000", "path", "/mnt/host-xdg"));
 
-        daemon.client().updateFresh("gui", GuiPassthrough.guiUpdate(xdg.toString(), "wayland-0", "1000"));
+        daemon.client().updateFresh("gui", GuiPassthrough.guiUpdate(xdg.toString(), "wayland-0", "1000",
+                GuiPassthrough.presentAudioSockets(xdg.toString())));
 
         var devices = daemon.instanceDevices("gui");
         // Only the GPU and the present safe sockets — no directory mount, no manager/D-Bus/ssh-agent.

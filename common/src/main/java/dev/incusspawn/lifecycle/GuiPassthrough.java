@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -48,17 +49,22 @@ public final class GuiPassthrough {
     private static final String WAYLAND_DEVICE = "xdg-wayland";
 
     /**
-     * The audio sockets GUI mounts when the host has them, device name to path in
-     * {@code XDG_RUNTIME_DIR}. Only these and the Wayland display are passed through, never the
-     * whole {@code XDG_RUNTIME_DIR}: that directory also holds the session D-Bus, podman, ssh-agent
-     * and keyring sockets, all owned by the host user whose uid the guest shares, so a mount of it
-     * would hand the guest the host. PipeWire's {@code pipewire-0-manager} is left out on purpose:
-     * a client on it gets session-manager rights (screencast and camera nodes, rerouting), which
-     * playback does not need.
+     * An audio socket GUI mounts when the host has it: its device name and its path in
+     * {@code XDG_RUNTIME_DIR}.
      */
-    private static final Map<String, String> AUDIO_SOCKETS = Map.of(
-            "xdg-pipewire", "pipewire-0",
-            "xdg-pulse", "pulse/native");
+    record AudioSocket(String device, String relPath) {}
+
+    /**
+     * The audio sockets GUI mounts when the host has them. Only these and the Wayland display are
+     * passed through, never the whole {@code XDG_RUNTIME_DIR}: that directory also holds the session
+     * D-Bus, podman, ssh-agent and keyring sockets, all owned by the host user whose uid the guest
+     * shares, so a mount of it would hand the guest the host. PipeWire's {@code pipewire-0-manager}
+     * is left out on purpose: a client on it gets session-manager rights (screencast and camera
+     * nodes, rerouting), which playback does not need.
+     */
+    private static final List<AudioSocket> AUDIO_SOCKETS = List.of(
+            new AudioSocket("xdg-pipewire", "pipewire-0"),
+            new AudioSocket("xdg-pulse", "pulse/native"));
 
     /**
      * Every device {@link #configureGui} may set, so {@link #removeGui} and {@link #hasGui} clear
@@ -75,8 +81,22 @@ public final class GuiPassthrough {
         names.add("xdg-runtime");
         names.add("xdg-pipewire-manager");
         names.add(WAYLAND_DEVICE);
-        names.addAll(AUDIO_SOCKETS.keySet());
+        AUDIO_SOCKETS.forEach(socket -> names.add(socket.device()));
         return List.copyOf(names);
+    }
+
+    /**
+     * Every environment key {@link #guiEnv} may set, so {@link #guiUpdate} unsets the ones it does
+     * not set this time, and {@link #removeGui} and {@link #hasGui} clear and detect them.
+     */
+    private static final List<String> GUI_ENV_KEYS = guiEnvKeys();
+
+    private static List<String> guiEnvKeys() {
+        var keys = new ArrayList<String>();
+        keys.add("WAYLAND_DISPLAY");
+        keys.add("XDG_RUNTIME_DIR");
+        keys.addAll(WAYLAND_ENV.keySet());
+        return List.copyOf(keys);
     }
 
     /** Whether isx runs in a Wayland session it could pass through. */
@@ -118,10 +138,11 @@ public final class GuiPassthrough {
 
         BuildOutput.step("Enabling GUI passthrough.");
         var uid = InstanceLifecycle.getUid();
-        var waylandSocketPath = MOUNT_ROOT + "/" + waylandDisplay;
-        incus.updateFresh(name, guiUpdate(xdgRuntimeDir, waylandDisplay, uid));
+        // Checked once, so the instance config and the profile script agree on what is mounted.
+        var audio = presentAudioSockets(xdgRuntimeDir);
+        incus.updateFresh(name, guiUpdate(xdgRuntimeDir, waylandDisplay, uid, audio));
 
-        if (!pushWaylandFiles(incus, name, waylandSocketPath, uid)) {
+        if (!pushWaylandFiles(incus, name, profileScript(guiEnv(waylandDisplay, uid, audio)), uid)) {
             System.err.println("Warning: GUI devices configured but profile.d scripts failed to install.");
             System.err.println("GUI may not work in login shells.");
             return false;
@@ -142,43 +163,50 @@ public final class GuiPassthrough {
      * than failing the start. A file bind-mount pins the socket's inode, so one recreated after
      * start is not re-resolved as the directory mount's was — the instance must be restarted.
      */
-    static InstanceUpdate guiUpdate(String xdgRuntimeDir, String waylandDisplay, String uid) {
+    static InstanceUpdate guiUpdate(String xdgRuntimeDir, String waylandDisplay, String uid,
+                                     List<AudioSocket> audio) {
         var update = new InstanceUpdate();
         var mounted = new HashSet<String>();
         update.replaceDevice("gpu", Map.of("type", "gpu"));
         mounted.add("gpu");
-        for (var mount : socketMounts(xdgRuntimeDir, waylandDisplay)) {
-            update.replaceDevice(mount.device(), Map.of(
-                    "type", "disk",
-                    "source", xdgRuntimeDir + "/" + mount.relPath(),
-                    "path", MOUNT_ROOT + "/" + mount.relPath(),
-                    "required", "false"));
-            mounted.add(mount.device());
+        // The Wayland display (already checked to exist by waylandProblem), plus each audio socket
+        // the host has: a missing one is skipped rather than mounted as an empty path.
+        mountSocket(update, mounted, xdgRuntimeDir, WAYLAND_DEVICE, waylandDisplay);
+        for (var socket : audio) {
+            mountSocket(update, mounted, xdgRuntimeDir, socket.device(), socket.relPath());
         }
-        // Env via container config (seen by init and direct exec); pushWaylandFiles repeats it in
-        // profile.d for login shells, which su - resets.
-        update.config("environment.WAYLAND_DISPLAY", MOUNT_ROOT + "/" + waylandDisplay);
-        update.config("environment.XDG_RUNTIME_DIR", "/run/user/" + uid);
-        WAYLAND_ENV.forEach((k, v) -> update.config("environment." + k, v));
+        // Env via container config (seen by init and direct exec); profileScript repeats it for
+        // login shells, which su - resets.
+        var env = guiEnv(waylandDisplay, uid, audio);
+        GUI_ENV_KEYS.forEach(key -> update.config("environment." + key, env.get(key)));
         GUI_DEVICES.stream().filter(device -> !mounted.contains(device)).forEach(update::removeDevice);
         return update;
     }
 
-    /** A host socket to pass through, by its device name and its path under {@code XDG_RUNTIME_DIR}. */
-    private record SocketMount(String device, String relPath) {}
+    private static void mountSocket(InstanceUpdate update, Set<String> mounted, String xdgRuntimeDir,
+                                    String device, String relPath) {
+        update.replaceDevice(device, Map.of(
+                "type", "disk",
+                "source", xdgRuntimeDir + "/" + relPath,
+                "path", MOUNT_ROOT + "/" + relPath,
+                "required", "false"));
+        mounted.add(device);
+    }
 
-    /**
-     * The sockets to mount for {@code name}: the Wayland display (already checked to exist by
-     * {@link #waylandProblem}), plus each audio socket the host has. A missing audio socket is
-     * skipped rather than mounted as an empty path.
-     */
-    private static List<SocketMount> socketMounts(String xdgRuntimeDir, String waylandDisplay) {
-        var mounts = new ArrayList<SocketMount>();
-        mounts.add(new SocketMount(WAYLAND_DEVICE, waylandDisplay));
-        AUDIO_SOCKETS.forEach((device, relPath) -> {
-            if (Files.exists(Path.of(xdgRuntimeDir, relPath))) mounts.add(new SocketMount(device, relPath));
-        });
-        return mounts;
+    /** The audio sockets the host has under {@code xdgRuntimeDir}. */
+    static List<AudioSocket> presentAudioSockets(String xdgRuntimeDir) {
+        return AUDIO_SOCKETS.stream()
+                .filter(socket -> Files.exists(Path.of(xdgRuntimeDir, socket.relPath())))
+                .toList();
+    }
+
+    /** The guest environment GUI passthrough sets, for the given mounted audio sockets. */
+    static Map<String, String> guiEnv(String waylandDisplay, String uid, List<AudioSocket> audio) {
+        var env = new LinkedHashMap<String, String>();
+        env.put("WAYLAND_DISPLAY", MOUNT_ROOT + "/" + waylandDisplay);
+        env.put("XDG_RUNTIME_DIR", "/run/user/" + uid);
+        env.putAll(WAYLAND_ENV);
+        return env;
     }
 
     /**
@@ -192,11 +220,9 @@ public final class GuiPassthrough {
 
         incus.devicesRemoveAll(name, GUI_DEVICES);
 
-        var configUnsets = new java.util.LinkedHashMap<String, Object>();
+        var configUnsets = new LinkedHashMap<String, Object>();
         configUnsets.put(Metadata.GUI_ENABLED, null);
-        configUnsets.put("environment.WAYLAND_DISPLAY", null);
-        configUnsets.put("environment.XDG_RUNTIME_DIR", null);
-        for (var key : WAYLAND_ENV.keySet()) {
+        for (var key : GUI_ENV_KEYS) {
             configUnsets.put("environment." + key, null);
         }
         incus.configUpdate(name, configUnsets);
@@ -221,11 +247,8 @@ public final class GuiPassthrough {
             if (devices.has(device)) return true;
         }
         var config = instance.path("config");
-        if (config.has(Metadata.GUI_ENABLED) || config.has("environment.WAYLAND_DISPLAY")
-                || config.has("environment.XDG_RUNTIME_DIR")) {
-            return true;
-        }
-        for (var key : WAYLAND_ENV.keySet()) {
+        if (config.has(Metadata.GUI_ENABLED)) return true;
+        for (var key : GUI_ENV_KEYS) {
             if (config.has("environment." + key)) return true;
         }
         return false;
@@ -252,14 +275,19 @@ public final class GuiPassthrough {
         }
     }
 
-    private static boolean pushWaylandFiles(IncusClient incus, String container,
-                                             String waylandSocketPath, String uid) {
+    /**
+     * {@code /etc/profile.d/wayland.sh} for {@link #guiEnv}'s environment. Package-private so a
+     * test can assert what login shells get.
+     */
+    static String profileScript(Map<String, String> env) {
+        var profile = new StringBuilder();
+        env.forEach((k, v) -> profile.append("export ").append(k).append('=').append(v).append('\n'));
+        return profile.toString();
+    }
+
+    private static boolean pushWaylandFiles(IncusClient incus, String container, String profile, String uid) {
         try {
-            var profile = new StringBuilder();
-            profile.append("export WAYLAND_DISPLAY=").append(waylandSocketPath).append('\n');
-            profile.append("export XDG_RUNTIME_DIR=/run/user/").append(uid).append('\n');
-            WAYLAND_ENV.forEach((k, v) -> profile.append("export ").append(k).append('=').append(v).append('\n'));
-            pushTempFile(incus, container, profile.toString(), "/etc/profile.d/wayland.sh");
+            pushTempFile(incus, container, profile, "/etc/profile.d/wayland.sh");
 
             // systemd-logind may not create /run/user/<uid> in containers;
             // ensure it exists at boot so XDG_RUNTIME_DIR is usable.
