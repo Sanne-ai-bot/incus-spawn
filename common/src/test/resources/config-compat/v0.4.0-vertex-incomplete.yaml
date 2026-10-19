@@ -1,0 +1,12 @@
+claude:
+  useVertex: true
+github: {}
+bob:
+  licenseConsent: false
+openai: {}
+features: []
+searchPaths: []
+host-paths: []
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""

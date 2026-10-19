@@ -26,10 +26,14 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>The fixtures under {@code config-compat/} are not hand-written: they are what each
  * release's own {@code SpawnConfig.save()} produced (see
  * {@code scripts/config-compat/generate-fixtures.sh}), empty strings and stray
- * {@code oauthMode} keys included. Every release listed in {@link #RELEASES} predates
- * credential accounts, so every namespace in them is flat. v0.3.7 differs from v0.3.8 only in
- * also writing the old single-path {@code host-path} key -- beside {@code host-paths} when one
- * was set -- which is why it is kept: users are still on it.
+ * {@code oauthMode} keys included. They are written through the flat setters every release
+ * has, so every namespace in them is flat: for v0.3.7 and v0.3.8, which predate credential
+ * accounts, that is all they wrote; for v0.3.12 and v0.4.0 it is a file from before accounts
+ * as they load and save it, which stays flat until a credential is written. Their expectations
+ * are v0.3.8's: they differ from its files only in formatting -- no {@code ---}, empty strings,
+ * {@code false} Vertex flag or stray {@code oauthMode}, so only v0.3.7 and v0.3.8 carry those.
+ * v0.3.7 differs from v0.3.8 only in also writing the old single-path {@code host-path} key --
+ * beside {@code host-paths} when one was set -- which is why it is kept: users are still on it.
  *
  * <p>Each is loaded the way the CLI and proxy load a real one -- {@link SpawnConfig#load()} from a
  * config directory, with a YAML tool installed beside it -- and followed through everything
@@ -42,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class PreviousReleaseConfigCompatTest {
 
     /** Releases users are on whose files must keep working. Add one per format-changing release. */
-    private static final List<String> RELEASES = List.of("v0.3.7", "v0.3.8");
+    private static final List<String> RELEASES = List.of("v0.3.7", "v0.3.8", "v0.3.12", "v0.4.0");
 
     /** The fixtures every release has, as the generator names them. */
     private static final List<String> FIXTURES =
