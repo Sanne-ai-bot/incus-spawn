@@ -29,8 +29,7 @@ class UpdateAllCommandTest {
     /** A template whose every step succeeds; each test fails one. Records what runs as agentuser. */
     private IncusClient incus() {
         var incus = mock(IncusClient.class);
-        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(JqObject.builder(1)
-                .put("config", JqObject.builder(1).put(Metadata.TYPE, Metadata.TYPE_BASE).build()).build());
+        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"));
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
         when(incus.shellExec(NAME, "which", "npm")).thenReturn(new IncusClient.ExecResult(1, "", ""));
         when(incus.execInContainer(eq(NAME), eq("agentuser"), anyString())).thenAnswer(inv -> {
@@ -38,6 +37,12 @@ class UpdateAllCommandTest {
             return OK;
         });
         return incus;
+    }
+
+    /** A base template as read, in {@code status}. */
+    private static JqObject template(String status) {
+        return JqObject.builder(2).put("status", status)
+                .put("config", JqObject.builder(1).put(Metadata.TYPE, Metadata.TYPE_BASE).build()).build();
     }
 
     private static int update(IncusClient incus) {
@@ -63,6 +68,95 @@ class UpdateAllCommandTest {
 
         verify(incus).deviceConfigSet(NAME, "eth0", "security.ipv4_filtering", "false");
         verify(incus, times(2)).start(NAME);
+    }
+
+    /** A template the update leaves running fails the next update-all's start. */
+    @Test
+    void aTemplateIsStoppedWhenItsUpdateThrows() {
+        var incus = incus();
+        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any());
+
+        assertThrows(IncusException.class, () -> update(incus));
+
+        verify(incus).stop(NAME);
+    }
+
+    @Test
+    void aTemplateIsStoppedWhenAGuestStepThrows() {
+        var incus = incus();
+        when(incus.shellExec(NAME, "dnf", "update", "-y")).thenThrow(new IncusException("exec failed"));
+
+        assertThrows(IncusException.class, () -> update(incus));
+
+        verify(incus).stop(NAME);
+    }
+
+    /** The guest that never answered may ignore the shutdown too: it is forced, and why the update failed stays the error. */
+    @Test
+    void aTemplateThatIgnoresTheStopIsForcedWithoutHidingWhyTheUpdateFailed() {
+        var incus = incus();
+        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any());
+        doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
+
+        var e = assertThrows(IncusException.class, () -> update(incus));
+
+        assertEquals("Timed out waiting for tpl-test", e.getMessage());
+        verify(incus).forceStop(NAME);
+    }
+
+    /** Incus refuses to stop a stopped instance: one that died is stopped, not one that cannot be. */
+    @Test
+    void aTemplateThatDiedIsNotForceStopped() {
+        var incus = incus();
+        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"), template("Stopped"));
+        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any());
+        doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
+
+        var e = assertThrows(IncusException.class, () -> update(incus));
+
+        assertEquals("Timed out waiting for tpl-test", e.getMessage());
+        verify(incus, never()).forceStop(any());
+    }
+
+    @Test
+    void aTemplateAlreadyStoppedAtTheEndDoesNotFailTheCommand() {
+        var incus = incus();
+        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"), template("Stopped"));
+        doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
+
+        assertEquals(0, update(incus));
+        verify(incus, never()).forceStop(any());
+    }
+
+    /** Not knowing the status is no reason to leave the template running. */
+    @Test
+    void aTemplateIsForceStoppedWhenItsStatusCannotBeRead() {
+        var incus = incus();
+        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"))
+                .thenThrow(new IncusException("Failed to read instance 'tpl-test' (HTTP 500)"));
+        doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
+
+        assertEquals(0, update(incus));
+        verify(incus).forceStop(NAME);
+    }
+
+    @Test
+    void aTemplateGoneByTheEndIsNotForceStopped() {
+        var incus = incus();
+        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"), null);
+        doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
+
+        assertEquals(0, update(incus));
+        verify(incus, never()).forceStop(any());
+    }
+
+    @Test
+    void aTemplateThatCannotBeStoppedFailsTheCommand() {
+        var incus = incus();
+        doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
+        doThrow(new IncusException("Failed to force-stop tpl-test")).when(incus).forceStop(NAME);
+
+        assertEquals(1, update(incus));
     }
 
     @Test

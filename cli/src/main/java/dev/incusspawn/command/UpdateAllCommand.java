@@ -73,19 +73,22 @@ public class UpdateAllCommand extends BaseCommand {
         BuildOutput.section("Updating " + resolved.size() + " template(s).");
 
         boolean primesSkipped = false;
+        boolean leftRunning = false;
         var failedSteps = new LinkedHashSet<String>();
         for (var entry : resolved.entrySet()) {
             BuildOutput.header("Updating " + entry.getKey());
             var result = updateImage(incus, entry.getKey(), entry.getValue());
             primesSkipped |= result.primesSkipped();
+            leftRunning |= result.leftRunning();
             failedSteps.addAll(result.failedSteps());
         }
 
         if (!failedSteps.isEmpty()) {
             BuildOutput.warn("Some " + String.join(", ", failedSteps)
                     + " failed; re-run 'isx update-all" + (prime ? " --prime" : "") + "' to retry them.");
-            return 1;
         }
+        // A re-run cannot retry a stop: each template left running was warned about on its own
+        if (!failedSteps.isEmpty() || leftRunning) return 1;
         BuildOutput.success("All templates updated.");
         if (primesSkipped) {
             BuildOutput.note("Use --prime to re-run prime commands.");
@@ -112,26 +115,70 @@ public class UpdateAllCommand extends BaseCommand {
         static final PrimeResult NONE = new PrimeResult(false, false);
     }
 
-    /** {@code failedSteps} names each failed step in plural, for one summary line. */
-    private record UpdateResult(boolean primesSkipped, Set<String> failedSteps) {}
+    /**
+     * {@code failedSteps} names each failed step in plural, for one summary line; {@code leftRunning}
+     * is a template that could not be stopped.
+     */
+    private record UpdateResult(boolean primesSkipped, Set<String> failedSteps, boolean leftRunning) {}
 
     private UpdateResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
         var instance = incus.instanceMetadataOrThrow(name);
         var machineType = IncusClient.machineType(instance);
         InstanceLifecycle.startTemplate(incus, name, instance, System.err::println);
-        incus.waitForReady(name, machineType);
-
+        // Stopped however the update ends: a template left running fails the next update-all's start
         var failedSteps = new LinkedHashSet<String>();
-        if (!GuestUpdate.system(incus, name)) failedSteps.add("system updates");
-        // Update globally installed npm packages (coding tools, etc.)
-        if (!NpmUpdate.run(incus, name)) failedSteps.add("npm updates");
-        // Git fetch in all repos (for project images)
-        if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetches");
-        var primeResult = handlePrimeCommands(incus, name, imageDef);
-        if (primeResult.failed) failedSteps.add("prime commands");
+        boolean primesSkipped;
+        boolean leftRunning;
+        try {
+            incus.waitForReady(name, machineType);
 
-        incus.stop(name);
-        return new UpdateResult(primeResult.skipped, failedSteps);
+            if (!GuestUpdate.system(incus, name)) failedSteps.add("system updates");
+            // Update globally installed npm packages (coding tools, etc.)
+            if (!NpmUpdate.run(incus, name)) failedSteps.add("npm updates");
+            // Git fetch in all repos (for project images)
+            if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetches");
+            var primeResult = handlePrimeCommands(incus, name, imageDef);
+            if (primeResult.failed) failedSteps.add("prime commands");
+            primesSkipped = primeResult.skipped;
+        } finally {
+            leftRunning = !stop(incus, name);
+        }
+        return new UpdateResult(primesSkipped, failedSteps, leftRunning);
+    }
+
+    /**
+     * Stop the template, forcing it when its guest ignores the shutdown, as one whose agent never
+     * answered may. One that died on its own is already stopped, which Incus refuses to stop again.
+     * Never throws: from a {@code finally}, that would replace why the update failed.
+     *
+     * @return whether the template is stopped
+     */
+    private static boolean stop(IncusClient incus, String name) {
+        try {
+            incus.stop(name);
+            return true;
+        } catch (RuntimeException e) {
+            if (isStoppedOrGone(incus, name)) return true;
+            try {
+                incus.forceStop(name);
+                BuildOutput.warn("Force-stopped " + name + ": it did not shut down when asked.");
+                return true;
+            } catch (RuntimeException forced) {
+                BuildOutput.warn("Could not stop " + name + ": " + e.getMessage() + "; forcing it: " + forced.getMessage(),
+                        "The next update-all cannot start it until it is stopped.");
+                return false;
+            }
+        }
+    }
+
+    /** Whether Incus says the template is stopped or no longer there; a read that fails says neither. */
+    private static boolean isStoppedOrGone(IncusClient incus, String name) {
+        try {
+            var instance = incus.instanceMetadataOrThrow(name);
+            return instance == null || "Stopped".equalsIgnoreCase(instance.pathText("status", ""));
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private PrimeResult handlePrimeCommands(IncusClient incus, String name, ImageDef imageDef) {
