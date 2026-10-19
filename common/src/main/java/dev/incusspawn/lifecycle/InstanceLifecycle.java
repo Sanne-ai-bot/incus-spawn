@@ -539,6 +539,25 @@ public final class InstanceLifecycle {
     }
 
     /**
+     * Start a stopped template for {@code isx update-all} (#1457) the way isx starts an instance,
+     * with {@link #startInstance}'s fallback where the host cannot enforce IP spoofing protection.
+     * None of {@link #prepareForStart}'s repairs applies to a template: its build removes the
+     * host-resource devices (the recorded list is for its branches), it never has an inbox or a
+     * zmx device, and each branch sets its own filtering ({@link #configureBranch}). Nor is it given
+     * a secret: it is never used as a box.
+     *
+     * @param instance the template as read ({@link IncusClient#instanceMetadataOrThrow}); anything
+     *                 else is refused, since an instance starts through {@link #startForUse}
+     */
+    public static void startTemplate(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
+        var type = instance == null ? "" : instance.path("config").path(Metadata.TYPE).asText("");
+        if (!Metadata.TYPE_BASE.equals(type) && !Metadata.TYPE_PROJECT.equals(type)) {
+            throw new IllegalArgumentException("'" + name + "' is not a template, or no longer exists");
+        }
+        startInstance(incus, name, warn);
+    }
+
+    /**
      * Restart a running instance and wait until it answers, with a new secret (#934): the
      * reboot empties the guest's {@code /run}, so without one the box would be left with none.
      *
@@ -757,7 +776,8 @@ public final class InstanceLifecycle {
      * user has to know which one they have.
      *
      * <p>Package-private, as {@link #prepareForStart} is: code outside {@code lifecycle} starts an
-     * existing instance through {@link #startForUse}, so it cannot skip the re-arm before this.
+     * existing instance through {@link #startForUse} (a template through {@link #startTemplate}),
+     * so it cannot skip the re-arm before this.
      * The other public paths here that start one ({@code RuntimeSetup.prefetchAndStart},
      * {@code BuildAccounts.start}) start an instance just created, which has it set already.
      */

@@ -2,6 +2,9 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.Metadata;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,6 +29,8 @@ class UpdateAllCommandTest {
     /** A template whose every step succeeds; each test fails one. Records what runs as agentuser. */
     private IncusClient incus() {
         var incus = mock(IncusClient.class);
+        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(JqObject.builder(1)
+                .put("config", JqObject.builder(1).put(Metadata.TYPE, Metadata.TYPE_BASE).build()).build());
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
         when(incus.shellExec(NAME, "which", "npm")).thenReturn(new IncusClient.ExecResult(1, "", ""));
         when(incus.execInContainer(eq(NAME), eq("agentuser"), anyString())).thenAnswer(inv -> {
@@ -39,6 +44,25 @@ class UpdateAllCommandTest {
         var resolved = new LinkedHashMap<String, ImageDef>();
         resolved.put(NAME, null);
         return new UpdateAllCommand().updateTemplates(incus, resolved);
+    }
+
+    /**
+     * A template starts as an instance does (#1457): on a host that cannot enforce IP spoofing
+     * protection the start drops it and goes on, instead of failing the update.
+     */
+    @Test
+    void aTemplateStartsOnAHostThatCannotEnforceIpFiltering() {
+        var incus = incus();
+        when(incus.findNic(eq(NAME), anyString()))
+                .thenReturn(new IncusClient.NicDevice("eth0", Map.of("security.ipv4_filtering", "true")));
+        doThrow(new IncusException("Failed to start device \"eth0\": Failed to run: ebtables -t filter -A INPUT"
+                + " -i veth0 -j DROP: exit status 255 (The kernel doesn't support the ebtables 'filter' table.)"))
+                .doNothing().when(incus).start(NAME);
+
+        assertEquals(0, update(incus));
+
+        verify(incus).deviceConfigSet(NAME, "eth0", "security.ipv4_filtering", "false");
+        verify(incus, times(2)).start(NAME);
     }
 
     @Test

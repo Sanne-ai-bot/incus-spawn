@@ -5,8 +5,8 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.HostRepoRefresh;
 import dev.incusspawn.incus.IncusClient;
-import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -116,8 +116,9 @@ public class UpdateAllCommand extends BaseCommand {
     private record UpdateResult(boolean primesSkipped, Set<String> failedSteps) {}
 
     private UpdateResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
-        var machineType = incus.machineType(name);
-        incus.start(name);
+        var instance = incus.instanceMetadataOrThrow(name);
+        var machineType = IncusClient.machineType(instance);
+        InstanceLifecycle.startTemplate(incus, name, instance, System.err::println);
         incus.waitForReady(name, machineType);
 
         var failedSteps = new LinkedHashSet<String>();
