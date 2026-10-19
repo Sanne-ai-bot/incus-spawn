@@ -70,6 +70,7 @@ Tool schema fields (all optional except `name`):
 - `proxy` -- credential injection rules for the MITM proxy (see [Proxy Credentials](#proxy-credentials))
 
 A key isx does not know, here or in an entry, is ignored with a warning when the tool loads, naming where it is (`downloads[0].sha265`) and the key it probably meant.
+A tool file without `name:` (or with a blank one) is skipped with a warning, and `isx build` refuses until it is fixed, since the file may have been meant to replace a tool of the same name from another layer.
 
 Download entry fields:
 - `url` (required) -- `http://` or `https://` download URL (local addresses such as `localhost` are refused)
