@@ -118,9 +118,10 @@ final class PreparationCache {
     }
 
     /**
-     * Null when the snapshot was kept for later builds. Otherwise it stays usable in {@code staged},
-     * and the result says why it was not kept and which setting to change: every later build then
-     * clones and verifies it in full again.
+     * Null when the snapshot was kept for later builds without evicting another recently used one.
+     * Otherwise the result says whether this snapshot or others were not kept, why, and which setting
+     * to change: every later build of those repositories clones and verifies them in full again. A
+     * snapshot that is not kept stays usable in {@code staged}.
      */
     String publishSnapshot(String key, Path staged) throws IOException {
         String notRetained = null;
@@ -129,10 +130,8 @@ final class PreparationCache {
             notRetained = "Git snapshot retention is disabled (git-cache." + (policy.snapshotBytes() == 0
                     ? "snapshot-max-mib" : "max-age-days") + ": 0); it was used for this build but not kept";
         } else if ((bytes = size(staged)) > policy.snapshotBytes()) {
-            // In the setting's unit, rounded up to a tenth: never shown as equal to, or under, the limit.
-            var size = String.format(java.util.Locale.ROOT, "%.1f MiB", Math.ceil(bytes * 10.0 / (1L << 20)) / 10);
-            notRetained = "Git snapshot (" + size + ") exceeds git-cache.snapshot-max-mib ("
-                    + (policy.snapshotBytes() >> 20) + " MiB); it was used for this build but not kept";
+            notRetained = "Git snapshot (" + mib(bytes) + ") exceeds " + limit()
+                    + "; it was used for this build but not kept";
         }
         boolean retain = notRetained == null;
         try (var ignored = catalogue()) {
@@ -148,17 +147,35 @@ final class PreparationCache {
             for (var old : children(parent)) {
                 if (!old.equals(target) && old.getFileName().toString().startsWith(key + "-")) delete(old);
             }
-            prune();
+            var evicted = prune();
+            // Snapshots that each fit but not together would otherwise evict each other on every build, silently.
+            if (retain && !evicted.isEmpty()) {
+                long lost = evicted.stream().mapToLong(Long::longValue).sum();
+                notRetained = "Git snapshot kept, but it evicted " + evicted.size() + " other recently used snapshot"
+                        + (evicted.size() == 1 ? "" : "s") + " (" + mib(lost) + ") to fit " + limit()
+                        + "; raise it, or repositories built in turn are cloned and verified in full every time";
+            }
         }
         return notRetained;
     }
 
-    private void prune() throws IOException {
-        // Size counts logical file bytes; entry ceilings also bound tiny files and directory overhead.
-        trim(root.resolve("snapshots"), policy.snapshotBytes(), 128);
+    private String limit() {
+        return "git-cache.snapshot-max-mib (" + (policy.snapshotBytes() >> 20) + " MiB)";
     }
 
-    private void trim(Path directory, long budget, int maxEntries) throws IOException {
+    /** In the setting's unit, rounded up to a tenth: an oversized snapshot never reads as equal to, or under, the limit. */
+    private static String mib(long bytes) {
+        return String.format(java.util.Locale.ROOT, "%.1f MiB", Math.ceil(bytes * 10.0 / (1L << 20)) / 10);
+    }
+
+    /** The sizes of the snapshots evicted for space while still within their maximum age. */
+    private java.util.List<Long> prune() throws IOException {
+        // Size counts logical file bytes; entry ceilings also bound tiny files and directory overhead.
+        return trim(root.resolve("snapshots"), policy.snapshotBytes(), 128);
+    }
+
+    private java.util.List<Long> trim(Path directory, long budget, int maxEntries) throws IOException {
+        var evicted = new java.util.ArrayList<Long>();
         var entries = new java.util.ArrayList<>(children(directory));
         entries.sort(Comparator.comparingLong(PreparationCache::modified));
         long total = 0;
@@ -166,12 +183,15 @@ final class PreparationCache {
         long cutoff = Instant.now().minus(policy.maxAge()).toEpochMilli();
         int count = entries.size();
         for (var path : entries) {
-            if (total <= budget && count <= maxEntries && modified(path) > cutoff) continue;
+            boolean fresh = modified(path) > cutoff;
+            if (total <= budget && count <= maxEntries && fresh) continue;
             long bytes = size(path);
+            if (fresh && total > budget) evicted.add(bytes);
             delete(path);
             total -= bytes;
             count--;
         }
+        return evicted;
     }
 
     /** Reclaim work left by a dead process. Never open another channel on a live in-process lease. */

@@ -40,6 +40,34 @@ class PreparationCacheTest {
         }
     }
 
+    @Test void evictingARecentlyUsedSnapshotForSpaceSaysSoAndWhichSettingToRaise() throws Exception {
+        // Two snapshots that each fit but not together evicted each other on every build, silently.
+        var cache = new PreparationCache(root, new GitCacheConfig(1L << 20, Duration.ofDays(1)));
+        try (var lease = cache.lease()) {
+            assertNull(cache.publishSnapshot("first", staged(lease.path, "first", 600 << 10)));
+            var first = PreparationGit.children(root.resolve("snapshots")).getFirst();
+            Files.setLastModifiedTime(first, FileTime.fromMillis(System.currentTimeMillis() - 1000));
+            assertEquals("Git snapshot kept, but it evicted 1 other recently used snapshot (0.6 MiB) to fit"
+                    + " git-cache.snapshot-max-mib (1 MiB); raise it, or repositories built in turn are cloned and"
+                    + " verified in full every time",
+                    cache.publishSnapshot("second", staged(lease.path, "second", 600 << 10)));
+            assertFalse(Files.exists(first));
+            assertNull(cache.publishSnapshot("second", staged(lease.path, "replacement", 600 << 10)),
+                    "replacing a repository's own snapshot evicts nothing else");
+        }
+    }
+
+    @Test void evictingAnExpiredSnapshotIsNotReported() throws Exception {
+        var cache = new PreparationCache(root, new GitCacheConfig(1L << 20, Duration.ofDays(1)));
+        try (var lease = cache.lease()) {
+            cache.publishSnapshot("old", staged(lease.path, "old", 600 << 10));
+            var old = PreparationGit.children(root.resolve("snapshots")).getFirst();
+            Files.setLastModifiedTime(old, FileTime.fromMillis(0));
+            assertNull(cache.publishSnapshot("new", staged(lease.path, "new", 600 << 10)));
+            assertFalse(Files.exists(old));
+        }
+    }
+
     @Test void anOversizedReplacementRetiresTheOldSnapshotWithoutInvalidatingReaders() throws Exception {
         var cache = new PreparationCache(root, new GitCacheConfig(20, Duration.ofDays(1)));
         try (var lease = cache.lease()) {

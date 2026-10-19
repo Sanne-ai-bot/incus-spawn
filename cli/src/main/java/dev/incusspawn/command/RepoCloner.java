@@ -45,7 +45,7 @@ class RepoCloner {
     private final java.util.Map<Integer, String> preparationTimings = new java.util.concurrent.ConcurrentHashMap<>();
     /** By repo: why its Git preparation failed, isx's words then Git's quoted, for a warning after the group. */
     final java.util.Map<Integer, GitCommandException> preparationFailures = new java.util.concurrent.ConcurrentHashMap<>();
-    /** By repo: why its clean snapshot was used but not kept, so the next build clones it in full again. */
+    /** By repo: why its clean snapshot, or one its publication evicted, was not kept, so a later build clones it in full again. */
     final java.util.Map<Integer, String> preparationNotRetained = new java.util.concurrent.ConcurrentHashMap<>();
 
     RepoCloner(IncusClient incus) {
