@@ -49,6 +49,12 @@ class TemplateChangesTest {
     }
 
     @Test
+    void aChangedMaskIsListed() throws Exception {
+        assertEquals(List.of("+ masked unit tmp.mount"), TemplateChanges.definitionChanges(def("packages: [git]"),
+                def("packages: [git]\nmask_services: [tmp.mount]"), java.util.Map.of()));
+    }
+
+    @Test
     void settingsOutsidePackagesToolsAndReposListNothing() throws Exception {
         assertEquals(List.of(), TemplateChanges.definitionChanges(def("packages: [git]\ngui: false"),
                 def("packages: [git]\ngui: true"), java.util.Map.of()));
