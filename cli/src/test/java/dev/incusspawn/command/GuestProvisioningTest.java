@@ -731,32 +731,66 @@ class GuestProvisioningTest {
     void cleanCachesNeverCleansThroughALiveCacheMount(@TempDir Path tempDir) throws Exception {
         // Run the real script against a stand-in cache dir, with `mountpoint` and `dnf`
         // stubbed on PATH, so the guard is checked by behaviour rather than by string shape.
-        var incus = mock(IncusClient.class);
-        var cmd = dnfCacheCommand(incus);
-        cmd.cleanCaches("b");
-        var captor = ArgumentCaptor.forClass(String.class);
-        verify(incus).shellExec(eq("b"), eq("sh"), eq("-c"), captor.capture());
-        var script = captor.getValue()
-                .replace(GuestProvisioning.DNF_CACHE_PATH, tempDir.resolve("cache").toString())
-                .replace("rm -rf /tmp/* /var/tmp/*", "true");
-
+        var script = cleanCachesScript(tempDir);
         for (boolean mounted : new boolean[] {true, false}) {
             var cache = Files.createDirectories(tempDir.resolve("cache"));
             Files.writeString(cache.resolve("repomd.xml"), "x");
-            var bin = Files.createDirectories(tempDir.resolve("bin"));
             var dnfLog = tempDir.resolve("dnf.log");
             Files.deleteIfExists(dnfLog);
-            writeStub(bin.resolve("mountpoint"), "exit " + (mounted ? 0 : 1));
-            writeStub(bin.resolve("dnf"), "echo \"$@\" >> " + dnfLog);
-
-            var pb = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
-            pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
-            assertEquals(0, pb.start().waitFor());
+            assertEquals(0, runWithStubs(tempDir, script, mounted, "echo \"$@\" >> " + dnfLog));
 
             assertEquals(mounted, Files.exists(cache.resolve("repomd.xml")),
                     "mounted=" + mounted);
             assertEquals(!mounted, Files.exists(dnfLog), "dnf clean ran, mounted=" + mounted);
         }
+    }
+
+    @Test
+    void cleanCachesEmptiesTmpHiddenFilesIncluded(@TempDir Path tempDir) throws Exception {
+        // /tmp is on disk now (#1561): whatever the build leaves there is saved into the template
+        var script = cleanCachesScript(tempDir);
+        var dirs = new Path[] {tempDir.resolve("tmp"), tempDir.resolve("var-tmp")};
+        for (var dir : dirs) {
+            Files.writeString(dir.resolve("visible"), "x");
+            Files.writeString(dir.resolve(".hidden"), "x");
+            Files.writeString(Files.createDirectories(dir.resolve(".cache/sub")).resolve(".f"), "x");
+        }
+        assertEquals(0, runWithStubs(tempDir, script, false, "true"));
+
+        for (var dir : dirs) {
+            assertTrue(Files.isDirectory(dir), dir + " itself stays");
+            try (var left = Files.list(dir)) {
+                assertEquals(List.of(), left.toList(), dir + " is empty");
+            }
+        }
+    }
+
+    /**
+     * The script cleanCaches runs, with the DNF cache, /tmp and /var/tmp pointed at stand-ins
+     * under {@code tempDir} ({@code cache}, {@code tmp}, {@code var-tmp}), never the real ones.
+     */
+    private static String cleanCachesScript(Path tempDir) throws Exception {
+        var incus = mock(IncusClient.class);
+        dnfCacheCommand(incus).cleanCaches("b");
+        var captor = ArgumentCaptor.forClass(String.class);
+        verify(incus).shellExec(eq("b"), eq("sh"), eq("-c"), captor.capture());
+        // Placeholders first: the stand-ins themselves sit under the real /tmp
+        var script = captor.getValue().replace("/var/tmp", "@VARTMP@").replace("/tmp", "@TMP@");
+        assertFalse(script.contains("/tmp"), script);
+        return script
+                .replace("@VARTMP@", Files.createDirectories(tempDir.resolve("var-tmp")).toString())
+                .replace("@TMP@", Files.createDirectories(tempDir.resolve("tmp")).toString())
+                .replace(GuestProvisioning.DNF_CACHE_PATH, tempDir.resolve("cache").toString());
+    }
+
+    /** Runs {@code script} with `mountpoint` answering {@code mounted} and `dnf` running {@code dnf}. */
+    private static int runWithStubs(Path tempDir, String script, boolean mounted, String dnf) throws Exception {
+        var bin = Files.createDirectories(tempDir.resolve("bin"));
+        writeStub(bin.resolve("mountpoint"), "exit " + (mounted ? 0 : 1));
+        writeStub(bin.resolve("dnf"), dnf);
+        var pb = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        return pb.start().waitFor();
     }
 
     @Test

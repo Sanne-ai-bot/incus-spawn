@@ -105,6 +105,24 @@ class ProjectCommandTest {
     }
 
     @Test
+    void createAndUpdateEmptyTmpBeforeTheTemplateStops() {
+        var incus = parentWhoseGuestAnswers(OK);
+        assertEquals(0, create(incus, config("mvn install")));
+        // After the pre-build, which is what leaves files there
+        var order = inOrder(incus);
+        order.verify(incus).execInContainer(BUILD, "agentuser", "mvn install");
+        order.verify(incus).shellExec(BUILD, "sh", "-c", GuestUpdate.EMPTY_TMP_SCRIPT);
+        order.verify(incus).stop(BUILD);
+
+        var update = new ProjectCommand.Update();
+        update.name = NAME;
+        assertEquals(0, update.update(incus, config("mvn install")));
+        order.verify(incus).execInContainer(NAME, "agentuser", "mvn install");
+        order.verify(incus).shellExec(NAME, "sh", "-c", GuestUpdate.EMPTY_TMP_SCRIPT);
+        order.verify(incus).stop(NAME);
+    }
+
+    @Test
     void projectCreateAndUpdateAuthenticateThenRevokeWithoutLosingAccountRestrictions() {
         var incus = preparedClient(false);
         incus.configSetAll(PARENT, Map.of(Metadata.accountKey("github"), "project-bot",

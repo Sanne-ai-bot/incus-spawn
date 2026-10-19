@@ -140,6 +140,7 @@ public class UpdateAllCommand extends BaseCommand {
             var primeResult = handlePrimeCommands(incus, name, imageDef);
             if (primeResult.failed) failedSteps.add("prime commands");
             primesSkipped = primeResult.skipped;
+            GuestUpdate.emptyTmp(incus, name);
         } finally {
             leftRunning = !stop(incus, name);
         }
