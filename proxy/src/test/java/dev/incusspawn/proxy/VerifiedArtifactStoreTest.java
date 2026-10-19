@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.proxy.VerifiedArtifactStore.Commit;
 import dev.incusspawn.proxy.VerifiedArtifactStore.Outcome;
 
 import org.junit.jupiter.api.Test;
@@ -11,6 +12,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -36,10 +40,16 @@ class VerifiedArtifactStoreTest {
     }
 
     Path cached(byte[] content) throws Exception {
+        assertEquals(Commit.COMMITTED, commit(content, content, Instant.now()));
+        return artifact();
+    }
+
+    /** Commit a download of {@code content} verified on {@code verifiedOn}'s checksum, looked up at {@code lookedUp}. */
+    Commit commit(byte[] content, byte[] verifiedOn, Instant lookedUp) throws Exception {
         var download = Files.createTempFile(dir, "dl-", ".tmp");
         Files.write(download, content);
-        assertTrue(VerifiedArtifactStore.verifyAndCommit(download, prepareParent(), Sidecar.SHA1, sha1Of(content), true));
-        return artifact();
+        return VerifiedArtifactStore.verifyAndCommit(download, prepareParent(), Sidecar.SHA1, sha1Of(verifiedOn),
+                true, lookedUp);
     }
 
     Path prepareParent() throws Exception {
@@ -96,12 +106,10 @@ class VerifiedArtifactStoreTest {
 
     @Test
     void commitRejectsMismatchingDownload() throws Exception {
-        var download = Files.createTempFile(dir, "dl-", ".tmp");
-        Files.write(download, OTHER);
-        assertFalse(VerifiedArtifactStore.verifyAndCommit(download, prepareParent(), Sidecar.SHA1, sha1Of(JAR), true));
+        assertEquals(Commit.REJECTED, commit(OTHER, JAR, Instant.now()));
         assertFalse(Files.exists(artifact()));
         assertFalse(Files.exists(Sidecar.SHA1.storedFile(artifact())));
-        assertFalse(Files.exists(download));
+        assertTrue(ArtifactCacheProxyTest.noDownloadInFlight(dir));
     }
 
     @Test
@@ -113,6 +121,48 @@ class VerifiedArtifactStoreTest {
         cached(JAR);
         assertFalse(Files.exists(Sidecar.MD5.storedFile(artifact)),
                 "the stored .md5 described the replaced copy");
+    }
+
+    @Test
+    void commitIsStampedWithItsLookup() throws Exception {
+        var lookedUp = Instant.now().minus(Duration.ofMinutes(10)).truncatedTo(ChronoUnit.SECONDS);
+        assertEquals(Commit.COMMITTED, commit(JAR, JAR, lookedUp));
+        assertEquals(lookedUp, Files.getLastModifiedTime(Sidecar.SHA1.storedFile(artifact())).toInstant(),
+                "upstream confirmed these bytes at the lookup, not when their download finished");
+    }
+
+    @Test
+    void commitFromAnOlderLookupKeepsTheCopyConfirmedAfterIt() throws Exception {
+        // Two downloads racing a republish: the one whose lookup came second commits first
+        var older = Instant.now().minus(Duration.ofMinutes(2));
+        assertEquals(Commit.COMMITTED, commit(OTHER, OTHER, older.plusSeconds(60)));
+
+        assertEquals(Commit.SUPERSEDED, commit(JAR, JAR, older));
+
+        assertArrayEquals(OTHER, Files.readAllBytes(artifact()));
+        assertArrayEquals(sha1Of(OTHER), Files.readAllBytes(Sidecar.SHA1.storedFile(artifact())));
+        assertTrue(ArtifactCacheProxyTest.noDownloadInFlight(dir));
+    }
+
+    @Test
+    void commitFromANewerLookupReplacesACopyCommittedAfterIt() throws Exception {
+        // The one whose lookup came first commits first: committed later, it is still the older answer
+        var older = Instant.now().minus(Duration.ofMinutes(2));
+        assertEquals(Commit.COMMITTED, commit(OTHER, OTHER, older));
+
+        assertEquals(Commit.COMMITTED, commit(JAR, JAR, older.plusSeconds(60)));
+
+        assertArrayEquals(JAR, Files.readAllBytes(artifact()));
+        assertArrayEquals(sha1Of(JAR), Files.readAllBytes(Sidecar.SHA1.storedFile(artifact())));
+    }
+
+    @Test
+    void commitReplacesACopyWhoseConfirmationWasExpired() throws Exception {
+        cached(OTHER);
+        VerifiedArtifactStore.expireConfirmation(artifact(), Sidecar.SHA1);
+
+        assertEquals(Commit.COMMITTED, commit(JAR, JAR, Instant.now().minus(Duration.ofHours(1))));
+        assertArrayEquals(JAR, Files.readAllBytes(artifact()));
     }
 
     // --- reconcile ---
@@ -286,7 +336,7 @@ class VerifiedArtifactStoreTest {
         Files.createDirectories(source.getParent());
         Files.write(source, JAR);
 
-        assertTrue(VerifiedArtifactStore.importCopy(source, artifact(), Sidecar.SHA1, sha1Of(JAR)));
+        assertEquals(Commit.COMMITTED, VerifiedArtifactStore.importCopy(source, artifact(), Sidecar.SHA1, sha1Of(JAR), Instant.now()));
         assertFalse(Files.isSameFile(source, artifact()));
 
         // An in-place rewrite (O_TRUNC, as plain cp does) would show through a hardlink
@@ -302,7 +352,7 @@ class VerifiedArtifactStoreTest {
         Files.createDirectories(source.getParent());
         Files.write(source, OTHER);
 
-        assertFalse(VerifiedArtifactStore.importCopy(source, artifact(), Sidecar.SHA1, sha1Of(JAR)));
+        assertEquals(Commit.REJECTED, VerifiedArtifactStore.importCopy(source, artifact(), Sidecar.SHA1, sha1Of(JAR), Instant.now()));
         assertFalse(Files.exists(artifact()));
         try (var leftovers = Files.list(artifact().getParent())) {
             assertEquals(0, leftovers.count(), "no temp files left behind");

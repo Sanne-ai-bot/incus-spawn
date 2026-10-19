@@ -381,8 +381,10 @@ class NpmCacheProxyTest {
     }
 
     @Test
-    void tarballCommittedAfterARepublishKeepsItsOwnDigest() throws Exception {
-        // Both downloads are held at the registry, each answered with the bytes its own lookup described
+    void tarballFromALookupBeforeARepublishDoesNotReplaceTheRepublishedCopy() throws Exception {
+        // Both downloads are held at the registry, each answered with the bytes its own lookup described.
+        // The packument ETag stays the same throughout, as under npm ci (#1538)
+        ArtifactCacheHandler.storePackageEtag("republished", "\"republished-etag\"");
         var path = publish("republished", "original");
         stalledLookup = path;
         var first = getAsync(path);
@@ -397,17 +399,21 @@ class NpmCacheProxyTest {
         assertEquals(new Response(200, "republished"), second.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
         awaitCached(path);
 
-        // The first download then finishes, verified on the digest its own lookup found
+        // The first download then finishes, verified on the digest its own lookup found: its client
+        // gets those bytes, but upstream confirmed the cached copy after that lookup, so it stays
         answerHeld(original, "original");
         assertEquals(new Response(200, "original"), first.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
-        // The digest is the last file a commit writes, and the one that vouches for the tarball. The commit
-        // drops the previous copy's first, so it can be missing between two polls: read it as one step
-        var shasum = Path.of(cached(path) + ".shasum");
-        var digest = "sha512:" + ArtifactCacheProxyTest.hex("SHA-512", "original".getBytes(StandardCharsets.UTF_8));
-        ArtifactCacheProxyTest.await(shasum + " to hold " + digest, () -> digest.equals(ArtifactCacheHandler.readFileOrNull(shasum)));
-        assertEquals("original", Files.readString(cached(path)), "the stored digest describes the tarball beside it");
+        ArtifactCacheProxyTest.await("the first download to be settled",
+                () -> ArtifactCacheProxyTest.noDownloadInFlight(cached(path).getParent()));
+        var digest = "sha512:" + ArtifactCacheProxyTest.hex("SHA-512", "republished".getBytes(StandardCharsets.UTF_8));
+        assertEquals(digest, ArtifactCacheHandler.readFileOrNull(Path.of(cached(path) + ".shasum")));
+        assertEquals("republished", Files.readString(cached(path)));
+
+        // Within fresh and under the same ETag, the next request is served from the cache without a lookup
         stalledLookup = null;
-        assertEquals(new Response(200, "republished"), get(path, 10), "the next request gets what upstream publishes now");
+        var lookups = hits.get("/republished/1.0.0").get();
+        assertEquals(new Response(200, "republished"), get(path, 10), "what upstream publishes now");
+        assertEquals(lookups, hits.get("/republished/1.0.0").get(), "served without a lookup");
     }
 
     /** Answer a held request with {@code body}, taking it from the drain. */

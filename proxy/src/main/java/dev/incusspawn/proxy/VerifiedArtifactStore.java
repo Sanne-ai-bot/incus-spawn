@@ -24,9 +24,11 @@ import java.util.SequencedMap;
  *   <li>A stored checksum sidecar always describes the artifact beside it: it was
  *       either committed with it or checked against its hash before being stored.</li>
  *   <li>The stored checksum's modification time is when upstream last confirmed
- *       the artifact: set when both are committed, and again on every match by an
- *       answer that could have evicted it. Renewing it is best-effort: a file the
- *       proxy cannot re-stamp just ages, and gets confirmed before it is served.</li>
+ *       the artifact: set to the time of the lookup a commit was verified on, and
+ *       again on every match by an answer that could have evicted it. Renewing it is
+ *       best-effort: a file the proxy cannot re-stamp just ages, and gets confirmed
+ *       before it is served. A commit never replaces a copy confirmed after its own
+ *       lookup.</li>
  *   <li>Commit, reconcile and evict for one artifact are serialized, so a store
  *       racing an eviction cannot leave a sidecar next to an artifact it does not
  *       describe. Hashing, which can take long for a large artifact, happens
@@ -58,11 +60,24 @@ final class VerifiedArtifactStore {
         for (int i = 0; i < LOCKS.length; i++) LOCKS[i] = new Object();
     }
 
-    /** For {@link #verifyAndCommit(Path, Path, Sidecar, byte[], boolean, SequencedMap)}: no file beside the artifact. */
+    /** For {@link #verifyAndCommit(Path, Path, Sidecar, byte[], boolean, SequencedMap, Instant)}: no file beside the artifact. */
     static final SequencedMap<String, byte[]> NOTHING_ALONGSIDE = Collections.emptySortedMap();
 
     static Object lockFor(Path artifact) {
         return LOCKS[Math.floorMod(artifact.hashCode(), LOCKS.length)];
+    }
+
+    /** What became of a download given to {@link #verifyAndCommit}. */
+    enum Commit {
+        /** It matched, and is now the cached copy. */
+        COMMITTED,
+        /**
+         * It matched, but upstream confirmed the cached copy after this download's lookup,
+         * so that copy stays and the download is dropped.
+         */
+        SUPERSEDED,
+        /** It did not match, and was dropped. */
+        REJECTED
     }
 
     /**
@@ -71,32 +86,50 @@ final class VerifiedArtifactStore {
      * beside it as that sidecar, replacing any sidecars stored for a previous copy.
      *
      * @param expected the checksum, as a sidecar body
-     * @return whether the file was committed
+     * @param lookedUp when upstream was asked for {@code expected} (see the full overload)
      */
-    static boolean verifyAndCommit(Path download, Path artifact, Sidecar checksum,
-                                   byte[] expected, boolean storeSidecar) throws IOException {
-        return verifyAndCommit(download, artifact, checksum, expected, storeSidecar, NOTHING_ALONGSIDE);
+    static Commit verifyAndCommit(Path download, Path artifact, Sidecar checksum,
+                                  byte[] expected, boolean storeSidecar, Instant lookedUp) throws IOException {
+        return verifyAndCommit(download, artifact, checksum, expected, storeSidecar, NOTHING_ALONGSIDE, lookedUp);
     }
 
     /**
-     * {@link #verifyAndCommit(Path, Path, Sidecar, byte[], boolean)}, also committing
+     * {@link #verifyAndCommit(Path, Path, Sidecar, byte[], boolean, Instant)}, also committing
      * {@code alongside}: files stored beside the artifact outside {@link Sidecar}'s layout
      * (npm's {@code .etag} and {@code .shasum}), by the suffix of the artifact's name. Each
      * one stored for a previous copy goes before the artifact is replaced, and they are
      * written after it, in their order, so the one that vouches for the artifact goes last.
      * A null content only removes the previous copy's.
+     * <p>
+     * The file that vouches for the artifact (the checksum sidecar, else the last of
+     * {@code alongside}) is stamped with {@code lookedUp}: that is when upstream confirmed
+     * these bytes, not when their download finished. A cached copy whose vouching file is
+     * newer than {@code lookedUp} was confirmed after this download's lookup, so it is
+     * kept ({@link Commit#SUPERSEDED}): of two downloads racing a republish, the one that
+     * finishes last no longer wins when its lookup came first (#1538).
      */
-    static boolean verifyAndCommit(Path download, Path artifact, Sidecar checksum, byte[] expected,
-                                   boolean storeSidecar, SequencedMap<String, byte[]> alongside) throws IOException {
+    static Commit verifyAndCommit(Path download, Path artifact, Sidecar checksum, byte[] expected,
+                                  boolean storeSidecar, SequencedMap<String, byte[]> alongside,
+                                  Instant lookedUp) throws IOException {
         var hex = checksum.hex(expected);
         if (hex == null || !hex.equals(checksum.hashOf(download))) {
             Files.deleteIfExists(download);
-            return false;
+            return Commit.REJECTED;
         }
+        var vouching = storeSidecar ? checksum.storedFile(artifact)
+                : alongside.isEmpty() ? null : sibling(artifact, alongside.lastEntry().getKey());
+        var confirmedAt = FileTime.from(lookedUp);
         // On disk before it is named: a power loss must not leave a truncated
         // artifact beside an intact checksum
         force(download);
         synchronized (lockFor(artifact)) {
+            var current = vouching == null ? null : attributesOrNull(vouching);
+            // A vouching file left without its artifact vouches for nothing
+            if (current != null && current.lastModifiedTime().compareTo(confirmedAt) > 0
+                    && Files.isRegularFile(artifact)) {
+                Files.deleteIfExists(download);
+                return Commit.SUPERSEDED;
+            }
             // In this order a crash at any point leaves no sidecar describing other
             // bytes: sidecars of a previous copy go first, the checksum comes last,
             // and an artifact without a stored checksum is hashed before one is trusted
@@ -105,12 +138,15 @@ final class VerifiedArtifactStore {
             // Replaced in one step, so a concurrent reader never finds it missing
             Files.move(download, artifact,
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            if (storeSidecar) writeAtomically(checksum.storedFile(artifact), expected);
+            if (storeSidecar) writeAtomically(checksum.storedFile(artifact), expected, confirmedAt);
             for (var file : alongside.entrySet()) {
-                if (file.getValue() != null) writeAtomically(sibling(artifact, file.getKey()), file.getValue());
+                var target = sibling(artifact, file.getKey());
+                if (file.getValue() != null) {
+                    writeAtomically(target, file.getValue(), target.equals(vouching) ? confirmedAt : null);
+                }
             }
         }
-        return true;
+        return Commit.COMMITTED;
     }
 
     private static Path sibling(Path artifact, String suffix) {
@@ -127,13 +163,13 @@ final class VerifiedArtifactStore {
      * copy costs no space there and a plain copy elsewhere. A hardlink would share
      * the inode, so an in-place rewrite of the source would change the cache.
      */
-    static boolean importCopy(Path source, Path artifact, Sidecar checksum,
-                              byte[] expected) throws IOException {
+    static Commit importCopy(Path source, Path artifact, Sidecar checksum,
+                             byte[] expected, Instant lookedUp) throws IOException {
         Files.createDirectories(artifact.getParent());
         var temp = Files.createTempFile(artifact.getParent(), "m2-", ".tmp");
         try {
             Files.copy(source, temp, StandardCopyOption.REPLACE_EXISTING);
-            return verifyAndCommit(temp, artifact, checksum, expected, true);
+            return verifyAndCommit(temp, artifact, checksum, expected, true, lookedUp);
         } finally {
             Files.deleteIfExists(temp);
         }
@@ -354,10 +390,16 @@ final class VerifiedArtifactStore {
     }
 
     private static void writeAtomically(Path target, byte[] content) throws IOException {
+        writeAtomically(target, content, null);
+    }
+
+    /** With a {@code modified} time, the file is named with it already set. */
+    private static void writeAtomically(Path target, byte[] content, FileTime modified) throws IOException {
         Files.createDirectories(target.getParent());
         var temp = Files.createTempFile(target.getParent(), "sc-", ".tmp");
         try {
             Files.write(temp, content);
+            if (modified != null) Files.setLastModifiedTime(temp, modified);
             force(temp);
             Files.move(temp, target,
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
