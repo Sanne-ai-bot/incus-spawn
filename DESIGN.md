@@ -2456,9 +2456,11 @@ So it applies to all definitions, trusted or not:
   Each hop goes through the same check and the same no-https-downgrade rule as `Redirect.NORMAL`, because a public URL could otherwise redirect to `127.0.0.1`.
   The check comes before the cache lookup.
 - **Retries start over, and are checked again.**
-  A 429, 500, 502, 503 or 504, or a connection that fails or breaks mid-body, is retried twice (after 2s, then 8s, or a longer `Retry-After` capped at 30s), because GitHub release downloads have been seen to answer 500 transiently, around when a new base image had just been published and was first pulled.
+  A 429, 500, 502, 503 or 504, or a connection that fails or breaks mid-body, is retried four times (after 2s, 8s, 30s, then 60s; a `Retry-After` of up to 30s can lengthen the shorter waits).
+  That is because GitHub release downloads have been seen to answer 500 transiently, around when a new base image had just been published and was first pulled, and a CI runner to be unable to connect to github.com for 100s (#1572).
+  With those 30s connect timeouts the attempts span about four minutes, while a connection refused at once gets the 100s of pauses; a name that does not resolve is not retried, so a machine without DNS still fails at once.
   Each attempt starts again at the original URL and runs the host-local check on it again just before connecting.
-  A retry comes seconds after the first check, long enough for the JDK's address cache to let a rebinding domain move to `127.0.0.1`.
+  A retry comes seconds to minutes after the first check, by when the JDK's address cache may have let a rebinding domain move to `127.0.0.1`.
   Starting over also means a short-lived signed redirect target is never reused.
   What another attempt cannot fix fails at once: other statuses, these rules' refusals, an unresolvable name, a TLS handshake or certificate failure, a malformed response, and anything on this side of the connection (a failed write to the cache, a throwing `Listener`).
   `CountingSubscriber` tells the two apart once the body has started, since only the connection signals `onError`.

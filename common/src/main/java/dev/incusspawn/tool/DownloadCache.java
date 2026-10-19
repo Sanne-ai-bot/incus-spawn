@@ -49,9 +49,13 @@ public class DownloadCache {
     /**
      * Pauses before each retry of a download that failed transiently (a 5xx, a 429 or a broken
      * connection); one entry per retry. GitHub release downloads have been seen to answer 500
-     * transiently, around when a new base image had just been published and was first pulled.
+     * transiently, around when a new base image had just been published and was first pulled, and a
+     * CI runner to time out connecting to github.com for 100s (#1572); with those connect timeouts
+     * the attempts span about four minutes. A name that does not resolve is final, so a machine
+     * without DNS does not wait them out.
      */
-    private static final List<Duration> RETRY_DELAYS = List.of(Duration.ofSeconds(2), Duration.ofSeconds(8));
+    static final List<Duration> RETRY_DELAYS = List.of(
+            Duration.ofSeconds(2), Duration.ofSeconds(8), Duration.ofSeconds(30), Duration.ofSeconds(60));
 
     /** Statuses a later attempt may not get; other errors (501, 505, every other 4xx) are final. */
     private static final Set<Integer> RETRIED_STATUSES = Set.of(429, 500, 502, 503, 504);
@@ -59,7 +63,7 @@ public class DownloadCache {
     /** The longest {@code Retry-After} honoured, so a server cannot park a build. */
     private static final Duration MAX_RETRY_AFTER = Duration.ofSeconds(30);
 
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
+    static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
 
     /** Waits before a retry; a seam so tests neither sleep nor lose what was asked for. */
     interface Pause {
