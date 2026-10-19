@@ -42,21 +42,26 @@ class UpdateBaseCommandTest {
     @Test
     void aPinKeepsTheBuiltinMaskedServices(@TempDir Path home) throws Exception {
         var yaml = pin(home, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
-        assertEquals(List.of("tmp.mount"), ImageDef.parseYaml(yaml).getMaskServices(), yaml);
+        var pinned = ImageDef.parseYaml(yaml);
+        assertEquals(List.of("tmp.mount"), pinned.getMaskServices(), yaml);
+        assertEquals("Base OS only", pinned.getDescription(), yaml);
+        assertFalse(yaml.contains("remove_packages"), yaml);
     }
 
-    /** Quoted: a dnf glob such as {@code *-langpack-*} unquoted is a YAML alias, and the pin would not load. */
+    /** Read back as written: a dnf glob such as {@code *-langpack-*} bare is a YAML alias, and the pin would not load. */
     @Test
     void aPinKeepsWhatItsDefinitionRemovesAndMasksGlobsIncluded(@TempDir Path home) throws Exception {
-        var removed = List.of("*-langpack-*", "nano", "a \"quoted\" name");
+        var removed = List.of("*-langpack-*", "nano", "a \"quoted\" name", "back\\slash");
         var masked = List.of("tmp.mount", "getty@*.service", "&anchor");
         var def = ImageDef.loadBuiltinByName("tpl-minimal");
+        def.setDescription("Base: OS only #1\nfolded \u0001\n");
         def.setRemovePackages(removed);
         def.setMaskServices(masked);
         var yaml = pin(home, def, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of()));
         var pinned = ImageDef.parseYaml(yaml);
         assertEquals(removed, pinned.getRemovePackages(), yaml);
         assertEquals(masked, pinned.getMaskServices(), yaml);
+        assertEquals("Base: OS only #1\nfolded \u0001\n", pinned.getDescription(), yaml);
     }
 
     /** One arch's VM checksum is not a pin: the other arch would download the image unverified. */
