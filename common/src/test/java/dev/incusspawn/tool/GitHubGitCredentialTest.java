@@ -98,8 +98,10 @@ class GitHubGitCredentialTest {
             assertEquals("", invoke("get", input).output());
         }
         var before = Files.readString(proofs());
+        // The helper declines without reading; more than a pipe buffer holds made a write racing its exit fail (#1544).
+        var input = "protocol=https\nhost=github.com\npassword=unused\n" + "x=y\n".repeat(32 * 1024) + "\n";
         for (var action : List.of("store", "erase")) {
-            var result = invoke(action, "protocol=https\nhost=github.com\npassword=unused\n\n");
+            var result = invoke(action, input);
             assertEquals(0, result.exit());
             assertEquals("", result.output());
             assertEquals(before, Files.readString(proofs()));
@@ -130,8 +132,10 @@ class GitHubGitCredentialTest {
     private Result run(List<String> command, String input, Map<String, String> env) throws Exception {
         var pb = HermeticGit.configure(new ProcessBuilder(command).directory(root.toFile()), config());
         pb.environment().putAll(env);
-        var process = pb.start();
-        try (var stdin = process.getOutputStream()) { stdin.write(input.getBytes(StandardCharsets.UTF_8)); }
+        // From a file, not a pipe: a helper may exit without reading, as Git allows (#1544).
+        var stdin = Files.createTempFile(root, "stdin", null);
+        Files.writeString(stdin, input);
+        var process = pb.redirectInput(stdin.toFile()).start();
         assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Git must never wait for a terminal prompt");
         return new Result(process.exitValue(), new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8),
                 new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8));
