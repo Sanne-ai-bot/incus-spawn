@@ -372,7 +372,7 @@ class VerifiedArtifactStoreTest {
         System.setProperty("user.home", dir.toString());
         System.setErr(new PrintStream(err, true));
         try {
-            VerifiedArtifactStore.renewConfirmation(artifact, storedChecksum);
+            VerifiedArtifactStore.renewConfirmation(artifact, storedChecksum, Instant.now());
         } finally {
             System.setErr(originalErr);
             System.setProperty("user.home", originalHome);

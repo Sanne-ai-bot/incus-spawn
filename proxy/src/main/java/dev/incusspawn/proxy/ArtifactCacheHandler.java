@@ -829,15 +829,25 @@ class ArtifactCacheHandler {
 
     /**
      * {@code confirmAgain}: a hit served on an aging confirmation, to be confirmed in the background.
-     * A miss carries the digest to verify the download on and the package ETag to store with it.
+     * A miss carries the digest to verify the download on, the package ETag to store with it,
+     * and when upstream was asked for that digest, which orders its commit (#1538).
      */
-    record NpmVerifyResult(boolean cacheHit, long size, String digest, String packageEtag, boolean confirmAgain) {
+    record NpmVerifyResult(boolean cacheHit, long size, String digest, String packageEtag, Instant lookedUp,
+                           boolean confirmAgain) {
         static NpmVerifyResult hit(long size, boolean confirmAgain) {
-            return new NpmVerifyResult(true, size, null, null, confirmAgain);
+            return new NpmVerifyResult(true, size, null, null, null, confirmAgain);
         }
 
-        static NpmVerifyResult miss(String digest, String packageEtag) {
-            return new NpmVerifyResult(false, 0, digest, packageEtag, false);
+        static NpmVerifyResult miss(String digest, String packageEtag, Instant lookedUp) {
+            return new NpmVerifyResult(false, 0, digest, packageEtag, lookedUp, false);
+        }
+    }
+
+    /** Upstream's answer for a version document, and when it was asked for: the ask that answered, after a retry. */
+    record NpmLookup(SidecarAnswer answer, Instant askedAt) {
+        /** No ask at all (a backoff): the answer is as of now. */
+        static NpmLookup unreachable() {
+            return new NpmLookup(SidecarAnswer.UNREACHABLE, Instant.now());
         }
     }
 
@@ -865,8 +875,6 @@ class ArtifactCacheHandler {
         // other tarballs' settling. That queue is the one every request on this server
         // shares, so the digest lookup waits outside it: inside, a cold install's lookups ran
         // one at a time (#960).
-        // Before the digest lookup, which a miss's commit is ordered by (#1538)
-        var lookedUp = Instant.now();
         vertx.executeBlocking(() -> {
             var cacheDir = npmCacheDir();
             var etagFile = cacheDir.resolve(packageName).resolve(".etag").normalize();
@@ -876,11 +884,12 @@ class ArtifactCacheHandler {
         }).compose(state -> {
             if (state.hit() != null) return Future.succeededFuture(state.hit());
             // A copy to fall back on is served at once during a backoff, as for Maven/Gradle; with none, the registry is still asked
-            var answer = state.cached() && inBackoff(domain)
-                    ? Future.succeededFuture(SidecarAnswer.UNREACHABLE)
+            var lookup = state.cached() && inBackoff(domain)
+                    ? Future.succeededFuture(NpmLookup.unreachable())
                     : fetchNpmVersion(domain, packageName, version, started);
-            return answer.compose(a -> vertx.executeBlocking(
-                    () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, a)));
+            // Ordered by when upstream was asked, not by when the request came in: the queue above can be long
+            return lookup.compose(l -> vertx.executeBlocking(
+                    () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, l.answer(), l.askedAt())));
         }).onSuccess(result -> {
             if (result == null) {
                 // Said here, so a relay that fails points at the lookup that sent it there
@@ -895,7 +904,7 @@ class ArtifactCacheHandler {
                 }
             } else {
                 fetchCacheAndServe(clientReq, started, domain, cacheFile, ref,
-                        Verification.ofNpmTarball(result.digest(), result.packageEtag(), lookedUp));
+                        Verification.ofNpmTarball(result.digest(), result.packageEtag(), result.lookedUp()));
             }
         }).onFailure(err -> {
             System.err.println("npm integrity check error for " + ref +
@@ -942,8 +951,8 @@ class ArtifactCacheHandler {
         // Timed from then too, not from the request it followed: no client waits on it.
         inBackground(cacheFile, () -> inBackoff(domain) ? Future.succeededFuture()
                 : fetchNpmVersion(domain, packageName, version, System.nanoTime())
-                        .compose(answer -> answer.unreachable() ? Future.succeededFuture() : vertx.executeBlocking(() -> {
-                            reconcileNpmCopy(cacheFile, ref, answer);
+                        .compose(l -> l.answer().unreachable() ? Future.succeededFuture() : vertx.executeBlocking(() -> {
+                            reconcileNpmCopy(cacheFile, ref, l.answer(), l.askedAt());
                             return null;
                         }))
                         .onFailure(err -> System.err.println("npm background confirmation error for " + ref
@@ -957,18 +966,20 @@ class ArtifactCacheHandler {
      * fetching it again, and its sidecars are not this one's to touch. The check and what
      * follows hold {@link VerifiedArtifactStore}'s per-artifact lock, which the foreground's
      * settling ({@link #checkNpmTarballCache}) and a download's commit with its sidecars hold
-     * too, so neither runs in the middle of the other. The answer was fetched before the lock, though: a copy the foreground
-     * replaced and committed meanwhile can still be evicted on it, which costs a re-download.
+     * too, so neither runs in the middle of the other. The answer was fetched before the lock, though, so it
+     * is dropped when upstream confirmed the copy after {@code lookedUp}, the answer's lookup: a copy the
+     * foreground replaced and committed meanwhile is not evicted, renewed or expired on an older answer.
      */
-    static void reconcileNpmCopy(Path cacheFile, String ref, SidecarAnswer answer) throws IOException {
+    static void reconcileNpmCopy(Path cacheFile, String ref, SidecarAnswer answer, Instant lookedUp) throws IOException {
         var digest = answer.status() == 200 ? npmDigest(answer.body()) : null;
         // Under the artifact's lock, as is the foreground's evict-and-write (checkNpmTarballCache)
         synchronized (VerifiedArtifactStore.lockFor(cacheFile)) {
-            if (!Files.isRegularFile(cacheFile)) return;
             var storedDigest = Path.of(cacheFile + ".shasum");
+            // Confirmed after this lookup, by a commit or another check: the answer has nothing newer to say (#1538)
+            if (!Files.isRegularFile(cacheFile) || VerifiedArtifactStore.confirmedAfter(storedDigest, lookedUp)) return;
             var stored = storedNpmDigest(storedDigest);
             if (digest != null && digest.equals(stored)) {
-                VerifiedArtifactStore.renewConfirmation(cacheFile, storedDigest);
+                VerifiedArtifactStore.renewConfirmation(cacheFile, storedDigest, lookedUp);
             } else if (digest != null || answer.gone()) {
                 System.out.println("npm cache: " + ref + (digest != null ? npmMismatch(stored, digest)
                         : " is gone upstream (" + answer.status() + ")") + ", evicting");
@@ -987,15 +998,21 @@ class ArtifactCacheHandler {
      * served only on a matching digest, and a version that is gone (404/410: unpublished,
      * or taken down as malware) is evicted so the client gets upstream's answer. Any other
      * answer without a digest confirms nothing and relays. Only an unreachable registry
-     * (no connection, 5xx, 429) serves the copy unconfirmed (#787).
+     * (no connection, 5xx, 429) serves the copy unconfirmed (#787). An answer from a lookup made
+     * before upstream last confirmed the copy ({@code lookedUp}) is older news, and serves the copy (#1538).
      */
     static NpmVerifyResult checkNpmTarballCache(Path cacheFile, String packageEtag,
-                                                 String ref, SidecarAnswer answer)
+                                                 String ref, SidecarAnswer answer, Instant lookedUp)
             throws IOException {
         // Parsed before taking the lock, which other artifacts share
         var digest = answer.status() == 200 ? npmDigest(answer.body()) : null;
         synchronized (VerifiedArtifactStore.lockFor(cacheFile)) {
             var cached = Files.isRegularFile(cacheFile);
+            var storedDigest = Path.of(cacheFile + ".shasum");
+            if (cached && VerifiedArtifactStore.confirmedAfter(storedDigest, lookedUp)) {
+                // Upstream confirmed the copy after this lookup, which a slow answer can predate (#1538)
+                return NpmVerifyResult.hit(Files.size(cacheFile), false);
+            }
 
             if (digest == null) {
                 if (!cached) return null;
@@ -1012,10 +1029,9 @@ class ArtifactCacheHandler {
             }
 
             if (cached) {
-                var storedDigest = Path.of(cacheFile + ".shasum");
                 var stored = storedNpmDigest(storedDigest);
                 if (digest.equals(stored)) {
-                    VerifiedArtifactStore.renewConfirmation(cacheFile, storedDigest);
+                    VerifiedArtifactStore.renewConfirmation(cacheFile, storedDigest, lookedUp);
                     if (packageEtag != null) {
                         Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
                     }
@@ -1026,7 +1042,7 @@ class ArtifactCacheHandler {
             }
 
             // Its sidecars are committed with the download (Verification.ofNpmTarball)
-            return NpmVerifyResult.miss(digest, packageEtag);
+            return NpmVerifyResult.miss(digest, packageEtag, lookedUp);
         }
     }
 
@@ -1072,13 +1088,16 @@ class ArtifactCacheHandler {
      * relayed body that stalls cannot be resumed (#925, #929). A 429 is not: asked again at
      * once, it would only be refused again.
      */
-    Future<SidecarAnswer> fetchNpmVersion(String domain, String packageName, String version, long started) {
+    Future<NpmLookup> fetchNpmVersion(String domain, String packageName, String version, long started) {
         var path = "/" + packageName.replace("/", "%2F") + "/" + version;
-        return fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES)
-                .compose(answer -> answer.status() >= 500
-                        && upstream.silenceLeftMillis(started) > TimeUnit.SECONDS.toMillis(upstream.clientSilenceBudgetSeconds) / 2
-                        ? fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES)
-                        : Future.succeededFuture(answer));
+        Supplier<Future<NpmLookup>> ask = () -> {
+            var asked = Instant.now();
+            return fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES).map(answer -> new NpmLookup(answer, asked));
+        };
+        return ask.get().compose(lookup -> lookup.answer().status() >= 500
+                && upstream.silenceLeftMillis(started) > TimeUnit.SECONDS.toMillis(upstream.clientSilenceBudgetSeconds) / 2
+                ? ask.get()
+                : Future.succeededFuture(lookup));
     }
 
     /**
