@@ -14,6 +14,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -80,7 +81,7 @@ class DefinitionTextTableTest {
                 """);
         var out = new ByteArrayOutputStream();
         var err = new ByteArrayOutputStream();
-        TemplatesCommand.validateAndReport(file, Map.of(), new PrintStream(out, true, StandardCharsets.UTF_8),
+        TemplatesCommand.validateAndReport(file, Map.of(), List.of(), new PrintStream(out, true, StandardCharsets.UTF_8),
                 new PrintStream(err, true, StandardCharsets.UTF_8));
 
         // The host-resource mode and the duplicate tool.

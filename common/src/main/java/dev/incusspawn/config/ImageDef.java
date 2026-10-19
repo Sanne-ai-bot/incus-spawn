@@ -406,15 +406,16 @@ public class ImageDef {
             var warnings = new ArrayList<String>();
             var entry = source != null ? "host-resource '" + OutputFormat.oneLine(source) + "'"
                     : "a host-resource without a source";
-            var ignored = new ArrayList<>(unknownKeys);
-            if (confinedTo != null) ignored.add("confined-to");
-            for (var key : ignored) {
+            for (var key : unknownKeys) {
                 var warning = entry + ": unknown key '" + OutputFormat.oneLine(key)
                         + "', ignored (a host resource takes source, path and mode)";
                 if (source != null && path == null && PATH_LIKE.contains(key.toLowerCase(Locale.ROOT).replace('_', '-'))) {
                     warning += "; use 'path:' to set where it goes in the instance";
                 }
                 warnings.add(warning);
+            }
+            if (confinedTo != null) {
+                warnings.add(entry + ": 'confined-to' is set by isx, a file's value is ignored (#765)");
             }
             return warnings;
         }

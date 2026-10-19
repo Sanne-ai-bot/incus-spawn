@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.Warnings;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.TemplateValidator;
 import dev.incusspawn.incus.IncusException;
@@ -304,9 +305,22 @@ public class TemplatesCommand extends BaseCommand {
      * a project-local file is checked even when the user leaves it unchanged, so nothing in them
      * reaches the terminal raw (#1133). A warning is one line; an error keeps the line breaks of
      * the advice isx writes into it, and each line is made safe.
+     * <p>
+     * {@code loadWarnings} are what loading {@code defs} reported. Those about this file that the
+     * report states again, such as an ignored host-resource key, are left to the report, so a key
+     * added in this edit is named once; every other one is passed on to {@link Warnings}. They are
+     * matched as text, on the {@code <file name>: } prefix {@code ImageDef} gives them, until load
+     * warnings say which file and check they come from (#1546).
      */
-    static boolean validateAndReport(Path file, Map<String, ImageDef> defs, PrintStream out, PrintStream err) {
+    static boolean validateAndReport(Path file, Map<String, ImageDef> defs, List<String> loadWarnings,
+                                     PrintStream out, PrintStream err) {
         var result = TemplateValidator.validate(file, defs);
+        var ownPrefix = OutputFormat.oneLine(file.getFileName().toString()) + ": ";
+        for (var warning : loadWarnings) {
+            var reported = warning.startsWith(ownPrefix)
+                    && result.warnings().contains(warning.substring(ownPrefix.length()));
+            if (!reported) Warnings.warn(warning);
+        }
         if (result.hasErrors()) {
             err.println("Validation errors:");
             result.errors().forEach(e -> err.println("  ERROR: " + e.lines().map(OutputFormat::oneLine)
@@ -341,7 +355,9 @@ public class TemplatesCommand extends BaseCommand {
                 return;
             }
 
-            boolean valid = validateAndReport(file, ImageDef.loadAll(), System.out, System.err);
+            var loadWarnings = new ArrayList<String>();
+            var defs = ImageDef.loadAll(loadWarnings::add);
+            boolean valid = validateAndReport(file, defs, loadWarnings, System.out, System.err);
 
             if (valid && originalName != null) {
                 checkNameChange(file, originalName, isBuiltinCopy);
