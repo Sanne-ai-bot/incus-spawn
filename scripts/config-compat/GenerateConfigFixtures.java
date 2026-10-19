@@ -12,14 +12,16 @@ import java.util.Map;
  * the release's classes -- never against the working tree, whose serializer is the thing under test.
  *
  * <p>Uses only setters every release since v0.3.8 has, so the same source produces each new
- * release's fixture set. The credential values are recognisable placeholders, never real ones;
+ * release's fixture set. What only some releases write is in the other {@code Generate*} classes
+ * here, which {@code generate-fixtures.sh} runs against a release that has what they call. The
+ * credential values are recognisable placeholders, never real ones;
  * {@code PreviousReleaseConfigCompatTest} asserts on them.
  *
  * <p>Args: output directory, file-name prefix (the release tag).
  */
 public class GenerateConfigFixtures {
 
-    private interface Fill { void fill(SpawnConfig config) throws Exception; }
+    interface Fill { void fill(SpawnConfig config) throws Exception; }
 
     public static void main(String[] args) throws Exception {
         var out = Path.of(args[0]);
@@ -63,14 +65,27 @@ public class GenerateConfigFixtures {
         write(out, prefix, "empty", c -> { });
     }
 
-    private static void write(Path out, String prefix, String name, Fill fill) throws Exception {
+    static void write(Path out, String prefix, String name, Fill fill) throws Exception {
+        write(out, prefix, name, null, fill);
+    }
+
+    /**
+     * With {@code handEdited}, the file starts as that text, loaded as the release loads it:
+     * a section only a person writes, as the release's next save leaves it.
+     */
+    static void write(Path out, String prefix, String name, String handEdited, Fill fill) throws Exception {
         // save() writes under user.home, so give each file a home of its own.
         var home = Files.createTempDirectory("isx-config-fixture");
         System.setProperty("user.home", home.toString());
+        var file = home.resolve(".config/incus-spawn/config.yaml");
         var config = new SpawnConfig();
+        if (handEdited != null) {
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, handEdited);
+            config = SpawnConfig.load();
+        }
         fill.fill(config);
         config.save();
-        Files.copy(home.resolve(".config/incus-spawn/config.yaml"),
-                out.resolve(prefix + "-" + name + ".yaml"), StandardCopyOption.REPLACE_EXISTING);
+        Files.copy(file, out.resolve(prefix + "-" + name + ".yaml"), StandardCopyOption.REPLACE_EXISTING);
     }
 }

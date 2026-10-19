@@ -1,0 +1,42 @@
+claude:
+  accounts:
+    default:
+      type: oauth
+      oauthToken: sk-ant-oat01-fixture
+    work:
+      type: api-key
+      apiKey: sk-ant-api03-work
+  default: work
+github:
+  accounts:
+    default:
+      token: ghp_fixture
+      email: me@example.com
+    work:
+      token: ghp_work
+      email: me@work.example.com
+  default: default
+bob:
+  licenseConsent: true
+  accounts:
+    default:
+      apiKey: bob-fixture
+  default: default
+openai:
+  accounts:
+    default:
+      apiKey: sk-openai-fixture
+  default: default
+features: []
+searchPaths: []
+host-paths: []
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""
+testProxyTool:
+  accounts:
+    default:
+      token: tpt-fixture
+    work:
+      token: tpt-work
+  default: work

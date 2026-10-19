@@ -1,0 +1,16 @@
+claude: {}
+github:
+  token: ghp_fixture
+bob:
+  licenseConsent: false
+openai: {}
+features: []
+searchPaths: []
+host-paths: []
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""
+mcp:
+  templates:
+    - tpl-java
+  max-instances: 4

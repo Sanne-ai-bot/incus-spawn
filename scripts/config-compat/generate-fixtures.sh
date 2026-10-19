@@ -10,7 +10,9 @@
 # Output: common/src/test/resources/config-compat/<tag>-*.yaml
 #
 # Add a fixture set for each release whose config format differs from the last one, then
-# list its files in PreviousReleaseConfigCompatTest.
+# list its files in PreviousReleaseConfigCompatTest. GenerateConfigFixtures writes the set
+# every release has; each other Generate*.java writes what only some releases do, and runs
+# against a release that has what it calls (below).
 
 set -euo pipefail
 
@@ -24,9 +26,19 @@ git -C "$REPO" worktree add --detach "$WORK/src" "$TAG" >/dev/null
 (cd "$WORK/src" && mvn -q -pl common -am compile \
     && mvn -q -pl common dependency:build-classpath -Dmdep.outputFile="$WORK/cp.txt")
 
+CONFIG="$WORK/src/common/src/main/java/dev/incusspawn/config"
+GENERATORS=(GenerateConfigFixtures)
+[[ -f "$CONFIG/NamespaceAccounts.java" ]] && GENERATORS+=(GenerateAccountConfigFixtures)
+grep -q 'public void setMcp(' "$CONFIG/SpawnConfig.java" && GENERATORS+=(GenerateMcpSectionConfigFixtures)
+[[ -f "$CONFIG/GitCacheConfig.java" ]] && GENERATORS+=(GenerateSectionsConfigFixtures)
+
 CP="$WORK/src/common/target/classes:$(cat "$WORK/cp.txt")"
 mkdir -p "$WORK/classes" "$OUT"
-javac -d "$WORK/classes" -cp "$CP" "$REPO/scripts/config-compat/GenerateConfigFixtures.java"
-java -cp "$WORK/classes:$CP" GenerateConfigFixtures "$OUT" "$TAG"
+SOURCES=()
+for generator in "${GENERATORS[@]}"; do SOURCES+=("$REPO/scripts/config-compat/$generator.java"); done
+javac -d "$WORK/classes" -cp "$CP" "${SOURCES[@]}"
+for generator in "${GENERATORS[@]}"; do
+    java -cp "$WORK/classes:$CP" "$generator" "$OUT" "$TAG"
+done
 
 ls -1 "$OUT"/"$TAG"-*.yaml
