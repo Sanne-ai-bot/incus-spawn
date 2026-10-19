@@ -683,6 +683,22 @@ class ImageDefTest {
     }
 
     @Test
+    void theOldVmKeySaysWhatBuildsAVirtualMachine() throws Exception {
+        // No mapping reads 'vm:', so such a template builds a container.
+        var def = ImageDef.parseYaml("name: tpl-x\nvm: true\n");
+
+        assertFalse(def.isVm());
+        assertEquals(List.of("unknown key 'vm', ignored; a virtual machine is 'type: vm';"
+                + " without it this builds a container"), def.unknownKeyWarnings());
+        // With type: set, the key is only a leftover, and what gets built is what type: says;
+        // a child may inherit type: vm from its parent, so neither is told it builds a container.
+        assertEquals(List.of("unknown key 'vm', ignored; a virtual machine is 'type: vm'"),
+                ImageDef.parseYaml("name: tpl-x\ntype: vm\nvm: true\n").unknownKeyWarnings());
+        assertEquals(List.of("unknown key 'vm', ignored; a virtual machine is 'type: vm'"),
+                ImageDef.parseYaml("name: tpl-x\nparent: tpl-vm-base\nvm: true\n").unknownKeyWarnings());
+    }
+
+    @Test
     void aKeyWithNothingCloseNamesTheKeysItsEntryTakes() throws Exception {
         var def = ImageDef.parseYaml("""
                 name: tpl-x
