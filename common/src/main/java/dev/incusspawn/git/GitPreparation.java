@@ -238,9 +238,12 @@ public final class GitPreparation {
                 var roots = lease.path.resolve("roots");
                 Files.write(roots, selected.values());
                 var pack = result.resolve("objects/pack/export.pack");
+                // The walk from the roots alone decides which objects enter the pack. Without --thin, a
+                // stored delta is reused only when its base is selected too; otherwise the object is
+                // written whole or against a selected base, so a private object is never a base here.
+                // Bitmaps stay off: they are the source's own claim about reachability, not our walk.
                 run(result, roots, pack, List.of("-c", "protocol.https.allow=never", "-c", "protocol.ssh.allow=never",
-                        "-c", "protocol.git.allow=never", "pack-objects", "--stdout", "--revs",
-                        "--no-reuse-delta", "--no-reuse-object", "--no-use-bitmap-index"));
+                        "-c", "protocol.git.allow=never", "pack-objects", "--stdout", "--revs", "--no-use-bitmap-index"));
                 // index-pack --stdin installs the standard pack-<hash> pair in our owned store.
                 run(result, pack, null, List.of("index-pack", "--stdin", "--strict"));
                 Files.delete(pack);

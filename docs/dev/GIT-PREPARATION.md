@@ -20,7 +20,11 @@ Project-local templates cannot prepare host sources, including when rebuilding f
 Guest-side `file://` URLs retain their existing meaning and never select this path.
 
 `GitPreparation.prepareHost` reads source refs, then packs their captured object IDs through fresh owned metadata with a temporary alternate pointing at the source object directory.
-Object and delta reuse and bitmap selection are disabled so no extra source objects enter the export.
+The walk from those object IDs alone decides what enters the export, so no extra source objects enter it.
+Stored objects and deltas are reused: without `--thin`, `pack-objects` reuses a delta only when its base is selected too, and otherwise writes the object whole or against a selected object, so a private object never enters as a delta base.
+Bitmap selection stays disabled: a bitmap is the source's own record of reachability, and trusting it would let a stale or damaged one add objects that the walk would not select.
+Reused bytes are not trusted either: `index-pack --strict` recomputes every object ID and checks its structure, and the fsck below follows every link.
+On apache/camel (4.4 million objects) reuse cut the export from 263–300 s to 127–131 s; recomputing every delta had taken 175 s of it (#1548, [measurements](../../bench/data/git-large-repositories-2026-10-19.json)).
 Only the resulting pack/index pair, exported heads/tags and chosen HEAD remain; fsck runs after removing the alternate.
 Source hooks, configuration, worktree files and reflogs are never copied.
 The source is never fetched into or maintained, and no remote advertisement or network fallback is involved.
@@ -221,7 +225,7 @@ Each prepared clone detaches its own clean snapshot before priming; other clean 
 
 Preparation tests serve disposable remotes through `git daemon`, exercising the production transport policy without enabling file transport for tests.
 The daemon executable must be installed (`git-daemon` on Fedora).
-Real-Git tests compare the physical object inventory with the selected remote closure, including mixed private commits, stashes, staged blobs and a forced private delta base.
+Real-Git tests compare the physical object inventory with the selected remote closure, including mixed private commits, stashes, staged blobs and a forced private delta base, for both clean snapshots and host-source exports.
 They cover ref rewrites/deletions, moved tags, default HEAD changes, branch/tag pins, SHA-256 repositories, empty remotes, source removal, corruption and pruning while borrowing, integrity-failure retry, snapshot corruption and an unavailable remote.
 Incremental tests cover repeated SHA-1/SHA-256 updates, unchanged pack inodes, independent old readers and guest copies, new branches/tags, detached remote HEADs, merged branch deletion, removed history, advertisement races, new/retained pack corruption, failed fetches, cancellation and compaction.
 Concurrency tests cover independent readers, replacement and eviction, cross-process leases and dead-reader reclamation.

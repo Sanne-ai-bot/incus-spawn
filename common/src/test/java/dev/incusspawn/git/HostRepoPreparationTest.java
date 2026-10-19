@@ -72,6 +72,22 @@ class HostRepoPreparationTest {
         assertFalse(Files.exists(tmp.resolve("hook-ran")));
     }
 
+    @Test void aSelectedObjectWhoseOnlyStoredDeltaBaseIsPrivateIsExportedWithoutThatBase() throws Exception {
+        var host = releasesFixture(tmp);
+        var publicId = git(host, "rev-parse", "main:isx.deb");
+        var privateId = forcePrivateDeltaBase(host.resolve(".git"), publicId, Files.readAllBytes(host.resolve("isx.deb")));
+        var expected = git(host, "rev-list", "--objects", "--no-object-names", "--branches", "--tags")
+                .lines().collect(java.util.stream.Collectors.toSet());
+        assertTrue(expected.contains(publicId));
+        try (var prepared = preparation().prepareHost(host, null, phase -> {})) {
+            var actual = allObjects(prepared.repository());
+            assertEquals(expected, actual, "the physical object store must equal the selected closure");
+            assertFalse(actual.contains(privateId));
+            PreparationGit.delete(host);
+            assertEquals("", git(prepared.repository(), "fsck", "--full", "--no-dangling"));
+        }
+    }
+
     @Test void supportsWorktreesAndBareRepositories() throws Exception {
         var host = releasesFixture(tmp);
         var worktree = tmp.resolve("worktree");
