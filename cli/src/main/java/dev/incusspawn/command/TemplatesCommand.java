@@ -307,10 +307,10 @@ public class TemplatesCommand extends BaseCommand {
      * the advice isx writes into it, and each line is made safe.
      * <p>
      * {@code loadWarnings} are what loading {@code defs} reported. Those about this file that the
-     * report states again, such as an ignored host-resource key, are left to the report, so a key
-     * added in this edit is named once; every other one is passed on to {@link Warnings}. They are
-     * matched as text, on the {@code <file name>: } prefix {@code ImageDef} gives them, until load
-     * warnings say which file and check they come from (#1546).
+     * report states again, such as an ignored key, are left to the report, so a key added in this
+     * edit is named once; every other one is passed on to {@link Warnings}. They are matched as
+     * text, on the {@code <file name>: } prefix {@code ImageDef} gives them: both sides take an
+     * ignored key's warning from {@code ImageDef.unknownKeyWarnings()}.
      */
     static boolean validateAndReport(Path file, Map<String, ImageDef> defs, List<String> loadWarnings,
                                      PrintStream out, PrintStream err) {

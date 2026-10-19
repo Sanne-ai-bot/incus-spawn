@@ -206,10 +206,8 @@ class TemplateValidatorTest {
         var result = TemplateValidator.validate(file, knownTemplates());
         assertFalse(result.hasErrors(), result.errors().toString());
         assertEquals(List.of(
-                "host-resource '~/.claude/CLAUDE-isx.md': unknown key 'target', ignored"
-                        + " (a host resource takes source, path and mode); use 'path:' to set where it goes"
-                        + " in the instance",
-                "host-resource '~/.gitconfig': 'confined-to' is set by isx, a file's value is ignored (#765)"),
+                "unknown key 'host-resources[0].target', ignored; use 'path:' to set where it goes in the instance",
+                "'host-resources[1].confined-to' is set by isx, a file's value is ignored (#765)"),
                 result.warnings());
     }
 
@@ -342,7 +340,8 @@ class TemplateValidatorTest {
     }
 
     @Test
-    void unknownFieldsIgnored(@TempDir Path dir) throws Exception {
+    void unknownFieldsAreWarningsNotErrors(@TempDir Path dir) throws Exception {
+        // #1546: still a valid template, but the edit check names what isx ignores.
         var file = dir.resolve("test.yaml");
         Files.writeString(file, """
                 name: tpl-test
@@ -352,7 +351,8 @@ class TemplateValidatorTest {
                 """);
         var result = TemplateValidator.validate(file, knownTemplates());
         assertFalse(result.hasErrors());
-        assertFalse(result.hasWarnings());
+        assertEquals(List.of("unknown key 'some_future_field', ignored", "unknown key 'another_unknown', ignored"),
+                result.warnings());
     }
 
     @Test

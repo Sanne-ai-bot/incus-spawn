@@ -209,6 +209,14 @@ Each image definition specifies:
 - `agent_note` — always-true fact an agent must know before acting, rendered into the generated agent context file (see below)
 - `deprecated` — `true` or a note: still builds, but warns on every build of it or of a template naming it as `parent` (one line, even when that template is deprecated too)
 
+A key isx does not read, anywhere in a template or tool definition, is ignored with a warning when the file loads (#1546), and `isx templates edit` reports it in its check of the edited file.
+The warning names where the key is (`host-resource` at the top level, `repos[0].branch-name`) and the key it probably meant: the same one in another case or with `_` for `-` (the format uses both), one or two letters off, or a word of it.
+Without one, an entry's warning lists the keys it takes.
+Every mapped class, entries included, extends `MappedDefinition`, whose `@JqAnySetter` collects the keys; `ImageDef.unknownKeyWarnings()` and `ToolDef.unknownKeyWarnings()` walk the parts, and the env and skills converters hand their unknown keys to the entry they build.
+A misspelled key changes the build as surely as a wrong value, since the build goes ahead without what it asked for, so it is not dropped without a word.
+It is a warning and not a refusal, so every definition that loaded before still loads; whether some keys (a misspelled top-level section) should refuse is a separate decision.
+The keys are never written back, so a stored definition holds only what isx read.
+
 Building an image automatically builds missing parents recursively.
 `isx build --all` rebuilds every defined image from scratch.
 `isx build` takes several templates (#1130).
@@ -2159,7 +2167,7 @@ This is the right mode for caches (Maven, OCI) where tools expect to write but y
 Supports local paths and URLs.
 No runtime dependency on the host.
 
-An entry takes `source`, `path` and `mode`; any other key is ignored with a warning when the template's file is loaded (#1543), and so is a `confined-to` the file sets, which isx sets itself (#765).
+An entry takes `source`, `path` and `mode`; any other key is ignored with a warning when the template's file is loaded (#1543, as for any key isx does not read, #1546), and so is a `confined-to` the file sets, which isx sets itself (#765).
 `isx templates edit` also reports them in its check of the edited file (`TemplateValidator`), so a file with one is never called valid.
 The edit flow loads every definition again after the edit, so it leaves that load's warnings about the edited file to the report, and a key added in the edit is named once.
 It is a warning and not a refusal, so a template that built before still builds.

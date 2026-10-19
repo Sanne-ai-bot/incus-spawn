@@ -26,7 +26,7 @@ isx update-base fedora-44-v2 # pin to a specific release tag
 
 Tracking latest is the default and requires no action: when the base image is unpinned, `isx build tpl-minimal` resolves the newest release at build time and installs it (falling back to the version baked into the binary if it can't reach the release list). Pinning writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml`; `--latest` removes that override to resume tracking. After changing the base image version, rebuild with `isx build tpl-minimal`.
 
-Add your own templates by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local). You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](CONFIGURATION.md#configuration)).
+Add your own templates by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local). A key isx does not know, such as `repo:` for `repos:`, is ignored with a warning that names where it is and the key it probably meant. You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](CONFIGURATION.md#configuration)).
 
 Use `isx templates` to manage templates from the CLI:
 

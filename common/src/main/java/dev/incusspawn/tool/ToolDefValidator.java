@@ -48,6 +48,7 @@ public class ToolDefValidator {
     }
 
     public static void validateDef(ToolDef def, List<String> errors, List<String> warnings) {
+        warnings.addAll(def.unknownKeyWarnings());
         if (def.getName() == null || def.getName().isBlank()) {
             errors.add("'name' field is required and must not be blank");
             return;

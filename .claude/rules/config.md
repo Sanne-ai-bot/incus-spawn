@@ -60,6 +60,10 @@ v0.3.7 still writes the old `host-path` key, beside `host-paths` naming the same
 A new `ImageDef` field, or a new key in one of its entries, gets a line there; `TemplateSkeletonTest` takes the field names the mappings bind (`@JqName`, else the field's own) and the env and skills converters' keys, and fails without it.
 The skeleton's examples, uncommented, must stay a valid template.
 
+**Unknown keys warn, wherever they are** (#1546): every class a template or tool definition maps to, entries included, extends `MappedDefinition`, so a key isx does not read is collected and `ImageDef.unknownKeyWarnings()` / `ToolDef.unknownKeyWarnings()` name it with its place (`repos[0].branch-name`) and the key it probably meant.
+A new mapped class in a definition extends it, and a new list, map or nested entry gets a line in that walk; a converter that reads the tree itself hands its unknown keys to the entry it builds (`EnvEntryListConverter`, `SkillsDefConverter`).
+They are warnings, never refusals, reported at load (`ImageDef.validate`, `ToolDefLoader`) and by `TemplateValidator`.
+
 **Name conflicts vs. overrides**: Overriding a definition from a *later* layer is intentional and supported.
 Two files declaring the same `name:` *within a single directory* (usually a copy-paste that forgot to update `name:`) is always a mistake and is reported as a conflict.
 `ImageDef.loadAllWithConflicts()` / `ToolDefLoader.conflicts()` return these same-directory collisions (all colliding files, so 3+ are listed together) plus the intentional cross-layer overrides.
