@@ -10,6 +10,8 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.SequencedMap;
 
 /**
  * On-disk half of the Maven/Gradle artifact cache: an artifact plus the stored
@@ -56,6 +58,9 @@ final class VerifiedArtifactStore {
         for (int i = 0; i < LOCKS.length; i++) LOCKS[i] = new Object();
     }
 
+    /** For {@link #verifyAndCommit(Path, Path, Sidecar, byte[], boolean, SequencedMap)}: no file beside the artifact. */
+    static final SequencedMap<String, byte[]> NOTHING_ALONGSIDE = Collections.emptySortedMap();
+
     static Object lockFor(Path artifact) {
         return LOCKS[Math.floorMod(artifact.hashCode(), LOCKS.length)];
     }
@@ -70,6 +75,19 @@ final class VerifiedArtifactStore {
      */
     static boolean verifyAndCommit(Path download, Path artifact, Sidecar checksum,
                                    byte[] expected, boolean storeSidecar) throws IOException {
+        return verifyAndCommit(download, artifact, checksum, expected, storeSidecar, NOTHING_ALONGSIDE);
+    }
+
+    /**
+     * {@link #verifyAndCommit(Path, Path, Sidecar, byte[], boolean)}, also committing
+     * {@code alongside}: files stored beside the artifact outside {@link Sidecar}'s layout
+     * (npm's {@code .etag} and {@code .shasum}), by the suffix of the artifact's name. Each
+     * one stored for a previous copy goes before the artifact is replaced, and they are
+     * written after it, in their order, so the one that vouches for the artifact goes last.
+     * A null content only removes the previous copy's.
+     */
+    static boolean verifyAndCommit(Path download, Path artifact, Sidecar checksum, byte[] expected,
+                                   boolean storeSidecar, SequencedMap<String, byte[]> alongside) throws IOException {
         var hex = checksum.hex(expected);
         if (hex == null || !hex.equals(checksum.hashOf(download))) {
             Files.deleteIfExists(download);
@@ -83,12 +101,20 @@ final class VerifiedArtifactStore {
             // bytes: sidecars of a previous copy go first, the checksum comes last,
             // and an artifact without a stored checksum is hashed before one is trusted
             if (storeSidecar) deleteSidecarsLocked(artifact);
+            for (var suffix : alongside.keySet()) Files.deleteIfExists(sibling(artifact, suffix));
             // Replaced in one step, so a concurrent reader never finds it missing
             Files.move(download, artifact,
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             if (storeSidecar) writeAtomically(checksum.storedFile(artifact), expected);
+            for (var file : alongside.entrySet()) {
+                if (file.getValue() != null) writeAtomically(sibling(artifact, file.getKey()), file.getValue());
+            }
         }
         return true;
+    }
+
+    private static Path sibling(Path artifact, String suffix) {
+        return artifact.resolveSibling(artifact.getFileName() + suffix);
     }
 
     /**
