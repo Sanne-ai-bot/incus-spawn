@@ -14,6 +14,11 @@ class GitCacheConfigTest {
         assertEquals(GitCacheConfig.DEFAULT, GitCacheConfig.of(Map.of("snapshot-max-mib", "9223372036854775807", "max-age-days", "bad")));
     }
 
+    @Test void theDefaultBudgetKeepsALargeRepositorySnapshot() {
+        // apache/camel packs to about 1.5 GiB (#1548): a smaller budget made every build clone it in full.
+        assertEquals(4096L << 20, GitCacheConfig.DEFAULT.snapshotBytes());
+    }
+
     @Test void retentionCanBeDisabled() {
         var config = GitCacheConfig.of(Map.of("snapshot-max-mib", 0, "max-age-days", 2));
         assertEquals(0, config.snapshotBytes());

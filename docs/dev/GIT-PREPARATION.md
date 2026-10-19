@@ -184,7 +184,7 @@ That extra clean payload is the deliberate space tradeoff for eliminating per-pa
 
 ```yaml
 git-cache:
-  snapshot-max-mib: 1024
+  snapshot-max-mib: 4096
   max-age-days: 7
 ```
 
@@ -192,6 +192,9 @@ These defaults bound retained logical file bytes across all repositories, includ
 Least-recently-used entries expire on preparation/publication until the size, age and 128-entry bounds hold.
 There is no background eviction daemon.
 A snapshot larger than the entire budget is usable for its current build but is not retained.
+The default budget fits large repositories such as apache/camel, whose snapshot is about 1.5 GiB (#1548); with 1 GiB it was never kept, and every build took the full clone and fsck.
+When a snapshot is not retained, the build warns after its repository lines. With retention disabled the warning names the setting that is `0`; over the budget it gives the size, the limit and the setting to raise, for example `monorepo: Git snapshot (5324.8 MiB) exceeds git-cache.snapshot-max-mib (4096 MiB); it was used for this build but not kept`.
+The size is in the setting's unit, rounded up to a tenth of a MiB, so it always reads as larger than the limit.
 Publishing an oversized replacement also retires the old generation for that URL, preventing repeated refreshes from a stale retained base.
 Existing readers keep their pinned files.
 Setting either limit to zero disables retention; malformed values use the defaults.
