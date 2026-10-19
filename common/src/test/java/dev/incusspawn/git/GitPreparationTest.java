@@ -515,7 +515,8 @@ class GitPreparationTest {
                 } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
             }
         })) {
-            assertEquals(2, checks.get());
+            // The retry has no reference: its strict transfer replaces the separate check.
+            assertEquals(1, checks.get());
             assertEquals("new clean snapshot (reference retry)", result.strategy());
             sameObjects(remote, result.repository());
         }
@@ -531,24 +532,111 @@ class GitPreparationTest {
         for (var pack : PreparationGit.children(moved)) {
             if (pack.toString().endsWith(".pack")) PreparationGit.run(host, pack, null, List.of("unpack-objects", "-q"));
         }
-        var publicId = git(remote, "rev-parse", "HEAD:isx.deb");
-        byte[] wrong = new byte[Files.readAllBytes(remote.resolve("isx.deb")).length];
-        var header = ("blob " + wrong.length + "\0").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-        var loose = objects.resolve(publicId.substring(0, 2)).resolve(publicId.substring(2));
-        assertTrue(loose.toFile().setWritable(true));
-        try (var out = new java.util.zip.DeflaterOutputStream(Files.newOutputStream(loose))) {
-            out.write(header);
-            out.write(wrong);
-        }
+        corruptLooseBlob(host, git(remote, "rev-parse", "HEAD:isx.deb"));
         var checks = new java.util.concurrent.atomic.AtomicInteger();
         try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
             if (phase.equals("Verifying Git snapshot")) checks.incrementAndGet();
         })) {
-            assertEquals(2, checks.get(), "the damaged reference clone must fail its check and be retried");
+            assertEquals(1, checks.get(), "only the reference clone needs the separate check");
             assertEquals("new clean snapshot (reference retry)", result.strategy());
             sameObjects(remote, result.repository());
             assertEquals("", git(result.repository(), "fsck", "--full", "--no-dangling"));
         }
+    }
+
+    @Test void aCloneWithoutAReferenceIsCheckedByTheTransferInsteadOfASeparateFsck() throws Exception {
+        start();
+        var phases = new ArrayList<String>();
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, null), phases::add)) {
+            assertEquals("new clean snapshot", result.strategy());
+            assertFalse(phases.contains("Verifying Git snapshot"), "every object went through index-pack --strict");
+            sameObjects(remote, result.repository());
+            assertEquals("", git(result.repository(), "fsck", "--full", "--no-dangling"));
+        }
+    }
+
+    @Test void aRemoteObjectWithBrokenStructureIsRejectedWithoutAReference() throws Exception {
+        // A tree listing the same name twice: its ID matches its bytes, so only a structural check rejects it.
+        literalTreeBranch("bad", "100644", 2);
+        start();
+        var phases = new ArrayList<String>();
+        var failure = assertThrows(IOException.class, () -> preparation.prepare(
+                new GitPreparation.Request(server.url(remote), null, null), phases::add));
+        assertTrue(phases.contains("Verifying Git snapshot"), "the strict receive's rejection falls back to the fsck, which rejects it too");
+        assertEquals("Git preparation failed: fsck", failure.getMessage());
+        assertTrue(GitPreparation.fsckRejected(((GitCommandException) failure.getSuppressed()[0]).details()),
+                "the fsck failure keeps why the snapshot was cloned twice");
+        assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
+    }
+
+    @Test void historyThatFsckOnlyWarnsAboutIsClonedAgainForTheFullFsck() throws Exception {
+        // --strict makes fsck's warnings fatal; fsck --full accepts a zero-padded mode, as main did.
+        literalTreeBranch("old", "0100644", 1);
+        start();
+        var phases = new ArrayList<String>();
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, null), phases::add)) {
+            assertEquals("new clean snapshot", result.strategy());
+            assertTrue(phases.contains("Recloning Git snapshot for a full check"));
+            assertTrue(phases.contains("Verifying Git snapshot"));
+            sameObjects(remote, result.repository());
+        }
+        try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
+    }
+
+    /** A branch whose commit's tree, written without Git's checks, lists {@code isx.deb} as "a" {@code copies} times. */
+    private void literalTreeBranch(String branch, String mode, int copies) throws Exception {
+        var blob = git(remote, "rev-parse", "HEAD:isx.deb");
+        var entry = new java.io.ByteArrayOutputStream();
+        for (int i = 0; i < copies; i++) {
+            entry.writeBytes((mode + " a\0").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            entry.writeBytes(java.util.HexFormat.of().parseHex(blob));
+        }
+        var tree = Files.write(tmp.resolve(branch + "-tree"), entry.toByteArray());
+        var literal = git(remote, "hash-object", "--literally", "-t", "tree", "-w", tree.toString());
+        var commit = git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", literal, "-m", branch);
+        git(remote, "update-ref", "refs/heads/" + branch, commit);
+    }
+
+    @Test void aRemoteObjectWhoseBytesDoNotMatchItsNameIsRejectedWithoutAReference() throws Exception {
+        start();
+        // The pack carries other content under the blob's name, so the tree's link to that name is missing.
+        corruptLooseBlob(remote, git(remote, "rev-parse", "HEAD:isx.deb"));
+        var phases = new ArrayList<String>();
+        assertThrows(IOException.class, () -> preparation.prepare(
+                new GitPreparation.Request(server.url(remote), null, null), phases::add));
+        assertFalse(phases.contains("Recloning Git snapshot for a full check"), "only an fsck rejection is cloned again");
+        assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
+    }
+
+    @Test void onlyGitsOwnFsckRejectionClonesAgain() {
+        var rejected = new GitCommandException("Git preparation failed: clone", null,
+                "error: object 1234: zeroPaddedFilemode: contains zero-padded file modes\n"
+                        + "fatal: fsck error in packed object\nfatal: fetch-pack: invalid index-pack output\n");
+        assertTrue(GitPreparation.fsckRejected(rejected.details()));
+        assertTrue(GitPreparation.fsckRejected(new GitCommandException("x", null, "fatal: fsck error in pack objects\n").details()));
+        // A server's sideband line is prefixed, and cannot ask for the second download.
+        var sideband = new GitCommandException("Git preparation failed: clone", null,
+                "remote: x | fatal: fsck error in packed object\nremote: fatal: fsck error in packed object\n"
+                        + "fatal: early EOF\nfatal: fetch-pack: invalid index-pack output\n");
+        assertFalse(GitPreparation.fsckRejected(sideband.details()));
+    }
+
+    @Test void onlyAStrictReceiveOfEveryObjectReplacesTheSeparateFsck() {
+        var strict = "12:00:00.000000 git.c:506               trace: built-in: git index-pack --stdin --fix-thin "
+                + "'--keep=fetch-pack 1 on box' --check-self-contained-and-connected --strict\n";
+        assertEquals(1, GitPreparation.strictReceives(strict));
+        assertEquals(2, GitPreparation.strictReceives(strict + strict));
+        // A user's fetch.fsck.<msg-id> severities or skip list may accept what fsck --full rejects.
+        assertEquals(0, GitPreparation.strictReceives(strict.replace("--strict", "--strict=duplicateentries=ignore")));
+        // Dumb HTTP indexes the packs it downloads without --strict, and writes loose objects with no index-pack at all.
+        assertEquals(0, GitPreparation.strictReceives("12:00:00.000000 git.c:506 trace: built-in: git index-pack --stdin\n"));
+        assertEquals(0, GitPreparation.strictReceives(
+                "12:00:00.000000 git.c:506 trace: built-in: git clone -q --bare --no-local http://h/r r.git\n"));
+        assertEquals(0, GitPreparation.strictReceives(""));
+        // Packfile URIs and bundles are indexed with --fsck-objects, which does not check links.
+        assertEquals(0, GitPreparation.strictReceives(strict
+                + "12:00:00.000000 git.c:506 trace: built-in: git index-pack --stdin --fsck-objects\n"));
+        assertEquals(0, GitPreparation.strictReceives(strict.replace("--strict", "--strict-later")));
     }
 
     @Test void aFailedRemoteRetryLeavesNoSnapshotOrWork() throws Exception {

@@ -25,6 +25,7 @@ Stored objects and deltas are reused: without `--thin`, `pack-objects` reuses a 
 Bitmap selection stays disabled: a bitmap is the source's own record of reachability, and trusting it would let a stale or damaged one add objects that the walk would not select.
 Reused bytes are not trusted either: `index-pack --strict` recomputes every object ID, checks its structure and follows every link.
 On apache/camel (4.4 million objects) reuse cut the export from 263–300 s to 127–131 s; recomputing every delta had taken 175 s of it (#1548, [measurements](../../bench/data/git-large-repositories-2026-10-19.json)).
+Indexing without the source and dropping the fsck (#1557) then brought it to 40–53 s.
 The pack is written to a file and the alternate removed before `index-pack` reads it, so every link must resolve inside the export: that proves it self-contained, and no separate fsck runs.
 Only the resulting pack/index pair, exported heads/tags and chosen HEAD remain.
 Source hooks, configuration, worktree files and reflogs are never copied.
@@ -174,28 +175,44 @@ With a reference, Git's `--dissociate` repacks the selected objects into a stand
 This rewrites mixed public/private packs, including public objects whose stored delta base is private.
 The fresh-clone approach also drops objects retained only by deleted branches or moved tags; fetching and pruning refs in an old snapshot would leave those objects behind.
 Without a reference, a normal bare transport clone supplies the objects; small clones that unpack received objects are packed once.
-Initial and rebuilt output must be full and independent and pass `git fsck --full`.
+Initial and rebuilt output must be full and independent, and pass `git fsck --full` or, cloned without a reference, a strict check of every received object (see below).
 Only its pack/index pairs and freshly installed heads, tags and HEAD enter the final minimal bare repository, discarding clone configuration and generated sidecars.
 
 Using `--bare` avoids the historical in-process checkout failure in older Git's `--dissociate` path.
 [Upstream commit 3d8e4004](https://github.com/git/git/commit/3d8e4004c604b206d70240a087816907cce70a08) fixes the commit-graph lifetime bug; the research reproduces it on Git 2.54.0 and verifies bare dissociation there.
 The guest's later local clone checks out in a separate Git process from a repository containing no borrowed graph metadata.
 
-## Why a fresh snapshot keeps the full fsck
+## Which fresh snapshots get a separate full fsck
 
 On apache/camel (4.4 million objects, #1548) the reference clone takes about 34 s and `fsck --full` another 62 s.
 With retention working it runs only on a first build and on rebuilds, but those still matter for large repositories, so the cheaper checks were measured against what they catch ([measurements](../../bench/data/git-large-repositories-2026-10-19.json)).
 
+A reference clone keeps the full fsck.
 `--dissociate` repacks the borrowed objects with `pack-objects`, which copies them as stored and names them after the checkout's own index entries or loose file names without rehashing them; only packed entries get a CRC check against the checkout's index.
 A checkout whose loose object holds other content under a public object's name therefore produces a clone that succeeds, with one standalone pack serving the wrong content under that name.
 Clone's own connectivity check and `fsck --connectivity-only` (8 s on camel) accept that repository; `fsck --full` rejects it and the remote retry follows.
-`transfer.fsckObjects` would not help: it checks only objects received from the remote, and a reference clone borrows almost all of them.
+Checking objects on receive (`fetch.fsckObjects`) does not help here: it checks only objects received from the remote, and a reference clone borrows almost all of them.
 The test `aCheckoutObjectWhoseBytesDoNotMatchItsNameIsCaughtAfterDissociation` keeps this case covered.
+`index-pack --verify --strict` on the single pack would catch it as well, in 43 s against 62 s; it is not adopted (#1553, option (a)).
 
-`index-pack --verify --strict` on the single pack also recomputes every object ID, checks each object's structure and fails on a missing link, which for a loose-free, single-pack repository covers fsck's object checks; it took 43 s on camel against 62 s.
-A clone without a reference gets every object from the transport, where `index-pack` computes each ID as it receives it; with `transfer.fsckObjects=true` it also checks structure and links, at no measurable cost on camel (37 s either way), which would leave the separate 59 s fsck with nothing new to find.
-Neither replacement is made: the full fsck is the single end-to-end check that this protection rests on, and narrowing it is a decision recorded on #1548.
-The same holds for host-source exports, where the fsck after removing the alternate is what proves that the export is self-contained (61 s on camel), and an `index-pack --stdin --strict` run without the alternate would prove it as well.
+A clone without a reference, the first build's and the retry's, skips the separate fsck when the transfer has already done its work (#1557).
+Every object then arrives over the transport, and with `fetch.fsckObjects=true` `index-pack --strict` computes each ID as it receives it, checks each object's structure and fails on a link that does not resolve; clone's connectivity check covers the refs.
+On camel that receive cost nothing measurable (37 s either way), and the separate fsck took 59 s with nothing new to find.
+A first snapshot without a reference now takes 33.6–33.7 s there instead of 89.6–90.3 s.
+That holds only when every object really arrived that way, so the clone runs with `GIT_TRACE`, and the fsck is skipped only when each `index-pack` it ran had a bare `--strict`, one ran for every pack in the result, and no loose object was written.
+Dumb HTTP does not qualify: it indexes the packs it downloads without `--strict` and writes loose objects directly, so a malformed tree passes `fetch.fsckObjects` there and only `fsck --full` rejects it.
+Packfile URIs and bundle URIs are indexed with `--fsck-objects`, which does not check links, so they get the full fsck too.
+Unpacked objects are loose, so a transfer that `unpack-objects` received gets it as well.
+A user's `fetch.fsck.<msg-id>` severities or `fetch.fsck.skipList` turn `--strict` into `--strict=<list>`, which may accept what the fsck rejects, so they keep the fsck too.
+`--strict` is also stricter than the fsck: it makes fsck's warnings fatal, such as zero-padded file modes or bad dates in old history.
+When `index-pack` rejects an object or the pack under it (Git's own `fatal: fsck error in packed object` or `in pack objects` line), the clone runs once more without it, and the full fsck decides, as it alone did before; a network failure is not retried.
+A `remote:` line cannot match, but a server can still trigger that one reclone, by serving history with an fsck warning or, over SSH, where its stderr reaches isx unprefixed, by printing the line; this costs a second download and is safe, because the full fsck decides.
+The strict rejection is attached to a later failure as a suppressed exception, which build output does not show.
+The trace names the URL, so it is written inside the private preparation lease and deleted right after the clone.
+
+A host-source export follows the same reasoning.
+Its pack is indexed with `index-pack --stdin --strict` after the alternate is removed, so a link that only the source could resolve fails there, and the export is self-contained without the fsck that used to prove it (61 s on camel).
+Indexing also gets faster, 28 s instead of 50 s on camel: with the source attached every incoming object already exists, and index-pack reads each one back to compare it.
 
 ## Retention and readers
 

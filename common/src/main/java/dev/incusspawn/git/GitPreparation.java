@@ -5,16 +5,20 @@ import dev.incusspawn.config.GitCacheConfig;
 import dev.incusspawn.config.GitTransferConfig;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static dev.incusspawn.git.PreparationGit.*;
 import static dev.incusspawn.incus.Container.shellQuote;
@@ -323,39 +327,125 @@ public final class GitPreparation {
                                Phases phase, Map<String, Long> timings) throws IOException {
         long start = System.nanoTime();
         var progress = live(phase, "Creating clean Git snapshot");
+        var trace = work.resolve("clone-trace");
+        boolean transferChecked, loose;
+        Received received;
         try {
-            var clone = new ArrayList<String>();
-            if (reference != null && reference.tips() != null) {
-                // Git appends the alternate's repository path. Ignore it: emitting only captured
-                // public tracking tips also overrides a global alternateRefsCommand/prefix policy.
-                clone.addAll(List.of("-c", "core.alternateRefsCommand=sh -c 'cat \"$1\"' - "
-                        + shellQuote(reference.tips().toString())));
-            }
-            // A bare clone avoids the commit-graph/checkout bug in older Git's --dissociate.
-            // The real remote selects refs; Git's non-thin repack excludes private reference objects.
-            clone.addAll(List.of("clone", "--progress", "--bare", "--no-local", "--template="));
-            if (reference != null) clone.addAll(List.of("--reference", reference.repository().toString(), "--dissociate"));
-            clone.addAll(List.of("--", url, result.toString()));
-            run(work, null, null, clone, transfer, progress);
-            if (Files.exists(result.resolve("shallow")) || Files.exists(result.resolve("objects/info/alternates"))) {
-                throw new IOException("Git snapshot is not a standalone full repository");
+            try {
+                received = clone(url, work, result, reference, trace, phase, progress);
+                if (Files.exists(result.resolve("shallow")) || Files.exists(result.resolve("objects/info/alternates"))) {
+                    throw new IOException("Git snapshot is not a standalone full repository");
+                }
+                // Loose objects did not come through index-pack: dumb HTTP writes them directly, and an
+                // unpacked transfer gets the full fsck too. Each pack must come from its own strict receive.
+                loose = hasLooseObjects(result);
+                transferChecked = received.strict() && !loose && Files.exists(trace)
+                        && strictReceives(Files.readString(trace, StandardCharsets.ISO_8859_1)) == children(result.resolve("objects/pack"))
+                                .stream().filter(p -> p.getFileName().toString().endsWith(".pack")).count();
+            } finally {
+                Files.deleteIfExists(trace);
             }
             // Small network clones may unpack received objects. Normalize those once; a dissociated
             // reference clone already has its selected pack and must not pay for a second repack.
-            if (hasLooseObjects(result)) {
+            if (loose) {
                 git(result, "repack", "-a", "-d");
                 git(result, "prune-packed");
             }
         } finally {
             elapsed(timings, "clone", start);
         }
+        // Without a reference, a strict receive has hashed every object and checked its structure and
+        // links; a reference clone's borrowed objects are copied without rehashing and need the full fsck.
+        if (transferChecked) return;
         start = System.nanoTime();
         phase.accept("Verifying Git snapshot");
         try {
             git(result, "fsck", "--full", "--no-dangling");
+        } catch (IOException failed) {
+            // Keep why the snapshot was cloned twice next to why it was then rejected.
+            if (received.rejected() != null) failed.addSuppressed(received.rejected());
+            throw failed;
         } finally {
             elapsed(timings, "verify", start);
         }
+    }
+
+    /**
+     * index-pack's own rejection of an object or a pack under {@code --strict}, as a quoted line of Git's
+     * output. Matching the whole line keeps a {@code remote:} sideband line out, but a server can still trigger
+     * one reclone: by serving history with an fsck warning, or over SSH, where its stderr reaches us unprefixed.
+     * That is safe, because the full fsck then decides.
+     */
+    private static final Pattern FSCK_REJECTED = Pattern.compile(
+            Pattern.quote(GitCommandException.QUOTE) + "fatal: fsck error in pack(?:ed object| objects)");
+
+    static boolean fsckRejected(List<String> details) {
+        return details.stream().anyMatch(line -> FSCK_REJECTED.matcher(line).matches());
+    }
+
+    /** {@code strict}: the strict receive was kept. {@code rejected}: why it was not, when it was cloned again. */
+    private record Received(boolean strict, GitCommandException rejected) {}
+
+    /** Clone {@code url}; without a reference, with a strict receive traced to {@code trace}. */
+    private Received clone(String url, Path work, Path result, Reference reference, Path trace, Phases phase,
+                          Consumer<GitProcess.Progress> progress) throws IOException {
+        if (reference != null) {
+            run(work, null, null, cloneCommand(url, result, reference, false), transfer, progress);
+            return new Received(false, null);
+        }
+        GitCommandException rejected;
+        try {
+            // Git's trace shows how the objects arrived. It names the URL, so it stays in the private lease.
+            run(work, null, null, cloneCommand(url, result, null, true), transfer, progress, Map.of("GIT_TRACE", trace.toString()));
+            return new Received(true, null);
+        } catch (GitCommandException e) {
+            if (e instanceof TransferStopped || !fsckRejected(e.details())) throw e;
+            rejected = e;
+        }
+        // --strict also makes fsck's warnings fatal, such as zero-padded modes or bad dates in old history.
+        // Clone again without it and let the full fsck decide, as it alone did before the receive was strict.
+        delete(result);
+        Files.deleteIfExists(trace);
+        try {
+            run(work, null, null, cloneCommand(url, result, null, false), transfer,
+                    live(phase, "Recloning Git snapshot for a full check"));
+        } catch (IOException failed) {
+            failed.addSuppressed(rejected);
+            throw failed;
+        }
+        return new Received(false, rejected);
+    }
+
+    private static List<String> cloneCommand(String url, Path result, Reference reference, boolean strict) {
+        var clone = new ArrayList<String>();
+        if (reference != null && reference.tips() != null) {
+            // Git appends the alternate's repository path. Ignore it: emitting only captured
+            // public tracking tips also overrides a global alternateRefsCommand/prefix policy.
+            clone.addAll(List.of("-c", "core.alternateRefsCommand=sh -c 'cat \"$1\"' - "
+                    + shellQuote(reference.tips().toString())));
+        }
+        // fetch.fsckObjects, not transfer.fsckObjects, which a user's fetch.fsckObjects=false would override.
+        if (strict) clone.addAll(List.of("-c", "fetch.fsckObjects=true"));
+        // A bare clone avoids the commit-graph/checkout bug in older Git's --dissociate.
+        // The real remote selects refs; Git's non-thin repack excludes private reference objects.
+        clone.addAll(List.of("clone", "--progress", "--bare", "--no-local", "--template="));
+        if (reference != null) clone.addAll(List.of("--reference", reference.repository().toString(), "--dissociate"));
+        clone.addAll(List.of("--", url, result.toString()));
+        return clone;
+    }
+
+    private static final Pattern RECEIVE = Pattern.compile("trace: built-in: git index-pack(?: (.*))?$");
+
+    /**
+     * How many index-pack runs a clone's {@code GIT_TRACE} shows, or 0 unless each had a bare {@code --strict}.
+     * Dumb HTTP indexes its packs without it and writes loose objects with no index-pack at all; packfile URIs
+     * and bundles use {@code --fsck-objects}, which skips links. {@code --strict=<list>} carries the user's
+     * {@code fetch.fsck.*} severities or skip list, which may let through what {@code fsck --full} rejects.
+     */
+    static long strictReceives(String trace) {
+        var receives = trace.lines().map(RECEIVE::matcher).filter(Matcher::find).toList();
+        return receives.stream().allMatch(receive -> receive.group(1) != null
+                && Arrays.asList(receive.group(1).replace("'", "").split(" ")).contains("--strict")) ? receives.size() : 0;
     }
 
     /** Extend a verified generation without rewriting or decoding its old packs. */
