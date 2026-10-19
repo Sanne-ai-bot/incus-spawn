@@ -112,7 +112,8 @@ Change both sides together, and keep the fallback until no reachable release pre
 
 `fresh-daemon-init` exists because `isx-integration-tests` runs `incus admin init --minimal` *before* `isx init`, which populates the default profile -- so it cannot catch `isx init` failing to populate it itself.
 It installs Incus and creates only the storage pool, with no `admin init`, reproducing the state where a pool exists but the default profile is empty (every instance creation then fails with "Failed getting root disk: No root device could be found").
-It asserts the profile has a root disk and a NIC, then launches a real instance -- a profile that merely looks right can still name a bad pool.
+It asserts the profile has a root disk and a NIC, then launches a real instance and runs a command in it -- a profile that merely looks right can still name a bad pool or a missing network.
+The instance's image is a static busybox the job builds and imports itself, not one from images.linuxcontainers.org, whose outages otherwise read as isx regressions (#1558).
 
 Note that `isx init` is not run against the QEMU appliance VM: on Linux it provisions a *native* Incus, and the appliance has its own provisioning.
 The vsock-bridged boot in `integration-tests` exercises the client path to the appliance instead (`isx` over `vm.incus.sock`), which needs no `init`.

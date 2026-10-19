@@ -923,7 +923,7 @@ jobs:
           echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
             | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
           sudo apt-get update -qq
-          sudo apt-get install -y -qq incus btrfs-progs
+          sudo apt-get install -y -qq incus btrfs-progs busybox-static
           sudo usermod -aG incus-admin "$USER"
 
           # Create ONLY the storage pool — no admin init. This reproduces the reported broken
@@ -988,12 +988,28 @@ jobs:
 
       - name: Assert an instance can actually be created
         run: |
-          # The real assertion: a profile that merely looks right can still name a bad pool.
-          # This is the exact operation that failed with "No root device could be found".
-          # Rolling alias on purpose: a pinned version silently EOLs off the image server and
-          # the job then fails on image resolution rather than on what it means to test.
-          sg incus-admin -c "incus launch images:alpine/edge fresh-daemon-smoketest"
-          sg incus-admin -c "incus list fresh-daemon-smoketest"
+          # The real assertion: a profile that merely looks right can still name a bad pool or
+          # network. Launching is the exact operation that failed with "No root device could be
+          # found", and starting and running a command in it also exercises the idmap. The NIC
+          # is validated (its network must exist) but not used. The image is a static
+          # busybox built here, not one from images.linuxcontainers.org, so an outage of that
+          # server cannot fail this job (#1558).
+          img=$(mktemp -d)
+          mkdir -p "$img/rootfs/bin" "$img/rootfs/sbin" "$img/rootfs/etc" \
+            "$img/rootfs/dev" "$img/rootfs/proc" "$img/rootfs/sys"
+          install -d -m 1777 "$img/rootfs/tmp"
+          cp "$(command -v busybox)" "$img/rootfs/bin/busybox"
+          ln -s busybox "$img/rootfs/bin/sh"
+          ln -s ../bin/busybox "$img/rootfs/sbin/init"
+          echo '::respawn:/bin/busybox sleep 3600' > "$img/rootfs/etc/inittab"
+          printf 'architecture: %s\ncreation_date: %s\nproperties:\n  description: fresh-daemon-init smoke test\n' \
+            "$(uname -m)" "$(date +%s)" > "$img/metadata.yaml"
+          tar -C "$img" --owner=0 --group=0 --numeric-owner -czf "$img/image.tar.gz" metadata.yaml rootfs
+          sg incus-admin -c "incus image import $img/image.tar.gz --alias fresh-daemon-smoke"
+
+          sg incus-admin -c "incus launch fresh-daemon-smoke fresh-daemon-smoketest"
+          sg incus-admin -c "incus exec fresh-daemon-smoketest -- /bin/busybox true"
+          echo "Smoke-test instance is running."
 
       - name: Dump Incus logs on failure
         if: failure()
@@ -1001,4 +1017,6 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sg incus-admin -c "incus delete -f fresh-daemon-smoketest" || true
+        run: |
+          sg incus-admin -c "incus delete -f fresh-daemon-smoketest" || true
+          sg incus-admin -c "incus image delete fresh-daemon-smoke" || true
