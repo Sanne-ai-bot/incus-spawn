@@ -154,4 +154,32 @@ class DnsCacheTest {
                 "An address that refused a connection must be resolved again, not kept");
         assertEquals(2, proxy.lookups.get());
     }
+
+    @Test
+    void failedConnectDuringARefreshIsNotKept() throws Exception {
+        var proxy = new GatedProxy();
+        proxy.upstream.dnsCacheTtlMillis = 0;
+        proxy.upstream.overrideDns("example.test", "127.0.0.1");
+        var refreshing = proxy.upstream.resolveHost("example.test");
+        // A request that got 127.0.0.1 before the entry expired fails to connect now
+        proxy.upstream.forgetAddress("example.test", "127.0.0.1");
+        proxy.answer = List.of("127.0.0.2", "127.0.0.1");
+        proxy.release.countDown();
+
+        assertEquals("127.0.0.2", await(refreshing),
+                "The refresh must not keep an address that failed while it was in flight");
+    }
+
+    @Test
+    void failedConnectToAnotherAddressDuringARefreshKeepsTheAddressInUse() throws Exception {
+        var proxy = new GatedProxy();
+        proxy.upstream.dnsCacheTtlMillis = 0;
+        proxy.upstream.overrideDns("example.test", "127.0.0.1");
+        var refreshing = proxy.upstream.resolveHost("example.test");
+        proxy.upstream.forgetAddress("example.test", "127.0.0.2");
+        proxy.answer = List.of("127.0.0.2", "127.0.0.1");
+        proxy.release.countDown();
+
+        assertEquals("127.0.0.1", await(refreshing));
+    }
 }

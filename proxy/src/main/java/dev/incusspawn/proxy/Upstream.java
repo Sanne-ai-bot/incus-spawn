@@ -51,15 +51,18 @@ class Upstream {
 
     // Overridable for tests
     long dnsCacheTtlMillis = 60_000;
-    private record DnsEntry(String ip, long expiresAt, Future<String> inflight) {
-        static DnsEntry resolving(Future<String> f) { return new DnsEntry(null, 0, f); }
+    // While resolving, keep is the expired entry's address, which the lookup keeps if DNS still lists it
+    private record DnsEntry(String ip, long expiresAt, Future<String> inflight, AtomicReference<String> keep) {
+        static DnsEntry resolving(Future<String> f, String previous) {
+            return new DnsEntry(null, 0, f, new AtomicReference<>(previous));
+        }
         boolean isValid() { return ip != null && System.currentTimeMillis() < expiresAt; }
         boolean isResolving() { return inflight != null; }
     }
     private final ConcurrentHashMap<String, DnsEntry> dns = new ConcurrentHashMap<>();
 
     private DnsEntry resolved(String ip) {
-        return new DnsEntry(ip, System.currentTimeMillis() + dnsCacheTtlMillis, null);
+        return new DnsEntry(ip, System.currentTimeMillis() + dnsCacheTtlMillis, null, null);
     }
 
     // Overridable for tests
@@ -260,33 +263,38 @@ class Upstream {
     // connections are pooled per address, and CDNs reorder their answers on every lookup (#862).
     Future<String> resolveHost(String host) {
         var claimed = new AtomicReference<Promise<String>>();
-        var previous = new AtomicReference<String>();
         var entry = dns.compute(host, (h, existing) -> {
             if (existing != null && (existing.isValid() || existing.isResolving()))
                 return existing;
-            if (existing != null) previous.set(existing.ip());
             var promise = Promise.<String>promise();
             claimed.set(promise);
-            return DnsEntry.resolving(promise.future());
+            return DnsEntry.resolving(promise.future(), existing == null ? null : existing.ip());
         });
         var promise = claimed.get();
         if (promise != null) {
-            vertx.<String>executeBlocking(() -> {
+            vertx.<List<String>>executeBlocking(() -> {
                         var all = hostLookup.lookupHost(host);
                         if (all.isEmpty()) throw new UnknownHostException(host);
-                        var kept = previous.get();
-                        return kept != null && all.contains(kept) ? kept : all.get(0);
+                        return all;
                     }, false)
                     .onComplete(ar -> {
                         // Update the cache before waking waiters, so none of them re-resolves.
                         // Only replace our own inflight entry: one written meanwhile (overrideDns)
                         // is newer than this lookup and must not be overwritten or dropped.
-                        if (ar.succeeded()) {
-                            dns.replace(host, entry, resolved(ar.result()));
-                        } else {
+                        if (ar.failed()) {
                             dns.remove(host, entry);
+                            promise.fail(ar.cause());
+                            return;
                         }
-                        promise.handle(ar);
+                        // Chosen under the map's lock for the host, so a forgetAddress racing this
+                        // either clears keep before it is read or drops the entry written here
+                        var chosen = new AtomicReference<String>();
+                        dns.compute(host, (h, current) -> {
+                            var kept = entry.keep().get();
+                            chosen.set(kept != null && ar.result().contains(kept) ? kept : ar.result().get(0));
+                            return current == entry ? resolved(chosen.get()) : current;
+                        });
+                        promise.complete(chosen.get());
                     });
         }
         return entry.isValid()
@@ -295,9 +303,14 @@ class Upstream {
     }
 
     // resolveHost keeps an address while DNS lists it, so one that failed to connect is dropped:
-    // the next request resolves again instead of staying on a dead address.
-    private void forgetAddress(String host, String ip) {
-        dns.computeIfPresent(host, (h, cached) -> ip.equals(cached.ip()) ? null : cached);
+    // the next request resolves again instead of staying on a dead address. A refresh still in
+    // flight is told not to keep it.
+    void forgetAddress(String host, String ip) {
+        dns.computeIfPresent(host, (h, cached) -> {
+            if (ip.equals(cached.ip())) return null;
+            if (cached.isResolving()) cached.keep().compareAndSet(ip, null);
+            return cached;
+        });
     }
 
     /** What is left of the client's silence budget, counted from {@code since}. */
