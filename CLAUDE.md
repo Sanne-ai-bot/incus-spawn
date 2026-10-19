@@ -25,6 +25,9 @@ See README.md and the pages in `docs/` (published on isx.run beside it; maintain
 
 **Keep notes in the repository**: the machines this is developed on are wiped regularly, so anything worth remembering between sessions goes in a committed file (this one, `.claude/rules/`, DESIGN.md), never only in local agent memory.
 
+**List every divergence from stock Fedora in [docs/FEDORA.md](docs/FEDORA.md)** (published as isx.run/docs/fedora), in the same change that makes it.
+That covers a masked unit, a changed default or a replaced file, whether it comes from isx, a built-in template or the base images.
+
 **The project spans several repositories, and the technical work is delegated.**
 `isx` is only part of it: the base images live in [`incus-spawn-images`](https://github.com/Sanne/incus-spawn-images), the template definitions in [`incus-spawn-templates`](https://github.com/Sanne/incus-spawn-templates), and the install channels in [`homebrew-tap`](https://github.com/Sanne/homebrew-tap) and [`isx-apt-releases`](https://github.com/Sanne/isx-apt-releases).
 When a fix belongs in one of them, open the companion PR *there* and cross-link it with the issue here.
