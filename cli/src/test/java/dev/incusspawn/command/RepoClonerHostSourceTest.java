@@ -49,7 +49,7 @@ class RepoClonerHostSourceTest {
             scripts.add(script);
             if (script.startsWith("cd ")) assertFalse(mounted, "prime must follow detachment");
             script = script.replaceAll("\\{ ! command -v mountpoint .*?; \\} && ", "");
-            if (damageCopy && script.contains("git clone")) {
+            if (damageCopy && script.contains(" clone ")) {
                 script = script.replace(" && { g=", " && printf damage >> "
                         + Container.shellQuote(tmp.resolve("guest/.git/objects/extra").toString()) + " && { g=");
             }
@@ -129,7 +129,7 @@ class RepoClonerHostSourceTest {
         assertEquals(BuildProgress.StepState.FAILED, result.state());
         assertTrue(scripts.stream().noneMatch(s -> s.startsWith("cd ") || s.contains("ls-remote") || s.contains("corporate.invalid")));
         assertEquals(failure.equals("copy") || failure.equals("detach") ? 1 : 0,
-                scripts.stream().filter(s -> s.contains("git clone")).count());
+                scripts.stream().filter(s -> s.contains(" clone ")).count());
         if (snapshot != null) assertEquals(failDetach, Files.exists(snapshot), "retain lease if still mounted");
     }
     @Test void projectLocalDefinitionCannotExportAHostSourceEvenFromStoredMetadata() throws Exception {

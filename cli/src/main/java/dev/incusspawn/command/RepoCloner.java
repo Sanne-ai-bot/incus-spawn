@@ -773,7 +773,10 @@ class RepoCloner {
     /** Copy an already selected store; verify the independent bytes before any prime can run. */
     static String preparedCloneCommand(ImageDef.RepoEntry repo, RepoReference ref) {
         var path = shellQuote(expandHome(repo.getPath()));
-        var command = new StringBuilder("git clone --no-hardlinks");
+        // An unshifted macOS mount shows the snapshot owned by an unmapped uid, which Git refuses (#1590).
+        // Trust only this snapshot, only for this clone: -c keeps the exception out of the template.
+        var command = new StringBuilder("git -c ").append(shellQuote("safe.directory=" + ref.containerPath()))
+                .append(" clone --no-hardlinks");
         if (repo.hasBranch()) command.append(" --branch ").append(shellQuote(repo.getBranch()));
         command.append(" -- ").append(shellQuote(ref.containerPath())).append(' ').append(path)
                 .append(repo.isHostSource() ? "" : " && git -C " + path + " remote set-url origin " + shellQuote(repo.getUrl()))

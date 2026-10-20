@@ -2842,6 +2842,7 @@ SSH defaults to batch mode unless an SSH command or executable was explicitly su
 The guest first checks the remote with its template's accounts, and its full advertised selection must match the prepared snapshot before any bytes are mounted.
 Denied access, different credential-visible refs or a selection race uses the ordinary guest clone path instead.
 All guest access checks finish before any prime runs; host credentials alone never authorize snapshot access, including warm-cache copies.
+The guest trusts only the mounted snapshot's own path, on the clone's command line, for Git's ownership check, since an unshifted macOS mount shows it owned by an unmapped uid (#1590).
 Changed refs first fetch incrementally into staging, with separate metadata and hardlinks only to the previous verified generation's owned immutable packs.
 Fetching checks incoming objects, forces packed storage and disables automatic maintenance; new packs also pass `index-pack --verify --strict`, while old pack/index hashes must still match their seal.
 Old refs and HEAD must remain reachable from the new selection, including annotated tag objects; unchanged roots and fast-forward ancestry avoid an object walk, with a reachability difference for the remaining roots.

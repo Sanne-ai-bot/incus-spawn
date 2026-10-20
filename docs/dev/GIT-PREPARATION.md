@@ -252,6 +252,13 @@ The lease lasts through guest copying and device detachment, including a retaine
 
 Only the prepared bare repository is mounted read-only into the guest.
 The guest uses `clone --no-hardlinks`, sets the real origin, rejects alternates, and checks the physical object-file count and every expected SHA-256 digest.
+On macOS the mount is not shifted, so the guest sees the snapshot owned by the Mac user's unmapped uid.
+Git refuses a local clone from a repository another user owns, since 2.45.1 and the maintenance releases back to 2.39.4 (CVE-2024-32004, #1590).
+The clone therefore passes `-c safe.directory=<mount path>`.
+It trusts exactly that read-only, isx-made snapshot, for that one command.
+It never trusts `*` and writes nothing to the guest's config, so the finished template keeps no exception.
+The checksums still verify every copied byte.
+Shallow references clone with `--no-local` through `upload-pack`, which does not apply this check (checked by hand with Git 2.56).
 Checksum input uses `-c -`, including the explicit stdin filename required on macOS, with `shasum -a 256 -c -` as the fallback.
 A preparation, mount or copy-verification failure uses the existing remote fallback before priming.
 An already-existing destination is preserved.
@@ -267,7 +274,7 @@ They cover ref rewrites/deletions, moved tags, default HEAD changes, branch/tag 
 Incremental tests cover repeated SHA-1/SHA-256 updates, unchanged pack inodes, independent old readers and guest copies, new branches/tags, detached remote HEADs, merged branch deletion, removed history, advertisement races, new/retained pack corruption, failed fetches, cancellation and compaction.
 Concurrency tests cover independent readers, replacement and eviction, cross-process leases and dead-reader reclamation.
 Review regressions cover local paths, rewritten file transports, SSH defaults, denied or narrower guest access, writer waits beyond 30 seconds, unrelated URL locks, prime pipelining and oversized replacement with active readers.
-Guest-command tests exercise independent copies, later fetches, corruption fallback and the macOS checksum-input requirement.
+Guest-command tests exercise independent copies, later fetches, corruption fallback, the macOS checksum-input requirement and a snapshot owned by another uid.
 Existing shallow, project-local, hotplug, timeout and detach-failure tests remain regression coverage.
 
 `bench/GitPreparationBench.java` runs the production preparation code with a fresh cache and reports cold/warm phase timings.
