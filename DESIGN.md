@@ -1880,8 +1880,17 @@ The macOS appliance was such a host until its kernel gained the nft `bridge` fam
 **A per-start secret, checked together with the address (#934).**
 A host-side service that authorises control actions -- grants, leases, a controller reached through the proxy -- needs more than the address, which is only as good as the filter on the day.
 So every isx start gives the instance a new random secret (`InstanceSecret`: 256 bits, hex), and `InstanceRegistry.identify()` accepts a caller only when its source address and the secret it presents (`X-Isx-Instance-Secret`) belong to the same instance; neither alone passes.
-It is an extra layer, never an alternative: since the secret is only valid from its bound address, a leaked one is useless, so it needs no rotation protocol beyond "every start makes a new one".
+On Linux it is an extra layer, never an alternative (macOS is below): since the secret is only valid from its bound address, a leaked one is useless, so it needs no rotation protocol beyond "every start makes a new one".
 Client certificates per instance were the alternative -- a key in the box and a CA to run, for nothing over address plus secret given the filter.
+
+*On macOS, the secret alone (#1583).*
+The address that would bind the secret identifies nothing there: every container reaches the proxy from the VM's address (#1582, "How the proxy tells callers apart"), so until 0.4.1 `identify()` refused every caller on a Mac, and with it `isx branch --mcp-client` and every host route.
+So, behind the same gate as a proof (`MitmProxy.proofMayIdentify`: macOS, never the host's own traffic), a caller whose address is no known instance is the instance whose secret it presents (`identify(address, secret, true)`).
+The registry indexes each running address owner's secret hash to its address; a hash two instances share comes only from an `incus copy` made outside isx before isx started it, and is decided as a shared proof is: the one running, else nobody, and never a stopped instance.
+A failed listing clears that index with the proofs' (the address check keeps its last good listing), so an Incus outage does not keep a stopped instance's secret valid.
+The secret is 256 random bits rotated on every start, so it cannot be guessed; what is lost is the address check that makes a secret leaked to another instance useless, a protection the Mac never had.
+A caller at a known instance's address is still held to that instance's secret, and Linux keeps the address check.
+Restoring per-address identity in the appliance (#1584) would make this unnecessary again.
 
 *Where it lives.*
 The host keeps only its SHA-256, as `user.incus-spawn.instance-secret-sha256`, which the registry reads from the listing it already makes, so the proxy pays nothing.
@@ -4028,8 +4037,8 @@ Recording a differing override where the CLI could read it (a `proxy-gateway-ip`
 It is the path to take if a second bridge or a dedicated proxy interface ever becomes a real request.
 Saving `isx proxy start --gateway-ip` into `config.yaml` was rejected too: a command must not rewrite the user's secrets-bearing file to remember an option.
 On macOS the address the proxy listens on is the host's end of the VM link, so the block, which dnsmasq serves inside the VM, still points at the VM's own bridge gateway.
-There `--gateway-ip` is not written anywhere but it is the bind address of the credential-injecting listener, and a caller the proxy cannot place by address is identified by its credential proof alone (#1582).
-So an override of `0.0.0.0` or a LAN address would let any host that obtained an instance's proof spend that instance's credentials.
+There `--gateway-ip` is not written anywhere but it is the bind address of the credential-injecting listener, and a caller the proxy cannot place by address is identified by its credential proof alone (#1582), or for `isx mcp` and host routes by its per-start secret alone (#1583).
+So an override of `0.0.0.0` or a LAN address would let any host that obtained an instance's proof spend that instance's credentials, or with its secret act as that instance.
 On macOS the override must therefore be exactly the host's end of the VM link that `VmNetwork.discoverHostBridgeIp()` finds, and anything else is `EXIT_CONFIG`.
 When no VM bridge is found the override cannot be checked and the proxy stops as it would without one (#937).
 Refusing only wildcard and public addresses was the alternative, rejected because a private LAN address is just as reachable from other hosts.
@@ -4076,7 +4085,7 @@ host-routes:
 
 With no entries there are no routes, and an entry with no templates is no route either: its owner names who may call it.
 Each name joins the intercepted set, so it gets bridge DNS and a leaf certificate the way a credential domain does, through the one function both the proxy and the CLI writers of the DNS block use (`ToolProxyResolver.hostRoutes`, which `resolvedDomains` includes); otherwise an `isx` command rewriting the block would drop them.
-A request to the name passes only when the caller's address and its per-start secret belong to one instance (`InstanceRegistry.identifyWithLineage`, one throttled refresh on a refusal, then 403) and the route admits the instance's leaf template; a project-local instance never passes.
+A request to the name passes only when the caller's address and its per-start secret belong to one instance (`InstanceRegistry.identifyWithLineage`, one throttled refresh on a refusal, then 403; on macOS the secret alone, #1583) and the route admits the instance's leaf template; a project-local instance never passes.
 Nor does a build that has not succeeded, or anything copied from one: a build container is a copy of its parent and keeps the parent's `profile` and `build-source` stamps, which only a successful build replaces.
 So the request that copies or creates a build container already stamps `untrusted-lineage` (`Metadata.UNTRUSTED_LINEAGE`).
 Only `BuildCommand.trustBuilt` removes it, after the swap of a build that succeeded and inside the swap's lock, so a branch or `isx mcp` delegate waiting on the rebuild copies the template only once it is trusted.

@@ -32,7 +32,8 @@ import java.util.function.Supplier;
  *
  * <p><b>Who may call.</b> An instance stamped {@code mcp-caller} ({@code isx branch --mcp-client}),
  * identified by its source address <em>and</em> the per-start secret it presents
- * ({@link InstanceSecret#HEADER}): {@link InstanceRegistry#identifyMcpCaller}. Anything else is
+ * ({@link InstanceSecret#HEADER}): {@link InstanceRegistry#identifyMcpCaller}; on macOS, where the
+ * address names no instance, by the secret alone (#1583). Anything else is
  * refused before its body is read. The session is bound to the instance that opened it: a
  * session id presented from another instance is unknown there.
  *
@@ -107,8 +108,11 @@ final class McpBridge {
         sessions.clear();
     }
 
-    /** Serve one request to {@link ProxyConfig#MCP_DOMAIN}. */
-    void handle(HttpServerRequest req, String address) {
+    /**
+     * Serve one request to {@link ProxyConfig#MCP_DOMAIN}; with {@code bySecretAlone}, a caller
+     * whose address is no instance may be identified by its secret ({@link InstanceRegistry#identify(String, String, boolean)}).
+     */
+    void handle(HttpServerRequest req, String address, boolean bySecretAlone) {
         req.pause();
         if (!PATH.equals(req.path())) {
             refuse(req, 404, "isx mcp is served at https://" + ProxyConfig.MCP_DOMAIN + PATH);
@@ -120,19 +124,15 @@ final class McpBridge {
             refuse(req, 503, "the proxy cannot tell instances apart yet; try again shortly");
             return;
         }
-        CallerCheck.identify(vertx, req, current, r -> r.identifyMcpCaller(address, secret), instance -> {
+        CallerCheck.identify(vertx, req, current, r -> r.identifyMcpCaller(address, secret, bySecretAlone), instance -> {
             if (instance != null) serve(req, instance);
-            else refuse(req, 403, whyNot(current, address, secret));
+            else refuse(req, 403, whyNot(current, address, secret, bySecretAlone));
         });
     }
 
-    private static String whyNot(InstanceRegistry registry, String address, String secret) {
-        var instance = registry.lookup(address);
-        if (instance == null) return "only an isx instance may call isx mcp";
-        if (registry.identify(address, secret) == null) {
-            return "send this start's secret as " + InstanceSecret.HEADER + " (from $"
-                    + InstanceSecret.FILE_ENV_VAR + ")";
-        }
+    private static String whyNot(InstanceRegistry registry, String address, String secret, boolean bySecretAlone) {
+        var instance = registry.identify(address, secret, bySecretAlone);
+        if (instance == null) return CallerCheck.unidentified(registry, address, bySecretAlone, "isx mcp");
         return "instance '" + instance.instanceName() + "' may not call isx mcp: only one branched "
                 + "with 'isx branch --mcp-client' may";
     }

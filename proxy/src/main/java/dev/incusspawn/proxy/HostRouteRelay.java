@@ -21,7 +21,8 @@ import java.util.function.Supplier;
  *
  * <p><b>Who may call.</b> An instance identified by its source address <em>and</em> the
  * per-start secret it presents ({@link InstanceSecret#HEADER}), as {@link InstanceRegistry#identify}
- * decides, one throttled refresh on a refusal as for {@code isx mcp}; and whose leaf template
+ * decides (on macOS, where the address names no instance, by the secret alone, #1583), one
+ * throttled refresh on a refusal as for {@code isx mcp}; and whose leaf template
  * the route admits ({@link HostRoutes.Route#admits}), never a project-local one. Everything else
  * is refused before its body is read, and the controller sees nothing of it.
  *
@@ -113,8 +114,11 @@ final class HostRouteRelay {
                 .anyMatch(route -> name.equals(route) || HostRoutes.isUnder(name, route));
     }
 
-    /** Answer one request {@link #claims} says is the relay's. */
-    void handle(HttpServerRequest req, String address, Map<String, Served> routes) {
+    /**
+     * Answer one request {@link #claims} says is the relay's; with {@code bySecretAlone}, a caller
+     * whose address is no instance may be identified by its secret ({@link InstanceRegistry#identify(String, String, boolean)}).
+     */
+    void handle(HttpServerRequest req, String address, boolean bySecretAlone, Map<String, Served> routes) {
         // Nothing may read the body before the caller is known, and Vert.x drops a body nobody reads
         req.pause();
         var host = hostOf(req);
@@ -139,15 +143,10 @@ final class HostRouteRelay {
             return;
         }
         var secret = req.getHeader(InstanceSecret.HEADER);
-        CallerCheck.identify(vertx, req, current, r -> r.identifyWithLineage(address, secret), caller -> {
+        CallerCheck.identify(vertx, req, current, r -> r.identifyWithLineage(address, secret, bySecretAlone), caller -> {
             if (caller != null) admit(req, route, caller);
-            else CallerCheck.refuse(req, 403, unidentified(current, address));
+            else CallerCheck.refuse(req, 403, CallerCheck.unidentified(current, address, bySecretAlone, "a host route"));
         });
-    }
-
-    private static String unidentified(InstanceRegistry registry, String address) {
-        if (registry.lookup(address) == null) return "only an isx instance may call a host route";
-        return "send this start's secret as " + InstanceSecret.HEADER + " (from $" + InstanceSecret.FILE_ENV_VAR + ")";
     }
 
     private void admit(HttpServerRequest req, Served served, InstanceRegistry.Identified caller) {

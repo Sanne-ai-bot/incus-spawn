@@ -277,10 +277,10 @@ class InstanceRegistryTest {
 
         var route = new dev.incusspawn.config.HostRoutes.Route("work.isx.internal", "127.0.0.1", 1, java.util.List.of("tpl-isx-agent"));
         for (var address : java.util.List.of("10.0.0.5", "10.0.0.6", "10.0.0.8")) {
-            var lineage = registry.identifyWithLineage(address, secret).lineage();
+            var lineage = registry.identifyWithLineage(address, secret, false).lineage();
             assertFalse(route.admits(lineage.template(), lineage.untrusted()), address + " is admitted: " + lineage);
         }
-        var agent = registry.identifyWithLineage("10.0.0.7", secret).lineage();
+        var agent = registry.identifyWithLineage("10.0.0.7", secret, false).lineage();
         assertTrue(route.admits(agent.template(), agent.untrusted()), "an ordinary branch still is");
     }
 
@@ -311,9 +311,9 @@ class InstanceRegistryTest {
         var registry = new InstanceRegistry(daemon.client());
         registry.refresh();
 
-        assertTrue(registry.identifyWithLineage("10.0.0.5", secret).lineage().untrusted(), "a branch of a branch");
-        assertTrue(registry.identifyWithLineage("10.0.0.6", secret).lineage().untrusted(), "of a renamed failed build");
-        var trusted = registry.identifyWithLineage("10.0.0.7", secret).lineage();
+        assertTrue(registry.identifyWithLineage("10.0.0.5", secret, false).lineage().untrusted(), "a branch of a branch");
+        assertTrue(registry.identifyWithLineage("10.0.0.6", secret, false).lineage().untrusted(), "of a renamed failed build");
+        var trusted = registry.identifyWithLineage("10.0.0.7", secret, false).lineage();
         assertFalse(trusted.untrusted(), "an ordinary branch, whose ancestors are templates: " + trusted);
         assertEquals("tpl-isx-agent", trusted.template());
     }
@@ -410,6 +410,102 @@ class InstanceRegistryTest {
         assertEquals("box-a", registry.identify("10.0.0.5", after).instanceName());
     }
 
+    /** #1583: on macOS every container arrives from the VM's address, which is no instance. */
+    @Test
+    void whereTheAddressNamesNoInstanceTheSecretAloneIdentifiesTheCaller() {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon();
+        var a = InstanceSecret.generate();
+        var b = InstanceSecret.generate();
+        var registry = twoBoxes(daemon, a, b);
+        var vm = "10.166.11.2";
+
+        assertEquals("box-a", registry.identify(vm, a, true).instanceName());
+        assertEquals("box-b", registry.identify(vm, " " + b + "\n", true).instanceName(),
+                "trimmed, as against the address");
+        assertNull(registry.identify(vm, a), "only where the caller allows it");
+        assertNull(registry.identify(vm, InstanceSecret.generate(), true), "a wrong secret");
+        assertNull(registry.identify(vm, InstanceSecret.sha256(a), true), "the recorded hash");
+        assertNull(registry.identify(vm, null, true));
+        assertNull(registry.identify(vm, "", true));
+        assertNull(registry.identify("10.0.0.6", a, true), "a known address is held to its own secret");
+
+        var after = InstanceSecret.generate();
+        daemon.client().configSet("box-a", SECRET_KEY, InstanceSecret.sha256(after));
+        assertTrue(registry.refresh());
+        assertNull(registry.identify(vm, a, true), "the previous start's secret");
+        assertEquals("box-a", registry.identify(vm, after, true).instanceName());
+    }
+
+    @Test
+    void theSecretAloneIdentifiesForIsxMcpAndHostRoutesToo() {
+        var secret = InstanceSecret.generate();
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("coord", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, InstanceSecret.sha256(secret), dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",
+                        dev.incusspawn.incus.Metadata.MCP_CALLER, dev.incusspawn.incus.Metadata.newMcpCallerGrant()));
+        var registry = new InstanceRegistry(daemon.client());
+        assertTrue(registry.refresh());
+
+        assertEquals("coord", registry.identifyMcpCaller("10.166.11.2", secret, true));
+        assertNull(registry.identifyMcpCaller("10.166.11.2", secret, false));
+        var identified = registry.identifyWithLineage("10.166.11.2", secret, true);
+        assertEquals("coord", identified.instanceName());
+        assertEquals("tpl-agent", identified.lineage().template());
+        assertNull(registry.identifyWithLineage("10.166.11.2", secret, false));
+    }
+
+    @Test
+    void aSecretSharedByACopyIdentifiesOnlyTheOneRunning() {
+        // An incus copy made outside isx carries its source's hash until isx starts it
+        var secret = InstanceSecret.generate();
+        var hash = InstanceSecret.sha256(secret);
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("source", "container", "Stopped", java.util.Map.of(ADDRESS_KEY, "10.0.0.5", SECRET_KEY, hash))
+                .instance("copy", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.6", SECRET_KEY, hash));
+        var registry = new InstanceRegistry(daemon.client());
+        assertTrue(registry.refresh());
+        assertEquals("copy", registry.identify("10.166.11.2", secret, true).instanceName());
+
+        daemon.instance("source", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5", SECRET_KEY, hash));
+        assertTrue(registry.refresh());
+        assertNull(registry.identify("10.166.11.2", secret, true), "two running: nobody");
+        assertEquals("source", registry.identify("10.0.0.5", secret).instanceName(), "an address still decides");
+    }
+
+    @Test
+    void aStoppedInstancesSecretIdentifiesNobodyBySecretAlone() {
+        var secret = InstanceSecret.generate();
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("box", "container", "Stopped", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, InstanceSecret.sha256(secret)));
+        var registry = new InstanceRegistry(daemon.client());
+        assertTrue(registry.refresh());
+        assertNull(registry.identify("10.166.11.2", secret, true));
+    }
+
+    @Test
+    void aFailedListingStopsIdentifyingBySecretAlone() {
+        // As for proofs: without a current listing, nothing says the instance is still running
+        var fail = new java.util.concurrent.atomic.AtomicBoolean();
+        var secret = InstanceSecret.generate();
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("box", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, InstanceSecret.sha256(secret)));
+        var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
+            @Override
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                if (fail.get()) throw new dev.incusspawn.incus.IncusException("socket gone");
+                return daemon.client().listJsonConfig();
+            }
+        });
+        assertTrue(registry.refresh());
+        assertEquals("box", registry.identify("10.166.11.2", secret, true).instanceName());
+
+        fail.set(true);
+        assertFalse(registry.refresh());
+        assertNull(registry.identify("10.166.11.2", secret, true));
+    }
+
     @Test
     void anIdentifiedCallerCarriesWhatItWasBuiltFrom() {
         // A host route's templates: filter is decided on these (#936)
@@ -431,12 +527,12 @@ class InstanceRegistryTest {
         registry.refresh();
 
         assertEquals(new InstanceRegistry.Identified("agent", new InstanceRegistry.Lineage("tpl-agent", false)),
-                registry.identifyWithLineage("10.0.0.5", secret));
-        assertTrue(registry.identifyWithLineage("10.0.0.6", secret).lineage().untrusted());
-        assertTrue(registry.identifyWithLineage("10.0.0.7", secret).lineage().untrusted());
-        assertTrue(registry.identifyWithLineage("10.0.0.8", secret).lineage().untrusted(),
+                registry.identifyWithLineage("10.0.0.5", secret, false));
+        assertTrue(registry.identifyWithLineage("10.0.0.6", secret, false).lineage().untrusted());
+        assertTrue(registry.identifyWithLineage("10.0.0.7", secret, false).lineage().untrusted());
+        assertTrue(registry.identifyWithLineage("10.0.0.8", secret, false).lineage().untrusted(),
                 "a build stamp that cannot be read cannot show it was not");
-        assertNull(registry.identifyWithLineage("10.0.0.5", InstanceSecret.generate()));
+        assertNull(registry.identifyWithLineage("10.0.0.5", InstanceSecret.generate(), false));
     }
 
     @Test
@@ -481,10 +577,10 @@ class InstanceRegistryTest {
                         SECRET_KEY, InstanceSecret.sha256(plain)));
         var registry = new InstanceRegistry(daemon.client());
         registry.refresh();
-        assertEquals("coord", registry.identifyMcpCaller("10.0.0.5", caller));
-        assertNull(registry.identifyMcpCaller("10.0.0.5", null), "the address alone");
-        assertNull(registry.identifyMcpCaller("10.0.0.6", caller), "its secret from another address");
-        assertNull(registry.identifyMcpCaller("10.0.0.6", plain), "an instance that was not granted it");
+        assertEquals("coord", registry.identifyMcpCaller("10.0.0.5", caller, false));
+        assertNull(registry.identifyMcpCaller("10.0.0.5", null, false), "the address alone");
+        assertNull(registry.identifyMcpCaller("10.0.0.6", caller, false), "its secret from another address");
+        assertNull(registry.identifyMcpCaller("10.0.0.6", plain, false), "an instance that was not granted it");
         assertTrue(registry.isMcpCaller("coord"));
         assertFalse(registry.isMcpCaller("worker"));
     }
@@ -500,7 +596,7 @@ class InstanceRegistryTest {
                         dev.incusspawn.incus.Metadata.MCP_CALLER, "2026-10-05T10:00:00"));
         var registry = new InstanceRegistry(daemon.client());
         registry.refresh();
-        assertNull(registry.identifyMcpCaller("10.0.0.5", secret));
+        assertNull(registry.identifyMcpCaller("10.0.0.5", secret, false));
         assertFalse(registry.isMcpCaller("odd"));
     }
 }

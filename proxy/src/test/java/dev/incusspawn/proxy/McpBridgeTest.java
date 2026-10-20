@@ -122,10 +122,14 @@ class McpBridgeTest {
 
     /** The instance at 127.0.0.1, this start's secret recorded, and the stamp if {@code caller}. */
     private static void instance(boolean caller) {
+        instance(caller, "127.0.0.1");
+    }
+
+    private static void instance(boolean caller, String address) {
         listing = """
                 [{"name":"%s","status":"Running","config":{
-                   "%s":"127.0.0.1", "%s":"%s"%s}}]
-                """.formatted(CALLER, Metadata.STATIC_IP, Metadata.INSTANCE_SECRET_SHA256,
+                   "%s":"%s", "%s":"%s"%s}}]
+                """.formatted(CALLER, Metadata.STATIC_IP, address, Metadata.INSTANCE_SECRET_SHA256,
                 InstanceSecret.sha256(SECRET),
                 caller ? ", \"" + Metadata.MCP_CALLER + "\":\"" + Metadata.newMcpCallerGrant() + "\"" : "");
         registry.refresh();
@@ -208,6 +212,31 @@ class McpBridgeTest {
         var wrong = send(HttpMethod.POST, McpBridge.PATH, "b".repeat(64), null, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}");
         assertEquals(403, wrong.status());
         assertEquals(List.of(), startedProcesses());
+    }
+
+    @Test
+    void onMacOSTheSecretIdentifiesACallerFromAnAddressThatIsNoInstance() throws Exception {
+        // #1583: the VM NATs every container to its own address, which names no instance
+        instance(true, "10.0.0.5");
+        try {
+            var refused = post(null, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}");
+            assertEquals(403, refused.status(), "Linux keeps the address check");
+            assertTrue(refused.body().contains("only an isx instance"), refused.body());
+
+            proxy.proofIdentifies = (remote, local) -> true;
+            var session = initialize();
+            var reply = post(session, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+            assertEquals(CALLER, reply.messages().getFirst().get("result").get("instance").asText());
+
+            var started = startedProcesses();
+            var wrong = send(HttpMethod.POST, McpBridge.PATH, "b".repeat(64), null,
+                    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}");
+            assertEquals(403, wrong.status());
+            assertTrue(wrong.body().contains(InstanceSecret.HEADER), "the secret is what to fix: " + wrong.body());
+            assertEquals(started, startedProcesses());
+        } finally {
+            proxy.proofIdentifies = (remote, local) -> false;
+        }
     }
 
     @Test

@@ -1188,8 +1188,10 @@ public class MitmProxy {
             var mcp = ProxyConfig.MCP_DOMAIN.equals(domain);
             var cache = domain == null || hostRoute || mcp ? null : cacheHandler(domain, started);
             var authorizes = domain != null && !hostRoute && !mcp && cache == null && isInterceptedDomain(domain);
-            var byProofAlone = authorizes && caller == null
+            // Secret alone for a host route or isx mcp, proof alone for an intercepted domain
+            var byTokenAlone = caller == null
                     && proofIdentifiesCaller(clientReq.remoteAddress(), clientReq.localAddress());
+            var byProofAlone = authorizes && byTokenAlone;
             // A caller only its proof can name is counted once authorize has checked it
             var flow = countTraffic(clientReq, byProofAlone
                     ? apiActivity.pendingFlow(trafficDomain(domain)) : trafficFlow(caller, domain));
@@ -1200,10 +1202,10 @@ public class MitmProxy {
 
             if (hostRoute) {
                 // First, by Host or SNI: neither half of a route's connection reaches credentials
-                hostRouteRelay.handle(clientReq, address, routes);
+                hostRouteRelay.handle(clientReq, address, byTokenAlone, routes);
             } else if (mcp) {
                 // Answered here, never relayed: it names no host outside this machine.
-                mcpBridge.handle(clientReq, address);
+                mcpBridge.handle(clientReq, address, byTokenAlone);
             } else if (cache != null) {
                 if (hasBody(clientReq)) {
                     // An upload or a query (npm audit, a registry push): never from a cache, keyed by
@@ -1436,9 +1438,10 @@ public class MitmProxy {
 
     /**
      * Whether a caller whose address is no known instance may be identified by its credential
-     * proof alone (#1582): on macOS, where every container arrives from the VM's address, so the
-     * address identifies nothing, and never for the host's own traffic. Linux keeps the address
-     * check. Overridable for tests, which cannot send from an address that is not the host's.
+     * proof alone (#1582), or for {@code isx mcp} and host routes by its per-start secret alone
+     * (#1583): on macOS, where every container arrives from the VM's address, so the address
+     * identifies nothing, and never for the host's own traffic. Linux keeps the address check.
+     * Overridable for tests, which cannot send from an address that is not the host's.
      */
     java.util.function.BiPredicate<String, String> proofIdentifies =
             (remote, local) -> proofMayIdentify(dev.incusspawn.Platform.isMacOS(), remote, local);
