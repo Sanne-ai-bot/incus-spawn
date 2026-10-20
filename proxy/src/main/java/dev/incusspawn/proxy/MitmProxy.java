@@ -1468,11 +1468,6 @@ public class MitmProxy {
         return hostAddressOf(ws.remoteAddress());
     }
 
-    /** Name the caller for a log line: the instance if the registry knows it, else its address. */
-    private String describeCaller(HttpServerRequest req) {
-        return describeCaller(sourceAddressOf(req));
-    }
-
     /** Name a caller {@link #authorize} identified, for a log line. */
     private static String describe(InstanceRegistry.Caller caller) {
         return "instance '" + caller.accounts().instanceName() + "'";
@@ -1483,6 +1478,7 @@ public class MitmProxy {
         return caller != null ? describe(caller) : describeCaller(sourceAddress);
     }
 
+    /** Name the caller for a log line: the instance if the registry knows it, else its address. */
     private String describeCaller(String sourceAddress) {
         var registry = instanceRegistry;
         var instance = registry == null ? null : registry.lookup(sourceAddress);
@@ -1545,7 +1541,7 @@ public class MitmProxy {
                     var proven = result.succeeded() ? result.result() : null;
                     who.set(proven == null ? caller : proven.caller());
                     begin(flow, who.get());
-                    context.set(proven == null ? passthroughContext(domain, callerAt(address), flow)
+                    context.set(proven == null ? passthroughContext(domain, caller, flow)
                             : contextFor(state, domain, proven.caller(), proven.namespaces(), flow));
                     status.complete(101);
                 } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
