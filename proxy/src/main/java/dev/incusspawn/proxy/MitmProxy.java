@@ -1180,22 +1180,31 @@ public class MitmProxy {
         var started = System.nanoTime();
         try {
             var domain = extractDomain(clientReq);
-            var caller = callerAt(sourceAddressOf(clientReq));
-            var flow = countTraffic(clientReq, caller, domain);
+            var address = sourceAddressOf(clientReq);
+            var caller = callerAt(address);
+            var routes = configState.hostRoutes();
+            // The route, decided once: which branch authorizes also decides how the flow is counted
+            var hostRoute = domain != null && HostRouteRelay.claims(routes, clientReq);
+            var mcp = ProxyConfig.MCP_DOMAIN.equals(domain);
+            var cache = domain == null || hostRoute || mcp ? null : cacheHandler(domain, started);
+            var authorizes = domain != null && !hostRoute && !mcp && cache == null && isInterceptedDomain(domain);
+            var byProofAlone = authorizes && caller == null
+                    && proofIdentifiesCaller(clientReq.remoteAddress(), clientReq.localAddress());
+            // A caller only its proof can name is counted once authorize has checked it
+            var flow = countTraffic(clientReq, byProofAlone
+                    ? apiActivity.pendingFlow(trafficDomain(domain)) : trafficFlow(caller, domain));
             if (domain == null) {
                 sendError(clientReq.response(), 502, "Unknown domain");
                 return;
             }
 
-            Consumer<HttpServerRequest> cache;
-            var routes = configState.hostRoutes();
-            if (HostRouteRelay.claims(routes, clientReq)) {
+            if (hostRoute) {
                 // First, by Host or SNI: neither half of a route's connection reaches credentials
-                hostRouteRelay.handle(clientReq, sourceAddressOf(clientReq), routes);
-            } else if (ProxyConfig.MCP_DOMAIN.equals(domain)) {
+                hostRouteRelay.handle(clientReq, address, routes);
+            } else if (mcp) {
                 // Answered here, never relayed: it names no host outside this machine.
-                mcpBridge.handle(clientReq, sourceAddressOf(clientReq));
-            } else if ((cache = cacheHandler(domain, started)) != null) {
+                mcpBridge.handle(clientReq, address);
+            } else if (cache != null) {
                 if (hasBody(clientReq)) {
                     // An upload or a query (npm audit, a registry push): never from a cache, keyed by
                     // path alone, and relayed now, since a cache handler waits before it relays (#1164)
@@ -1203,11 +1212,12 @@ public class MitmProxy {
                 } else {
                     cache.accept(clientReq);
                 }
-            } else if (isInterceptedDomain(domain)) {
+            } else if (authorizes) {
                 clientReq.pause();
                 var state = configState;
-                authorize(state, domain, sourceAddressOf(clientReq), clientReq.headers()).onComplete(result -> {
+                authorize(state, domain, address, byProofAlone, clientReq.headers()).onComplete(result -> {
                     var proven = result.succeeded() ? result.result() : null;
+                    begin(flow, proven == null ? caller : proven.caller());
                     if (proven == null) {
                         handleApiRequest(clientReq, passthroughContext(domain, caller, flow), started);
                     } else {
@@ -1234,10 +1244,10 @@ public class MitmProxy {
             handleApiRequest(clientReq, contextFor(state, domain, proof.caller(), proof.namespaces(), flow), started);
         } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
                  | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
-            ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + refusal(e));
+            ProxyLog.warn("Refusing " + domain + " for " + describe(proof.caller()) + refusal(e));
             CallerCheck.refuse(clientReq, 502, e.getMessage());
         } catch (RuntimeException e) {
-            ProxyLog.error("Refusing " + domain + " for " + describeCaller(clientReq) + refusal(e));
+            ProxyLog.error("Refusing " + domain + " for " + describe(proof.caller()) + refusal(e));
             CallerCheck.refuse(clientReq, 502, "Internal proxy error");
         }
     }
@@ -1269,7 +1279,8 @@ public class MitmProxy {
      * ({@link RequestContext#proves}), so tools sharing a domain under different path scopes
      * each need only their own (#1423). Claude's domains still need all of theirs.
      */
-    private Future<Proof> authorize(ConfigState state, String domain, String address, io.vertx.core.MultiMap headers) {
+    private Future<Proof> authorize(ConfigState state, String domain, String address, boolean byProofAlone,
+                                    io.vertx.core.MultiMap headers) {
         var registry = instanceRegistry;
         var presented = state.proofCarriers().read(domain, headers::getAll);
         if (presented.digests().isEmpty()) return Future.succeededFuture(null);
@@ -1277,15 +1288,15 @@ public class MitmProxy {
                 : presented.digests().entrySet().stream().filter(e -> !e.getValue().isEmpty())
                         .collect(java.util.stream.Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
         if (registry == null || offered.isEmpty() || offered.values().stream().anyMatch(List::isEmpty)) {
-            refusedProof(address, presented);
+            refusedProof(address, byProofAlone, presented);
             return Future.succeededFuture(null);
         }
-        var caller = registry.prove(address, offered);
+        var caller = registry.prove(address, offered, byProofAlone);
         if (caller != null && !registry.isStale()) return Future.succeededFuture(new Proof(caller, offered.keySet()));
         var refreshed = refreshProofs(registry);
-        return refreshed.map(done -> provenOrWarn(registry, address, presented, offered))
+        return refreshed.map(done -> provenOrWarn(registry, address, byProofAlone, presented, offered))
                 .recover(error -> {
-                    refusedProof(address, presented);
+                    refusedProof(address, byProofAlone, presented);
                     return Future.succeededFuture(null);
                 });
     }
@@ -1334,11 +1345,11 @@ public class MitmProxy {
         if (proofRefresh == promise.future()) proofRefresh = null;
     }
 
-    private Proof provenOrWarn(InstanceRegistry registry, String address, ProofCarriers.Presented presented,
-                               Map<String, List<String>> offered) {
-        var caller = registry.isStale() ? null : registry.prove(address, offered);
+    private Proof provenOrWarn(InstanceRegistry registry, String address, boolean byProofAlone,
+                               ProofCarriers.Presented presented, Map<String, List<String>> offered) {
+        var caller = registry.isStale() ? null : registry.prove(address, offered, byProofAlone);
         if (caller == null) {
-            refusedProof(address, presented);
+            refusedProof(address, byProofAlone, presented);
             return null;
         }
         return new Proof(caller, offered.keySet());
@@ -1365,15 +1376,27 @@ public class MitmProxy {
         return false;
     }
 
-    private void refusedProof(String address, ProofCarriers.Presented presented) {
+    /**
+     * Counts a refused proof, and warns once a window. Which warning says whose problem it is: a
+     * proof from an address that is no known instance was never checked, and nothing inside an
+     * instance fixes that; one that was checked and does not match is the instance's to renew.
+     */
+    private void refusedProof(String address, boolean byProofAlone, ProofCarriers.Presented presented) {
         refusedInjections.incrementAndGet();
         var namespaces = presented.digests().keySet();
-        if (presented.claimsProof()
-                && refusedProofWarnings.shouldLog(address + ":" + namespaces, System.nanoTime())) {
+        // On macOS every instance shares the VM's address: one's refusal must not silence another's
+        var key = address + ":" + namespaces + (byProofAlone ? ":" + presented.digests().hashCode() : "");
+        if (presented.claimsProof() && refusedProofWarnings.shouldLog(key, System.nanoTime())) {
+            var registry = instanceRegistry;
+            var unchecked = !byProofAlone && (registry == null || registry.lookup(address) == null);
             ProxyLog.warn("Credential proof refused for " + describeCaller(address) + " ("
-                    + String.join(", ", namespaces) + "); relaying unchanged. Open a new login shell;"
-                    + " if needed, run isx shell on the host, then isx doctor inside the instance."
-                    + " Old API-key Claude images may need rebuilding.");
+                    + String.join(", ", namespaces) + "); relaying unchanged. " + (unchecked
+                    ? "That address is no instance the proxy knows, so the proof was not checked."
+                            + " Host-side traffic must bring its own credentials; an instance's traffic arriving"
+                            + " from another address is the proxy's problem, which isx doctor inside it cannot fix."
+                    : "It matches no current proof. Open a new login shell;"
+                            + " if needed, run isx shell on the host, then isx doctor inside the instance."
+                            + " Old API-key Claude images may need rebuilding."));
         }
     }
 
@@ -1383,8 +1406,7 @@ public class MitmProxy {
      * {@link #beginModelCall} each set their own, and a handler set later replaces the earlier.
      * An HTTP/1.1 connection answers one request at a time, so its close ends this one.
      */
-    private ApiActivity.Flow countTraffic(HttpServerRequest clientReq, InstanceRegistry.Caller caller, String domain) {
-        var flow = trafficFlow(caller, domain);
+    private ApiActivity.Flow countTraffic(HttpServerRequest clientReq, ApiActivity.Flow flow) {
         var resp = clientReq.response();
         io.vertx.core.Handler<Void> ended = v -> {
             flow.addRequestBytes(clientReq.bytesRead());
@@ -1398,28 +1420,67 @@ public class MitmProxy {
 
     /** A request or WebSocket to {@code domain} begins, from {@code caller} (null: no known instance). */
     private ApiActivity.Flow trafficFlow(InstanceRegistry.Caller caller, String domain) {
-        var counted = ApiActivity.trafficDomain(domain, configState.routing().allInterceptedDomains());
-        return caller == null ? apiActivity.flow(null, null, 0, counted)
-                : apiActivity.flow(caller.accounts().instanceName(), caller.incarnation(), caller.view(), counted);
+        return begin(apiActivity.pendingFlow(trafficDomain(domain)), caller);
+    }
+
+    private String trafficDomain(String domain) {
+        return ApiActivity.trafficDomain(domain, configState.routing().allInterceptedDomains());
+    }
+
+    /** Counts a pending {@code flow} as {@code caller}'s, null for no known instance; a begun one stays as it is. */
+    private static ApiActivity.Flow begin(ApiActivity.Flow flow, InstanceRegistry.Caller caller) {
+        if (caller == null) flow.begin(null, null, 0);
+        else flow.begin(caller.accounts().instanceName(), caller.incarnation(), caller.view());
+        return flow;
+    }
+
+    /**
+     * Whether a caller whose address is no known instance may be identified by its credential
+     * proof alone (#1582): on macOS, where every container arrives from the VM's address, so the
+     * address identifies nothing, and never for the host's own traffic. Linux keeps the address
+     * check. Overridable for tests, which cannot send from an address that is not the host's.
+     */
+    java.util.function.BiPredicate<String, String> proofIdentifies =
+            (remote, local) -> proofMayIdentify(dev.incusspawn.Platform.isMacOS(), remote, local);
+
+    static boolean proofMayIdentify(boolean macOS, String remote, String local) {
+        return macOS && remote != null && !isHostCaller(remote, local);
+    }
+
+    private boolean proofIdentifiesCaller(io.vertx.core.net.SocketAddress remote, io.vertx.core.net.SocketAddress local) {
+        return proofIdentifies.test(hostAddressOf(remote), hostAddressOf(local));
+    }
+
+    private static String hostAddressOf(io.vertx.core.net.SocketAddress address) {
+        return address == null ? null : address.hostAddress();
     }
 
     /**
      * The address the request came from. iptables REDIRECT preserves the container's source
-     * address, so on the bridge this is the instance's own static IP.
+     * address, so on the bridge this is the instance's own static IP. Not on macOS, where it is
+     * the VM's ({@link #proofMayIdentify}).
      */
     private static String sourceAddressOf(HttpServerRequest req) {
-        var remote = req.remoteAddress();
-        return remote == null ? null : remote.hostAddress();
+        return hostAddressOf(req.remoteAddress());
     }
 
     private static String sourceAddressOf(ServerWebSocket ws) {
-        var remote = ws.remoteAddress();
-        return remote == null ? null : remote.hostAddress();
+        return hostAddressOf(ws.remoteAddress());
     }
 
     /** Name the caller for a log line: the instance if the registry knows it, else its address. */
     private String describeCaller(HttpServerRequest req) {
         return describeCaller(sourceAddressOf(req));
+    }
+
+    /** Name a caller {@link #authorize} identified, for a log line. */
+    private static String describe(InstanceRegistry.Caller caller) {
+        return "instance '" + caller.accounts().instanceName() + "'";
+    }
+
+    /** Name {@code caller} if known, else whoever is at {@code sourceAddress}. */
+    private String describe(InstanceRegistry.Caller caller, String sourceAddress) {
+        return caller != null ? describe(caller) : describeCaller(sourceAddress);
     }
 
     private String describeCaller(String sourceAddress) {
@@ -1446,10 +1507,18 @@ public class MitmProxy {
         var colon = host == null ? -1 : host.indexOf(':');
         var domain = colon > 0 ? host.substring(0, colon) : host;
         var address = sourceAddressOf(clientWs);
-        var flow = trafficFlow(callerAt(address), domain);
+        var caller = callerAt(address);
+        var authorizes = domain != null && !ProxyConfig.MCP_DOMAIN.equals(domain)
+                && !HostRouteRelay.claims(configState.hostRoutes(), clientWs);
+        var byProofAlone = authorizes && caller == null
+                && proofIdentifiesCaller(clientWs.remoteAddress(), clientWs.localAddress());
+        // A caller only its proof can name is counted once authorize has checked it
+        var flow = byProofAlone ? apiActivity.pendingFlow(trafficDomain(domain)) : trafficFlow(caller, domain);
         clientWs.pause();
         var status = io.vertx.core.Promise.<Integer>promise();
         var context = new java.util.concurrent.atomic.AtomicReference<RequestContext>();
+        // Who authorize found: on macOS the proof's instance, which the address does not name
+        var who = new java.util.concurrent.atomic.AtomicReference<InstanceRegistry.Caller>();
         // Defer Netty's handshake while a stale registry is refreshed. Dial only after it validates.
         clientWs.setHandshake(status.future()).onComplete(handshake -> {
             if (handshake.failed() || handshake.result() != 101) {
@@ -1460,29 +1529,31 @@ public class MitmProxy {
             try {
                 handleWebSocketUpgrade(clientWs, context.get(), flow);
             } catch (RuntimeException e) {
-                ProxyLog.error("WebSocket relay setup failed for " + domain + " for " + describeCaller(address) + refusal(e));
+                ProxyLog.error("WebSocket relay setup failed for " + domain + " for " + describe(who.get(), address) + refusal(e));
                 if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
                 flow.end();
             }
         });
         if (domain == null) {
             status.complete(400);
-        } else if (ProxyConfig.MCP_DOMAIN.equals(domain) || HostRouteRelay.claims(configState.hostRoutes(), clientWs)) {
+        } else if (!authorizes) {
             status.complete(404);
         } else {
             var state = configState;
-            authorize(state, domain, address, clientWs.headers()).onComplete(result -> {
+            authorize(state, domain, address, byProofAlone, clientWs.headers()).onComplete(result -> {
                 try {
                     var proven = result.succeeded() ? result.result() : null;
+                    who.set(proven == null ? caller : proven.caller());
+                    begin(flow, who.get());
                     context.set(proven == null ? passthroughContext(domain, callerAt(address), flow)
                             : contextFor(state, domain, proven.caller(), proven.namespaces(), flow));
                     status.complete(101);
                 } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
                          | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
-                    ProxyLog.warn("Refusing WebSocket to " + domain + " for " + describeCaller(address) + refusal(e));
+                    ProxyLog.warn("Refusing WebSocket to " + domain + " for " + describe(who.get(), address) + refusal(e));
                     status.complete(502);
                 } catch (RuntimeException e) {
-                    ProxyLog.error("Refusing WebSocket to " + domain + " for " + describeCaller(address) + refusal(e));
+                    ProxyLog.error("Refusing WebSocket to " + domain + " for " + describe(who.get(), address) + refusal(e));
                     status.tryComplete(502);
                 }
             });
@@ -2435,8 +2506,7 @@ public class MitmProxy {
     }
 
     private static boolean isHostCaller(HttpServerRequest req) {
-        return isHostCaller(req.remoteAddress() == null ? null : req.remoteAddress().hostAddress(),
-                req.localAddress() == null ? null : req.localAddress().hostAddress());
+        return isHostCaller(hostAddressOf(req.remoteAddress()), hostAddressOf(req.localAddress()));
     }
 
     /**

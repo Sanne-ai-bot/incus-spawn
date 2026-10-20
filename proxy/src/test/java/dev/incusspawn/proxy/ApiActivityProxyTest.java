@@ -230,6 +230,41 @@ class ApiActivityProxyTest {
     }
 
     @Test
+    void aCallerOnlyItsProofIdentifiesCountsAsThatInstance() throws Exception {
+        // macOS (#1582): the address is the VM's, the proof names the instance
+        var secret = "42".repeat(32);
+        try {
+            listing = """
+                    [{"name":"behind-nat","created_at":"2026-10-01T09:00:00Z","config":{
+                       "user.incus-spawn.static-ip":"10.0.0.9","user.incus-spawn.instance-proof-sha256":"%s"}}]
+                    """.formatted(ProofVerifier.stamp(secret, ProofToken.declared()).replace("\n", "\\n"));
+            registry.refresh();
+            proxy.proofIdentifies = (remote, local) -> true;
+            var before = activity();
+            var options = new RequestOptions().setMethod(HttpMethod.POST)
+                    .setServer(SocketAddress.inetSocketAddress(mitmPort, "127.0.0.1"))
+                    .setHost(ANTHROPIC).setPort(443).setURI("/v1/messages");
+            assertEquals(200, client.request(options)
+                    .compose(req -> req.putHeader("x-api-key", "sk-ant-isx_" + ProofToken.derive(secret, "claude"))
+                            .send(Buffer.buffer("{}")))
+                    .compose(resp -> resp.body().map(b -> resp.statusCode()))
+                    .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+            var after = activity();
+
+            var counted = after.path("instances").path("behind-nat");
+            assertEquals(1, counted.path("requests").asLong(), after.toString());
+            assertEquals(1, counted.path("traffic").path("requests").asLong(), after.toString());
+            assertEquals(0, counted.path("traffic").path("in_flight").asLong());
+            assertEquals(before.path("unattributed").path("requests").asLong(),
+                    after.path("unattributed").path("requests").asLong(), after.toString());
+        } finally {
+            proxy.proofIdentifies = (remote, local) -> false;
+            listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+        }
+    }
+
+    @Test
     void theHealthServerOnlyReads() throws Exception {
         for (var path : List.of("/health", "/activity")) {
             for (var method : List.of("POST", "PUT", "PATCH", "DELETE")) {

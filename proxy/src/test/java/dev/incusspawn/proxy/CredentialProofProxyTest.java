@@ -445,6 +445,30 @@ class CredentialProofProxyTest {
         assertEquals(proof, request(true, GITHUB, "Authorization", proof).authorization());
     }
 
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void onMacOSAValidProofFromAnAddressThatIsNoInstanceIdentifiesTheCaller(boolean websocket) throws Exception {
+        // #1582: the VM NATs every container to its own address, which names no instance
+        address = "10.166.11.2";
+        serve(claude("api-key"));
+        proxy.proofIdentifies = (remote, local) -> true;
+        var proof = "Bearer " + ProofTestSupport.token("github", "gho_");
+        assertEquals("Bearer ghp_outer", request(websocket, GITHUB, "Authorization", proof).authorization());
+        var foreign = "Bearer gho_isx_" + ProofToken.derive("55".repeat(32), "github");
+        assertEquals(foreign, request(websocket, GITHUB, "Authorization", foreign).authorization());
+        var otherNamespace = "Bearer gho_isx_" + ProofToken.derive(SECRET, "claude");
+        assertEquals(otherNamespace, request(websocket, GITHUB, "Authorization", otherNamespace).authorization());
+    }
+
+    @Test void onlyMacOSCallersOtherThanTheHostMayBeIdentifiedByTheirProofAlone() {
+        assertTrue(MitmProxy.proofMayIdentify(true, "192.168.64.21", "192.168.64.1"));
+        assertFalse(MitmProxy.proofMayIdentify(false, "192.168.64.21", "192.168.64.1"), "Linux keeps the address check");
+        assertFalse(MitmProxy.proofMayIdentify(true, "192.168.64.1", "192.168.64.1"), "the host, from the bridge address");
+        assertFalse(MitmProxy.proofMayIdentify(true, "127.0.0.1", "127.0.0.1"));
+        assertFalse(MitmProxy.proofMayIdentify(true, "::ffff:127.0.0.1", "192.168.64.1"));
+        assertFalse(MitmProxy.proofMayIdentify(true, "::1", "192.168.64.1"));
+        assertFalse(MitmProxy.proofMayIdentify(true, null, "192.168.64.1"));
+    }
+
     @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings = {"api-key", "oauth"})
     void everyClaudePrefixAndCarrierWorksIndependentlyOfTheSelectedMode(String mode) throws Exception {
         serve(claude(mode));
