@@ -265,6 +265,54 @@ class ApiActivityProxyTest {
     }
 
     @Test
+    void aCallerOnlyItsSecretIdentifiesCountsAsThatInstance() throws Exception {
+        // Identified, then sent back to initialize: no session process is started
+        secretIdentifiedMcpCallIsCounted(true, 404);
+    }
+
+    @Test
+    void anUnstampedCallerItsSecretIdentifiesCountsAsThatInstanceToo() throws Exception {
+        // As on Linux, where the address counts it, though isx mcp refuses it
+        secretIdentifiedMcpCallIsCounted(false, 403);
+    }
+
+    /** macOS (#1583): the address is the VM's, the per-start secret names the instance. */
+    private void secretIdentifiedMcpCallIsCounted(boolean stamped, int status) throws Exception {
+        var secret = InstanceSecret.generate();
+        // Its own name: counters outlive a test, and the proof test counts a "behind-nat"
+        var name = stamped ? "coordinator-behind-nat" : "worker-behind-nat";
+        try {
+            listing = """
+                    [{"name":"%s","status":"Running","created_at":"2026-10-01T09:00:00Z","config":{
+                       "user.incus-spawn.static-ip":"10.0.0.9","%s":"%s"%s}}]
+                    """.formatted(name, dev.incusspawn.incus.Metadata.INSTANCE_SECRET_SHA256, InstanceSecret.sha256(secret),
+                    stamped ? ",\"" + dev.incusspawn.incus.Metadata.MCP_CALLER + "\":\""
+                            + dev.incusspawn.incus.Metadata.newMcpCallerGrant() + "\"" : "");
+            registry.refresh();
+            proxy.proofIdentifies = (remote, local) -> true;
+            var before = activity();
+            var options = new RequestOptions().setMethod(HttpMethod.GET)
+                    .setServer(SocketAddress.inetSocketAddress(mitmPort, "127.0.0.1"))
+                    .setHost(ProxyConfig.MCP_DOMAIN).setPort(443).setURI(McpBridge.PATH);
+            assertEquals(status, client.request(options)
+                    .compose(req -> req.putHeader(InstanceSecret.HEADER, secret).send())
+                    .compose(resp -> resp.body().map(b -> resp.statusCode()))
+                    .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+            var after = activity();
+
+            var counted = after.path("instances").path(name).path("traffic");
+            assertEquals(1, counted.path("requests").asLong(), after.toString());
+            assertEquals(0, counted.path("in_flight").asLong());
+            assertEquals(before.path("unattributed").path("requests").asLong(),
+                    after.path("unattributed").path("requests").asLong(), after.toString());
+        } finally {
+            proxy.proofIdentifies = (remote, local) -> false;
+            listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+        }
+    }
+
+    @Test
     void theHealthServerOnlyReads() throws Exception {
         for (var path : List.of("/health", "/activity")) {
             for (var method : List.of("POST", "PUT", "PATCH", "DELETE")) {

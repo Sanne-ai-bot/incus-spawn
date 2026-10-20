@@ -1192,8 +1192,8 @@ public class MitmProxy {
             var byTokenAlone = caller == null
                     && proofIdentifiesCaller(clientReq.remoteAddress(), clientReq.localAddress());
             var byProofAlone = authorizes && byTokenAlone;
-            // A caller only its proof can name is counted once authorize has checked it
-            var flow = countTraffic(clientReq, byProofAlone
+            // A caller only its proof or secret can name is counted once that has been checked
+            var flow = countTraffic(clientReq, byTokenAlone && (authorizes || hostRoute || mcp)
                     ? apiActivity.pendingFlow(trafficDomain(domain)) : trafficFlow(caller, domain));
             if (domain == null) {
                 sendError(clientReq.response(), 502, "Unknown domain");
@@ -1202,10 +1202,10 @@ public class MitmProxy {
 
             if (hostRoute) {
                 // First, by Host or SNI: neither half of a route's connection reaches credentials
-                hostRouteRelay.handle(clientReq, address, byTokenAlone, routes);
+                hostRouteRelay.handle(clientReq, address, byTokenAlone, routes, identified -> begin(flow, identified));
             } else if (mcp) {
                 // Answered here, never relayed: it names no host outside this machine.
-                mcpBridge.handle(clientReq, address, byTokenAlone);
+                mcpBridge.handle(clientReq, address, byTokenAlone, identified -> begin(flow, identified));
             } else if (cache != null) {
                 if (hasBody(clientReq)) {
                     // An upload or a query (npm audit, a registry push): never from a cache, keyed by

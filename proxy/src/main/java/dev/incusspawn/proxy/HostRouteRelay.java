@@ -117,8 +117,10 @@ final class HostRouteRelay {
     /**
      * Answer one request {@link #claims} says is the relay's; with {@code bySecretAlone}, a caller
      * whose address is no instance may be identified by its secret ({@link InstanceRegistry#identify(String, String, boolean)}).
+     * {@code identified} is told who the caller is, null for nobody, once that is decided.
      */
-    void handle(HttpServerRequest req, String address, boolean bySecretAlone, Map<String, Served> routes) {
+    void handle(HttpServerRequest req, String address, boolean bySecretAlone, Map<String, Served> routes,
+                java.util.function.Consumer<InstanceRegistry.Caller> identified) {
         // Nothing may read the body before the caller is known, and Vert.x drops a body nobody reads
         req.pause();
         var host = hostOf(req);
@@ -144,6 +146,7 @@ final class HostRouteRelay {
         }
         var secret = req.getHeader(InstanceSecret.HEADER);
         CallerCheck.identify(vertx, req, current, r -> r.identifyWithLineage(address, secret, bySecretAlone), caller -> {
+            identified.accept(caller == null ? null : caller.caller());
             if (caller != null) admit(req, route, caller);
             else CallerCheck.refuse(req, 403, CallerCheck.unidentified(current, address, bySecretAlone, "a host route"));
         });
