@@ -119,8 +119,8 @@ public final class InstanceRegistry {
      *                        out of {@link InstanceAccounts} for the same reason as the secret
      * @param lineageByName   what each instance owning an address was built from, for the
      *                        host routes' {@code templates:} filter (#936)
-     * @param addressByProof  per namespace, each verifier hash to the address of the instance it
-     *                        is stamped on, for {@link #prove} when the address names no instance
+     * @param addressByProof  per namespace, each verifier hash to the address of the running
+     *                        instance it is stamped on, for {@link #prove} when the address names no instance
      *                        (#1582); a hash several instances share maps by {@link #owner}'s rule
      */
     record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
@@ -549,10 +549,12 @@ public final class InstanceRegistry {
         stampedWith.forEach((namespace, byHash) -> {
             var addresses = new LinkedHashMap<String, String>();
             byHash.forEach((hash, stamped) -> {
-                // Only an incus copy made outside isx shares a proof: as for an address, the one running
+                // Only an incus copy made outside isx shares a proof: as for an address, the one
+                // running. Unlike an address, never a stopped one: it sends nothing, and a listing
+                // from before its start costs one refresh, which authorize makes on a miss
                 var owner = owner("A " + namespace + " proof verifier", stamped,
                         "a caller its address does not name is not identified by that proof");
-                if (owner != null) addresses.put(hash, owner.address());
+                if (owner != null && owner.running()) addresses.put(hash, owner.address());
             });
             addressByProof.put(namespace, Map.copyOf(addresses));
         });
