@@ -197,8 +197,8 @@ class CredentialProofProxyTest {
                 if (account != null) config.put(Metadata.accountKey("claude"), account);
                 if (geminiAccount != null) config.put(Metadata.accountKey("gemini"), geminiAccount);
                 if (bakedIdentity != null) config.put(Metadata.accountIdentityKey("claude"), bakedIdentity);
-                return JqValues.parse("[" + JqValues.toPrettyJsonString(JqObject.builder(2)
-                        .put("name", "outer-instance").put("config", config.build()).build()) + "]");
+                return JqValues.parse("[" + JqValues.toPrettyJsonString(JqObject.builder(3)
+                        .put("name", "outer-instance").put("status", "Running").put("config", config.build()).build()) + "]");
             }
         });
         registry.refresh();

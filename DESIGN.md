@@ -1820,8 +1820,10 @@ A known instance that pins nothing receives the configured default only after pr
 That premise does not hold on macOS (#1582).
 There the VM's `PROXY_MODE=remote` DNATs `:443` to the host and the VM bridge's `ipv4.nat` masquerades it, so every container reaches the proxy from the VM's one address, which is no instance.
 Before #1107 such a caller got the defaults; after it, nothing, so 0.4.0 served no credential at all on macOS.
-So on macOS a caller whose address is no known instance is identified by its proof instead: the registry indexes each verifier hash to the instance stamped with it, per namespace, and `InstanceRegistry.prove` takes the instance every presented proof names, refusing when they name different ones (`MitmProxy.proofMayIdentify`).
+So on macOS a caller whose address is no known instance is identified by its proof instead (`MitmProxy.proofMayIdentify`).
+The registry indexes each verifier hash to the running instance stamped with it, per namespace, and `InstanceRegistry.prove` takes the instance every presented proof names, refusing when they name different ones.
 A hash two instances share comes only from an `incus copy` made outside isx, and is decided as a shared address is: the one running, else nobody.
+Unlike an address, a proof never names a stopped instance, even its only holder: it sends nothing, and a listing taken before its start costs only the refresh `authorize` makes on a miss.
 The host's own traffic (loopback, or from the listener's address) is never identified this way, and a caller at a known instance's address is always held to that instance's proofs.
 Linux keeps the strict address check, which is what stops a proof replayed from another instance; that protection never existed on macOS, where the address identifies nothing.
 Matching the VM's DHCP lease to accept only the VM's address was rejected: it adds nothing an address that identifies nothing could give, and an unreadable leases file would reproduce this failure.

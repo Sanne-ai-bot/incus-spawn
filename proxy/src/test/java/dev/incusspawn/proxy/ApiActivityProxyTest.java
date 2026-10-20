@@ -235,7 +235,7 @@ class ApiActivityProxyTest {
         var secret = "42".repeat(32);
         try {
             listing = """
-                    [{"name":"behind-nat","created_at":"2026-10-01T09:00:00Z","config":{
+                    [{"name":"behind-nat","status":"Running","created_at":"2026-10-01T09:00:00Z","config":{
                        "user.incus-spawn.static-ip":"10.0.0.9","user.incus-spawn.instance-proof-sha256":"%s"}}]
                     """.formatted(ProofVerifier.stamp(secret, ProofToken.declared()).replace("\n", "\\n"));
             registry.refresh();

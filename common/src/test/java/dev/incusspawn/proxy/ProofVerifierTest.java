@@ -122,6 +122,37 @@ class ProofVerifierTest {
                 "the address still identifies each of them");
     }
 
+    @Test
+    void aStoppedInstancesProofIdentifiesNobodyByProofAlone() {
+        // A stopped instance sends nothing: its proof arriving from elsewhere is a copy's
+        var status = new String[]{"Stopped"};
+        var registry = new InstanceRegistry(new IncusClient() {
+            @Override public JqValue listJsonConfig() {
+                return JqValues.parse("[" + guest("guest", "10.1.2.3", SECRET, status[0]) + "]");
+            }
+        });
+        registry.refresh();
+        var proofs = Map.of("github", List.of(ProofToken.derive(SECRET, "github")));
+        assertNull(registry.prove("192.168.64.21", proofs, true));
+        assertNotNull(registry.prove("10.1.2.3", proofs, true), "its own address is checked as before");
+        status[0] = "Running";
+        registry.refresh();
+        assertEquals("guest", registry.prove("192.168.64.21", proofs, true).accounts().instanceName());
+    }
+
+    @Test
+    void aRunningCopyOfAStoppedInstanceIsTheOneItsSharedProofNames() {
+        var registry = new InstanceRegistry(new IncusClient() {
+            @Override public JqValue listJsonConfig() {
+                return JqValues.parse("[" + guest("guest", "10.1.2.3", SECRET, "Stopped") + ","
+                        + guest("copy", "10.1.2.4", SECRET, "Running") + "]");
+            }
+        });
+        registry.refresh();
+        var proofs = Map.of("github", List.of(ProofToken.derive(SECRET, "github")));
+        assertEquals("copy", registry.prove("192.168.64.21", proofs, true).accounts().instanceName());
+    }
+
     private static String guest(String name, String address, String secret, String status) {
         var config = JqObject.builder(2).put(Metadata.STATIC_IP, address)
                 .put(Metadata.INSTANCE_PROOF_SHA256, ProofVerifier.stamp(secret, DECLARED)).build();
