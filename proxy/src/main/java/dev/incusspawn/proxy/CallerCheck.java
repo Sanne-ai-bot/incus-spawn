@@ -13,8 +13,11 @@ import java.util.function.Function;
  */
 final class CallerCheck {
 
-    /** How long a refused caller waits for a listing, on a worker thread. */
-    static final long REFRESH_WAIT_MILLIS = 5_000;
+    /**
+     * How long a refused caller waits for a listing, on a worker thread: the registry reports a
+     * listing that runs longer than this as hung, so the two are one number (#1596).
+     */
+    static final long REFRESH_WAIT_MILLIS = InstanceRegistry.LISTING_HUNG_AFTER_MS;
 
     private CallerCheck() {}
 
