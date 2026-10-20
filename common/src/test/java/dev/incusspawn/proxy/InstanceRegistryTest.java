@@ -76,7 +76,7 @@ class InstanceRegistryTest {
         assertTrue(second > first);
         fail.set(true);
         registry.refresh();
-        assertEquals(new InstanceRegistry.Incarnations(java.util.Map.of("box", "2026-10-07T10:00:00Z"), second),
+        assertEquals(new InstanceRegistry.Incarnations(java.util.Map.of("box", "2026-10-07T10:00:00Z"), second, java.util.Set.of()),
                 registry.incarnations(), "a failed refresh lists nothing new");
     }
 

@@ -1,12 +1,14 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -14,12 +16,49 @@ import java.util.Map;
  * in flight, when the last started and ended, and the tokens their responses reported -- and all
  * of its traffic through the proxy, by domain (#935). Traffic from no instance the proxy knows
  * (the host, or an address it has not listed) is counted apart, as {@code unattributed}, from
- * {@code unattributedSince}. Only the host is answered. Fields are only ever added.
+ * {@code unattributedSince}. How well the proxy tells its callers apart is its {@link Placement}
+ * (#1586). Only the host is answered. Fields are only ever added.
  */
-public record ProxyActivity(Map<String, Instance> instances, Instant unattributedSince, Traffic unattributed) {
+public record ProxyActivity(Map<String, Instance> instances, Instant unattributedSince, Traffic unattributed,
+                            Placement placement) {
 
     public ProxyActivity(Map<String, Instance> instances) {
         this(instances, null, Traffic.NONE);
+    }
+
+    public ProxyActivity(Map<String, Instance> instances, Instant unattributedSince, Traffic unattributed) {
+        this(instances, unattributedSince, unattributed, Placement.NONE);
+    }
+
+    /** This activity with {@code placement}. */
+    public ProxyActivity placed(Placement placement) {
+        return new ProxyActivity(instances, unattributedSince, unattributed, placement);
+    }
+
+    /**
+     * Whether the proxy can tell its callers apart (#1586), since it started. Only requests that
+     * present something shaped like a credential proof count: the host's own traffic, which
+     * brings real credentials, is in neither counter.
+     *
+     * @param refusedProofs        proofs checked against an instance's and found not to match:
+     *                             the instance's to renew
+     * @param refusedAddressMisses proofs from an address that is no instance the proxy knows, so
+     *                             never checked: the proxy's problem, which nothing inside an instance fixes
+     * @param registryStale        whether the proxy's last listing of the instances failed, or the
+     *                             one under way has hung: until one succeeds, it refuses every proof
+     *                             after a failure, and new or renewed ones while it hangs
+     * @param unplacedRunning      the running instances no request has been attributed to since
+     *                             their counting started, by name: the ones the proxy cannot tell
+     *                             apart, if they made any. An idle one is here too
+     * @param lastAddressMissAt    when the last of {@code refusedAddressMisses} was, null before one
+     */
+    public record Placement(long refusedProofs, long refusedAddressMisses, boolean registryStale,
+                            List<String> unplacedRunning, Instant lastAddressMissAt) {
+        public static final Placement NONE = new Placement(0, 0, false, List.of());
+
+        public Placement(long refusedProofs, long refusedAddressMisses, boolean registryStale, List<String> unplacedRunning) {
+            this(refusedProofs, refusedAddressMisses, registryStale, unplacedRunning, null);
+        }
     }
 
 
@@ -28,13 +67,23 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
      * on the first read or call after it learned of the instance, or again after it dropped them.
      * Two reads subtract only with the same {@code countingSince}. Times are null until there is
      * one; {@link #NONE}, an instance the proxy does not know, has none at all.
+     * {@code identifiedByProof}: a request of it was named by its proof or secret alone, where
+     * its address named no instance (#1582, #1583).
      */
     public record Instance(Instant countingSince, long requests, long inFlight,
                            Instant lastRequestAt, Instant lastResponseAt,
                            long inputTokens, long outputTokens,
                            long cacheReadInputTokens, long cacheCreationInputTokens,
-                           Traffic traffic) {
+                           Traffic traffic, boolean identifiedByProof) {
         public static final Instance NONE = new Instance(null, 0, 0, null, null, 0, 0, 0, 0);
+
+        public Instance(Instant countingSince, long requests, long inFlight,
+                        Instant lastRequestAt, Instant lastResponseAt,
+                        long inputTokens, long outputTokens,
+                        long cacheReadInputTokens, long cacheCreationInputTokens, Traffic traffic) {
+            this(countingSince, requests, inFlight, lastRequestAt, lastResponseAt,
+                    inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, traffic, false);
+        }
 
         /** Model calls only, with no traffic counted. */
         public Instance(Instant countingSince, long requests, long inFlight,
@@ -110,7 +159,7 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
     public String toJson(long refusedInjections) {
         var all = JqObject.builder(instances.size());
         instances.forEach((name, c) -> {
-            var n = JqObject.builder(10);
+            var n = JqObject.builder(11);
             n.put("counting_since", c.countingSince().toEpochMilli());
             n.put("requests", c.requests());
             n.put("in_flight", c.inFlight());
@@ -121,12 +170,21 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
             n.put("cache_read_input_tokens", c.cacheReadInputTokens());
             n.put("cache_creation_input_tokens", c.cacheCreationInputTokens());
             n.put("traffic", trafficJson(JqObject.builder(6), c.traffic()));
+            n.put("identified_by_proof", c.identifiedByProof());
             all.put(name, n.build());
         });
         var other = JqObject.builder(7);
         if (unattributedSince != null) other.put("counting_since", unattributedSince.toEpochMilli());
-        return JqObject.builder(3)
+        var unplaced = JqArray.arrayBuilder();
+        placement.unplacedRunning().forEach(unplaced::add);
+        var root = JqObject.builder(8);
+        if (placement.lastAddressMissAt() != null) root.put("last_address_miss_at", placement.lastAddressMissAt().toEpochMilli());
+        return root
                 .put("refused_injections", refusedInjections)
+                .put("refused_proofs", placement.refusedProofs())
+                .put("refused_address_misses", placement.refusedAddressMisses())
+                .put("registry_stale", placement.registryStale())
+                .put("unplaced_running", unplaced.build())
                 .put("instances", all.build())
                 .put("unattributed", trafficJson(other, unattributed))
                 .build().toJsonString();
@@ -162,10 +220,15 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
                     instant(n.path("last_request_at")), instant(n.path("last_response_at")),
                     n.path("input_tokens").asLong(0), n.path("output_tokens").asLong(0),
                     n.path("cache_read_input_tokens").asLong(0), n.path("cache_creation_input_tokens").asLong(0),
-                    traffic(n.path("traffic")))));
+                    traffic(n.path("traffic")), n.path("identified_by_proof").asBoolean(false))));
         }
         var other = root.path("unattributed");
-        return new ProxyActivity(Map.copyOf(instances), instant(other.path("counting_since")), traffic(other));
+        // A proxy older than #1586 reports none: Placement.NONE
+        var unplaced = root.path("unplaced_running") instanceof JqArray names
+                ? names.asList().stream().filter(JqValue::isString).map(v -> v.asText("")).sorted().toList() : List.<String>of();
+        var placement = new Placement(root.path("refused_proofs").asLong(0), root.path("refused_address_misses").asLong(0),
+                root.path("registry_stale").asBoolean(false), unplaced, instant(root.path("last_address_miss_at")));
+        return new ProxyActivity(Map.copyOf(instances), instant(other.path("counting_since")), traffic(other), placement);
     }
 
     /** A proxy older than #935 reports no traffic: {@link Traffic#NONE}. */
