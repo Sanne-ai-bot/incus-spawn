@@ -125,6 +125,7 @@ The integration fixtures use `proof-curl.sh` to send the proofs delivered to the
 `test-build-proofs.sh` checks that published templates retain neither a grant nor a cached Codex build proof.
 
 Refused injections are counted in `/activity` as `refused_injections`.
+Of those that carried a proof, `refused_proofs` were checked and matched nothing, and `refused_address_misses` came from an address that is no instance and were never checked.
 Custom tools must declare `proxy.placeholders` and export the credential variable in `env`, as shown in [Custom Tools](TOOLS.md#proxy-credentials).
 The proxy logs missing declarations when loading configuration, and tool validation warns about them.
 Single-tool validation checks its own namespace; borrowed namespaces are checked against all loaded tools when the proxy loads configuration.

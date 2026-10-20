@@ -1194,7 +1194,7 @@ public class MitmProxy {
             var byProofAlone = authorizes && byTokenAlone;
             // A caller only its proof or secret can name is counted once that has been checked
             var flow = countTraffic(clientReq, byTokenAlone && (authorizes || hostRoute || mcp)
-                    ? apiActivity.pendingFlow(trafficDomain(domain)) : trafficFlow(caller, domain));
+                    ? apiActivity.proofFlow(trafficDomain(domain)) : trafficFlow(caller, domain));
             if (domain == null) {
                 sendError(clientReq.response(), 502, "Unknown domain");
                 return;
@@ -1273,6 +1273,11 @@ public class MitmProxy {
     private final ProofWarningWindow refusedProofWarnings = new ProofWarningWindow();
     private Future<Void> proofRefresh;
     private final java.util.concurrent.atomic.AtomicLong refusedInjections = new java.util.concurrent.atomic.AtomicLong();
+    /** Claimed proofs refused after a check, and from an address no instance has, for {@code /activity} (#1586). */
+    private final java.util.concurrent.atomic.AtomicLong refusedProofs = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong refusedAddressMisses = new java.util.concurrent.atomic.AtomicLong();
+    /** Epoch millis of the last of {@link #refusedAddressMisses}, 0 before one. */
+    private final java.util.concurrent.atomic.AtomicLong lastAddressMissAt = new java.util.concurrent.atomic.AtomicLong();
 
     /**
      * The only entry to account-dependent handling, shared by HTTP and WebSockets. Every proof
@@ -1290,15 +1295,19 @@ public class MitmProxy {
                 : presented.digests().entrySet().stream().filter(e -> !e.getValue().isEmpty())
                         .collect(java.util.stream.Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
         if (registry == null || offered.isEmpty() || offered.values().stream().anyMatch(List::isEmpty)) {
-            refusedProof(address, byProofAlone, presented);
+            // Nothing here refreshes: an address a stale listing does not have may be one it has not caught up with
+            var maybeBehind = registry != null && registry.isStale() && !byProofAlone && registry.lookup(address) == null;
+            refusedProof(address, byProofAlone, presented, registry != null && !maybeBehind);
             return Future.succeededFuture(null);
         }
         var caller = registry.prove(address, offered, byProofAlone);
         if (caller != null && !registry.isStale()) return Future.succeededFuture(new Proof(caller, offered.keySet()));
+        var viewBefore = registry.incarnations().view();
         var refreshed = refreshProofs(registry);
-        return refreshed.map(done -> provenOrWarn(registry, address, byProofAlone, presented, offered))
+        return refreshed.map(done -> provenOrWarn(registry, address, byProofAlone, presented, offered, viewBefore))
                 .recover(error -> {
-                    refusedProof(address, byProofAlone, presented);
+                    // The refresh timed out or failed: the snapshot may lack the caller's proofs
+                    refusedProof(address, byProofAlone, presented, false);
                     return Future.succeededFuture(null);
                 });
     }
@@ -1347,11 +1356,17 @@ public class MitmProxy {
         if (proofRefresh == promise.future()) proofRefresh = null;
     }
 
+    /**
+     * {@code viewBefore}: the listing the request was first refused by. A refusal counts on
+     * {@code /activity} only from a later one: a refresh coalesced onto a stalled listing returns
+     * at its deadline with the snapshot that may lack the caller's new proof.
+     */
     private Proof provenOrWarn(InstanceRegistry registry, String address, boolean byProofAlone,
-                               ProofCarriers.Presented presented, Map<String, List<String>> offered) {
-        var caller = registry.isStale() ? null : registry.prove(address, offered, byProofAlone);
+                               ProofCarriers.Presented presented, Map<String, List<String>> offered, long viewBefore) {
+        var stale = registry.isStale();
+        var caller = stale ? null : registry.prove(address, offered, byProofAlone);
         if (caller == null) {
-            refusedProof(address, byProofAlone, presented);
+            refusedProof(address, byProofAlone, presented, !stale && registry.incarnations().view() > viewBefore);
             return null;
         }
         return new Proof(caller, offered.keySet());
@@ -1382,15 +1397,29 @@ public class MitmProxy {
      * Counts a refused proof, and warns once a window. Which warning says whose problem it is: a
      * proof from an address that is no known instance was never checked, and nothing inside an
      * instance fixes that; one that was checked and does not match is the instance's to renew.
+     * {@code /activity} counts the two apart (#1586), but neither when the refusal came from a
+     * snapshot that may lack the caller's proofs: not {@code current} (no registry, a refresh
+     * timed out or listed nothing new, or the snapshot was stale), or the last listing failed,
+     * which {@code registry_stale} says.
+     * Such a refusal is no instance's to renew.
      */
-    private void refusedProof(String address, boolean byProofAlone, ProofCarriers.Presented presented) {
+    private void refusedProof(String address, boolean byProofAlone, ProofCarriers.Presented presented, boolean current) {
         refusedInjections.incrementAndGet();
+        if (!presented.claimsProof()) return;
+        var registry = instanceRegistry;
+        var unchecked = !byProofAlone && (registry == null || registry.lookup(address) == null);
+        if (current && registry != null && !registry.listingUnavailable()) {
+            if (unchecked) {
+                refusedAddressMisses.incrementAndGet();
+                lastAddressMissAt.set(System.currentTimeMillis());
+            } else {
+                refusedProofs.incrementAndGet();
+            }
+        }
         var namespaces = presented.digests().keySet();
         // On macOS every instance shares the VM's address: one's refusal must not silence another's
         var key = address + ":" + namespaces + (byProofAlone ? ":" + presented.digests().hashCode() : "");
-        if (presented.claimsProof() && refusedProofWarnings.shouldLog(key, System.nanoTime())) {
-            var registry = instanceRegistry;
-            var unchecked = !byProofAlone && (registry == null || registry.lookup(address) == null);
+        if (refusedProofWarnings.shouldLog(key, System.nanoTime())) {
             ProxyLog.warn("Credential proof refused for " + describeCaller(address) + " ("
                     + String.join(", ", namespaces) + "); relaying unchanged. " + (unchecked
                     ? "That address is no instance the proxy knows, so the proof was not checked."
@@ -1512,7 +1541,7 @@ public class MitmProxy {
         var byProofAlone = authorizes && caller == null
                 && proofIdentifiesCaller(clientWs.remoteAddress(), clientWs.localAddress());
         // A caller only its proof can name is counted once authorize has checked it
-        var flow = byProofAlone ? apiActivity.pendingFlow(trafficDomain(domain)) : trafficFlow(caller, domain);
+        var flow = byProofAlone ? apiActivity.proofFlow(trafficDomain(domain)) : trafficFlow(caller, domain);
         clientWs.pause();
         var status = io.vertx.core.Promise.<Integer>promise();
         var context = new java.util.concurrent.atomic.AtomicReference<RequestContext>();
@@ -2495,13 +2524,22 @@ public class MitmProxy {
         }
     }
 
-    /** Each instance's model calls and traffic ({@link ApiActivity}); {@link #healthRoute} keeps it the host's. */
+    /**
+     * Each instance's model calls and traffic ({@link ApiActivity}), and how well the proxy tells
+     * them apart (#1586); {@link #healthRoute} keeps it the host's.
+     */
     private void sendActivity(HttpServerRequest req) {
         var registry = instanceRegistry;
-        var known = registry == null ? new InstanceRegistry.Incarnations(Map.of(), 0) : registry.incarnations();
+        var known = registry == null ? new InstanceRegistry.Incarnations(Map.of(), 0, java.util.Set.of()) : registry.incarnations();
+        var activity = apiActivity.snapshot(known.byName(), known.view());
+        var unplaced = known.running().stream()
+                .filter(name -> activity.of(name).traffic().total().requests() == 0).sorted().toList();
+        var lastMiss = lastAddressMissAt.get();
+        var placement = new ProxyActivity.Placement(refusedProofs.get(), refusedAddressMisses.get(),
+                registry != null && registry.listingUnavailable(), unplaced, lastMiss == 0 ? null : java.time.Instant.ofEpochMilli(lastMiss));
         req.response()
                 .putHeader("Content-Type", "application/json")
-                .end(apiActivity.snapshot(known.byName(), known.view()).toJson(refusedInjections.get()));
+                .end(activity.placed(placement).toJson(refusedInjections.get()));
     }
 
     private static boolean isHostCaller(HttpServerRequest req) {

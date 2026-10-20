@@ -63,6 +63,9 @@ public final class InstanceRegistry {
      */
     public static final long MISS_REFRESH_INTERVAL_MS = 1_000L;
 
+    /** How long a listing may run before {@link #listingUnavailable} says it hung: a caller's refresh wait. */
+    public static final long LISTING_HUNG_AFTER_MS = 5_000L;
+
     /**
      * One instance's identity, as far as credential selection is concerned.
      *
@@ -125,14 +128,15 @@ public final class InstanceRegistry {
      *                        (#1582); a hash several instances share maps by {@link #owner}'s rule
      * @param addressBySecret the same for the hash of each running address owner's secret, for
      *                        {@link #identify} when the address names no instance (#1583)
+     * @param running         the names of the address owners that are running (#1586)
      */
     record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
                   java.util.Set<String> mcpCallers, Map<String, String> incarnationByName,
                   Map<String, Lineage> lineageByName, Map<String, Map<String, String>> proofsByAddress,
                   Map<String, ProofState> proofStates, Map<String, Map<String, String>> addressByProof,
-                  Map<String, String> addressBySecret) {
+                  Map<String, String> addressBySecret, java.util.Set<String> running) {
         static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
-                Map.of());
+                Map.of(), java.util.Set.of());
     }
 
     /** Host-only acknowledgement of persisted proof state; contains no usable credential. */
@@ -179,15 +183,18 @@ public final class InstanceRegistry {
     /**
      * @param view from {@link #VIEWS}, so a later snapshot always has a higher one, even from a
      *             registry that replaced another in the same process
+     * @param listingFailed the listing this was made from failed, so it holds no proofs (#1586)
      */
-    private record Snapshot(Parsed parsed, long takenAt, long view) {}
+    private record Snapshot(Parsed parsed, long takenAt, long view, boolean listingFailed) {}
 
-    private static final Snapshot EMPTY = new Snapshot(Parsed.EMPTY, 0L, 0L);
+    private static final Snapshot EMPTY = new Snapshot(Parsed.EMPTY, 0L, 0L, false);
 
     private static final java.util.concurrent.atomic.AtomicLong VIEWS = new java.util.concurrent.atomic.AtomicLong();
 
     private final IncusClient incus;
     private final AtomicBoolean refreshing = new AtomicBoolean();
+    /** When the listing {@link #refreshing} says is under way started, in epoch millis. */
+    private volatile long listingStartedAt;
     /** Listings started, numbering each one; and the highest-numbered one finished, guarded by {@link #listed}. */
     private final AtomicLong listingsStarted = new AtomicLong();
     private final Object listed = new Object();
@@ -294,8 +301,9 @@ public final class InstanceRegistry {
      * @param view   which listing: a later one has a higher view. What tells two views of a name
      *               apart in time, never {@code created_at} -- a rename gives a name an instance
      *               made before the one that had it
+     * @param running the names in {@code byName} that are running (#1586), from the same listing
      */
-    public record Incarnations(Map<String, String> byName, long view) {}
+    public record Incarnations(Map<String, String> byName, long view, java.util.Set<String> running) {}
 
     /**
      * The instance a caller is, judged by its source address <em>and</em> the secret it
@@ -375,12 +383,22 @@ public final class InstanceRegistry {
      */
     public Incarnations incarnations() {
         var current = snapshot;
-        return new Incarnations(current.parsed().incarnationByName(), current.view());
+        return new Incarnations(current.parsed().incarnationByName(), current.view(), current.parsed().running());
     }
 
     /** Whether the snapshot still has {@code instanceName} as an MCP caller. Non-blocking. */
     public boolean isMcpCaller(String instanceName) {
         return snapshot.parsed().mcpCallers().contains(instanceName);
+    }
+
+    /**
+     * Whether the last listing failed, or the one under way has not answered for
+     * {@link #LISTING_HUNG_AFTER_MS}: a hung Incus throws nothing. Proofs a new start or renewal
+     * brought are refused until one succeeds (#1586). Non-blocking.
+     */
+    public boolean listingUnavailable() {
+        return snapshot.listingFailed()
+                || refreshing.get() && System.currentTimeMillis() - listingStartedAt > LISTING_HUNG_AFTER_MS;
     }
 
     /** Whether the snapshot is old enough that a refresh is worth doing. */
@@ -410,9 +428,10 @@ public final class InstanceRegistry {
      */
     public boolean refresh() {
         if (!refreshing.compareAndSet(false, true)) return false;
+        listingStartedAt = System.currentTimeMillis();
         var number = listingsStarted.incrementAndGet();
         try {
-            snapshot = new Snapshot(parse(incus.listJsonConfig()), System.currentTimeMillis(), VIEWS.incrementAndGet());
+            snapshot = new Snapshot(parse(incus.listJsonConfig()), System.currentTimeMillis(), VIEWS.incrementAndGet(), false);
             return true;
         } catch (RuntimeException e) {
             // Retain attribution and account pins, but revoke credential authorization
@@ -420,8 +439,9 @@ public final class InstanceRegistry {
             // retried per request.
             var previous = snapshot.parsed();
             var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
-                    previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of(), Map.of(), Map.of());
-            snapshot = new Snapshot(withoutProofs, System.currentTimeMillis(), snapshot.view());
+                    previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of(), Map.of(), Map.of(),
+                    previous.running());
+            snapshot = new Snapshot(withoutProofs, System.currentTimeMillis(), snapshot.view(), true);
             ProxyLog.warn("Instance registry refresh failed: " + e.getMessage());
             return false;
         } finally {
@@ -558,6 +578,7 @@ public final class InstanceRegistry {
         var mcpCallers = new java.util.HashSet<String>();
         var incarnationByName = new java.util.HashMap<String, String>();
         var lineageByName = new java.util.HashMap<String, Lineage>();
+        var running = new java.util.HashSet<String>();
         var configByName = configsByName(root);
         var proofStates = new LinkedHashMap<String, ProofState>();
         configByName.forEach((name, config) -> proofStates.put(name, new ProofState(
@@ -579,6 +600,7 @@ public final class InstanceRegistry {
                 givenSecret.computeIfAbsent(owner.secretSha256(), h -> new ArrayList<>()).add(owner);
             }
             if (owner.mcpCaller()) mcpCallers.add(owner.accounts().instanceName());
+            if (owner.running()) running.add(owner.accounts().instanceName());
             incarnationByName.put(owner.accounts().instanceName(), owner.createdAt());
             // Only for owners: a build stamp is parsed for no address nobody serves
             lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config(), configByName));
@@ -588,7 +610,7 @@ public final class InstanceRegistry {
                 runningAddressByHash("A " + namespace + " proof verifier", byHash)));
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
                 Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(proofsByAddress), Map.copyOf(proofStates),
-                Map.copyOf(addressByProof), runningAddressByHash("An instance secret", givenSecret));
+                Map.copyOf(addressByProof), runningAddressByHash("An instance secret", givenSecret), java.util.Set.copyOf(running));
     }
 
     /**

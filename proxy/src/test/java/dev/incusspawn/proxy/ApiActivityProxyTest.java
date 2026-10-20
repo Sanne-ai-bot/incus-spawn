@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,6 +54,10 @@ class ApiActivityProxyTest {
     static InstanceRegistry registry;
     /** What the registry lists: one instance, at the test client's address. */
     static volatile String listing;
+    /** Whether listing fails, as when the Incus socket is gone. */
+    static volatile boolean listingFails;
+    /** Holds every listing back until completed, as when Incus stalls. */
+    static volatile java.util.concurrent.CountDownLatch listingHeld = new java.util.concurrent.CountDownLatch(0);
     /** The response upstream holds back for {@code /stall}, until a test ends it. */
     static volatile java.util.concurrent.CompletableFuture<io.vertx.core.http.HttpServerResponse> stalled =
             new java.util.concurrent.CompletableFuture<>();
@@ -87,6 +92,12 @@ class ApiActivityProxyTest {
         registry = new InstanceRegistry(new IncusClient() {
             @Override
             public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                if (listingFails) throw new IllegalStateException("Incus is not answering");
+                try {
+                    listingHeld.await(30, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
                 return io.hyperfoil.tools.jjq.value.JqValues.parse(listing);
             }
         });
@@ -253,6 +264,7 @@ class ApiActivityProxyTest {
 
             var counted = after.path("instances").path("behind-nat");
             assertEquals(1, counted.path("requests").asLong(), after.toString());
+            assertTrue(counted.path("identified_by_proof").asBoolean(), after.toString());
             assertEquals(1, counted.path("traffic").path("requests").asLong(), after.toString());
             assertEquals(0, counted.path("traffic").path("in_flight").asLong());
             assertEquals(before.path("unattributed").path("requests").asLong(),
@@ -302,6 +314,7 @@ class ApiActivityProxyTest {
 
             var counted = after.path("instances").path(name).path("traffic");
             assertEquals(1, counted.path("requests").asLong(), after.toString());
+            assertTrue(after.path("instances").path(name).path("identified_by_proof").asBoolean(), after.toString());
             assertEquals(0, counted.path("in_flight").asLong());
             assertEquals(before.path("unattributed").path("requests").asLong(),
                     after.path("unattributed").path("requests").asLong(), after.toString());
@@ -310,6 +323,168 @@ class ApiActivityProxyTest {
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
             registry.refresh();
         }
+    }
+
+    @Test
+    void anInstanceItsAddressNamesIsNotIdentifiedByProof() throws Exception {
+        assertEquals(200, post("/v1/messages"));
+        var worker = activity().path("instances").path(WORKER);
+        assertTrue(worker.has("identified_by_proof"), worker.toString());
+        assertFalse(worker.path("identified_by_proof").asBoolean(), worker.toString());
+    }
+
+    @Test
+    void aProofFromAnUnknownAddressCountsAsAnAddressMissNotARefusedProof() throws Exception {
+        // #1582 before its fix: the proof is never checked, since no instance has the address
+        try {
+            listing = """
+                    [{"name":"elsewhere","created_at":"2026-10-01T09:00:00Z","config":{"user.incus-spawn.static-ip":"10.0.0.9"}}]
+                    """;
+            registry.refresh();
+            var before = activity();
+            assertEquals(200, postWithKey("sk-ant-isx_" + ProofToken.derive("42".repeat(32), "claude")));
+            var after = activity();
+
+            assertEquals(1, after.path("refused_address_misses").asLong() - before.path("refused_address_misses").asLong(),
+                    after.toString());
+            assertEquals(before.path("refused_proofs").asLong(), after.path("refused_proofs").asLong(), after.toString());
+        } finally {
+            listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+        }
+    }
+
+    @Test
+    void aProofThatMatchesNoneOfAKnownInstancesCountsAsARefusedProof() throws Exception {
+        var before = activity();
+        assertEquals(200, postWithKey("sk-ant-isx_" + ProofToken.derive("42".repeat(32), "claude")));
+        var after = activity();
+
+        assertEquals(1, after.path("refused_proofs").asLong() - before.path("refused_proofs").asLong(), after.toString());
+        assertEquals(before.path("refused_address_misses").asLong(), after.path("refused_address_misses").asLong(),
+                after.toString());
+    }
+
+    @Test
+    void theHostsOwnCredentialIsNeitherARefusedProofNorAnAddressMiss() throws Exception {
+        var before = activity();
+        assertEquals(200, postWithKey("sk-ant-api03-the-hosts-own"));
+        var after = activity();
+
+        assertEquals(before.path("refused_proofs").asLong(), after.path("refused_proofs").asLong(), after.toString());
+        assertEquals(before.path("refused_address_misses").asLong(), after.path("refused_address_misses").asLong(),
+                after.toString());
+    }
+
+    @Test
+    void unplacedRunningNamesOnlyRunningInstancesWithNoTraffic() throws Exception {
+        try {
+            listing = """
+                    [{"name":"silent","status":"Running","created_at":"2026-10-01T09:00:00Z","config":{"user.incus-spawn.static-ip":"10.0.0.9"}},
+                     {"name":"stopped","status":"Stopped","created_at":"2026-10-01T09:00:00Z","config":{"user.incus-spawn.static-ip":"10.0.0.10"}},
+                     {"name":"%s","status":"Running","created_at":"2026-10-01T09:00:00.000000000Z","config":{"user.incus-spawn.static-ip":"127.0.0.1"}}]
+                    """.formatted(WORKER);
+            registry.refresh();
+            assertEquals(200, post("/v1/messages"));
+
+            assertEquals("[\"silent\"]", activity().path("unplaced_running").toString());
+        } finally {
+            listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+        }
+    }
+
+    @Test
+    void aFailedListingShowsAsAStaleRegistryUntilOneSucceeds() throws Exception {
+        try {
+            assertFalse(activity().path("registry_stale").asBoolean());
+            listingFails = true;
+            registry.refresh();
+            assertTrue(activity().path("registry_stale").asBoolean());
+        } finally {
+            listingFails = false;
+            registry.refresh();
+        }
+        assertFalse(activity().path("registry_stale").asBoolean());
+    }
+
+    @Test
+    void aProofRefusedWhenTheRefreshTimedOutIsNeitherARefusedProofNorAnAddressMiss() throws Exception {
+        // The snapshot may lack the instance's new proof: no instance's to renew, and no miss either
+        var before = activity();
+        listingHeld = new java.util.concurrent.CountDownLatch(1);
+        try {
+            assertEquals(200, postWithKey("sk-ant-isx_" + ProofToken.derive("42".repeat(32), "claude")));
+        } finally {
+            listingHeld.countDown();
+        }
+        var after = activity();
+
+        assertEquals(before.path("refused_injections").asLong() + 1, after.path("refused_injections").asLong(), after.toString());
+        assertEquals(before.path("refused_proofs").asLong(), after.path("refused_proofs").asLong(), after.toString());
+        assertEquals(before.path("refused_address_misses").asLong(), after.path("refused_address_misses").asLong(),
+                after.toString());
+    }
+
+    @Test
+    void aProofRefusedWhileAnotherListingStallsIsNeitherARefusedProofNorAnAddressMiss() throws Exception {
+        // The request's refresh coalesces onto the stalled listing and gives up at its deadline, with the old snapshot
+        var before = activity();
+        listingHeld = new java.util.concurrent.CountDownLatch(1);
+        var stalled = new Thread(registry::refresh);
+        try {
+            stalled.start();
+            assertEquals(200, postWithKey("sk-ant-isx_" + ProofToken.derive("42".repeat(32), "claude")));
+            // A hung listing throws nothing: how long it has run is what says the proxy cannot vouch for proofs
+            assertTrue(activity().path("registry_stale").asBoolean(), "while the listing hangs");
+        } finally {
+            listingHeld.countDown();
+            stalled.join(10_000);
+        }
+        var after = activity();
+        assertFalse(after.path("registry_stale").asBoolean(), "once the hung listing lands: " + after);
+
+        assertEquals(before.path("refused_injections").asLong() + 1, after.path("refused_injections").asLong(), after.toString());
+        assertEquals(before.path("refused_proofs").asLong(), after.path("refused_proofs").asLong(), after.toString());
+        assertEquals(before.path("refused_address_misses").asLong(), after.path("refused_address_misses").asLong(),
+                after.toString());
+    }
+
+    @Test
+    void anAddressMissSaysWhenTheLastWas() throws Exception {
+        try {
+            listing = """
+                    [{"name":"elsewhere","created_at":"2026-10-01T09:00:00Z","config":{"user.incus-spawn.static-ip":"10.0.0.9"}}]
+                    """;
+            registry.refresh();
+            var sent = System.currentTimeMillis();
+            assertEquals(200, postWithKey("sk-ant-isx_" + ProofToken.derive("42".repeat(32), "claude")));
+            var last = activity().path("last_address_miss_at").asLong();
+            assertTrue(last >= sent && last <= System.currentTimeMillis(), String.valueOf(last));
+        } finally {
+            listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+        }
+    }
+
+    @Test
+    void healthCarriesNoneOfThePlacementFields() throws Exception {
+        var body = health("GET", "/health").body();
+        for (var field : List.of("refused_proofs", "refused_address_misses", "registry_stale", "identified_by_proof",
+                "last_address_miss_at")) {
+            assertFalse(body.contains(field), body);
+        }
+    }
+
+    /** A model call carrying {@code key}, as an instance's Claude Code sends it. */
+    static int postWithKey(String key) throws Exception {
+        var options = new RequestOptions().setMethod(HttpMethod.POST)
+                .setServer(SocketAddress.inetSocketAddress(mitmPort, "127.0.0.1"))
+                .setHost(ANTHROPIC).setPort(443).setURI("/v1/messages");
+        return client.request(options)
+                .compose(req -> req.putHeader("x-api-key", key).send(Buffer.buffer("{}")))
+                .compose(resp -> resp.body().map(b -> resp.statusCode()))
+                .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
     }
 
     @Test
@@ -324,29 +499,37 @@ class ApiActivityProxyTest {
 
     @Test
     void countsAnInstancesModelCallsAndTheTokensTheirResponsesReport() throws Exception {
-        var before = System.currentTimeMillis();
-        assertEquals(200, post("/v1/messages?mode=stream"));
-        assertEquals(200, post("/v1/messages"));
-        assertEquals(529, post("/v1/messages?mode=fail"));
-        // Not model calls: an idle agent's other traffic must not make it look busy
-        assertEquals(200, post("/v1/messages/count_tokens"));
-        assertEquals(200, post("/api/oauth/profile"));
+        // A new incarnation, so its counts start here whichever tests called as the worker before
+        listing = listed(WORKER, "2026-10-01T10:00:00.000000000Z");
+        registry.refresh();
+        try {
+            var before = System.currentTimeMillis();
+            assertEquals(200, post("/v1/messages?mode=stream"));
+            assertEquals(200, post("/v1/messages"));
+            assertEquals(529, post("/v1/messages?mode=fail"));
+            // Not model calls: an idle agent's other traffic must not make it look busy
+            assertEquals(200, post("/v1/messages/count_tokens"));
+            assertEquals(200, post("/api/oauth/profile"));
 
-        var worker = activity().path("instances").path(WORKER);
-        assertEquals(3, worker.path("requests").asLong(), worker.toString());
-        assertTrue(worker.path("counting_since").asLong() >= before, "from its first call");
-        assertEquals(0, worker.path("in_flight").asLong());
-        assertTrue(worker.path("last_request_at").asLong() >= before);
-        assertTrue(worker.path("last_response_at").asLong() >= worker.path("last_request_at").asLong());
-        // The stream's message_delta counts are cumulative: 30, not 1 + 12 + 30; a failed call reports none
-        assertEquals(107, worker.path("input_tokens").asLong());
-        assertEquals(33, worker.path("output_tokens").asLong());
-        assertEquals(4000, worker.path("cache_read_input_tokens").asLong());
-        assertEquals(50, worker.path("cache_creation_input_tokens").asLong());
+            var worker = activity().path("instances").path(WORKER);
+            assertEquals(3, worker.path("requests").asLong(), worker.toString());
+            assertTrue(worker.path("counting_since").asLong() >= before, "from its first call");
+            assertEquals(0, worker.path("in_flight").asLong());
+            assertTrue(worker.path("last_request_at").asLong() >= before);
+            assertTrue(worker.path("last_response_at").asLong() >= worker.path("last_request_at").asLong());
+            // The stream's message_delta counts are cumulative: 30, not 1 + 12 + 30; a failed call reports none
+            assertEquals(107, worker.path("input_tokens").asLong());
+            assertEquals(33, worker.path("output_tokens").asLong());
+            assertEquals(4000, worker.path("cache_read_input_tokens").asLong());
+            assertEquals(50, worker.path("cache_creation_input_tokens").asLong());
 
-        // Asked uncompressed, or the usage could not be read; other requests are left as sent
-        assertEquals("identity", acceptEncodings.get("/v1/messages"));
-        assertEquals("gzip, br", acceptEncodings.get("/api/oauth/profile"));
+            // Asked uncompressed, or the usage could not be read; other requests are left as sent
+            assertEquals("identity", acceptEncodings.get("/v1/messages"));
+            assertEquals("gzip, br", acceptEncodings.get("/api/oauth/profile"));
+        } finally {
+            listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+        }
     }
 
     @Test

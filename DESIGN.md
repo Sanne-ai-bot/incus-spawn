@@ -1988,6 +1988,16 @@ Unexpected credential-refusal and WebSocket setup failures log only the exceptio
 WebSocket setup failures after acceptance are logged as relay failures.
 Ordinary independent credentials pass without warnings.
 `/activity` adds `refused_injections`, including anonymous and independently authenticated pass-through requests.
+It also says whether the proxy can tell its callers apart (#1586), because #1582 went unseen for a year while every check passed.
+A refused proof that was checked against an instance's and matched nothing is `refused_proofs`: the instance's to renew.
+One from an address no instance has was never checked: `refused_address_misses`, the proxy's problem.
+Both count only requests whose credential looks like a proof, so the host's own traffic is in neither.
+`registry_stale` says the last listing failed, or the listing under way has run past a caller's refresh wait (a hung Incus throws nothing), so refusals meanwhile count in neither: until one succeeds, a failure refuses every proof, and a hang any new or renewed one.
+Nor do refusals from a snapshot that may lack the caller's proofs: with no registry yet, after a refresh that timed out or listed nothing new (one coalesced onto a stalled listing gives up at its deadline), or from a stale snapshot, since they are no instance's to renew.
+`last_address_miss_at` says when the last address miss was.
+`unplaced_running` names the running instances no request has been attributed to; stopped instances and templates own addresses too, so the registry says which are running.
+Each instance's `identified_by_proof` says a request of it was named by its proof or secret alone, which only macOS allows.
+These stay off `/health`, which containers reach: what the proxy knows of their neighbours is not their business.
 
 An ordinary start keeps credential verifiers while replacing the MCP secret.
 Migration and changed tool declarations re-read under the instance proof lock before updating verifiers in the secret write.

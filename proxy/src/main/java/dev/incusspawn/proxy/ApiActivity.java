@@ -96,18 +96,26 @@ final class ApiActivity {
      * instance when it is null; {@link Flow#end} counts it done.
      */
     Flow flow(String instance, String incarnation, long view, String domain) {
-        var flow = new Flow(domain);
+        var flow = pendingFlow(domain);
         flow.begin(instance, incarnation, view);
         return flow;
     }
 
     /**
      * A request or WebSocket to {@code domain} whose caller is not known yet: {@link Flow#begin}
-     * counts it once it is, and it counts as unattributed if it ends first. For a caller only its
-     * credential proof identifies (#1582): until that is checked it is not counted in flight.
+     * counts it once it is, and it counts as unattributed if it ends first.
      */
     Flow pendingFlow(String domain) {
-        return new Flow(domain);
+        return new Flow(domain, false);
+    }
+
+    /**
+     * A {@link #pendingFlow} for a caller only its credential proof or secret identifies (#1582,
+     * #1583): until that is checked it is not counted in flight, and the instance it names is
+     * marked identified by proof (#1586).
+     */
+    Flow proofFlow(String domain) {
+        return new Flow(domain, true);
     }
 
     /**
@@ -153,7 +161,7 @@ final class ApiActivity {
                 instances.put(name, new ProxyActivity.Instance(Instant.ofEpochMilli(c.since),
                         c.requests, c.inFlight, instant(c.lastRequestAt), instant(c.lastResponseAt),
                         c.usage.input, c.usage.output, c.usage.cacheRead, c.usage.cacheCreation,
-                        c.traffic.read()));
+                        c.traffic.read(), c.byProof));
             }
         });
         return new ProxyActivity(instances, Instant.ofEpochMilli(startedAt), unattributed.read());
@@ -194,6 +202,8 @@ final class ApiActivity {
         long inFlight;
         long lastRequestAt;
         long lastResponseAt;
+        /** Named by its proof or secret alone at least once ({@link #proofFlow}); only ever set. */
+        volatile boolean byProof;
         final Usage usage = new Usage();
         final Traffic traffic = new Traffic();
 
@@ -274,6 +284,8 @@ final class ApiActivity {
      */
     final class Flow {
         private final String domain;
+        /** Its caller is named by proof or secret alone, not by address ({@link #proofFlow}). */
+        private final boolean byProof;
         /** Set once by {@link #begin}, under this flow's lock. */
         private Traffic traffic;
         private Tally tally;
@@ -283,8 +295,9 @@ final class ApiActivity {
         private volatile Exchange call;
         private volatile long endedAt;
 
-        private Flow(String domain) {
+        private Flow(String domain, boolean byProof) {
             this.domain = domain;
+            this.byProof = byProof;
         }
 
         /**
@@ -299,7 +312,10 @@ final class ApiActivity {
                 return;
             }
             var started = new Tally[1];
-            var counters = charge(instance, incarnation, view, c -> started[0] = c.traffic.begin(domain, clock.getAsLong()));
+            var counters = charge(instance, incarnation, view, c -> {
+                started[0] = c.traffic.begin(domain, clock.getAsLong());
+                if (byProof && !c.byProof) c.byProof = true;
+            });
             traffic = counters.traffic;
             tally = started[0];
         }

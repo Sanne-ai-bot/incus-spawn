@@ -111,7 +111,7 @@ Key design:
   An unknown address gets no injected credential; host traffic must supply its own authentication.
   Except on macOS (#1582), where the VM NATs every container to its own address: there `MitmProxy.proofMayIdentify` lets a non-host caller at an unknown address be the instance its proofs name (`InstanceRegistry.prove(address, digests, true)`, the snapshot's `addressByProof`, running instances only; a hash two running instances share names nobody).
   Never widen that gate to Linux, where the address check is what stops a proof replayed from another instance.
-  Such a caller's traffic flow starts pending (`ApiActivity.pendingFlow`) and is begun for the instance once `authorize` names it.
+  Such a caller's traffic flow starts pending (`ApiActivity.proofFlow`) and is begun for the instance once `authorize` names it.
   Build containers are **not** unknown (#903, #1107): `BuildAccounts.start` claims them an address (`InstanceNetwork.assignBuildAddress`, filtering on, guest keeps DHCP, leased addresses skipped) and stamps the template's pins before the first start, clears every `account-identity` stamp copied from the parent (else `refuseIfUnservable` would refuse the build its own template's account, or a changed default) -- reading them first, since `settleIdentities` needs them after tool setup and `BuildAccounts.identityStamps` puts back the ones the build does not re-stamp -- and signals the proxy.
   `releaseBuildAddress` gives the address back once the template is stopped.
   Builds using configured defaults also need a registered address and fresh proofs before authenticated steps run.
@@ -168,6 +168,12 @@ Key design:
   Refusal diagnostics are bounded and deduplicated, contain no authentication values, and do not warn for ordinary independent credentials.
   The 256-entry request-warning window expires after five minutes so later callers can still be diagnosed.
   `/activity` counts refused injections, including anonymous and independent pass-through.
+  It also counts claimed proofs apart (#1586): `refused_proofs` were checked and matched nothing, `refused_address_misses` came from an address no instance has and were never checked.
+  The host's own credentials claim no proof, so they are in neither.
+  Refusals while the last listing failed count in neither (`registry_stale` says so, and also while a listing has hung past `InstanceRegistry.LISTING_HUNG_AFTER_MS`, `listingUnavailable`), nor do refusals with no registry, from an address a stale listing lacks, after a refresh that timed out or listed nothing new (`provenOrWarn`'s `viewBefore`), or from a stale snapshot (`refusedProof`'s `current`).
+  `last_address_miss_at` is when the last miss was; `isx doctor` fails only on a recent one with no traffic placed since.
+  `unplaced_running` names the running instances with no traffic attributed, and each instance's `identified_by_proof` says its proof or secret alone named it (`ApiActivity.proofFlow`).
+  None of these are on `/health`.
   The existing guest exec writes proofs and the secret into `/run/isx`, root-owned and readable by group 1000.
   Login profiles replace only isx placeholders or earlier proofs in variables the build exported.
   VM recovery and uninitiated reboots retain credential proofs while replacing the boot secret.

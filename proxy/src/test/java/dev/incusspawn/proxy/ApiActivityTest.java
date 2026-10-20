@@ -4,6 +4,7 @@ import io.vertx.core.buffer.Buffer;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -372,6 +373,23 @@ class ApiActivityTest {
         assertEquals(Instant.ofEpochMilli(5_000), read.unattributedSince());
         assertEquals(ProxyActivity.Traffic.NONE, ProxyActivity.parse("{\"instances\":{\"w\":{\"requests\":1}}}")
                 .of("w").traffic(), "a proxy from before #935 reports none");
+    }
+
+    @Test
+    void placementSurvivesTheJsonTheCliReads() {
+        var activity = new ApiActivity(new AtomicLong(5_000)::get);
+        activity.proofFlow("github.com").begin("by-proof", "", 0);
+        activity.flow("by-address", "", 0, "github.com");
+        var placement = new ProxyActivity.Placement(3, 2, true, List.of("idle"), java.time.Instant.ofEpochMilli(4_000));
+
+        var read = ProxyActivity.parse(activity.snapshot(Map.of("by-proof", "", "by-address", "", "idle", ""), 0)
+                .placed(placement).toJson());
+
+        assertEquals(placement, read.placement());
+        assertTrue(read.of("by-proof").identifiedByProof());
+        assertFalse(read.of("by-address").identifiedByProof());
+        assertEquals(ProxyActivity.Placement.NONE, ProxyActivity.parse("{\"instances\":{}}").placement(),
+                "a proxy from before #1586 reports none");
     }
 
     private static void end(ApiActivity.Flow flow, long requestBytes, long responseBytes) {
