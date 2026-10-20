@@ -1832,7 +1832,7 @@ The host's own traffic (loopback, or from the listener's address) is never ident
 Linux keeps the strict address check, which is what stops a proof replayed from another instance; that protection never existed on macOS, where the address identifies nothing.
 Matching the VM's DHCP lease to accept only the VM's address was rejected: it adds nothing an address that identifies nothing could give, and an unreadable leases file would reproduce this failure.
 The proof's instance also gets the request's traffic in `/activity`: a flow from such a caller is counted once `authorize` has named it, not in flight while its proof is checked.
-A PROXY-protocol relay in the appliance restoring per-container addresses is #1584.
+A PROXY-protocol relay in the appliance restoring per-container addresses was considered and deferred (#1584, "Considered and deferred").
 
 **Builds are served their template's accounts (#903).**
 A build container used to get a DHCP address, so the proxy could not tell it from host traffic and served every namespace's default, whatever the template's `accounts:` chose.
@@ -4732,3 +4732,14 @@ The regexes are anchored at both ends and list exact values, or a shape no servi
 - Inbox mount is strictly read-only
 - Host resources default to read-only; overlay mode provides an ephemeral writable layer but the host directory is never modified
 - Clone filesystems are independent CoW copies — changes in one clone don't affect others or the template image
+
+## Considered and deferred
+
+### Address-based caller identity on macOS
+
+On macOS every container reaches the proxy from the VM's one address, so the proxy identifies a caller there by the proof or per-start secret it presents, not by where it comes from (#1582, #1583).
+Restoring per-container addresses was considered: the appliance would REDIRECT `:443` to an in-VM relay that prefixes a PROXY protocol v2 header, the proxy would trust that header only from the VM, and a FORWARD rule would stop containers forging it.
+It is deferred because proof-only identity is simpler and sufficient for now.
+What it would close is replay of one instance's tokens from another, which needs that instance to leak them first, and it would cost a long-lived relay on the data path, PROXY protocol in the native proxy, the anti-forgery rule and validation on a real Mac.
+It is worth revisiting for full per-instance traffic accounting on macOS (cached Maven or npm traffic carries no proof), or for a threat model where one user's instances are mutually adversarial.
+The full reasoning is in #1584.
