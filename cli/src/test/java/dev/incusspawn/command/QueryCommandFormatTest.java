@@ -505,7 +505,13 @@ class QueryCommandFormatTest {
                   "input_tokens" : 10,
                   "output_tokens" : 20,
                   "cache_read_input_tokens" : 30,
-                  "cache_creation_input_tokens" : 40
+                  "cache_creation_input_tokens" : 40,
+                  "identified_by_proof" : false,
+                  "refused_proofs" : null,
+                  "refused_address_misses" : null,
+                  "registry_stale" : null,
+                  "unplaced_running" : null,
+                  "last_address_miss_at" : null
                 }, {
                   "instance" : null,
                   "counting_since" : "2026-10-11T09:00:00Z",
@@ -521,12 +527,18 @@ class QueryCommandFormatTest {
                   "input_tokens" : null,
                   "output_tokens" : null,
                   "cache_read_input_tokens" : null,
-                  "cache_creation_input_tokens" : null
+                  "cache_creation_input_tokens" : null,
+                  "identified_by_proof" : null,
+                  "refused_proofs" : 0,
+                  "refused_address_misses" : 0,
+                  "registry_stale" : false,
+                  "unplaced_running" : [ ],
+                  "last_address_miss_at" : null
                 } ]
                 """, json(records));
         assertEquals("worker\t2026-10-11T10:00:00Z\t5\t1\t2026-10-11T10:01:00Z\t300\t4000\t2\t1"
-                        + "\t2026-10-11T10:01:00Z\t2026-10-11T10:00:45Z\t10\t20\t30\t40\n"
-                        + "-\t2026-10-11T09:00:00Z\t1\t0\t2026-10-11T10:00:00Z\t0\t50\t-\t-\t-\t-\t-\t-\t-\t-\n",
+                        + "\t2026-10-11T10:01:00Z\t2026-10-11T10:00:45Z\t10\t20\t30\t40\tfalse\t-\t-\t-\t-\t-\n"
+                        + "-\t2026-10-11T09:00:00Z\t1\t0\t2026-10-11T10:00:00Z\t0\t50\t-\t-\t-\t-\t-\t-\t-\t-\t-\t0\t0\tfalse\t-\t-\n",
                 plain(records));
     }
 
@@ -550,5 +562,19 @@ class QueryCommandFormatTest {
         var table = bytes.toString(StandardCharsets.UTF_8);
         assertTrue(table.contains("(unattributed)"), table);
         assertTrue(table.lines().anyMatch(l -> l.startsWith("worker") && l.contains("1m ago")), table);
+        assertFalse(table.contains("Refused proofs"), "no footer when the proxy places every caller: " + table);
+    }
+
+    @Test
+    void proxyActivityTableEndsWithWhatThePlacementCountersSay() {
+        var bytes = new ByteArrayOutputStream();
+        ProxyCommand.Activity.print(activity().placed(new dev.incusspawn.proxy.ProxyActivity.Placement(3, 2, true, List.of("idle"))),
+                OutputFormat.TABLE, false, java.time.ZoneOffset.UTC,
+                java.time.Instant.parse("2026-10-11T10:02:00Z"), new PrintStream(bytes, true, StandardCharsets.UTF_8));
+        var table = bytes.toString(StandardCharsets.UTF_8);
+        assertTrue(table.contains("Refused proofs: 3 matched no proof of their instance, 2 came from an address that is no instance"),
+                table);
+        assertTrue(table.contains("Running, no traffic attributed: idle"), table);
+        assertTrue(table.contains("Instance listing failed"), table);
     }
 }

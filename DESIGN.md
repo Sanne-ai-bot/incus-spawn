@@ -1998,6 +1998,12 @@ Nor do refusals from a snapshot that may lack the caller's proofs: with no regis
 `unplaced_running` names the running instances no request has been attributed to; stopped instances and templates own addresses too, so the registry says which are running.
 Each instance's `identified_by_proof` says a request of it was named by its proof or secret alone, which only macOS allows.
 These stay off `/health`, which containers reach: what the proxy knows of their neighbours is not their business.
+`isx doctor` reads them on the host and says nothing while they are zero.
+Address misses are reported only while `unplaced_running` names an instance, and the finding names those: a miss cannot say whose it was, and one while every running instance is placed was transient.
+They fail only when the last was within ten minutes and no instance has had traffic attributed since, #1582's signature of a proxy that places nobody; otherwise they warn, since the counter never goes down and an idle instance is unplaced too.
+Refused proofs and a failed listing warn.
+`identified_by_proof` is no finding: on macOS it is how instances are named, and Linux never sets it.
+`isx proxy activity` prints the counters under its table, and all of them on its unattributed record.
 
 An ordinary start keeps credential verifiers while replacing the MCP secret.
 Migration and changed tool declarations re-read under the instance proof lock before updating verifiers in the secret write.

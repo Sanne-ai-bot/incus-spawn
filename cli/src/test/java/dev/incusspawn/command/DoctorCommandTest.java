@@ -5,6 +5,7 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.proxy.BridgeDns;
+import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.util.MacKeychainTrust;
@@ -23,6 +24,7 @@ import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
+import java.time.Instant;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DoctorCommandTest {
@@ -49,6 +51,75 @@ class DoctorCommandTest {
         var failed = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), "timed out"));
         assertEquals(DoctorCommand.Status.WARN, failed.status());
         assertTrue(failed.detail().contains("timed out"), failed.detail());
+    }
+
+    private static final Instant NOW = Instant.parse("2026-10-20T12:00:00Z");
+
+    /** What {@code /activity} says: {@code placed} last had traffic {@code placedAt}, {@code idle} none and is running. */
+    private static ProxyActivity activity(ProxyActivity.Placement placement, Instant placedAt) {
+        var placed = new ProxyActivity.Instance(Instant.EPOCH, 0, 0, null, null, 0, 0, 0, 0,
+                new ProxyActivity.Traffic(new ProxyActivity.Counts(4, 0, placedAt, 0, 0), Map.of()));
+        var idle = new ProxyActivity.Instance(Instant.EPOCH, 0, 0, null, null, 0, 0, 0, 0);
+        return new ProxyActivity(Map.of("placed", placed, "idle", idle), null, ProxyActivity.Traffic.NONE, placement);
+    }
+
+    private static ProxyActivity.Placement misses(long count, Instant last, List<String> unplaced) {
+        return new ProxyActivity.Placement(0, count, false, unplaced, last);
+    }
+
+    @Test
+    void aProxyThatPlacesEveryCallerIsNoFinding() {
+        assertEquals(List.of(), DoctorCommand.placementFindings(activity(ProxyActivity.Placement.NONE, NOW), false, NOW));
+    }
+
+    @Test
+    void aRecentAddressMissWithNoTrafficPlacedSinceFails() {
+        // #1582: the proxy places nobody, so every instance's traffic predates the misses
+        var findings = DoctorCommand.placementFindings(activity(misses(5, NOW.minusSeconds(30), List.of("idle", "other")),
+                NOW.minusSeconds(3600)), true, NOW);
+        assertEquals(1, findings.size(), findings.toString());
+        var f = findings.getFirst();
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertTrue(f.detail().contains("cannot tell 2 running instances apart"), f.detail());
+        assertTrue(f.detail().contains("idle and other are running"), f.detail());
+        assertTrue(f.detail().contains("the last 0 min ago"), f.detail());
+        assertTrue(f.detail().contains("appliance's NAT"), f.detail());
+        assertFalse(DoctorCommand.placementFindings(activity(misses(5, NOW.minusSeconds(30), List.of("idle")), null), false, NOW)
+                .getFirst().detail().contains("NAT"), "the NAT pointer is macOS's");
+    }
+
+    @Test
+    void aStrayAddressMissOnlyWarns() {
+        // The misses never go down and an idle instance is unplaced: one stray miss must not fail doctor for good
+        var placedSince = DoctorCommand.placementFindings(activity(misses(1, NOW.minusSeconds(60), List.of("idle")),
+                NOW.minusSeconds(10)), false, NOW);
+        assertEquals(1, placedSince.size(), placedSince.toString());
+        assertEquals(DoctorCommand.Status.WARN, placedSince.getFirst().status());
+        assertTrue(placedSince.getFirst().detail().contains("no traffic is attributed to idle"), placedSince.getFirst().detail());
+        assertFalse(placedSince.getFirst().detail().contains("placed"), placedSince.getFirst().detail());
+
+        var old = DoctorCommand.placementFindings(activity(misses(1, NOW.minus(DoctorCommand.RECENT_ADDRESS_MISS).minusSeconds(1),
+                List.of("idle")), null), false, NOW);
+        assertEquals(DoctorCommand.Status.WARN, old.getFirst().status(), "nothing placed since, but long ago: " + old);
+
+        assertEquals(List.of(), DoctorCommand.placementFindings(activity(misses(5, NOW, List.of()), null), false, NOW),
+                "a miss while every running instance is placed was transient");
+    }
+
+    @Test
+    void refusedProofsOfAKnownInstanceWarnWithTheInstancesRemedy() {
+        var findings = DoctorCommand.placementFindings(activity(new ProxyActivity.Placement(2, 0, false, List.of()), NOW), false, NOW);
+        assertEquals(1, findings.size(), findings.toString());
+        assertEquals(DoctorCommand.Status.WARN, findings.getFirst().status());
+        assertTrue(findings.getFirst().remediation().description().contains("new login shell"),
+                findings.getFirst().remediation().description());
+    }
+
+    @Test
+    void aFailedListingWarns() {
+        var findings = DoctorCommand.placementFindings(activity(new ProxyActivity.Placement(0, 0, true, List.of()), NOW), false, NOW);
+        assertEquals(1, findings.size(), findings.toString());
+        assertEquals(DoctorCommand.Status.WARN, findings.getFirst().status());
     }
 
     @Test

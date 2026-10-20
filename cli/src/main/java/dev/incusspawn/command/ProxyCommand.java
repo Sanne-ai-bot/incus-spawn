@@ -274,6 +274,7 @@ public class ProxyCommand extends BaseCommand {
                     out.printf(DOMAIN_ROW, name(r), r.get("domain"), r.get("requests"), r.get("in_flight"),
                             size(r.get("request_bytes")), size(r.get("response_bytes")), ago(r.get("last_activity_at"), now));
                 }
+                printPlacement(activity, out);
                 return;
             }
             out.printf(ROW, "INSTANCE", "REQUESTS", "IN FLIGHT", "SENT", "RECEIVED", "LAST ACTIVITY", "MODEL CALLS",
@@ -283,6 +284,26 @@ public class ProxyCommand extends BaseCommand {
                         size(r.get("response_bytes")), ago(r.get("last_activity_at"), now),
                         dash(r.get("model_requests")), dash(r.get("output_tokens")));
             }
+            printPlacement(activity, out);
+        }
+
+        /** How well the proxy tells its callers apart (#1586), under the table; nothing when nothing is wrong. */
+        private static void printPlacement(ProxyActivity activity, PrintStream out) {
+            var placement = activity.placement();
+            var lines = new ArrayList<String>();
+            if (placement.refusedProofs() > 0 || placement.refusedAddressMisses() > 0) {
+                lines.add("Refused proofs: %d matched no proof of their instance, %d came from an address that is no instance"
+                        .formatted(placement.refusedProofs(), placement.refusedAddressMisses()));
+            }
+            // What isx doctor judges address misses by; an idle instance is listed too, so only beside them
+            if (placement.refusedAddressMisses() > 0 && !placement.unplacedRunning().isEmpty()) {
+                lines.add("Running, no traffic attributed: "
+                        + String.join(", ", placement.unplacedRunning().stream().map(OutputFormat::oneLine).toList()));
+            }
+            if (placement.registryStale()) lines.add("Instance listing failed or not answering: proofs are refused until one succeeds");
+            if (lines.isEmpty()) return;
+            out.println();
+            lines.forEach(out::println);
         }
 
         private static String name(Map<String, Object> record) {
@@ -318,20 +339,25 @@ public class ProxyCommand extends BaseCommand {
          * are not counted ({@code null}). In order: add to the end, never rename. Counts run from
          * {@code counting_since}; two reads subtract only with the same one. The {@code requests}
          * to {@code response_bytes} fields are all traffic, model calls included; the
-         * {@code model_} ones and the tokens are model calls alone.
+         * {@code model_} ones and the tokens are model calls alone. {@code identified_by_proof}: its
+         * proof or secret alone named it, not its address (#1586). The proxy's {@code refused_proofs},
+         * {@code refused_address_misses}, {@code registry_stale}, {@code unplaced_running} and {@code last_address_miss_at} are
+         * on the unattributed record alone, {@code null} on the others (#1586).
          */
         static List<Map<String, Object>> records(ProxyActivity activity, ZoneId zone) {
             var records = new ArrayList<Map<String, Object>>();
             for (var name : new TreeSet<>(activity.instances().keySet())) {
                 var i = activity.of(name);
-                records.add(record(name, i.countingSince(), i.traffic().total(), i, zone));
+                records.add(record(name, i.countingSince(), i.traffic().total(), i, null, zone));
             }
-            records.add(record(null, activity.unattributedSince(), activity.unattributed().total(), null, zone));
+            records.add(record(null, activity.unattributedSince(), activity.unattributed().total(), null,
+                    activity.placement(), zone));
             return records;
         }
 
         private static Map<String, Object> record(String instance, Instant since, ProxyActivity.Counts traffic,
-                                                  ProxyActivity.Instance model, ZoneId zone) {
+                                                  ProxyActivity.Instance model, ProxyActivity.Placement placement,
+                                                  ZoneId zone) {
             var record = traffic(instance, null, since, traffic, zone);
             record.put("model_requests", model == null ? null : model.requests());
             record.put("model_in_flight", model == null ? null : model.inFlight());
@@ -341,6 +367,12 @@ public class ProxyCommand extends BaseCommand {
             record.put("output_tokens", model == null ? null : model.outputTokens());
             record.put("cache_read_input_tokens", model == null ? null : model.cacheReadInputTokens());
             record.put("cache_creation_input_tokens", model == null ? null : model.cacheCreationInputTokens());
+            record.put("identified_by_proof", model == null ? null : model.identifiedByProof());
+            record.put("refused_proofs", placement == null ? null : placement.refusedProofs());
+            record.put("refused_address_misses", placement == null ? null : placement.refusedAddressMisses());
+            record.put("registry_stale", placement == null ? null : placement.registryStale());
+            record.put("unplaced_running", placement == null ? null : placement.unplacedRunning());
+            record.put("last_address_miss_at", placement == null ? null : iso(placement.lastAddressMissAt(), zone));
             return record;
         }
 

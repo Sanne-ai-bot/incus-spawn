@@ -24,6 +24,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProofToken;
+import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
@@ -1271,13 +1272,74 @@ public class DoctorCommand extends BaseCommand {
         findings.add(checkProxyRunning(incus));
         findings.addAll(checkProxyDrift(incus));
         ProxyHealthCheck.ProxyInfo info;
+        String address = null;
         try {
-            info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
+            address = ProxyHealthCheck.healthAddress(incus);
+            info = ProxyHealthCheck.fetchProxyInfo(address);
         } catch (Exception e) {
             info = null;
         }
         var authFinding = checkProxyAuth(info);
         if (authFinding != null) findings.add(authFinding);
+        if (info != null) findings.addAll(checkProxyPlacement(address));
+        return findings;
+    }
+
+    private static List<Finding> checkProxyPlacement(String healthAddress) {
+        try {
+            return placementFindings(ProxyActivity.fetch(healthAddress), Platform.isMacOS(), java.time.Instant.now());
+        } catch (ProxyActivity.Unavailable e) {
+            // A proxy that is down or predates /activity is reported by the checks above
+            return List.of();
+        }
+    }
+
+    /** How long an address miss with no traffic placed since keeps {@link #placementFindings} failing. */
+    static final java.time.Duration RECENT_ADDRESS_MISS = java.time.Duration.ofMinutes(10);
+
+    /**
+     * Whether the proxy can tell its callers apart (#1586), from its host-only {@code /activity}:
+     * nothing when it can, as for every other healthy check. #1582 served every macOS instance
+     * the defaults for a year while the proxy reported itself healthy.
+     */
+    static List<Finding> placementFindings(ProxyActivity activity, boolean macOS, java.time.Instant now) {
+        var findings = new ArrayList<Finding>();
+        var placement = activity.placement();
+        var unplaced = placement.unplacedRunning();
+        if (placement.registryStale()) {
+            findings.add(Finding.warn("Proxy instance listing", "(its last listing of the instances failed or has not answered;"
+                            + " until one succeeds, it refuses every credential proof after a failure, and any new or renewed one while it hangs)",
+                    new Remediation("Check that Incus is answering, then 'isx proxy logs'", false, null)));
+        }
+        if (placement.refusedAddressMisses() > 0 && !unplaced.isEmpty()) {
+            // The misses never go down and an idle instance is unplaced too. #1582's signature is a
+            // recent miss with no traffic placed since; anything else may have been a transient miss
+            var lastMiss = placement.lastAddressMissAt();
+            var failing = lastMiss != null && lastMiss.isAfter(now.minus(RECENT_ADDRESS_MISS))
+                    && activity.instances().values().stream().map(i -> i.traffic().total().lastActivityAt())
+                            .noneMatch(at -> at != null && at.isAfter(lastMiss));
+            var names = OutputFormat.andList(unplaced.stream().map(OutputFormat::oneLine).toList());
+            var one = unplaced.size() == 1;
+            var misses = placement.refusedAddressMisses() + " proof(s) came from an address that is no instance since the proxy started"
+                    + (lastMiss == null ? "" : ", the last "
+                            + Math.max(0, java.time.Duration.between(lastMiss, now).toMinutes()) + " min ago");
+            var detail = (failing
+                    ? "(the proxy cannot tell " + unplaced.size() + " running instance" + (one ? "" : "s")
+                            + " apart; credentials are not injected: " + misses + ", and no instance has had traffic"
+                            + " attributed since: " + names + (one ? " is" : " are") + " running"
+                    : "(" + misses + ", and no traffic is attributed to " + names
+                            + "; if one of them is in use, the proxy cannot tell it apart")
+                    + (macOS ? ". On macOS the appliance's NAT hides each instance's address" : "") + ")";
+            var remediation = new Remediation("Restart the proxy with 'isx proxy restart'; if it persists, report it with"
+                    + " 'isx proxy logs' (isx doctor inside an instance cannot fix this)", false, null);
+            findings.add(new Finding(failing ? Status.FAIL : Status.WARN, "Proxy caller placement", detail, remediation));
+        }
+        if (placement.refusedProofs() > 0) {
+            findings.add(Finding.warn("Credential proofs", "(" + placement.refusedProofs()
+                            + " refused since the proxy started: an instance presented a proof that matches none of its own)",
+                    new Remediation("In the instance, open a new login shell; if needed, run 'isx shell <name>' and"
+                            + " 'isx doctor' inside it. Old API-key Claude images may need rebuilding", false, null)));
+        }
         return findings;
     }
 
