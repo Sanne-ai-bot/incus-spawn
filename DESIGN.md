@@ -1272,6 +1272,10 @@ The proxy routes requests to `api.anthropic.com` through one of three paths base
   Vertex treats a strict tool schema as the `structured_outputs` partner-model feature, which an organization policy (`constraints/vertexai.allowedPartnerModelFeatures`) can disallow, and then refuses every request with tools.
   A `strict` anywhere else, such as a property in an `input_schema`, is the client's data and is kept; the dropped member is logged once as `tools[].strict`.
   The passthrough path (1) applies the same rule to bodies already in Vertex's format (#1568)
+- Body: `output_config` is forwarded unchanged on the passthrough and translation paths (1 and 2), a JSON-schema `format` included (#1569).
+  Vertex treats that format as the same `structured_outputs` feature.
+  Unlike `strict`, dropping it would change what the client gets back (no longer the JSON it asked for).
+  The proxy therefore forwards it, and under a policy that disallows the feature the client gets Vertex's own 400.
 - Header: removes `anthropic-beta` (Vertex rejects beta feature flags; features are enabled via `anthropic_version`)
 - Host: rewrites to the Vertex endpoint hostname for the configured region
 
