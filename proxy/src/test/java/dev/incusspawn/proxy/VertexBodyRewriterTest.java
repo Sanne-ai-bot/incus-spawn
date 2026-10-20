@@ -32,10 +32,13 @@ class VertexBodyRewriterTest {
     static final String REGION = "us-east5";
     static final String VERTEX_PATH = "/v1/projects/proj/locations/us-east5/publishers/anthropic/models/m@20251001:rawPredict";
 
-    /** What the rewriter made of a body: its path and output, or the refusal it threw. */
-    record Outcome(String path, byte[] body, Exception refusal) {
+    /**
+     * What the rewriter made of a body: its path and output, or the refusal it threw; {@code dropped},
+     * the field names it reports ({@code null} from the tree translation).
+     */
+    record Outcome(String path, byte[] body, Exception refusal, List<String> dropped) {
         static Outcome of(Exception e) {
-            return new Outcome(null, null, e);
+            return new Outcome(null, null, e, null);
         }
     }
 
@@ -57,7 +60,7 @@ class VertexBodyRewriterTest {
             }
             rewriter.accept(Buffer.buffer(java.util.Arrays.copyOfRange(body, from, body.length)));
             var result = rewriter.end();
-            return new Outcome(result.path(), out.toByteArray(), null);
+            return new Outcome(result.path(), out.toByteArray(), null, result.droppedFields());
         } catch (VertexBodyRewriter.InvalidBody | VertexBodyRewriter.RefusedBody e) {
             return Outcome.of(e);
         }
@@ -71,7 +74,7 @@ class VertexBodyRewriterTest {
         try {
             var t = vertexFormat ? LegacyVertexTranslation.vertexFormat(VERTEX_PATH, body)
                     : LegacyVertexTranslation.translate(PATH, body, PROJECT, REGION);
-            return new Outcome(t.path(), t.body(), null);
+            return new Outcome(t.path(), t.body(), null, null);
         } catch (RuntimeException e) {
             return Outcome.of(e);
         }
@@ -409,6 +412,30 @@ class VertexBodyRewriterTest {
                 + "\"cache_control\":{\"type\":\"e\"}},{},[{\"strict\":2}]],"
                 + "\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"strict\":true}]}],"
                 + "\"anthropic_version\":\"vertex-2023-10-16\"}", out);
+    }
+
+    /**
+     * {@code output_config.format} is forwarded as sent on both paths, its {@code strict} members
+     * included, and nothing is reported dropped (#1569; DESIGN.md says why).
+     */
+    @Test
+    void outputConfigFormatIsForwardedAsSent() {
+        var outputConfig = "\"output_config\":{\"format\":{\"type\":\"json_schema\",\"schema\":{\"type\":\"object\","
+                + "\"properties\":{\"a\":{\"type\":\"string\"}},\"required\":[\"a\"],\"additionalProperties\":false},"
+                + "\"strict\":true},\"strict\":true}";
+        var standard = ("{\"model\":\"m\",\"messages\":[]," + outputConfig + "}").getBytes(StandardCharsets.UTF_8);
+        var vertex = "{\"anthropic_version\":\"vertex-2023-10-16\",\"messages\":[]," + outputConfig + "}";
+        for (int split = 0; split < standard.length; split++) {
+            var got = rewrite(standard, split);
+            assertEquals("{\"messages\":[]," + outputConfig + ",\"anthropic_version\":\"vertex-2023-10-16\"}", body(got));
+            assertEquals(List.of(), got.dropped());
+        }
+        var bytes = vertex.getBytes(StandardCharsets.UTF_8);
+        for (int split = 0; split < bytes.length; split++) {
+            var got = rewrite(true, bytes, split);
+            assertEquals(vertex, body(got));
+            assertEquals(List.of(), got.dropped());
+        }
     }
 
     /** Only an array of tools holds tool definitions: {@code tools} in any other shape is copied as it is. */

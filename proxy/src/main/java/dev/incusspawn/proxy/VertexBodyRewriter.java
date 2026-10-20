@@ -25,6 +25,12 @@ import java.util.function.Consumer;
  *       feature, which an organization policy may disallow, and then refuses every request with
  *       tools.</li>
  * </ul>
+ * {@code output_config}, a JSON-schema {@code format} included, is copied as it is, by the
+ * translation and for a body already in Vertex's format (#1569). Vertex treats that format as the
+ * same feature. Unlike a tool's {@code strict}, dropping it would answer with something other than
+ * the JSON the client asked for. The rewriter therefore keeps it, and under such a policy the
+ * client gets Vertex's own 400.
+ * <p>
  * Its memory is bounded whatever the body: two bits per nesting level up to {@link #MAX_DEPTH}, a
  * field name up to {@link #MAX_NAME_CHARS} characters, and {@code model} up to the URL ceiling
  * ({@link #MAX_URL_PATH}), and {@link #MAX_DROPPED_NAMES} names to log. Strings and numbers pass
