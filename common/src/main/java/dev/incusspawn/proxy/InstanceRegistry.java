@@ -11,9 +11,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.function.LongSupplier;
 
 /**
  * Maps a request's source address to the instance that made it, and to the credential
@@ -144,7 +144,7 @@ public final class InstanceRegistry {
 
     public ProofState proofState(String name) {
         var current = snapshot;
-        return System.currentTimeMillis() - current.takenAt() > STALE_AFTER_MS
+        return clock.getAsLong() - current.takenAt() > STALE_AFTER_MS
                 ? null : current.parsed().proofStates().get(name);
     }
 
@@ -189,12 +189,17 @@ public final class InstanceRegistry {
 
     private static final Snapshot EMPTY = new Snapshot(Parsed.EMPTY, 0L, 0L, false);
 
-    private static final java.util.concurrent.atomic.AtomicLong VIEWS = new java.util.concurrent.atomic.AtomicLong();
+    private static final AtomicLong VIEWS = new AtomicLong();
 
     private final IncusClient incus;
-    private final AtomicBoolean refreshing = new AtomicBoolean();
-    /** When the listing {@link #refreshing} says is under way started, in epoch millis. */
-    private volatile long listingStartedAt;
+    private final LongSupplier clock;
+    /**
+     * When the listing under way started, in epoch millis; 0 while none is, {@link #CLAIMED} while
+     * one has been claimed and is reading the clock. One value, so no read sees a listing under way
+     * with an earlier one's start (#1596).
+     */
+    private final AtomicLong listingStartedAt = new AtomicLong();
+    private static final long CLAIMED = -1;
     /** Listings started, numbering each one; and the highest-numbered one finished, guarded by {@link #listed}. */
     private final AtomicLong listingsStarted = new AtomicLong();
     private final Object listed = new Object();
@@ -202,7 +207,16 @@ public final class InstanceRegistry {
     private volatile Snapshot snapshot = EMPTY;
 
     public InstanceRegistry(IncusClient incus) {
+        this(incus, System::currentTimeMillis);
+    }
+
+    /**
+     * {@code clock}: epoch millis, for the snapshot's age (staleness, the miss-refresh rate) and how
+     * long a listing has run.
+     */
+    InstanceRegistry(IncusClient incus, LongSupplier clock) {
         this.incus = incus;
+        this.clock = clock;
     }
 
     /**
@@ -397,13 +411,13 @@ public final class InstanceRegistry {
      * brought are refused until one succeeds (#1586). Non-blocking.
      */
     public boolean listingUnavailable() {
-        return snapshot.listingFailed()
-                || refreshing.get() && System.currentTimeMillis() - listingStartedAt > LISTING_HUNG_AFTER_MS;
+        var started = listingStartedAt.get();
+        return snapshot.listingFailed() || started > 0 && clock.getAsLong() - started > LISTING_HUNG_AFTER_MS;
     }
 
     /** Whether the snapshot is old enough that a refresh is worth doing. */
     public boolean isStale() {
-        return System.currentTimeMillis() - snapshot.takenAt() > STALE_AFTER_MS;
+        return clock.getAsLong() - snapshot.takenAt() > STALE_AFTER_MS;
     }
 
     /**
@@ -416,7 +430,7 @@ public final class InstanceRegistry {
     }
 
     public long missRefreshDelayMillis() {
-        return Math.max(0, MISS_REFRESH_INTERVAL_MS + 1 - (System.currentTimeMillis() - snapshot.takenAt()));
+        return Math.max(0, MISS_REFRESH_INTERVAL_MS + 1 - (clock.getAsLong() - snapshot.takenAt()));
     }
 
     /**
@@ -427,11 +441,13 @@ public final class InstanceRegistry {
      * @return true if this call performed the refresh
      */
     public boolean refresh() {
-        if (!refreshing.compareAndSet(false, true)) return false;
-        listingStartedAt = System.currentTimeMillis();
+        // Claimed first, timed after: a time read before the claim may be long gone when it wins
+        if (!listingStartedAt.compareAndSet(0, CLAIMED)) return false;
         var number = listingsStarted.incrementAndGet();
         try {
-            snapshot = new Snapshot(parse(incus.listJsonConfig()), System.currentTimeMillis(), VIEWS.incrementAndGet(), false);
+            // At least 1: 0 is idle and CLAIMED is below. Inside the try, so finally always releases the claim
+            listingStartedAt.set(Math.max(1, clock.getAsLong()));
+            snapshot = new Snapshot(parse(incus.listJsonConfig()), clock.getAsLong(), VIEWS.incrementAndGet(), false);
             return true;
         } catch (RuntimeException e) {
             // Retain attribution and account pins, but revoke credential authorization
@@ -441,13 +457,13 @@ public final class InstanceRegistry {
             var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
                     previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of(), Map.of(), Map.of(),
                     previous.running());
-            snapshot = new Snapshot(withoutProofs, System.currentTimeMillis(), snapshot.view(), true);
+            snapshot = new Snapshot(withoutProofs, clock.getAsLong(), snapshot.view(), true);
             ProxyLog.warn("Instance registry refresh failed: " + e.getMessage());
             return false;
         } finally {
             synchronized (listed) {
                 listedThrough = Math.max(listedThrough, number);
-                refreshing.set(false);
+                listingStartedAt.set(0);
                 listed.notifyAll();
             }
         }
@@ -466,7 +482,7 @@ public final class InstanceRegistry {
         var deadline = System.nanoTime() + timeoutMillis * 1_000_000;
         while (true) {
             synchronized (listed) {
-                while (listedThrough < wanted && refreshing.get()) {
+                while (listedThrough < wanted && listingStartedAt.get() != 0) {
                     var left = (deadline - System.nanoTime()) / 1_000_000;
                     if (left <= 0) return;
                     try {
