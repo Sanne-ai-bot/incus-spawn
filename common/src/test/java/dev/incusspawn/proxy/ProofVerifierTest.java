@@ -69,4 +69,63 @@ class ProofVerifierTest {
         assertNull(registry.prove("10.1.2.3", Map.of("claude", List.of(ProofToken.derive("34".repeat(32), "claude")))),
                 "cached verifiers cannot authorize after a failed refresh");
     }
+
+    @Test
+    void whereTheAddressNamesNoInstanceTheProofAloneIdentifiesTheCaller() {
+        // macOS: every container reaches the proxy from the VM's address (#1582)
+        var other = "56".repeat(32);
+        var unavailable = new boolean[1];
+        var registry = new InstanceRegistry(new IncusClient() {
+            @Override public JqValue listJsonConfig() {
+                if (unavailable[0]) throw new IllegalStateException("test daemon unavailable");
+                return JqValues.parse("[" + guest("guest", "10.1.2.3", SECRET, "Running") + ","
+                        + guest("neighbour", "10.1.2.5", other, "Running") + "]");
+            }
+        });
+        registry.refresh();
+        var vm = "192.168.64.21";
+        var mine = Map.of("github", List.of(ProofToken.derive(SECRET, "github")),
+                "claude", List.of(ProofToken.derive(SECRET, "claude")));
+        assertNull(registry.prove(vm, mine), "the address check stays the default");
+        assertNull(registry.prove(vm, mine, false));
+        assertEquals("guest", registry.prove(vm, mine, true).accounts().instanceName());
+        assertEquals("neighbour", registry.prove(vm, Map.of("github",
+                List.of(ProofToken.derive(other, "github"))), true).accounts().instanceName());
+        assertNull(registry.prove(vm, Map.of("github", List.of(ProofToken.derive(SECRET, "github")),
+                "claude", List.of(ProofToken.derive(other, "claude"))), true), "proofs of two instances name none");
+        assertNull(registry.prove(vm, Map.of("github", List.of(ProofToken.derive("34".repeat(32), "github"))), true));
+        assertNull(registry.prove(vm, Map.of("github", List.of(ProofToken.derive(SECRET, "claude"))), true),
+                "a proof counts only for its own namespace");
+        assertNull(registry.prove("10.1.2.5", mine, true), "a known address is held to its own instance's proofs");
+        unavailable[0] = true;
+        assertFalse(registry.refresh());
+        assertNull(registry.prove(vm, mine, true), "cached verifiers cannot authorize after a failed refresh");
+    }
+
+    @Test
+    void aProofSharedByACopyIdentifiesOnlyTheOneRunning() {
+        // Only an incus copy made outside isx carries another instance's verifiers
+        var status = new String[]{"Stopped"};
+        var registry = new InstanceRegistry(new IncusClient() {
+            @Override public JqValue listJsonConfig() {
+                return JqValues.parse("[" + guest("guest", "10.1.2.3", SECRET, "Running") + ","
+                        + guest("copy", "10.1.2.4", SECRET, status[0]) + "]");
+            }
+        });
+        registry.refresh();
+        var proofs = Map.of("github", List.of(ProofToken.derive(SECRET, "github")));
+        assertEquals("guest", registry.prove("192.168.64.21", proofs, true).accounts().instanceName());
+        status[0] = "Running";
+        registry.refresh();
+        assertNull(registry.prove("192.168.64.21", proofs, true), "two running instances: refuse rather than guess");
+        assertEquals("copy", registry.prove("10.1.2.4", proofs, true).accounts().instanceName(),
+                "the address still identifies each of them");
+    }
+
+    private static String guest(String name, String address, String secret, String status) {
+        var config = JqObject.builder(2).put(Metadata.STATIC_IP, address)
+                .put(Metadata.INSTANCE_PROOF_SHA256, ProofVerifier.stamp(secret, DECLARED)).build();
+        return JqValues.toPrettyJsonString(JqObject.builder(3)
+                .put("name", name).put("status", status).put("config", config).build());
+    }
 }
