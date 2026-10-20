@@ -10,6 +10,122 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class InstanceRegistryTest {
 
+    /**
+     * A registry over a listing that counts down {@code started}, then waits for {@code listed},
+     * on a clock the test moves (#1596).
+     */
+    private static InstanceRegistry hangingRegistry(java.util.concurrent.CountDownLatch started,
+                                                    java.util.concurrent.CountDownLatch listed,
+                                                    java.util.function.LongSupplier clock) {
+        return new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
+            @Override
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                started.countDown();
+                try {
+                    listed.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return io.hyperfoil.tools.jjq.value.JqValues.parse("[]");
+            }
+        }, clock);
+    }
+
+    @Test
+    void aListingThatHasJustStartedIsNotHung() throws Exception {
+        // Held where the listing reads its start time: no read may see it under way with an older one
+        var now = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+        var reading = new java.util.concurrent.CountDownLatch(1);
+        var resume = new java.util.concurrent.CountDownLatch(1);
+        var lister = new java.util.concurrent.atomic.AtomicReference<Thread>();
+        var registry = hangingRegistry(new java.util.concurrent.CountDownLatch(1), new java.util.concurrent.CountDownLatch(0), () -> {
+            if (Thread.currentThread() == lister.get()) {
+                reading.countDown();
+                try {
+                    resume.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return now.get();
+        });
+        var thread = new Thread(registry::refresh);
+        lister.set(thread);
+        thread.start();
+        try {
+            assertTrue(reading.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            assertFalse(registry.listingUnavailable(), "a listing starting now has not hung");
+        } finally {
+            resume.countDown();
+            thread.join(10_000);
+        }
+        assertFalse(thread.isAlive(), "the listing ended");
+    }
+
+    @Test
+    void aListingClaimsBeforeItReadsItsStartTime() throws Exception {
+        // A start time read before the claim may be long gone when the claim wins, after other
+        // listings ran: then a listing would read as hung the moment it begins
+        var reading = new java.util.concurrent.CountDownLatch(1);
+        var resume = new java.util.concurrent.CountDownLatch(1);
+        var lister = new java.util.concurrent.atomic.AtomicReference<Thread>();
+        var firstRead = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var registry = hangingRegistry(new java.util.concurrent.CountDownLatch(1), new java.util.concurrent.CountDownLatch(0), () -> {
+            if (Thread.currentThread() == lister.get() && firstRead.getAndSet(false)) {
+                reading.countDown();
+                try {
+                    resume.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return 1_000_000;
+        });
+        var thread = new Thread(registry::refresh);
+        lister.set(thread);
+        thread.start();
+        try {
+            assertTrue(reading.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            assertFalse(registry.refresh(), "the one reading its start time already holds the listing");
+        } finally {
+            resume.countDown();
+            thread.join(10_000);
+        }
+        assertFalse(thread.isAlive(), "the listing ended");
+    }
+
+    @Test
+    void aClockThatThrowsAfterTheClaimStillReleasesIt() {
+        var once = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var registry = hangingRegistry(new java.util.concurrent.CountDownLatch(1), new java.util.concurrent.CountDownLatch(0), () -> {
+            if (once.getAndSet(false)) throw new IllegalStateException("no clock");
+            return 1_000_000;
+        });
+        assertFalse(registry.refresh(), "that listing failed");
+        assertTrue(registry.refresh(), "and released its claim");
+    }
+
+    @Test
+    void aListingUnansweredPastTheRefreshWaitIsUnavailableUntilItLands() throws Exception {
+        var now = new java.util.concurrent.atomic.AtomicLong(1_000_000);
+        var listed = new java.util.concurrent.CountDownLatch(1);
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var registry = hangingRegistry(started, listed, now::get);
+        var thread = new Thread(registry::refresh);
+        thread.start();
+        try {
+            assertTrue(started.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            assertFalse(registry.listingUnavailable(), "within the wait");
+            now.addAndGet(InstanceRegistry.LISTING_HUNG_AFTER_MS + 1);
+            assertTrue(registry.listingUnavailable(), "past it");
+        } finally {
+            listed.countDown();
+            thread.join(10_000);
+        }
+        assertFalse(thread.isAlive(), "the listing ended");
+        assertFalse(registry.listingUnavailable(), "once it lands");
+    }
+
     @Test
     void mapsStaticIpToInstanceAndAccounts() {
         var parsed = InstanceRegistry.parse("""
