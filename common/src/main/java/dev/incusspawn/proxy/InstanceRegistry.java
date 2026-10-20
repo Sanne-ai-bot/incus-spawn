@@ -32,6 +32,10 @@ import java.util.function.Function;
  * neighbour's credentials. Do not treat the mapping as an authorization decision on hosts
  * where the filtering could not be applied.
  *
+ * <p>On macOS the premise fails: the VM NATs every container to its own address, which is no
+ * instance, so there the proxy has {@link #prove(String, Map, boolean)} identify such a caller by
+ * its credential proof alone (#1582).
+ *
  * <h3>Staleness</h3>
  * Lookups never block -- they read a snapshot, and the caller refreshes off the event loop.
  * An address missing from the snapshot never authorizes injection. The request's current
@@ -115,12 +119,15 @@ public final class InstanceRegistry {
      *                        out of {@link InstanceAccounts} for the same reason as the secret
      * @param lineageByName   what each instance owning an address was built from, for the
      *                        host routes' {@code templates:} filter (#936)
+     * @param addressByProof  per namespace, each verifier hash to the address of the instance it
+     *                        is stamped on, for {@link #prove} when the address names no instance
+     *                        (#1582); a hash several instances share maps by {@link #owner}'s rule
      */
     record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
                   java.util.Set<String> mcpCallers, Map<String, String> incarnationByName,
                   Map<String, Lineage> lineageByName, Map<String, Map<String, String>> proofsByAddress,
-                  Map<String, ProofState> proofStates) {
-        static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of(), Map.of());
+                  Map<String, ProofState> proofStates, Map<String, Map<String, String>> addressByProof) {
+        static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
     }
 
     /** Host-only acknowledgement of persisted proof state; contains no usable credential. */
@@ -208,15 +215,53 @@ public final class InstanceRegistry {
 
     /** Address and every requested namespace proof checked against one immutable listing. */
     public Caller prove(String address, Map<String, java.util.List<String>> digests) {
+        return prove(address, digests, false);
+    }
+
+    /**
+     * As {@link #prove(String, Map)}; with {@code byProofAlone}, a caller whose address is no
+     * known instance is the instance its proofs name, when they all name the same one (#1582).
+     *
+     * <p>For where the address identifies nothing: on macOS every container reaches the proxy
+     * from the VM's address. A proof is keyed by a host secret the guest never sees, so it cannot
+     * be forged, but it can be replayed from another instance, which only the address check
+     * stops. A caller at a known instance's address is always held to that instance's proofs.
+     */
+    public Caller prove(String address, Map<String, java.util.List<String>> digests, boolean byProofAlone) {
         var current = snapshot;
+        if (digests.isEmpty()) return null;
         var instance = find(current.parsed(), address);
-        if (instance == null || digests.isEmpty()) return null;
+        if (instance == null && byProofAlone) {
+            // Every namespace's proof already verified, by finding its hash
+            var proven = addressProven(current.parsed(), digests);
+            instance = proven == null ? null : current.parsed().byAddress().get(proven);
+            return instance == null ? null : new Caller(instance,
+                    current.parsed().incarnationByName().getOrDefault(instance.instanceName(), ""), current.view());
+        }
+        if (instance == null) return null;
         var hashes = current.parsed().proofsByAddress().getOrDefault(normalize(address), Map.of());
         for (var entry : digests.entrySet()) {
             var hash = hashes.get(entry.getKey());
             if (entry.getValue().stream().noneMatch(digest -> ProofVerifier.matches(digest, hash))) return null;
         }
         return new Caller(instance, current.parsed().incarnationByName().getOrDefault(instance.instanceName(), ""), current.view());
+    }
+
+    /**
+     * The address of the one instance every namespace's presented digests are stamped on, or
+     * null. A lookup by the digest's hash: the hash of a secret value, so its timing tells nothing.
+     */
+    private static String addressProven(Parsed current, Map<String, java.util.List<String>> digests) {
+        String proven = null;
+        for (var entry : digests.entrySet()) {
+            var byHash = current.addressByProof().getOrDefault(entry.getKey(), Map.of());
+            var addresses = entry.getValue().stream().filter(java.util.Objects::nonNull)
+                    .map(digest -> byHash.get(dev.incusspawn.tool.ToolDef.sha256hex(digest)))
+                    .filter(java.util.Objects::nonNull).distinct().toList();
+            if (addresses.size() != 1 || proven != null && !proven.equals(addresses.getFirst())) return null;
+            proven = addresses.getFirst();
+        }
+        return proven;
     }
 
     /**
@@ -341,7 +386,7 @@ public final class InstanceRegistry {
             // retried per request.
             var previous = snapshot.parsed();
             var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
-                    previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of());
+                    previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of(), Map.of());
             snapshot = new Snapshot(withoutProofs, System.currentTimeMillis(), snapshot.view());
             ProxyLog.warn("Instance registry refresh failed: " + e.getMessage());
             return false;
@@ -462,7 +507,7 @@ public final class InstanceRegistry {
                 var address = config.pathText(Metadata.STATIC_IP, "").strip();
                 if (address.isEmpty()) continue;
 
-                claimants.computeIfAbsent(normalize(address), a -> new ArrayList<>()).add(new Claimant(
+                claimants.computeIfAbsent(normalize(address), a -> new ArrayList<>()).add(new Claimant(normalize(address),
                         new InstanceAccounts(name, accountsOf(config), identitiesOf(config)),
                         "Running".equalsIgnoreCase(instance.pathText("status", "")),
                         config.pathText(Metadata.INSTANCE_SECRET_SHA256, "").strip(),
@@ -484,22 +529,39 @@ public final class InstanceRegistry {
         configByName.forEach((name, config) -> proofStates.put(name, new ProofState(
                 config.pathText(Metadata.INSTANCE_PROOF_ID, ""),
                 dev.incusspawn.tool.ToolDef.sha256hex(config.pathText(Metadata.INSTANCE_PROOF_SHA256, "")))));
+        // Per namespace and verifier hash, the address owners stamped with it
+        var stampedWith = new LinkedHashMap<String, Map<String, List<Claimant>>>();
         claimants.forEach((address, all) -> {
-            var owner = owner(address, all);
+            var owner = owner("Address " + address, all, "refusing credential injection until only one holds it");
             if (owner == null) return;
             byAddress.put(address, owner.accounts());
-            proofsByAddress.put(address, ProofVerifier.parse(owner.config().pathText(Metadata.INSTANCE_PROOF_SHA256, "")));
+            var proofs = ProofVerifier.parse(owner.config().pathText(Metadata.INSTANCE_PROOF_SHA256, ""));
+            proofsByAddress.put(address, proofs);
+            proofs.forEach((namespace, hash) -> stampedWith.computeIfAbsent(namespace, n -> new LinkedHashMap<>())
+                    .computeIfAbsent(hash, h -> new ArrayList<>()).add(owner));
             if (!owner.secretSha256().isEmpty()) secretByAddress.put(address, owner.secretSha256());
             if (owner.mcpCaller()) mcpCallers.add(owner.accounts().instanceName());
             incarnationByName.put(owner.accounts().instanceName(), owner.createdAt());
             // Only for owners: a build stamp is parsed for no address nobody serves
             lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config(), configByName));
         });
+        var addressByProof = new LinkedHashMap<String, Map<String, String>>();
+        stampedWith.forEach((namespace, byHash) -> {
+            var addresses = new LinkedHashMap<String, String>();
+            byHash.forEach((hash, stamped) -> {
+                // Only an incus copy made outside isx shares a proof: as for an address, the one running
+                var owner = owner("A " + namespace + " proof verifier", stamped,
+                        "a caller its address does not name is not identified by that proof");
+                if (owner != null) addresses.put(hash, owner.address());
+            });
+            addressByProof.put(namespace, Map.copyOf(addresses));
+        });
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
-                Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(proofsByAddress), Map.copyOf(proofStates));
+                Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(proofsByAddress), Map.copyOf(proofStates),
+                Map.copyOf(addressByProof));
     }
 
-    private record Claimant(InstanceAccounts accounts, boolean running, String secretSha256, boolean mcpCaller,
+    private record Claimant(String address, InstanceAccounts accounts, boolean running, String secretSha256, boolean mcpCaller,
                             String createdAt, JqValue config) {}
 
     /** How many ancestors {@link #lineageOf} asks, against a cycle in hand-edited parents. */
@@ -555,22 +617,23 @@ public final class InstanceRegistry {
      * Who an address belongs to. isx gives each address to one instance, but a copy made by an
      * older isx, or by {@code incus copy}, carries its source's (#815). Incus refuses to start
      * an instance whose NIC address another NIC holds, so of several claimants only a running
-     * one can be sending traffic from it; never whichever the listing happens to put last.
+     * one can be sending traffic from it; never whichever the listing happens to put last. A
+     * proof verifier such a copy shares is decided the same way ({@code claimed} names which, and
+     * {@code refusal} what having no owner refuses).
      */
-    private static Claimant owner(String address, List<Claimant> claimants) {
+    private static Claimant owner(String claimed, List<Claimant> claimants, String refusal) {
         if (claimants.size() == 1) return claimants.getFirst();
         var running = claimants.stream().filter(Claimant::running).toList();
         var names = claimants.stream().map(c -> c.accounts().instanceName()).toList();
         if (running.size() == 1) {
-            ProxyLog.warn("Address " + address + " is claimed by " + names + "; serving "
+            ProxyLog.warn(claimed + " is claimed by " + names + "; serving "
                     + running.getFirst().accounts().instanceName() + ", the one running");
             return running.getFirst();
         }
         // Stopped claimants send nothing. Several running is not something isx creates: map
         // the address to none of them rather than guess, and say so
         if (!running.isEmpty()) {
-            ProxyLog.warn("Address " + address + " is claimed by running instances " + names
-                    + "; refusing credential injection until only one holds it");
+            ProxyLog.warn(claimed + " is claimed by running instances " + names + "; " + refusal);
         }
         return null;
     }
