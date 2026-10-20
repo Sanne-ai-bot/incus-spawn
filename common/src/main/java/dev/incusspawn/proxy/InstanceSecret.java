@@ -23,6 +23,10 @@ import java.util.Map;
  * it is only ever accepted from its bound address, a leaked secret is useless on its own: it is a
  * plain random string with no rotation protocol beyond "every start makes a new one".
  *
+ * <p>Except on macOS, where the address identifies nothing (every container arrives from the VM's),
+ * so there the proxy accepts the secret alone from a caller whose address is no instance (#1583,
+ * {@link InstanceRegistry#identify(String, String, boolean)}).
+ *
  * <h3>Where it lives</h3>
  * <ul>
  *   <li>Host side, only its SHA-256 is kept, as {@link Metadata#INSTANCE_SECRET_SHA256} -- read
@@ -127,10 +131,15 @@ public final class InstanceSecret {
      * never matches, whatever is presented.
      */
     public static boolean matches(String presented, String recordedSha256) {
-        if (presented == null || presented.isEmpty()
-                || recordedSha256 == null || recordedSha256.isEmpty()) return false;
-        return MessageDigest.isEqual(sha256(presented.strip()).getBytes(StandardCharsets.US_ASCII),
+        var presentedSha256 = presentedSha256(presented);
+        if (presentedSha256 == null || recordedSha256 == null || recordedSha256.isEmpty()) return false;
+        return MessageDigest.isEqual(presentedSha256.getBytes(StandardCharsets.US_ASCII),
                 recordedSha256.getBytes(StandardCharsets.US_ASCII));
+    }
+
+    /** What the host would record for a presented secret, surrounding whitespace aside; null when none is. */
+    static String presentedSha256(String presented) {
+        return presented == null || presented.isBlank() ? null : sha256(presented.strip());
     }
 
     /**

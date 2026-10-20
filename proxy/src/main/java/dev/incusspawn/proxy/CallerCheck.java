@@ -8,7 +8,8 @@ import java.util.function.Function;
 
 /**
  * What the names the proxy answers itself ({@code isx mcp}, host routes) share: identifying the
- * instance behind a request by address and per-start secret, and refusing a request in plain text.
+ * instance behind a request by address and per-start secret (on macOS, where the address names no
+ * instance, by the secret alone, #1583), and refusing a request in plain text.
  */
 final class CallerCheck {
 
@@ -44,6 +45,15 @@ final class CallerCheck {
                 refuse(req, 502, "Internal proxy error");
             }
         });
+    }
+
+    /**
+     * Why {@code identify} named nobody, for the 403 of a call to {@code what}: the address is no
+     * instance, unless the secret alone may identify (#1583); otherwise the secret is wrong.
+     */
+    static String unidentified(InstanceRegistry registry, String address, boolean bySecretAlone, String what) {
+        if (!bySecretAlone && registry.lookup(address) == null) return "only an isx instance may call " + what;
+        return "send this start's secret as " + InstanceSecret.HEADER + " (from $" + InstanceSecret.FILE_ENV_VAR + ")";
     }
 
     /** Answer {@code req} with {@code status} and a plain-text line, reading and dropping any body. */

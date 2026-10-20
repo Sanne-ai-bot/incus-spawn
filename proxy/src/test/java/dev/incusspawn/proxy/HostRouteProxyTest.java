@@ -143,10 +143,14 @@ class HostRouteProxyTest {
 
     /** The instance at 127.0.0.1, built from {@code template}, with this start's secret recorded. */
     private static void instance(String template, String extraConfig) {
+        instance("127.0.0.1", template, extraConfig);
+    }
+
+    private static void instance(String address, String template, String extraConfig) {
         listing = """
                 [{"name":"%s","status":"Running","config":{
-                   "%s":"127.0.0.1", "%s":"%s", "%s":"%s"%s}}]
-                """.formatted(INSTANCE, Metadata.STATIC_IP, Metadata.INSTANCE_SECRET_SHA256,
+                   "%s":"%s", "%s":"%s", "%s":"%s"%s}}]
+                """.formatted(INSTANCE, Metadata.STATIC_IP, address, Metadata.INSTANCE_SECRET_SHA256,
                 InstanceSecret.sha256(SECRET), Metadata.PROFILE, template, extraConfig);
         registry.refresh();
     }
@@ -302,6 +306,31 @@ class HostRouteProxyTest {
         assertEquals(403, send(WORK, MultiMap.caseInsensitiveMultiMap()).status());
         assertEquals(403, send(WORK, MultiMap.caseInsensitiveMultiMap().add(InstanceSecret.HEADER, "c".repeat(64))).status());
         assertEquals(List.of(), seen);
+    }
+
+    @Test
+    void onMacOSTheSecretIdentifiesACallerFromAnAddressThatIsNoInstance() throws Exception {
+        // #1583: the VM NATs every container to its own address, which names no instance
+        instance("10.0.0.5", TEMPLATE, "");
+        try {
+            var refused = send(WORK, withSecret());
+            assertEquals(403, refused.status(), "Linux keeps the address check");
+            assertTrue(refused.body().contains("only an isx instance"), refused.body());
+
+            proxy.proofIdentifies = (remote, local) -> true;
+            var reply = send(WORK, withSecret());
+            assertEquals(200, reply.status(), reply.body());
+            assertEquals(List.of(INSTANCE), seen.getFirst().headers().getAll("X-Isx-Instance"));
+            assertEquals(List.of(TEMPLATE), seen.getFirst().headers().getAll("X-Isx-Template"));
+
+            var wrong = send(WORK, MultiMap.caseInsensitiveMultiMap().add(InstanceSecret.HEADER, "c".repeat(64)));
+            assertEquals(403, wrong.status());
+            assertTrue(wrong.body().contains(InstanceSecret.HEADER), "the secret is what to fix: " + wrong.body());
+            assertEquals(403, send(OTHER, withSecret()).status(), "the route's templates still decide");
+            assertEquals(1, seen.size(), "nothing refused reaches the controller");
+        } finally {
+            proxy.proofIdentifies = (remote, local) -> false;
+        }
     }
 
     @Test
