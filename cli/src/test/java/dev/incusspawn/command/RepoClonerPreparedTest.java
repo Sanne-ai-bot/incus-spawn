@@ -38,6 +38,8 @@ class RepoClonerPreparedTest {
     private final List<String> scripts = new ArrayList<>();
     private final List<Path> mounts = new ArrayList<>();
     private boolean breakCopy;
+    private boolean foreignSnapshot;
+    private int foreignClones;
     private Path guestConfig;
     private String checksumPrelude = "";
     private final AtomicReferenceArray<BuildProgress.StepProgress> states = new AtomicReferenceArray<>(1);
@@ -57,13 +59,22 @@ class RepoClonerPreparedTest {
         when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenAnswer(inv -> {
             String script = inv.getArgument(2);
             scripts.add(script);
-            if (script.contains("git clone")) statesWhileCloning.add(states.get(0));
+            if (script.contains(" clone ")) statesWhileCloning.add(states.get(0));
             script = script.replaceAll("\\{ ! command -v mountpoint .*?; \\} && ", "");
-            if (breakCopy && script.contains("git clone --no-hardlinks")) {
+            if (breakCopy && script.contains("clone --no-hardlinks")) {
                 // Produce a valid copy first, then alter a byte before the checksum phase.
                 script = script.replace(" && { g=", " && for pack in "
                         + shellQuote(tmp.resolve("guest/.git/objects/pack").toString()) + "/*.pack; do "
                         + "chmod u+w \"$pack\" && printf damage >> \"$pack\" || exit 1; done && { g=");
+            }
+            if (foreignSnapshot) {
+                // The macOS guest sees the snapshot owned by the Mac user's unmapped uid (#1590).
+                // Only the clone that reads it sees a foreign owner; the guest's own checkout stays ours.
+                // The pattern matches the clone with or without its exception, so this test fails without the fix.
+                var foreign = script.replaceFirst("git (-c 'safe\\.directory=[^']*' )?clone --no-hardlinks",
+                        "GIT_TEST_ASSUME_DIFFERENT_OWNER=1 $0");
+                if (!foreign.equals(script)) foreignClones++;
+                script = foreign;
             }
             var out = tmp.resolve("stdout");
             var err = tmp.resolve("stderr");
@@ -171,7 +182,7 @@ class RepoClonerPreparedTest {
         var result = run(null);
         assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
         assertTrue(result.note().startsWith("via "), result.note());
-        assertEquals(1, scripts.stream().filter(s -> s.contains("git clone")).count());
+        assertEquals(1, scripts.stream().filter(s -> s.contains(" clone ")).count());
         assertEquals(1, mounts.size());
         assertFalse(Files.exists(mounts.getFirst()), "preparation lease should be released after detach");
         var guest = tmp.resolve("guest");
@@ -183,6 +194,23 @@ class RepoClonerPreparedTest {
         git(guest, "pull", "--ff-only");
         assertEquals(git(remote, "rev-parse", "HEAD"), git(guest, "rev-parse", "HEAD"));
         assertTrue(scripts.stream().noneMatch(s -> s.contains("pack-objects")), "guest copy must not repack");
+    }
+
+    @Test void snapshotOwnedByAnotherUidIsTrustedForItsOwnCloneOnly() throws Exception {
+        foreignSnapshot = true;
+        guestConfig = tmp.resolve("guest.config");
+        Files.writeString(guestConfig, "");
+        var result = run(null);
+        assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
+        assertTrue(result.note().startsWith("via "), result.note());
+        assertEquals(1, foreignClones, "the clone must have seen a foreign owner");
+        // Exactly the mounted snapshot is trusted, never "*" or a wider path.
+        var exception = "git -c " + shellQuote("safe.directory=" + mounts.getFirst()) + " clone --no-hardlinks";
+        assertEquals(1, scripts.stream().filter(s -> s.contains(" clone ")).count());
+        assertTrue(scripts.stream().anyMatch(s -> s.contains(exception)), String.join("\n", scripts));
+        // The exception is on the command line only: neither the guest's global config nor the checkout keeps it.
+        assertEquals("", Files.readString(guestConfig));
+        assertFalse(git(tmp.resolve("guest"), "config", "--list", "--local").contains("safe.directory"));
     }
 
     @Test void incrementalSnapshotCopiesAllPacksAndVerifiesTheGuestBeforePriming() throws Exception {
@@ -220,7 +248,7 @@ class RepoClonerPreparedTest {
         var result = run(null);
         assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
         assertTrue(result.note().contains("checksum failed"), result.note());
-        assertEquals(2, scripts.stream().filter(s -> s.contains("git clone")).count());
+        assertEquals(2, scripts.stream().filter(s -> s.contains(" clone ")).count());
         assertEquals("", git(tmp.resolve("guest"), "fsck", "--full", "--no-dangling"));
         assertFalse(Files.exists(mounts.getFirst()));
     }
@@ -237,6 +265,6 @@ class RepoClonerPreparedTest {
         var result = run(null);
         assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
         assertTrue(corrupt ? result.note().contains("checksum failed") : result.note().startsWith("via "), result.note());
-        assertEquals(corrupt ? 2 : 1, scripts.stream().filter(s -> s.contains("git clone")).count());
+        assertEquals(corrupt ? 2 : 1, scripts.stream().filter(s -> s.contains(" clone ")).count());
     }
 }

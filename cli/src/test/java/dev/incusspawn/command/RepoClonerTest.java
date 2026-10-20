@@ -179,7 +179,7 @@ class RepoClonerTest {
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(incus).execInContainer(eq("test"), eq("agentuser"), argThat(script ->
-                script.contains("git clone --no-hardlinks") && script.contains("remote set-url origin")
+                script.contains("clone --no-hardlinks") && script.contains("remote set-url origin")
                         && !script.contains("pack-objects") && !script.contains("fetch --")));
         // Reference device cleaned up
         verify(incus).deviceRemove("test", "ref-repo");
@@ -239,7 +239,7 @@ class RepoClonerTest {
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(incus).execInContainer(eq("test"), eq("agentuser"), argThat(script ->
-                script.contains("git clone --no-hardlinks --branch 'feature/x'")
+                script.contains("clone --no-hardlinks --branch 'feature/x'")
                         && script.contains("remote set-url origin")));
     }
 
@@ -665,7 +665,7 @@ class RepoClonerTest {
                 primes.incrementAndGet();
                 if (mounted.get() > 0) primesWhileMounted.incrementAndGet();
             }
-            if (cmdLine.contains("git clone --no-hardlinks")) Thread.sleep(50); // slow local clones
+            if (cmdLine.contains("clone --no-hardlinks")) Thread.sleep(50); // slow local clones
             return OK;
         });
         doAnswer(inv -> { mounted.decrementAndGet(); return null; }).when(incus).deviceRemove(eq("test"), anyString());

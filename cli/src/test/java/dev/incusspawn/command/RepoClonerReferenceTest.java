@@ -96,7 +96,7 @@ class RepoClonerReferenceTest {
         doReturn(OK).when(incus).shellExec(eq(VM), any(String[].class));
         doAnswer(inv -> {
             String script = inv.getArgument(2);
-            if (script.contains("git clone")) {
+            if (script.contains(" clone ")) {
                 Thread.sleep(20); // let the clones overlap
                 if (script.contains("--no-hardlinks")) {
                     // Straight after the attach the mount point is still an empty directory.
@@ -161,7 +161,7 @@ class RepoClonerReferenceTest {
     }
 
     private static long viaReference(Build build) {
-        return build.clones().stream().filter(c -> c.contains("git clone --no-hardlinks")).count();
+        return build.clones().stream().filter(c -> c.contains("clone --no-hardlinks")).count();
     }
 
     private static List<String> referenceDevices(Build build) {
