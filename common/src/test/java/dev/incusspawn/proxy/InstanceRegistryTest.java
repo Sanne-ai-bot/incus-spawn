@@ -455,6 +455,32 @@ class InstanceRegistryTest {
     }
 
     @Test
+    void anIdentifiedCallerCarriesTheIncarnationOfTheListingThatNamedIt() {
+        // Its traffic is charged to that incarnation, never to one a later listing pairs with the name
+        var secret = InstanceSecret.generate();
+        var listing = new java.util.concurrent.atomic.AtomicReference<>("2026-10-01T09:00:00Z");
+        var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
+            @Override
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                return io.hyperfoil.tools.jjq.value.JqValues.parse("""
+                        [{"name":"box","status":"Running","created_at":"%s","config":{"%s":"10.0.0.5","%s":"%s"}}]
+                        """.formatted(listing.get(), ADDRESS_KEY, SECRET_KEY, InstanceSecret.sha256(secret)));
+            }
+        });
+        assertTrue(registry.refresh());
+        var identified = registry.identifyWithLineage("10.166.11.2", secret, true);
+        var view = registry.incarnations().view();
+        assertFalse(identified.mcpCaller(), "not stamped");
+
+        listing.set("2026-10-02T09:00:00Z");
+        assertTrue(registry.refresh());
+        assertEquals("2026-10-01T09:00:00Z", identified.caller().incarnation());
+        assertEquals(view, identified.caller().view());
+        assertEquals("2026-10-02T09:00:00Z",
+                registry.identifyWithLineage("10.166.11.2", secret, true).caller().incarnation());
+    }
+
+    @Test
     void aSecretSharedByACopyIdentifiesOnlyTheOneRunning() {
         // An incus copy made outside isx carries its source's hash until isx starts it
         var secret = InstanceSecret.generate();
@@ -526,8 +552,9 @@ class InstanceRegistryTest {
         var registry = new InstanceRegistry(daemon.client());
         registry.refresh();
 
-        assertEquals(new InstanceRegistry.Identified("agent", new InstanceRegistry.Lineage("tpl-agent", false)),
-                registry.identifyWithLineage("10.0.0.5", secret, false));
+        var agent = registry.identifyWithLineage("10.0.0.5", secret, false);
+        assertEquals("agent", agent.instanceName());
+        assertEquals(new InstanceRegistry.Lineage("tpl-agent", false), agent.lineage());
         assertTrue(registry.identifyWithLineage("10.0.0.6", secret, false).lineage().untrusted());
         assertTrue(registry.identifyWithLineage("10.0.0.7", secret, false).lineage().untrusted());
         assertTrue(registry.identifyWithLineage("10.0.0.8", secret, false).lineage().untrusted(),

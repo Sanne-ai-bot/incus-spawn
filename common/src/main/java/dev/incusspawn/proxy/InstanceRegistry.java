@@ -168,8 +168,13 @@ public final class InstanceRegistry {
         }
     }
 
-    /** An instance that proved who it is ({@link #identify}), with what it was built from. */
-    public record Identified(String instanceName, Lineage lineage) {}
+    /**
+     * An instance that proved who it is ({@link #identify}), with what it was built from and
+     * whether it may call {@code isx mcp}, all from the listing that identified it.
+     */
+    public record Identified(Caller caller, Lineage lineage, boolean mcpCaller) {
+        public String instanceName() { return caller.accounts().instanceName(); }
+    }
 
     /**
      * @param view from {@link #VIEWS}, so a later snapshot always has a higher one, even from a
@@ -214,8 +219,13 @@ public final class InstanceRegistry {
     public Caller resolve(String sourceAddress) {
         var current = snapshot;
         var instance = find(current.parsed(), sourceAddress);
-        return instance == null ? null : new Caller(instance,
-                current.parsed().incarnationByName().getOrDefault(instance.instanceName(), ""), current.view());
+        return instance == null ? null : callerOf(current, instance);
+    }
+
+    /** {@code instance} as {@code current} has it, with its incarnation and view from the same listing. */
+    private static Caller callerOf(Snapshot current, InstanceAccounts instance) {
+        return new Caller(instance, current.parsed().incarnationByName().getOrDefault(instance.instanceName(), ""),
+                current.view());
     }
 
     /** Address and every requested namespace proof checked against one immutable listing. */
@@ -240,8 +250,7 @@ public final class InstanceRegistry {
             // Every namespace's proof already verified, by finding its hash
             var proven = addressProven(current.parsed(), digests);
             instance = proven == null ? null : current.parsed().byAddress().get(proven);
-            return instance == null ? null : new Caller(instance,
-                    current.parsed().incarnationByName().getOrDefault(instance.instanceName(), ""), current.view());
+            return instance == null ? null : callerOf(current, instance);
         }
         if (instance == null) return null;
         var hashes = current.parsed().proofsByAddress().getOrDefault(normalize(address), Map.of());
@@ -249,7 +258,7 @@ public final class InstanceRegistry {
             var hash = hashes.get(entry.getKey());
             if (entry.getValue().stream().noneMatch(digest -> ProofVerifier.matches(digest, hash))) return null;
         }
-        return new Caller(instance, current.parsed().incarnationByName().getOrDefault(instance.instanceName(), ""), current.view());
+        return callerOf(current, instance);
     }
 
     /**
@@ -341,24 +350,23 @@ public final class InstanceRegistry {
      * otherwise -- the same refresh-and-retry advice as for {@link #identify} applies.
      */
     public String identifyMcpCaller(String sourceAddress, String presentedSecret, boolean bySecretAlone) {
-        var current = snapshot.parsed();
-        var instance = identify(current, sourceAddress, presentedSecret, bySecretAlone);
-        return instance != null && current.mcpCallers().contains(instance.instanceName())
-                ? instance.instanceName() : null;
+        var identified = identifyWithLineage(sourceAddress, presentedSecret, bySecretAlone);
+        return identified != null && identified.mcpCaller() ? identified.instanceName() : null;
     }
 
     /**
      * The instance a caller is, by {@link #identify}, with its {@link Lineage}: what a host
-     * route's {@code templates:} filter is decided on (#936). Null when {@link #identify} is,
-     * with the same refresh-and-retry advice.
+     * route's {@code templates:} filter is decided on (#936), and with the {@link Metadata#MCP_CALLER}
+     * stamp {@code isx mcp} is. Null when {@link #identify} is, with the same refresh-and-retry advice.
      */
     public Identified identifyWithLineage(String sourceAddress, String presentedSecret, boolean bySecretAlone) {
-        var current = snapshot.parsed();
-        var instance = identify(current, sourceAddress, presentedSecret, bySecretAlone);
+        var current = snapshot;
+        var instance = identify(current.parsed(), sourceAddress, presentedSecret, bySecretAlone);
         if (instance == null) return null;
         // Every identified instance owns an address, so has a lineage; fail closed regardless
-        var lineage = current.lineageByName().getOrDefault(instance.instanceName(), Lineage.UNKNOWN);
-        return new Identified(instance.instanceName(), lineage);
+        var lineage = current.parsed().lineageByName().getOrDefault(instance.instanceName(), Lineage.UNKNOWN);
+        return new Identified(callerOf(current, instance), lineage,
+                current.parsed().mcpCallers().contains(instance.instanceName()));
     }
 
     /**

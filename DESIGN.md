@@ -1890,6 +1890,7 @@ The registry indexes each running address owner's secret hash to its address; a 
 A failed listing clears that index with the proofs' (the address check keeps its last good listing), so an Incus outage does not keep a stopped instance's secret valid.
 The secret is 256 random bits rotated on every start, so it cannot be guessed; what is lost is the address check that makes a secret leaked to another instance useless, a protection the Mac never had.
 A caller at a known instance's address is still held to that instance's secret, and Linux keeps the address check.
+As with a proof, the secret's instance gets the request's traffic in `/activity`, counted once `McpBridge` or `HostRouteRelay` has named it.
 Restoring per-address identity in the appliance (#1584) would make this unnecessary again.
 
 *Where it lives.*
@@ -3351,7 +3352,7 @@ The pieces, and why each is the way it is:
   Like account pins it is the user's act, never an agent's: a guest can read its own `user.*` keys, never write them.
 - *How a caller is known: address and secret.*
   The proxy already identifies instances by source address (`security.ipv4_filtering` makes that trustworthy), and #934 added the per-start secret for exactly this kind of host-side service.
-  `InstanceRegistry.identifyMcpCaller()` passes only when the address, the secret in `X-Isx-Instance-Secret` and the stamp all name one instance, read from the listing the proxy makes anyway.
+  The proxy (`InstanceRegistry.identifyWithLineage()` and its `mcpCaller()`) admits a caller only when the address, the secret in `X-Isx-Instance-Secret` and the stamp all name one instance, read from the listing the proxy makes anyway.
   A refusal is decided before the body is read, and a refusal right after a start is worth one throttled refresh, as for `identify()`.
   A bearer token issued to the box (#859's sketch) was rejected: it is a secret the box would hold for good, where the start secret is useless from any other address and dies with the start.
 - *Where it is served: by the proxy, as a name.*
