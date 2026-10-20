@@ -96,10 +96,18 @@ final class ApiActivity {
      * instance when it is null; {@link Flow#end} counts it done.
      */
     Flow flow(String instance, String incarnation, long view, String domain) {
-        if (instance == null) return new Flow(unattributed, unattributed.begin(domain, clock.getAsLong()));
-        var started = new Tally[1];
-        var counters = charge(instance, incarnation, view, c -> started[0] = c.traffic.begin(domain, clock.getAsLong()));
-        return new Flow(counters.traffic, started[0]);
+        var flow = new Flow(domain);
+        flow.begin(instance, incarnation, view);
+        return flow;
+    }
+
+    /**
+     * A request or WebSocket to {@code domain} whose caller is not known yet: {@link Flow#begin}
+     * counts it once it is, and it counts as unattributed if it ends first. For a caller only its
+     * credential proof identifies (#1582): until that is checked it is not counted in flight.
+     */
+    Flow pendingFlow(String domain) {
+        return new Flow(domain);
     }
 
     /**
@@ -265,17 +273,35 @@ final class ApiActivity {
      * frame, a request's at its end) and counted when it ends.
      */
     final class Flow {
-        private final Traffic traffic;
-        private final Tally tally;
+        private final String domain;
+        /** Set once by {@link #begin}, under this flow's lock. */
+        private Traffic traffic;
+        private Tally tally;
         private final AtomicBoolean ended = new AtomicBoolean();
         private final AtomicLong requestBytes = new AtomicLong();
         private final AtomicLong responseBytes = new AtomicLong();
         private volatile Exchange call;
         private volatile long endedAt;
 
-        private Flow(Traffic traffic, Tally tally) {
-            this.traffic = traffic;
-            this.tally = tally;
+        private Flow(String domain) {
+            this.domain = domain;
+        }
+
+        /**
+         * Counts this flow as started, from {@code instance} as {@link ApiActivity#begin} names it,
+         * or from no known instance when it is null. Once: a later call does nothing.
+         */
+        synchronized void begin(String instance, String incarnation, long view) {
+            if (traffic != null) return;
+            if (instance == null) {
+                traffic = unattributed;
+                tally = unattributed.begin(domain, clock.getAsLong());
+                return;
+            }
+            var started = new Tally[1];
+            var counters = charge(instance, incarnation, view, c -> started[0] = c.traffic.begin(domain, clock.getAsLong()));
+            traffic = counters.traffic;
+            tally = started[0];
         }
 
         void addRequestBytes(long n) {
@@ -309,7 +335,11 @@ final class ApiActivity {
                 carried.end(now);
                 call = null;
             }
-            traffic.end(tally, now, requestBytes.get(), responseBytes.get());
+            synchronized (this) {
+                // Ended before anything named its caller: no known instance's
+                begin(null, null, 0);
+                traffic.end(tally, now, requestBytes.get(), responseBytes.get());
+            }
         }
     }
 

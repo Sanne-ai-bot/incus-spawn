@@ -1817,6 +1817,17 @@ So one `/1.0/instances?recursion=1` call maps every address to an instance and i
 An address that is not a known instance gets no injected credential; host-side traffic supplies its own authentication.
 A known instance that pins nothing receives the configured default only after proving its namespace.
 
+That premise does not hold on macOS (#1582).
+There the VM's `PROXY_MODE=remote` DNATs `:443` to the host and the VM bridge's `ipv4.nat` masquerades it, so every container reaches the proxy from the VM's one address, which is no instance.
+Before #1107 such a caller got the defaults; after it, nothing, so 0.4.0 served no credential at all on macOS.
+So on macOS a caller whose address is no known instance is identified by its proof instead: the registry indexes each verifier hash to the instance stamped with it, per namespace, and `InstanceRegistry.prove` takes the instance every presented proof names, refusing when they name different ones (`MitmProxy.proofMayIdentify`).
+A hash two instances share comes only from an `incus copy` made outside isx, and is decided as a shared address is: the one running, else nobody.
+The host's own traffic (loopback, or from the listener's address) is never identified this way, and a caller at a known instance's address is always held to that instance's proofs.
+Linux keeps the strict address check, which is what stops a proof replayed from another instance; that protection never existed on macOS, where the address identifies nothing.
+Matching the VM's DHCP lease to accept only the VM's address was rejected: it adds nothing an address that identifies nothing could give, and an unreadable leases file would reproduce this failure.
+The proof's instance also gets the request's traffic in `/activity`: a flow from such a caller is counted once `authorize` has named it, not in flight while its proof is checked.
+A PROXY-protocol relay in the appliance restoring per-container addresses is #1584.
+
 **Builds are served their template's accounts (#903).**
 A build container used to get a DHCP address, so the proxy could not tell it from host traffic and served every namespace's default, whatever the template's `accounts:` chose.
 `repos:` were cloned and `prime` ran with the user's default token -- for a project-local template, handing that identity to code the cloned repository controls -- and `GhSetup` baked the default account's name next to the template account's email, stamped as the template account so nothing ever repaired it.
@@ -1944,6 +1955,8 @@ Claude's domains still require every namespace their carriers declare, and the `
 The authorization and account resolution use the same configuration snapshot even if a reload finishes during a registry refresh.
 A missing, static, malformed, stale, cross-instance or cross-namespace proof preserves incoming authentication, host, path, query and body semantics.
 An unknown address receives no injected defaults, including host-originated traffic; host tools must use their own credentials.
+On macOS an unknown address other than the host's may be identified by its proof alone (#1582, "How the proxy tells callers apart").
+A refusal's warning says which case it is: a proof from an address that is no known instance was never checked, which nothing inside an instance fixes, while one that was checked and does not match points to renewing it.
 A valid proof authorizes account selection but creates no credential grant.
 A valid proof for a missing or incompatible selected account still fails with the existing account diagnostic.
 
@@ -4009,8 +4022,8 @@ Recording a differing override where the CLI could read it (a `proxy-gateway-ip`
 It is the path to take if a second bridge or a dedicated proxy interface ever becomes a real request.
 Saving `isx proxy start --gateway-ip` into `config.yaml` was rejected too: a command must not rewrite the user's secrets-bearing file to remember an option.
 On macOS the address the proxy listens on is the host's end of the VM link, so the block, which dnsmasq serves inside the VM, still points at the VM's own bridge gateway.
-There `--gateway-ip` is not written anywhere but it is the bind address of the credential-injecting listener, and a caller the proxy cannot place is served the default accounts (build containers and host traffic rely on that).
-So an override of `0.0.0.0` or a LAN address would inject the user's credentials into any host's requests.
+There `--gateway-ip` is not written anywhere but it is the bind address of the credential-injecting listener, and a caller the proxy cannot place by address is identified by its credential proof alone (#1582).
+So an override of `0.0.0.0` or a LAN address would let any host that obtained an instance's proof spend that instance's credentials.
 On macOS the override must therefore be exactly the host's end of the VM link that `VmNetwork.discoverHostBridgeIp()` finds, and anything else is `EXIT_CONFIG`.
 When no VM bridge is found the override cannot be checked and the proxy stops as it would without one (#937).
 Refusing only wildcard and public addresses was the alternative, rejected because a private LAN address is just as reachable from other hosts.

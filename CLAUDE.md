@@ -164,6 +164,7 @@ Missing declarations warn on proxy configuration load and during tool validation
 Single-tool validation checks its own namespace; the proxy checks borrowed namespaces against all loaded tools.
 The proxy checks address and namespace proof before account resolution, HTTP or WebSocket injection, Vertex translation or `inherit` substitution (#1107).
 Missing or incorrect proofs preserve the incoming authentication and destination; unknown addresses get no defaults.
+On macOS, where the VM NATs every container to its own address, a non-host caller at an unknown address is the instance its proofs name (#1582); Linux keeps the address check.
 Verifier hashes change on creation, explicit reset or declaration changes; credentialed builds receive and revoke their own temporary proofs.
 Project create and update also use temporary proofs, preserving inherited account pins, baked-identity checks and untrusted host-route lineage, with cleanup on success or failure.
 Reset invalidates old prefetched generations before its metadata write, and guest proof delivery holds the same lock through its boot stamp.

@@ -265,6 +265,22 @@ class ApiActivityTest {
     }
 
     @Test
+    void aPendingFlowCountsOnceForWhoeverBeginsItAndUnattributedIfItEndsFirst() {
+        // #1582: a caller only its proof names is counted once the proof is checked
+        var activity = new ApiActivity(new AtomicLong(1_000)::get);
+        var named = activity.pendingFlow("github.com");
+        assertEquals(ProxyActivity.Traffic.NONE, activity.snapshot(Map.of(), 0).unattributed(), "nothing before it begins");
+        named.begin("a", "", 0);
+        named.begin(null, null, 0);
+        end(named, 1, 2);
+        end(activity.pendingFlow("github.com"), 3, 4);
+
+        var read = activity.snapshot(Map.of("a", ""), 0);
+        assertEquals(new ProxyActivity.Counts(1, 0, Instant.ofEpochMilli(1_000), 1, 2), read.of("a").traffic().total());
+        assertEquals(new ProxyActivity.Counts(1, 0, Instant.ofEpochMilli(1_000), 3, 4), read.unattributed().total());
+    }
+
+    @Test
     void aCallerThatIsNoKnownInstanceCountsAsUnattributed() {
         var now = new AtomicLong(1_000);
         var activity = new ApiActivity(now::get);

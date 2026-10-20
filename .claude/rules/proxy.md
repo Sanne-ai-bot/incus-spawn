@@ -109,6 +109,9 @@ Key design:
   `lookup()` must stay non-blocking (event loop); refreshes go through `executeBlocking` with single-flight, like `resolveHost`/`acquireVertexAccessToken`.
   Normalize `::ffff:` mapped addresses or every lookup misses and credential proofs fail.
   An unknown address gets no injected credential; host traffic must supply its own authentication.
+  Except on macOS (#1582), where the VM NATs every container to its own address: there `MitmProxy.proofMayIdentify` lets a non-host caller at an unknown address be the instance its proofs name (`InstanceRegistry.prove(address, digests, true)`, the snapshot's `addressByProof`; a hash two running instances share names nobody).
+  Never widen that gate to Linux, where the address check is what stops a proof replayed from another instance.
+  Such a caller's traffic flow starts pending (`ApiActivity.pendingFlow`) and is begun for the instance once `authorize` names it.
   Build containers are **not** unknown (#903, #1107): `BuildAccounts.start` claims them an address (`InstanceNetwork.assignBuildAddress`, filtering on, guest keeps DHCP, leased addresses skipped) and stamps the template's pins before the first start, clears every `account-identity` stamp copied from the parent (else `refuseIfUnservable` would refuse the build its own template's account, or a changed default) -- reading them first, since `settleIdentities` needs them after tool setup and `BuildAccounts.identityStamps` puts back the ones the build does not re-stamp -- and signals the proxy.
   `releaseBuildAddress` gives the address back once the template is stopped.
   Builds using configured defaults also need a registered address and fresh proofs before authenticated steps run.

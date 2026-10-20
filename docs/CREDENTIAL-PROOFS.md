@@ -3,6 +3,7 @@
 The proxy adds an instance's credentials to a request only when the request carries that instance's proof: a token isx gives each instance, per credential namespace, in place of the credential.
 This page says what the proofs reach, how to share or revoke one, and what to do after an upgrade.
 An instance's address selects its accounts; its current namespace proof authorizes their use.
+On macOS every container reaches the proxy from the VM's address, so there the proof alone identifies the instance: a proof copied to another instance is accepted there, which on Linux the address check refuses.
 A nested container sharing that address receives no credential unless its parent deliberately shares a proof.
 An independent inner credential passes through with its destination, path, query and body unchanged, including through an outer Claude account using a different authentication mode.
 
