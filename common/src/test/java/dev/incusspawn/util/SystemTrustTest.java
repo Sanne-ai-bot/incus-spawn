@@ -1,6 +1,5 @@
 package dev.incusspawn.util;
 
-import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import dev.incusspawn.DerEncoder;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -9,13 +8,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -56,21 +52,7 @@ class SystemTrustTest {
         otherCa = caUnder(temp.resolve("other"));
 
         var leaf = inspectingCa.generateDomainCert("localhost");
-        var keys = KeyStore.getInstance("PKCS12");
-        keys.load(null, null);
-        keys.setKeyEntry("leaf", leaf.key(), new char[0], new Certificate[] {leaf.cert(), inspectingCa.caCert()});
-        var kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-        kmf.init(keys, new char[0]);
-        var tls = SSLContext.getInstance("TLS");
-        tls.init(kmf.getKeyManagers(), null, null);
-
-        server = HttpsServer.create(new InetSocketAddress(InetAddress.getByName("localhost"), 0), 0);
-        server.setHttpsConfigurator(new HttpsConfigurator(tls));
-        server.createContext("/", exchange -> {
-            exchange.sendResponseHeaders(204, -1);
-            exchange.close();
-        });
-        server.start();
+        server = CertChain.serve(leaf.key(), leaf.cert(), inspectingCa.caCert());
     }
 
     @AfterEach
@@ -173,6 +155,38 @@ class SystemTrustTest {
         assertEquals(1, SystemTrust.anchors(bundle, keychain).size());
     }
 
+    @Test
+    void aChainThroughADeniedIntermediateIsRefused() throws Exception {
+        // macOS refuses a chain holding any denied certificate, and an intermediate is never an anchor (#1552)
+        var chain = CertChain.create("deny intermediate", "localhost");
+        var bundle = Files.writeString(temp.resolve("cert.pem"), DerEncoder.toPem("CERTIFICATE", chain.root().getEncoded()));
+        var publicServer = chain.serve();
+        try {
+            assertEquals(204, get(SystemTrust.sslContext(bundle, MacKeychainTrust.Trust.NONE), "localhost", publicServer));
+            var deniedIntermediate = new MacKeychainTrust.Trust(List.of(), Set.of(MacKeychainTrust.sha1(chain.intermediate())), null);
+            assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(bundle, deniedIntermediate), "localhost", publicServer));
+            var deniedLeaf = new MacKeychainTrust.Trust(List.of(), Set.of(MacKeychainTrust.sha1(chain.leaf())), null);
+            assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(bundle, deniedLeaf), "localhost", publicServer));
+        } finally {
+            publicServer.stop(0);
+        }
+    }
+
+    @Test
+    void withDeniesTheHostNameIsStillChecked() throws Exception {
+        // The deny check wraps the JDK's trust manager: it must keep its endpoint identification
+        // A valid chain to a trusted root, for another host (aChainThroughADeniedIntermediateIsRefused shows such a chain validates)
+        var chain = CertChain.create("host name", "elsewhere.example");
+        var bundle = Files.writeString(temp.resolve("cert.pem"), DerEncoder.toPem("CERTIFICATE", chain.root().getEncoded()));
+        var publicServer = chain.serve();
+        try {
+            var unrelatedDeny = new MacKeychainTrust.Trust(List.of(), Set.of(MacKeychainTrust.sha1(otherCa.caCert())), null);
+            assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(bundle, unrelatedDeny), "localhost", publicServer));
+        } finally {
+            publicServer.stop(0);
+        }
+    }
+
     private static javax.net.ssl.TrustManager jdkTrustManager() throws Exception {
         var jdk = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         jdk.init((KeyStore) null);
@@ -180,8 +194,12 @@ class SystemTrustTest {
     }
 
     private int get(SSLContext tls) throws Exception {
+        return get(tls, "localhost", server);
+    }
+
+    private static int get(SSLContext tls, String host, HttpsServer server) throws Exception {
         try (var client = HttpClient.newBuilder().sslContext(tls).build()) {
-            var request = HttpRequest.newBuilder(URI.create("https://localhost:" + server.getAddress().getPort() + "/")).build();
+            var request = HttpRequest.newBuilder(URI.create("https://" + host + ":" + server.getAddress().getPort() + "/")).build();
             return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
         }
     }

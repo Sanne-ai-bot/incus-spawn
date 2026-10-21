@@ -1235,11 +1235,15 @@ A `<real>` result of 3 is a deny, as macOS reads any number.
 An entry restricted to a host name, an application or a key usage is skipped when it trusts and decides when it denies, so a constraint only ever narrows what isx trusts.
 `SystemTrust` adds the admin-trusted certificates to the CLI's JDK store and bundle, and `Upstream.upstreamTrust()` gives the proxy the bundle's and the Keychain's as values.
 A certificate an administrator denied for SSL is removed from every source, the JDK store and the bundle included, which only narrows.
-This does not match macOS in two places, where isx still trusts what macOS refuses (#1552).
-Neither is a regression, since isx applied no denies at all before #1467.
+Removing it covers a root only: neither an intermediate nor a server (leaf) certificate is ever an anchor, while macOS refuses a deny anywhere in the chain.
+So whenever the Keychain denies anything, `DeniedChainTrustManager` wraps the JDK's PKIX trust manager, in the CLI (`SystemTrust.sslContext`) and in the proxy's three Vert.x clients (`Upstream.refusingDenied`, through `TrustOptions.wrap`), and after the JDK's validation refuses a chain holding a denied certificate (#1552).
+It checks the chain the server presented, not the path PKIX built, which the JDK does not expose; that is stricter, since an unused denied certificate a server sends is refused too.
+The rest of the built path is anchors, from which every denied certificate is already removed, because the JDK fetches no intermediate itself: AIA fetching (`com.sun.security.enableAIAcaIssuers`) is off by default and isx never turns it on.
+The wrapper is an `X509ExtendedTrustManager` passing each `SSLEngine` and `Socket` overload to the JDK's own, so the host-name check stays the JDK's; `SystemTrustTest` and `UpstreamTrustTest` check that a wrong host is still refused.
+With no denies, on Linux always, nothing is wrapped and the proxy keeps its `PemTrustOptions`.
+This does not match macOS in one place, where isx still trusts what macOS refuses (#1552).
+It is not a regression, since isx applied no denies at all before #1467.
 
-- *A denied intermediate or server certificate*: a deny removes a certificate from the anchors, and neither an intermediate nor a server (leaf) certificate is ever one, so a chain holding either to a trusted root still validates; macOS rejects a deny anywhere in the chain.
-  Fixing it takes a trust manager that checks every certificate of a validated chain, in the CLI and in the proxy's Vert.x clients.
 - *User-domain denies*: macOS gives the user's own trust settings precedence over the admin domain's, so a root a user marked "Never Trust" is refused there; isx does not read the user domain, so it keeps trusting that root.
   Reading only the user domain's denies would only narrow, but it would let any process running as the user break isx's TLS by denying roots.
 
@@ -1258,6 +1262,7 @@ Why not the alternatives:
   Corporate inspection agents and MDM install into the System keychain; a user whose CA is only in the login keychain gets the `sudo security add-trusted-cert -d` remedy from `isx doctor` and the README.
 - *Every certificate in the System keychain* (`find-certificate -a` alone): it holds certificates nobody trusted, and some an administrator distrusted.
 - *The system domain* (Apple's roots, `SystemRootCertificates.keychain`): they overlap `/etc/ssl/cert.pem` and the JDK store, and an inspection CA is never among them.
+- *Its own `CertPathBuilder` with a checker rejecting denied certificates*, to refuse a denied intermediate: it would build around one as macOS does, but it re-implements what JSSE checks (algorithm constraints, revocation settings, the host name), a larger surface than one check after the JDK's.
 - *The JDK's `KeychainStore`*: whether a native image can use it is unproven, and its reading of trust settings is the JDK's, not one isx can test on Linux.
 - *A `config.yaml` file of extra CAs*: a manual step for every user, which the Keychain already records; it stays open if a need appears.
 

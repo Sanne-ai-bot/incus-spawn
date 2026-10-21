@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.DerEncoder;
+import dev.incusspawn.util.DeniedChainTrustManager;
 import dev.incusspawn.util.MacKeychainTrust;
 import dev.incusspawn.util.SystemTrust;
 import io.vertx.core.Future;
@@ -644,12 +645,31 @@ class Upstream {
 
     /**
      * The system CA bundle, plus a benchmark stub's certificate when one is configured. On macOS
-     * the Keychain's admin-trusted certificates join the bundle's, less what an administrator
-     * denied ({@link SystemTrust#upstreamAnchors}, #1467); they are read once, so a Keychain change
-     * takes a proxy restart, as a bundle change does.
+     * the Keychain's admin-trusted certificates join the bundle's, less what the Keychain denied
+     * ({@link SystemTrust#upstreamAnchors}, #1467), and a chain holding a denied certificate is
+     * refused ({@link #refusingDenied}); they are read once, so a Keychain change takes a proxy
+     * restart, as a bundle change does.
      */
-    private io.vertx.core.net.PemTrustOptions upstreamTrust() {
-        return upstreamTrust(SystemTrust.findBundle(), SystemTrust.keychain(), extraUpstreamTrustPem);
+    private io.vertx.core.net.TrustOptions upstreamTrust() {
+        var keychain = SystemTrust.keychain();
+        return refusingDenied(vertx, upstreamTrust(SystemTrust.findBundle(), keychain, extraUpstreamTrustPem), keychain);
+    }
+
+    /**
+     * {@code anchors} as they are when the Keychain denies nothing; otherwise a trust manager over
+     * them that also refuses a chain holding a denied certificate, an intermediate or a leaf, which
+     * removing it from the anchors cannot (#1552).
+     */
+    static io.vertx.core.net.TrustOptions refusingDenied(Vertx vertx, io.vertx.core.net.PemTrustOptions anchors,
+                                                         MacKeychainTrust.Trust keychain) {
+        if (anchors == null || keychain.denied().isEmpty()) return anchors;
+        try {
+            var managers = DeniedChainTrustManager.wrap(anchors.getTrustManagerFactory(vertx).getTrustManagers(), keychain);
+            // The PKIX factory makes exactly one
+            return io.vertx.core.net.TrustOptions.wrap(managers[0]);
+        } catch (Exception e) {
+            throw new IllegalStateException("No upstream trust: " + e.getMessage(), e);
+        }
     }
 
     /** With nothing from the Keychain, the bundle as a file, as always; otherwise its certificates with the Keychain's. */

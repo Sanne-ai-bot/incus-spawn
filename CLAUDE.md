@@ -185,7 +185,7 @@ An isx running inside an instance shares that instance's grant for a namespace o
 See `.claude/rules/proxy.md` and DESIGN.md.
 
 **Host trust** (#1437): isx's own HTTPS, CLI and proxy upstream alike, trusts the host's system CA bundle through `SystemTrust`.
-On macOS it adds what an administrator trusts for SSL in the Keychain's admin domain and drops what one denied, from every source (`MacKeychainTrust`, #1467); the user's login keychain is never read.
+On macOS it adds what an administrator trusts for SSL in the Keychain's admin domain and drops what one denied, from every source, refusing a chain that holds it (`MacKeychainTrust`, #1467; `DeniedChainTrustManager`, #1552); the user's login keychain is never read.
 See DESIGN.md "Host trust on macOS: the admin domain only".
 
 **Host CA propagation** is opt-in via `host-ca: { propagate: true }` in `config.yaml`.
