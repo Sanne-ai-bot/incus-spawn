@@ -310,12 +310,15 @@ public class DoctorCommand extends BaseCommand {
     static Finding keychainTrustFinding(MacKeychainTrust.Trust trust) {
         if (trust.problem() != null) {
             var trusts = trust.defaultRootsDenied()
-                    ? "isx trusts no CA: an administrator denied the default roots and no Keychain CA could be read"
+                    ? "isx trusts no CA: the Keychain denies the default roots and no Keychain CA could be read"
                     : "isx trusts /etc/ssl/cert.pem and the CA list it was built with, no Keychain CA"
-                        + (trust.denied().isEmpty() ? "" : ", less the " + trust.denied().size() + " an administrator denied");
+                        + (trust.denied().isEmpty() ? "" : ", less the " + trust.denied().size() + " the Keychain denies");
             return Finding.warn("Keychain trust settings unreadable", "(" + trust.problem() + "; " + trusts + ")", null);
         }
-        var denied = trust.denied().isEmpty() ? "" : "; " + trust.denied().size() + " denied by an administrator";
+        // A deny of the default roots leaves isx trusting the Keychain's CAs alone: say so, and where to look
+        var denies = (trust.defaultRootsDenied() ? "the default roots" + (trust.denied().isEmpty() ? "" : " and ") : "")
+                + (trust.denied().isEmpty() ? "" : trust.denied().size());
+        var denied = denies.isEmpty() ? "" : "; " + denies + " denied (security dump-trust-settings, with -d for an administrator's)";
         if (trust.trusted().isEmpty()) {
             return Finding.note("Keychain CAs trusted for TLS", "(none" + denied + "; a CA trusted only in a login keychain is not used: "
                     + "trust it system-wide with sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain <ca.pem>)");

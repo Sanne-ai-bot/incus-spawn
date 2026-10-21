@@ -1223,11 +1223,12 @@ It checks the chain the server presented, not the path PKIX built, which the JDK
 The rest of the built path is anchors, from which every denied certificate is already removed, because the JDK fetches no intermediate itself: AIA fetching (`com.sun.security.enableAIAcaIssuers`) is off by default and isx never turns it on.
 The wrapper is an `X509ExtendedTrustManager` passing each `SSLEngine` and `Socket` overload to the JDK's own, so the host-name check stays the JDK's; `SystemTrustTest` and `UpstreamTrustTest` check that a wrong host is still refused.
 With no denies, on Linux always, nothing is wrapped and the proxy keeps its `PemTrustOptions`.
-This does not match macOS in one place, where isx still trusts what macOS refuses (#1552).
-It is not a regression, since isx applied no denies at all before #1467.
 
-- *User-domain denies*: macOS gives the user's own trust settings precedence over the admin domain's, so a root a user marked "Never Trust" is refused there; isx does not read the user domain, so it keeps trusting that root.
-  Reading only the user domain's denies would only narrow, but it would let any process running as the user break isx's TLS by denying roots.
+The user's own trust domain is read for its denies alone (`security trust-settings-export` without `-d`, a fourth run under the same deadline, #1552): macOS refuses what a user marked "Never Trust", so isx does too, a certificate or the default roots as a whole.
+Its trusts are never used, since no certificate body is passed with it; a user's trust that macOS lets override an administrator's deny does not override it here, which is narrower than macOS.
+The user domain is any user-level process's to write, so it can only narrow: when it cannot be read (none exists, a timeout, a plist that does not parse), the admin domain's result stands, and a failed admin read keeps the user's denies.
+The cost is availability: such a process can deny the roots isx needs and break its TLS, and denying every one stops the proxy from starting.
+It could already kill the proxy or edit `~/.config/incus-spawn`, so this gives it nothing new; the proxy's error and `isx doctor` name `security dump-trust-settings`, with and without `-d`, to find the deny.
 
 A deny of the default roots as a whole (`kSecTrustSettingsDefaultRootCertSetting`) drops the JDK store and the bundle, which stand for them, leaving only what an administrator trusts.
 Without a bundle the proxy keeps the JDK store, as before, with the Keychain's certificates added to it.
@@ -1236,14 +1237,15 @@ When only the System keychain's certificates cannot be read, by an exit status, 
 When the Keychain's denies leave the proxy nothing to trust, it refuses to start rather than fall back to the JDK store, which would trust the denied roots again.
 The plist is parsed with its DOCTYPE dropped and any other refused, so no DTD or entity is ever resolved.
 The proxy reads the Keychain once, at start: a Keychain change takes `isx proxy restart`, as a bundle change does.
-The CLI reads it for each TLS context it builds, which only network commands do (up to three `security` runs at once, tens of milliseconds), never branch, start or shell.
+The CLI reads it for each TLS context it builds, which only network commands do (up to four `security` runs at once, tens of milliseconds), never branch, start or shell.
 
 Why not the alternatives:
-- *The user domain too* (a CA a user marked "Always Trust" in their login keychain): anything running as the user can ask for that trust, while the admin domain takes root, as the Linux system store does.
+- *The user domain's trusts too* (a CA a user marked "Always Trust" in their login keychain): anything running as the user can ask for that trust, while the admin domain takes root, as the Linux system store does.
   A CA isx trusts can read every credential the proxy injects, so trusting one should take an administrator.
   Corporate inspection agents and MDM install into the System keychain; a user whose CA is only in the login keychain gets the `sudo security add-trusted-cert -d` remedy from `isx doctor` and the README.
 - *Every certificate in the System keychain* (`find-certificate -a` alone): it holds certificates nobody trusted, and some an administrator distrusted.
 - *The system domain* (Apple's roots, `SystemRootCertificates.keychain`): they overlap `/etc/ssl/cert.pem` and the JDK store, and an inspection CA is never among them.
+- *No user-domain denies* (the admin domain alone, as before #1552): isx kept trusting a root a user refused while Safari and curl refuse it, to protect an availability a same-user process can take away anyway.
 - *Its own `CertPathBuilder` with a checker rejecting denied certificates*, to refuse a denied intermediate: it would build around one as macOS does, but it re-implements what JSSE checks (algorithm constraints, revocation settings, the host name), a larger surface than one check after the JDK's.
 - *The JDK's `KeychainStore`*: whether a native image can use it is unproven, and its reading of trust settings is the JDK's, not one isx can test on Linux.
 - *A `config.yaml` file of extra CAs*: a manual step for every user, which the Keychain already records; it stays open if a need appears.
@@ -1251,7 +1253,7 @@ Why not the alternatives:
 `KeychainTrustMacTest` checks this against the real Keychain on the `unit-tests-macos` runner, which is discarded after the job (it runs only when the job sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`).
 `macos-keychain-trust.yml` builds the native CLI on macOS weekly and on a change to this code, and `release.yml` smoke-tests each released macOS binary, through `isx doctor --format=json`.
 MDM-delivered CAs cannot be reproduced on a runner, since a configuration profile cannot be installed headless.
-Each check uses a CA of its own and never changes or removes a trust setting: on a runner that waited for an authorization nobody gives (#1515), as user-domain trust always does, so the user domain is left out of the checks too.
+Each check uses a CA of its own and never changes or removes a trust setting: on a runner that waited for an authorization nobody gives (#1515), as user-domain trust always does, so the user domain is left out of the checks too; `MacKeychainTrustTest` covers its denies with plists on every platform.
 
 **Redirect rule cleanup:** `isx proxy uninstall` removes the systemd service **and** cleans up the PREROUTING redirect rule and bridge DNS overrides unconditionally — even if the service removal itself fails.
 `ProxyConfig.clearRedirectRules()` attempts both firewalld and UFW independently (not else-if) so that a system with firewalld installed but inactive still reaches UFW cleanup.

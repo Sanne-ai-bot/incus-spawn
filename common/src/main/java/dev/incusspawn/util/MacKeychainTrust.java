@@ -28,6 +28,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -35,22 +36,24 @@ import java.util.concurrent.TimeUnit;
  * (or MDM) trusts for SSL in the <em>admin</em> trust domain, which is where
  * {@code sudo security add-trusted-cert -d} and TLS-inspection agents put their CA (#1467).
  * <p>
- * Only the admin domain counts, so trusting a CA takes root, as it does on Linux. The user
- * domain (a CA a user marked "Always Trust" in their login keychain) is not read: anything
- * running as the user can ask for that, and a CA isx trusts can read what the proxy injects.
- * Apple's own roots (the system domain) are not read either; the JDK store and the PEM bundle
+ * Only the admin domain can trust, so trusting a CA takes root, as it does on Linux. The user
+ * domain (a CA a user marked "Always Trust" in their login keychain) is read for its denies alone:
+ * anything running as the user can ask for that trust, and a CA isx trusts can read what the proxy
+ * injects, while a deny only narrows.
+ * Apple's own roots (the system domain) are not read; the JDK store and the PEM bundle
  * already cover the public roots, and an inspection CA is never among them.
  * <p>
  * A failure (no {@code security}, a timeout, output that does not parse) adds nothing. When only
  * the certificates cannot be read, the trust settings' denies are kept, since they need no
- * certificate bodies; when the settings themselves cannot be read, nothing is denied either.
+ * certificate bodies; when the settings themselves cannot be read, nothing is denied either. The
+ * two domains fail apart: either one's denies apply when the other cannot be read.
  */
 public final class MacKeychainTrust {
 
     /**
      * Admin-trusted certificates, the SHA-1 (upper-case hex) of every certificate an administrator
-     * denied for SSL, and whether one denied the default roots as a whole (then the JDK store and
-     * the bundle, which stand for them, are not trusted either).
+     * or the user denied for SSL, and whether one denied the default roots as a whole (then the JDK
+     * store and the bundle, which stand for them, are not trusted either).
      */
     public record Trust(List<X509Certificate> trusted, Set<String> denied, boolean defaultRootsDenied, String problem) {
         public static final Trust NONE = new Trust(List.of(), Set.of(), null);
@@ -60,7 +63,7 @@ public final class MacKeychainTrust {
             this(trusted, denied, false, problem);
         }
 
-        /** Whether an administrator denied {@code cert} for SSL. */
+        /** Whether an administrator or the user denied {@code cert} for SSL. */
         public boolean denies(X509Certificate cert) {
             return !denied.isEmpty() && denied.contains(sha1(cert));
         }
@@ -91,35 +94,36 @@ public final class MacKeychainTrust {
 
     private MacKeychainTrust() {}
 
-    /** Reads the admin domain's trust settings and the keychains' certificates. Never throws. */
+    /** Reads the admin domain's trust settings, the user domain's denies and the keychains' certificates. Never throws. */
     public static Trust read() {
         var temps = new ArrayList<Path>();
         var running = new ArrayList<Process>();
         try {
-            // A file the user alone can read: trust-settings-export takes no stdout
-            var export = temp(temps, "isx-trust-settings", ".plist");
-            // Certificate bodies come from the user's login keychain too: `add-trusted-cert -d` without
-            // -k stores a certificate there. That trusts nothing by itself; only the admin domain's
-            // settings, which take root to write, decide what is trusted.
-            // The login keychain is read on its own, so one a user-level process broke cannot fail the
-            // System keychain's read too.
-            var login = Path.of(System.getProperty("user.home"), "Library", "Keychains", "login.keychain-db");
             // Started together, so the wait is the slowest one's, not the sum
             var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TIMEOUT_SECONDS);
-            var exporting = start(temps, running, deadline, SECURITY, "trust-settings-export", "-d", export.toString());
-            var findingSystem = start(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", SYSTEM_KEYCHAIN);
-            var findingLogin = Files.isRegularFile(login)
-                    ? start(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", login.toString()) : null;
-            var exported = exporting.finish();
-            if (exported.exit() != 0) {
-                // With no admin trust settings at all, there is nothing to trust or deny
-                if (exported.output().contains("No Trust Settings")) return Trust.NONE;
-                return Trust.failed("security trust-settings-export exited " + exported.exit() + ": " + exported.output().strip());
+            // The domains fail apart, from the start: one that cannot even be started keeps the other's denies
+            Callable<String> user;
+            try {
+                // A file the user alone can read: trust-settings-export takes no stdout. Without -d:
+                // the user's own domain, read for its denies alone
+                var userExport = temp(temps, "isx-user-trust-settings", ".plist");
+                var exportingUser = start(temps, running, deadline, SECURITY, "trust-settings-export", userExport.toString());
+                user = () -> {
+                    outputOf(exportingUser);
+                    return Files.readString(userExport);
+                };
+            } catch (IOException e) {
+                user = () -> { throw e; };
             }
-            return evaluate(Files.readString(export), () -> certificatesOf(findingSystem), loginCertificates(findingLogin));
+            Trust admin;
+            try {
+                admin = admin(temps, running, deadline);
+            } catch (Exception e) {
+                admin = failed(e);
+            }
+            return withUserDenies(admin, user);
         } catch (Exception e) {
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            return Trust.failed(e.getClass().getSimpleName() + ": " + e.getMessage());
+            return failed(e);
         } finally {
             // One that timed out was ended already; the other must not outlive the failure
             running.forEach(Process::destroyForcibly);
@@ -131,6 +135,51 @@ public final class MacKeychainTrust {
                 }
             }
         }
+    }
+
+    /** The admin domain's trust settings applied to the keychains' certificates. */
+    private static Trust admin(List<Path> temps, List<Process> running, long deadline) throws Exception {
+        var export = temp(temps, "isx-trust-settings", ".plist");
+        // Certificate bodies come from the user's login keychain too: `add-trusted-cert -d` without
+        // -k stores a certificate there. That trusts nothing by itself; only the admin domain's
+        // settings, which take root to write, decide what is trusted.
+        // The login keychain is read on its own, so one a user-level process broke cannot fail the
+        // System keychain's read too.
+        var login = Path.of(System.getProperty("user.home"), "Library", "Keychains", "login.keychain-db");
+        var exporting = start(temps, running, deadline, SECURITY, "trust-settings-export", "-d", export.toString());
+        var findingSystem = start(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", SYSTEM_KEYCHAIN);
+        var findingLogin = Files.isRegularFile(login)
+                ? start(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", login.toString()) : null;
+        var exported = exporting.finish();
+        if (exported.exit() != 0) {
+            // With no admin trust settings at all, there is nothing to trust or deny
+            if (exported.output().contains("No Trust Settings")) return Trust.NONE;
+            return Trust.failed("security trust-settings-export exited " + exported.exit() + ": " + exported.output().strip());
+        }
+        return evaluate(Files.readString(export), () -> certificatesOf(findingSystem), loginCertificates(findingLogin));
+    }
+
+    /**
+     * {@code admin} with the user domain's denies added, as macOS refuses what a user marked "Never
+     * Trust" (#1552). Its trusts are never used: no certificate body is passed, so it cannot trust,
+     * and a user's trust that macOS lets override an administrator's deny does not override it here.
+     * The user domain is anyone's running as the user to write, so it only ever narrows: when it
+     * cannot be read (none exists, a timeout, output that does not parse), {@code admin} stands.
+     */
+    static Trust withUserDenies(Trust admin, Callable<String> userDomain) {
+        Trust user;
+        try {
+            user = evaluate(userDomain.call(), List.of());
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            return admin;
+        }
+        if (user.denied().isEmpty() && !user.defaultRootsDenied()) return admin;
+        var trusted = new ArrayList<>(admin.trusted());
+        trusted.removeIf(user::denies);
+        var denied = new TreeSet<>(admin.denied());
+        denied.addAll(user.denied());
+        return new Trust(List.copyOf(trusted), Set.copyOf(denied), admin.defaultRootsDenied() || user.defaultRootsDenied(), admin.problem());
     }
 
     /**
@@ -152,9 +201,20 @@ public final class MacKeychainTrust {
 
     /** A {@code find-certificate} run's certificates; throws when it fails, times out or prints something else. */
     private static List<X509Certificate> certificatesOf(Running finding) throws Exception {
-        var run = finding.finish();
+        return certificates(outputOf(finding));
+    }
+
+    /** A run's output; throws when it exits with an error or times out. */
+    private static String outputOf(Running running) throws IOException, InterruptedException {
+        var run = running.finish();
         if (run.exit() != 0) throw new IOException("exited " + run.exit() + ": " + run.output().strip());
-        return certificates(run.output());
+        return run.output();
+    }
+
+    /** What failed, with the interrupt kept. */
+    private static Trust failed(Exception e) {
+        if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+        return Trust.failed(e.getClass().getSimpleName() + ": " + e.getMessage());
     }
 
     interface Certificates {

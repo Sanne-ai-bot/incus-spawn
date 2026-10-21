@@ -194,6 +194,36 @@ class MacKeychainTrustTest {
     }
 
     @Test
+    void theUserDomainsDeniesApplyAndItsTrustsDoNot() throws Exception {
+        // macOS refuses what a user marked "Never Trust" (#1552); a user's trust must never widen isx's
+        var adminTrusted = ca("admin trusted");
+        var userTrusted = ca("user trusted");
+        var admin = MacKeychainTrust.evaluate(plist(record(adminTrusted, "<array/>")), List.of(adminTrusted, userTrusted));
+        var user = plist(record(adminTrusted, entries(result(3))) + record(userTrusted, "<array/>")
+                + "<key>kSecTrustSettingsDefaultRootCertSetting</key><dict><key>trustSettings</key>" + entries(result(3)) + "</dict>");
+
+        var trust = MacKeychainTrust.withUserDenies(admin, () -> user);
+
+        assertEquals(List.of(), trust.trusted());
+        assertEquals(Set.of(MacKeychainTrust.sha1(adminTrusted)), trust.denied());
+        assertEquals(true, trust.defaultRootsDenied());
+    }
+
+    @Test
+    void aUserDomainThatCannotBeReadLeavesTheAdminDomainsResult() throws Exception {
+        var trusted = ca("trusted");
+        var denied = ca("denied");
+        var admin = MacKeychainTrust.evaluate(plist(record(trusted, "<array/>") + record(denied, entries(result(3)))), List.of(trusted));
+        // None exists (`security` exits with "No Trust Settings"), a timeout, output that does not parse
+        assertEquals(admin, MacKeychainTrust.withUserDenies(admin, () -> { throw new java.io.IOException("exited 1"); }));
+        assertEquals(admin, MacKeychainTrust.withUserDenies(admin, () -> "not xml"));
+        // And an admin domain that cannot be read keeps the user's denies
+        var failed = MacKeychainTrust.withUserDenies(MacKeychainTrust.Trust.failed("timed out"), () -> plist(record(denied, entries(result(3)))));
+        assertEquals(Set.of(MacKeychainTrust.sha1(denied)), failed.denied());
+        assertEquals("timed out", failed.problem());
+    }
+
+    @Test
     void aDenyOfTheDefaultRootsIsKeptAndOtherKeysAreNotCertificates() throws Exception {
         var deniedRoots = "<key>kSecTrustSettingsDefaultRootCertSetting</key><dict><key>trustSettings</key>"
                 + entries(result(3)) + "</dict><key>notAFingerprint</key><dict><key>trustSettings</key>" + entries(result(3)) + "</dict>";
