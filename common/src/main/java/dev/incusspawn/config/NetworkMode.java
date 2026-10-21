@@ -11,7 +11,7 @@ public enum NetworkMode {
     /** Network restricted to the host proxy only (Claude API + GitHub via proxy, nothing else). */
     PROXY_ONLY("Proxy only"),
 
-    /** Complete network isolation — no network device attached. */
+    /** No network device attached, and no passthrough hardware that could be one (#1518). */
     AIRGAP("Airgapped");
 
     private final String label;

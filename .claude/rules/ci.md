@@ -132,7 +132,8 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
   After it, the "Test container" step writes a file to `/tmp`, runs `incus restart` and checks the file is still there, waiting at most 60 s for `local-fs.target`.
 - **`test-airgap.sh`**: runs on the host.
   Branches `tpl-minimal` with `--airgap` and asserts on the *expanded* devices (no `nic` at all), the `network-mode` stamp, and from inside that the started branch has no interface but loopback and cannot reach the internet.
-  Then branches it again without `--airgap` and asserts the NIC and an address come back.
+  A `proxy` device bound in the instance, from a profile of the test's own on a copy of `tpl-minimal` (not the default profile: Incus refuses a non-NAT proxy for the VMs using it), must be masked too and unreachable from inside; a second one added after the branch must be masked by the next `isx run` (#1518).
+  Then branches it again without `--airgap` and asserts the NIC, the proxy and an address come back, and that `curl` through the proxy now succeeds: the positive control for the checks that it cannot.
   It needs a real Incus because the bug it guards (#813) was Incus semantics.
   Removing an instance device that overrides a profile device only drops the override, so the NIC must be masked with `type: none` instead.
   A fake that drops removed devices from `expanded_devices` passes either way.

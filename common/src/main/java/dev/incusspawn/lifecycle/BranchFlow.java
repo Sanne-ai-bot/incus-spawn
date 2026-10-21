@@ -294,6 +294,12 @@ public final class BranchFlow {
         } catch (HostResourceSetup.ForbiddenMountTargetException e) {
             throw new BranchException(e.getMessage());
         }
+        if (req.networkMode() != NetworkMode.FULL) {
+            refusal = InstanceNetwork.passthroughRefusal("'" + req.source() + "', the source of this "
+                    + (req.networkMode() == NetworkMode.AIRGAP ? "airgapped" : "proxy-only") + " branch,", sourceInstance,
+                    "remove the device from it or its profile, or branch with full network.");
+            if (refusal != null) throw new BranchException(refusal);
+        }
         // Last, and before anything is created: a host that cannot enforce proxy-only on its side
         // gets no proxy-only instance at all (#1137)
         if (req.networkMode() == NetworkMode.PROXY_ONLY) {

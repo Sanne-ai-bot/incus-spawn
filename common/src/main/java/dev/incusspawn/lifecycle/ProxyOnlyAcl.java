@@ -105,11 +105,11 @@ public final class ProxyOnlyAcl {
 
     /**
      * The network devices Incus would attach to {@code instance}, from its own devices or a
-     * profile's: NICs, and InfiniBand devices, which reach a network without any NIC.
+     * profile's ({@link IncusClient#isNetworkDevice}): NICs, and the devices that reach a network
+     * without any NIC.
      */
     private static List<String> networkDevices(JqValue instance) {
-        if (!(instance.path("expanded_devices") instanceof io.hyperfoil.tools.jjq.value.JqObject devices)) return List.of();
-        return devices.keys().stream().filter(device -> IncusClient.isNetworkDevice(devices.path(device))).sorted().toList();
+        return InstanceNetwork.expandedDevices(instance, IncusClient::isNetworkDevice);
     }
 
     /**
@@ -159,6 +159,8 @@ public final class ProxyOnlyAcl {
      */
     static void enforce(IncusClient incus, String name, JqValue instance, Consumer<String> say) {
         if (!NetworkMode.isProxyOnly(instance)) return;
+        var passthrough = InstanceNetwork.passthroughRefusal(name, "proxy-only", instance);
+        if (passthrough != null) throw new NotEnforceableException(passthrough);
         var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
         if (nic == null) {
             // No network device at all is no network, which is within the mode; a network device

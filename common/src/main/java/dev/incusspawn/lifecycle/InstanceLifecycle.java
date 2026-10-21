@@ -472,7 +472,7 @@ public final class InstanceLifecycle {
                                    MachineType machineType, Consumer<String> say) {
         var stopped = "Stopped".equalsIgnoreCase(instance.path("status").asText(""));
         // A running instance too: one branched before #1137 and restarted outside isx runs unrestricted
-        if (!stopped) ProxyOnlyAcl.enforce(incus, name, instance, say);
+        if (!stopped) enforceNetworkMode(incus, name, instance, say);
         if (stopped) {
             say.accept("Starting " + name + "...");
             startForUse(incus, name, instance, machineType, say);
@@ -572,13 +572,23 @@ public final class InstanceLifecycle {
     /** Reuses the TUI's listing, including its proof generation and verifiers. */
     public static void restartForUse(IncusClient incus, String name, MachineType machineType,
                                      boolean mcpCaller, JqValue instance) {
+        if (NetworkMode.isAirgapped(instance)) {
+            // Stopped and started as any start for use, from a read after the stop rather than the
+            // listing: a network device a profile gained is masked while the instance is down, which
+            // Incus may refuse to do to a running one (#1518). It has no proxy, so the speed of
+            // one restart buys little here.
+            AirgapGuard.refusePassthrough(name, instance);
+            incus.stop(name);
+            startForUse(incus, name, incus.instanceMetadata(name), machineType, msg -> {});
+            return;
+        }
         // Before, not after: once the restart returns the guest is booting, when Incus API calls
         // contend with it. A restart that then fails leaves a guest whose secret no longer
         // matches, which is refused -- the safe way for it to go wrong.
         var placeholders = ProofToken.declaredInBackground();
         // Quietly: the TUI owns the terminal here, and a refusal throws, which it reports
         var secret = ProxyOnlyAcl.explaining(incus, name, instance, () -> {
-            ProxyOnlyAcl.enforce(incus, name, instance, msg -> {});
+            enforceNetworkMode(incus, name, instance, msg -> {});
             var delivery = rotateInstanceSecret(incus, name, instance, Map.of(), placeholders.join());
             incus.restart(name);
             return delivery;
@@ -827,6 +837,8 @@ public final class InstanceLifecycle {
      *   <li>IP spoofing protection ({@link InstanceNetwork#rearmIpFiltering}): turned back on where it is off.</li>
      *   <li>A proxy-only instance's host ACL ({@link ProxyOnlyAcl#enforce}): put in force where it is
      *       missing, or the start is refused.</li>
+     *   <li>An airgapped instance's masks ({@link AirgapGuard#enforce}): a network device it gained
+     *       is masked, and passthrough hardware refuses the start.</li>
      * </ul>
      */
     static void prepareForStart(IncusClient incus, String name) {
@@ -852,7 +864,17 @@ public final class InstanceLifecycle {
         restoreInbox(incus, name, instance, warn);
         ZmxSocketForward.ensureHostDirForStart(incus, name, instance);
         InstanceNetwork.rearmIpFiltering(incus, name, instance, warn);
-        ProxyOnlyAcl.enforce(incus, name, instance, warn);
+        enforceNetworkMode(incus, name, instance, warn);
+    }
+
+    /**
+     * Hold the instance to its network mode before it is used: the proxy-only ACL
+     * ({@link ProxyOnlyAcl#enforce}) or the airgap masks ({@link AirgapGuard#enforce}). Every path
+     * that starts or uses an instance calls this, never one of them alone.
+     */
+    private static void enforceNetworkMode(IncusClient incus, String name, JqValue instance, Consumer<String> say) {
+        ProxyOnlyAcl.enforce(incus, name, instance, say);
+        AirgapGuard.enforce(incus, name, instance, say);
     }
 
     /**

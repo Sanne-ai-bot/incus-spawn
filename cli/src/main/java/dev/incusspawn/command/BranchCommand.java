@@ -51,7 +51,7 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "no-kvm", description = "Disable KVM even if the template was built with type: kvm", hasValue = false)
     boolean noKvm;
 
-    @Option(name = "airgap", description = "Disable network access (complete isolation)", hasValue = false)
+    @Option(name = "airgap", description = "No network devices (masks NICs and outbound proxies, refuses pci/usb passthrough)", hasValue = false)
     boolean airgap;
 
     @Option(name = "proxy-only", description = "Restrict network to host proxy only (Claude + GitHub via proxy)", hasValue = false)

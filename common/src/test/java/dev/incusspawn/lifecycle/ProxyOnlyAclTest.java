@@ -368,4 +368,54 @@ class ProxyOnlyAclTest {
         assertTrue(e.getMessage().contains("a network device that is not on incusbr0 (ib0)"), e::getMessage);
         assertEquals(List.of(), daemon.stateActions());
     }
+
+    @Test
+    void aSourceWithAProxyThatBindsInTheInstanceGetsNoProxyOnlyBranch() {
+        // #1518: the host's end of it connects out past the ACL on the NIC
+        var daemon = template();
+        daemon.device("tpl-dev", "fwd", Map.of("type", "proxy", "bind", "instance",
+                "listen", "tcp:127.0.0.1:8080", "connect", "tcp:192.0.2.1:80"));
+
+        var e = assertThrows(BranchFlow.BranchException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+        assertTrue(e.getMessage().contains("fwd"), e::getMessage);
+        assertFalse(daemon.requests().stream().anyMatch(r -> r.startsWith("POST /1.0/instances")),
+                () -> String.join("\n", daemon.requests()));
+    }
+
+    @Test
+    void aSourceWithAProxyThatBindsOnTheHostGetsAProxyOnlyBranch() {
+        var daemon = template();
+        daemon.device("tpl-dev", "ssh", Map.of("type", "proxy",
+                "listen", "tcp:127.0.0.1:2222", "connect", "tcp:127.0.0.1:22"));
+
+        branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY);
+
+        assertRestricted(nic(daemon, "dev-2"));
+    }
+
+    @Test
+    void aSourceWithAPciDeviceGetsNoProxyOnlyBranch() {
+        var daemon = template();
+        daemon.device("tpl-dev", "card0", Map.of("type", "pci", "address", "0000:03:00.0"));
+
+        var e = assertThrows(BranchFlow.BranchException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+        assertTrue(e.getMessage().contains("card0") && e.getMessage().contains("'gpu' device"), e::getMessage);
+        assertFalse(daemon.requests().stream().anyMatch(r -> r.startsWith("POST /1.0/instances")),
+                () -> String.join("\n", daemon.requests()));
+    }
+
+    @Test
+    void aProxyOnlyInstanceThatGainedAUsbDeviceIsNotStarted() {
+        var daemon = new FakeIncusDaemon().instance("box", "container", "Stopped", Map.of(
+                Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name(), Metadata.PROXY_GATEWAY, GATEWAY));
+        var restricted = new HashMap<String, String>(ProxyOnlyAcl.NIC_KEYS);
+        restricted.putAll(Map.of("type", "nic", "network", "incusbr0", "name", "eth0"));
+        daemon.device("box", "eth0", restricted);
+        daemon.device("box", "dongle", Map.of("type", "usb", "vendorid", "0bda", "productid", "8153"));
+
+        var e = assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
+                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+        assertTrue(e.getMessage().contains("dongle"), e::getMessage);
+        assertEquals(List.of(), daemon.stateActions());
+    }
 }

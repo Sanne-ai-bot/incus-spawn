@@ -155,7 +155,7 @@ Each branch runs in one of three network modes:
 |------|------|-------------|
 | **Full internet** | *(default)* | Unrestricted network access via NAT, auth via MITM proxy |
 | **Proxy only** | `--proxy-only` | Outbound traffic restricted to the MITM proxy, enforced on the host where root in the instance cannot lift it |
-| **Airgapped** | `--airgap` | No network device at all, complete isolation |
+| **Airgapped** | `--airgap` | No network device at all, and no `pci`/`usb` passthrough |
 
 ### Git Remotes
 
