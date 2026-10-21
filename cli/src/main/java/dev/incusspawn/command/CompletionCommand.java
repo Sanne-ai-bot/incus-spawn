@@ -185,7 +185,7 @@ public class CompletionCommand extends BaseCommand {
                 '--kvm[Expose /dev/kvm for nested virtualization]' \\
                 '--no-gui[Disable GUI passthrough even if the template has gui: true]' \\
                 '--no-kvm[Disable KVM even if the template was built with type: kvm]' \\
-                '--airgap[Disable network access (complete isolation)]' \\
+                '--airgap[No network devices (masks NICs and outbound proxies, refuses pci/usb passthrough)]' \\
                 '--proxy-only[Restrict network to host proxy only]' \\
                 '--inbox=[Host directory to mount read-only at /home/agentuser/inbox]:directory:_files -/' \\
                 '--cpu=[CPU core limit]:number' \\
@@ -890,7 +890,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand branch' -l kvm         -d 'Expose /dev/kvm for nested virtualization'
             complete -c isx -f -n '__isx_using_subcommand branch' -l no-gui      -d 'Disable GUI passthrough even if the template has gui: true'
             complete -c isx -f -n '__isx_using_subcommand branch' -l no-kvm      -d 'Disable KVM even if the template was built with type: kvm'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l airgap      -d 'Disable network access (complete isolation)'
+            complete -c isx -f -n '__isx_using_subcommand branch' -l airgap      -d 'No network devices (masks NICs and outbound proxies, refuses pci/usb passthrough)'
             complete -c isx -f -n '__isx_using_subcommand branch' -l proxy-only  -d 'Restrict network to host proxy only'
             complete -c isx -F -n '__isx_using_subcommand branch' -l inbox       -d 'Host directory to mount read-only at /home/agentuser/inbox'
             complete -c isx -f -n '__isx_using_subcommand branch' -l cpu         -d 'CPU core limit'

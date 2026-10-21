@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
@@ -207,10 +208,42 @@ public final class InstanceNetwork {
         return assigned;
     }
 
+    /** The devices Incus would attach to {@code instance}, its own or a profile's, that match {@code which}, sorted. */
+    static List<String> expandedDevices(JqValue instance, Predicate<JqValue> which) {
+        if (!(instance.getField("expanded_devices") instanceof JqObject devices)) return List.of();
+        return devices.keys().stream().filter(device -> which.test(devices.path(device))).sorted().toList();
+    }
+
+    /**
+     * Why {@code instance} cannot have airgap or proxy-only, when it passes host hardware through
+     * ({@link IncusClient#isPassthrough}); null when it does not. isx cannot tell a network card
+     * from other hardware, so it refuses rather than mask hardware the user attached (#1518).
+     *
+     * @param subject how the refusal names it, as the subject of "passes"
+     * @param remedy  what the user can do besides passing a GPU as a {@code gpu} device
+     */
+    static String passthroughRefusal(String subject, JqValue instance, String remedy) {
+        var devices = expandedDevices(instance, IncusClient::isPassthrough);
+        if (devices.isEmpty()) return null;
+        var pci = devices.stream().anyMatch(device -> "pci".equals(
+                instance.path("expanded_devices").path(device).pathText("type", "")));
+        return subject + " passes host hardware through (" + String.join(", ", devices) + "), which could be a"
+                + " network card that reaches the network directly; isx cannot tell. "
+                + (pci ? "Pass a GPU as a 'gpu' device instead of 'pci', which Incus accepts only for a GPU. Otherwise "
+                        : "To keep it, ") + remedy;
+    }
+
+    /** {@link #passthroughRefusal} for an existing instance in {@code mode} ("airgapped", "proxy-only"), which isx will not start or use. */
+    static String passthroughRefusal(String name, String mode, JqValue instance) {
+        return passthroughRefusal("'" + name + "' is " + mode + ", but it", instance,
+                "remove the device from it or its profile; isx will not use it until then. 'isx destroy " + name + "' removes it.");
+    }
+
     private static final Map<String, String> MASKED_DEVICE = Map.of("type", "none");
 
     /**
-     * Take every network device away from the instance (NICs and InfiniBand devices), whichever
+     * Take every network device away from the instance ({@link IncusClient#isNetworkDevice}: NICs,
+     * InfiniBand devices and proxies bound in the instance), whichever
      * network it is on and wherever it comes from. Removing an instance device only drops the
      * instance's own copy: a NIC the {@code default} profile provides, or one the instance
      * overrides from it (a clone's static IP), applies again. A {@code type: none} device of the
@@ -223,14 +256,9 @@ public final class InstanceNetwork {
             var stamped = stampedMasks(instance);
             masked.addAll(stamped != null ? stamped : preStampMasks(instance, profileDevices(incus, instance)));
         }
-        var expanded = instance.getField("expanded_devices");
-        if (expanded instanceof JqObject devices) {
-            devices.forEach((name, device) -> {
-                if (IncusClient.isNetworkDevice(device)) {
-                    update.replaceDevice(name, MASKED_DEVICE);
-                    masked.add(name);
-                }
-            });
+        for (var name : expandedDevices(instance, IncusClient::isNetworkDevice)) {
+            update.replaceDevice(name, MASKED_DEVICE);
+            masked.add(name);
         }
         update.config(Metadata.AIRGAP_MASKED, masked.isEmpty() ? "," : String.join(",", masked));
     }
@@ -695,6 +723,8 @@ public final class InstanceNetwork {
      * an instance that has it (every one branched since) costs no request at all.
      */
     static void rearmIpFiltering(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
+        // Airgapped: a bridge NIC it gained is about to be masked (AirgapGuard), not filtered
+        if (NetworkMode.isAirgapped(instance)) return;
         var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
         // No bridge NIC: airgap, or a hand-made instance -- nothing to filter.
         if (nic == null || "true".equals(nic.config().get("security.ipv4_filtering"))) return;

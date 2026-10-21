@@ -694,6 +694,67 @@ class InstanceLifecycleRequestBudgetTest {
                 instance.path("config").path(Metadata.AIRGAP_MASKED).asText().split(",")).sorted().toList());
     }
 
+    /** The default profile with a proxy device beside its bridge NIC, bound as {@code bind}. */
+    private static FakeIncusDaemon withProfileProxy(FakeIncusDaemon daemon, String bind) {
+        return daemon.profile("default", Map.of(
+                "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0"),
+                "fwd", Map.of("type", "proxy", "bind", bind,
+                        "listen", "tcp:127.0.0.1:8080", "connect", "tcp:192.0.2.1:80"),
+                "root", Map.of("type", "disk", "path", "/", "pool", "default")));
+    }
+
+    private static String expandedType(FakeIncusDaemon daemon, String device) {
+        return daemon.instance(NAME).path("expanded_devices").path(device).path("type").asText();
+    }
+
+    @Test
+    void anAirgappedBranchMasksAProxyThatBindsInTheInstance() {
+        // #1518: it listens in the guest and connects from the host, past every NIC
+        var daemon = withProfileProxy(new FakeIncusDaemon(), "instance").container(NAME, Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+
+        assertEquals("none", expandedType(daemon, "fwd"));
+        assertEquals("eth0,fwd", sortedStamp(daemon.instance(NAME)));
+    }
+
+    @Test
+    void anAirgappedBranchKeepsAProxyThatBindsOnTheHost() {
+        // Only inbound: the host listens and connects into the instance
+        var daemon = withProfileProxy(new FakeIncusDaemon(), "host").container(NAME, Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+
+        assertEquals("proxy", expandedType(daemon, "fwd"));
+        assertEquals("eth0", sortedStamp(daemon.instance(NAME)));
+    }
+
+    @Test
+    void anAirgappedBranchKeepsAProxyToAHostUnixSocket() {
+        // An X11 or audio forward reaches that socket, not a network
+        var daemon = new FakeIncusDaemon().profile("default", Map.of(
+                "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0"),
+                "x11", Map.of("type", "proxy", "bind", "instance",
+                        "listen", "unix:@/tmp/.X11-unix/X0", "connect", "unix:@/tmp/.X11-unix/X0"),
+                "root", Map.of("type", "disk", "path", "/", "pool", "default"))).container(NAME, Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+
+        assertEquals("proxy", expandedType(daemon, "x11"));
+    }
+
+    @Test
+    void branchingWithNetworkFromAnAirgappedInstanceRestoresItsProxy() {
+        var daemon = withProfileProxy(new FakeIncusDaemon(), "instance")
+                .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name(),
+                        Metadata.AIRGAP_MASKED, "eth0,fwd"))
+                .device(NAME, "eth0", Map.of("type", "none"))
+                .device(NAME, "fwd", Map.of("type", "none"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+
+        var fwd = daemon.instance(NAME).path("expanded_devices").path("fwd");
+        assertEquals("proxy", fwd.path("type").asText());
+        assertEquals("tcp:192.0.2.1:80", fwd.path("connect").asText());
+    }
+
     @Test
     void reAirgappingKeepsTheSourcesMasks() {
         // The copy carries the source's masks, which no longer expand to a network device

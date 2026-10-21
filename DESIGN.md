@@ -1087,12 +1087,15 @@ security.acls.default.ingress.action=allow   # the host reaches the instance ove
 The ACL's egress rules allow, to the gateway's address only: tcp 443, 18443 and 18080, udp and tcp 53, and ICMP echo (the connectivity watchdog pings the gateway).
 DNS over TCP is wider than the in-guest rules, which allowed udp 53 only, but no NIC ACL can take it away: Incus puts its own `udp dport 53` and `tcp dport 53 accept` to the gateway in the same chains ahead of the ACL's rules, so the ACL lists both to say what is in force.
 That is accepted: DNS reaches only the gateway's resolver either way, and blocking TCP would take a host nftables table isx owns, the state the ACL exists to avoid.
-A proxy-only instance has one network device, the bridge NIC that carries the ACL: any other NIC or InfiniBand device, its own or from a profile, would reach the network directly.
+A proxy-only instance has one network device, the bridge NIC that carries the ACL: any other NIC, InfiniBand device or `proxy` device bound in the instance (`IncusClient.isNetworkDevice`), its own or from a profile, would reach the network directly.
+A `proxy` with `bind: instance` listens in the guest and connects from the host, where no NIC ACL sees it (#1518); one bound on the host, the default, only reaches into the instance and stays, as does one that connects to a host Unix socket (an X11 or audio forward), which reaches that socket only.
 A branch whose source has one (an airgapped source's, as unmasking would bring it back) is refused before anything is created, and isx refuses to start or use an instance that has gained one.
+`pci` and `usb` passthrough devices are refused the same way, by both proxy-only and airgap (`InstanceNetwork.passthroughRefusal`, #1518): either can be a network card, and isx cannot tell one from a GPU or a security key.
+The refusal names the device and says to pass a GPU as a `gpu` device, which Incus accepts only for a GPU and which isx leaves alone, as it does its own GUI passthrough's.
+Until #1518 a `pci` device was accepted on proxy-only because isx never adds one, but templates and profiles, which a branch copies, can.
+Masking them, as airgap masks NICs, was the alternative: it would take away hardware the user attached on purpose without saying so, and the loss would show only later, as a GPU that is not there.
+Warning only would leave the mode named while a way out stays open.
 A start outside isx (`incus start`, autostart) cannot be refused and starts it with that NIC unrestricted.
-A `pci` passthrough device is not refused, though a passed-through network card reaches the network outside the ACL: refusing every `pci` device would refuse GPUs too.
-That is accepted *because* isx never adds such a device; only a user who adds one by hand gets it.
-If isx ever adds `pci` devices itself, or a template can bring a network card that way, revisit this.
 Incus installs it as per-NIC chains in the host's nftables `bridge` family, the table that also enforces `security.ipv4_filtering`, at every start of the instance, whoever starts it: `isx`, `incus restart`, autostart after a host reboot, `isx doctor`'s subnet move.
 A start whose ACL cannot be installed fails.
 Those chains match in the bridge family, which on most hosts is before the host's PREROUTING redirect, so they see port 443 rather than the proxy's 18443.
@@ -1133,12 +1136,20 @@ The second needs root on the host for every branch and a boot-time restore order
 Incus already does all of that for its own per-NIC rules.
 
 **Airgapped** (`--airgap`): Every network device, each NIC and InfiniBand device (which reaches a network without any NIC, #1507), is masked with a `type: none` device of the same name, and the instance is stamped `network-mode=AIRGAP` and `airgap-masked=<the masked devices>`.
-Complete network isolation — no egress at all.
+No network device, and no way out that isx can see in the instance's config; what it cannot see is listed below.
 Masking is the only way: Incus cannot remove a profile device from one instance, and removing an instance device that overrides one only drops the override, so the profile's device applies again.
 That is how airgap branches kept full network access until #813.
 A branch with network from an airgapped instance writes the profiles' network devices back over the masks named in `airgap-masked`, and no other: a `type: none` the template set itself over a profile device is its own choice and stays.
 An instance airgapped before that stamp existed masked NICs only, so without the stamp only masks over a profile NIC are lifted.
 Airgapping an airgapped instance keeps its source's names in the stamp, since the copy carries those masks.
+A `proxy` device with `bind: instance` is a network device here too, masked and put back like a NIC (#1518).
+An airgapped branch of a source with a `pci` or `usb` device is refused, as on proxy-only above.
+Masks are written at branch time, and a profile that gains a network device later attaches it at the next start, so every start for use (`prepareForStart`), `isx shell` into a running instance and the TUI's restart mask what the instance gained, add it to the stamp and say so (`AirgapGuard.enforce`).
+This also masks the InfiniBand devices of an instance airgapped before #1507.
+The TUI restarts an airgapped instance as a stop and a start for use, reading it after the stop, so the mask is written while it is down; `isx shell` into a running instance masks it live, and a device Incus will not take from a running guest refuses that shell, with the advice to stop it.
+An instance that gained passthrough hardware is refused instead, and one that gained nothing costs no request.
+As with proxy-only, a start outside isx is not checked.
+Other ways out are not covered by either mode: `raw.qemu` or `raw.lxc` (a QEMU `-netdev user`), `unix-char` and `unix-hotplug` devices such as a serial modem, and a `disk` device sharing a host socket that can open connections.
 
 ### Auth & Security: MITM TLS Proxy
 

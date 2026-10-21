@@ -48,7 +48,7 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 | `--no-gui` | Disable GUI passthrough even if the template has `gui: true` |
 | `--kvm` | Expose /dev/kvm for nested virtualization (Linux only: refused on macOS) |
 | `--no-kvm` | Disable KVM even if the template was built with `type: kvm` |
-| `--airgap` | Disable all network access |
+| `--airgap` | No network devices: every NIC, InfiniBand device and outbound `proxy` device is masked, and `pci`/`usb` passthrough is refused |
 | `--proxy-only` | Restrict network to the host proxy only |
 | `--inbox <dir>` | Host directory to mount read-only at ~/inbox inside the instance |
 | `--cpu <N>` | CPU core limit (default: none for containers; for VMs host CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores) |

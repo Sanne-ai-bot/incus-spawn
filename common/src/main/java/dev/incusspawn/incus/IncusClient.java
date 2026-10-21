@@ -1233,11 +1233,28 @@ public class IncusClient {
     }
 
     /**
-     * Whether a device reaches a network: a NIC, or an InfiniBand device, which reaches one
-     * without any NIC.
+     * Whether a device reaches a network: a NIC, an InfiniBand device, which reaches one without
+     * any NIC, or a {@code proxy} bound in the instance that connects to a TCP or UDP address: it
+     * listens in the guest and connects from the host (#1518). A proxy bound on the host, the
+     * default, only reaches into the instance, and one that connects to a host Unix socket (an X11
+     * or audio forward) reaches that socket only.
      */
     public static boolean isNetworkDevice(JqValue device) {
-        return isNic(device) || "infiniband".equals(device.pathText("type", ""));
+        return switch (device.pathText("type", "")) {
+            case "nic", "infiniband" -> true;
+            case "proxy" -> "instance".equals(device.pathText("bind", ""))
+                    && !device.pathText("connect", "").startsWith("unix:");
+            default -> false;
+        };
+    }
+
+    /**
+     * Whether a device passes host hardware through, which may be a network card: a {@code pci}
+     * or {@code usb} device. A {@code gpu} device is not one: Incus accepts it only for a GPU.
+     */
+    public static boolean isPassthrough(JqValue device) {
+        var type = device.pathText("type", "");
+        return "pci".equals(type) || "usb".equals(type);
     }
 
     /** As {@link #findNicDeviceName}, from an instance representation already read. */
