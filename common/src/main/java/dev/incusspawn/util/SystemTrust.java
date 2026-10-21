@@ -34,7 +34,8 @@ import java.util.List;
  * <p>
  * On macOS an inspection CA is in the Keychain, not in {@code /etc/ssl/cert.pem}, so the
  * certificates an administrator trusts for SSL there are added too, and those an administrator
- * denied are taken out of every source, the JDK store included ({@link MacKeychainTrust}, #1467).
+ * denied are taken out of every source, the JDK store included ({@link MacKeychainTrust}, #1467), and
+ * a chain holding one is refused ({@link DeniedChainTrustManager}, #1552).
  */
 public final class SystemTrust {
 
@@ -71,7 +72,7 @@ public final class SystemTrust {
             var tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             tmf.init(anchors(bundle, keychain));
             var tls = SSLContext.getInstance("TLS");
-            tls.init(null, tmf.getTrustManagers(), null);
+            tls.init(null, DeniedChainTrustManager.wrap(tmf.getTrustManagers(), keychain), null);
             return tls;
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("No TLS context: " + e.getMessage(), e);

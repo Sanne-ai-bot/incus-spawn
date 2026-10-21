@@ -2,6 +2,7 @@ package dev.incusspawn.util;
 
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
+import dev.incusspawn.DerEncoder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,8 @@ class KeychainTrustMacTest {
     private Path caPem;
     private String caSha1;
     private HttpsServer server;
+    /** What to delete from the System keychain after the test, by SHA-1. */
+    private final List<String> toDelete = new ArrayList<>();
 
     /**
      * A CA and a leaf for localhost from openssl, as an inspection proxy's would be. Each test's CA
@@ -128,7 +131,8 @@ class KeychainTrustMacTest {
     @AfterEach
     void removeTheCa() throws Exception {
         if (server != null) server.stop(0);
-        if (caSha1 != null) run(List.of("sudo", "-n", SECURITY, "delete-certificate", "-Z", caSha1, SYSTEM_KEYCHAIN));
+        if (caSha1 != null) toDelete.add(caSha1);
+        for (var sha1 : toDelete) run(List.of("sudo", "-n", SECURITY, "delete-certificate", "-Z", sha1, SYSTEM_KEYCHAIN));
     }
 
     @Test
@@ -168,6 +172,26 @@ class KeychainTrustMacTest {
         assertThrows(SSLHandshakeException.class, this::get);
     }
 
+    @Test
+    void aChainThroughAnIntermediateAnAdministratorDeniedIsNot() throws Exception {
+        // A deny only removed anchors, and an intermediate is never one (#1552)
+        var chain = CertChain.create("isx keychain test " + System.nanoTime(), "localhost");
+        var rootPem = Files.writeString(temp.resolve("chain-root.pem"), DerEncoder.toPem("CERTIFICATE", chain.root().getEncoded()));
+        var intermediatePem = Files.writeString(temp.resolve("chain-intermediate.pem"),
+                DerEncoder.toPem("CERTIFICATE", chain.intermediate().getEncoded()));
+        toDelete.add(MacKeychainTrust.sha1(chain.root()));
+        toDelete.add(MacKeychainTrust.sha1(chain.intermediate()));
+        var chainServer = chain.serve();
+        try {
+            sudo(SECURITY, "add-trusted-cert", "-d", "-r", "trustRoot", "-k", SYSTEM_KEYCHAIN, rootPem.toString());
+            assertEquals(204, get(chainServer));
+            sudo(SECURITY, "add-trusted-cert", "-d", "-r", "deny", "-k", SYSTEM_KEYCHAIN, intermediatePem.toString());
+            assertThrows(SSLHandshakeException.class, () -> get(chainServer));
+        } finally {
+            chainServer.stop(0);
+        }
+    }
+
     private void adminTrust(String... args) throws Exception {
         var command = new ArrayList<>(List.of(SECURITY, "add-trusted-cert", "-d"));
         command.addAll(List.of(args));
@@ -199,6 +223,10 @@ class KeychainTrustMacTest {
     }
 
     private int get() throws Exception {
+        return get(server);
+    }
+
+    private static int get(HttpsServer server) throws Exception {
         try (var client = HttpClient.newBuilder().sslContext(SystemTrust.sslContext()).build()) {
             var request = HttpRequest.newBuilder(URI.create("https://localhost:" + server.getAddress().getPort() + "/")).build();
             return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
