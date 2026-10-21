@@ -33,9 +33,9 @@ import java.util.List;
  * change while a long-running isx is up.
  * <p>
  * On macOS an inspection CA is in the Keychain, not in {@code /etc/ssl/cert.pem}, so the
- * certificates an administrator trusts for SSL there are added too, and those an administrator
- * denied are taken out of every source, the JDK store included ({@link MacKeychainTrust}, #1467), and
- * a chain holding one is refused ({@link DeniedChainTrustManager}, #1552).
+ * certificates an administrator trusts for SSL there are added too, and those an administrator or
+ * the user denied are taken out of every source, the JDK store included ({@link MacKeychainTrust},
+ * #1467), and a chain holding one is refused ({@link DeniedChainTrustManager}, #1552).
  */
 public final class SystemTrust {
 
@@ -93,7 +93,7 @@ public final class SystemTrust {
     /**
      * The proxy's upstream trust when the Keychain adds or denies something: the bundle, or the JDK
      * store when there is none or it cannot be read (the proxy's rule without a Keychain), then the
-     * Keychain's admin-trusted certificates, less what an administrator denied. Throws when nothing
+     * Keychain's admin-trusted certificates, less what the Keychain denied. Throws when nothing
      * is left, as the CLI's empty trust store does.
      */
     public static List<X509Certificate> upstreamAnchors(Path bundle, MacKeychainTrust.Trust keychain) throws GeneralSecurityException {
@@ -101,13 +101,13 @@ public final class SystemTrust {
         var anchors = withKeychain(base != null ? base : jdkAnchors(), keychain);
         // Empty would leave the proxy with Vert.x's default, the JDK store, denied roots included
         if (anchors.isEmpty()) {
-            throw new GeneralSecurityException("the Keychain's admin trust settings deny every CA and trust none "
-                    + "(see `security dump-trust-settings -d`)");
+            throw new GeneralSecurityException("the Keychain's trust settings deny every CA and trust none "
+                    + "(see `security dump-trust-settings -d` for an administrator's, and without -d for your own)");
         }
         return anchors;
     }
 
-    /** The JDK store's anchors, then the bundle's and the Keychain's, less what an administrator denied. */
+    /** The JDK store's anchors, then the bundle's and the Keychain's, less what the Keychain denied. */
     static KeyStore anchors(Path bundle, MacKeychainTrust.Trust keychain) throws GeneralSecurityException {
         var anchors = KeyStore.getInstance("PKCS12");
         try {
@@ -124,8 +124,8 @@ public final class SystemTrust {
     }
 
     /**
-     * {@code base} with the Keychain applied: its admin-trusted certificates added, what an
-     * administrator denied removed, and {@code base} dropped whole when one denied the default roots.
+     * {@code base} with the Keychain applied: its admin-trusted certificates added, what it denied
+     * removed, and {@code base} dropped whole when it denied the default roots.
      */
     private static List<X509Certificate> withKeychain(List<X509Certificate> base, MacKeychainTrust.Trust keychain) {
         var certs = new ArrayList<X509Certificate>();

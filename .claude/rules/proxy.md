@@ -51,10 +51,9 @@ Key design:
   It runs `/usr/bin/security` by absolute path; a failure adds nothing.
   When only the System keychain's certificates cannot be read (exit status, timeout or unparseable output), the export's denies still apply; a failed login-keychain read only loses the bodies stored there; nothing is denied only when the trust settings themselves cannot be read.
   An unreadable entry (not a dict, a result that is not an integer, a policy that is not data) decides nothing and stops any later entry from trusting; a later deny still denies, and so does a deny on an entry whose policy is not data, and a `<real>` result of 3.
-  The user domain (login keychain) is deliberately not read.
+  The user domain is read for its denies alone (`withUserDenies`); its trusts are never used, and when it cannot be read the admin result stands (#1552).
   A deny only removes anchors, so whenever the Keychain denies anything `DeniedChainTrustManager` wraps the JDK's trust manager (CLI: `SystemTrust.sslContext`; proxy: `Upstream.refusingDenied`, `TrustOptions.wrap`) and refuses a presented chain holding a denied intermediate or leaf (#1552).
   It must stay an `X509ExtendedTrustManager` passing every `SSLEngine`/`Socket` overload to the JDK's, which does the host-name check; AIA fetching must stay off, or a fetched denied intermediate would go unchecked.
-  One documented deviation trusts more than macOS: user-domain denies are ignored (#1552).
   `SystemTrustGateTest` (in `cli`) fails on a plain `HttpClient.newBuilder()`, a default `SSLContext`/socket factory or an `HttpsURLConnection` in any module's main sources; a plain HTTP client says so with a `// plain HTTP:` comment on that line.
   Nothing is cached: the class is initialized at image build time, and the store may change under a long-running isx.
 - **Host CA propagation** (opt-in, `host-ca: { propagate: true }` in config.yaml): `CertificateAuthority.collectTrustAnchors()` builds one trust set -- the MITM CA plus host anchors from `/etc/pki/ca-trust/source/anchors/`, every certificate in each `.crt`/`.pem` file (PEM bundles and DER alike) re-encoded as PEM from its DER and keyed by its SHA-256 fingerprint (`isx-<fp>.crt`).

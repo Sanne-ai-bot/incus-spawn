@@ -48,6 +48,10 @@ class DoctorCommandTest {
         assertEquals(DoctorCommand.Status.NOTE, none.status());
         assertTrue(none.detail().contains("sudo security add-trusted-cert -d"), none.detail());
 
+        // A user-level process can deny the default roots in the user's own domain (#1552)
+        var rootsDenied = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), true, null));
+        assertTrue(rootsDenied.detail().contains("the default roots denied (security dump-trust-settings"), rootsDenied.detail());
+
         var failed = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), "timed out"));
         assertEquals(DoctorCommand.Status.WARN, failed.status());
         assertTrue(failed.detail().contains("timed out"), failed.detail());

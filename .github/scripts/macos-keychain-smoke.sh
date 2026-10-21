@@ -72,7 +72,7 @@ if ! echo "$after" | grep -q "$trusted"; then
   echo "$after"
   exit 1
 fi
-if ! echo "$after" | grep -q "1 denied by an administrator"; then
+if ! echo "$after" | grep -qF "1 denied (security dump-trust-settings"; then
   echo "::error::isx doctor does not count the CA an administrator denied"
   echo "$after"
   exit 1
