@@ -46,6 +46,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.GeneralSecurityException;
 import java.security.cert.CertificateExpiredException;
 import java.security.cert.CertificateNotYetValidException;
 import java.time.Instant;
@@ -224,7 +225,7 @@ public class DoctorCommand extends BaseCommand {
 
         // Layer 1: Host configuration
         findings.addAll(checkHostConfig());
-        findings.add(keychainTrustFinding(SystemTrust.keychain()));
+        findings.add(keychainTrustFinding(SystemTrust.keychain(), SystemTrust.findBundle()));
         // Said here so nobody has to find it out from a failed build or branch (#1254)
         findings.add(Finding.note("VM instances and KVM", "(not available on macOS: isx runs containers only)"));
 
@@ -306,13 +307,25 @@ public class DoctorCommand extends BaseCommand {
         return findings;
     }
 
-    /** What macOS's Keychain adds to isx's own TLS trust (#1467), so a user can tell why an inspection CA is or is not used. */
-    static Finding keychainTrustFinding(MacKeychainTrust.Trust trust) {
+    /**
+     * What macOS's Keychain adds to isx's own TLS trust (#1467), so a user can tell why an inspection CA is or is not used.
+     * {@code bundle} is the system CA bundle, or null: whether anything is left to trust is the proxy's own decision.
+     */
+    static Finding keychainTrustFinding(MacKeychainTrust.Trust trust, Path bundle) {
+        // As the proxy decides: with no say from the Keychain it loads the bundle by path, whatever it holds
+        if (!trust.isEmpty()) {
+            try {
+                SystemTrust.upstreamAnchors(bundle, trust);
+            } catch (GeneralSecurityException e) {
+                // Nothing left: the proxy refuses to start and every download fails, and a user-level process can cause it (#1552)
+                return Finding.warn("Keychain CAs trusted for TLS", "(isx trusts no CA, so the proxy will not start: " + e.getMessage()
+                        + (trust.problem() == null ? "" : "; " + trust.problem()) + ")", null);
+            }
+        }
         if (trust.problem() != null) {
-            var trusts = trust.defaultRootsDenied()
-                    ? "isx trusts no CA: the Keychain denies the default roots and no Keychain CA could be read"
-                    : "isx trusts /etc/ssl/cert.pem and the CA list it was built with, no Keychain CA"
-                        + (trust.denied().isEmpty() ? "" : ", less the " + trust.denied().size() + " the Keychain denies");
+            // A deny of the default roots left nothing to trust, which the check above reported
+            var trusts = "isx trusts /etc/ssl/cert.pem and the CA list it was built with, no Keychain CA"
+                    + (trust.denied().isEmpty() ? "" : ", less the " + trust.denied().size() + " the Keychain denies");
             return Finding.warn("Keychain trust settings unreadable", "(" + trust.problem() + "; " + trusts + ")", null);
         }
         // A deny of the default roots leaves isx trusting the Keychain's CAs alone: say so, and where to look

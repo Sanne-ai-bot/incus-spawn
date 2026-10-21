@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class DoctorCommandTest {
 
     @Test
-    void keychainTrustSaysWhichCasAreTrustedAndHowToTrustOneSystemWide(@org.junit.jupiter.api.io.TempDir Path temp) {
+    void keychainTrustSaysWhichCasAreTrustedAndHowToTrustOneSystemWide(@org.junit.jupiter.api.io.TempDir Path temp) throws Exception {
         var savedHome = System.getProperty("user.home");
         java.security.cert.X509Certificate ca;
         try {
@@ -39,20 +39,37 @@ class DoctorCommandTest {
         } finally {
             System.setProperty("user.home", savedHome);
         }
-        var trusted = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(ca), Set.of("AB"), null));
+        var trusted = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(ca), Set.of("AB"), null), null);
         assertEquals(DoctorCommand.Status.OK, trusted.status());
         assertTrue(trusted.detail().contains("sha256:" + dev.incusspawn.proxy.CertificateAuthority.fingerprintOf(ca)), trusted.detail());
         assertTrue(trusted.detail().contains("1 denied"), trusted.detail());
 
-        var none = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), null));
+        // No say from the Keychain: never the "trusts no CA" warning, even with a bundle that holds no certificate
+        var emptyBundle = Files.writeString(temp.resolve("empty.pem"), "");
+        var none = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), null), emptyBundle);
         assertEquals(DoctorCommand.Status.NOTE, none.status());
         assertTrue(none.detail().contains("sudo security add-trusted-cert -d"), none.detail());
 
         // A user-level process can deny the default roots in the user's own domain (#1552)
-        var rootsDenied = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), true, null));
+        var rootsDenied = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(ca), Set.of(), true, null), null);
+        assertEquals(DoctorCommand.Status.OK, rootsDenied.status());
         assertTrue(rootsDenied.detail().contains("the default roots denied (security dump-trust-settings"), rootsDenied.detail());
+        // With no Keychain CA either, isx trusts nothing: the proxy will not start
+        var nothingTrusted = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), true, null), null);
+        assertEquals(DoctorCommand.Status.WARN, nothingTrusted.status());
+        assertTrue(nothingTrusted.detail().contains("isx trusts no CA"), nothingTrusted.detail());
+        assertTrue(nothingTrusted.detail().contains("security dump-trust-settings"), nothingTrusted.detail());
+        // The same when each CA of the bundle is denied on its own: doctor asks the proxy's own rule
+        var bundle = Files.writeString(temp.resolve("cert.pem"), dev.incusspawn.DerEncoder.toPem("CERTIFICATE", ca.getEncoded()));
+        var eachDenied = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(MacKeychainTrust.sha1(ca)), null), bundle);
+        assertEquals(DoctorCommand.Status.WARN, eachDenied.status());
+        assertEquals("Keychain CAs trusted for TLS", eachDenied.label());
+        // Also when part of the Keychain could not be read: its denies still leave the proxy nothing
+        var partlyRead = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(MacKeychainTrust.sha1(ca)), "timed out"), bundle);
+        assertEquals(DoctorCommand.Status.WARN, partlyRead.status());
+        assertTrue(partlyRead.detail().contains("isx trusts no CA") && partlyRead.detail().contains("timed out"), partlyRead.detail());
 
-        var failed = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), "timed out"));
+        var failed = DoctorCommand.keychainTrustFinding(new MacKeychainTrust.Trust(List.of(), Set.of(), "timed out"), null);
         assertEquals(DoctorCommand.Status.WARN, failed.status());
         assertTrue(failed.detail().contains("timed out"), failed.detail());
     }
