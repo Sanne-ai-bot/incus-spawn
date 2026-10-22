@@ -314,7 +314,7 @@ Codex CLI can intercept URL clicks and try to launch a browser inside the isx in
 
 ### Why doesn't "copied" from an agent reach my host clipboard?
 
-Agents copy with OSC 52, which isx forwards but cannot apply: your host terminal must support it. Apple Terminal and GNOME Terminal/VTE do not support OSC 52. Ghostty, kitty, WezTerm, foot, Alacritty, and iTerm2 support SC 52. In iTerm2 enable **Settings → General → Selection → Applications in terminal may access clipboard**. In tmux set `set -g set-clipboard on` and `set -as terminal-features '*:clipboard'`.
+Agents copy with OSC 52, which isx forwards but cannot apply: your host terminal must support it. Apple Terminal and GNOME Terminal/VTE do not support OSC 52. Ghostty, kitty, WezTerm, foot, Alacritty, and iTerm2 support OSC 52. In iTerm2 enable **Settings → General → Selection → Applications in terminal may access clipboard**. In tmux set `set -g set-clipboard on` and `set -as terminal-features '*:clipboard'` (tmux 3.2 or newer) in every tmux between the agent and your terminal, on the host and in the instance; one that is missing them drops the copy silently.
 
 ### Why can't I mount a host directory read-write to follow agent work in my IDE?
 
