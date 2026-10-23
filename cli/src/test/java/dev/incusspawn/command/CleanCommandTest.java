@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -311,6 +312,54 @@ class CleanCommandTest {
     }
 
     @Test
+    void decliningThePoolCleansDnfCacheKeepsIt() {
+        // isx clean pool asks about each category; the DNF cache was deleted without asking
+        var incus = withDnfCacheVolume();
+        var asked = new ArrayList<String>();
+
+        assertTrue(CleanCommand.Pool.cleanDnfCacheFromPool(incus, "cow", false, q -> asked.add(q) && false));
+
+        assertEquals(1, asked.size());
+        verify(incus, never()).deleteStorageVolume(anyString(), anyString());
+    }
+
+    @Test
+    void cleanDnfDeletesOnlyTheVolume() throws Exception {
+        Files.createDirectories(Environment.cacheDir());
+        var blob = Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
+        var incus = withDnfCacheVolume();
+
+        var out = capture(() -> CleanCommand.Dnf.clean(incus, false, q -> true));
+
+        verify(incus).deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME);
+        assertTrue(Files.exists(blob), out);
+        assertFalse(out.contains("Freed"), out);
+    }
+
+    @Test
+    void cleanDnfWithNoVolumeSaysSo() throws Exception {
+        var incus = mock(IncusClient.class);
+        when(incus.probeCowPool()).thenReturn(new IncusClient.CowPoolProbe(true, "cow", "btrfs"));
+
+        var out = capture(() -> CleanCommand.Dnf.clean(incus, false, q -> true));
+
+        assertTrue(out.contains("Nothing to clean"), out);
+    }
+
+    @Test
+    void cleanDnfFailsWhenItCouldNotLook() {
+        // Its whole job is the volume: Incus not answering is not "nothing to clean"
+        var incus = mock(IncusClient.class);
+        when(incus.probeCowPool()).thenReturn(new IncusClient.CowPoolProbe(false, null, null));
+
+        var e = assertThrows(IllegalStateException.class,
+                () -> capture(() -> CleanCommand.Dnf.clean(incus, false, q -> true)));
+
+        assertTrue(e.getMessage().contains("could not look for the DNF cache volume"), e.getMessage());
+        verify(incus, never()).deleteStorageVolume(anyString(), anyString());
+    }
+
+    @Test
     void cleanCacheGoesOnWhenItCouldNotLookForTheVolume() throws Exception {
         Files.createDirectories(Environment.cacheDir());
         var blob = Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
@@ -359,6 +408,30 @@ class CleanCommandTest {
     }
 
     @Test
+    void cleanDnfFailsWhenTheDeleteFails() {
+        var incus = withDnfCacheVolume();
+        when(incus.deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME))
+                .thenThrow(new IncusException("Failed to delete storage volume dnf-cache from pool cow: "
+                        + "Storage volume is still in use"));
+
+        var e = assertThrows(IllegalStateException.class,
+                () -> capture(() -> CleanCommand.Dnf.clean(incus, false, q -> true)));
+
+        assertTrue(e.getMessage().contains("in use by a running build"), e.getMessage());
+    }
+
+    @Test
+    void cleanDnfFailsWhenIncusCouldNotSayWithNoMessage() {
+        var incus = mock(IncusClient.class);
+        when(incus.probeCowPool()).thenThrow(new IncusException(null));
+
+        var e = assertThrows(IllegalStateException.class,
+                () -> capture(() -> CleanCommand.Dnf.clean(incus, false, q -> true)));
+
+        assertFalse(e.getMessage().endsWith("null"), e.getMessage());
+    }
+
+    @Test
     void cleanCacheWithNoIncusCleansTheCacheAlone() throws Exception {
         // macOS with its VM stopped: nothing to ask, and nothing to warn about
         Files.createDirectories(Environment.cacheDir());
@@ -380,6 +453,17 @@ class CleanCommandTest {
     }
 
     @Test
+    void cleanDnfSaysWhenTheVolumeWasAlreadyGone() throws Exception {
+        // Another clean deleted it between the listing and the answer
+        var incus = withDnfCacheVolume();
+        when(incus.deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME)).thenReturn(false);
+
+        var out = capture(() -> CleanCommand.Dnf.clean(incus, false, q -> true));
+
+        assertTrue(out.contains("already gone"), out);
+    }
+
+    @Test
     void cleanAllWithOnlyTheVolumeLeftDoesNotWarnAboutTheConfiguration() throws Exception {
         var incus = withDnfCacheVolume();
 
@@ -387,17 +471,5 @@ class CleanCommandTest {
 
         assertFalse(out.contains("SSH keys"), out);
         verify(incus).deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME);
-    }
-
-    @Test
-    void decliningThePoolCleansDnfCacheKeepsIt() {
-        // isx clean pool asks about each category; the DNF cache was deleted without asking
-        var incus = withDnfCacheVolume();
-        var asked = new ArrayList<String>();
-
-        assertTrue(CleanCommand.Pool.cleanDnfCacheFromPool(incus, "cow", false, q -> asked.add(q) && false));
-
-        assertEquals(1, asked.size());
-        verify(incus, never()).deleteStorageVolume(anyString(), anyString());
     }
 }

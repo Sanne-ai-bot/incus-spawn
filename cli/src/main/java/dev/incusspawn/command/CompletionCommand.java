@@ -332,6 +332,7 @@ public class CompletionCommand extends BaseCommand {
                 'state:remove VM state, logs, and appliance artifacts'
                 'config:remove configuration, SSH keys, and CA certificate'
                 'pool:reclaim space from the storage pool'
+                'dnf:remove only the DNF cache volume builds share'
                 'all:remove all incus-spawn data'
               )
 
@@ -595,12 +596,12 @@ public class CompletionCommand extends BaseCommand {
                   COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes" -- "$cur") )
                   ;;
                 clean)
-                  local clean_subcmds="cache state config pool all"
+                  local clean_subcmds="cache state config pool dnf all"
                   local clean_cmd=""
                   local j
                   for (( j=i+1; j < cword; j++ )); do
                     case "${words[j]}" in
-                      cache|state|config|pool|all) clean_cmd="${words[j]}"; break ;;
+                      cache|state|config|pool|dnf|all) clean_cmd="${words[j]}"; break ;;
                     esac
                   done
                   if [[ -z "$clean_cmd" ]]; then
@@ -912,14 +913,15 @@ public class CompletionCommand extends BaseCommand {
 
             # ── clean ────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a cache  -d 'Remove cached downloads, registry blobs, and build caches'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a state  -d 'Remove VM state, logs, and appliance artifacts'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a config -d 'Remove configuration, SSH keys, and CA certificate'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a pool   -d 'Reclaim space from the storage pool'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a all    -d 'Remove all incus-spawn data'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a cache  -d 'Remove cached downloads, registry blobs, and build caches'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a state  -d 'Remove VM state, logs, and appliance artifacts'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a config -d 'Remove configuration, SSH keys, and CA certificate'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a pool   -d 'Reclaim space from the storage pool'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a dnf    -d 'Remove only the DNF cache volume builds share'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a all    -d 'Remove all incus-spawn data'
 
-            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -l dry-run           -d 'Show what would be deleted without deleting'
-            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -l skip-confirmation -d 'Skip the confirmation prompt'
+            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -l dry-run           -d 'Show what would be deleted without deleting'
+            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -l skip-confirmation -d 'Skip the confirmation prompt'
 
             # ── destroy ──────────────────────────────────────────────────────────────────
 

@@ -434,6 +434,7 @@ isx clean <subcommand> [options]
 | `state` | Remove VM state, logs and appliance artifacts |
 | `config` | Remove configuration, SSH keys and the CA certificate |
 | `pool` | Reclaim space from the storage pool: failed builds, unused images, DNF cache |
+| `dnf` | Remove only the DNF cache volume builds share; the next build downloads its packages again |
 | `all` | Remove cache, state and configuration, and on Linux the DNF cache volume |
 
 All subcommands accept these options:
