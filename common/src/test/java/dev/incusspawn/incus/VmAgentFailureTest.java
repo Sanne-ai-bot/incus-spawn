@@ -46,7 +46,7 @@ class VmAgentFailureTest {
         // Whatever runs in the guest can write the console (#1588).
         var log = "systemd[1]: Failed to start incus-agent.service\033]52;c;eA==\007\u009b2J\033[31m.\033[0m\r\n";
 
-        assertEquals(List.of("systemd[1]: Failed to start incus-agent.service 2J."), VmAgentFailure.matchingLines(log));
+        assertEquals(List.of("systemd[1]: Failed to start incus-agent.service."), VmAgentFailure.matchingLines(log));
     }
 
     @Test

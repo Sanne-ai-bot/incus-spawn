@@ -333,14 +333,19 @@ class BuildOutputTest {
         assertEquals("red\ntab\tend\n100%\ndone\n",
                 BuildOutput.guestText("\033[31mred\033[0m\r\n\033]52;c;eA==\007tab\tend\n"
                         + " 10%\r 50%\r100%\r\ndone\n"));
-        assertEquals(" 2J", BuildOutput.guestText("\u009b2J"));
+        assertEquals("", BuildOutput.guestText("\u009b2J"));
+        assertEquals("cursor keys", BuildOutput.guestText("cursor\033[0 q keys\033[>4;2m"));
         assertEquals("", BuildOutput.guestText("\r\r"));
-        assertEquals(" ]0;unterminated", BuildOutput.guestText("\033]0;unterminated"));
+        assertEquals("0;unterminated", BuildOutput.guestText("\033]0;unterminated"));
         // A terminal still shows the text before a carriage return that only colour follows.
         assertEquals("npm error", BuildOutput.guestText("npm error\r\033[0m"));
         assertEquals("text", BuildOutput.guestText("\u009d0;title\u009ctext\033Pq#0\033\\"));
         // A control string never spans lines, so an unterminated one cannot swallow the log.
-        assertEquals(" ]0;open\nnext ", BuildOutput.guestText("\033]0;open\nnext\007"));
+        assertEquals("0;open\nnext ", BuildOutput.guestText("\033]0;open\nnext\007"));
+        // A terminal ends a control string at the next escape and shows the text after it.
+        assertEquals("0;titlevisible error ", BuildOutput.guestText("\033]0;title\033[31mvisible error\007"));
+        // tput sgr0 on xterm: a charset designation, then a reset.
+        assertEquals("done", BuildOutput.guestText("done\033(B\033[m"));
         assertSame("plain\ttext\n", BuildOutput.guestText("plain\ttext\n"));
     }
 
@@ -352,7 +357,10 @@ class BuildOutputTest {
         var mixed = "\u0090x\u0098x\u009dx\u009ex\u009fx\033]x".repeat(50_000);
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
             assertEquals(" ".repeat(200_000), BuildOutput.guestText(introducers));
-            assertEquals(" x x x x x ]x".repeat(50_000), BuildOutput.guestText(mixed));
+            assertEquals(" x x x x xx".repeat(50_000), BuildOutput.guestText(mixed));
+            assertEquals("", BuildOutput.guestText("\033[".repeat(100_000)));
+            assertEquals("", BuildOutput.guestText("\033[" + "0;".repeat(100_000) + " ".repeat(100_000) + "m"));
+            assertEquals(" 0".repeat(100_000), BuildOutput.guestText("\u009b0".repeat(100_000)));
         });
     }
 }
