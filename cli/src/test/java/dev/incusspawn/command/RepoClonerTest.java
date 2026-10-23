@@ -5,6 +5,8 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
+import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.TerminalLink;
 
 import org.junit.jupiter.api.Test;
 
@@ -482,6 +484,46 @@ class RepoClonerTest {
         assertNotNull(ex.stepOutput(), "the exception should carry step output from the failed prime");
         assertTrue(ex.stepOutput().contains("npm ERR! could not resolve dependency"),
                 "step output should contain the prime's captured stdout");
+    }
+
+    @Test
+    void failedPrimeOutputCannotDriveTheTerminal() {
+        // A prime is code the repository controls: what it prints is shown as text (#1588).
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(OK)  // clone
+                .thenReturn(OK)  // refspec restore
+                .thenReturn(new IncusClient.ExecResult(1,
+                        "\033]0;pwned\007\033[2J\033[31mred\r\n\033]52;c;cHduZWQ=\007\u009b2Jtail\tend", ""));
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "exit 1")));
+
+        // Both streams: off a terminal the failure line, with the prime's last line, goes to stdout.
+        var output = new java.io.ByteArrayOutputStream();
+        var originalOut = System.out;
+        var originalErr = System.err;
+        IncusException ex;
+        try {
+            System.setOut(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
+            System.setErr(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
+            ex = assertThrows(IncusException.class,
+                    () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+        var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(shown.contains("red"), shown);
+        assertTrue(shown.contains("tail\tend"), "tabs are kept: " + shown);
+        assertTrue(shown.contains("2Jtail"), "the last line is on the failure line: " + shown);
+        assertEquals(TerminalLink.plainText(shown).replace("\033", "ESC"), shown.replace("\033", "ESC"),
+                "the prime's escapes must not reach the terminal");
+        // The failure report a person is pointed to and may cat.
+        assertEquals(TerminalLink.plainText(ex.stepOutput()), ex.stepOutput());
+        assertEquals(OutputFormat.oneLine(ex.getMessage().replace("\n", " ")), ex.getMessage().replace("\n", " "));
     }
 
     private static ImageDef.RepoEntry repo(String url, String path, String prime) {

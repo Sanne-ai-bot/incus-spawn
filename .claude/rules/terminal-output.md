@@ -3,6 +3,8 @@ paths:
   - "common/src/main/java/dev/incusspawn/util/BuildOutput.java"
   - "common/src/main/java/dev/incusspawn/util/TerminalProgress.java"
   - "common/src/main/java/dev/incusspawn/tool/**"
+  - "cli/src/main/java/dev/incusspawn/command/BuildProgress.java"
+  - "cli/src/main/java/dev/incusspawn/command/RepoCloner.java"
 ---
 
 # Terminal Output
@@ -21,6 +23,10 @@ Styled text anywhere, a command included, goes through the public `BuildOutput.s
 An AI answer never reaches the terminal raw (#1413): `TerminalLink.plainText` turns what `OutputFormat.isControl` names into spaces, line feeds and tabs apart.
 `TerminalLink.parseSegments` and `linkify` pass the text around a link through it, and `isx ask` prints a chunk through it off a terminal.
 An AI request's error goes through `OutputFormat.oneLine`: `AiHelpClient` passes a provider's text through it, and AI Help every error it shows.
+Output captured from a guest command is someone else's text too (#1588).
+A build step's `StepProgress` cleans its detail and log as it is made, since a prime is code the repository controls.
+Colour is dropped, the detail goes through `OutputFormat.oneLine` and the log through `TerminalLink.plainText`.
+So the live line, the plain failure line on stdout, the printed log and the saved failure report all show it as text.
 `AnsiEscapeGateTest` fails on any raw CSI/OSC literal (`\033[`, `\033]`) whose line lacks a `// raw ANSI: <why>` comment, apart from the gates, `TerminalProgress` and `ShellStatusBar` (#1082).
 Escapes follow stdout: `System.console()` never looks at stderr, so `2>log` alone keeps colour (documented, not fixable without native code).
 A warning's closing blank line goes to stdout, so stdout's flow keeps its layout when stderr is redirected.

@@ -901,6 +901,10 @@ Completion scripts installed by older releases call it by name, so it stays, hid
 An AI answer never reaches the terminal raw (#1413): `TerminalLink.plainText` turns what `OutputFormat.isControl` names into spaces, line feeds and tabs apart.
 `TerminalLink.parseSegments` and `linkify` pass the text around a link through it, and `isx ask` prints a chunk through it off a terminal.
 An AI request's error goes through `OutputFormat.oneLine`: `AiHelpClient` passes a provider's text through it, and AI Help every error it shows.
+Output captured from a guest command is someone else's text too (#1588).
+A build step's `StepProgress` cleans its detail and log as it is made, since a prime is code the repository controls.
+Colour is dropped, the detail goes through `OutputFormat.oneLine` and the log through `TerminalLink.plainText`.
+So the live line, the plain failure line on stdout, the printed log and the saved failure report all show it as text.
 The console is decided by stdin and stdout, never stderr, and Java cannot ask whether stderr alone is a terminal without native code.
 So the contract is that escapes follow stdout: redirecting stdout or setting `NO_COLOR` clears both streams, while `2>log` alone from a terminal keeps colour in the log.
 `docs/CLI.md` ("Scripting isx") says so rather than promising more.
