@@ -133,7 +133,7 @@ public final class NpmGlobalInstall {
             case PLATFORM_PACKAGE_MISSING -> new Check(false, result.stdout().strip());
             default -> {
                 BuildOutput.stepBreak();
-                if (!result.stderr().isBlank()) System.err.print(result.stderr());
+                if (!result.stderr().isBlank()) System.err.print(BuildOutput.guestText(result.stderr()));
                 throw new IncusException("Could not check " + cli.displayName() + "'s platform package"
                         + " (exit code " + result.exitCode() + ")");
             }
@@ -148,8 +148,8 @@ public final class NpmGlobalInstall {
 
     private static IncusException npmFailed(String displayName, IncusClient.ExecResult npm) {
         BuildOutput.stepBreak();
-        if (!npm.stdout().isBlank()) System.err.print(npm.stdout());
-        if (!npm.stderr().isBlank()) System.err.print(npm.stderr());
+        if (!npm.stdout().isBlank()) System.err.print(BuildOutput.guestText(npm.stdout()));
+        if (!npm.stderr().isBlank()) System.err.print(BuildOutput.guestText(npm.stderr()));
         return new IncusException("Failed to install " + displayName + " (exit code " + npm.exitCode() + ")");
     }
 

@@ -92,4 +92,27 @@ class ContainerTest {
         assertEquals(0, process.waitFor());
         assertEquals(content + "\n", output);
     }
+
+    @Test
+    void quietRunsShowAFailedCommandsOutputAsText() {
+        // A tool's run: step decides what it prints (#1588).
+        var hostile = new IncusClient.ExecResult(1, "\033]52;c;eA==\007out\n", "\033[2Jerr\n");
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), org.mockito.ArgumentMatchers.<String>any())).thenReturn(hostile);
+        when(incus.execInContainer("test", "agentuser", "setup")).thenReturn(hostile);
+        var container = new Container(incus, "test");
+        var captured = new java.io.ByteArrayOutputStream();
+        var originalErr = System.err;
+        try {
+            System.setErr(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
+            org.junit.jupiter.api.Assertions.assertThrows(IncusException.class,
+                    () -> container.runQuiet("failed", "setup"));
+            org.junit.jupiter.api.Assertions.assertThrows(IncusException.class,
+                    () -> container.runAsUserQuiet("agentuser", "setup", "failed"));
+        } finally {
+            System.setErr(originalErr);
+        }
+        var once = " ]52;c;eA== out\nerr\n";
+        assertEquals(once + once, captured.toString(java.nio.charset.StandardCharsets.UTF_8));
+    }
 }

@@ -70,8 +70,8 @@ public class Container {
     public void runQuiet(String failureMessage, String... command) {
         var result = incus.shellExec(name, command);
         if (!result.success()) {
-            if (!result.stdout().isBlank()) System.err.print(result.stdout());
-            if (!result.stderr().isBlank()) System.err.print(result.stderr());
+            if (!result.stdout().isBlank()) System.err.print(dev.incusspawn.util.BuildOutput.guestText(result.stdout()));
+            if (!result.stderr().isBlank()) System.err.print(dev.incusspawn.util.BuildOutput.guestText(result.stderr()));
             throw new IncusException(failureMessage + " (exit code " + result.exitCode() + ")");
         }
     }
@@ -105,8 +105,8 @@ public class Container {
     public void runAsUserQuiet(String user, String script, String failureMessage) {
         var result = incus.execInContainer(name, user, script);
         if (!result.success()) {
-            if (!result.stdout().isBlank()) System.err.print(result.stdout());
-            if (!result.stderr().isBlank()) System.err.print(result.stderr());
+            if (!result.stdout().isBlank()) System.err.print(dev.incusspawn.util.BuildOutput.guestText(result.stdout()));
+            if (!result.stderr().isBlank()) System.err.print(dev.incusspawn.util.BuildOutput.guestText(result.stderr()));
             throw new IncusException(failureMessage + " (exit code " + result.exitCode() + ")");
         }
     }
