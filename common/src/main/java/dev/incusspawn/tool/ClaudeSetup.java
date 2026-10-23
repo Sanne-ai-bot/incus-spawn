@@ -132,9 +132,23 @@ public class ClaudeSetup implements ToolSetup {
         var a = new ToolDef.ActionEntry();
         a.setLabel("Claude Code");
         a.setType("shell");
-        a.setCommand("d=$(find ~/.claude/projects -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-); if [ -n \"$d\" ]; then c=$(grep -m1 -o '\"cwd\":\"[^\"]*\"' \"$d\" | cut -d'\"' -f4); [ -n \"$c\" ] && [ -d \"$c\" ] && cd \"$c\"; claude --continue; else claude; fi");
+        a.setCommand(actionCommand("claude --continue", "claude"));
         a.setAutoReturn(true);
         return List.of(a);
+    }
+
+    /**
+     * The Claude Code action: {@code resume} continues the newest session from the directory it
+     * ran in (from the home directory when its transcript names none), else {@code fresh} starts
+     * one. {@code claude --continue} looks for a session of the current directory, so when that
+     * directory is gone it would find none and exit, and the action would end in a shell instead
+     * of Claude Code.
+     */
+    public static String actionCommand(String resume, String fresh) {
+        return "d=$(find ~/.claude/projects -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-); r=; "
+                + "if [ -n \"$d\" ]; then r=1; c=$(grep -m1 -o '\"cwd\":\"[^\"]*\"' \"$d\" | cut -d'\"' -f4); "
+                + "[ -n \"$c\" ] && { [ -d \"$c\" ] && cd \"$c\" || r=; }; fi; "
+                + "if [ -n \"$r\" ]; then " + resume + "; else " + fresh + "; fi";
     }
 
     @Override
