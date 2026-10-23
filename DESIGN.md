@@ -194,9 +194,7 @@ It is in the root template, not in one template (yrodiere/incus-spawn-templates#
 It is not in the base image either, which would put an isx choice in a Fedora image other tools could use.
 `mask_services` is in the content fingerprint, as is `remove_packages`, each adding nothing when empty so other templates keep theirs; masking `tmp.mount` marks `tpl-minimal` and everything below it out of sync.
 What a step leaves in `/tmp` is now saved with the template, so every path that saves one empties `/tmp` and `/var/tmp` first, hidden files included (`GuestUpdate.EMPTY_TMP_SCRIPT`): the builds' `cleanCaches`, `isx update-all`, and `isx project create` and `update`.
-A pin of the base image (`isx update-base <tag>`) writes a user-level `minimal.yaml` that replaces the built-in definition, so it also writes the pinned definition's description, `remove_packages` and `mask_services`, through the YAML writer so each reads back as written.
-A pin written before this change has none; `isx update-base --latest` and pinning again restores them.
-Pinning does not merge the built-in's masks back in, as a user may have removed one on purpose.
+A base image pinned before #1563 replaced the whole built-in definition, so it keeps the tmpfs until `isx update-base` pins it again or unpins it (below).
 
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
 Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
@@ -265,8 +263,26 @@ An event-driven CI job (`.github/workflows/update-base-image.yml`) keeps that bu
 So this repo neither polls nor re-parses `SHA256SUMS`.
 A manual `workflow_dispatch` re-derives the newest release from the images repo's release list as a backstop if a dispatch is ever missed.
 
-`isx update-base` manages the pin: it fetches the release list from the GitHub API, retrieves per-architecture container **and VM** SHA256 checksums, and writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml` (`pinned: true`) when pinning a specific version.
-`--latest` (or menu option 1) simply removes that override, restoring build-time latest tracking — it does not itself download anything.
+`isx update-base` manages the pin: it fetches the release list from the GitHub API, retrieves per-architecture container **and VM** SHA256 checksums, and writes them to `~/.config/incus-spawn/base-image-pin.yaml` when pinning a specific version.
+`--latest` (or menu option 1) simply removes that file, restoring build-time latest tracking — it does not itself download anything.
+
+**A pin is data beside the definition, not a definition** (#1563).
+The pin file holds only the release's base image: `image`, `image_url`, `vm_image_url`, `image_tag` and both checksum maps.
+`ImageDef` applies it to `tpl-minimal` once the trusted layers are loaded, before the project layer, and marks the template `pinned`.
+Every other field comes from whichever definition is in effect, so a built-in change such as #1561's `tmp.mount` mask reaches pinned users, and pinning keeps a user's own `minimal.yaml` edits.
+Until #1563 a pin was a user `minimal.yaml` that replaced the built-in whole, copying back a hand-picked list of fields.
+Every new built-in field then missed pinned users, and pinning over a hand-edited file dropped its edits.
+A pin-only user `minimal.yaml` merged onto the built-in was rejected: it needs an exception to "a later same-name definition replaces", and a shape test that breaks again on the first hand edit.
+`config.yaml` was rejected as the pin's home because `isx init` owns that file and support bundles redact it.
+The pin carries the image's name and URLs, not only its tag, so a built-in moved to another Fedora's file names never pairs them with the pinned checksums.
+It is applied only while the definition still downloads from the release repository it was taken from, with a warning otherwise, so its checksums never verify another publisher's files.
+A pin file that cannot be read, lacks a field or lacks a checksum for an arch counts as a file that failed to parse, so `isx build` refuses rather than track the latest release in its place.
+A project-local `tpl-minimal` replaces the pinned one whole, as it replaced a pinned user file before.
+The pin is applied before fingerprinting, so pinning or unpinning marks `tpl-minimal` out of sync, as it did.
+A user `minimal.yaml` with `pinned: true`, only the keys an earlier `isx update-base` wrote, and the built-in's `mask_services` and `remove_packages` where it lists them is that command's legacy pin: `isx update-base` removes it when it pins or unpins, and `isx build` notes it.
+From #1561 that command copied those lists from the definition in effect, so other lists are a choice the user made.
+Any other user `minimal.yaml` is the user's, and the command never removes it; before #1563 `--latest` deleted it whatever it held.
+When such a file sets `pinned: true` itself, `--latest` says builds stay on its tag rather than report tracking the latest.
 `BaseImageReleases` looks checksums up by the exact file names the definition's `image_url` and `vm_image_url` download, per arch, so a pin records the correct digest for each.
 A release carries two VM images from #1255 on, and only the old ones are in `SHA256SUMS`, byte for byte what earlier isx releases parse: `-vm.tar.xz`, built from the stock Incus image, and `-vm-direct.tar.xz`, built from scratch around isx's own kernel, listed with everything else in `SHA256SUMS.v2`.
 isx reads `SHA256SUMS.v2` when a release has one.
@@ -282,11 +298,11 @@ Incus also resolves a fingerprint by prefix, so a checksum that is not a full SH
 An unchecked import by an isx before this recorded no URL, and is imported once more.
 If the request for `SHA256SUMS.v2` fails or returns an error status, `SHA256SUMS` is read instead; a v2 that downloads but does not parse is not read around.
 `update-base-image.yml` points `vm_image_url` at `-vm-direct` in the bump of the first release that has it for both arches, says so in the PR, and refuses a later release without it rather than move the built-in back to the stock image.
-`isx update-base` pins only what the release lists a checksum for on every arch, since a pin is used wherever it is copied: a release without the container image for every arch is not pinned, and one without the VM image the definition names for every arch is pinned without `vm_image_url`, with a warning, so its VM templates start from the Incus image server; the next pin takes the built-in's `vm_image_url` again, when the definition is on the built-in's `image_url`.
+`isx update-base` pins only what the release lists a checksum for on every arch, since a pin is used wherever it is copied: a release without the container image for every arch is not pinned, and one without the VM image the definition names for every arch is pinned without `vm_image_url`, with a warning, so its VM templates start from the Incus image server; the next pin is taken from the definition with no pin applied, so it names the VM image again.
 See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version) for the full release process.
 
 **Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`).
-Definitions with the same name from a later source override earlier ones — this is the mechanism behind pinning and template customization, so it stays silent.
+Definitions with the same name from a later source override earlier ones — this is the mechanism behind template customization, so it stays silent.
 But two files declaring the same `name:` *within the same directory* is always a mistake (typically a copy that forgot to update `name:`, which silently masks the file you think you are editing).
 `ImageDef.loadAllWithConflicts()` distinguishes the two: same-directory collisions become `NameConflict`s (listing every colliding file), cross-layer replacements become `LayerOverride`s.
 `isx build` refuses to build while any conflict exists and names the offending files; the TUI degrades to a status warning but still renders; `isx doctor` surfaces both (conflicts as warnings, overrides as informational notes).

@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.baseimage.BaseImageReleases.Checksums;
+import dev.incusspawn.config.BaseImagePin;
 import dev.incusspawn.config.ImageDef;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -22,8 +23,8 @@ class UpdateBaseCommandTest {
         var out = new String[1];
         InitCommandTest.withHome(home, () -> {
             try {
-                new UpdateBaseCommand().writeUserOverride(def, "fedora-44-20261020", sums);
-                out[0] = Files.readString(ImageDef.userImagesDir().resolve("minimal.yaml"));
+                new UpdateBaseCommand().writePin(def, "fedora-44-20261020", sums);
+                out[0] = Files.readString(BaseImagePin.file());
             } catch (java.io.IOException e) {
                 throw new AssertionError(e);
             }
@@ -36,32 +37,6 @@ class UpdateBaseCommandTest {
         var yaml = pin(home, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
         assertTrue(yaml.contains("vm_image_url: "), yaml);
         assertTrue(yaml.contains("vm_image_sha256:\n  aarch64: v2\n  x86_64: v1\n"), yaml);
-    }
-
-    /** The pin replaces the built-in definition, so it must carry its masks too (#1561). */
-    @Test
-    void aPinKeepsTheBuiltinMaskedServices(@TempDir Path home) throws Exception {
-        var yaml = pin(home, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
-        var pinned = ImageDef.parseYaml(yaml);
-        assertEquals(List.of("tmp.mount"), pinned.getMaskServices(), yaml);
-        assertEquals("Base OS only", pinned.getDescription(), yaml);
-        assertFalse(yaml.contains("remove_packages"), yaml);
-    }
-
-    /** Read back as written: a dnf glob such as {@code *-langpack-*} bare is a YAML alias, and the pin would not load. */
-    @Test
-    void aPinKeepsWhatItsDefinitionRemovesAndMasksGlobsIncluded(@TempDir Path home) throws Exception {
-        var removed = List.of("*-langpack-*", "nano", "a \"quoted\" name", "back\\slash");
-        var masked = List.of("tmp.mount", "getty@*.service", "&anchor");
-        var def = ImageDef.loadBuiltinByName("tpl-minimal");
-        def.setDescription("Base: OS only #1\nfolded \u0001\n");
-        def.setRemovePackages(removed);
-        def.setMaskServices(masked);
-        var yaml = pin(home, def, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of()));
-        var pinned = ImageDef.parseYaml(yaml);
-        assertEquals(removed, pinned.getRemovePackages(), yaml);
-        assertEquals(masked, pinned.getMaskServices(), yaml);
-        assertEquals("Base: OS only #1\nfolded \u0001\n", pinned.getDescription(), yaml);
     }
 
     /** One arch's VM checksum is not a pin: the other arch would download the image unverified. */
@@ -87,34 +62,21 @@ class UpdateBaseCommandTest {
                 var result = cmd.pinToTag("fedora-44-20261020", java.util.List.of(release),
                         ImageDef.loadBuiltinByName("tpl-minimal"));
                 assertNotEquals(org.aesh.command.CommandResult.SUCCESS, result);
-                assertFalse(Files.exists(ImageDef.userImagesDir().resolve("minimal.yaml")));
+                assertFalse(Files.exists(BaseImagePin.file()));
             } catch (java.io.IOException e) {
                 throw new AssertionError(e);
             }
         });
     }
 
-    /** A pin left without a VM image by an earlier pin takes the built-in's VM image again, so the loss does not stick. */
+    /** A pin is taken from the definition with no pin applied, so an earlier pin's lost VM image does not stick. */
     @Test
-    void aPinAfterOneWithoutAVmImageNamesTheBuiltInVmImageAgain(@TempDir Path home) throws Exception {
-        var release = new dev.incusspawn.baseimage.BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
-        var releases = org.mockito.Mockito.mock(dev.incusspawn.baseimage.BaseImageReleases.class);
-        org.mockito.Mockito.when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(release),
-                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
-                .thenReturn(new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
+    void aPinAfterOneWithoutAVmImageNamesTheBuiltInVmImageAgain(@TempDir Path home) {
+        pin(home, new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of()));
         InitCommandTest.withHome(home, () -> {
-            try {
-                var earlierPin = ImageDef.loadBuiltinByName("tpl-minimal");
-                earlierPin.setVmImageUrl(null);
-                var cmd = new UpdateBaseCommand();
-                cmd.releases = releases;
-                assertEquals(org.aesh.command.CommandResult.SUCCESS,
-                        cmd.pinToTag("fedora-44-20261020", java.util.List.of(release), earlierPin));
-                var yaml = Files.readString(ImageDef.userImagesDir().resolve("minimal.yaml"));
-                assertTrue(yaml.contains("vm_image_url: " + ImageDef.loadBuiltinByName("tpl-minimal").getVmImageUrl()), yaml);
-            } catch (java.io.IOException e) {
-                throw new AssertionError(e);
-            }
+            assertNull(ImageDef.loadAll().get("tpl-minimal").getVmImageUrl());
+            assertEquals(ImageDef.loadBuiltinByName("tpl-minimal").getVmImageUrl(),
+                    UpdateBaseCommand.unpinnedMinimal().getVmImageUrl());
         });
     }
 
@@ -135,7 +97,7 @@ class UpdateBaseCommandTest {
                 cmd.releases = releases;
                 assertEquals(org.aesh.command.CommandResult.SUCCESS,
                         cmd.pinToTag("fedora-44-20261020", java.util.List.of(release), own));
-                var yaml = Files.readString(ImageDef.userImagesDir().resolve("minimal.yaml"));
+                var yaml = Files.readString(BaseImagePin.file());
                 assertFalse(yaml.contains("vm_image_url"), yaml);
                 org.mockito.Mockito.verify(releases).fetchChecksums(release, own.getImageUrl(), null);
             } catch (java.io.IOException e) {
@@ -151,5 +113,209 @@ class UpdateBaseCommandTest {
         assertFalse(yaml.contains("vm_image_url"), yaml);
         assertFalse(yaml.contains("vm_image_sha256"), yaml);
         assertTrue(yaml.contains("image_sha256:\n  aarch64: c2\n  x86_64: c1\n"), yaml);
+    }
+
+    private static final dev.incusspawn.baseimage.BaseImageReleases.Release RELEASE =
+            new dev.incusspawn.baseimage.BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
+
+    /** Pins {@code RELEASE} as {@code isx update-base <tag>} does. */
+    private static void pinRelease() throws java.io.IOException {
+        var releases = org.mockito.Mockito.mock(dev.incusspawn.baseimage.BaseImageReleases.class);
+        org.mockito.Mockito.when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(RELEASE),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
+        var cmd = new UpdateBaseCommand();
+        cmd.releases = releases;
+        assertEquals(org.aesh.command.CommandResult.SUCCESS,
+                cmd.pinToTag(RELEASE.tag(), List.of(RELEASE), UpdateBaseCommand.unpinnedMinimal()));
+    }
+
+    interface IoBody { void run() throws java.io.IOException; }
+
+    private static void inHome(Path home, IoBody body) {
+        InitCommandTest.withHome(home, () -> {
+            try {
+                body.run();
+            } catch (java.io.IOException e) {
+                throw new AssertionError(e);
+            }
+        });
+    }
+
+    private static void writeUserMinimal(String yaml) throws java.io.IOException {
+        Files.createDirectories(ImageDef.userImagesDir());
+        Files.writeString(BaseImagePin.legacyFile(), yaml);
+    }
+
+    private static String userMinimal(String extra) {
+        var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
+        return "name: tpl-minimal\nimage: " + builtin.getImage() + "\nimage_url: " + builtin.getImageUrl()
+                + "\nimage_tag: " + builtin.getImageTag() + "\n" + extra;
+    }
+
+    /** A pin changes only the base image: a hand-edited minimal.yaml keeps its edits (#1563). */
+    @Test
+    void aPinKeepsTheUsersOwnEditsToTheDefinition(@TempDir Path home) {
+        inHome(home, () -> {
+            writeUserMinimal(userMinimal("packages: [htop]\n"));
+            pinRelease();
+            var minimal = ImageDef.loadAll().get("tpl-minimal");
+            assertEquals(List.of("htop"), minimal.getPackages());
+            assertTrue(minimal.isPinned());
+            assertEquals(RELEASE.tag(), minimal.getImageTag());
+            assertEquals(Map.of("x86_64", "c1", "aarch64", "c2"), minimal.getImageSha256());
+        });
+    }
+
+    /** What the definition gains after the pin reaches the pinned template, as a built-in change would (#1563). */
+    @Test
+    void aDefinitionChangedAfterThePinIsStillPinned(@TempDir Path home) {
+        inHome(home, () -> {
+            writeUserMinimal(userMinimal(""));
+            pinRelease();
+            writeUserMinimal(userMinimal("mask_services: [tmp.mount, other.service]\n"));
+            var minimal = ImageDef.loadAll().get("tpl-minimal");
+            assertEquals(List.of("tmp.mount", "other.service"), minimal.getMaskServices());
+            assertTrue(minimal.isPinned());
+            assertEquals(RELEASE.tag(), minimal.getImageTag());
+        });
+    }
+
+    /** With no definition of the user's own, the pinned template is the built-in, its masks included. */
+    @Test
+    void aPinOfTheBuiltInKeepsEverythingButTheBaseImage(@TempDir Path home) {
+        inHome(home, () -> {
+            pinRelease();
+            assertFalse(Files.exists(BaseImagePin.legacyFile()));
+            var minimal = ImageDef.loadAll().get("tpl-minimal");
+            var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
+            assertEquals(builtin.getMaskServices(), minimal.getMaskServices());
+            assertEquals(builtin.getDescription(), minimal.getDescription());
+            assertEquals(builtin.getVmImageUrl(), minimal.getVmImageUrl());
+            assertEquals(Map.of("x86_64", "v1", "aarch64", "v2"), minimal.getVmImageSha256());
+            assertTrue(minimal.isPinned());
+        });
+    }
+
+    /** --latest removes the pin, never a definition the user wrote. */
+    @Test
+    void trackingTheLatestKeepsTheUsersOwnDefinition(@TempDir Path home) {
+        inHome(home, () -> {
+            writeUserMinimal(userMinimal("packages: [htop]\n"));
+            pinRelease();
+            new UpdateBaseCommand().trackLatest(RELEASE.tag());
+            var minimal = ImageDef.loadAll().get("tpl-minimal");
+            assertEquals(List.of("htop"), minimal.getPackages());
+            assertFalse(minimal.isPinned());
+        });
+    }
+
+    /** A minimal.yaml an earlier update-base wrote replaced the built-in whole; pinning again removes it. */
+    @Test
+    void pinningAgainRemovesAPinAnEarlierIsxWrote(@TempDir Path home) {
+        inHome(home, () -> {
+            var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
+            writeUserMinimal("name: tpl-minimal\ndescription: Base OS only\nimage: " + builtin.getImage()
+                    + "\nimage_url: " + builtin.getImageUrl() + "\nimage_tag: fedora-44-20260101\npinned: true\n"
+                    + "image_sha256:\n  aarch64: o2\n  x86_64: o1\n");
+            assertTrue(ImageDef.loadAll().get("tpl-minimal").getMaskServices().isEmpty());
+            pinRelease();
+            assertFalse(Files.exists(BaseImagePin.legacyFile()));
+            var minimal = ImageDef.loadAll().get("tpl-minimal");
+            assertEquals(builtin.getMaskServices(), minimal.getMaskServices());
+            assertEquals(builtin.getVmImageUrl(), minimal.getVmImageUrl());
+            assertEquals(RELEASE.tag(), minimal.getImageTag());
+        });
+    }
+
+    /** --latest removes an earlier isx's pin too, which is the command's, not the user's. */
+    @Test
+    void trackingTheLatestRemovesAPinAnEarlierIsxWrote(@TempDir Path home) {
+        inHome(home, () -> {
+            var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
+            writeUserMinimal("name: tpl-minimal\nimage: " + builtin.getImage() + "\nimage_url: " + builtin.getImageUrl()
+                    + "\nimage_tag: fedora-44-20260101\npinned: true\nimage_sha256: {x86_64: o1, aarch64: o2}\n");
+            new UpdateBaseCommand().trackLatest(RELEASE.tag());
+            assertFalse(Files.exists(BaseImagePin.legacyFile()));
+            assertFalse(ImageDef.loadAll().get("tpl-minimal").isPinned());
+        });
+    }
+
+    /** A pin's checksums are never paired with another publisher's files. */
+    @Test
+    void aPinOfAnotherRepositoryIsIgnored(@TempDir Path home) {
+        inHome(home, () -> {
+            pinRelease();
+            writeUserMinimal("name: tpl-minimal\nimage: own\nimage_url: https://github.com/someone/images/releases/download/{tag}/f-{arch}.tar.xz\nimage_tag: t1\n");
+            var warnings = new java.util.ArrayList<String>();
+            var minimal = ImageDef.loadAll(warnings::add).get("tpl-minimal");
+            assertFalse(minimal.isPinned());
+            assertEquals("t1", minimal.getImageTag());
+            assertTrue(warnings.stream().anyMatch(w -> w.contains("the pin is ignored")), warnings.toString());
+        });
+    }
+
+    /** A pin that cannot be used makes the build refuse, rather than track the latest release instead. */
+    @Test
+    void anUnusablePinIsAParseFailure(@TempDir Path home) {
+        inHome(home, () -> {
+            Files.createDirectories(BaseImagePin.file().getParent());
+            Files.writeString(BaseImagePin.file(), "image_tag: fedora-44-20261020\nimage_tagg: x\n");
+            var warnings = new java.util.ArrayList<String>();
+            var layers = ImageDef.loadLayers(warnings::add);
+            assertFalse(layers.defs().get("tpl-minimal").isPinned());
+            assertEquals(List.of(BaseImagePin.file().toAbsolutePath().normalize()), layers.parseFailures());
+            assertTrue(warnings.stream().anyMatch(w -> w.contains("unknown key 'image_tagg'")), warnings.toString());
+        });
+    }
+
+    /** A pin file without a checksum for every arch would download unverified on the arch without one. */
+    @Test
+    void aPinFileMissingAnArchIsAParseFailure(@TempDir Path home) {
+        inHome(home, () -> {
+            var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
+            new BaseImagePin(builtin.getImage(), builtin.getImageUrl(), null, "t1", Map.of("x86_64", "c1"), null)
+                    .write(BaseImagePin.file());
+            var warnings = new java.util.ArrayList<String>();
+            var layers = ImageDef.loadLayers(warnings::add);
+            assertFalse(layers.defs().get("tpl-minimal").isPinned());
+            assertEquals(List.of(BaseImagePin.file().toAbsolutePath().normalize()), layers.parseFailures());
+            assertTrue(warnings.stream().anyMatch(w -> w.contains("'image_sha256' does not list")), warnings.toString());
+        });
+    }
+
+    /** --latest leaves a definition that pins itself to the user, and says it still pins. */
+    @Test
+    void trackingTheLatestOverTheUsersOwnPinSaysItStillPins(@TempDir Path home) {
+        inHome(home, () -> {
+            writeUserMinimal(userMinimal("pinned: true\nparent: ~\npackages: [htop]\n"));
+            var err = new java.io.ByteArrayOutputStream();
+            var original = System.err;
+            System.setErr(new java.io.PrintStream(err, true));
+            try {
+                new UpdateBaseCommand().trackLatest(RELEASE.tag());
+            } finally {
+                System.setErr(original);
+            }
+            assertTrue(Files.exists(BaseImagePin.legacyFile()));
+            assertTrue(ImageDef.loadAll().get("tpl-minimal").isPinned());
+            assertTrue(err.toString().contains("sets 'pinned: true' itself"), err.toString());
+        });
+    }
+
+    /** An earlier pin copied the masks of the definition in effect: other masks than the built-in's are the user's choice. */
+    @Test
+    void anEarlierPinWithMasksOfItsOwnIsKept(@TempDir Path home) {
+        inHome(home, () -> {
+            var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
+            writeUserMinimal("name: tpl-minimal\nmask_services: [other.service]\nimage: " + builtin.getImage()
+                    + "\nimage_url: " + builtin.getImageUrl() + "\nimage_tag: fedora-44-20260101\npinned: true\n"
+                    + "image_sha256: {x86_64: o1, aarch64: o2}\n");
+            pinRelease();
+            assertTrue(Files.exists(BaseImagePin.legacyFile()));
+            var minimal = ImageDef.loadAll().get("tpl-minimal");
+            assertEquals(List.of("other.service"), minimal.getMaskServices());
+            assertEquals(RELEASE.tag(), minimal.getImageTag());
+        });
     }
 }

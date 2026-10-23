@@ -48,9 +48,13 @@ Tracking latest is the default and requires no action.
 When the base image is unpinned, `isx build tpl-minimal` resolves the newest release at build time and installs it.
 If isx cannot reach the release list, it falls back to the version baked into the binary.
 
-Pinning writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml`.
-`--latest` removes that override to resume tracking.
+Pinning writes the release to `~/.config/incus-spawn/base-image-pin.yaml`, which changes only the base image `tpl-minimal` downloads.
+Everything else still comes from the built-in definition, or from your own `minimal.yaml`.
+`--latest` removes that file to resume tracking.
 After changing the base image version, rebuild with `isx build tpl-minimal`.
+
+An older isx pinned by replacing the whole built-in definition with `~/.config/incus-spawn/images/minimal.yaml`.
+Running `isx update-base <tag>` or `--latest` removes that file, and keeps any `minimal.yaml` you wrote yourself.
 
 ## Adding your own
 
