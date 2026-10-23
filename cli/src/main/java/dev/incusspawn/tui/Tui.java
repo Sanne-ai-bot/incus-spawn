@@ -1282,7 +1282,7 @@ public class Tui {
                     // Gateway dials Hostname, never the ProxyCommand (#1612).
                     SshKeyManager.addHostEntry(newName, config.pathText(Metadata.STATIC_IP, ""));
                 }
-                AutoRemoteService.addRemotes(newName, instance, msg -> {});
+                AutoRemoteService.addRemotes(newName, instance, msg -> {}, warningLog::add);
                 // The zmx device still points at the old name's directory,
                 // which removeHostIntegration just deleted — re-point it.
                 if (ZmxSocketForward.isZmxInstalled(buildSource)) {
