@@ -112,7 +112,7 @@ class ContainerTest {
         } finally {
             System.setErr(originalErr);
         }
-        var once = " ]52;c;eA== out\nerr\n";
+        var once = "out\nerr\n";
         assertEquals(once + once, captured.toString(java.nio.charset.StandardCharsets.UTF_8));
     }
 }

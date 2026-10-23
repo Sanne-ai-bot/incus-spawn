@@ -48,6 +48,12 @@ public final class BuildOutput {
 
     private static final java.util.regex.Pattern ANSI_PATTERN =
             java.util.regex.Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
+    /**
+     * A control string within one line, ended by BEL or ST, in its 7-bit or C1 form: an operating
+     * system command (a title, a link, a clipboard write), DCS, SOS, PM or APC.
+     */
+    private static final java.util.regex.Pattern CONTROL_STRING_PATTERN = java.util.regex.Pattern.compile(
+            "(?:\u001B[\\]PX^_]|[\u0090\u0098\u009D\u009E\u009F])[^\u0007\u001B\u009C\n]*(?:\u0007|\u001B\\\\|\u009C)");
 
     /**
      * Whether to write escapes (colour, {@link TerminalLink} hyperlinks): on an ANSI terminal
@@ -72,19 +78,27 @@ public final class BuildOutput {
 
     /**
      * {@code text} a guest command printed, as text that cannot drive the terminal it is shown on
-     * (#1588): a repository's prime or a package's install script decides what it holds. Each
-     * line keeps what a terminal would leave of it after its last carriage return, colour is
-     * dropped, and every other control becomes a space ({@link TerminalLink#plainText}).
+     * (#1588): a repository's prime or a package's install script decides what it holds. Colour
+     * and complete control strings are dropped, each line keeps the last text a carriage return
+     * left on it (a progress bar's final frame), and every other control becomes a space
+     * ({@link TerminalLink#plainText}).
      */
     public static String guestText(String text) {
+        if (text.codePoints().noneMatch(c -> c != '\n' && c != '\t' && OutputFormat.isControl(c))) return text;
+        text = CONTROL_STRING_PATTERN.matcher(stripAnsi(text)).replaceAll("");
         if (text.indexOf('\r') >= 0) {
-            text = Arrays.stream(text.split("\n", -1)).map(line -> {
-                var end = line.length();
-                while (end > 0 && line.charAt(end - 1) == '\r') end--;
-                return line.substring(line.lastIndexOf('\r', end - 1) + 1, end);
-            }).collect(Collectors.joining("\n"));
+            text = Arrays.stream(text.split("\n", -1)).map(BuildOutput::lastFrame).collect(Collectors.joining("\n"));
         }
-        return TerminalLink.plainText(stripAnsi(text));
+        return TerminalLink.plainText(text);
+    }
+
+    /** The last carriage-return segment of {@code line} with text in it, or "" when none has. */
+    private static String lastFrame(String line) {
+        var frames = line.split("\r");
+        for (int i = frames.length - 1; i >= 0; i--) {
+            if (!frames[i].isBlank()) return frames[i];
+        }
+        return "";
     }
 
     public static final String STEP_INDENT = "    ";

@@ -902,10 +902,10 @@ An AI answer never reaches the terminal raw (#1413): `TerminalLink.plainText` tu
 `TerminalLink.parseSegments` and `linkify` pass the text around a link through it, and `isx ask` prints a chunk through it off a terminal.
 An AI request's error goes through `OutputFormat.oneLine`: `AiHelpClient` passes a provider's text through it, and AI Help every error it shows.
 Output captured from a guest command is someone else's text too (#1588).
-A build step's `StepProgress` cleans its detail and log as it is made, since a prime is code the repository controls.
-Colour is dropped, the detail goes through `OutputFormat.oneLine` and the log through `TerminalLink.plainText`.
-So the live line, the plain failure line on stdout, the printed log and the saved failure report all show it as text.
-`Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` print a failed command's output through `BuildOutput.guestText`, since a tool's `run:` step or an npm package's install script decides it too.
+`BuildOutput.guestText` is how such output is shown: colour and complete control strings (OSC, DCS, APC and the like) dropped, each line's last text a carriage return left, then `TerminalLink.plainText`.
+A build step's `StepProgress` cleans its detail and log through it as it is made, the detail also through `OutputFormat.oneLine`, since a prime is code the repository controls.
+So the live line, the plain failure line on stdout, the printed log and the saved failure report all show it as text, and the failure line is the last one with text left.
+`Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` print a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
 The console is decided by stdin and stdout, never stderr, and Java cannot ask whether stderr alone is a terminal without native code.
 So the contract is that escapes follow stdout: redirecting stdout or setting `NO_COLOR` clears both streams, while `2>log` alone from a terminal keeps colour in the log.
 `docs/CLI.md` ("Scripting isx") says so rather than promising more.
