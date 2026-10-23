@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -589,7 +590,10 @@ class ApiRequestBodyTest {
         assertNull(got.header("Expect"), "upstream was asked to continue a body it gets whole");
     }
 
-    /** Too little disk for a body that may spill is a 507 naming the host's space, before the client sends it. */
+    /**
+     * Too little disk for a body that may spill is a 507 naming the host's space, before the client
+     * sends it; and a client that waits to be told to send it sends nothing, so its connection closes at once.
+     */
     @Test
     void lowDiskIsRefusedBeforeTheBodyIsSent() throws Exception {
         var store = vertexProxy.spoolStore;
@@ -597,33 +601,176 @@ class ApiRequestBodyTest {
         full.room = false;
         vertexProxy.spoolStore = full;
         try {
-            var reply = exchange(vertexProxy, "api.anthropic.com", head("POST", "api.anthropic.com", "/v1/messages",
-                    "Expect: 100-continue", "Content-Length: 40000000"));
-            assertTrue(reply.startsWith("HTTP/1.1 507"), reply);
-            assertFalse(reply.contains("100 Continue"), reply);
-            assertTrue(reply.contains("no room"), reply);
+            withLinger(60_000, 60_000, () -> {
+                var reply = exchange(vertexProxy, "api.anthropic.com", head("POST", "api.anthropic.com", "/v1/messages",
+                        "Expect: 100-continue", "Content-Length: 40000000"));
+                assertTrue(reply.startsWith("HTTP/1.1 507"), reply);
+                assertFalse(reply.contains("100 Continue"), reply);
+                assertTrue(reply.contains("no room"), reply);
+            });
         } finally {
             vertexProxy.spoolStore = store;
         }
     }
 
-    /** A body that outgrows memory when the disk has no room left is a 507, and the connection closes. */
-    @Test
-    void lowDiskMidBodyIsRefused() throws Exception {
+    /** Runs {@code body} with a refused body's connection lingering {@code idle} ms after its last read, {@code cap} ms at most. */
+    static void withLinger(long idle, long cap, Body body) throws Exception {
+        var linger = vertexProxy.refusalLingerMillis;
+        var lingerCap = vertexProxy.refusalLingerCapMillis;
+        vertexProxy.refusalLingerMillis = idle;
+        vertexProxy.refusalLingerCapMillis = cap;
+        try {
+            body.run();
+        } finally {
+            vertexProxy.refusalLingerMillis = linger;
+            vertexProxy.refusalLingerCapMillis = lingerCap;
+        }
+    }
+
+    interface RefusedBody {
+        void run(NetSocket socket, Refusal refusal) throws Exception;
+    }
+
+    /**
+     * Runs {@code body} on a connection to the Vertex proxy, whose disk admits nothing a body spills,
+     * under a 64 KiB budget; the connection is closed after it, however it ends.
+     */
+    static void withNoRoomToSpill(RefusedBody body) throws Exception {
         var store = vertexProxy.spoolStore;
         var full = new BodySpoolTest.FakeStore();
         full.admits = false;
         vertexProxy.spoolStore = full;
         try {
             withSpoolBudget(64 * 1024, () -> {
-                var body = largeMessages(256 * 1024);
-                var reply = exchange(vertexProxy, "api.anthropic.com", head("POST", "api.anthropic.com", "/v1/messages",
-                        "Content-Length: " + (body.length() + 1000)) + body);
-                assertTrue(reply.startsWith("HTTP/1.1 507"), reply.substring(0, Math.min(200, reply.length())));
+                var socket = connect(vertexProxy, "api.anthropic.com");
+                try {
+                    body.run(socket, Refusal.on(socket));
+                } finally {
+                    socket.close();
+                }
             });
         } finally {
             vertexProxy.spoolStore = store;
         }
+    }
+
+    /** What the proxy answers on a socket: {@code refused} once its 507 for want of disk is in, {@code closed} with all of it. */
+    record Refusal(StringBuffer bytes, CompletableFuture<Void> refused, CompletableFuture<String> closed, List<Throwable> errors) {
+        static Refusal on(NetSocket socket) {
+            var refusal = new Refusal(new StringBuffer(), new CompletableFuture<>(), new CompletableFuture<>(),
+                    new CopyOnWriteArrayList<>());
+            socket.handler(b -> {
+                refusal.bytes.append(b.toString(StandardCharsets.UTF_8));
+                if (refusal.bytes.indexOf("could not be held") >= 0) refusal.refused.complete(null);
+            });
+            socket.exceptionHandler(refusal.errors::add);
+            socket.closeHandler(v -> refusal.closed.complete(refusal.bytes.toString()));
+            return refusal;
+        }
+
+        void assertRefused() {
+            var reply = bytes.toString();
+            assertTrue(reply.startsWith("HTTP/1.1 507"), reply.substring(0, Math.min(200, reply.length())));
+        }
+
+        /** The writes all went out, and the connection closed without a reset. */
+        void assertReadWhole(List<io.vertx.core.Future<Void>> writes) throws Exception {
+            closed.get(10, TimeUnit.SECONDS);
+            assertRefused();
+            for (var write : writes) {
+                assertDoesNotThrow(() -> write.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS),
+                        "the rest of the body could not be sent");
+            }
+            assertEquals(List.of(), errors, "the connection was reset");
+        }
+    }
+
+    /**
+     * A body that outgrows memory when the disk has no room left is a 507, and the connection closes
+     * once the rest stops coming, even though the body never ends.
+     */
+    @Test
+    void lowDiskMidBodyIsRefused() throws Exception {
+        withLinger(200, 60_000, () -> withNoRoomToSpill((socket, refusal) -> {
+            var body = largeMessages(256 * 1024);
+            socket.write(head("POST", "api.anthropic.com", "/v1/messages",
+                    "Content-Length: " + (body.length() + 1000)) + body);
+            refusal.refused().get(5, TimeUnit.SECONDS);
+            refusal.assertRefused();
+            refusal.closed().get(10, TimeUnit.SECONDS);
+        }));
+    }
+
+    /**
+     * A client still sending its body when the 507 comes may send the rest and then read (#1617): the
+     * proxy reads it and closes once the body has ended, since closing with some of it unread resets
+     * the connection, and a reset can take the 507 with it. A body still coming is read for as long
+     * as it keeps coming, here twice as long as it may pause.
+     */
+    @Test
+    void lowDiskRefusalReadsTheRestBeforeClosing() throws Exception {
+        withLinger(1000, 60_000, () -> withNoRoomToSpill((socket, refusal) -> {
+            var body = largeMessages(256 * 1024);
+            var split = 128 * 1024;
+            socket.write(head("POST", "api.anthropic.com", "/v1/messages", "Content-Length: " + body.length())
+                    + body.substring(0, split));
+            refusal.refused().get(5, TimeUnit.SECONDS);
+            assertFalse(refusal.closed().isDone(), "closed before the body had ended");
+            var slices = 20;
+            var slice = (body.length() - split + slices - 1) / slices;
+            var writes = new java.util.ArrayList<io.vertx.core.Future<Void>>();
+            for (int at = split; at < body.length(); at += slice) {
+                writes.add(socket.write(body.substring(at, Math.min(body.length(), at + slice))));
+                Thread.sleep(100);
+            }
+            refusal.assertReadWhole(writes);
+        }));
+    }
+
+    /**
+     * The chunk the disk refused does not leave the rest unread: with the shared budget spent by
+     * other bodies, the spool would ask the client to wait for room it never gives back once refused.
+     * Only the body's end can close the connection within the wait.
+     */
+    @Test
+    void aRefusalWhileTheBudgetIsSpentStillReadsTheRest() throws Exception {
+        withLinger(60_000, 60_000, () -> withNoRoomToSpill((socket, refusal) -> {
+            var budget = vertexProxy.spoolBudget;
+            budget.acquire(64 * 1024);
+            try {
+                var body = largeMessages(256 * 1024);
+                socket.write(head("POST", "api.anthropic.com", "/v1/messages", "Content-Length: " + body.length())
+                        + body.substring(0, 1024));
+                refusal.refused().get(5, TimeUnit.SECONDS);
+                refusal.assertReadWhole(List.of(socket.write(body.substring(1024))));
+            } finally {
+                budget.release(64 * 1024, false);
+            }
+        }));
+    }
+
+    /**
+     * A refused body that keeps trickling in cannot hold its connection: it closes at the cap, counted
+     * from the refusal, though no pause ever reaches the idle wait. The 507 is in before it closes.
+     */
+    @Test
+    void aTricklingRefusedBodyIsClosedAtTheCap() throws Exception {
+        withLinger(4000, 2000, () -> withNoRoomToSpill((socket, refusal) -> {
+            var body = largeMessages(256 * 1024);
+            socket.write(head("POST", "api.anthropic.com", "/v1/messages",
+                    "Content-Length: " + (body.length() + 1000)) + body);
+            refusal.refused().get(5, TimeUnit.SECONDS);
+            var refusedAt = System.nanoTime();
+            for (int i = 0; i < 100 && !refusal.closed().isDone(); i++) {
+                socket.write("x");
+                Thread.sleep(100);
+            }
+            assertTrue(refusal.closed().isDone(), "a body trickling in held its refused connection for 10 s");
+            // Counted from after the refusal, so it may be short of the cap, but not by half
+            var held = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - refusedAt);
+            assertTrue(held >= 1000, "closed after " + held + " ms, before the 2000 ms cap");
+            refusal.assertRefused();
+        }));
     }
 
     @Test

@@ -1550,7 +1550,11 @@ A spool is only ever used on its own event loop: a replay asked for elsewhere (t
 So the heap held for bodies is the budget plus what Netty holds for any connection, a few TLS records each, whatever the size or the number of bodies.
 `DiskReserve` keeps the host's disk from filling: the spool leaves free min(15% of the filesystem, 4 GiB), journald's `SystemKeepFree` default, the rule the same host's logger keeps (3 GiB on 20 GiB, 4 GiB on 2 TiB; 5% would keep about 100 GiB on 2 TiB).
 Free space is sampled off the event loop every 8 MiB written or every second, and a write is admitted only if the sample, less every write pending and every write completed since the sample began, leaves the reserve free.
-A body that does not fit is answered `507 Insufficient Storage`, naming the host's free space and not the body, with the connection closed and nothing sent upstream.
+A body that does not fit is answered `507 Insufficient Storage`, naming the host's free space and not the body, with nothing sent upstream.
+The connection closes once the rest of the body has been read and dropped, once none has come for 5 s, or 30 s after the 507 however it keeps coming (#1617): nginx's `lingering_timeout` and `lingering_time`.
+The cap is what stops a client trickling bytes from holding a refused connection, which every read would otherwise keep open.
+Closed with some of it unread, the connection is reset, and a client still sending its body loses the 507 with it.
+A client refused before it was told to continue sends no body, and its connection closes at once.
 The same check runs before the proxy answers a client's `Expect: 100-continue`, but only for a body that may spill (no `Content-Length`, or more than half the budget): one that fits in memory never touches the disk, so a host short of disk still serves it.
 It answers that itself (RFC 9110 §10.1.1): upstream cannot be asked before the body is in, and a client that waits for `100` would otherwise wait out its own timeout; upstream gets the body whole, with a `Content-Length` and no `Expect`.
 There is no upload size limit: a body passes as long as the host has disk for it.
