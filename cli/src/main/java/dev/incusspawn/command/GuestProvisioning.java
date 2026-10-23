@@ -18,6 +18,7 @@ import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.GeminiSetup;
 import dev.incusspawn.tool.ToolVerifier;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -200,13 +201,15 @@ public class GuestProvisioning {
         if (allRepos.isEmpty()) return;
 
         for (var key : allRepos) {
+            // A template, project-local included, names its repositories: shown as text (#1610).
+            var shownName = OutputFormat.oneLine(key.name());
             switch (key.type()) {
-                case "copr" -> runWithSpinner("Enabling", "COPR repo " + key.name(),
-                        "Failed to enable COPR repo " + key.name(),
+                case "copr" -> runWithSpinner("Enabling", "COPR repo " + shownName,
+                        "Failed to enable COPR repo " + shownName,
                         state -> state.set(0, stepFrom(
                                 container.exec("dnf", "copr", "enable", "-y", key.name()))));
-                default -> System.err.println("Warning: unknown package_repos type '" + key.type()
-                        + "' for '" + key.name() + "', skipping.");
+                default -> System.err.println("Warning: unknown package_repos type '" + OutputFormat.oneLine(key.type())
+                        + "' for '" + shownName + "', skipping.");
             }
         }
     }
