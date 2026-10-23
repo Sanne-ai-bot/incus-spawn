@@ -372,6 +372,14 @@ Key design:
   `isx init`'s firewall step defers its restart when the marker is stale; `completeWithProxyService` restarts a running service it found with a stale marker once the marker is written (read from the marker, so an aborted run's restart is not lost).
   The TUI names `isx init` on its status line when the auto-restart was refused.
   `ProxyService.replaceCommandRunner` swaps `runQuiet` for a recorder so `ProxyServiceInitGateTest` fails, rather than restarts a real service, if a guard regresses.
+- **The proxy that answers may not be the service's (#1570)**: `/health` passes for any proxy on the fixed ports, another user's included.
+  `ProxyHolder.notTheService` compares the pid `/health` reports with `ProxyService.servicePid()` (`MainPID`, or `launchctl print`'s `pid`) and its descendants; a service with no process owns nothing.
+  `servicePid()` counts a unit in auto-restart (`activating`) as meaning to run: a unit that cannot bind waits there, where `isActive()` is false.
+  Every path that reports the service running asks `ProxyService.answeringIsTheService` after its health wait: `install()` on both platforms, `isx proxy install`, `isx proxy start` and `isx proxy restart`.
+  `isx proxy status` adds `pid`, `pid_owner` and `foreign_holder`, exiting 4 for another user's holder; `isx doctor` has a "Proxy ownership" finding.
+  The proxy's bind wait (`bindWaitingForOldProxy`) names the holder and throws at once for another user's, never waiting for it.
+  An owner `ProcessHandle` cannot give is never another user's, so it never turns the wait into a failure.
+  Never on the shell path: it costs a service-manager fork.
 - **launchd: `bootout` is asynchronous, so restarts use `kickstart -k`** (`LaunchdJob`, #916).
   `launchctl bootout` returns as soon as the job was told to go.
   A process that ignores SIGTERM (a hung proxy) is killed only about 5 s later, and until then a `bootstrap` fails with `5: Input/output error` while `launchctl print` still finds the job.
