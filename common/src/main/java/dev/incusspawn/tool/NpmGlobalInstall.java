@@ -163,9 +163,12 @@ public final class NpmGlobalInstall {
         skipReasons(npm).forEach(System.err::println);
     }
 
-    /** The lines of npm's verbose log that say why it dropped something. */
+    /**
+     * The lines of npm's verbose log that say why it dropped something, as text: an install
+     * script decides what they hold (#1588).
+     */
     static List<String> skipReasons(IncusClient.ExecResult npm) {
-        return (npm.stdout() + "\n" + npm.stderr()).lines()
+        return BuildOutput.guestText(npm.stdout() + "\n" + npm.stderr()).lines()
                 .filter(l -> {
                     var lower = l.toLowerCase();
                     return lower.contains("fail") || lower.contains("error");
