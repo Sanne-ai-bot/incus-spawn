@@ -11,10 +11,10 @@ class BuildProgressTest {
     @Test
     void guestOutputInAStepCannotDriveTheTerminal() {
         // What a guest command printed, such as a repository's prime, is shown as text (#1588):
-        // colour is dropped, and every other control a terminal acts on becomes a space.
-        var p = BuildProgress.StepProgress.failed("\033[31mboom\033[0m\033]52;c;eA==\007\u009b2J",
+        // control sequences are dropped, and every other control a terminal acts on becomes a space.
+        var p = BuildProgress.StepProgress.failed("\033[31mboom\033[0m\033]52;c;eA==\007\u009b2J\u0007end",
                 "\033[31mred\033[0m\r\n\033]0;pwned\007tab\there\n");
-        assertEquals("boom 2J", p.detail());
+        assertEquals("boom end", p.detail());
         assertEquals("red\ntab\there\n", p.log());
         var running = BuildProgress.StepProgress.running("Installing", "1/2  \033]8;;x\007pkg");
         assertEquals("1/2  pkg", running.detail());

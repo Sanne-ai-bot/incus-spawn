@@ -49,14 +49,23 @@ public final class BuildOutput {
     private static final java.util.regex.Pattern ANSI_PATTERN =
             java.util.regex.Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
     /**
-     * A control string within one line, ended by BEL or ST, in its 7-bit or C1 form: an operating
-     * system command (a title, a link, a clipboard write), DCS, SOS, PM or APC.
-     * The payload stops at every introducer too, so a line of them is matched in linear time,
-     * not scanned to its end from each one.
+     * What a terminal acts on within one line, dropped whole from guest output, left to right:
+     * <ul>
+     *   <li>a control string ended by BEL or ST, in its 7-bit or C1 form: an operating system
+     *       command (a title, a link, a clipboard write), DCS, SOS, PM or APC.
+     *       Its payload stops at every introducer, so a line of them is matched in linear time,
+     *       not scanned to its end from each one;</li>
+     *   <li>a control sequence, 7-bit or C1, with its parameters, intermediates and final byte
+     *       ({@code \e[0 q}, {@code \e[>4;2m}), not only colour;</li>
+     *   <li>any other escape ({@code \e(B}, {@code \e7}), including an introducer whose control
+     *       string a later escape cut short, as a terminal does.</li>
+     * </ul>
      */
-    private static final java.util.regex.Pattern CONTROL_STRING_PATTERN = java.util.regex.Pattern.compile(
+    private static final java.util.regex.Pattern GUEST_CONTROL_PATTERN = java.util.regex.Pattern.compile(
             "(?:\u001B[\\]PX^_]|[\u0090\u0098\u009D\u009E\u009F])"
-                    + "[^\u0007\u001B\u009C\u0090\u0098\u009D\u009E\u009F\n]*(?:\u0007|\u001B\\\\|\u009C)");
+                    + "[^\u0007\u001B\u009C\u0090\u0098\u009D\u009E\u009F\n]*(?:\u0007|\u001B\\\\|\u009C)"
+                    + "|(?:\u001B\\[|\u009B)[0-?]*[ -/]*[@-~]"
+                    + "|\u001B[ -/]*[0-~]");
 
     /**
      * Whether to write escapes (colour, {@link TerminalLink} hyperlinks): on an ANSI terminal
@@ -81,14 +90,14 @@ public final class BuildOutput {
 
     /**
      * {@code text} a guest command printed, as text that cannot drive the terminal it is shown on
-     * (#1588): a repository's prime or a package's install script decides what it holds. Colour
-     * and complete control strings are dropped, each line keeps the last text a carriage return
-     * left on it (a progress bar's final frame), and every other control becomes a space
+     * (#1588): a repository's prime or a package's install script decides what it holds. Complete
+     * control strings, control sequences and escapes are dropped, each line keeps the last text a
+     * carriage return left on it (a progress bar's final frame), and every other control becomes a space
      * ({@link TerminalLink#plainText}).
      */
     public static String guestText(String text) {
-        if (text.codePoints().noneMatch(c -> c != '\n' && c != '\t' && OutputFormat.isControl(c))) return text;
-        text = CONTROL_STRING_PATTERN.matcher(stripAnsi(text)).replaceAll("");
+        if (text.codePoints().noneMatch(TerminalLink::actsOnTerminal)) return text;
+        text = GUEST_CONTROL_PATTERN.matcher(text).replaceAll("");
         if (text.indexOf('\r') >= 0) {
             text = Arrays.stream(text.split("\n", -1)).map(BuildOutput::lastFrame).collect(Collectors.joining("\n"));
         }

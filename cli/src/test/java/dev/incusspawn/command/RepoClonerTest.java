@@ -518,7 +518,7 @@ class RepoClonerTest {
         var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
         assertTrue(shown.contains("red"), shown);
         assertTrue(shown.contains("tail\tend"), "tabs are kept: " + shown);
-        assertTrue(shown.contains("2Jtail"), "the last line is on the failure line: " + shown);
+        assertTrue(shown.contains("for app: tail"), "the last line is on the failure line: " + shown);
         assertEquals(TerminalLink.plainText(shown).replace("\033", "ESC"), shown.replace("\033", "ESC"),
                 "the prime's escapes must not reach the terminal");
         // The failure report a person is pointed to and may cat.

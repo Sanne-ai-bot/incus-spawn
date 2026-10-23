@@ -180,7 +180,7 @@ public final class TerminalLink {
         return sb.toString();
     }
 
-    private static boolean actsOnTerminal(int c) {
+    static boolean actsOnTerminal(int c) {
         return c != '\n' && c != '\t' && OutputFormat.isControl(c);
     }
 
