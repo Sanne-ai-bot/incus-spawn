@@ -2,6 +2,7 @@ package dev.incusspawn.incus;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
@@ -29,12 +30,15 @@ public final class VmAgentFailure {
     /** At most this many matched lines are reported; the agent's restarts repeat them. */
     static final int MAX_LINES = 6;
 
-    /** The lines of {@code consoleLog} that report the agent failing, trimmed and deduplicated. */
+    /**
+     * The lines of {@code consoleLog} that report the agent failing, trimmed and deduplicated, as
+     * text that cannot drive a terminal: whatever runs in the guest can write its console (#1588).
+     */
     public static List<String> matchingLines(String consoleLog) {
         if (consoleLog == null || consoleLog.isEmpty()) return List.of();
         return consoleLog.lines()
                 .filter(l -> l.contains("incus-agent"))
-                .map(l -> BuildOutput.stripAnsi(l).replace("\r", "").strip())
+                .map(l -> OutputFormat.oneLine(BuildOutput.guestText(l)).strip())
                 .filter(VmAgentFailure::isFailure)
                 .distinct()
                 .limit(MAX_LINES)

@@ -28,6 +28,7 @@ Output captured from a guest command is someone else's text too (#1588).
 A build step's `StepProgress` cleans its detail and log through it as it is made, the detail also through `OutputFormat.oneLine`, since a prime is code the repository controls.
 So the live line, the plain failure line on stdout, the printed log and the saved failure report all show it as text, and the failure line is the last one with text left.
 `Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` print a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
+`VmAgentFailure` quotes a VM's console lines through it too, since whatever runs in the guest can write its console.
 `AnsiEscapeGateTest` fails on any raw CSI/OSC literal (`\033[`, `\033]`) whose line lacks a `// raw ANSI: <why>` comment, apart from the gates, `TerminalProgress` and `ShellStatusBar` (#1082).
 Escapes follow stdout: `System.console()` never looks at stderr, so `2>log` alone keeps colour (documented, not fixable without native code).
 A warning's closing blank line goes to stdout, so stdout's flow keeps its layout when stderr is redirected.
