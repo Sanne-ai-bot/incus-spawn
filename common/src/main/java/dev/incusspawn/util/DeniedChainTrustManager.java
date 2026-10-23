@@ -11,6 +11,8 @@ import java.security.cert.X509Certificate;
  * A trust manager that refuses a chain holding a certificate the Keychain denied, after the JDK's
  * has validated it. Removing a denied certificate from the anchors only covers a root: macOS also
  * refuses a chain through a denied intermediate, or to a denied leaf, and so does this (#1552).
+ * A denied CA's cross-signed copy is refused too ({@link MacKeychainTrust.Trust#denies}): a server
+ * sends one to anchor its chain on an older root, which the deny does not name.
  * <p>
  * It checks the chain the peer presented, which is stricter than checking the path PKIX built: an
  * unused denied certificate the peer sends is refused too. The rest of that path is anchors, from
@@ -47,8 +49,12 @@ public final class DeniedChainTrustManager extends X509ExtendedTrustManager {
     private void refuseDenied(X509Certificate[] chain) throws CertificateException {
         for (var cert : chain) {
             if (keychain.denies(cert)) {
-                throw new CertificateException("certificate denied in the Keychain's trust settings: "
-                        + cert.getSubjectX500Principal().getName() + " (SHA-1 " + MacKeychainTrust.sha1(cert) + ")");
+                var sha1 = MacKeychainTrust.sha1(cert);
+                // A copy's hash is not the one `security dump-trust-settings` lists
+                throw new CertificateException((keychain.denied().contains(sha1)
+                        ? "certificate denied in the Keychain's trust settings: "
+                        : "certificate with the subject and key of one denied in the Keychain's trust settings: ")
+                        + cert.getSubjectX500Principal().getName() + " (SHA-1 " + sha1 + ")");
             }
         }
     }

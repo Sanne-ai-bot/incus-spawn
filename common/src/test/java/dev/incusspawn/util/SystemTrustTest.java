@@ -173,6 +173,24 @@ class SystemTrustTest {
     }
 
     @Test
+    void aChainThroughADeniedRootsCrossSignedCopyIsRefused() throws Exception {
+        // api.github.com sends Sectigo's Root E46 cross-signed by USERTrust ECC, and /etc/ssl/cert.pem
+        // holds only USERTrust ECC: a "Never Trust" on the self-signed E46 was never on the chain (#1552)
+        var older = CertChain.create("cross older", "localhost");
+        var chain = CertChain.create("cross denied", "localhost");
+        var bundle = Files.writeString(temp.resolve("cert.pem"), DerEncoder.toPem("CERTIFICATE", older.root().getEncoded()));
+        var publicServer = chain.serve(chain.rootCrossSignedBy(older));
+        try {
+            assertEquals(204, get(SystemTrust.sslContext(bundle, MacKeychainTrust.Trust.NONE), "localhost", publicServer));
+            var deniedRoot = new MacKeychainTrust.Trust(List.of(), Set.of(MacKeychainTrust.sha1(chain.root())), null)
+                    .withDeniedKeys(List.of(chain.root()));
+            assertThrows(SSLHandshakeException.class, () -> get(SystemTrust.sslContext(bundle, deniedRoot), "localhost", publicServer));
+        } finally {
+            publicServer.stop(0);
+        }
+    }
+
+    @Test
     void withDeniesTheHostNameIsStillChecked() throws Exception {
         // The deny check wraps the JDK's trust manager: it must keep its endpoint identification
         // A valid chain to a trusted root, for another host (aChainThroughADeniedIntermediateIsRefused shows such a chain validates)

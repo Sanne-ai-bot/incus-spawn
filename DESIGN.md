@@ -1242,6 +1242,14 @@ The rest of the built path is anchors, from which every denied certificate is al
 The wrapper is an `X509ExtendedTrustManager` passing each `SSLEngine` and `Socket` overload to the JDK's own, so the host-name check stays the JDK's; `SystemTrustTest` and `UpstreamTrustTest` check that a wrong host is still refused.
 With no denies, on Linux always, nothing is wrapped and the proxy keeps its `PemTrustOptions`.
 
+A deny names one certificate by its SHA-1, but a CA has copies: its self-signed root and each cross-signed one, with the same subject and key and another issuer.
+A server sends a cross-signed copy to anchor its chain on an older root: `api.github.com` sends Sectigo's Root E46 signed by USERTrust ECC, and `/etc/ssl/cert.pem` holds only USERTrust ECC.
+So a "Never Trust" on the self-signed E46, the copy Keychain Access lists, removed no anchor and matched no certificate the server sent, and isx went on trusting the CA (#1552, found on the Mac runner).
+`Trust.denies` therefore also refuses a certificate with a denied one's subject and public key (`keyOf`, SHA-256 of both), for every denied certificate whose body a keychain holds: the System and login keychains, and Apple's roots (`SystemRootCertificates.keychain`), read for this alone, since Keychain Access lists them and a user denies one there.
+A deny whose body no keychain holds still matches its own certificate by hash.
+Chosen over the subject alone, which any CA can put in a certificate, and over the key alone, which would also refuse a CA's renamed re-issue: a subject and key together are what a cross-sign keeps, and whoever holds the key is the CA that was denied.
+This is narrower than refusing only the named certificate, and possibly than macOS, whose path building may fall back to the cross-signed path; a deny only ever narrows here, and a user who denies a CA means its key.
+
 The user's own trust domain is read for its denies alone (`security trust-settings-export` without `-d`, a fourth run under the same deadline, #1552): macOS refuses what a user marked "Never Trust", so isx does too, a certificate or the default roots as a whole.
 Its trusts are never used, since no certificate body is passed with it; a user's trust that macOS lets override an administrator's deny does not override it here, which is narrower than macOS.
 The user domain is any user-level process's to write, so it can only narrow: when it cannot be read (none exists, a timeout, a plist that does not parse), the admin domain's result stands, and a failed admin read keeps the user's denies.
@@ -1255,7 +1263,7 @@ When only the System keychain's certificates cannot be read, by an exit status, 
 When the Keychain's denies leave the proxy nothing to trust, it refuses to start rather than fall back to the JDK store, which would trust the denied roots again.
 The plist is parsed with its DOCTYPE dropped and any other refused, so no DTD or entity is ever resolved.
 The proxy reads the Keychain once, at start: a Keychain change takes `isx proxy restart`, as a bundle change does.
-The CLI reads it for each TLS context it builds, which only network commands do (up to four `security` runs at once, tens of milliseconds), never branch, start or shell.
+The CLI reads it for each TLS context it builds, which only network commands do (up to five `security` runs at once, tens of milliseconds), never branch, start or shell.
 
 Why not the alternatives:
 - *The user domain's trusts too* (a CA a user marked "Always Trust" in their login keychain): anything running as the user can ask for that trust, while the admin domain takes root, as the Linux system store does.

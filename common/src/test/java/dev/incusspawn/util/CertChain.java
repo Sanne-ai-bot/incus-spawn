@@ -37,7 +37,8 @@ import static dev.incusspawn.DerEncoder.sha256WithRsaAid;
  * A root, an intermediate it signed, and a leaf the intermediate signed for {@code host}: the shape
  * of a public CA's chain, which {@code CertificateAuthority}'s root-signed leaves are not.
  */
-public record CertChain(X509Certificate root, X509Certificate intermediate, X509Certificate leaf, KeyPair leafKeys) {
+public record CertChain(X509Certificate root, X509Certificate intermediate, X509Certificate leaf, KeyPair leafKeys,
+                        KeyPair rootKeys) {
 
     /** A fresh chain; {@code name} sets the CAs' subjects, so two chains never share one. */
     public static CertChain create(String name, String host) throws Exception {
@@ -51,12 +52,28 @@ public record CertChain(X509Certificate root, X509Certificate intermediate, X509
         var leaf = sign(intermediateName, derDistinguishedName(host), leafKeys, intermediateKeys, concat(
                 derExtension(oidBasicConstraints(), true, derSequence(new byte[0])),
                 derExtension(oidSubjectAltName(), false, derSequence(derDnsName(host)))));
-        return new CertChain(root, intermediate, leaf, leafKeys);
+        return new CertChain(root, intermediate, leaf, leafKeys, rootKeys);
     }
 
-    /** A local HTTPS server answering 204 that presents the leaf and the intermediate, as a public server does. */
-    public HttpsServer serve() throws Exception {
-        return serve(leafKeys.getPrivate(), leaf, intermediate);
+    /**
+     * This chain's root cross-signed by {@code by}'s: its subject and key, issued by {@code by}'s
+     * root. A server sends one to anchor its chain on that older root instead.
+     */
+    public X509Certificate rootCrossSignedBy(CertChain by) throws Exception {
+        return sign(by.root.getSubjectX500Principal().getEncoded(), root.getSubjectX500Principal().getEncoded(),
+                rootKeys, by.rootKeys, ca());
+    }
+
+    /**
+     * A local HTTPS server answering 204 that presents the leaf, the intermediate and {@code more}:
+     * with nothing more, as a public server does.
+     */
+    public HttpsServer serve(X509Certificate... more) throws Exception {
+        var chain = new Certificate[2 + more.length];
+        chain[0] = leaf;
+        chain[1] = intermediate;
+        System.arraycopy(more, 0, chain, 2, more.length);
+        return serve(leafKeys.getPrivate(), chain);
     }
 
     /** A local HTTPS server answering 204 that presents {@code chain}, whose first certificate is {@code key}'s. */
