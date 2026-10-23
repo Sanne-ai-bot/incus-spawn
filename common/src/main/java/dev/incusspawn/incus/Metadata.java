@@ -59,6 +59,8 @@ public final class Metadata {
         return config.getOrDefault(PENDING_OP, "");
     }
     public static final String STATIC_IP = PREFIX + "static-ip";
+    /** Marks an instance whose SSH was set up explicitly, besides one built with the sshd tool. */
+    public static final String SSH_SETUP = PREFIX + "ssh-setup";
     public static final String STATIC_GATEWAY = PREFIX + "static-gateway";
     /**
      * Set on a VM whose address was reassigned while its {@code .network} file could not be

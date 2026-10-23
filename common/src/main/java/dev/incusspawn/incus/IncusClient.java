@@ -1628,8 +1628,10 @@ public class IncusClient {
      * reports as successful can still leave them under different names, the first step towards an
      * orphaned subvolume (#717); catching it here turns it into an error at the rename, not a
      * mystery at some later create or delete.
+     *
+     * @return the renamed instance's {@link #instanceMetadata}, as the check read it
      */
-    public void rename(String oldName, String newName) {
+    public JqValue rename(String oldName, String newName) {
         var resp = http().requestAndWait("POST", "/1.0/instances/" + oldName,
                 Map.of("name", newName, "migration", false));
         if (!resp.isSuccess()) throw new IncusException("Failed to rename " + oldName + " to " + newName);
@@ -1637,7 +1639,9 @@ public class IncusClient {
             throw new IncusException("Incus reported renaming " + oldName + " to " + newName
                     + ", but it does not list the instance under the new name");
         }
-        requireStorageArrived("Renaming " + oldName + " to " + newName, newName, instanceMetadata(newName));
+        var meta = instanceMetadata(newName);
+        requireStorageArrived("Renaming " + oldName + " to " + newName, newName, meta);
+        return meta;
     }
 
     /** After a rename or move Incus reported done: the record moved, so its subvolume must have too (#717). */

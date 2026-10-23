@@ -638,7 +638,10 @@ class BuildCommandTest {
     private static IncusClient incusBuildingInto(Set<String> existing) {
         var incus = mock(IncusClient.class);
         when(incus.exists(anyString())).thenAnswer(i -> existing.contains(i.<String>getArgument(0)));
-        doAnswer(i -> existing.add(i.getArgument(1))).when(incus).rename(anyString(), anyString());
+        doAnswer(i -> {
+            existing.add(i.getArgument(1));
+            return null;
+        }).when(incus).rename(anyString(), anyString());
         when(incus.instanceMetadataOrThrow(anyString()))
                 .thenReturn(instance("container", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version())));
         return incus;

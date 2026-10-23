@@ -1269,18 +1269,24 @@ public class Tui {
         }
         if (vanished(renameSourceName)) return true;
         try {
-            incus.rename(renameSourceName, newName);
+            var instance = incus.rename(renameSourceName, newName);
             try {
                 InstanceLifecycle.removeHostIntegration(renameSourceName);
-                AutoRemoteService.addRemotes(incus, newName, msg -> {});
+                var config = instance.path("config");
+                var buildSource = config.pathText(Metadata.BUILD_SOURCE, "");
+                // First, so a failure below cannot leave the instance without the block
+                // removeHostIntegration just deleted.
+                if (SshKeyManager.exists()
+                        && RuntimeSetup.hasSshCapability(config.pathText(Metadata.SSH_SETUP, ""), buildSource)) {
+                    // The instance is stopped, so its address is the one it is stamped with:
+                    // Gateway dials Hostname, never the ProxyCommand (#1612).
+                    SshKeyManager.addHostEntry(newName, config.pathText(Metadata.STATIC_IP, ""));
+                }
+                AutoRemoteService.addRemotes(newName, instance, msg -> {});
                 // The zmx device still points at the old name's directory,
                 // which removeHostIntegration just deleted — re-point it.
-                if (ZmxSocketForward.isZmxInstalled(
-                        incus.configGet(newName, Metadata.BUILD_SOURCE))) {
+                if (ZmxSocketForward.isZmxInstalled(buildSource)) {
                     ZmxSocketForward.configure(incus, newName);
-                }
-                if (RuntimeSetup.hasSshCapability(incus, newName)) {
-                    SshKeyManager.addHostEntry(newName);
                 }
             } catch (Exception ignore) {
                 // best-effort: instance is renamed, host integration may partially fail
