@@ -675,7 +675,7 @@ public class CleanCommand extends BaseCommand {
                 found |= cleanImages(incus, images.base(), "Cached base images", "cached base image(s)",
                         dryRun, skipConfirmation);
             }
-            found |= cleanDnfCacheFromPool(incus, pool, dryRun);
+            found |= cleanDnfCacheFromPool(incus, pool, dryRun, confirmation(skipConfirmation));
 
             if (!found) {
                 BuildOutput.step("Nothing to clean — no reclaimable artifacts found.");
@@ -750,21 +750,32 @@ public class CleanCommand extends BaseCommand {
             return true;
         }
 
-        private boolean cleanDnfCacheFromPool(IncusClient incus, String pool, boolean dryRun) {
+        /** List the DNF cache volume and delete it once confirmed, like every other category here. */
+        static boolean cleanDnfCacheFromPool(IncusClient incus, String pool, boolean dryRun,
+                                             Predicate<String> confirm) {
+            DnfCacheVolume volume;
             try {
-                if (!incus.storageVolumeExists(pool, GuestProvisioning.DNF_CACHE_VOLUME)) {
-                    return false;
-                }
-            } catch (Exception e) {
+                volume = DnfCacheVolume.find(incus, pool);
+            } catch (IllegalStateException e) {
+                // The pool listing just answered, so this is rare; the other categories still stand
+                System.err.println(BuildOutput.STEP_INDENT + "Warning: " + e.getMessage());
                 return false;
             }
+            if (volume == null) return false;
 
+            System.out.println();
+            BuildOutput.step(volume.label() + ":");
             if (dryRun) {
-                System.out.println("Would delete DNF cache volume (" + GuestProvisioning.DNF_CACHE_VOLUME + ") from pool " + pool);
+                BuildOutput.step("Would delete the DNF cache volume; the next build downloads its packages again.");
                 return true;
             }
 
-            new DnfCacheVolume(incus, pool).delete();
+            if (!confirm.test(BuildOutput.STEP_INDENT
+                    + "Delete the DNF cache volume? The next build downloads its packages again.")) {
+                return true;
+            }
+
+            volume.delete();
             return true;
         }
     }
