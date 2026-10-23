@@ -153,9 +153,12 @@ public class GitRemoteHelperCommand extends BaseCommand {
             var text = line.toString(StandardCharsets.UTF_8);
             line.reset();
             if (text.endsWith("\n")) text = text.substring(0, text.length() - 1);
-            var shown = BuildOutput.guestText(text);
-            if (shown.contains("not a git repository")) notARepository = true;
-            out.println(shown);
+            // Matched before guestText, which keeps only a line's last carriage-return frame.
+            // "does not appear to be a git repository" from upload-pack and receive-pack.
+            if (text.contains("not a git repository") || text.contains("not appear to be a git repository")) {
+                notARepository = true;
+            }
+            out.println(BuildOutput.guestText(text));
         }
     }
 }
