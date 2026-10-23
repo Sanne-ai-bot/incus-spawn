@@ -905,6 +905,7 @@ Output captured from a guest command is someone else's text too (#1588).
 A build step's `StepProgress` cleans its detail and log as it is made, since a prime is code the repository controls.
 Colour is dropped, the detail goes through `OutputFormat.oneLine` and the log through `TerminalLink.plainText`.
 So the live line, the plain failure line on stdout, the printed log and the saved failure report all show it as text.
+`Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` print a failed command's output through `BuildOutput.guestText`, since a tool's `run:` step or an npm package's install script decides it too.
 The console is decided by stdin and stdout, never stderr, and Java cannot ask whether stderr alone is a terminal without native code.
 So the contract is that escapes follow stdout: redirecting stdout or setting `NO_COLOR` clears both streams, while `2>log` alone from a terminal keeps colour in the log.
 `docs/CLI.md` ("Scripting isx") says so rather than promising more.

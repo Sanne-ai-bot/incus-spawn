@@ -83,6 +83,24 @@ class NpmGlobalInstallTest {
     }
 
     @Test
+    void showsAFailedNpmsOutputAsText() {
+        // An npm package's install script decides what npm prints (#1588).
+        var incus = incus();
+        when(incus.shellExec(eq(CONTAINER), eq("npm"), any(), any(), any(), any(), any()))
+                .thenReturn(new IncusClient.ExecResult(1, "\033]0;pwned\007out\n", "\033[31mnpm error\033[0m\n"));
+        var captured = new java.io.ByteArrayOutputStream();
+        var originalErr = System.err;
+        try {
+            System.setErr(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
+            assertThrows(IncusException.class,
+                    () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX));
+        } finally {
+            System.setErr(originalErr);
+        }
+        assertEquals(" ]0;pwned out\nnpm error\n", captured.toString(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    @Test
     void failsWhenTheLauncherIsNotInNpmsGlobalRoot() {
         var incus = incus();
         stubCheck(incus, "@openai/codex", NOT_INSTALLED);

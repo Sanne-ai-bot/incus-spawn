@@ -325,4 +325,15 @@ class BuildOutputTest {
         }
         return screen;
     }
+
+    @Test
+    void guestTextCannotDriveTheTerminal() {
+        // What a guest command printed is shown as text (#1588): colour dropped, a progress
+        // line as the terminal leaves it after its last carriage return, other controls spaces.
+        assertEquals("red\n ]52;c;eA== tab\tend\n100%\ndone\n",
+                BuildOutput.guestText("\033[31mred\033[0m\r\n\033]52;c;eA==\007tab\tend\n"
+                        + " 10%\r 50%\r100%\r\ndone\n"));
+        assertEquals(" 2J", BuildOutput.guestText("\u009b2J"));
+        assertEquals("", BuildOutput.guestText("\r\r"));
+    }
 }

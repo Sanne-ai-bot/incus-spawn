@@ -70,6 +70,23 @@ public final class BuildOutput {
         return ANSI_PATTERN.matcher(s).replaceAll("");
     }
 
+    /**
+     * {@code text} a guest command printed, as text that cannot drive the terminal it is shown on
+     * (#1588): a repository's prime or a package's install script decides what it holds. Each
+     * line keeps what a terminal would leave of it after its last carriage return, colour is
+     * dropped, and every other control becomes a space ({@link TerminalLink#plainText}).
+     */
+    public static String guestText(String text) {
+        if (text.indexOf('\r') >= 0) {
+            text = Arrays.stream(text.split("\n", -1)).map(line -> {
+                var end = line.length();
+                while (end > 0 && line.charAt(end - 1) == '\r') end--;
+                return line.substring(line.lastIndexOf('\r', end - 1) + 1, end);
+            }).collect(Collectors.joining("\n"));
+        }
+        return TerminalLink.plainText(stripAnsi(text));
+    }
+
     public static final String STEP_INDENT = "    ";
     private static final String GROUP_INDENT = "  ";
 
