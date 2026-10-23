@@ -69,6 +69,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     private JsonNode listingOverride;
     /** Storage pools by name, with their driver; empty means one btrfs pool, {@code default}. */
     private final Map<String, String> pools = new LinkedHashMap<>();
+    private final java.util.Set<String> customVolumes = new java.util.LinkedHashSet<>();
+    private RawResponse customVolumeFailure;
     private String subvolumeListing;
     private final java.util.Set<String> images = new java.util.LinkedHashSet<>();
     /** Local image aliases, and the image a remote alias was last fetched as. */
@@ -224,6 +226,22 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** A storage pool; once one is declared, only declared pools are listed. */
     public synchronized FakeIncusDaemon pool(String name, String driver) {
         pools.put(name, driver);
+        return this;
+    }
+
+    /** A custom volume, such as the shared DNF cache, on {@code pool}. */
+    public synchronized FakeIncusDaemon customVolume(String pool, String name) {
+        customVolumes.add(pool + "/" + name);
+        return this;
+    }
+
+    public synchronized boolean hasCustomVolume(String pool, String name) {
+        return customVolumes.contains(pool + "/" + name);
+    }
+
+    /** Answer every read or delete of a custom volume with this error, as a busy or broken server does. */
+    public synchronized FakeIncusDaemon customVolumesFail(int status, String error) {
+        customVolumeFailure = error(status, error);
         return this;
     }
 
@@ -621,6 +639,20 @@ public final class FakeIncusDaemon implements IncusTransport {
             var list = JSON.createArrayNode();
             instances.values().forEach(list::add);
             return sync(list);
+        }
+        if (path.startsWith("/1.0/storage-pools/") && path.contains("/volumes/custom/")
+                && (method.equals("GET") || method.equals("DELETE"))) {
+            if (customVolumeFailure != null) return customVolumeFailure;
+            var key = path.substring("/1.0/storage-pools/".length()).replace("/volumes/custom/", "/");
+            if (method.equals("GET")) {
+                return customVolumes.contains(key) ? sync(JSON.createObjectNode().put("name", key)) : notFound();
+            }
+            return customVolumes.remove(key) ? sync(JSON.createObjectNode()) : notFound();
+        }
+        if (path.startsWith("/1.0/storage-pools/") && path.endsWith("/volumes") && method.equals("POST")) {
+            var pool = path.substring("/1.0/storage-pools/".length(), path.length() - "/volumes".length());
+            customVolumes.add(pool + "/" + JSON.readTree(body).path("name").asText());
+            return sync(JSON.createObjectNode());
         }
         if (path.startsWith("/1.0/storage-pools?") && method.equals("GET")) {
             var list = JSON.createArrayNode();
