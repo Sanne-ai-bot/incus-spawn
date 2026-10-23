@@ -60,6 +60,9 @@ class DocsShapeTest {
                 problems(List.of(words)));
         assertEquals(List.of("2: 5 sentences in one paragraph, at most 4"),
                 problems(List.of("- An item.", "- One.", "  Two.", "  Three.", "  Four.", "  Five.", "- Short.")));
+        assertEquals(List.of(), problems(List.of("> One.", "> Two.", "> Three.", ">", "> Four.", "> Five.")));
+        assertEquals(List.of("1: 5 sentences in one paragraph, at most 4"),
+                problems(List.of("> One.", "> Two.", "> Three.", "> Four.", "> Five.")));
     }
 
     @Test
@@ -147,7 +150,7 @@ class DocsShapeTest {
                 continue;
             }
             var s = line.strip();
-            if (s.isEmpty() || s.startsWith("<") || LINK_DEFINITION.matcher(line).find() || RULE.matcher(line).find()) {
+            if (s.isEmpty() || s.matches(">[>\\s]*") || s.startsWith("<") || LINK_DEFINITION.matcher(line).find() || RULE.matcher(line).find()) {
                 block = block.close(problems);
                 continue;
             }

@@ -66,7 +66,7 @@ If a sentence needs emphasis, it needs rewriting.
 **No issue numbers, class names or "now" in README and docs.**
 They are for DESIGN.md, which records why.
 A user page says what is, never what changed.
-A roadmap item may link to its issue, as a link.
+A roadmap item, or a limitation a user may still meet, may link to its issue, as a link.
 
 **A connective must be true.**
 "So", "therefore", "because", "which means" claim that the second statement follows from the first.
