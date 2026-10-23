@@ -172,14 +172,23 @@ class ApiActivityProxyTest {
     }
 
     static JsonNode activity() throws Exception {
-        var resp = health("GET", "/activity");
+        return activity(healthPort);
+    }
+
+    /** {@code /activity} as the host reads it from the proxy whose health endpoint is on {@code port}. */
+    static JsonNode activity(int port) throws Exception {
+        var resp = health(port, "GET", "/activity");
         assertEquals(200, resp.statusCode(), resp.body());
         return JSON.readTree(resp.body());
     }
 
     static HttpResponse<String> health(String method, String path) throws Exception {
+        return health(healthPort, method, path);
+    }
+
+    private static HttpResponse<String> health(int port, String method, String path) throws Exception {
         try (var http = java.net.http.HttpClient.newHttpClient()) {
-            return http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + healthPort + path))
+            return http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
                             .method(method, HttpRequest.BodyPublishers.noBody()).build(),
                     HttpResponse.BodyHandlers.ofString());
         }
