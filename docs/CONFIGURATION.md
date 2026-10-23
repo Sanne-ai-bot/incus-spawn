@@ -168,11 +168,12 @@ What you see when a transfer fails:
 
 What to do before a transfer:
 
-- Load the key into `ssh-agent`.
-  isx adds `-o BatchMode=yes` to ssh or to your `core.sshCommand`, so ssh does not ask for a passphrase; for a build, only a global `core.sshCommand` applies.
-- Keep the host in `~/.ssh/known_hosts`, so ssh has no host key to ask about.
-  isx makes any other ssh fail rather than ask (OpenSSH 8.4 or later).
+- Load the key into `ssh-agent`: ssh does not ask for a passphrase.
+- Keep the host in `~/.ssh/known_hosts`: ssh does not ask about a host key.
 - Do not count on a password prompt: Git fails at once instead of asking for one.
+
+Where it can, isx adds `-o BatchMode=yes` to ssh or to your `core.sshCommand`, which stops both ssh prompts; for a build, only a global `core.sshCommand` applies.
+isx makes any other ssh, such as a custom `GIT_SSH` or a wrapper, fail rather than ask (OpenSSH 8.4 or later).
 
 A transfer that stops making progress is ended without waiting for it:
 

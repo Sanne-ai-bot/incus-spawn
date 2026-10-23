@@ -301,7 +301,7 @@ Maven builds that would download hundreds of megabytes of dependencies resolve t
 The `~/.gitconfig` entry mounts your git configuration read-only, the default mode.
 `git` inside the instance then picks up your name, email, aliases and other settings (see [Git Configuration](../README.md#git-configuration)).
 
-## Modes
+### Modes
 
 | Mode | Default? | Description |
 |------|----------|-------------|
@@ -312,7 +312,7 @@ The `~/.gitconfig` entry mounts your git configuration read-only, the default mo
 `readonly` and `overlay` resources cannot be mounted into system directories such as `/`, `/etc`, `/usr`, `/var` or `/tmp`.
 Use `/home/agentuser`, `/opt`, `/srv` or `/mnt` instead, or `mode: copy`.
 
-## Entry fields
+### Entry fields
 
 | Field | What it does | Default |
 |-------|--------------|---------|
@@ -324,13 +324,13 @@ isx ignores any other key, such as `target:`, with a warning.
 isx skips a missing host path with a warning, so templates remain portable.
 Host resources compose across the parent chain, with child entries overriding parent entries matched by instance path.
 
-## Project-local templates
+### Project-local templates
 
 Project-local templates (`.incus-spawn/images/`) come from whatever repository you cloned, so they cannot reach outside it.
 Their host resources and `file://` images must point inside the project directory, and isx always clones their `repos` from the network, never from your host checkouts.
 To give a template you trust wider access, move it to `~/.config/incus-spawn/images/`.
 
-## VMs
+### VMs
 
 VMs mount host resources via virtiofs.
 Single-file resources fall back to `copy` mode, since VMs only mount directories.
