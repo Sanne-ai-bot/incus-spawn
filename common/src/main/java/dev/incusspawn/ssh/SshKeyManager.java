@@ -1,6 +1,7 @@
 package dev.incusspawn.ssh;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.Warnings;
 import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
@@ -147,7 +148,7 @@ public final class SshKeyManager {
             writeAtomically(resolvedConfig, newContent);
             return true;
         } catch (IOException e) {
-            System.err.println("  Warning: failed to update ~/.ssh/config: " + e.getMessage());
+            Warnings.warn("failed to update ~/.ssh/config: " + e.getMessage());
             return false;
         }
     }
@@ -212,7 +213,7 @@ public final class SshKeyManager {
             if (!updated.equals(content)) writeAtomically(Environment.sshConfigFile(), updated);
             return true;
         } catch (IOException e) {
-            System.err.println("  Warning: failed to update SSH config: " + e.getMessage());
+            Warnings.warn("failed to update SSH config: " + e.getMessage());
             return false;
         }
     }
@@ -227,7 +228,7 @@ public final class SshKeyManager {
             var blocks = parseWithoutHostBlocks(content, instanceName);
             writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
         } catch (IOException e) {
-            System.err.println("  Warning: failed to update SSH config: " + e.getMessage());
+            Warnings.warn("failed to update SSH config: " + e.getMessage());
         }
     }
 

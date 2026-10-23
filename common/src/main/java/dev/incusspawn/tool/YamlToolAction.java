@@ -174,7 +174,7 @@ public class YamlToolAction implements ToolAction {
                 default -> ActionResult.error("Unknown action type: " + type);
             };
         } catch (ForwarderFailed e) {
-            return ActionResult.error("Could not start the SSH forwarder for " + context.instanceName()
+            return ActionResult.error("Could not set up the SSH forwarder for " + context.instanceName()
                     + ": " + e.getCause().getMessage());
         }
     }
