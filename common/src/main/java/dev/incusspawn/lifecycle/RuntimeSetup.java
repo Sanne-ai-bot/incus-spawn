@@ -346,7 +346,8 @@ public final class RuntimeSetup {
      * containers that don't have sshd installed.
      */
     public static boolean hasSshCapability(IncusClient incus, String name) {
-        return hasSshCapability(incus.configGet(name, Metadata.SSH_SETUP), incus.configGet(name, Metadata.BUILD_SOURCE));
+        var config = incus.instanceMetadata(name).path("config");
+        return hasSshCapability(config.pathText(Metadata.SSH_SETUP, ""), config.pathText(Metadata.BUILD_SOURCE, ""));
     }
 
     /** {@link #hasSshCapability(IncusClient, String)} from config values the caller already read. */
