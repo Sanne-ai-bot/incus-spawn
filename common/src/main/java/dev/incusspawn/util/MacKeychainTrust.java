@@ -1,9 +1,11 @@
 package dev.incusspawn.util;
 
+import dev.incusspawn.ClientLog;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
 
+import javax.security.auth.x500.X500Principal;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
@@ -163,9 +165,8 @@ public final class MacKeychainTrust {
             // Apple's roots, for the keys of those denied alone: Keychain Access lists them, so a user
             // marks one "Never Trust" there, and its cross-signed copy is what a server sends.
             // Read only now, with a deny to match, under the same deadline.
-            var findingRoots = startOrNull(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", SYSTEM_ROOTS_KEYCHAIN);
+            var bodies = new ArrayList<>(appleRoots(temps, running, deadline));
             // The keychains' are parsed again when an admin record needed them: only with a deny, a few milliseconds
-            var bodies = new ArrayList<>(certificatesOrNone(findingRoots));
             bodies.addAll(certificatesOrNone(findingSystem));
             bodies.addAll(certificatesOrNone(findingLogin));
             return trust.withDeniedKeys(bodies);
@@ -303,6 +304,21 @@ public final class MacKeychainTrust {
         }
     }
 
+    /**
+     * Apple's roots, or none when they cannot be read, logged: a deny then matches the certificate it
+     * names and no other copy of the CA, so a server sending a cross-signed one is trusted again.
+     */
+    private static List<X509Certificate> appleRoots(List<Path> temps, List<Process> running, long deadline) {
+        try {
+            return certificatesOf(start(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", SYSTEM_ROOTS_KEYCHAIN));
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            ClientLog.warn("Apple's root certificates not read, so a Keychain deny refuses only the certificate it names, "
+                    + "not the CA's cross-signed copies: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            return List.of();
+        }
+    }
+
     /** {@link #start}, or null when the run cannot even be started: for a read that only ever adds bodies. */
     private static Running startOrNull(List<Path> temps, List<Process> running, long deadline, String... command) {
         try {
@@ -429,7 +445,8 @@ public final class MacKeychainTrust {
     public static String keyOf(X509Certificate cert) {
         try {
             var digest = MessageDigest.getInstance("SHA-256");
-            digest.update(cert.getSubjectX500Principal().getEncoded());
+            // The canonical name, so a copy that encodes the same name with another string type still matches
+            digest.update(cert.getSubjectX500Principal().getName(X500Principal.CANONICAL).getBytes(StandardCharsets.UTF_8));
             digest.update(cert.getPublicKey().getEncoded());
             return HexFormat.of().withUpperCase().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
