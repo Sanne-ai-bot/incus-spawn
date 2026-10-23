@@ -6,6 +6,8 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
+import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.util.TerminalProgress;
 
 import java.util.ArrayList;
@@ -31,8 +33,22 @@ final class BuildProgress {
      *  live verb shown while RUNNING (e.g. "Cloning", then "Priming"); {@code note}
      *  is a dim annotation shown on success; {@code detail} is a concise one-line
      *  error for the inline display; {@code log} is the full captured command output,
-     *  printed on failure so the diagnostic isn't reduced to the single inline line. */
+     *  printed on failure so the diagnostic isn't reduced to the single inline line.
+     *  The detail and log quote what a guest command printed, such as a prime the cloned
+     *  repository controls, so neither holds anything that could drive a terminal wherever
+     *  it is shown or saved: colour is dropped and other controls become spaces (#1588). */
     record StepProgress(StepState state, String activity, String note, boolean noteHighlight, String detail, String log) {
+        StepProgress {
+            activity = shownLine(activity);
+            note = shownLine(note);
+            detail = shownLine(detail);
+            log = log == null ? null : TerminalLink.plainText(BuildOutput.stripAnsi(log));
+        }
+
+        private static String shownLine(String text) {
+            return text == null ? null : OutputFormat.oneLine(BuildOutput.stripAnsi(text));
+        }
+
         static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, false, null, null); }
         static StepProgress running(String activity, String detail) { return new StepProgress(StepState.RUNNING, activity, null, false, detail, null); }
         static StepProgress done(String note) { return new StepProgress(StepState.DONE, null, note, false, null, null); }
