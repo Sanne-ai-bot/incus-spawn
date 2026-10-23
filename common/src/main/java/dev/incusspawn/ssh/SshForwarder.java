@@ -67,8 +67,20 @@ public final class SshForwarder {
      */
     public static int ensure(String instance) throws IOException {
         int port = ensure(instance, SshForwarder::launch, START_WAIT);
-        SshKeyManager.addHostEntry(instance, "127.0.0.1", port);
+        pointHostBlockAt(instance, port);
         return port;
+    }
+
+    /**
+     * Point the instance's managed Host block at the forwarder's port. A client opened at that port
+     * finds its User and IdentityFile only through the block, so a block left naming another port
+     * fails the action rather than opening the client somewhere it cannot log in.
+     */
+    static void pointHostBlockAt(String instance, int port) throws IOException {
+        if (!SshKeyManager.addHostEntry(instance, "127.0.0.1", port)) {
+            throw new IOException("could not point the entry for " + instance + " in "
+                    + Environment.sshConfigFile() + " at the SSH forwarder on 127.0.0.1:" + port);
+        }
     }
 
     static int ensure(String instance, Launcher launcher, Duration wait) throws IOException {

@@ -1,5 +1,7 @@
 package dev.incusspawn.ssh;
 
+import dev.incusspawn.Environment;
+import dev.incusspawn.Warnings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -243,6 +245,26 @@ class SshForwarderTest {
         assertTrue(SshForwarder.Record.parse("").isEmpty());
         assertTrue(SshForwarder.Record.parse("42").isEmpty());
         assertTrue(SshForwarder.Record.parse("x 40222").isEmpty());
+    }
+
+    /**
+     * Gateway takes the managed key from the Host block, so a block that still names another port
+     * would open it where it cannot log in; the failure goes to the warning channel, not stderr,
+     * because the TUI reaches it (#1600).
+     */
+    @Test
+    void aHostBlockThatCannotBeWrittenFailsTheActionWithAWarning() throws Exception {
+        Files.createDirectories(Environment.sshConfigFile());
+        var warnings = new ArrayList<String>();
+
+        IOException e;
+        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+            e = assertThrows(IOException.class, () -> SshForwarder.pointHostBlockAt(INSTANCE, 2222));
+        }
+
+        assertTrue(e.getMessage().contains("127.0.0.1:2222"), e.getMessage());
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).startsWith("failed to update SSH config"), warnings.toString());
     }
 
     /** What the detached launch does, in this process: a forwarder that records itself. */
