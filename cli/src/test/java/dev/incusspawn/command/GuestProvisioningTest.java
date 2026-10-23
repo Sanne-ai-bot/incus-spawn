@@ -856,4 +856,33 @@ class GuestProvisioningTest {
         Files.writeString(path, "#!/bin/sh\n" + body + "\n");
         path.toFile().setExecutable(true);
     }
+
+    @Test
+    void packageRepoNamesAreShownAsText() {
+        // A template, project-local included, names its package repositories (#1610 follow-up).
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(new IncusClient.ExecResult(1, "", "no"));
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setPackageRepos(List.of(
+                new ImageDef.PackageRepo("x\033]0;pwned\007", "a\nb"),
+                new ImageDef.PackageRepo("copr", "owner/r\nERROR: forged\033[2J")));
+        var output = new java.io.ByteArrayOutputStream();
+        var originalOut = System.out;
+        var originalErr = System.err;
+        dev.incusspawn.incus.IncusException ex;
+        try {
+            System.setOut(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
+            System.setErr(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
+            ex = assertThrows(dev.incusspawn.incus.IncusException.class, () -> GuestProvisioning.enablePackageRepos(
+                    new Container(incus, "test"), imageDef, List.of(), List.of(), Map.of()));
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+        var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(shown.contains("unknown package_repos type 'x ]0;pwned ' for 'a b'"), shown.replace("\033", "ESC"));
+        assertEquals(dev.incusspawn.util.TerminalLink.plainText(shown), shown, shown.replace("\033", "ESC"));
+        assertFalse(ex.getMessage().contains("\n"), "a name cannot forge a line in the failure report: " + ex.getMessage());
+    }
 }

@@ -1951,7 +1951,7 @@ public class BuildCommand extends BaseCommand {
         var progress = new TransferProgress();
         var result = new java.util.concurrent.atomic.AtomicReference<Path>();
         runLiveStep("Downloading base image " + alias, progress::detail,
-                "Failed to download base image from " + url, state -> {
+                "Failed to download base image from " + OutputFormat.oneLine(url), state -> {
                     try {
                         result.set(newDownloadCache().downloadAllowingLocalFile(url, sha256, progress));
                         state.set(0, StepProgress.done(progress.fetched()
