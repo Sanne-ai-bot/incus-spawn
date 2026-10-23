@@ -46,6 +46,18 @@ class NpmGlobalInstallTest {
                 eq("--ignore-scripts"), eq("--loglevel=verbose"), eq(npmPackage));
     }
 
+    private static String stderrOf(Runnable action) {
+        var captured = new java.io.ByteArrayOutputStream();
+        var originalErr = System.err;
+        try {
+            System.setErr(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
+            action.run();
+        } finally {
+            System.setErr(originalErr);
+        }
+        return captured.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     @Test
     void reinstallsOnceWhenNpmSkippedThePlatformPackage() {
         var incus = incus();
@@ -88,16 +100,9 @@ class NpmGlobalInstallTest {
         var incus = incus();
         when(incus.shellExec(eq(CONTAINER), eq("npm"), any(), any(), any(), any(), any()))
                 .thenReturn(new IncusClient.ExecResult(1, "\033]0;pwned\007out\n", "\033[31mnpm error\033[0m\n"));
-        var captured = new java.io.ByteArrayOutputStream();
-        var originalErr = System.err;
-        try {
-            System.setErr(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
-            assertThrows(IncusException.class,
-                    () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX));
-        } finally {
-            System.setErr(originalErr);
-        }
-        assertEquals("out\nnpm error\n", captured.toString(java.nio.charset.StandardCharsets.UTF_8));
+        var err = stderrOf(() -> assertThrows(IncusException.class,
+                () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX)));
+        assertEquals("out\nnpm error\n", err);
     }
 
     @Test
@@ -191,5 +196,23 @@ class NpmGlobalInstallTest {
                 "npm http fetch GET https://registry.npmjs.org/@openai/codex/-/codex-0.157.1-linux-x64.tgz attempt 1 failed with ECONNRESET",
                 "npm verbose reify failed optional dependency /usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64"),
                 NpmGlobalInstall.skipReasons(NPM_SKIPPED_IT));
+    }
+
+    @Test
+    void showsNpmsSkipReasonsAsText() {
+        // An npm package's install script decides what npm's verbose log holds (#1588).
+        var npm = new IncusClient.ExecResult(0, "", "\033]52;c;eA==\007\033[31mnpm error\033[0m \033[2Kskipped\nfetch error 10%\rfetch ok 100%\n");
+        var incus = incus();
+        stubCheck(incus, "@openai/codex", CODEX_MISSING);
+        stubCheck(incus, "@github/copilot", OK);
+        when(incus.shellExec(eq(CONTAINER), eq("npm"), eq("install"), eq("-g"),
+                eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@openai/codex"))).thenReturn(npm);
+        var err = stderrOf(() -> assertThrows(IncusException.class,
+                () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX)));
+        assertEquals("npm error skipped\n", err);
+
+        var problems = NpmGlobalInstall.repairAfterUpdate(new Container(incus, CONTAINER));
+        assertEquals(1, problems.size());
+        assertTrue(problems.getFirst().endsWith("\n  npm error skipped"), problems.getFirst());
     }
 }
