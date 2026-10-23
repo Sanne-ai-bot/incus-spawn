@@ -367,16 +367,6 @@ public final class InstanceRegistry {
     }
 
     /**
-     * The name of the instance a caller is, if it may call {@code isx mcp} over the network:
-     * {@link #identify(String, String, boolean)}, and stamped {@link Metadata#MCP_CALLER}. Null
-     * otherwise -- the same refresh-and-retry advice as for {@link #identify} applies.
-     */
-    public String identifyMcpCaller(String sourceAddress, String presentedSecret, boolean bySecretAlone) {
-        var identified = identifyWithLineage(sourceAddress, presentedSecret, bySecretAlone);
-        return identified != null && identified.mcpCaller() ? identified.instanceName() : null;
-    }
-
-    /**
      * The instance a caller is, by {@link #identify}, with its {@link Lineage}: what a host
      * route's {@code templates:} filter is decided on (#936), and with the {@link Metadata#MCP_CALLER}
      * stamp {@code isx mcp} is. Null when {@link #identify} is, with the same refresh-and-retry advice.
