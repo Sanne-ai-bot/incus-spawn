@@ -309,6 +309,7 @@ class CleanCommandTest {
         assertTrue(out.contains("Would delete:"), out);
         assertTrue(out.contains("DNF cache volume"), out);
     }
+
     @Test
     void cleanCacheGoesOnWhenItCouldNotLookForTheVolume() throws Exception {
         Files.createDirectories(Environment.cacheDir());
@@ -386,5 +387,17 @@ class CleanCommandTest {
 
         assertFalse(out.contains("SSH keys"), out);
         verify(incus).deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME);
+    }
+
+    @Test
+    void decliningThePoolCleansDnfCacheKeepsIt() {
+        // isx clean pool asks about each category; the DNF cache was deleted without asking
+        var incus = withDnfCacheVolume();
+        var asked = new ArrayList<String>();
+
+        assertTrue(CleanCommand.Pool.cleanDnfCacheFromPool(incus, "cow", false, q -> asked.add(q) && false));
+
+        assertEquals(1, asked.size());
+        verify(incus, never()).deleteStorageVolume(anyString(), anyString());
     }
 }
