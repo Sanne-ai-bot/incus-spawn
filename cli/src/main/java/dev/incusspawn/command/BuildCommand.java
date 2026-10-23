@@ -1767,6 +1767,12 @@ public class BuildCommand extends BaseCommand {
 
     private void checkPinnedWarning(ImageDef imageDef) {
         if (!imageDef.isPinned()) return;
+        // A pin an isx before #1563 wrote replaces the whole built-in definition
+        if (dev.incusspawn.config.BaseImagePin.isLegacyPin(imageDef)) {
+            BuildOutput.note(OutputFormat.oneLine(imageDef.getSource()) + " was written by an earlier 'isx update-base' and hides every change to the built-in "
+                    + imageDef.getName() + ". Run 'isx update-base " + OutputFormat.oneLine(imageDef.getImageTag())
+                    + "' to keep the pin, or 'isx update-base --latest'.");
+        }
         var builtin = ImageDef.loadBuiltinByName(imageDef.getName());
         if (builtin == null || builtin.getImageTag() == null) return;
         var pinnedTag = imageDef.getImageTag();

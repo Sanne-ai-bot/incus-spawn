@@ -833,16 +833,25 @@ public class ImageDef extends MappedDefinition {
      */
     public static Map<String, ImageDef> loadTrusted() {
         // Warnings.warn: a long-lived isx mcp loads these on every call, and a conflict is news once.
-        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), Warnings::warn, false).defs();
+        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), Warnings::warn, false, true).defs();
+    }
+
+    /**
+     * The trusted definitions as {@link #loadTrusted()}, but without the base-image pin applied:
+     * what {@code isx update-base} pins a release of.
+     */
+    public static Map<String, ImageDef> loadTrustedUnpinned() {
+        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), Warnings::warn, false, false).defs();
     }
 
     static LayeredDefinitions<ImageDef> loadAllWithConflicts(List<String> searchPaths, Consumer<String> warnings) {
-        return loadAllWithConflicts(searchPaths, warnings, true);
+        return loadAllWithConflicts(searchPaths, warnings, true, true);
     }
 
     private static LayeredDefinitions<ImageDef> loadAllWithConflicts(List<String> searchPaths,
                                                                      Consumer<String> warnings,
-                                                                     boolean includeProject) {
+                                                                     boolean includeProject,
+                                                                     boolean applyPin) {
         var defs = new LayeredDefinitions<ImageDef>("image");
         loadBuiltins(defs, warnings);
         loadFromDirectory(userImagesDir(), defs, warnings, null);
@@ -850,10 +859,49 @@ public class ImageDef extends MappedDefinition {
             var expandedPath = HostResourceSetup.expandHostTilde(searchPath);
             loadFromDirectory(Path.of(expandedPath).resolve("images"), defs, warnings, null);
         }
+        if (applyPin) applyBaseImagePin(defs, warnings);
         if (includeProject) loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings, projectRoot());
         refuseParentCycles(defs, warnings);
         inheritTypes(defs.defs());
         return defs;
+    }
+
+    /**
+     * Put the release {@code isx update-base <tag>} pinned into the trusted {@code tpl-minimal}
+     * (#1563), before a project-local one could replace it: only its base image changes, so every
+     * other field still comes from whichever definition is in effect. A pin that cannot be read
+     * counts as a file that failed to parse, so {@code isx build} refuses rather than track the
+     * latest release in its place.
+     */
+    private static void applyBaseImagePin(LayeredDefinitions<ImageDef> defs, Consumer<String> warnings) {
+        var file = BaseImagePin.file();
+        if (!Files.exists(file)) return;
+        var name = OutputFormat.oneLine(file.toString());
+        BaseImagePin pin;
+        try {
+            pin = BaseImagePin.read(file);
+        } catch (IOException e) {
+            warnings.accept(YamlErrors.friendly(name, e));
+            defs.parseFailed(file.toAbsolutePath().normalize());
+            return;
+        }
+        pin.unknownKeyWarnings().forEach(w -> warnings.accept(name + ": " + w));
+        var problem = pin.problem();
+        if (problem != null) {
+            warnings.accept(name + ": " + problem + "; the base image pin is ignored, and isx build refuses until it is fixed"
+                    + " (or removed with 'isx update-base --latest')");
+            defs.parseFailed(file.toAbsolutePath().normalize());
+            return;
+        }
+        var def = defs.defs().get(BaseImagePin.TEMPLATE);
+        if (def == null) return;
+        if (!pin.appliesTo(def)) {
+            warnings.accept(name + ": pins a release of " + OutputFormat.oneLine(pin.getImageUrl())
+                    + ", but " + BaseImagePin.TEMPLATE + " no longer downloads from there; the pin is ignored."
+                    + " Run 'isx update-base <tag>' to pin again, or 'isx update-base --latest'");
+            return;
+        }
+        pin.applyTo(def);
     }
 
     /**

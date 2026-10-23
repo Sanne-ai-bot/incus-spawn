@@ -70,6 +70,11 @@ public final class Jjq {
         return YAML.readValue(file, ImageDef.class);
     }
 
+    /** {@code base-image-pin.yaml}; null for an empty document. */
+    public static BaseImagePin baseImagePin(java.nio.file.Path file) throws IOException {
+        return YAML.readValue(file, BaseImagePin.class);
+    }
+
     public static ToolDef toolDef(String yaml) throws IOException {
         return YAML.readValue(yaml, ToolDef.class);
     }

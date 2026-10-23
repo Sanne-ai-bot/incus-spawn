@@ -177,6 +177,7 @@ isx update-base [<release-tag>] [options]
 | `--format=<format>` | With `--list` only: `table` (the default), `plain` or `json` |
 
 Pass a release tag, such as `fedora-44-v2`, to pin to that version.
+The pin is written to `~/.config/incus-spawn/base-image-pin.yaml` and changes only the base image `tpl-minimal` downloads.
 
 ## `isx update-all`
 

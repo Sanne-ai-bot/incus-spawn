@@ -96,7 +96,7 @@ So `tpl-minimal` masks `tmp.mount` and every template inherits a `/tmp` on the i
 Files there survive restarts, count against disk instead of memory, and are removed by `systemd-tmpfiles-clean` once untouched for 10 days, as on stock Fedora.
 
 Before a template is saved (`isx build`, `isx update-all`, `isx project create` and `update`), isx empties `/tmp` and `/var/tmp`, hidden files included.
-A base image pinned with `isx update-base <tag>` from before this deviation keeps the tmpfs until `isx update-base --latest` and pinning again.
+A base image pinned by an `isx update-base <tag>` from before this deviation keeps the tmpfs until `isx update-base <tag>` pins it again, or `isx update-base --latest` unpins it.
 A template that wants the tmpfs back can install a tool whose `run` is `systemctl unmask tmp.mount`.
 
 ## The agent user

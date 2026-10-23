@@ -58,7 +58,7 @@ public final class BaseImageReleases {
     }
 
     /** The architectures base images are published for. */
-    static final List<String> ARCHES = List.of("x86_64", "aarch64");
+    static final List<String> ARCHES = dev.incusspawn.config.BaseImagePin.ARCHES;
 
     /**
      * A published base-image release, with the download URLs of its manifests: {@code SHA256SUMS},
