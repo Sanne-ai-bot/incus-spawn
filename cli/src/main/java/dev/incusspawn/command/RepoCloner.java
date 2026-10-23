@@ -685,7 +685,7 @@ class RepoCloner {
                 System.err.println(styled(BOLD, header));
                 System.err.println(progress.log().strip());
                 System.err.println(styled(BOLD, footer));
-                var trimmed = BuildOutput.stripAnsi(BuildOutput.lastLines(progress.log(), 100));
+                var trimmed = BuildOutput.lastLines(progress.log(), 100);
                 output.append(header).append('\n');
                 output.append(trimmed).append('\n');
                 output.append(footer).append("\n\n");
@@ -709,11 +709,11 @@ class RepoCloner {
         return !err.isEmpty() ? err : firstGitError(result.stdout());
     }
 
-    /** First fatal:/error: line from git output, else the last non-empty line. */
+    /** First fatal:/error: line from git output as a terminal shows it, else the last non-empty line. */
     static String firstGitError(String text) {
         if (text == null || text.isEmpty()) return "";
         String lastNonEmpty = "";
-        for (var line : text.split("\n")) {
+        for (var line : BuildOutput.guestText(text).split("\n")) {
             var trimmed = line.strip();
             if (trimmed.isEmpty()) continue;
             if (trimmed.startsWith("fatal:") || trimmed.startsWith("error:")) return trimmed;

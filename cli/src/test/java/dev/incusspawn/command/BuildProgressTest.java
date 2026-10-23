@@ -14,10 +14,17 @@ class BuildProgressTest {
         // colour is dropped, and every other control a terminal acts on becomes a space.
         var p = BuildProgress.StepProgress.failed("\033[31mboom\033[0m\033]52;c;eA==\007\u009b2J",
                 "\033[31mred\033[0m\r\n\033]0;pwned\007tab\there\n");
-        assertEquals("boom ]52;c;eA==  2J", p.detail());
-        assertEquals("red \n ]0;pwned tab\there\n", p.log());
+        assertEquals("boom 2J", p.detail());
+        assertEquals("red\ntab\there\n", p.log());
         var running = BuildProgress.StepProgress.running("Installing", "1/2  \033]8;;x\007pkg");
-        assertEquals("1/2   ]8;;x pkg", running.detail());
+        assertEquals("1/2  pkg", running.detail());
+    }
+
+    @Test
+    void theFailureLineIsTheLastOneATerminalShowsText() {
+        assertEquals("npm error", BuildProgress.lastNonEmptyLine("\033[31mnpm error\n\033[0m\n\033]0;t\007"));
+        assertEquals("100%", BuildProgress.lastNonEmptyLine(" 10%\r 50%\r100%"));
+        assertEquals("fatal: denied", RepoCloner.firstGitError("remote: x\n\033[31mfatal: denied\033[0m\n\033]0;t\007\n"));
     }
 
     // --- formatStepLine ---

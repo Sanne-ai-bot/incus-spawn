@@ -7,7 +7,6 @@ import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
 import dev.incusspawn.util.OutputFormat;
-import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.util.TerminalProgress;
 
 import java.util.ArrayList;
@@ -36,17 +35,13 @@ final class BuildProgress {
      *  printed on failure so the diagnostic isn't reduced to the single inline line.
      *  The detail and log quote what a guest command printed, such as a prime the cloned
      *  repository controls, so neither holds anything that could drive a terminal wherever
-     *  it is shown or saved: colour is dropped and other controls become spaces (#1588). */
+     *  it is shown or saved ({@link BuildOutput#guestText}, #1588). */
     record StepProgress(StepState state, String activity, String note, boolean noteHighlight, String detail, String log) {
         StepProgress {
-            activity = shownLine(activity);
-            note = shownLine(note);
-            detail = shownLine(detail);
-            log = log == null ? null : TerminalLink.plainText(BuildOutput.stripAnsi(log));
-        }
-
-        private static String shownLine(String text) {
-            return text == null ? null : OutputFormat.oneLine(BuildOutput.stripAnsi(text));
+            activity = activity == null ? null : OutputFormat.oneLine(activity);
+            note = note == null ? null : OutputFormat.oneLine(note);
+            detail = detail == null ? null : OutputFormat.oneLine(BuildOutput.guestText(detail));
+            log = log == null ? null : BuildOutput.guestText(log);
         }
 
         static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, false, null, null); }
@@ -467,11 +462,14 @@ final class BuildProgress {
         return out + "\n" + err;
     }
 
-    /** Last non-empty line of some text, or "" if none. */
+    /**
+     * Last non-empty line of some text as a terminal shows it, or "" if none: a last line holding
+     * only colour or a title escape is not the one that says what failed.
+     */
     static String lastNonEmptyLine(String text) {
         if (text == null || text.isEmpty()) return "";
         String last = "";
-        for (var line : text.split("\n")) {
+        for (var line : BuildOutput.guestText(text).split("\n")) {
             var trimmed = line.strip();
             if (!trimmed.isEmpty()) last = trimmed;
         }

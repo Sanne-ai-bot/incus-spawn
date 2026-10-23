@@ -97,7 +97,7 @@ class NpmGlobalInstallTest {
         } finally {
             System.setErr(originalErr);
         }
-        assertEquals(" ]0;pwned out\nnpm error\n", captured.toString(java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals("out\nnpm error\n", captured.toString(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     @Test

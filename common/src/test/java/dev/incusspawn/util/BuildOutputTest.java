@@ -330,10 +330,17 @@ class BuildOutputTest {
     void guestTextCannotDriveTheTerminal() {
         // What a guest command printed is shown as text (#1588): colour dropped, a progress
         // line as the terminal leaves it after its last carriage return, other controls spaces.
-        assertEquals("red\n ]52;c;eA== tab\tend\n100%\ndone\n",
+        assertEquals("red\ntab\tend\n100%\ndone\n",
                 BuildOutput.guestText("\033[31mred\033[0m\r\n\033]52;c;eA==\007tab\tend\n"
                         + " 10%\r 50%\r100%\r\ndone\n"));
         assertEquals(" 2J", BuildOutput.guestText("\u009b2J"));
         assertEquals("", BuildOutput.guestText("\r\r"));
+        assertEquals(" ]0;unterminated", BuildOutput.guestText("\033]0;unterminated"));
+        // A terminal still shows the text before a carriage return that only colour follows.
+        assertEquals("npm error", BuildOutput.guestText("npm error\r\033[0m"));
+        assertEquals("text", BuildOutput.guestText("\u009d0;title\u009ctext\033Pq#0\033\\"));
+        // A control string never spans lines, so an unterminated one cannot swallow the log.
+        assertEquals(" ]0;open\nnext ", BuildOutput.guestText("\033]0;open\nnext\007"));
+        assertSame("plain\ttext\n", BuildOutput.guestText("plain\ttext\n"));
     }
 }
