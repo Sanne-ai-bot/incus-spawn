@@ -60,8 +60,7 @@ public final class RuntimeSetup {
         if (instance == null) throw new IncusException("Failed to read config from " + name);
         var config = IncusClient.configByPrefix(instance, "");
         var buildSourceJson = config.getOrDefault(Metadata.BUILD_SOURCE, "");
-        var hasSshKeys = !config.getOrDefault("user.incus-spawn.ssh-setup", "").isEmpty()
-                || hasSshdTool(buildSourceJson);
+        var hasSshKeys = hasSshCapability(config.getOrDefault(Metadata.SSH_SETUP, ""), buildSourceJson);
         var workdir = config.getOrDefault(Metadata.WORKDIR, "");
         var shellCommand = config.getOrDefault(Metadata.SHELL_COMMAND, "");
         var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
@@ -347,8 +346,12 @@ public final class RuntimeSetup {
      * containers that don't have sshd installed.
      */
     public static boolean hasSshCapability(IncusClient incus, String name) {
-        return !incus.configGet(name, "user.incus-spawn.ssh-setup").isEmpty()
-                || hasSshdTool(incus.configGet(name, Metadata.BUILD_SOURCE));
+        return hasSshCapability(incus.configGet(name, Metadata.SSH_SETUP), incus.configGet(name, Metadata.BUILD_SOURCE));
+    }
+
+    /** {@link #hasSshCapability(IncusClient, String)} from config values the caller already read. */
+    public static boolean hasSshCapability(String sshSetup, String buildSourceJson) {
+        return !sshSetup.isEmpty() || hasSshdTool(buildSourceJson);
     }
 
     static boolean hasSshdTool(String buildSourceJson) {
