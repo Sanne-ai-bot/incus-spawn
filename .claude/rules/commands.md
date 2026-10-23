@@ -62,6 +62,7 @@ See DESIGN.md "Output for scripts".
 Anything that deletes data -- `destroy --all-*`, `clean`, `reset`, `vm reset` -- uses `confirmDestructive(prompt, skip, skipFlag)` instead.
 Without a terminal (`System.console()` null or `!isTerminal()`) it throws `NoTerminalException`, which `BaseCommand.execute` reports as an error with exit status 1, naming the flag that skips the question.
 Declining at the prompt is still a successful exit.
+A clean that also deletes the DNF cache volume lists it with what it deletes and deletes it only on that same answer (`CleanCommand.DnfCacheVolume`, #1627).
 `confirm()` stays for disruptive but recoverable actions (`vm restart`, `vm resize`); `BuildCommand` keeps its own proceed-without-a-terminal confirm, which CI relies on.
 
 **Tidying state never takes the instances (#1155).**
