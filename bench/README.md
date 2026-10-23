@@ -316,6 +316,45 @@ check is `InstanceLifecycleRequestBudgetTest` in `mvn test`, which pins how many
 trips a flow makes: an extra round trip is the usual cause of a CLI latency regression, and
 counting requests needs neither timing nor a daemon.
 
+## Claude Code's First Screen (`claude-start.sh`)
+
+`cli.sh` stops at a shell prompt and keeps a template's default action out. For a template
+whose default action is Claude Code, what a user waits for is Claude's first screen, which
+`claude-start.sh` measures and splits:
+
+```shell
+bench/claude-start.sh --from=tpl-agent                      # the installed isx
+bench/claude-start.sh --from=tpl-agent --isx=cli/target/incus-spawn-0.0.0-SNAPSHOT-runner
+bench/claude-start.sh --from=tpl-agent --sessions=1000 --restart-proxy
+```
+
+`--from` is required: a built template whose default action is Claude Code. The script builds
+nothing and drives the `isx` on `PATH`, or `--isx`. It branches a throwaway instance
+(`isx-claude-bench-<pid>`) and destroys it, and every other branch it makes, on exit.
+
+| Operation | What it covers |
+|---|---|
+| `branchToClaude` | `isx branch <new> --from <template>`, to Claude's first screen. `--branch-runs` samples (default 3) |
+| `branchToPrompt` | the same branch with `--shell`, to a usable prompt, for the split |
+| `runToClaude` | `isx run <instance>` on the running instance, to Claude's first screen |
+| `shellToPrompt` | `isx shell <instance>`, to a usable prompt: the isx part of `runToClaude` |
+| `preLaunchOwn` | the Claude action's `find`/`grep` over the instance's own session history, timed inside the instance |
+| `preLaunchSynthetic` | the same over `--sessions` synthetic sessions (default 300), each with two subagent transcripts, in a scratch `HOME` |
+| `claudeVersion` | `claude --version` inside the instance |
+| `afterProxyRestart` | with `--restart-proxy`: `isx proxy restart`, then the first and the second `runToClaude` |
+
+The first screen is the first output that matches `--wait-for` (a regex, default
+`Claude Code ?v[0-9]`, Claude's banner) once terminal escapes are stripped. `isx run` prints
+"Running default action: Claude Code" first, which the version number keeps from matching.
+Two Ctrl-C then end Claude as a user would. The guest figures run in the instance's own login
+shell, typed into an `isx shell`, and are timed on the instance's clock, so no exec or terminal is
+in them. `--restart-proxy` restarts the proxy service, so it is opt-in.
+
+The copy of the action's pre-launch command in the script is checked against
+`ClaudeSetup.actionCommand(":", ":")` by `BenchClaudeStartScriptTest`. Results go to `bench/results/claude/`.
+What the first measurement found is in DESIGN.md "Claude Code's first screen: where the wait
+goes", with its data in [`data/claude-start-2026-10-23.json`](data/claude-start-2026-10-23.json).
+
 ## What One Incus Request Costs (`request-cost.sh`)
 
 The request budgets count round trips; `request-cost.sh` says what one costs on this host. It
@@ -409,10 +448,11 @@ DESIGN.md "VM boot: where the wait goes".
 bench/
   run.sh                  # Proxy benchmark
   cli.sh                  # CLI latency benchmark, JVM vs native
+  claude-start.sh         # Time to Claude Code's first screen, and its split
   trace-branch.sh         # Daemon-side timeline of one isx branch
   request-cost.sh         # What one Incus request costs, outside isx
   vm-boot.sh              # Where a VM's boot goes, firmware to exec
-  isxbench.py             # Shared helper: run a command to a usable shell prompt
+  isxbench.py             # Shared helper: run a command to a usable shell prompt or a screen
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
   proxy-maven.hf.yaml     # Cached-artifact ladder over TLS (--load=maven)

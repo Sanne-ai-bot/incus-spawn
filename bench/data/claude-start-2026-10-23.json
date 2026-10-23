@@ -1,0 +1,168 @@
+{
+  "issue": 802,
+  "date": "2026-10-23",
+  "host": {
+    "cpu": "AMD Ryzen 9 9950X3D2 (16 cores)",
+    "os": "Fedora 44",
+    "kernel": "7.2.11",
+    "incus": "6.23",
+    "nesting": "Incus nested inside an isx instance; scripts/local-incus.sh setup, with the validate-on-real-incus measurement-only patches (no tun device, no root disk size). Claude's traffic crosses this isx's proxy (JVM build) and then the outer one."
+  },
+  "cli": "native isx built by GraalVM 25.0.4 from this branch",
+  "template": "tpl-claude: tpl-minimal + the claude tool, default-action claude; Claude Code 2.1.309, account 'inherit'",
+  "benchRuns": [
+    {
+      "label": "native-nested-1",
+      "results": {
+        "branchToClaude": {
+          "medianMs": 1259.0,
+          "p90Ms": 1333.8,
+          "minMs": 1193.5,
+          "runs": 3
+        },
+        "branchToPrompt": {
+          "medianMs": 730.4,
+          "p90Ms": 764.4,
+          "minMs": 690.7,
+          "runs": 3
+        },
+        "runToClaude": {
+          "medianMs": 391.2,
+          "p90Ms": 406.6,
+          "minMs": 372.4,
+          "runs": 10
+        },
+        "shellToPrompt": {
+          "medianMs": 146.7,
+          "p90Ms": 165.9,
+          "minMs": 131.0,
+          "runs": 10
+        },
+        "preLaunchOwn": {
+          "medianMs": 1.7,
+          "p90Ms": 1.8,
+          "minMs": 1.5,
+          "runs": 10
+        },
+        "claudeVersion": {
+          "medianMs": 5.0,
+          "p90Ms": 5.3,
+          "minMs": 4.9,
+          "runs": 10
+        },
+        "preLaunchSynthetic": {
+          "medianMs": 5.2,
+          "p90Ms": 5.8,
+          "minMs": 5.1,
+          "runs": 10
+        }
+      }
+    },
+    {
+      "label": "native-nested-2",
+      "results": {
+        "branchToClaude": {
+          "medianMs": 1612.6,
+          "p90Ms": 2011.8,
+          "minMs": 1312.1,
+          "runs": 3
+        },
+        "branchToPrompt": {
+          "medianMs": 700.5,
+          "p90Ms": 2866.4,
+          "minMs": 685.8,
+          "runs": 3
+        },
+        "runToClaude": {
+          "medianMs": 404.7,
+          "p90Ms": 418.0,
+          "minMs": 378.0,
+          "runs": 10
+        },
+        "shellToPrompt": {
+          "medianMs": 163.1,
+          "p90Ms": 170.0,
+          "minMs": 140.1,
+          "runs": 10
+        },
+        "preLaunchOwn": {
+          "medianMs": 1.4,
+          "p90Ms": 1.5,
+          "minMs": 1.3,
+          "runs": 10
+        },
+        "claudeVersion": {
+          "medianMs": 5.2,
+          "p90Ms": 6.0,
+          "minMs": 4.9,
+          "runs": 10
+        },
+        "preLaunchSynthetic": {
+          "medianMs": 5.6,
+          "p90Ms": 6.3,
+          "minMs": 5.3,
+          "runs": 10
+        }
+      }
+    }
+  ],
+  "experiments": {
+    "note": "Single sessions of isxbench.run_to_screen / run_to_prompt against one fresh instance each, in milliseconds, in order",
+    "firstStartInFreshInstance": {
+      "shellToPrompt": [
+        226,
+        153,
+        140
+      ],
+      "runToClaude": [
+        675,
+        376,
+        391
+      ]
+    },
+    "afterProxyRestart": {
+      "runToClaude": [
+        435,
+        376,
+        392,
+        398
+      ]
+    },
+    "binaryPrewarmed": {
+      "catClaudeBinaryMs": 31,
+      "runToClaude": [
+        717,
+        386,
+        392
+      ]
+    },
+    "apiAnthropicBlackholedAfterFirstRun": {
+      "runToClaude": [
+        404,
+        391,
+        391
+      ]
+    },
+    "apiAnthropicBlackholedBeforeFirstRun": {
+      "runToClaude": [
+        5530,
+        5414,
+        5430
+      ]
+    },
+    "claudeDirsPrecreated": {
+      "runToClaude": [
+        810,
+        368,
+        405
+      ]
+    },
+    "preLaunchBySessionCount": {
+      "note": "the action's find/grep alone in the guest, medians of 10 after 2 warmups, warm cache; each session has two subagent transcripts beside it",
+      "0": 1.3,
+      "1": 2.3,
+      "300": 5.8,
+      "1000": 12.4
+    }
+  }
+}

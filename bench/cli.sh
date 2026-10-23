@@ -195,7 +195,7 @@ export RUNTIME_SPECS
 RUNTIME_SPECS="$(printf '%s\n' "${RUNTIMES[@]}")"
 
 python3 - <<'PY'
-import json, os, shlex, statistics, subprocess, sys, time
+import json, os, shlex, subprocess, sys, time
 from datetime import datetime, timezone
 
 sys.dont_write_bytecode = True  # keep bench/ free of __pycache__
@@ -239,15 +239,7 @@ OPERATIONS = [
     ("prepareRunning", ["run", instance, "--action", PREPARE_ACTION], 1, PREPARE_MARKER),
 ]
 
-def stats(samples):
-    ordered = sorted(samples)
-    p90 = ordered[min(len(ordered) - 1, int(round(0.9 * (len(ordered) - 1))))]
-    return {"medianMs": round(statistics.median(ordered), 1), "p90Ms": round(p90, 1),
-            "minMs": round(ordered[0], 1), "runs": len(ordered)}
-
-def report(op, s):
-    print(f"  {op:<16} {s['medianMs']:>8.1f} ms median  {s['p90Ms']:>8.1f} p90  "
-          f"{s['minMs']:>8.1f} min  ({s['runs']} runs)")
+stats, report = isxbench.stats, isxbench.report
 
 print(f"Branching {instance} from {source}...")
 lifecycle = {}

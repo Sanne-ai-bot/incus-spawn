@@ -3659,6 +3659,49 @@ The request budgets keep their purpose: a count is deterministic where a wall cl
 What changes is one of the reasons given for them.
 "Far more expensive on macOS" was an assumption; measured, it is not so on this hardware and this vfkit.
 
+### Claude Code's first screen: where the wait goes
+
+For a template whose default action is Claude Code, the wait a user feels ends at Claude's first screen, not at a shell prompt, so `bench/cli.sh` (which keeps the default action out with `--shell`) did not measure it (#802).
+`bench/claude-start.sh` does, and splits it.
+
+Measured on 2026-10-23 with the native CLI from the change that added this section, on an AMD Ryzen 9 9950X3D2 (16 cores), Fedora 44, kernel 7.2.11, Incus 6.23.
+That Incus ran nested inside an isx instance, with the `validate-on-real-incus` skill's measurement-only patches, and Claude's traffic crossed two isx proxies, the inner one a JVM build.
+The template was `tpl-minimal` plus the `claude` tool (Claude Code 2.1.309).
+The ranges are the medians of two passes: 10 runs each after a warmup, and 3 branches each with none, in [`bench/data/claude-start-2026-10-23.json`](bench/data/claude-start-2026-10-23.json) with the experiments below:
+
+| What | Median |
+|---|---|
+| `isx branch` to Claude's first screen | 1259-1613 ms |
+| `isx branch --shell` to a usable prompt | 700-730 ms |
+| `isx run` on a running instance, to Claude's first screen | 391-405 ms |
+| `isx shell` on the same instance, to a usable prompt | 147-163 ms |
+| the action's pre-launch `find`/`grep`, the instance's own history | 1.4-1.7 ms |
+| the same over 300 synthetic sessions (900 transcripts) | 5.2-5.6 ms |
+| `claude --version` in the instance | 5.0-5.2 ms |
+
+What it shows:
+
+- **The pre-launch scan of the session history is not where users wait.**
+  It costs 1-2 ms with an empty history, about 6 ms with 300 sessions and 12 ms with 1000, against a first screen of ~400 ms.
+  Most of it is process start-up for the pipeline, and it was left as it is.
+- **Node start-up is not it either.**
+  `claude --version` takes 5 ms, so it answers without loading Claude's application, and cannot stand for Node's share.
+  Claude's own start on a running instance is the difference between the two `isx` figures, about 245 ms.
+- **Claude's first run in each instance waits on the network.**
+  The first start in a fresh instance takes 675-810 ms against ~390 ms for the next ones, after the shell has been warmed (a first `isx shell` costs about 80 ms more than later ones).
+  It is not the binary's page cache: reading the 280 MB binary first took 31 ms and changed nothing.
+  The first run writes `policy-limits.json` and `remote-settings.json` under `~/.claude`.
+  With `api.anthropic.com` made unreachable before that first run, every start waited about 5.4 s for the first screen; made unreachable after it, starts stayed at ~390 ms.
+  So the fetch that writes them is on the first screen's path until it has succeeded once.
+  Here it crosses two proxies; on a host it crosses one, so this share is smaller there.
+- **A proxy restart costs little.**
+  The first Claude start after one took 435 ms against ~390 ms for the later ones.
+  The proxy pre-mints and stores the intercepted domains' certificates on disk (`InterceptedCertOptions`), so a restart does not mint them again; what is left is the proxy's own warm-up.
+
+Claude's first-run fetch is made with the instance's credential, so its answer belongs to an account.
+Caching it in a template is therefore not the obvious fix it looks like: a template outlives an account switch, and builds scrub temporary credential state, Claude's included, before publication.
+It is recorded here rather than changed.
+
 ### VM boot: where the wait goes
 
 A container answers exec in well under a second; a VM from `tpl-isx-agent-vm` took about 11 s on Sanne's host (#1238).
