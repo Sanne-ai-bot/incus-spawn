@@ -66,4 +66,15 @@ class GitRemoteHelperCommandTest {
         stderr.write(bytes, 0, bytes.length);
         assertTrue(shown.size() > 0, "a line past the limit is shown before its end");
     }
+
+    @Test
+    void gitsServicesSayAPathIsNotARepositoryInTheirOwnWords() {
+        // git upload-pack and receive-pack on a path that is not a repository (git 2.x).
+        var stderr = new GitRemoteHelperCommand.GuestStderr(
+                new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
+        var bytes = "fatal: '/home/agentuser/x' does not appear to be a git repository\rlater frame\n"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        stderr.write(bytes, 0, bytes.length);
+        assertTrue(stderr.sawNotARepository());
+    }
 }

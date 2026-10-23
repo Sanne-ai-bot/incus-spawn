@@ -2982,7 +2982,7 @@ The bash `exec` replaces the shell process with the Java process before any data
 This is critical: Java's `BufferedInputStream` would consume bytes from the stdin pipe that are meant for the git pack protocol, corrupting the stream.
 By having bash handle only the text protocol exchange (a few short lines) and then `exec`-replacing itself, the Java process inherits the raw file descriptors with no buffered-ahead data.
 
-Stderr is captured in a virtual thread so the command can detect "not a git repository" errors and print hints listing known repos from the image definition chain.
+Stderr is captured in a virtual thread so the command can detect that the path is not a repository ("does not appear to be a git repository", from upload-pack and receive-pack) and print hints listing known repos from the image definition chain.
 Whatever runs in the instance decides that stderr, and git passes a helper's stderr to the terminal untouched, so `GuestStderr` relays it a line at a time through `BuildOutput.guestText`, decoded as UTF-8 per line.
 The hints quote each repository's path and URL, and the requested path, through `OutputFormat.oneLine` (#1624): a template, project-local included, decides them (#1133).
 
