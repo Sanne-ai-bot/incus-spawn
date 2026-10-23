@@ -78,6 +78,7 @@ class CompletionCommandTest {
                     assertFalse(script.contains("'instances:"), "zsh must not suggest instances");
                     assertFalse(script.contains("'git-remote-helper:"), "zsh must not suggest git-remote-helper");
                     assertFalse(script.contains("'ssh-proxy:"), "zsh must not suggest ssh-proxy");
+                    assertFalse(script.contains("'ssh-forward:"), "zsh must not suggest ssh-forward");
                 }
                 case bash -> {
                     String commands = script.lines()
@@ -87,12 +88,14 @@ class CompletionCommandTest {
                     assertFalse(commands.contains("instances"), "bash must not list instances");
                     assertFalse(commands.contains("git-remote-helper"), "bash must not list git-remote-helper");
                     assertFalse(commands.contains("ssh-proxy"), "bash must not list ssh-proxy");
+                    assertFalse(commands.contains("ssh-forward"), "bash must not list ssh-forward");
                 }
                 case fish -> {
                     assertFalse(script.contains("-a completion"), "fish must not suggest completion");
                     assertFalse(script.contains("-a instances"), "fish must not suggest instances");
                     assertFalse(script.contains("-a git-remote-helper"), "fish must not suggest git-remote-helper");
                     assertFalse(script.contains("-a ssh-proxy"), "fish must not suggest ssh-proxy");
+                    assertFalse(script.contains("-a ssh-forward"), "fish must not suggest ssh-forward");
                 }
             }
         }

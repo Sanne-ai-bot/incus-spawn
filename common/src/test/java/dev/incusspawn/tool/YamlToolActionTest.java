@@ -42,6 +42,63 @@ class YamlToolActionTest {
         assertTrue(resolvedUrl.contains("/home/agentuser/my-project"));
     }
 
+    // --- ${ssh_port}: where a client that ignores ProxyCommand reaches sshd (#1600) ---
+
+    /** The shipped Gateway action, expanded for one repository, asking {@code endpoint} for the port. */
+    private static YamlToolAction gatewayAction(YamlToolAction.SshEndpoint endpoint) {
+        var def = ((YamlToolSetup) new ToolDefLoader(List.of()).find("idea-backend")).toolDef();
+        var repo = new ActionContext.RepoInfo("my-project", "/home/agentuser/my-project", "u");
+        return new YamlToolAction("idea-backend", def.getActions().getFirst(), repo, endpoint);
+    }
+
+    private static final ActionContext GATEWAY_TARGET = new ActionContext("dev-1", MachineType.CONTAINER,
+            Set.of("idea-backend"), List.of(),
+            new ActionContext.InstanceState("10.166.11.20", "RUNNING", "tpl-idea", "FULL"));
+
+    @Test
+    void gatewayDialsTheForwardersPortWhereTheInstanceAddressIsUnreachable() {
+        var asked = new java.util.ArrayList<String>();
+        var action = gatewayAction((instance, start) -> {
+            asked.add(instance + (start ? " start" : " peek"));
+            return start ? 40222 : -1;
+        });
+
+        assertNull(action.resolveUrl(GATEWAY_TARGET), "showing the URL must not start a forwarder");
+        var url = action.urlToOpen(GATEWAY_TARGET);
+        assertTrue(url.contains("host=dev-1&port=40222&"), url);
+        assertEquals(List.of("dev-1 peek", "dev-1 start"), asked);
+    }
+
+    @Test
+    void gatewayDialsPort22WhereTheInstanceAddressIsReachable() {
+        var action = gatewayAction((instance, start) -> 22);
+
+        assertEquals("jetbrains-gateway://connect#idePath=%2Fopt%2Fidea&host=dev-1&port=22&user=agentuser"
+                + "&type=ssh&deploy=false&projectPath=/home/agentuser/my-project", action.resolveUrl(GATEWAY_TARGET));
+    }
+
+    @Test
+    void aForwarderThatDoesNotStartFailsTheActionWithItsReason() {
+        var action = gatewayAction((instance, start) -> {
+            throw new java.io.IOException("the SSH forwarder for dev-1 did not start");
+        });
+
+        var result = action.executeWithoutPrompting(GATEWAY_TARGET);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("did not start"), result.message());
+    }
+
+    @Test
+    void actionsThatDoNotNameTheSshPortNeverAskForIt() {
+        var entry = new ActionEntry();
+        entry.setLabel("Web");
+        entry.setType("url");
+        entry.setUrl("http://${ip}:8080/${name}");
+        var action = new YamlToolAction("t", entry, null, (instance, start) -> fail("asked for the SSH port"));
+
+        assertEquals("http://10.166.11.20:8080/dev-1", action.urlToOpen(GATEWAY_TARGET));
+    }
+
     @Test
     void absentRepoUrlInterpolatesAsEmptyAndReturnsMissingUrlError() {
         var entry = new ActionEntry();

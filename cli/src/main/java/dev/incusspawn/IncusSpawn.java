@@ -19,7 +19,7 @@ import dev.incusspawn.tui.Tui;
 public class IncusSpawn implements QuarkusApplication {
 
     static final Set<String> HIDDEN_COMMANDS = Set.of(
-            "completion", "instances", "git-remote-helper", "ssh-proxy"
+            "completion", "instances", "git-remote-helper", "ssh-proxy", "ssh-forward"
     );
     private static final Pattern ANSI_ESCAPE = Pattern.compile("\033\\[[^m]*m");
 
@@ -114,7 +114,7 @@ public class IncusSpawn implements QuarkusApplication {
                 BranchCommand.class, ShellCommand.class, RunCommand.class, ListCommand.class,
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
-                InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
+                InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class, SshForwardCommand.class,
                 VmCommand.class, UpdateBaseCommand.class, DoctorCommand.class,
                 AskCommand.class, ToolsCommand.class, AccountCommand.class, McpCommand.class
             }, generateHelp = true)
@@ -136,7 +136,7 @@ public class IncusSpawn implements QuarkusApplication {
                 BranchCommand.class, ShellCommand.class, RunCommand.class, ListCommand.class,
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
-                InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
+                InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class, SshForwardCommand.class,
                 UpdateBaseCommand.class, DoctorCommand.class,
                 AskCommand.class, ToolsCommand.class, AccountCommand.class, McpCommand.class
             }, generateHelp = true)

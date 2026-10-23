@@ -107,7 +107,9 @@ class InstanceActionsInstalledToolsTest {
         assertEquals(1, offered.size());
         var action = assertInstanceOf(YamlToolAction.class, offered.getFirst());
         assertEquals("Open repo 'local' in " + editor, action.label());
-        assertEquals(expectedUrl, action.resolveUrl(context));
+        // Where Gateway needs a forwarder (macOS), its port is not known until the action starts it.
+        var shown = expectedUrl.contains("port=22") && dev.incusspawn.ssh.SshForwarder.needed() ? null : expectedUrl;
+        assertEquals(shown, action.resolveUrl(context));
     }
 
     /** A YAML tool with one shell action, requiring {@code requires}. */

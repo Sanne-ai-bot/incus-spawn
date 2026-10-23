@@ -1037,7 +1037,7 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
     id_ed25519          # managed private key (mode 600, no passphrase)
     id_ed25519.pub      # managed public key
     config              # per-instance Host blocks (managed by isx)
-    known_hosts         # container host keys (isolated from ~/.ssh/known_hosts)
+    forward/<instance>  # a running SSH forwarder's pid and port (macOS, see "Remote IDE Access")
 ```
 
 **Lifecycle:**
@@ -1045,27 +1045,57 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 1. **`isx init`** generates the ed25519 key pair (via `ssh-keygen`) and prepends an `Include ~/.config/incus-spawn/ssh/config` directive to `~/.ssh/config` (idempotent, resolves symlinks for dotfile managers).
    The key pair is also created lazily at first branch for users upgrading from older versions.
 2. **`isx branch`** (via `RuntimeSetup.injectSshKeyIfAvailable`): injects both the managed public key and any personal `~/.ssh/*.pub` key into the container's `authorized_keys`.
-   Then regenerates the container's SSH host keys (`ssh-keygen -A` + sshd restart) so CoW-branched instances get unique keys, harvests the new host public key into the managed `known_hosts`, and writes a `Host <instance-name>` block to the managed config with `HostName`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `UserKnownHostsFile`, and `StrictHostKeyChecking yes`.
+   Then, once the instance has an address (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `StrictHostKeyChecking no` and `UserKnownHostsFile /dev/null`.
    After this, `ssh <instance-name>` just works.
-3. **`isx destroy`** (and TUI delete): removes the Host block from the managed config and the host key entry from the managed known_hosts.
+3. **`isx destroy`** (and TUI delete): removes the Host block from the managed config and stops the instance's SSH forwarder, if one runs.
 
 **Design decisions:**
 
-- **Dual known_hosts**: the primary store is `~/.config/incus-spawn/ssh/known_hosts`, referenced via `UserKnownHostsFile` in the managed SSH config.
-  Host keys are also written to `~/.ssh/known_hosts` because IntelliJ's built-in SSH client does not honor `UserKnownHostsFile` or `Include` directives — without the standard-file entry, IntelliJ Gateway prompts for host key confirmation on every connection.
-  Entries in both files are cleaned up on instance destroy.
-- **Host key regeneration**: CoW clones inherit the template's host keys, so all branches would share the same host key.
-  `harvestHostKey` regenerates them before harvesting to give each instance a unique key.
+- **`ProxyCommand` through the exec API** (a1086a1e, #128): `isx ssh-proxy` pipes the connection to `nc localhost 22` in the instance, so `ssh` needs no route to the instance's address.
+  That is what makes it work on macOS, where the address is inside the appliance VM.
+- **`Hostname` for clients that ignore `ProxyCommand`** (4e271acb, #211): JetBrains Gateway reads the Host block (it parses `~/.ssh/config` through `ssh -G`) but dials `Hostname` itself.
+  Without the line it reported "host not found" for the instance name.
+- **No host key checking**: host keys are not harvested or pinned.
+  Every branch of a template shares the host keys the template's build generated, and the `ProxyCommand` reaches the instance by name through Incus, not by an address another machine could answer on.
 - **Both keys injected**: the managed key (passphraseless) ensures tools always work, while the user's personal key is also injected so interactive SSH sessions can use their preferred key.
-- **Atomic writes**: all config and known_hosts updates use temp-file-then-rename with restrictive permissions to avoid partial writes.
+- **Atomic writes**: config updates use temp-file-then-rename with restrictive permissions to avoid partial writes, and a Host block that would not change is not rewritten.
 - **Non-fatal**: SSH setup failures never block init or branching — they warn and fall back to manual `ssh agentuser@<ip>`.
 
 ### Remote IDE Access
 
 The built-in `idea-backend` tool installs the JetBrains IntelliJ IDEA remote development backend and registers the container for JetBrains Gateway discovery.
 It uses the `requires` field to automatically pull in the `sshd` tool, which configures an OpenSSH server with pubkey-only authentication.
-SSH key injection and host key validation are handled automatically by the SSH key management subsystem (see above), so Gateway connections work without any manual key setup.
+SSH key injection is handled automatically by the SSH key management subsystem (see above), so Gateway connections work without any manual key setup.
 This enables IDE-based development inside containers: Gateway connects over SSH and runs the IntelliJ backend process inside the container, with the full project available.
+
+**Gateway on macOS: a loopback forwarder** (#1600).
+Gateway's own SSH client dials a host and port and ignores `ProxyCommand`, so on Linux it reaches sshd at the bridge address the Host block's `Hostname` names.
+On macOS that address is inside the appliance VM, which the Mac cannot route to, and Gateway timed out.
+TCP into the VM subnet is avoided by design ("Why vsock instead of HTTPS": VPN socket filters, Local Network prompts), so an Incus `proxy` device on the VM's address is out too.
+That leaves a listener on the Mac's loopback backed by the exec API, the transport of `isx ssh-proxy`.
+
+- **`isx ssh-forward <instance>`** (hidden, `SshForwarder`) listens on `127.0.0.1` and pipes each connection to `nc localhost 22` in the instance.
+  It runs detached in its own session (`OwnSession`), so a Gateway session outlives the TUI, `isx run` and an MCP call.
+- **The action starts it**: the Gateway URL's `port=${ssh_port}` makes the action ask for the port when it runs, never when the F9 menu renders.
+  Where no forwarder is needed (`SshForwarder.needed()`, false on Linux) the port is `22`, with no extra process.
+  On macOS it reuses a live forwarder or starts one, then points the instance's Host block at it (`Hostname 127.0.0.1`, `Port <port>`).
+  The URL keeps `host=<instance>`, so Gateway still takes `User` and `IdentityFile` from the Host block; a bare `127.0.0.1` would match no Host block and lose the managed key.
+  `ssh` and VS Code still go through the `ProxyCommand`, which ignores `Hostname` and `Port`.
+- **Reuse:** `~/.config/incus-spawn/ssh/forward/<instance>` holds its pid and port.
+  A record is live while its process runs and is `ssh-forward <instance>`; only where the system does not say what a process runs does an `SSH-2.0` banner on its port stand in, so a reused pid with another instance's forwarder on the port does not pass.
+  Otherwise the forwarder is stopped and replaced, under a per-instance `HostLock`.
+  A slow sshd never gets a working forwarder replaced, which would cut the sessions it carries.
+- **Lifetime:** it lives as long as the instance and exits once the instance is no longer `Running` (polled every 10 s; only Incus answering 404 counts as gone at once, and three failed reads in a row do too).
+  There is no idle exit: Gateway reopens a project from its own recent list, and after an idle exit that list would dial a dead loopback port with nothing telling the user to press F9 again, while a loopback listener costs nothing.
+  A forwarder does not survive the instance or the Mac restarting, so after either an F9 is needed before Gateway's remembered endpoint answers again.
+  `isx destroy` stops it, killing a recorded pid only when that process's command line is `ssh-forward <instance>`.
+- **Host key:** the port is stamped on the instance (`user.incus-spawn.ssh-forward-port`) and tried first on the next start, so Gateway's one-time prompt for `[127.0.0.1]:<port>` stays accepted.
+  A copy never carries the stamp, since two instances cannot share a port.
+  After the forwarder exits (the instance stops, crashes or the Mac restarts), the Host block keeps `127.0.0.1:<port>`, so another local account could bind that port; Gateway's own host-key prompt for `[127.0.0.1]:<port>` still catches it, and dropping the entries on a clean exit would not cover a restart.
+- **Why not on Linux too:** direct IP is the one Gateway path with real user mileage, needs no extra process, and keeps Gateway's file sync, port forwards and sessions off exec websockets.
+  The forwarder's code is platform-independent, so CI tests it against a real Incus on Linux (`test-ssh-forward.sh`) even though only macOS uses it.
+
+The listener binds loopback only, and sshd stays pubkey-only, so it exposes nothing beyond what Linux exposes to local processes through the bridge address.
 
 ### GUI and Audio Passthrough
 

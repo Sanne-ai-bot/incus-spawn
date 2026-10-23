@@ -18,6 +18,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.CredentialProof;
 import dev.incusspawn.proxy.ProofToken;
+import dev.incusspawn.ssh.SshForwarder;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
 
@@ -821,6 +822,7 @@ public final class InstanceLifecycle {
     public static void removeHostIntegration(String name) {
         AutoRemoteService.removeRemotes(name, msg -> {});
         SshKeyManager.cleanupInstance(name);
+        SshForwarder.stop(name);
         ZmxSocketForward.cleanup(name);
     }
 

@@ -177,6 +177,14 @@ public final class SshKeyManager {
      * @param hostname optional IP/hostname for clients that don't support ProxyCommand
      */
     public static boolean addHostEntry(String instanceName, String hostname) {
+        return addHostEntry(instanceName, hostname, 0);
+    }
+
+    /**
+     * @param port the port such clients dial at {@code hostname}, or 0 for SSH's default: a
+     *             {@link SshForwarder} where the instance's address cannot be reached (#1600)
+     */
+    public static boolean addHostEntry(String instanceName, String hostname, int port) {
         try {
             ensureManagedConfigExists();
             var content = Files.readString(Environment.sshConfigFile());
@@ -189,6 +197,9 @@ public final class SshKeyManager {
             if (hostname != null && !hostname.isEmpty()) {
                 blocks.add("    Hostname " + hostname);
             }
+            if (port > 0) {
+                blocks.add("    Port " + port);
+            }
             blocks.add("    ProxyCommand \"" + isxPath + "\" ssh-proxy " + instanceName);
             blocks.add("    User agentuser");
             blocks.add("    IdentityFile ~/.config/incus-spawn/ssh/id_ed25519");
@@ -197,7 +208,8 @@ public final class SshKeyManager {
             blocks.add("    UserKnownHostsFile /dev/null");
             blocks.add("");
 
-            writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
+            var updated = String.join("\n", blocks);
+            if (!updated.equals(content)) writeAtomically(Environment.sshConfigFile(), updated);
             return true;
         } catch (IOException e) {
             System.err.println("  Warning: failed to update SSH config: " + e.getMessage());
@@ -257,7 +269,7 @@ public final class SshKeyManager {
         return result;
     }
 
-    private static String resolveIsxPath() {
+    static String resolveIsxPath() {
         try {
             var pb = new ProcessBuilder("which", "isx");
             pb.redirectErrorStream(true);
@@ -279,7 +291,7 @@ public final class SshKeyManager {
         }
     }
 
-    private static void writeAtomically(Path target, String content) throws IOException {
+    static void writeAtomically(Path target, String content) throws IOException {
         var tmp = Files.createTempFile(target.getParent(), ".isx-ssh-", ".tmp");
         try {
             Files.writeString(tmp, content);

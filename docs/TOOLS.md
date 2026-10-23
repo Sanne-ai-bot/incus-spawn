@@ -439,6 +439,20 @@ It declares `requires: [sshd]`, so the SSH server is installed automatically.
 
 On the host, install [JetBrains Gateway](https://www.jetbrains.com/remote-development/gateway/).
 
+Press F9 on a running instance and choose **Open repo in Gateway** to open one of its repositories.
+Gateway connects with isx's managed SSH key through the instance's entry in `~/.ssh/config`, so no key or host setup is needed.
+
+On macOS the instance's address is inside isx's VM, and Gateway cannot use isx's SSH `ProxyCommand`.
+There the action first starts a small forwarder on `127.0.0.1`, or reuses the one already running, and points Gateway at it.
+
+The forwarder keeps running after the TUI quits, for as long as the instance runs, and exits when the instance stops or is destroyed.
+After the instance or the Mac restarts, press F9 on the instance once more before reopening it from Gateway's recent projects.
+
+The first connection to each instance asks you to accept its host key for `[127.0.0.1]:<port>`.
+The port stays the same for that instance afterwards, so the prompt does not come back.
+
+If Gateway warns that the host key for `[127.0.0.1]:<port>` changed, another instance now uses that port (a destroyed instance's port can go to a later one), and accepting the new key is safe.
+
 ```yaml
 name: tpl-java-ide
 parent: tpl-java
@@ -577,15 +591,17 @@ Two fields control where else an action shows.
 - `shortcut`: the single key that runs the action from that menu.
   It is one printable ASCII character, not shared with another menu action (case-insensitively); an action without a usable one is left out of the menu with a warning.
 
-Template variables available in `url`, `command`, and `text`: `${ip}`, `${name}`, `${parent}`.
+Template variables available in `url`, `command`, and `text`: `${ip}`, `${name}`, `${parent}`, and `${ssh_port}`.
 When `expand: repos` is set, repo-specific variables are also available: `${repo_name}`, `${repo_path}`, `${repo_url}`.
+
+`${ssh_port}` is the port an SSH client that does not run `ProxyCommand` dials at the instance's `~/.ssh/config` entry: `22` on Linux, and on macOS that of a loopback forwarder, which the action starts when it runs.
 
 ```yaml
 actions:
   - label: "Open repo '${repo_name}' in Gateway"
     type: url
     expand: repos
-    url: "jetbrains-gateway://connect#host=${ip}&projectPath=${repo_path}"
+    url: "jetbrains-gateway://connect#host=${name}&port=${ssh_port}&user=agentuser&type=ssh&projectPath=${repo_path}"
   - label: "Launch agent"
     id: launch
     type: shell
