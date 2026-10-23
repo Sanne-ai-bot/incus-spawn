@@ -1482,6 +1482,7 @@ public class IncusClient {
         config.put(Metadata.INSTANCE_PROOF_ID, "");
         config.put(Metadata.INSTANCE_PROOF_SHA256, "");
         config.put(Metadata.INSTANCE_SECRET_BOOT, "");
+        config.put(Metadata.SSH_FORWARD_PORT, "");
         config.putAll(configOverrides);
         body.put("config", config);
         var resp = http.requestAndWait("POST", "/1.0/instances", body);

@@ -97,6 +97,12 @@ public final class Metadata {
      * directory was gone; the first start that finds the directory back mounts it again (#1139).
      */
     public static final String INBOX_SOURCE = PREFIX + "inbox-source";
+    /**
+     * The loopback port the instance's SSH forwarder last listened on ({@code SshForwarder},
+     * #1600), tried first on its next start so a client keeps the host key it accepted there.
+     * Never carried by a copy, which would contend for the same port.
+     */
+    public static final String SSH_FORWARD_PORT = PREFIX + "ssh-forward-port";
     /** Prefix of the per-namespace credential account selection; see {@link #accountKey}. */
     public static final String ACCOUNT_PREFIX = PREFIX + "account.";
     /** Prefix of who chose each namespace's pinned account; see {@link #accountOriginKey}. */

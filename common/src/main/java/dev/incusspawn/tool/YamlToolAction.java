@@ -18,15 +18,43 @@ public class YamlToolAction implements ToolAction {
     private final String toolName;
     private final ToolDef.ActionEntry entry;
     private final ActionContext.RepoInfo repo; // null if not expanded
+    private final SshEndpoint sshEndpoint;
 
     public YamlToolAction(String toolName, ToolDef.ActionEntry entry) {
         this(toolName, entry, null);
     }
 
     public YamlToolAction(String toolName, ToolDef.ActionEntry entry, ActionContext.RepoInfo repo) {
+        this(toolName, entry, repo, SshEndpoint.HOST);
+    }
+
+    YamlToolAction(String toolName, ToolDef.ActionEntry entry, ActionContext.RepoInfo repo, SshEndpoint sshEndpoint) {
         this.toolName = toolName;
         this.entry = entry;
         this.repo = repo;
+        this.sshEndpoint = sshEndpoint;
+    }
+
+    /**
+     * The port {@code ${ssh_port}} names: where an SSH client that dials the instance's managed
+     * Host block, ignoring its {@code ProxyCommand}, reaches sshd (#1600).
+     */
+    interface SshEndpoint {
+        /**
+         * @param start whether a forwarder may be started for it; when false and one would be
+         *              needed, -1
+         */
+        int port(String instance, boolean start) throws IOException;
+
+        SshEndpoint HOST = (instance, start) -> {
+            if (!dev.incusspawn.ssh.SshForwarder.needed()) return 22;
+            return start ? dev.incusspawn.ssh.SshForwarder.ensure(instance) : -1;
+        };
+    }
+
+    /** An SSH forwarder an action needed did not start; the action fails with its reason. */
+    private static final class ForwarderFailed extends RuntimeException {
+        ForwarderFailed(IOException cause) { super(cause); }
     }
 
     @Override
@@ -83,14 +111,28 @@ public class YamlToolAction implements ToolAction {
         return TYPE_URL.equals(entry.getType());
     }
 
+    /**
+     * The URL the action opens, to show; null when it is not a URL action or cannot be known
+     * without starting something, such as an SSH forwarder.
+     */
     public String resolveUrl(ActionContext context) {
-        return isUrl() ? interpolate(entry.getUrl(), context) : null;
+        return isUrl() ? interpolate(entry.getUrl(), context, false) : null;
+    }
+
+    /** The URL running the action opens, after starting whatever it needs. */
+    String urlToOpen(ActionContext context) {
+        return interpolate(entry.getUrl(), context);
     }
 
     @Override
     public java.util.Optional<String> shellCommand(ActionContext context) {
         if (!TYPE_SHELL.equals(entry.getType())) return java.util.Optional.empty();
-        var cmd = interpolate(entry.getCommand(), context);
+        String cmd;
+        try {
+            cmd = interpolate(entry.getCommand(), context);
+        } catch (ForwarderFailed e) {
+            return java.util.Optional.empty();
+        }
         return (cmd == null || cmd.isBlank()) ? java.util.Optional.empty() : java.util.Optional.of(cmd);
     }
 
@@ -123,17 +165,22 @@ public class YamlToolAction implements ToolAction {
             return ActionResult.error("Missing action type for tool: " + toolName);
         }
 
-        return switch (type) {
-            case TYPE_URL -> executeUrl(context, mayPrompt);
-            case TYPE_COMMAND -> executeCommand(context);
-            case TYPE_SHELL -> ActionResult.error("Missing command for shell action: " + entry.getLabel());
-            case TYPE_COPY_TO_CLIPBOARD -> executeCopyToClipboard(context);
-            default -> ActionResult.error("Unknown action type: " + type);
-        };
+        try {
+            return switch (type) {
+                case TYPE_URL -> executeUrl(context, mayPrompt);
+                case TYPE_COMMAND -> executeCommand(context);
+                case TYPE_SHELL -> ActionResult.error("Missing command for shell action: " + entry.getLabel());
+                case TYPE_COPY_TO_CLIPBOARD -> executeCopyToClipboard(context);
+                default -> ActionResult.error("Unknown action type: " + type);
+            };
+        } catch (ForwarderFailed e) {
+            return ActionResult.error("Could not start the SSH forwarder for " + context.instanceName()
+                    + ": " + e.getCause().getMessage());
+        }
     }
 
     private ActionResult executeUrl(ActionContext context, boolean mayPrompt) {
-        var url = interpolate(entry.getUrl(), context);
+        var url = urlToOpen(context);
         if (url == null || url.isBlank()) {
             return ActionResult.error("Missing URL for action: " + entry.getLabel());
         }
@@ -235,6 +282,15 @@ public class YamlToolAction implements ToolAction {
     }
 
     private String interpolate(String template, ActionContext context) {
+        return interpolate(template, context, true);
+    }
+
+    /**
+     * @param startForwarder whether {@code ${ssh_port}} may start an SSH forwarder; when it may
+     *                       not and one is needed, the result is null
+     * @throws ForwarderFailed if the forwarder does not start
+     */
+    private String interpolate(String template, ActionContext context, boolean startForwarder) {
         if (template == null) return "";
         var result = template;
 
@@ -251,6 +307,17 @@ public class YamlToolAction implements ToolAction {
             result = result.replace("${ip}", context.ipv4());
             result = result.replace("${name}", context.instanceName());
             result = result.replace("${parent}", context.parent());
+            // Only an action that names it asks: finding the port can start a forwarder.
+            if (result.contains("${ssh_port}")) {
+                int port;
+                try {
+                    port = sshEndpoint.port(context.instanceName(), startForwarder);
+                } catch (IOException e) {
+                    throw new ForwarderFailed(e);
+                }
+                if (port < 0) return null;
+                result = result.replace("${ssh_port}", String.valueOf(port));
+            }
         }
 
         return result;

@@ -22,10 +22,13 @@ public class SshProxyCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        int exitCode = incus.execBidirectional(instance, 0, 0, "/",
-                new String[]{"nc", "localhost", "22"},
-                System.in, System.out, System.err);
-        return CommandResult.valueOf(exitCode);
+        return CommandResult.valueOf(pipeToSshd(incus, instance, System.in, System.out, System.err));
+    }
+
+    /** Carry one SSH connection to the instance's sshd through the exec API; also {@code ssh-forward}'s transport. */
+    static int pipeToSshd(dev.incusspawn.incus.IncusClient incus, String instance,
+                          java.io.InputStream in, java.io.OutputStream out, java.io.OutputStream err) {
+        return incus.execBidirectional(instance, 0, 0, "/", new String[]{"nc", "localhost", "22"}, in, out, err);
     }
 
     private boolean checkInstanceRunning(dev.incusspawn.incus.IncusClient incus) {
