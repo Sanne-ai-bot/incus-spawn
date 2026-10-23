@@ -53,6 +53,7 @@ Key design:
   An unreadable entry (not a dict, a result that is not an integer, a policy that is not data) decides nothing and stops any later entry from trusting; a later deny still denies, and so does a deny on an entry whose policy is not data, and a `<real>` result of 3.
   The user domain is read for its denies alone (`withUserDenies`); its trusts are never used, and when it cannot be read the admin result stands (#1552).
   A deny only removes anchors, so whenever the Keychain denies anything `DeniedChainTrustManager` wraps the JDK's trust manager (CLI: `SystemTrust.sslContext`; proxy: `Upstream.refusingDenied`, `TrustOptions.wrap`) and refuses a presented chain holding a denied intermediate or leaf (#1552).
+  `Trust.denies` matches a certificate's SHA-1 or, for a denied certificate whose body a keychain holds (System, login, `SystemRootCertificates.keychain`), its subject and key (`keyOf`): a server's cross-signed copy of a denied root has another hash (#1552, DESIGN.md).
   It must stay an `X509ExtendedTrustManager` passing every `SSLEngine`/`Socket` overload to the JDK's, which does the host-name check; AIA fetching must stay off, or a fetched denied intermediate would go unchecked.
   `SystemTrustGateTest` (in `cli`) fails on a plain `HttpClient.newBuilder()`, a default `SSLContext`/socket factory or an `HttpsURLConnection` in any module's main sources; a plain HTTP client says so with a `// plain HTTP:` comment on that line.
   Nothing is cached: the class is initialized at image build time, and the store may change under a long-running isx.

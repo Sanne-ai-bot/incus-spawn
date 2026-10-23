@@ -364,7 +364,7 @@ These are Linux-only:
 
 - On Linux that is the system bundle: `/etc/pki/ca-trust`, `/etc/ssl/certs`.
 - On macOS it is `/etc/ssl/cert.pem` plus every certificate an administrator or MDM trusts for SSL in the System keychain, which is where inspection agents install their CA.
-  A certificate an administrator denied there, or you marked "Never Trust" in your login keychain, is not trusted from any source, and a chain holding one is refused.
+  A certificate an administrator denied there, or you marked "Never Trust" in your login keychain, is not trusted from any source, and neither is a chain holding it or a cross-signed copy.
 - A CA trusted only in your login keychain is not used: trusting a CA for isx should take an administrator.
   Trust it system-wide, then restart the proxy:
 

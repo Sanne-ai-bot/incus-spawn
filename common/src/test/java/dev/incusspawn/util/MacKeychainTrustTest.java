@@ -210,6 +210,27 @@ class MacKeychainTrustTest {
     }
 
     @Test
+    void aDenyCoversEveryCopyOfTheCaWhoseBodyAKeychainHolds() throws Exception {
+        // A deny names one certificate; a CA's cross-signed copy has its subject and key, not its hash (#1552)
+        var denied = CertChain.create("copies denied", "localhost");
+        var other = CertChain.create("copies other", "localhost");
+        var crossSigned = denied.rootCrossSignedBy(other);
+        var byHash = MacKeychainTrust.withUserDenies(MacKeychainTrust.Trust.NONE, () -> plist(record(denied.root(), entries(result(3)))));
+
+        var withBody = byHash.withDeniedKeys(List.of(other.root(), denied.root()));
+
+        assertEquals(Set.of(MacKeychainTrust.keyOf(denied.root())), withBody.deniedKeys());
+        assertEquals(true, withBody.denies(crossSigned));
+        assertEquals(false, withBody.denies(other.root()));
+        assertEquals(false, withBody.denies(denied.intermediate()));
+        // Without its body the key is unknown, and the hash still denies the certificate itself
+        assertEquals(false, byHash.denies(crossSigned));
+        assertEquals(true, byHash.denies(denied.root()));        // An admin-trusted copy of the denied CA is no longer listed as trusted, as isx doctor shows it
+        var trustingCopy = new MacKeychainTrust.Trust(List.of(crossSigned, other.root()), byHash.denied(), null);
+        assertEquals(List.of(other.root()), trustingCopy.withDeniedKeys(List.of(denied.root())).trusted());
+    }
+
+    @Test
     void aUserDomainThatCannotBeReadLeavesTheAdminDomainsResult() throws Exception {
         var trusted = ca("trusted");
         var denied = ca("denied");

@@ -31,6 +31,8 @@ import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
+import static java.util.stream.Collectors.toUnmodifiableSet;
+
 /**
  * What macOS trusts for TLS beyond {@code /etc/ssl/cert.pem}: the certificates an administrator
  * (or MDM) trusts for SSL in the <em>admin</em> trust domain, which is where
@@ -40,8 +42,9 @@ import java.util.concurrent.TimeUnit;
  * domain (a CA a user marked "Always Trust" in their login keychain) is read for its denies alone:
  * anything running as the user can ask for that trust, and a CA isx trusts can read what the proxy
  * injects, while a deny only narrows.
- * Apple's own roots (the system domain) are not read; the JDK store and the PEM bundle
- * already cover the public roots, and an inspection CA is never among them.
+ * Apple's own roots (the system domain) are not read for trust; the JDK store and the PEM bundle
+ * already cover the public roots, and an inspection CA is never among them. Their bodies are read
+ * for the denies alone: a deny names one certificate, and a CA's other copies share its key.
  * <p>
  * A failure (no {@code security}, a timeout, output that does not parse) adds nothing. When only
  * the certificates cannot be read, the trust settings' denies are kept, since they need no
@@ -53,19 +56,40 @@ public final class MacKeychainTrust {
     /**
      * Admin-trusted certificates, the SHA-1 (upper-case hex) of every certificate an administrator
      * or the user denied for SSL, and whether one denied the default roots as a whole (then the JDK
-     * store and the bundle, which stand for them, are not trusted either).
+     * store and the bundle, which stand for them, are not trusted either). {@code deniedKeys} holds
+     * the {@link #keyOf key} of each denied certificate whose body a keychain holds.
      */
-    public record Trust(List<X509Certificate> trusted, Set<String> denied, boolean defaultRootsDenied, String problem) {
+    public record Trust(List<X509Certificate> trusted, Set<String> denied, boolean defaultRootsDenied, String problem,
+                        Set<String> deniedKeys) {
         public static final Trust NONE = new Trust(List.of(), Set.of(), null);
         static Trust failed(String problem) { return new Trust(List.of(), Set.of(), problem); }
+
+        public Trust(List<X509Certificate> trusted, Set<String> denied, boolean defaultRootsDenied, String problem) {
+            this(trusted, denied, defaultRootsDenied, problem, Set.of());
+        }
 
         public Trust(List<X509Certificate> trusted, Set<String> denied, String problem) {
             this(trusted, denied, false, problem);
         }
 
-        /** Whether an administrator or the user denied {@code cert} for SSL. */
+        /**
+         * Whether an administrator or the user denied {@code cert} for SSL: that very certificate,
+         * or another with a denied one's subject and public key. A CA's cross-signed copy is such
+         * a certificate: a server sends it to anchor its chain on an older root, so a deny by hash
+         * alone never sees the CA it was meant for (#1552).
+         */
         public boolean denies(X509Certificate cert) {
-            return !denied.isEmpty() && denied.contains(sha1(cert));
+            return !denied.isEmpty() && (denied.contains(sha1(cert)) || !deniedKeys.isEmpty() && deniedKeys.contains(keyOf(cert)));
+        }
+
+        /**
+         * This with {@code deniedKeys} the {@link #keyOf key} of every denied certificate among
+         * {@code bodies}, and a trusted certificate that has one dropped: call it once every deny is in.
+         */
+        Trust withDeniedKeys(List<X509Certificate> bodies) {
+            var keys = bodies.stream().filter(c -> denied.contains(sha1(c))).map(MacKeychainTrust::keyOf).collect(toUnmodifiableSet());
+            if (keys.isEmpty()) return this;
+            return new Trust(trusted.stream().filter(c -> !keys.contains(keyOf(c))).toList(), denied, defaultRootsDenied, problem, keys);
         }
 
         /** Whether this changes nothing about what isx trusts. */
@@ -77,6 +101,7 @@ public final class MacKeychainTrust {
     /** By absolute path: a {@code security} earlier on {@code PATH} must not decide what isx trusts. */
     private static final String SECURITY = "/usr/bin/security";
     private static final String SYSTEM_KEYCHAIN = "/Library/Keychains/System.keychain";
+    private static final String SYSTEM_ROOTS_KEYCHAIN = "/System/Library/Keychains/SystemRootCertificates.keychain";
     /** All runs together: they run at once, so a hung {@code security} holds a proxy start or a download this long at most. */
     private static final long TIMEOUT_SECONDS = 5;
     /** The trustList key for the settings of the default (system) roots as a whole, not a certificate. */
@@ -115,13 +140,35 @@ public final class MacKeychainTrust {
             } catch (IOException e) {
                 user = () -> { throw e; };
             }
+            // Certificate bodies come from the user's login keychain too: `add-trusted-cert -d` without
+            // -k stores a certificate there. That trusts nothing by itself; only the admin domain's
+            // settings, which take root to write, decide what is trusted.
+            // The login keychain is read on its own, so one a user-level process broke cannot fail the
+            // System keychain's read too.
+            var login = Path.of(System.getProperty("user.home"), "Library", "Keychains", "login.keychain-db");
             Trust admin;
+            Running findingSystem = null;
+            Running findingLogin = null;
             try {
-                admin = admin(temps, running, deadline);
+                findingSystem = start(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", SYSTEM_KEYCHAIN);
+                // A login keychain that cannot even be started only loses its bodies
+                findingLogin = Files.isRegularFile(login)
+                        ? startOrNull(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", login.toString()) : null;
+                admin = admin(temps, running, deadline, findingSystem, findingLogin);
             } catch (Exception e) {
                 admin = failed(e);
             }
-            return withUserDenies(admin, user);
+            var trust = withUserDenies(admin, user);
+            if (trust.denied().isEmpty()) return trust;
+            // Apple's roots, for the keys of those denied alone: Keychain Access lists them, so a user
+            // marks one "Never Trust" there, and its cross-signed copy is what a server sends.
+            // Read only now, with a deny to match, under the same deadline.
+            var findingRoots = startOrNull(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", SYSTEM_ROOTS_KEYCHAIN);
+            // The keychains' are parsed again when an admin record needed them: only with a deny, a few milliseconds
+            var bodies = new ArrayList<>(certificatesOrNone(findingRoots));
+            bodies.addAll(certificatesOrNone(findingSystem));
+            bodies.addAll(certificatesOrNone(findingLogin));
+            return trust.withDeniedKeys(bodies);
         } catch (Exception e) {
             return failed(e);
         } finally {
@@ -138,25 +185,17 @@ public final class MacKeychainTrust {
     }
 
     /** The admin domain's trust settings applied to the keychains' certificates. */
-    private static Trust admin(List<Path> temps, List<Process> running, long deadline) throws Exception {
+    private static Trust admin(List<Path> temps, List<Process> running, long deadline,
+                               Running findingSystem, Running findingLogin) throws Exception {
         var export = temp(temps, "isx-trust-settings", ".plist");
-        // Certificate bodies come from the user's login keychain too: `add-trusted-cert -d` without
-        // -k stores a certificate there. That trusts nothing by itself; only the admin domain's
-        // settings, which take root to write, decide what is trusted.
-        // The login keychain is read on its own, so one a user-level process broke cannot fail the
-        // System keychain's read too.
-        var login = Path.of(System.getProperty("user.home"), "Library", "Keychains", "login.keychain-db");
         var exporting = start(temps, running, deadline, SECURITY, "trust-settings-export", "-d", export.toString());
-        var findingSystem = start(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", SYSTEM_KEYCHAIN);
-        var findingLogin = Files.isRegularFile(login)
-                ? start(temps, running, deadline, SECURITY, "find-certificate", "-a", "-p", login.toString()) : null;
         var exported = exporting.finish();
         if (exported.exit() != 0) {
             // With no admin trust settings at all, there is nothing to trust or deny
             if (exported.output().contains("No Trust Settings")) return Trust.NONE;
             return Trust.failed("security trust-settings-export exited " + exported.exit() + ": " + exported.output().strip());
         }
-        return evaluate(Files.readString(export), () -> certificatesOf(findingSystem), loginCertificates(findingLogin));
+        return evaluate(Files.readString(export), () -> certificatesOf(findingSystem), certificatesOrNone(findingLogin));
     }
 
     /**
@@ -179,15 +218,16 @@ public final class MacKeychainTrust {
         trusted.removeIf(user::denies);
         var denied = new TreeSet<>(admin.denied());
         denied.addAll(user.denied());
-        return new Trust(List.copyOf(trusted), Set.copyOf(denied), admin.defaultRootsDenied() || user.defaultRootsDenied(), admin.problem());
+        return new Trust(List.copyOf(trusted), Set.copyOf(denied), admin.defaultRootsDenied() || user.defaultRootsDenied(),
+                admin.problem(), admin.deniedKeys());
     }
 
     /**
-     * The login keychain's certificates, or none when it is absent or its read fails in any way (a
-     * timeout or output that does not parse included): that only loses bodies stored there, never
-     * the System keychain's or the export's denies, so a keychain the user can break cannot cancel them.
+     * A keychain's certificates, or none when it is absent or its read fails in any way (a timeout or
+     * output that does not parse included): that only loses bodies stored there, never the System
+     * keychain's or the export's denies, so a keychain the user can break cannot cancel them.
      */
-    private static List<X509Certificate> loginCertificates(Running finding) {
+    private static List<X509Certificate> certificatesOrNone(Running finding) {
         if (finding == null) return List.of();
         try {
             return certificatesOf(finding);
@@ -260,6 +300,15 @@ public final class MacKeychainTrust {
                 throw new IOException("security " + name + " timed out after " + TIMEOUT_SECONDS + "s");
             }
             return new Run(process.exitValue(), Files.readString(out, StandardCharsets.UTF_8));
+        }
+    }
+
+    /** {@link #start}, or null when the run cannot even be started: for a read that only ever adds bodies. */
+    private static Running startOrNull(List<Path> temps, List<Process> running, long deadline, String... command) {
+        try {
+            return start(temps, running, deadline, command);
+        } catch (IOException e) {
+            return null;
         }
     }
 
@@ -371,6 +420,21 @@ public final class MacKeychainTrust {
                 || entry.containsKey("kSecTrustSettingsApplication")
                 || (entry.containsKey("kSecTrustSettingsKeyUsage")
                     && !(entry.get("kSecTrustSettingsKeyUsage") instanceof Long usage && (usage & KEY_USE_ANY) == KEY_USE_ANY));
+    }
+
+    /**
+     * SHA-256 of the certificate's subject and public key, upper-case hex: what a CA's copies share,
+     * the self-signed root and every cross-signed one, and what no other CA's certificate has.
+     */
+    public static String keyOf(X509Certificate cert) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            digest.update(cert.getSubjectX500Principal().getEncoded());
+            digest.update(cert.getPublicKey().getEncoded());
+            return HexFormat.of().withUpperCase().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** SHA-1 of the certificate's encoding, upper-case hex: how trust settings name a certificate. */
