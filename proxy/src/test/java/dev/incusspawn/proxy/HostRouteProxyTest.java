@@ -147,10 +147,14 @@ class HostRouteProxyTest {
     }
 
     private static void instance(String address, String template, String extraConfig) {
+        instance(INSTANCE, address, template, extraConfig);
+    }
+
+    private static void instance(String name, String address, String template, String extraConfig) {
         listing = """
                 [{"name":"%s","status":"Running","config":{
                    "%s":"%s", "%s":"%s", "%s":"%s"%s}}]
-                """.formatted(INSTANCE, Metadata.STATIC_IP, address, Metadata.INSTANCE_SECRET_SHA256,
+                """.formatted(name, Metadata.STATIC_IP, address, Metadata.INSTANCE_SECRET_SHA256,
                 InstanceSecret.sha256(SECRET), Metadata.PROFILE, template, extraConfig);
         registry.refresh();
     }
@@ -328,6 +332,28 @@ class HostRouteProxyTest {
             assertTrue(wrong.body().contains(InstanceSecret.HEADER), "the secret is what to fix: " + wrong.body());
             assertEquals(403, send(OTHER, withSecret()).status(), "the route's templates still decide");
             assertEquals(1, seen.size(), "nothing refused reaches the controller");
+        } finally {
+            proxy.proofIdentifies = (remote, local) -> false;
+        }
+    }
+
+    @Test
+    void aCallerItsSecretAloneIdentifiesCountsAsThatInstance() throws Exception {
+        // #1593: else isx proxy activity shows macOS host-route traffic as (unattributed).
+        // Its own name: counters outlive a test, and identified_by_proof is never unset
+        var name = "agent-behind-nat";
+        instance(name, "10.0.0.5", TEMPLATE, "");
+        try {
+            proxy.proofIdentifies = (remote, local) -> true;
+            var before = ApiActivityProxyTest.activity(proxy.healthPort());
+            assertEquals(200, send(WORK, withSecret()).status());
+            var after = ApiActivityProxyTest.activity(proxy.healthPort());
+
+            var counted = after.path("instances").path(name);
+            assertEquals(1, counted.path("traffic").path("requests").asLong(), after.toString());
+            assertTrue(counted.path("identified_by_proof").asBoolean(), after.toString());
+            assertEquals(before.path("unattributed").path("requests").asLong(),
+                    after.path("unattributed").path("requests").asLong(), after.toString());
         } finally {
             proxy.proofIdentifies = (remote, local) -> false;
         }
