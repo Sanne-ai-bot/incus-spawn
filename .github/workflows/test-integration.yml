@@ -661,6 +661,12 @@ jobs:
           tools:
             - test-claude-stub
           EOF
+          cat > ~/.config/incus-spawn/images/test-sshd.yaml << 'EOF'
+          name: tpl-test-sshd
+          parent: tpl-minimal
+          tools:
+            - sshd
+          EOF
 
       - name: Build templates
         run: |
@@ -671,6 +677,7 @@ jobs:
           sg incus-admin -c "isx build tpl-test-accounts --yes"
           sg incus-admin -c "isx build tpl-test-codex --yes"
           sg incus-admin -c "isx build tpl-test-mcp --yes"
+          sg incus-admin -c "isx build tpl-test-sshd --yes"
 
       - name: Test published templates have no build credential grant
         run: sg incus-admin -c "bash .github/scripts/test-build-proofs.sh"
@@ -706,6 +713,9 @@ jobs:
           sudo modprobe br_netfilter
           sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
           sg incus-admin -c "bash .github/scripts/test-proxy-only.sh"
+
+      - name: Test the loopback SSH forwarder
+        run: sg incus-admin -c "bash .github/scripts/test-ssh-forward.sh"
 
       - name: Test container
         run: |
