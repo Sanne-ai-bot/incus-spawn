@@ -21,6 +21,41 @@ class BuildProgressTest {
     }
 
     @Test
+    void aStepsLabelCannotDriveTheTerminal() {
+        // A label can hold definition text, such as a COPR repository's name (#1610).
+        var output = new java.io.ByteArrayOutputStream();
+        var originalOut = System.out;
+        var originalErr = System.err;
+        try {
+            System.setOut(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
+            System.setErr(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
+            assertThrows(dev.incusspawn.incus.IncusException.class,
+                    () -> BuildProgress.runWithSpinner("Enabling", "COPR repo \033]0;pwned\007x", "Failed",
+                            state -> state.set(0, BuildProgress.StepProgress.failed("boom", "log"))));
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+        var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(shown.contains("COPR repo  ]0;pwned x"), shown);
+        assertEquals(dev.incusspawn.util.TerminalLink.plainText(shown).replace("\033", "ESC"),
+                shown.replace("\033", "ESC"), "the label's escapes must not reach the terminal");
+    }
+
+    @Test
+    void anAnimatedStepLineShowsItsLabelAndContextAsText() {
+        // RepoCloner draws a repository's label and URL straight through the renderer (#1610).
+        var line = BuildProgress.formatStepLine("\033]0;pwned\007app", "https://x/\033[2J\u009b2Japp.git",
+                BuildProgress.StepProgress.running("Cloning"), 0, "Ready");
+        assertTrue(line.contains(" ]0;pwned app"), line.replace("\033", "ESC"));
+        assertTrue(line.contains("https://x/ [2J 2Japp.git"), line.replace("\033", "ESC"));
+        assertFalse(line.contains("\033]") || line.contains("\033[2J") || line.contains("\u009b"), line.replace("\033", "ESC"));
+        var plain = BuildProgress.plainStepLine("\033]0;pwned\007app",
+                BuildProgress.StepProgress.failed("boom", null), "Ready", "prepare");
+        assertEquals(dev.incusspawn.util.TerminalLink.plainText(plain), plain);
+    }
+
+    @Test
     void theFailureLineIsTheLastOneATerminalShowsText() {
         assertEquals("npm error", BuildProgress.lastNonEmptyLine("\033[31mnpm error\n\033[0m\n\033]0;t\007"));
         assertEquals("100%", BuildProgress.lastNonEmptyLine(" 10%\r 50%\r100%"));

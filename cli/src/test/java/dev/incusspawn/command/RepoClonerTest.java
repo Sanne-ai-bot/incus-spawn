@@ -526,6 +526,41 @@ class RepoClonerTest {
         assertEquals(OutputFormat.oneLine(ex.getMessage().replace("\n", " ")), ex.getMessage().replace("\n", " "));
     }
 
+    @Test
+    void aRepositorysLabelCannotDriveTheTerminal() {
+        // A template, project-local included, decides a repository's URL, and so its label (#1610).
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(OK)  // clone
+                .thenReturn(OK)  // refspec restore
+                .thenReturn(new IncusClient.ExecResult(1, "prime failed", ""));
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/\033]0;pwned\007\033[2Japp.git", "~/app", "exit 1")));
+
+        var output = new java.io.ByteArrayOutputStream();
+        var originalOut = System.out;
+        var originalErr = System.err;
+        IncusException ex;
+        try {
+            System.setOut(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
+            System.setErr(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
+            ex = assertThrows(IncusException.class,
+                    () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+        var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(shown.contains("prepare output:  ]0;pwned  [2Japp"), shown);
+        assertEquals(TerminalLink.plainText(shown).replace("\033", "ESC"), shown.replace("\033", "ESC"),
+                "the label's escapes must not reach the terminal");
+        assertEquals(TerminalLink.plainText(ex.stepOutput()), ex.stepOutput());
+        assertEquals(OutputFormat.oneLine(ex.getMessage().replace("\n", " ")), ex.getMessage().replace("\n", " "));
+    }
+
     private static ImageDef.RepoEntry repo(String url, String path, String prime) {
         var repo = new ImageDef.RepoEntry();
         repo.setUrl(url);
