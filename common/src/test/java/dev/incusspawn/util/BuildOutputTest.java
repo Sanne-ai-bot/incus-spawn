@@ -343,4 +343,16 @@ class BuildOutputTest {
         assertEquals(" ]0;open\nnext ", BuildOutput.guestText("\033]0;open\nnext\007"));
         assertSame("plain\ttext\n", BuildOutput.guestText("plain\ttext\n"));
     }
+
+    @Test
+    void guestTextTakesLinearTimeOnALineOfIntroducers() {
+        // A guest decides what it prints, so one long line must not stall isx: scanned to its
+        // end from each introducer, 80k of them took 31 s; 200k would take minutes.
+        var introducers = "\u009d".repeat(200_000);
+        var mixed = "\u0090x\u0098x\u009dx\u009ex\u009fx\033]x".repeat(50_000);
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
+            assertEquals(" ".repeat(200_000), BuildOutput.guestText(introducers));
+            assertEquals(" x x x x x ]x".repeat(50_000), BuildOutput.guestText(mixed));
+        });
+    }
 }

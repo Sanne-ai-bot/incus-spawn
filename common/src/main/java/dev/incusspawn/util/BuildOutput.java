@@ -51,9 +51,12 @@ public final class BuildOutput {
     /**
      * A control string within one line, ended by BEL or ST, in its 7-bit or C1 form: an operating
      * system command (a title, a link, a clipboard write), DCS, SOS, PM or APC.
+     * The payload stops at every introducer too, so a line of them is matched in linear time,
+     * not scanned to its end from each one.
      */
     private static final java.util.regex.Pattern CONTROL_STRING_PATTERN = java.util.regex.Pattern.compile(
-            "(?:\u001B[\\]PX^_]|[\u0090\u0098\u009D\u009E\u009F])[^\u0007\u001B\u009C\n]*(?:\u0007|\u001B\\\\|\u009C)");
+            "(?:\u001B[\\]PX^_]|[\u0090\u0098\u009D\u009E\u009F])"
+                    + "[^\u0007\u001B\u009C\u0090\u0098\u009D\u009E\u009F\n]*(?:\u0007|\u001B\\\\|\u009C)");
 
     /**
      * Whether to write escapes (colour, {@link TerminalLink} hyperlinks): on an ANSI terminal
