@@ -27,6 +27,7 @@ import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.proxy.ProxyHolder;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.tool.ToolSetup;
@@ -1286,7 +1287,6 @@ public class DoctorCommand extends BaseCommand {
         var incus = RuntimeServices.incus();
         var findings = new ArrayList<Finding>();
         findings.add(checkProxyRunning(incus));
-        findings.addAll(checkProxyDrift(incus));
         ProxyHealthCheck.ProxyInfo info;
         String address = null;
         try {
@@ -1295,10 +1295,31 @@ public class DoctorCommand extends BaseCommand {
         } catch (Exception e) {
             info = null;
         }
+        var holder = ProxyService.isInstalled() ? ProxyService.foreignHolder(info) : null;
+        var holderFinding = holderFinding(holder);
+        if (holderFinding != null) findings.add(holderFinding);
+        // Another user's proxy: its drift, auth and callers are theirs, and their remedies,
+        // restarting this user's service among them, cannot help (#1570).
+        if (holder != null && holder.otherUser()) return findings;
+        findings.addAll(checkProxyDrift(incus));
         var authFinding = checkProxyAuth(info);
         if (authFinding != null) findings.add(authFinding);
         if (info != null) findings.addAll(checkProxyPlacement(address));
         return findings;
+    }
+
+    /**
+     * The proxy answering is not the active service's (#1570): the service cannot bind while it
+     * holds the ports. Another user's fails, since instances then reach that user's CA and
+     * credentials; an orphan of this user's warns.
+     */
+    static Finding holderFinding(ProxyHolder holder) {
+        if (holder == null) return null;
+        var detail = "(" + holder.describe() + " holds the ports, not the proxy service)";
+        var remediation = new Remediation(holder.remedy(), false, null);
+        return holder.otherUser()
+                ? Finding.fail("Proxy ownership", detail, remediation)
+                : Finding.warn("Proxy ownership", detail, remediation);
     }
 
     private static List<Finding> checkProxyPlacement(String healthAddress) {

@@ -865,6 +865,19 @@ class DoctorCommandTest {
                 "restarting cannot fix a missing binary");
     }
 
+    @Test
+    void anotherUsersProxyOnThePortsFailsAndAnOrphanWarns() {
+        // #1570: the service cannot bind while another proxy holds the ports.
+        assertNull(DoctorCommand.holderFinding(null));
+        var other = DoctorCommand.holderFinding(new dev.incusspawn.proxy.ProxyHolder(80914, "0.3.12", "runner", true));
+        assertEquals(DoctorCommand.Status.FAIL, other.status());
+        assertTrue(other.detail().contains("isx-proxy 0.3.12, pid 80914, owned by user runner"), other.detail());
+        assertTrue(other.remediation().description().contains("runner"));
+        var orphan = DoctorCommand.holderFinding(new dev.incusspawn.proxy.ProxyHolder(4242, "0.3.12", "me", false));
+        assertEquals(DoctorCommand.Status.WARN, orphan.status());
+        assertTrue(orphan.remediation().description().contains("kill 4242"));
+    }
+
     // ---- Option implications ----
 
     @Test

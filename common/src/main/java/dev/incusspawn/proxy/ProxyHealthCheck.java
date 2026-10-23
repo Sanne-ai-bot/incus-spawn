@@ -123,7 +123,8 @@ public final class ProxyHealthCheck {
         cache = null;
     }
 
-    private static String resolveHealthAddress() {
+    /** Where the host reaches the proxy's health port, or null when that cannot be determined. */
+    public static String resolveHealthAddress() {
         try {
             return healthAddress(new IncusClient());
         } catch (Exception e) {
@@ -273,8 +274,13 @@ public final class ProxyHealthCheck {
     }
 
     public static ProxyInfo fetchProxyInfo(String gatewayIp, int timeoutMs) {
+        return fetchProxyInfo(gatewayIp, ProxyConfig.DEFAULT_HEALTH_PORT, timeoutMs);
+    }
+
+    /** {@link #fetchProxyInfo(String, int)} on a given health port: the proxy's own, when it may differ. */
+    public static ProxyInfo fetchProxyInfo(String address, int port, int timeoutMs) {
         try {
-            var answer = get(gatewayIp, ProxyConfig.DEFAULT_HEALTH_PORT, "/health", timeoutMs);
+            var answer = get(address, port, "/health", timeoutMs);
             return answer.status() == 200 ? parseProxyInfo(answer.body()) : null;
         } catch (Exception e) {
             return null;
