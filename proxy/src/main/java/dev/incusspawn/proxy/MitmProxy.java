@@ -1010,7 +1010,8 @@ public class MitmProxy {
                 if (attempt >= BIND_RETRIES || port == 0 || !isBindException(e)) throw e;
                 // Freed between the bind and the probe, or held by something that is not a
                 // proxy: one more bind tells them apart.
-                if (!ProxyHealthCheck.isHealthy(healthBindAddress, requestedHealthPort)) {
+                var answering = ProxyHealthCheck.fetchProxyInfo(healthBindAddress, requestedHealthPort, 500);
+                if (answering == null) {
                     try {
                         return bind.call();
                     } catch (Exception again) {
@@ -1019,7 +1020,15 @@ public class MitmProxy {
                         throw again;
                     }
                 }
-                ProxyLog.warn(what + " " + port + " in use, previous proxy still running (" + attempt + "/" + BIND_RETRIES + ")");
+                // Named, so the log says whose proxy it is (#1570). Another user's never stops
+                // for this proxy or its service, so waiting for it only delays the same failure.
+                var holder = ProxyHolder.answering(answering);
+                if (holder != null && holder.otherUser()) {
+                    throw new java.net.BindException(what + " " + port + " is held by " + holder.describe()
+                            + ", another user's proxy, which this one cannot wait out: " + holder.remedy());
+                }
+                ProxyLog.warn(what + " " + port + " in use, " + (holder == null ? "previous proxy still running"
+                        : "held by " + holder.describe()) + " (" + attempt + "/" + BIND_RETRIES + ")");
                 Thread.sleep(200);
             }
         }

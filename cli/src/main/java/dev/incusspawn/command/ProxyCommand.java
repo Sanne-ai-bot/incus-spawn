@@ -8,6 +8,7 @@ import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.DumpProxy;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.proxy.ProxyHolder;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
@@ -93,20 +94,30 @@ public class ProxyCommand extends BaseCommand {
             }
             var serviceInstalled = ProxyService.isInstalled();
             var serviceActive = serviceInstalled && ProxyService.isActive();
+            var running = status == ProxyHealthCheck.ProxyStatus.RUNNING
+                    || status == ProxyHealthCheck.ProxyStatus.WAITING_FOR_DNS;
+            var proxyInfo = running ? ProxyHealthCheck.fetchProxyInfo(healthIp) : null;
+            // Whether what answers is the service's own process (#1570). Asked of an installed
+            // service, not only an active one: a unit that cannot bind waits in auto-restart.
+            var holder = serviceInstalled ? ProxyService.foreignHolder(proxyInfo) : null;
             if (outputFormat != OutputFormat.TABLE) {
-                var running = status == ProxyHealthCheck.ProxyStatus.RUNNING
-                        || status == ProxyHealthCheck.ProxyStatus.WAITING_FOR_DNS;
-                var proxyInfo = running ? ProxyHealthCheck.fetchProxyInfo(healthIp) : null;
-                outputFormat.printOne(System.out, record(status, proxyInfo, healthIp, serviceInstalled,
-                        managedBy(status, serviceActive, Platform.isMacOS()), null));
-                return CommandResult.valueOf(exitCode(status));
+                var record = record(status, proxyInfo, healthIp, serviceInstalled,
+                        managedBy(status, serviceActive, Platform.isMacOS()), null);
+                addHolder(record, proxyInfo, serviceInstalled, holder);
+                outputFormat.printOne(System.out, record);
+                return CommandResult.valueOf(exitCode(status, holder));
             }
             switch (status) {
                 case RUNNING, WAITING_FOR_DNS -> {
                     System.out.println(status == ProxyHealthCheck.ProxyStatus.RUNNING
                             ? "Proxy is running." : "Proxy is running (waiting for DNS configuration).");
-                    var proxyInfo = ProxyHealthCheck.fetchProxyInfo(healthIp);
-                    if (proxyInfo != null) {
+                    if (holder != null) {
+                        holder.report(line -> System.out.println("  " + BuildOutput.styled(
+                                BuildOutput.BOLD + BuildOutput.RED, ">>> " + line)));
+                    }
+                    // Another user's drift and auth error are theirs to act on, not this user's.
+                    var ownInfo = holder != null && holder.otherUser() ? null : proxyInfo;
+                    if (ownInfo != null) {
                         if (!proxyInfo.isLegacy()) {
                             System.out.println("  Version:         " + proxyInfo.version() + " (" + proxyInfo.gitSha() + ")");
                             if (proxyInfo.runtime() != null && !proxyInfo.runtime().isEmpty()) {
@@ -114,17 +125,22 @@ public class ProxyCommand extends BaseCommand {
                             }
                         }
                         System.out.println("  DNS overrides:   " + (proxyInfo.dnsConfigured() ? "active" : "pending"));
-                        var drift = ProxyHealthCheck.assessDrift(proxyInfo);
+                        var drift = ProxyHealthCheck.assessDrift(ownInfo);
                         for (var d : drift.drifts()) {
                             System.out.println("  " + BuildOutput.styled(BuildOutput.BOLD + BuildOutput.YELLOW, ">>> " + d));
                         }
                         if (drift.futileReason() != null) System.out.println("      " + drift.futileReason());
                     }
-                    if (proxyInfo != null && proxyInfo.hasAuthError()) {
-                        System.out.println("  " + BuildOutput.styled(BuildOutput.BOLD + BuildOutput.RED, ">>> Auth error: " + proxyInfo.authError()));
+                    if (ownInfo != null && ownInfo.hasAuthError()) {
+                        System.out.println("  " + BuildOutput.styled(BuildOutput.BOLD + BuildOutput.RED, ">>> Auth error: " + ownInfo.authError()));
                     }
                     System.out.println("  Health endpoint: http://" + healthIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health");
                     System.out.println("  MITM port:       " + ProxyConfig.DEFAULT_MITM_PORT);
+                    if (holder != null) {
+                        System.out.println("  Managed by:      " + (holder.otherUser()
+                                ? "user " + holder.user() : "manual (not the proxy service)"));
+                        return CommandResult.valueOf(exitCode(status, holder));
+                    }
                     if (serviceActive) {
                         var manager = Platform.isMacOS() ? "launchd (dev.incusspawn.proxy)" : "systemd (incus-spawn-proxy.service)";
                         System.out.println("  Managed by:      " + manager);
@@ -184,6 +200,31 @@ public class ProxyCommand extends BaseCommand {
             };
         }
 
+        /** The exit code for a proxy held by another user's (#1570): instances reach its CA and credentials. */
+        static final int EXIT_OTHER_USERS_PROXY = 4;
+
+        /**
+         * {@link #exitCode(ProxyHealthCheck.ProxyStatus)}, except that a running proxy owned by
+         * another user is {@link #EXIT_OTHER_USERS_PROXY}: it answers, but not for this user.
+         */
+        static int exitCode(ProxyHealthCheck.ProxyStatus status, ProxyHolder holder) {
+            var code = exitCode(status);
+            return code == 0 && holder != null && holder.otherUser() ? EXIT_OTHER_USERS_PROXY : code;
+        }
+
+        /**
+         * The last fields of {@link #record}: {@code pid} and {@code pid_owner} of the proxy that
+         * answered ({@code null} when it did not say), and {@code foreign_holder}, whether the
+         * installed service's process is not that proxy ({@code null} with no service).
+         */
+        static void addHolder(Map<String, Object> record, ProxyHealthCheck.ProxyInfo info,
+                              boolean serviceInstalled, ProxyHolder holder) {
+            var answering = holder != null ? holder : ProxyHolder.answering(info);
+            record.put("pid", answering == null ? null : answering.pid());
+            record.put("pid_owner", answering == null ? null : answering.user());
+            record.put("foreign_holder", serviceInstalled && answering != null ? holder != null : null);
+        }
+
         /** The exit code of every format: 0 when instances can use the proxy, else 1, 2 or 3 by state. */
         static int exitCode(ProxyHealthCheck.ProxyStatus status) {
             return switch (status) {
@@ -225,6 +266,10 @@ public class ProxyCommand extends BaseCommand {
             record.put("managed_by", managedBy);
             record.put("restart_helps", drifted ? drift.restartHelps() : null);
             record.put("check_error", checkError);
+            // Filled in by addHolder where the proxy answered; null otherwise.
+            record.put("pid", null);
+            record.put("pid_owner", null);
+            record.put("foreign_holder", null);
             return record;
         }
     }
@@ -444,7 +489,13 @@ public class ProxyCommand extends BaseCommand {
                 System.out.println("Proxy is not installed or running. Use 'isx proxy start' or 'isx proxy install'.");
                 return CommandResult.SUCCESS;
             }
-            return ProxyService.restart() ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+            if (!ProxyService.restart()) return CommandResult.valueOf(1);
+            // A healthy answer may be another proxy's, which this restart did not reach (#1570).
+            if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())
+                    && !ProxyService.answeringIsTheService(System.err::println)) {
+                return CommandResult.valueOf(1);
+            }
+            return CommandResult.SUCCESS;
         }
     }
 
@@ -462,8 +513,15 @@ public class ProxyCommand extends BaseCommand {
             if (!ProxyService.initComplete()) return CommandResult.FAILURE;
             var incus = RuntimeServices.incus();
             if (ProxyService.isActive()) {
-                ProxyService.upgradeIfNeeded();
                 var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
+                // Another user's proxy on the ports (#1570): its drift is not this service's, and
+                // no restart of this service can take the ports from it.
+                var holder = ProxyService.foreignHolder(info);
+                if (holder != null && holder.otherUser()) {
+                    holder.report(System.err::println);
+                    return CommandResult.FAILURE;
+                }
+                ProxyService.upgradeIfNeeded();
                 if (ProxyService.reinstallIfChanged(incus, info)) {
                     BuildOutput.success("Proxy service restarted with updated binary.");
                 } else {
@@ -478,7 +536,9 @@ public class ProxyCommand extends BaseCommand {
                     System.err.println("Check logs with: isx proxy logs");
                     return CommandResult.FAILURE;
                 }
-                return CommandResult.SUCCESS;
+                // Something answering is not enough: it may be another proxy on the ports (#1570).
+                return ProxyService.answeringIsTheService(System.err::println)
+                        ? CommandResult.SUCCESS : CommandResult.FAILURE;
             }
             if (!ProxyService.install()) {
                 return CommandResult.FAILURE;

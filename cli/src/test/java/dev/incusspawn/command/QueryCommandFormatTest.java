@@ -273,7 +273,10 @@ class QueryCommandFormatTest {
                   "service_installed" : true,
                   "managed_by" : "systemd",
                   "restart_helps" : true,
-                  "check_error" : null
+                  "check_error" : null,
+                  "pid" : null,
+                  "pid_owner" : null,
+                  "foreign_holder" : null
                 }
                 """.formatted(build.version(), build.gitSha()),
                 json(ProxyCommand.Status.record(ProxyStatus.RUNNING, info, "10.166.11.1", true, "systemd", null)));
@@ -295,7 +298,10 @@ class QueryCommandFormatTest {
                   "service_installed" : false,
                   "managed_by" : null,
                   "restart_helps" : null,
-                  "check_error" : null
+                  "check_error" : null,
+                  "pid" : null,
+                  "pid_owner" : null,
+                  "foreign_holder" : null
                 }
                 """, json(ProxyCommand.Status.record(ProxyStatus.STALE_DNS, null, "10.166.11.1", false, null, null)));
     }
@@ -316,10 +322,51 @@ class QueryCommandFormatTest {
                   "service_installed" : true,
                   "managed_by" : null,
                   "restart_helps" : null,
-                  "check_error" : "Could not determine Incus bridge gateway IP: no socket"
+                  "check_error" : "Could not determine Incus bridge gateway IP: no socket",
+                  "pid" : null,
+                  "pid_owner" : null,
+                  "foreign_holder" : null
                 }
                 """, json(ProxyCommand.Status.record(null, null, null, true, null,
                 "Could not determine Incus bridge gateway IP: no socket")));
+    }
+
+    @Test
+    void anotherUsersProxyOnThePortsIsItsOwnExitCode() {
+        // #1570: it answers, but with another user's CA, config and credentials.
+        var other = new dev.incusspawn.proxy.ProxyHolder(80914, "0.3.12", "runner", true);
+        var orphan = new dev.incusspawn.proxy.ProxyHolder(4242, "0.3.12", "me", false);
+        assertEquals(ProxyCommand.Status.EXIT_OTHER_USERS_PROXY, ProxyCommand.Status.exitCode(ProxyStatus.RUNNING, other));
+        assertEquals(4, ProxyCommand.Status.EXIT_OTHER_USERS_PROXY, "docs/CLI.md documents 4");
+        assertEquals(0, ProxyCommand.Status.exitCode(ProxyStatus.RUNNING, orphan));
+        assertEquals(0, ProxyCommand.Status.exitCode(ProxyStatus.RUNNING, null));
+        assertEquals(1, ProxyCommand.Status.exitCode(ProxyStatus.NOT_RUNNING, other));
+    }
+
+    @Test
+    void proxyStatusNamesWhoAnswersAndWhetherItIsTheService() {
+        var info = new ProxyInfo("0.3.12", "abc", "native", "ab:cd", false, true, null, 80914);
+        var record = ProxyCommand.Status.record(ProxyStatus.RUNNING, info, "10.166.11.1", true, "systemd", null);
+        ProxyCommand.Status.addHolder(record, info, true,
+                new dev.incusspawn.proxy.ProxyHolder(80914, "0.3.12", "runner", true));
+        assertEquals(List.of("check_error", "pid", "pid_owner", "foreign_holder"),
+                List.copyOf(record.keySet()).subList(record.size() - 4, record.size()), "added at the end");
+        assertEquals(80914L, record.get("pid"));
+        assertEquals("runner", record.get("pid_owner"));
+        assertEquals(true, record.get("foreign_holder"));
+
+        // The service's own process: its pid and owner, and not foreign.
+        var self = ProcessHandle.current().pid();
+        var own = new ProxyInfo("0.3.12", "abc", "native", "ab:cd", false, true, null, self);
+        var ownRecord = ProxyCommand.Status.record(ProxyStatus.RUNNING, own, "10.166.11.1", true, "systemd", null);
+        ProxyCommand.Status.addHolder(ownRecord, own, true, null);
+        assertEquals(self, ownRecord.get("pid"));
+        assertEquals(false, ownRecord.get("foreign_holder"));
+
+        // No service: nothing to be foreign to.
+        var manual = ProxyCommand.Status.record(ProxyStatus.RUNNING, own, "10.166.11.1", false, "manual", null);
+        ProxyCommand.Status.addHolder(manual, own, false, null);
+        assertNull(manual.get("foreign_holder"));
     }
 
     @Test

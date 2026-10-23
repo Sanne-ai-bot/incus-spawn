@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 public final class ProxyService {
@@ -189,6 +190,74 @@ public final class ProxyService {
         }
     }
 
+    /**
+     * The pid of the service's running process ({@code MainPID}, or the {@code pid} of {@code
+     * launchctl print}), 0 when the service means to run but has no process, or -1 when it does
+     * not mean to run. A unit waiting to be restarted is {@code activating} (auto-restart), and
+     * a launchd job between two retries is loaded with no pid: both are 0, since a service that
+     * cannot bind spends most of its time there.
+     */
+    static long servicePid() {
+        String pid;
+        if (Platform.isMacOS()) {
+            // Loaded is what isActive() means on macOS.
+            var output = proxyJobPrintOutput();
+            if (output == null) return -1;
+            pid = parseLaunchctlPrintPid(output);
+        } else {
+            var shown = showProperties("ActiveState", "MainPID");
+            var state = shown == null ? null : shown.lines().filter(l -> l.startsWith("ActiveState="))
+                    .findFirst().map(l -> l.substring("ActiveState=".length())).orElse(null);
+            if (!"active".equals(state) && !"activating".equals(state) && !"reloading".equals(state)) return -1;
+            pid = shown.lines().filter(l -> l.startsWith("MainPID=")).findFirst()
+                    .map(l -> l.substring("MainPID=".length())).orElse(null);
+        }
+        try {
+            return pid == null ? 0 : Long.parseLong(pid.strip());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * The proxy answering {@code info} when the service is active but that proxy is not its
+     * process (#1570), else null. Asks the service manager once, so only commands that report on
+     * the service call it, never the shell path.
+     */
+    public static ProxyHolder foreignHolder(ProxyHealthCheck.ProxyInfo info) {
+        if (info == null || info.pid() <= 0) return null;
+        var servicePid = servicePid();
+        return servicePid < 0 ? null : ProxyHolder.notTheService(info, servicePid);
+    }
+
+    /**
+     * Whether the healthy proxy that answers is the active service's own, reporting the holder
+     * to {@code out} when it is not (#1570). A health check alone passes for any proxy on the
+     * ports, so every path that reports the service as running asks this after it.
+     * A holder of this user's is asked about again for up to {@link #LAUNCHD_THROTTLE_SECONDS}:
+     * a restarted service's previous process frees the health port last (#1219), and launchd
+     * kills one that ignores SIGTERM only seconds later. Another user's is never the service's.
+     */
+    public static boolean answeringIsTheService(Consumer<String> out) {
+        var address = ProxyHealthCheck.resolveHealthAddress();
+        if (address == null) return true;
+        for (int attempt = 1; ; attempt++) {
+            var holder = foreignHolder(ProxyHealthCheck.fetchProxyInfo(address, 500));
+            if (holder == null) return true;
+            if (holder.otherUser() || attempt >= LAUNCHD_THROTTLE_SECONDS * 2) {
+                holder.report(out);
+                return false;
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                holder.report(out);
+                return false;
+            }
+        }
+    }
+
     public static boolean isActive() {
         if (Platform.isMacOS()) return isMacOsServiceActive();
         try {
@@ -263,6 +332,7 @@ public final class ProxyService {
 
         if (isActive()) {
             if (ProxyHealthCheck.awaitHealthy(configuredStartWaitSeconds())) {
+                if (!answeringIsTheService(System.err::println)) return false;
                 System.out.println("Proxy service is running.");
                 return true;
             }
@@ -1338,6 +1408,10 @@ public final class ProxyService {
         }
         if (isActive()) {
             if (awaitStarted(configuredStartWaitSeconds())) {
+                if (!answeringIsTheService(message -> System.err.println("  " + message))) {
+                    ProxyLog.info("Service installed, but another proxy holds its ports");
+                    return false;
+                }
                 ProxyLog.info("Service installed and running");
                 System.out.println("  Services installed and running.");
                 return true;

@@ -58,6 +58,9 @@ public class ProxyStartCommand extends BaseCommand {
         // next to the isx on PATH.
         var serviceActive = serviceManaged && ProxyService.isActive();
         if (serviceActive && ProxyHealthCheck.awaitHealthy(0)) {
+            // A healthy answer may come from another proxy on the ports (#1570), which
+            // restarting this service cannot end.
+            if (!ProxyService.answeringIsTheService(System.err::println)) return CommandResult.FAILURE;
             System.out.println("Proxy is already running (service-managed).");
             return CommandResult.SUCCESS;
         }
@@ -83,7 +86,8 @@ public class ProxyStartCommand extends BaseCommand {
                 System.err.println("Proxy service is registered but not responding. Restarting...");
                 ProxyService.restart(System.err::println);
                 if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
-                    return CommandResult.SUCCESS;
+                    return ProxyService.answeringIsTheService(System.err::println)
+                            ? CommandResult.SUCCESS : CommandResult.FAILURE;
                 }
                 if (ProxyService.failedWithConfigError()) {
                     System.err.println("Proxy failed due to a configuration problem (exit " + ProxyService.EXIT_CONFIG + ").");
@@ -97,6 +101,7 @@ public class ProxyStartCommand extends BaseCommand {
             System.out.println("Starting proxy via service manager...");
             if (ProxyService.startService()) {
                 if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
+                    if (!ProxyService.answeringIsTheService(System.err::println)) return CommandResult.FAILURE;
                     System.out.println("Proxy service started.");
                     return CommandResult.SUCCESS;
                 }
