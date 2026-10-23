@@ -86,7 +86,7 @@ An agent gets these tools, and no others.
 | `stop_instance` / `start_instance` | Stop an instance, to fork it, and start it again. | Stop is refused while a task runs, unless `force`. |
 | `list_instances` / `adopt_instance` | Your instances and their tasks, including those an ended session left behind; take one back. | Your instances only. |
 | `exec` | Run a command as `agentuser`, or with `background: true` as a task. | No time limit unless the agent sets one; `max-concurrent-tasks` for a task. |
-| `delegate` | Give an instruction or installed skill to an instance, or to a fresh one from a template, with `purpose` and `name_hint` for a fresh one. | `max-concurrent-tasks`, `delegate-max-turns` and the permission modes in `mcp.yaml`. |
+| `delegate` | Give an instruction or installed skill to an instance, or to a fresh one from a template, with `purpose` and `name_hint` for a fresh one. | `max-concurrent-tasks`, `delegate-max-turns` and the permission modes in `mcp.yaml`; `max-instances` for a fresh instance. |
 | `task_status` / `wait_any` / `task_result` | Follow a task, optionally waiting; wait for whichever of several finishes first; read its outcome or the agent's report. | Your instances only. |
 | `send_message` | Continue a delegated agent's conversation, for example "push and open a PR". | Refused while you are in that conversation. |
 | `get_diff` | What a delegated task changed, committed or not: a patch, or with `stat` only the files and line counts. | Your instances only. |
