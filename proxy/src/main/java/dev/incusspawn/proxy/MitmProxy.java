@@ -70,6 +70,10 @@ public class MitmProxy {
     // What Vertex model calls' bodies may hold, in heap and on disk (#1315). Package-private for tests.
     SpoolBudget spoolBudget = new SpoolBudget(SpoolBudget.DEFAULT_LIMIT);
     SpoolStore spoolStore;
+    // How long a refused request's body may pause, and take in all, before its connection closes
+    // without the rest (#1617): nginx's lingering_timeout and lingering_time. Package-private for tests.
+    volatile long refusalLingerMillis = 5000;
+    volatile long refusalLingerCapMillis = 30_000;
 
     // Cached GCP access token for Vertex AI (tokens last ~60 min, refresh at ~50 min).
     // Single-flight: concurrent callers share one in-flight gcloud invocation via the
@@ -1846,17 +1850,18 @@ public class MitmProxy {
         }
         var translator = rewriter;
         var refused = new boolean[1];
+        var expectsContinue = "100-continue".equalsIgnoreCase(clientReq.getHeader("Expect"));
         java.util.function.BiConsumer<Integer, String> refuse = (status, message) -> {
             if (refused[0]) return;
             refused[0] = true;
-            if (!clientReq.isEnded()) clientReq.handler(ignored -> {});
-            refuseUnread(clientReq, status, message);
+            refuseUnread(clientReq, status, message, true);
         };
         // Checked before the client is told to send a body that may not fit in memory: one that does
         // never reaches the disk, so the disk's state is no reason to refuse it
         if (mayNeedDisk(clientReq) && !store.hasRoom()) {
             ProxyLog.warn("Refusing a Vertex request (" + path + "): " + store.refusal());
-            refuse.accept(507, "isx-proxy: " + store.refusal() + "; this request could not be held");
+            // A client that awaits 100 Continue sends no body: it is never told to
+            refuseUnread(clientReq, 507, "isx-proxy: " + store.refusal() + "; this request could not be held", !expectsContinue);
             return;
         }
         spool.failureHandler(err -> {
@@ -1866,7 +1871,7 @@ public class MitmProxy {
                     : "Proxy error");
         });
         // Upstream cannot be asked before the body is in: the proxy answers for it (RFC 9110 10.1.1)
-        if ("100-continue".equalsIgnoreCase(clientReq.getHeader("Expect"))) clientResp.writeContinue();
+        if (expectsContinue) clientResp.writeContinue();
 
         clientReq.handler(chunk -> {
             if (debug != null) capture(debug.original, chunk);
@@ -1878,6 +1883,8 @@ public class MitmProxy {
                 refuseTranslation(path, e, refuse);
                 return;
             }
+            // Refused by this very chunk: the rest is read and dropped, and the spool gives no drain
+            if (refused[0]) return;
             if (spool.writeQueueFull()) {
                 clientReq.pause();
                 spool.drainHandler(clientReq::resume);
@@ -1915,8 +1922,14 @@ public class MitmProxy {
         clientReq.resume();
     }
 
-    /** Answers a request whose body was not all read, and closes its connection, which still holds the rest. */
-    private void refuseUnread(HttpServerRequest clientReq, int status, String message) {
+    /**
+     * Answers a request whose body was not all read, and closes its connection once the rest has been
+     * read and dropped ({@link Linger}). Closed with some of the body unread, the connection is reset,
+     * and a client still sending loses the answer with it (#1617). A client not yet told to send its
+     * body ({@code bodyComing} false) sends nothing more.
+     */
+    private void refuseUnread(HttpServerRequest clientReq, int status, String message, boolean bodyComing) {
+        if (!clientReq.isEnded()) clientReq.handler(ignored -> {});
         var resp = clientReq.response();
         if (resp.ended() || resp.closed()) return;
         if (resp.headWritten()) {
@@ -1925,7 +1938,64 @@ public class MitmProxy {
         }
         resp.headers().clear();
         resp.putHeader("Connection", "close");
-        resp.setStatusCode(status).end(message).onComplete(v -> clientReq.connection().close());
+        var answered = resp.setStatusCode(status).end(message);
+        var connection = clientReq.connection();
+        Runnable close = () -> answered.onComplete(v -> connection.close());
+        if (!bodyComing || clientReq.isEnded()) {
+            close.run();
+            return;
+        }
+        new Linger(clientReq, close, refusalLingerMillis, refusalLingerCapMillis);
+    }
+
+    /**
+     * Reads and drops a refused request's body, then closes its connection: once the body ends, once
+     * none has come for {@code idle} milliseconds, or {@code cap} milliseconds after the refusal
+     * however it keeps coming, so a client trickling bytes cannot hold the connection. One timer
+     * checks the last read's time, rather than one per chunk.
+     */
+    private final class Linger {
+        private final Runnable close;
+        private final long idle;
+        private final long until;
+        private long lastRead;
+        private long timer;
+        private boolean closed;
+
+        Linger(HttpServerRequest clientReq, Runnable close, long idle, long cap) {
+            this.close = close;
+            this.idle = idle;
+            lastRead = nowMillis();
+            until = lastRead + cap;
+            timer = vertx.setTimer(Math.min(idle, cap), this::check);
+            clientReq.handler(ignored -> lastRead = nowMillis());
+            clientReq.endHandler(v -> close());
+            // The connection closed first: nothing is left to close
+            clientReq.exceptionHandler(err -> {
+                closed = true;
+                vertx.cancelTimer(timer);
+            });
+            clientReq.resume();
+        }
+
+        private void check(long id) {
+            if (closed) return;
+            var now = nowMillis();
+            var next = Math.min(lastRead + idle, until);
+            if (now >= next) close();
+            else timer = vertx.setTimer(next - now, this::check);
+        }
+
+        private void close() {
+            if (closed) return;
+            closed = true;
+            vertx.cancelTimer(timer);
+            close.run();
+        }
+
+        private static long nowMillis() {
+            return System.nanoTime() / 1_000_000;
+        }
     }
 
     /**
