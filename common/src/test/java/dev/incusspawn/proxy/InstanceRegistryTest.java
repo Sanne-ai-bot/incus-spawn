@@ -562,8 +562,8 @@ class InstanceRegistryTest {
         var registry = new InstanceRegistry(daemon.client());
         assertTrue(registry.refresh());
 
-        assertEquals("coord", registry.identifyMcpCaller("10.166.11.2", secret, true));
-        assertNull(registry.identifyMcpCaller("10.166.11.2", secret, false));
+        assertEquals("coord", mcpCaller(registry, "10.166.11.2", secret, true));
+        assertNull(mcpCaller(registry, "10.166.11.2", secret, false));
         var identified = registry.identifyWithLineage("10.166.11.2", secret, true);
         assertEquals("coord", identified.instanceName());
         assertEquals("tpl-agent", identified.lineage().template());
@@ -720,10 +720,10 @@ class InstanceRegistryTest {
                         SECRET_KEY, InstanceSecret.sha256(plain)));
         var registry = new InstanceRegistry(daemon.client());
         registry.refresh();
-        assertEquals("coord", registry.identifyMcpCaller("10.0.0.5", caller, false));
-        assertNull(registry.identifyMcpCaller("10.0.0.5", null, false), "the address alone");
-        assertNull(registry.identifyMcpCaller("10.0.0.6", caller, false), "its secret from another address");
-        assertNull(registry.identifyMcpCaller("10.0.0.6", plain, false), "an instance that was not granted it");
+        assertEquals("coord", mcpCaller(registry, "10.0.0.5", caller, false));
+        assertNull(mcpCaller(registry, "10.0.0.5", null, false), "the address alone");
+        assertNull(mcpCaller(registry, "10.0.0.6", caller, false), "its secret from another address");
+        assertNull(mcpCaller(registry, "10.0.0.6", plain, false), "an instance that was not granted it");
         assertTrue(registry.isMcpCaller("coord"));
         assertFalse(registry.isMcpCaller("worker"));
     }
@@ -739,7 +739,13 @@ class InstanceRegistryTest {
                         dev.incusspawn.incus.Metadata.MCP_CALLER, "2026-10-05T10:00:00"));
         var registry = new InstanceRegistry(daemon.client());
         registry.refresh();
-        assertNull(registry.identifyMcpCaller("10.0.0.5", secret, false));
+        assertNull(mcpCaller(registry, "10.0.0.5", secret, false));
         assertFalse(registry.isMcpCaller("odd"));
+    }
+
+    /** The name {@code isx mcp} serves: identified with its lineage, and stamped {@code mcp-caller}. */
+    private static String mcpCaller(InstanceRegistry registry, String address, String secret, boolean bySecretAlone) {
+        var identified = registry.identifyWithLineage(address, secret, bySecretAlone);
+        return identified != null && identified.mcpCaller() ? identified.instanceName() : null;
     }
 }
