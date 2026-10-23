@@ -1906,7 +1906,11 @@ public class IncusClient {
      * Does nothing if the volume already exists.
      */
     public void ensureStorageVolume(String pool, String volumeName) {
-        if (storageVolumeExists(pool, volumeName)) return;
+        try {
+            if (storageVolumeExists(pool, volumeName)) return;
+        } catch (IncusException e) {
+            // Could not tell: try to create it, which fails on its own if it does exist
+        }
         var createResp = http().requestAndWait("POST",
                 "/1.0/storage-pools/" + pool + "/volumes",
                 Map.of("name", volumeName, "type", "custom"));
@@ -1915,15 +1919,24 @@ public class IncusClient {
         }
     }
 
+    /**
+     * Whether the custom volume exists. Only a 404 means it does not: any other error throws, so a
+     * caller never reports a volume it could not ask about as absent.
+     */
     public boolean storageVolumeExists(String pool, String volumeName) {
-        return http().get("/1.0/storage-pools/" + pool + "/volumes/custom/" + volumeName).isSuccess();
+        var resp = http().get("/1.0/storage-pools/" + pool + "/volumes/custom/" + volumeName);
+        if (resp.isSuccess()) return true;
+        if (resp.statusCode() == 404) return false;
+        throw new IncusException("Failed to look up storage volume " + volumeName + " in pool " + pool
+                + ": " + resp.body().pathText("error", "unknown error"));
     }
 
     public boolean deleteStorageVolume(String pool, String volumeName) {
         var resp = http().delete("/1.0/storage-pools/" + pool + "/volumes/custom/" + volumeName);
         if (resp.isSuccess()) return true;
         if (resp.statusCode() == 404) return false;
-        throw new IncusException("Failed to delete storage volume " + volumeName + " from pool " + pool);
+        throw new IncusException("Failed to delete storage volume " + volumeName + " from pool " + pool
+                + ": " + resp.body().pathText("error", "unknown error"));
     }
 
     /**
