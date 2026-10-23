@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
+import dev.incusspawn.Platform;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
@@ -26,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 @CommandDefinition(
         name = "clean",
@@ -98,7 +100,8 @@ public class CleanCommand extends BaseCommand {
         return new DirInfo(dir, size[0], files[0]);
     }
 
-    static void printSummary(List<DirInfo> infos) {
+    /** The directories and their total, then the DNF cache volume if there is one. */
+    static void printSummary(List<DirInfo> infos, DnfCacheVolume dnfCache) {
         long total = 0;
         int totalFiles = 0;
         for (var info : infos) {
@@ -107,7 +110,11 @@ public class CleanCommand extends BaseCommand {
             total += info.size;
             totalFiles += info.files;
         }
-        System.out.printf("  %-50s %8s  (%d files)%n", "Total:", formatSize(total), totalFiles);
+        // The volume's size is not known here, so it stays out of the total, below it
+        if (!infos.isEmpty()) {
+            System.out.printf("  %-50s %8s  (%d files)%n", "Total:", formatSize(total), totalFiles);
+        }
+        if (dnfCache != null) System.out.println("  and the " + dnfCache.label());
     }
 
     /** Delete {@code dir}, or everything in it but {@code keep} when that is one of its entries. */
@@ -147,6 +154,22 @@ public class CleanCommand extends BaseCommand {
     static boolean cleanDirs(List<Path> dirs, boolean deleteInstances, boolean dryRun, boolean skipConfirmation,
                              String category, String header, List<String> warning, String question)
             throws IOException {
+        return cleanDirs(dirs, deleteInstances, dryRun, confirmation(skipConfirmation),
+                category, header, warning, question, null);
+    }
+
+    static Predicate<String> confirmation(boolean skipConfirmation) {
+        return question -> confirmDestructive(question, skipConfirmation, "--skip-confirmation");
+    }
+
+    /**
+     * As above, with {@code dnfCache} (if not null) listed and confirmed with the directories and
+     * deleted before them: it is never deleted on an answer that kept them (#1627).
+     */
+    static boolean cleanDirs(List<Path> dirs, boolean deleteInstances, boolean dryRun, Predicate<String> confirm,
+                             String category, String header, List<String> warning, String question,
+                             DnfCacheVolume dnfCache)
+            throws IOException {
         var disk = Environment.vmDataImage();
         // Only a directory holding the disk itself: delete() spares it there and nowhere deeper
         boolean holdsDisk = Files.exists(disk) && dirs.contains(disk.getParent());
@@ -156,13 +179,13 @@ public class CleanCommand extends BaseCommand {
         }
         var keep = holdsDisk && !deleteInstances ? disk : null;
         var infos = collectInfo(dirs, keep);
-        if (infos.isEmpty()) {
+        if (infos.isEmpty() && dnfCache == null) {
             System.out.println("Nothing to clean — no " + category + " data found.");
             return false;
         }
 
         System.out.println(dryRun ? "Would delete:" : header);
-        printSummary(infos);
+        printSummary(infos, dnfCache);
         if (holdsDisk) {
             System.out.println();
             if (deleteInstances) {
@@ -177,36 +200,90 @@ public class CleanCommand extends BaseCommand {
         System.out.println();
         warning.forEach(System.out::println);
 
-        if (!confirmDestructive(question, skipConfirmation, "--skip-confirmation")) return false;
+        if (!confirm.test(question)) return false;
 
+        // First: Incus may need what the directories hold, such as the config
+        if (dnfCache != null) dnfCache.delete();
         for (var info : infos) {
             delete(info.path, keep);
         }
-        long total = infos.stream().mapToLong(i -> i.size).sum();
-        int totalFiles = infos.stream().mapToInt(i -> i.files).sum();
-        System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
+        if (!infos.isEmpty()) {
+            long total = infos.stream().mapToLong(i -> i.size).sum();
+            int totalFiles = infos.stream().mapToInt(i -> i.files).sum();
+            System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
+        }
         return true;
     }
 
-    static void cleanDnfCacheVolume(boolean dryRun) {
-        try {
-            var incus = RuntimeServices.incus();
-            var pool = incus.findCowPool();
-            if (pool == null) return;
-            var volume = GuestProvisioning.DNF_CACHE_VOLUME;
-            if (dryRun) {
-                System.out.println("Would delete DNF cache volume (" + volume + ") from pool " + pool);
-                return;
+    /** The shared DNF cache volume on the CoW pool, which builds recreate on demand. */
+    record DnfCacheVolume(IncusClient incus, String pool) {
+
+        /**
+         * The volume, or null when there is none.
+         *
+         * @throws IllegalStateException when Incus could not say, which is not "none"
+         */
+        static DnfCacheVolume find(IncusClient incus) {
+            IncusClient.CowPoolProbe probe;
+            try {
+                probe = incus.probeCowPool();
+            } catch (Exception e) {
+                throw couldNotLook(e);
             }
-            if (incus.deleteStorageVolume(pool, volume)) {
-                System.out.println("Deleted DNF cache volume (" + volume + ") from pool " + pool);
+            if (!probe.listed()) throw couldNotLook("Incus did not list its storage pools.");
+            return probe.poolName() == null ? null : find(incus, probe.poolName());
+        }
+
+        /** The volume if {@code pool} holds it, or null; throws as {@link #find(IncusClient)} does. */
+        static DnfCacheVolume find(IncusClient incus, String pool) {
+            try {
+                return incus.storageVolumeExists(pool, GuestProvisioning.DNF_CACHE_VOLUME)
+                        ? new DnfCacheVolume(incus, pool) : null;
+            } catch (Exception e) {
+                throw couldNotLook(e);
             }
-        } catch (Exception e) {
-            var msg = e.getMessage();
-            if (msg != null && msg.toLowerCase().contains("in use")) {
-                System.err.println("Warning: could not clean DNF cache volume — it is in use by a running build. Try again after the build finishes.");
-            } else {
-                System.err.println("Warning: could not clean DNF cache volume: " + msg);
+        }
+
+        /** {@link #find(IncusClient)} for a clean the volume is only part of: a warning, and none. */
+        static DnfCacheVolume findOrWarn(IncusClient incus) {
+            try {
+                return find(incus);
+            } catch (IllegalStateException e) {
+                System.err.println("Warning: " + e.getMessage());
+                return null;
+            }
+        }
+
+        private static IllegalStateException couldNotLook(String why) {
+            return new IllegalStateException("could not look for the DNF cache volume: " + why);
+        }
+
+        private static IllegalStateException couldNotLook(Exception cause) {
+            var e = couldNotLook(reason(cause));
+            e.initCause(cause);
+            return e;
+        }
+
+        private static String reason(Exception e) {
+            return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+        }
+
+        String label() {
+            return "DNF cache volume (" + GuestProvisioning.DNF_CACHE_VOLUME + ") in pool " + pool;
+        }
+
+        void delete() {
+            try {
+                if (incus.deleteStorageVolume(pool, GuestProvisioning.DNF_CACHE_VOLUME)) {
+                    System.out.println("Deleted " + label());
+                }
+            } catch (Exception e) {
+                var msg = e.getMessage();
+                if (msg != null && msg.toLowerCase().contains("in use")) {
+                    System.err.println("Warning: could not clean DNF cache volume — it is in use by a running build. Try again after the build finishes.");
+                } else {
+                    System.err.println("Warning: could not clean DNF cache volume: " + msg);
+                }
             }
         }
     }
@@ -215,7 +292,7 @@ public class CleanCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "cache",
-            description = "Remove cached downloads, registry blobs, and build caches (~/.cache/incus-spawn/)",
+            description = "Remove cached downloads, registry blobs, and build caches (~/.cache/incus-spawn/), and the DNF cache volume builds share",
             generateHelp = true
     )
     public static class Cache extends BaseCommand {
@@ -228,9 +305,16 @@ public class CleanCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            cleanDirs(List.of(Environment.cacheDir()), dryRun, skipConfirmation, "cache");
-            cleanDnfCacheVolume(dryRun);
+            // On macOS Incus runs in the VM: while it is stopped there is no Incus to ask
+            boolean noIncus = Platform.isMacOS() && !VmManager.isRunning();
+            clean(noIncus ? null : RuntimeServices.incus(), dryRun, confirmation(skipConfirmation));
             return CommandResult.SUCCESS;
+        }
+
+        /** {@code incus} is null when there is no Incus to ask about the DNF cache volume. */
+        static void clean(IncusClient incus, boolean dryRun, Predicate<String> confirm) throws IOException {
+            cleanDirs(List.of(Environment.cacheDir()), false, dryRun, confirm, "cache", "Will delete:",
+                    List.of(), "Proceed?", incus == null ? null : DnfCacheVolume.findOrWarn(incus));
         }
     }
 
@@ -290,7 +374,7 @@ public class CleanCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "all",
-            description = "Remove cache, state, and configuration (does not touch Incus templates or instances unless --delete-instances)",
+            description = "Remove cache, state, and configuration, and on Linux the DNF cache volume builds share (does not touch Incus templates or instances unless --delete-instances)",
             generateHelp = true
     )
     public static class All extends BaseCommand {
@@ -312,25 +396,36 @@ public class CleanCommand extends BaseCommand {
                 return CommandResult.valueOf(1);
             }
 
+            // On macOS Incus runs in the VM, stopped here, so there is no Incus to ask about the DNF cache
+            clean(Platform.isMacOS() ? null : RuntimeServices.incus(), deleteInstances, dryRun,
+                    confirmation(skipConfirmation));
+            return CommandResult.SUCCESS;
+        }
+
+        /** {@code incus} is null when there is no Incus to ask about the DNF cache volume. */
+        static void clean(IncusClient incus, boolean deleteInstances, boolean dryRun, Predicate<String> confirm)
+                throws IOException {
             var dirs = List.of(
                     Environment.cacheDir(),
                     Environment.vmStateDir(),
                     Environment.dataDir(),
                     Environment.configDir());
             boolean poolDeleted = deleteInstances && Files.exists(Environment.vmDataImage());
-            var warning = new ArrayList<>(List.of(
-                    "WARNING: This includes your SSH keys, CA certificate, and configuration.",
-                    "You will need to run 'isx init' again and rebuild all templates."));
+            var warning = new ArrayList<String>();
+            // With only the DNF cache volume left, there is no configuration to warn about
+            if (Files.isDirectory(Environment.configDir())) {
+                warning.add("WARNING: This includes your SSH keys, CA certificate, and configuration.");
+                warning.add("You will need to run 'isx init' again and rebuild all templates.");
+            }
             if (!poolDeleted) {
                 warning.add("Note: Built templates and instances in the Incus storage pool are not affected.");
                 warning.add("Use 'isx clean pool' to reclaim pool space.");
             }
-            boolean deleted = cleanDirs(dirs, deleteInstances, dryRun, skipConfirmation, "incus-spawn",
-                    "Will delete incus-spawn cache, state, and configuration:", warning,
-                    "Delete all listed directories?");
             // With the data disk gone there is no pool left to hold the DNF cache volume
-            if (deleted && !poolDeleted) cleanDnfCacheVolume(false);
-            return CommandResult.SUCCESS;
+            var dnfCache = poolDeleted || incus == null ? null : DnfCacheVolume.findOrWarn(incus);
+            cleanDirs(dirs, deleteInstances, dryRun, confirm, "incus-spawn",
+                    "Will delete incus-spawn cache, state, and configuration:", warning,
+                    "Delete everything listed?", dnfCache);
         }
     }
 
@@ -669,7 +764,7 @@ public class CleanCommand extends BaseCommand {
                 return true;
             }
 
-            cleanDnfCacheVolume(false);
+            new DnfCacheVolume(incus, pool).delete();
             return true;
         }
     }

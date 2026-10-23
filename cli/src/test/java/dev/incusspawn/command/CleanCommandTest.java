@@ -16,8 +16,10 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -140,15 +142,7 @@ class CleanCommandTest {
     }
 
     private static String run(BaseCommand command) throws Exception {
-        var out = new ByteArrayOutputStream();
-        var oldOut = System.out;
-        System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
-        try {
-            command.doExecute();
-        } finally {
-            System.setOut(oldOut);
-        }
-        return out.toString(StandardCharsets.UTF_8);
+        return capture(command::doExecute);
     }
 
     @Test
@@ -232,5 +226,165 @@ class CleanCommandTest {
         var out = run(state);
 
         assertTrue(out.contains("--delete-instances only deletes the macOS VM's data disk"), out);
+    }
+
+    // -- the DNF cache volume is part of what isx clean cache asks about (#1627) --
+
+    private static IncusClient withDnfCacheVolume() {
+        var incus = mock(IncusClient.class);
+        when(incus.probeCowPool()).thenReturn(new IncusClient.CowPoolProbe(true, "cow", "btrfs"));
+        when(incus.storageVolumeExists("cow", GuestProvisioning.DNF_CACHE_VOLUME)).thenReturn(true);
+        when(incus.deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME)).thenReturn(true);
+        return incus;
+    }
+
+    private interface Action {
+        void run() throws Exception;
+    }
+
+    private static String capture(Action action) throws Exception {
+        var out = new ByteArrayOutputStream();
+        var oldOut = System.out;
+        System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
+        try {
+            action.run();
+        } finally {
+            System.setOut(oldOut);
+        }
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
+    private static String runCache(IncusClient incus, boolean dryRun, boolean answer) throws Exception {
+        return capture(() -> CleanCommand.Cache.clean(incus, dryRun, question -> answer));
+    }
+
+    @Test
+    void decliningCleanCacheKeepsTheDnfCacheVolume() throws Exception {
+        Files.createDirectories(Environment.cacheDir());
+        var blob = Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
+        var incus = withDnfCacheVolume();
+
+        var out = runCache(incus, false, false);
+
+        verify(incus, never()).deleteStorageVolume(anyString(), anyString());
+        assertTrue(Files.exists(blob), out);
+        assertFalse(out.contains("Deleted DNF cache volume"), out);
+    }
+
+    @Test
+    void cleanCacheListsTheDnfCacheVolumeBeforeAsking() throws Exception {
+        Files.createDirectories(Environment.cacheDir());
+        var blob = Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
+        var incus = withDnfCacheVolume();
+
+        var out = runCache(incus, false, true);
+
+        verify(incus).deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME);
+        assertFalse(Files.exists(blob), out);
+        var listed = out.indexOf("DNF cache volume (" + GuestProvisioning.DNF_CACHE_VOLUME + ") in pool cow");
+        assertTrue(listed >= 0 && listed < out.indexOf("Deleted DNF cache volume"), out);
+    }
+
+    @Test
+    void cleanCacheAsksForTheDnfCacheVolumeAlone() throws Exception {
+        // No host cache: the volume is still something to delete, and still asked about
+        var incus = withDnfCacheVolume();
+
+        var out = runCache(incus, false, false);
+
+        verify(incus, never()).deleteStorageVolume(anyString(), anyString());
+        assertFalse(out.contains("Nothing to clean"), out);
+        assertTrue(out.contains("DNF cache volume"), out);
+    }
+
+    @Test
+    void aCleanCacheDryRunDeletesNothing() throws Exception {
+        Files.createDirectories(Environment.cacheDir());
+        Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
+        var incus = withDnfCacheVolume();
+
+        var out = runCache(incus, true, true);
+
+        verify(incus, never()).deleteStorageVolume(anyString(), anyString());
+        assertTrue(out.contains("Would delete:"), out);
+        assertTrue(out.contains("DNF cache volume"), out);
+    }
+    @Test
+    void cleanCacheGoesOnWhenItCouldNotLookForTheVolume() throws Exception {
+        Files.createDirectories(Environment.cacheDir());
+        var blob = Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
+        var incus = mock(IncusClient.class);
+        when(incus.probeCowPool()).thenReturn(new IncusClient.CowPoolProbe(false, null, null));
+
+        var out = runCache(incus, false, true);
+
+        assertFalse(Files.exists(blob), out);
+    }
+
+    @Test
+    void decliningCleanAllKeepsTheDnfCacheVolume() throws Exception {
+        Files.createDirectories(Environment.cacheDir());
+        var blob = Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
+        var incus = withDnfCacheVolume();
+
+        var out = capture(() -> CleanCommand.All.clean(incus, false, false, q -> false));
+
+        assertTrue(out.contains("DNF cache volume"), out);
+        verify(incus, never()).deleteStorageVolume(anyString(), anyString());
+        assertTrue(Files.exists(blob), out);
+    }
+
+    @Test
+    void cleanAllDeletesTheDnfCacheVolumeOnTheSameAnswer() throws Exception {
+        Files.createDirectories(Environment.cacheDir());
+        Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
+        var incus = withDnfCacheVolume();
+
+        capture(() -> CleanCommand.All.clean(incus, false, false, q -> true));
+
+        verify(incus).deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME);
+    }
+
+    @Test
+    void cleanAllTakingTheDataDiskDoesNotLookForTheVolume() throws Exception {
+        // The pool is on the disk being deleted: there is no volume left to ask about
+        seedVmState();
+        var incus = mock(IncusClient.class);
+
+        capture(() -> CleanCommand.All.clean(incus, true, false, q -> true));
+
+        verifyNoInteractions(incus);
+        assertFalse(Files.exists(Environment.vmDataImage()));
+    }
+
+    @Test
+    void cleanCacheWithNoIncusCleansTheCacheAlone() throws Exception {
+        // macOS with its VM stopped: nothing to ask, and nothing to warn about
+        Files.createDirectories(Environment.cacheDir());
+        var blob = Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
+
+        capture(() -> CleanCommand.Cache.clean(null, false, q -> true));
+
+        assertFalse(Files.exists(blob));
+    }
+
+    @Test
+    void theTotalCountsOnlyTheDirectories() throws Exception {
+        Files.createDirectories(Environment.cacheDir());
+        Files.writeString(Environment.cacheDir().resolve("blob"), "cached");
+
+        var out = runCache(withDnfCacheVolume(), true, true);
+
+        assertTrue(out.indexOf("Total:") < out.indexOf("DNF cache volume"), out);
+    }
+
+    @Test
+    void cleanAllWithOnlyTheVolumeLeftDoesNotWarnAboutTheConfiguration() throws Exception {
+        var incus = withDnfCacheVolume();
+
+        var out = capture(() -> CleanCommand.All.clean(incus, false, false, q -> true));
+
+        assertFalse(out.contains("SSH keys"), out);
+        verify(incus).deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME);
     }
 }
