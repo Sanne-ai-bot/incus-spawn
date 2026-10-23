@@ -203,6 +203,20 @@ class AutoRemoteServiceTest {
                 + "; to add it manually: git -C " + repoDir + " remote add <name> isx://work/home/agentuser/app");
     }
 
+    @Test
+    void aWarningShowsTheTemplatesRepositoryPathAsText() throws Exception {
+        // A template, project-local included, decides the path the warning quotes (#1624).
+        existingRemoteFixture("/home/agentuser/\\e]0;pwned\\a\\e[2Japp");
+        var incus = mock(IncusClient.class);
+        when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("tpl-app", ""));
+
+        var warnings = new ArrayList<String>();
+        AutoRemoteService.addRemotes(incus, "work", message -> {}, warnings::add);
+
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.getFirst()).endsWith("isx://work/home/agentuser/ ]0;pwned  [2Japp");
+    }
+
     /** A host checkout of a template's repository that already has a remote named {@code work}. */
     private Path existingRemoteFixture(String containerPath) throws Exception {
         var repoDir = tempDir.resolve("src/app");

@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.git.GitRemoteUtils;
+import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.invocation.CommandInvocation;
@@ -8,6 +10,8 @@ import org.aesh.command.option.Argument;
 
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 @CommandDefinition(
@@ -34,7 +38,7 @@ public class GitRemoteHelperCommand extends BaseCommand {
         var incus = dev.incusspawn.RuntimeServices.incus();
 
         if (!ALLOWED_SERVICES.contains(service)) {
-            System.err.println("Error: unknown git service: " + service);
+            System.err.println("Error: unknown git service: " + OutputFormat.oneLine(service));
             return CommandResult.valueOf(1);
         }
 
@@ -69,18 +73,18 @@ public class GitRemoteHelperCommand extends BaseCommand {
     private boolean checkInstanceRunning(dev.incusspawn.incus.IncusClient incus) {
         try {
             if (!incus.exists(instance)) {
-                System.err.println("Error: instance '" + instance + "' does not exist.");
+                System.err.println("Error: instance '" + OutputFormat.oneLine(instance) + "' does not exist.");
                 return false;
             }
             var status = incus.getInstanceStatus(instance);
             if (!"Running".equalsIgnoreCase(status)) {
-                System.err.println("Error: instance '" + instance + "' is not running (status: " + status + ").");
-                System.err.println("Start it first: isx shell " + instance);
+                System.err.println("Error: instance '" + OutputFormat.oneLine(instance) + "' is not running (status: " + status + ").");
+                System.err.println("Start it first: isx shell " + OutputFormat.oneLine(instance));
                 return false;
             }
             return true;
         } catch (Exception e) {
-            System.err.println("Error: could not check instance status: " + e.getMessage());
+            System.err.println("Error: could not check instance status: " + OutputFormat.oneLine(String.valueOf(e.getMessage())));
             return false;
         }
     }
@@ -90,10 +94,22 @@ public class GitRemoteHelperCommand extends BaseCommand {
         if (repos.isEmpty()) return;
 
         System.err.println();
-        System.err.println("The path '" + path + "' is not a git repository in instance '" + instance + "'.");
-        System.err.println("Known repositories:");
+        repoHints(instance, path, repos).forEach(System.err::println);
+    }
+
+    /**
+     * The hint for a path that is not a repository, as text: a template, project-local included,
+     * decides its repositories' paths and URLs, and a clone's remote URL the requested path (#1624).
+     */
+    static List<String> repoHints(String instance, String path, List<ImageDef.RepoEntry> repos) {
+        var lines = new ArrayList<String>();
+        lines.add("The path '" + OutputFormat.oneLine(path) + "' is not a git repository in instance '"
+                + OutputFormat.oneLine(instance) + "'.");
+        lines.add("Known repositories:");
         for (var repo : repos) {
-            System.err.println("  " + repo.getPath() + "  (" + repo.sourceDescription() + ")");
+            lines.add("  " + OutputFormat.oneLine(String.valueOf(repo.getPath()))
+                    + "  (" + OutputFormat.oneLine(String.valueOf(repo.sourceDescription())) + ")");
         }
+        return lines;
     }
 }

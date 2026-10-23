@@ -3,6 +3,7 @@ package dev.incusspawn.git;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.OutputFormat;
 import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.nio.file.Path;
@@ -34,7 +35,7 @@ public final class AutoRemoteService {
                 HostRepoSources.remember(instanceName, host);
                 addRemoteInHostRepo(host, instanceName, source.getKey(), output, warn, cache);
             } catch (Exception e) {
-                warn.accept("could not set up host-source remote: " + e.getMessage());
+                warn.accept(OutputFormat.oneLine("could not set up host-source remote: " + e.getMessage()));
             }
         }
         if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
@@ -55,7 +56,7 @@ public final class AutoRemoteService {
                     addRemoteInHostRepo(hostPath, instanceName, repo.getPath(), output, warn, cache);
                 }
             } catch (Exception e) {
-                warn.accept("could not set up git remote for " + repo.getUrl() + ": " + e.getMessage());
+                warn.accept(OutputFormat.oneLine("could not set up git remote for " + repo.getUrl() + ": " + e.getMessage()));
             }
         }
     }
@@ -70,8 +71,9 @@ public final class AutoRemoteService {
         var hasRemote = cache.remotes(hostPath).stream()
                 .anyMatch(r -> r.name().equals(instanceName));
         if (hasRemote) {
-            warn.accept("remote '" + instanceName + "' already exists in " + hostPath
-                    + "; to add it manually: git -C " + hostPath + " remote add <name> " + isxUrl);
+            // A template, project-local included, decides the repository path in the URL (#1624).
+            warn.accept(OutputFormat.oneLine("remote '" + instanceName + "' already exists in " + hostPath
+                    + "; to add it manually: git -C " + hostPath + " remote add <name> " + isxUrl));
             return;
         }
 
