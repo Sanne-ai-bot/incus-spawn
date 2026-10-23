@@ -630,6 +630,7 @@ For VMs, `unmountDnfCache` unmounts inside the guest before removing the device 
 `cleanCaches` skips `dnf clean`/`rm -rf` of the cache dir while it is still a mount point, since cleaning through a live mount would wipe the shared volume for every later build.
 `isx clean cache` wipes the cache by deleting the storage volume (via `IncusClient.deleteStorageVolume`).
 It lists the volume with the host cache directories, and deletes it only on the same confirmation, as `isx clean all` does (#1627).
+`isx clean dnf` deletes the volume alone, and `isx clean pool` asks about it as one of its categories.
 The volume is automatically recreated by the next build.
 
 **DNF failure recovery**: All DNF install/upgrade commands are wrapped in `runDnf()`, which retries once on any failure.

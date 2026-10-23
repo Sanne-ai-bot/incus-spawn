@@ -38,6 +38,7 @@ import java.util.function.Predicate;
                 CleanCommand.State.class,
                 CleanCommand.Config.class,
                 CleanCommand.Pool.class,
+                CleanCommand.Dnf.class,
                 CleanCommand.All.class
         }
 )
@@ -272,18 +273,29 @@ public class CleanCommand extends BaseCommand {
             return "DNF cache volume (" + GuestProvisioning.DNF_CACHE_VOLUME + ") in pool " + pool;
         }
 
+        /** Delete it, or warn: for a clean the volume is only part of. */
         void delete() {
             try {
-                if (incus.deleteStorageVolume(pool, GuestProvisioning.DNF_CACHE_VOLUME)) {
-                    System.out.println("Deleted " + label());
-                }
+                deleteOrThrow();
+            } catch (IllegalStateException e) {
+                System.err.println("Warning: " + e.getMessage());
+            }
+        }
+
+        /** Delete it, or throw saying why: for {@code isx clean dnf}, whose whole job it is. */
+        void deleteOrThrow() {
+            try {
+                System.out.println(incus.deleteStorageVolume(pool, GuestProvisioning.DNF_CACHE_VOLUME)
+                        ? "Deleted " + label()
+                        : "The " + label() + " was already gone.");
             } catch (Exception e) {
-                var msg = e.getMessage();
-                if (msg != null && msg.toLowerCase().contains("in use")) {
-                    System.err.println("Warning: could not clean DNF cache volume — it is in use by a running build. Try again after the build finishes.");
-                } else {
-                    System.err.println("Warning: could not clean DNF cache volume: " + msg);
-                }
+                var msg = reason(e);
+                var why = msg.toLowerCase().contains("in use")
+                        ? "it is in use by a running build. Try again after the build finishes."
+                        : msg;
+                var failure = new IllegalStateException("could not clean DNF cache volume: " + why);
+                failure.initCause(e);
+                throw failure;
             }
         }
     }
@@ -315,6 +327,47 @@ public class CleanCommand extends BaseCommand {
         static void clean(IncusClient incus, boolean dryRun, Predicate<String> confirm) throws IOException {
             cleanDirs(List.of(Environment.cacheDir()), false, dryRun, confirm, "cache", "Will delete:",
                     List.of(), "Proceed?", incus == null ? null : DnfCacheVolume.findOrWarn(incus));
+        }
+    }
+
+    @CommandDefinition(
+            name = "dnf",
+            description = "Remove only the DNF cache volume that builds share; the next build downloads its packages again",
+            generateHelp = true
+    )
+    public static class Dnf extends BaseCommand {
+
+        @Option(name = "dry-run", hasValue = false, description = "Show what would be deleted without deleting")
+        boolean dryRun;
+
+        @Option(name = "skip-confirmation", hasValue = false, description = "Skip the confirmation prompt")
+        boolean skipConfirmation;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            if (Platform.isMacOS() && !VmManager.isRunning()) {
+                System.err.println("Error: the DNF cache volume is in the VM, which is stopped. Start it with 'isx vm start'.");
+                return CommandResult.valueOf(1);
+            }
+            clean(RuntimeServices.incus(), dryRun, confirmation(skipConfirmation));
+            return CommandResult.SUCCESS;
+        }
+
+        /**
+         * Its whole job is this volume, so not being able to look for it or to delete it is an
+         * error (exit 1), never "nothing to clean".
+         */
+        static void clean(IncusClient incus, boolean dryRun, Predicate<String> confirm) {
+            var volume = DnfCacheVolume.find(incus);
+            if (volume == null) {
+                System.out.println("Nothing to clean — no DNF cache volume found.");
+                return;
+            }
+            System.out.println(dryRun ? "Would delete:" : "Will delete:");
+            System.out.println("  " + volume.label());
+            if (dryRun) return;
+            System.out.println();
+            if (confirm.test("Proceed?")) volume.deleteOrThrow();
         }
     }
 
