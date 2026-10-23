@@ -23,6 +23,8 @@ Styled text anywhere, a command included, goes through the public `BuildOutput.s
 An AI answer never reaches the terminal raw (#1413): `TerminalLink.plainText` turns what `OutputFormat.isControl` names into spaces, line feeds and tabs apart.
 `TerminalLink.parseSegments` and `linkify` pass the text around a link through it, and `isx ask` prints a chunk through it off a terminal.
 An AI request's error goes through `OutputFormat.oneLine`: `AiHelpClient` passes a provider's text through it, and AI Help every error it shows.
+A build step's label quotes definition text too (#1610): `RepoCloner.repoDisplayName`, `BuildProgress`'s step runners (`runWithSpinner`, `runDnf`, `runLiveStep`) and its shared renderers (`formatStepLine`, with the dim context, and `plainStepLine`) pass it through `oneLine`.
+So step lines and output headers show a repository's URL or a COPR name as text.
 Output captured from a guest command is someone else's text too (#1588).
 `BuildOutput.guestText` is how such output is shown: complete control strings (OSC, DCS, APC and the like), control sequences and other escapes dropped, each line's last text a carriage return left, then `TerminalLink.plainText`.
 Its one pattern ends a control string at the next escape or introducer, as a terminal does, so a guest's long line costs linear time, never a stall.

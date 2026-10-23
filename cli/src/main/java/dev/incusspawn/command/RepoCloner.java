@@ -15,6 +15,7 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalProgress;
 import dev.incusspawn.command.BuildProgress.StepProgress;
 import dev.incusspawn.command.BuildProgress.StepState;
@@ -326,25 +327,26 @@ class RepoCloner {
             // Complete guest authorization before any untrusted prime can alter the guest's Git/tools.
             // Only these short remote checks synchronize; slow host preparation never gates other primes.
             var accessChecked = new java.util.concurrent.CountDownLatch(repos.size());
+            var labels = repos.stream().map(RepoCloner::repoDisplayName).toList();
             try {
                 TerminalProgress.run(repos.size(), repos.size(),
                         idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
                                 limiter, referencesDetached, mounts, accessChecked),
-                        (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
+                        (idx, frame) -> formatStepLine(labels.get(idx),
                                 repos.get(idx).sourceDescription(), states.get(idx), frame, "Ready"),
-                        idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
+                        idx -> plainStepLine(labels.get(idx), states.get(idx), "Ready", "prepare"),
                         System.out::println);
             } finally {
                 // Phase 3 (serial): remove any reference a worker could not detach.
                 mounts.removeLeftovers();
             }
 
-            preparationTimings.forEach((idx, timing) -> BuildOutput.note(repoDisplayName(repos.get(idx)) + ": " + timing));
+            preparationTimings.forEach((idx, timing) -> BuildOutput.note(labels.get(idx) + ": " + timing));
             // isx's words, then Git's quoted: the step lines hold one line each.
-            preparationFailures.forEach((idx, failed) -> BuildOutput.warn(repoDisplayName(repos.get(idx))
+            preparationFailures.forEach((idx, failed) -> BuildOutput.warn(labels.get(idx)
                     + ": " + failed.getMessage() + (repos.get(idx).isHostSource() ? "." : "; falling back to a clone in the guest."),
                     failed.details().toArray(String[]::new)));
-            preparationNotRetained.forEach((idx, why) -> BuildOutput.warn(repoDisplayName(repos.get(idx)) + ": " + why));
+            preparationNotRetained.forEach((idx, why) -> BuildOutput.warn(labels.get(idx) + ": " + why));
 
             assertNoStepFailures(repos, states, "prepare");
             if (!hostSources.isEmpty()) HostRepoSources.record(incus, container.name(), hostSources);
@@ -698,9 +700,10 @@ class RepoCloner {
         }
     }
 
+    /** A repository's label, as text: a template, project-local included, decides its URL (#1610). */
     private static String repoDisplayName(ImageDef.RepoEntry repo) {
         var name = repo.sourceName();
-        return name.isEmpty() ? repo.sourceDescription() : name;
+        return OutputFormat.oneLine(name.isEmpty() ? java.util.Objects.requireNonNullElse(repo.sourceDescription(), "") : name);
     }
 
     /** Extract a concise error line from a failed git exec (stderr first, then stdout). */

@@ -59,9 +59,10 @@ final class BuildProgress {
      * records the outcome in {@code state[0]}; a DONE note is the whole completion line. On a
      * plain (non-ANSI) terminal the label is printed up front, since nothing animates there.
      */
-    static void runLiveStep(String label, java.util.function.Supplier<String> detail,
+    static void runLiveStep(String rawLabel, java.util.function.Supplier<String> detail,
                                     String failureMessage,
                                     Consumer<AtomicReferenceArray<StepProgress>> work) {
+        var label = OutputFormat.oneLine(rawLabel);  // it can hold definition text (#1610)
         var state = new AtomicReferenceArray<StepProgress>(1);
         state.set(0, StepProgress.running(""));
         if (!TerminalProgress.isAnsiTerminal()) BuildOutput.step(label + "...");
@@ -231,9 +232,10 @@ final class BuildProgress {
      * clears metadata and retries once with {@code --refresh}; if that also fails
      * the full captured output is printed and {@code failureMessage} thrown.
      *
-     * @param label the full phrase for the spinner line (e.g. "Installing base packages")
+     * @param rawLabel the full phrase for the spinner line (e.g. "Installing base packages")
      */
-    static void runDnf(Container container, String label, String failureMessage, String... args) {
+    static void runDnf(Container container, String rawLabel, String failureMessage, String... args) {
+        var label = OutputFormat.oneLine(rawLabel);  // it can hold definition text (#1610)
         var state = new AtomicReferenceArray<StepProgress>(1);
         state.set(0, StepProgress.running("", "starting"));
         var started = System.nanoTime();
@@ -347,8 +349,9 @@ final class BuildProgress {
      * the verb mid-flight. On a non-DONE result the captured log is printed to
      * stderr and {@code failureMessage} thrown.
      */
-    static void runWithSpinner(String activity, String label, String failureMessage,
+    static void runWithSpinner(String activity, String rawLabel, String failureMessage,
                                 Consumer<AtomicReferenceArray<StepProgress>> work) {
+        var label = OutputFormat.oneLine(rawLabel);  // it can hold definition text (#1610)
         var state = new AtomicReferenceArray<StepProgress>(1);
         state.set(0, StepProgress.running(activity));
         TerminalProgress.run(1, 1,
@@ -406,9 +409,12 @@ final class BuildProgress {
 
     /** Render one animated progress line, aligned across running/done/failed states.
      *  The running verb comes from the live state ({@code activity}) so a task can
-     *  advance through phases (e.g. Cloning → Priming) within one line. */
+     *  advance through phases (e.g. Cloning → Priming) within one line. The label and
+     *  context can quote definition text, such as a repository's URL, so they are shown as
+     *  text (#1610). */
     static String formatStepLine(String label, String dimContext, StepProgress progress, int frame,
                                  String doneWord) {
+        label = OutputFormat.oneLine(label);
         var runningWord = progress.activity() != null ? progress.activity() : "Working";
         var sb = new StringBuilder(BuildOutput.indent());
         switch (progress.state()) {
@@ -423,7 +429,7 @@ final class BuildProgress {
             sb.append("  \033[2m").append(progress.detail()).append("\033[0m"); // raw ANSI: animated line
         }
         if (dimContext != null && !dimContext.isEmpty()) {
-            sb.append(" \033[2m(").append(dimContext).append(")\033[0m"); // raw ANSI: animated line
+            sb.append(" \033[2m(").append(OutputFormat.oneLine(dimContext)).append(")\033[0m"); // raw ANSI: animated line
         }
         if (progress.state() == StepState.DONE && progress.note() != null && !progress.note().isEmpty()) {
             if (progress.noteHighlight()) {
@@ -439,6 +445,7 @@ final class BuildProgress {
     }
 
     static String plainStepLine(String label, StepProgress progress, String doneWord, String verb) {
+        label = OutputFormat.oneLine(label);
         if (progress.state() == StepState.DONE) {
             var line = BuildOutput.indent() + doneWord + " " + label;
             if (progress.note() != null && !progress.note().isEmpty()) line += " (" + progress.note() + ")";
