@@ -159,6 +159,29 @@ That holds even when the CLI died before the proxy started watching, and through
 An explicit pid, not "the parent I started with", is what makes that last case and the startup race work.
 Alternatives were a pipe on the child's stdin with exit on EOF, which a service's `/dev/null` stdin would trip unless it was also behind a flag, and `prctl(PR_SET_PDEATHSIG)`, which is Linux-only and not reachable from Java.
 
+A healthy `/health` does not say whose proxy answered (#1570).
+On a Mac two users share, one user's service retried its bind forever while the other user's `isx-proxy` held the fixed ports.
+`isx proxy install` reported success, and that user's instances reached the other user's CA, config and credentials.
+`ProxyHolder` compares the pid `/health` reports (to host callers only) with the active service's own: systemd's `MainPID`, or the `pid` of `launchctl print`.
+The answering proxy is the service's when it is that process or one of its descendants, which covers older units that exec `isx proxy start`.
+A service with no process owns nothing that answers.
+That covers launchd between two retries, and a systemd unit in auto-restart, which reports `activating` rather than `active`.
+A service that cannot bind spends most of its time there, so the check asks an installed service, not only an active one.
+The holder's owner comes from `ProcessHandle.info().user()`; an owner the host will not give is never called another user's.
+`isx proxy install`, `isx proxy start` and `isx proxy restart` fail when the answering proxy is not the service's, naming its version, pid and owner (`ProxyService.answeringIsTheService`).
+A holder of this user's gets up to ten seconds first, since a restarted service's previous process frees the health port last (#1219).
+`isx proxy install` refuses another user's holder before judging drift, which would be that user's.
+`isx proxy status` reports it with `pid`, `pid_owner` and `foreign_holder`, and exits 4 only when another user owns it, since 0 means instances can use the proxy.
+`isx doctor` fails on another user's holder and warns on an orphan of this user's.
+With another user's holder, status and doctor leave out its drift and auth error, which are not this user's to fix.
+A holder owned by root is most likely this user's own `sudo isx proxy start`, so its remedy is `sudo kill`.
+The proxy's own bind wait names the holder too, and does not wait for another user's, which none of its restarts can end.
+It still exits 1, so the service manager keeps retrying, and binds once the ports are free.
+Killing another user's proxy is not offered as the fix: that user's service starts it again within a second.
+Only one proxy can serve a host while the ports are fixed, so the remedy is that user stopping their service.
+Offering to stop an orphan of the same user's from `isx proxy install` was left out: the command runs unattended from `install.sh`, and the report names the `kill` that does it.
+`install.sh` relinking a Homebrew prefix that other users share is a separate question, left for its own decision.
+
 The uber-jars are what JBang users actually run, and nothing else in CI executes them, which is how the inline fallback's removal went unnoticed for six weeks.
 The `uber-jar-smoke` job in `test-integration.yml` runs both jars on every PR and asserts the missing-`isx-proxy` path exits 78 with install instructions.
 
