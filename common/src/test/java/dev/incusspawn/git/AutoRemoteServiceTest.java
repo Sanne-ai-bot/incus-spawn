@@ -9,7 +9,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -78,7 +81,7 @@ class AutoRemoteServiceTest {
                 .thenReturn(instance("tpl-incus-spawn", ""));
 
         // Call AutoRemoteService.addRemotes - this should add the remote despite origin not matching
-        AutoRemoteService.addRemotes(incus, "test-instance");
+        AutoRemoteService.addRemotes(incus, "test-instance", message -> {}, warning -> {});
 
         // Verify: remote was added because upstream (not origin) matches the template repo
         var remotes = runGit(repoDir, "remote", "-v");
@@ -124,7 +127,7 @@ class AutoRemoteServiceTest {
         when(incus.instanceMetadataOrThrow("my-fix")).thenReturn(instance("tpl-cxf", ""));
 
         var messages = new ArrayList<String>();
-        AutoRemoteService.addRemotes(incus, "my-fix", messages::add);
+        AutoRemoteService.addRemotes(incus, "my-fix", messages::add, warning -> {});
 
         // All three host repos should have gotten the remote
         assertThat(messages).hasSize(3);
@@ -167,7 +170,7 @@ class AutoRemoteServiceTest {
         when(incus.instanceMetadataOrThrow("my-branch")).thenReturn(instance("tpl-cq", ""));
 
         var messages = new ArrayList<String>();
-        AutoRemoteService.addRemotes(incus, "my-branch", messages::add);
+        AutoRemoteService.addRemotes(incus, "my-branch", messages::add, warning -> {});
 
         assertThat(messages).hasSize(1);
         var remotes = runGit(repoDir, "remote", "-v");
@@ -175,6 +178,53 @@ class AutoRemoteServiceTest {
                 .contains("my-branch")
                 .contains("isx://my-branch/home/agentuser/camel-quarkus");
     }
+
+    @Test
+    void anExistingRemoteIsReportedThroughTheCallersWarningSink() throws Exception {
+        // The TUI adds remotes while it draws, where a line on stderr scrambles the screen (#1624).
+        var repoDir = existingRemoteFixture("/home/agentuser/app");
+        var incus = mock(IncusClient.class);
+        when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("tpl-app", ""));
+
+        var output = new ArrayList<String>();
+        var warnings = new ArrayList<String>();
+        var stderr = new ByteArrayOutputStream();
+        var originalErr = System.err;
+        try {
+            System.setErr(new PrintStream(stderr, true, StandardCharsets.UTF_8));
+            AutoRemoteService.addRemotes(incus, "work", output::add, warnings::add);
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        assertThat(stderr.toString(StandardCharsets.UTF_8)).isEmpty();
+        assertThat(output).isEmpty();
+        assertThat(warnings).containsExactly("remote 'work' already exists in " + repoDir
+                + "; to add it manually: git -C " + repoDir + " remote add <name> isx://work/home/agentuser/app");
+    }
+
+    /** A host checkout of a template's repository that already has a remote named {@code work}. */
+    private Path existingRemoteFixture(String containerPath) throws Exception {
+        var repoDir = tempDir.resolve("src/app");
+        repoDir.toFile().mkdirs();
+        runGit(repoDir, "init");
+        runGit(repoDir, "remote", "add", "origin", "https://github.com/owner/app.git");
+        runGit(repoDir, "remote", "add", "work", "https://example.com/other.git");
+        var configDir = tempDir.resolve(".config/incus-spawn");
+        configDir.toFile().mkdirs();
+        Files.writeString(configDir.resolve("config.yaml"), "host-path: \"" + tempDir.resolve("src") + "\"");
+        var imagesDir = configDir.resolve("images");
+        imagesDir.toFile().mkdirs();
+        Files.writeString(imagesDir.resolve("app.yaml"), """
+                name: tpl-app
+                parent: tpl-minimal
+                repos:
+                  - url: https://github.com/owner/app.git
+                    path: "%s"
+                """.formatted(containerPath));
+        return repoDir;
+    }
+
     private static io.hyperfoil.tools.jjq.value.JqValue instance(String template, String sources) {
         return io.hyperfoil.tools.jjq.value.JqValues.fromJavaObject(
                 java.util.Map.of("config", java.util.Map.of(Metadata.PARENT, template,
@@ -191,7 +241,7 @@ class AutoRemoteServiceTest {
         var incus = mock(IncusClient.class);
         var sources = io.hyperfoil.tools.jjq.value.JqValues.serialize(io.hyperfoil.tools.jjq.value.JqValues.fromJavaObject(java.util.Map.of("/home/agentuser/private", host.toString())));
         when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("missing-template", sources));
-        AutoRemoteService.addRemotes(incus, "work", message -> {});
+        AutoRemoteService.addRemotes(incus, "work", message -> {}, warning -> {});
         assertThat(runGit(host, "remote", "get-url", "work")).contains("isx://work/home/agentuser/private");
         // Cleanup follows the URL even if the user renamed the remote, and preserves other instances.
         runGit(host, "remote", "rename", "work", "renamed");

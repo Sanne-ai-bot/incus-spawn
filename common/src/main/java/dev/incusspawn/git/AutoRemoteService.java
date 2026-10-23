@@ -12,15 +12,18 @@ public final class AutoRemoteService {
 
     private AutoRemoteService() {}
 
-    public static void addRemotes(IncusClient incus, String instanceName) {
-        addRemotes(incus, instanceName, System.out::println);
+    public static void addRemotes(IncusClient incus, String instanceName, Consumer<String> output,
+                                  Consumer<String> warn) {
+        addRemotes(instanceName, incus.instanceMetadataOrThrow(instanceName), output, warn);
     }
 
-    public static void addRemotes(IncusClient incus, String instanceName, Consumer<String> output) {
-        addRemotes(instanceName, incus.instanceMetadataOrThrow(instanceName), output);
-    }
-
-    public static void addRemotes(String instanceName, JqValue instance, Consumer<String> output) {
+    /**
+     * Add a remote named {@code instanceName} in each host checkout of the instance's repositories.
+     * {@code output} reports what was added, {@code warn} what could not be: the TUI reaches this
+     * too, so neither prints to the terminal itself.
+     */
+    public static void addRemotes(String instanceName, JqValue instance, Consumer<String> output,
+                                  Consumer<String> warn) {
         var config = SpawnConfig.load();
         var cache = new GitRemoteUtils.ConfigCache();
         var metadata = instance.path("config");
@@ -29,9 +32,9 @@ public final class AutoRemoteService {
             try {
                 var host = Path.of(source.getValue());
                 HostRepoSources.remember(instanceName, host);
-                addRemoteInHostRepo(host, instanceName, source.getKey(), output, cache);
+                addRemoteInHostRepo(host, instanceName, source.getKey(), output, warn, cache);
             } catch (Exception e) {
-                output.accept("Warning: could not set up host-source remote: " + e.getMessage());
+                warn.accept("could not set up host-source remote: " + e.getMessage());
             }
         }
         if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
@@ -49,17 +52,17 @@ public final class AutoRemoteService {
                 var normalizedUrl = GitRemoteUtils.normalizeGitUrl(repo.getUrl());
                 var matchingDirs = urlIndex.getOrDefault(normalizedUrl, java.util.List.of());
                 for (var hostPath : matchingDirs) {
-                    addRemoteInHostRepo(hostPath, instanceName, repo.getPath(), output, cache);
+                    addRemoteInHostRepo(hostPath, instanceName, repo.getPath(), output, warn, cache);
                 }
             } catch (Exception e) {
-                System.err.println("Warning: could not set up git remote for " + repo.getUrl() + ": " + e.getMessage());
+                warn.accept("could not set up git remote for " + repo.getUrl() + ": " + e.getMessage());
             }
         }
     }
 
     private static void addRemoteInHostRepo(Path hostPath, String instanceName,
                                              String containerPath, Consumer<String> output,
-                                             GitRemoteUtils.ConfigCache cache) {
+                                             Consumer<String> warn, GitRemoteUtils.ConfigCache cache) {
         var isxUrl = containerPath.startsWith("/")
                 ? "isx://" + instanceName + containerPath
                 : "isx://" + instanceName + "/" + containerPath;
@@ -67,8 +70,8 @@ public final class AutoRemoteService {
         var hasRemote = cache.remotes(hostPath).stream()
                 .anyMatch(r -> r.name().equals(instanceName));
         if (hasRemote) {
-            System.err.println("Warning: remote '" + instanceName + "' already exists in " + hostPath);
-            System.err.println("  To add manually: git -C " + hostPath + " remote add <name> " + isxUrl);
+            warn.accept("remote '" + instanceName + "' already exists in " + hostPath
+                    + "; to add it manually: git -C " + hostPath + " remote add <name> " + isxUrl);
             return;
         }
 

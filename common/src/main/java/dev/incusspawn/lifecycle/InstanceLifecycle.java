@@ -926,7 +926,7 @@ public final class InstanceLifecycle {
         }
 
         if (instanceType == InstanceType.INSTANCE) {
-            AutoRemoteService.addRemotes(name, instance, BuildOutput::step);
+            AutoRemoteService.addRemotes(name, instance, BuildOutput::step, BuildOutput::warn);
 
             var buildSourceJson = instance.path("config").path(Metadata.BUILD_SOURCE).asText("");
             if (ZmxSocketForward.isZmxInstalled(buildSourceJson)) {
