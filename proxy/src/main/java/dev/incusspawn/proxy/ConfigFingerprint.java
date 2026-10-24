@@ -78,7 +78,7 @@ record ConfigFingerprint(Path configDir, List<Path> searchToolDirs, Map<Path, St
     }
 
     private static void stampConfigDir(Map<Path, Stamp> entries, Path configDir) {
-        stamp(entries, configDir.resolve("config.yaml"));
+        stamp(entries, SpawnConfig.file(configDir));
         stampToolFiles(entries, configDir.resolve("tools"));
     }
 

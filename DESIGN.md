@@ -1799,6 +1799,10 @@ A failed connect drops the cached address (a connect timeout cut short to fit a 
 Hashing a large artifact happens outside the lock, re-checked under it against the file's identity, so it does not stall other artifacts in the same stripe.
 The benchmark (`bench/run.sh --load=maven`) points Central at a loopback stub through `ISX_BENCH_UPSTREAM`, since a confirmed hit makes a `HEAD` (with the default tiers, the benchmark's warm hits are fresh and make none).
 The end-to-end tests use the same hook.
+The model-call loads (`--load=anthropic|vertex`) point the Messages API and Vertex at the same stub, and run the proxy on Claude accounts of their own.
+`ISX_BENCH_CONFIG` names the file it reads instead of `config.yaml` (`SpawnConfig.useBenchFile`), so a benchmark never edits the user's file.
+The CA, the credential proofs and the rest of the configuration directory stay the user's, so the instance the load comes from proves itself as any other does.
+Nothing but `bench/run.sh` sets it, and the proxy refuses to start when it names no file.
 Accepted residual risk: an artifact corrupted on disk while its sidecar is intact is served until the client's own checksum check fails.
 Caches written before this (`~/.cache/incus-spawn/maven`, `gradle`) were stored unverified; the roots moved to `maven-verified`/`gradle-verified` and the proxy deletes the old ones on start.
 
