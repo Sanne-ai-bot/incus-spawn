@@ -258,6 +258,10 @@ bench/run.sh --label "before-my-change"   # Tag results for comparison
 Requires Oracle GraalVM with `native-image`, a running Incus daemon, and a working `isx init` setup.
 Results are saved as JSON to `bench/results/` and automatically compared with the previous run.
 Use this before and after changes to the proxy, Vert.x configuration, or native image settings to catch regressions.
+`--load=anthropic` and `--load=vertex` drive streamed model calls from Hyperfoil inside an instance branched from `tpl-isx-bench` (`bench/.incus-spawn/images/`), since the proxy injects only for a caller it knows by address and proof.
+They answer from `UpstreamStub.java`, on a config of the run's own (`ISX_BENCH_CONFIG`), never the user's.
+`--proxy=BIN`/`--cli=BIN` measure binaries built elsewhere, for an A/B of build flags.
+`bench/pgo-collect.sh` collects the PGO profiles of docs/dev/PGO.md (#1636, not yet on `main`) from instrumented builds: `run.sh --collect` once per load, then `cli.sh --collect`'s weighted flows, one gzipped `.iprof` per process.
 
 `bench/cli.sh` times `isx` commands against live Incus, JVM and native (`--runtime=both|jvm|native`), on a throwaway instance it branches and destroys itself.
 It also covers the preparation `isx shell` does before attaching a terminal, via `isx run <instance> --action=<unknown>`, and time to a usable prompt for `isx shell` and a full `isx branch --shell`, run on a pseudo-terminal that types a marker command.

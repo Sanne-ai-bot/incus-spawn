@@ -89,7 +89,7 @@ bench/run.sh --label "after"
 
 ## Load Profiles
 
-Three profiles, measuring genuinely different things. Picking the wrong one is how you get a
+Five profiles, measuring genuinely different things. Picking the wrong one is how you get a
 confident number that answers no question you actually had.
 
 | Mode | Endpoint | What it tells you |
@@ -97,6 +97,8 @@ confident number that answers no question you actually had.
 | `constant` (default) | `/health`, plain HTTP | Regression tripwire at 5,000 req/s |
 | `saturate` | `/health`, plain HTTP | HTTP server ceiling — no TLS, no body, no cache |
 | `maven` | intercepted HTTPS, cached artifact | **The workload containers actually generate** |
+| `anthropic` | intercepted HTTPS, streamed model calls | API-key injection, from inside an instance |
+| `vertex` | the same calls, translated for Vertex AI | The streaming body rewrite and the `gcloud` token |
 
 `constant` drives 5,000 req/s, roughly 3% of what `/health` can serve. Cheap, but structurally
 blind to throughput: a faster and a slower proxy both report ~5,000 req/s at 100% success.
@@ -134,6 +136,78 @@ measure serving from disk. To measure confirmed hits, each with one loopback `HE
 from before the stub, are not comparable. The stub speaks only HTTP/1.1, so these `HEAD`s take the proxy's HTTP/1.1 fallback rather than the HTTP/2 it uses against Central. It needs `java` and `keytool` from JDK 21 or later (the stub uses virtual threads).
 
 Results record `loadMode`, and the delta table only ever compares runs of the same mode.
+
+### Model calls (`anthropic`, `vertex`)
+
+The credential paths: header injection for an API key, and for Vertex the streaming translation
+of the body into `:streamRawPredict` plus the token from `gcloud`. Each call is a streamed
+Messages request of about 45 KiB written by `messages-body.py`, shaped like one of Claude Code's
+(a cached system prompt, two dozen tool definitions with some `strict`, a conversation with tool
+calls), and the reply is a stream of server-sent events. The ladder stops at 32 concurrent: model
+calls are few and large.
+
+The proxy injects a credential only for a caller it knows by address and proof, so the load
+cannot come from the host. `run.sh` branches a throwaway instance from `tpl-isx-bench` with the
+CLI under test (through the proxy under test, which delivers its proofs), copies Hyperfoil into
+it and drives it there over `incus exec`. So these two modes are Linux only, and need the
+template, built once from this directory:
+
+```shell
+(cd bench && isx build tpl-isx-bench --yes)   # bench/.incus-spawn/images/isx-bench.yaml
+bench/run.sh --load=anthropic
+bench/run.sh --load=vertex
+```
+
+Nothing real is called, and no account of yours is used. While the run's proxy serves, the
+Claude calls of your other running instances reach the stub too, and get its canned reply. `UpstreamStub.java` answers for
+`api.anthropic.com` and `us-east5-aiplatform.googleapis.com` and refuses (401) any call without
+the credential the proxy should have injected, so a run whose injection broke shows as errors,
+and one call is checked before the load starts. The proxy runs on a config of the run's own,
+one Claude account (`ISX_BENCH_CONFIG`, read instead of `config.yaml`, which is never touched),
+and a `gcloud` stand-in on its `PATH` hands it the token the stub expects.
+
+## Measuring Binaries Built Elsewhere
+
+`--proxy=BIN` and `--cli=BIN` (both scripts take `--cli`) measure those binaries and build
+nothing, which is how two builds of one commit with different flags are compared: build each,
+copy the runners aside, and alternate runs of the two.
+
+```shell
+bench/run.sh --load=anthropic --proxy=/tmp/a/isx-proxy --cli=/tmp/a/isx --label=a
+bench/run.sh --load=anthropic --proxy=/tmp/b/isx-proxy --cli=/tmp/b/isx --label=b
+```
+
+## PGO Profile Collection (`pgo-collect.sh`)
+
+The workloads [docs/dev/PGO.md](https://github.com/Sanne/incus-spawn/blob/d2d84713f6913f5a74128eb74f4884e8473063c0/docs/dev/PGO.md) (#1636) collects profiles from, against
+instrumented builds of both binaries. Linux only, with the proxy service stopped:
+
+```shell
+mvn package -Dnative -DskipTests -Dnative.optimization=-O3,--pgo-instrument \
+    -Dquarkus.native.additional-build-args-append=-H:+ParseRuntimeOptions
+cp cli/target/incus-spawn-*-runner /tmp/isx-instr
+cp proxy/target/incus-spawn-proxy-*-runner /tmp/isx-proxy-instr
+systemctl --user stop incus-spawn-proxy
+bench/pgo-collect.sh --proxy=/tmp/isx-proxy-instr --cli=/tmp/isx-instr --out=/tmp/pgo
+```
+
+It builds `tpl-isx-bench` if it is missing, then runs `run.sh --collect` once per load (`maven`,
+`saturate`, `anthropic`, `vertex`) and `cli.sh --collect` with the instrumented proxy serving
+it. Every process writes one profile, gzipped: `proxy/proxy-<load>.iprof.gz`,
+`proxy/proxy-cli-flows.iprof.gz`, and `cli/cli-<flow>-<time>-<pid>.iprof.gz` (about a hundred).
+An optimized build takes them all, and their counts add up, so the mix of runs is the
+weighting. About six minutes on an 8-core host.
+
+`-H:+ParseRuntimeOptions` is needed because release builds turn runtime option parsing off,
+and without it every process would write `default.iprof` in its working directory, over the
+last one. `cli.sh --collect` puts a wrapper first on `PATH` that adds
+`-XX:ProfilesDumpFile` for each process, so the `isx` git's `git-remote-isx` and ssh's
+`ProxyCommand` start are profiled too, each under its flow. Its flows and their counts are at
+the top of its collection code: branch to a prompt, shells, a shell into a stopped instance,
+destroy (six cycles); `isx list` in each format; thirty `ssh <instance> true` and three 256 MiB
+`scp` each way through `isx ssh-proxy`; four rounds of clone, commit, push and fetch through
+`git-remote-isx`; four scripted TUI sessions; `--help` and `templates list` once. Nothing an
+instrumented binary does is timed or saved as a result: its numbers mean nothing.
 
 ## Comparing Two Toolchains
 
@@ -456,6 +530,11 @@ bench/
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
   proxy-maven.hf.yaml     # Cached-artifact ladder over TLS (--load=maven)
+  proxy-messages.hf.yaml  # Streamed model calls, run inside an instance (--load=anthropic|vertex)
+  messages-body.py        # Writes the model calls' request body
+  UpstreamStub.java       # Loopback stand-in for Central, the Messages API and Vertex
+  pgo-collect.sh          # PGO profile collection over run.sh and cli.sh
+  .incus-spawn/images/    # tpl-isx-bench, the template the model loads and collection branch
   README.md               # This file
   results/                # JSON result files (git-ignored)
     cli/                  # cli.sh results
