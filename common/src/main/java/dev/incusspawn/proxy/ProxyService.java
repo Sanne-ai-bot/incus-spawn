@@ -220,14 +220,15 @@ public final class ProxyService {
     }
 
     /**
-     * The proxy answering {@code info} when the service is active but that proxy is not its
-     * process (#1570), else null. Asks the service manager once, so only commands that report on
-     * the service call it, never the shell path.
+     * The proxy answering {@code info} when it is not the service's process (#1570), else null.
+     * With the service active, any proxy that is not its own; with it stopped or failed, only
+     * another user's, whose CA and credentials instances then reach, while one of this user's
+     * stays unreported, as before. Asks the service manager once, so only commands that report
+     * on the service call it, never the shell path.
      */
     public static ProxyHolder foreignHolder(ProxyHealthCheck.ProxyInfo info) {
         if (info == null || info.pid() <= 0) return null;
-        var servicePid = servicePid();
-        return servicePid < 0 ? null : ProxyHolder.notTheService(info, servicePid);
+        return ProxyHolder.forService(info, servicePid());
     }
 
     /**

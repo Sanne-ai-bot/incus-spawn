@@ -167,13 +167,14 @@ The answering proxy is the service's when it is that process or one of its desce
 A service with no process owns nothing that answers.
 That covers launchd between two retries, and a systemd unit in auto-restart, which reports `activating` rather than `active`.
 A service that cannot bind spends most of its time there, so the check asks an installed service, not only an active one.
+An installed service that is stopped or failed (`isx proxy stop`, a halt) has no process either, and then only another user's holder is reported, since instances reach its CA and credentials; one of this user's stays unreported, as before (`ProxyHolder.forService`).
 The holder's owner comes from `ProcessHandle.info().user()`; an owner the host will not give is never called another user's.
 `isx proxy install`, `isx proxy start` and `isx proxy restart` fail when the answering proxy is not the service's, naming its version, pid and owner (`ProxyService.answeringIsTheService`).
 A holder of this user's gets up to ten seconds first, since a restarted service's previous process frees the health port last (#1219).
-`isx proxy install` refuses another user's holder before judging drift, which would be that user's.
+`isx proxy install` refuses another user's holder before judging drift, which would be that user's, and reads the drift again after an upgrade restarted the service, so it never restarts the new proxy for the old one's drift.
 `isx proxy status` reports it with `pid`, `pid_owner` and `foreign_holder`, and exits 4 only when another user owns it, since 0 means instances can use the proxy.
 `isx doctor` fails on another user's holder and warns on an orphan of this user's.
-With another user's holder, status and doctor leave out its drift and auth error, which are not this user's to fix.
+With another user's holder, status and doctor leave out its drift and auth error, which are not this user's to fix; `--format` leaves `restart_helps` null too, so no script restarts a service that cannot take the ports.
 A holder owned by root is most likely this user's own `sudo isx proxy start`, so its remedy is `sudo kill`.
 The proxy's own bind wait names the holder too, and does not wait for another user's, which none of its restarts can end.
 It still exits 1, so the service manager keeps retrying, and binds once the ports are free.

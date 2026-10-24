@@ -363,6 +363,17 @@ class QueryCommandFormatTest {
         assertEquals(self, ownRecord.get("pid"));
         assertEquals(false, ownRecord.get("foreign_holder"));
 
+        // Another user's drift and auth error are not this user's to act on (review on #1613).
+        var theirs = new ProxyInfo("0.0.1", "old", "native", "ef:01", false, true, "upstream refused the token", 80914);
+        var theirRecord = ProxyCommand.Status.record(ProxyStatus.RUNNING, theirs, "10.166.11.1", true, "systemd", null);
+        assertNotNull(theirRecord.get("auth_error"), "the record carries the answering proxy's error until the holder is known");
+        ProxyCommand.Status.addHolder(theirRecord, theirs, true,
+                new dev.incusspawn.proxy.ProxyHolder(80914, "0.0.1", "runner", true));
+        assertNull(theirRecord.get("drift"));
+        assertNull(theirRecord.get("auth_error"));
+        assertNull(theirRecord.get("restart_helps"));
+        assertEquals("0.0.1", theirRecord.get("version"), "who answers is still described");
+
         // No service: nothing to be foreign to.
         var manual = ProxyCommand.Status.record(ProxyStatus.RUNNING, own, "10.166.11.1", false, "manual", null);
         ProxyCommand.Status.addHolder(manual, own, false, null);

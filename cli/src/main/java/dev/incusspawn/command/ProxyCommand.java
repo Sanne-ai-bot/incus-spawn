@@ -223,6 +223,13 @@ public class ProxyCommand extends BaseCommand {
             record.put("pid", answering == null ? null : answering.pid());
             record.put("pid_owner", answering == null ? null : answering.user());
             record.put("foreign_holder", serviceInstalled && answering != null ? holder != null : null);
+            if (holder != null && holder.otherUser()) {
+                // Another user's drift and auth error are theirs to act on, as in the table:
+                // restart_helps would invite a script to restart a service that cannot take the ports.
+                record.put("drift", null);
+                record.put("auth_error", null);
+                record.put("restart_helps", null);
+            }
         }
 
         /** The exit code of every format: 0 when instances can use the proxy, else 1, 2 or 3 by state. */
@@ -521,7 +528,11 @@ public class ProxyCommand extends BaseCommand {
                     holder.report(System.err::println);
                     return CommandResult.FAILURE;
                 }
-                ProxyService.upgradeIfNeeded();
+                // An upgrade restarts the service: the drift read above is then the old proxy's,
+                // and acting on it would restart the new one a second time.
+                if (ProxyService.upgradeIfNeeded()) {
+                    info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
+                }
                 if (ProxyService.reinstallIfChanged(incus, info)) {
                     BuildOutput.success("Proxy service restarted with updated binary.");
                 } else {
