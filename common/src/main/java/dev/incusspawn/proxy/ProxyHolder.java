@@ -17,6 +17,11 @@ import java.util.function.LongFunction;
  */
 public record ProxyHolder(long pid, String version, String user, boolean otherUser) {
 
+    /** {@code otherUser} only ever with a known owner, whoever builds the record. */
+    public ProxyHolder {
+        otherUser = otherUser && user != null;
+    }
+
     /** How deep to walk a holder's ancestry looking for the service's process. */
     private static final int MAX_ANCESTRY = 8;
 
@@ -47,7 +52,7 @@ public record ProxyHolder(long pid, String version, String user, boolean otherUs
      * answers is not it.
      */
     public static ProxyHolder notTheService(ProxyHealthCheck.ProxyInfo info, long servicePid) {
-        return notTheService(info, servicePid, Processes.HOST, System.getProperty("user.name"));
+        return notTheService(info, servicePid, Processes.HOST, self());
     }
 
     static ProxyHolder notTheService(ProxyHealthCheck.ProxyInfo info, long servicePid,
@@ -56,6 +61,23 @@ public record ProxyHolder(long pid, String version, String user, boolean otherUs
         if (info == null || info.pid() <= 0) return null;
         if (servicePid > 0 && descendsFrom(info.pid(), servicePid, processes)) return null;
         return of(info, processes, self);
+    }
+
+    /**
+     * The holder answering {@code info} as {@link ProxyService#foreignHolder} reports it, given
+     * the service's process: with one ({@code servicePid} 0 or more), as {@link #notTheService};
+     * with the service stopped or failed (-1), only another user's.
+     */
+    public static ProxyHolder forService(ProxyHealthCheck.ProxyInfo info, long servicePid) {
+        return forService(info, servicePid, Processes.HOST, self());
+    }
+
+    static ProxyHolder forService(ProxyHealthCheck.ProxyInfo info, long servicePid,
+                                  Processes processes, String self) {
+        if (servicePid >= 0) return notTheService(info, servicePid, processes, self);
+        if (info == null || info.pid() <= 0) return null;
+        var holder = of(info, processes, self);
+        return holder.otherUser() ? holder : null;
     }
 
     /** What is known about the proxy answering {@code info}, which must report its pid. */
@@ -67,7 +89,12 @@ public record ProxyHolder(long pid, String version, String user, boolean otherUs
     /** The holder of the ports a proxy of this user's could not bind, as {@link #of} describes it. */
     public static ProxyHolder answering(ProxyHealthCheck.ProxyInfo info) {
         if (info == null || info.pid() <= 0) return null;
-        return of(info, Processes.HOST, System.getProperty("user.name"));
+        return of(info, Processes.HOST, self());
+    }
+
+    /** This process's user, from the same lookup as a holder's owner, so the two compare alike. */
+    private static String self() {
+        return ProcessHandle.current().info().user().orElse(System.getProperty("user.name"));
     }
 
     private static boolean descendsFrom(long pid, long ancestor, Processes processes) {
@@ -99,7 +126,7 @@ public record ProxyHolder(long pid, String version, String user, boolean otherUs
 
     /** How the holder ends, for {@link #report} and {@code isx doctor}. */
     public String remedy() {
-        if (otherUser && user.equals("root")) {
+        if (otherUser && "root".equals(user)) {
             // Most likely this user's own, started with sudo: root has no proxy service.
             return "It runs as root: stop it with 'sudo kill " + pid + "'; the service takes the ports once it is gone.";
         }

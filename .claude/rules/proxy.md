@@ -378,6 +378,7 @@ Key design:
 - **The proxy that answers may not be the service's (#1570)**: `/health` passes for any proxy on the fixed ports, another user's included.
   `ProxyHolder.notTheService` compares the pid `/health` reports with `ProxyService.servicePid()` (`MainPID`, or `launchctl print`'s `pid`) and its descendants; a service with no process owns nothing.
   `servicePid()` counts a unit in auto-restart (`activating`) as meaning to run: a unit that cannot bind waits there, where `isActive()` is false.
+  With the service stopped or failed (`servicePid()` -1), `ProxyHolder.forService` reports only another user's holder.
   Every path that reports the service running asks `ProxyService.answeringIsTheService` after its health wait: `install()` on both platforms, `isx proxy install`, `isx proxy start` and `isx proxy restart`.
   `isx proxy status` adds `pid`, `pid_owner` and `foreign_holder`, exiting 4 for another user's holder; `isx doctor` has a "Proxy ownership" finding.
   The proxy's bind wait (`bindWaitingForOldProxy`) names the holder and throws at once for another user's, never waiting for it.

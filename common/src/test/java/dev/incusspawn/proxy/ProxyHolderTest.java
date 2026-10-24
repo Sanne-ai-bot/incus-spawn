@@ -93,4 +93,32 @@ class ProxyHolderTest {
         var table = new Table(Map.of(5L, 4L, 4L, 1L), Map.of(5L, SELF));
         assertNotNull(ProxyHolder.notTheService(answering(5), 1, table, SELF));
     }
+
+    @Test
+    void anotherUsersProxyIsReportedWhileTheServiceIsStopped() {
+        // Installed but inactive or failed (`isx proxy stop`, a halt): instances still reach the
+        // other user's CA and credentials, so status and doctor must not pass (review on #1613).
+        var table = new Table(Map.of(80914L, 1L), Map.of(80914L, "runner", 4242L, SELF));
+        var holder = ProxyHolder.forService(answering(80914), -1, table, SELF);
+        assertNotNull(holder);
+        assertTrue(holder.otherUser());
+        // This user's own, or one whose owner is unknown, stays unreported there, as before.
+        assertNull(ProxyHolder.forService(answering(4242), -1, table, SELF));
+        assertNull(ProxyHolder.forService(answering(5555), -1, table, SELF));
+        assertNull(ProxyHolder.forService(answering(-1), -1, table, SELF));
+    }
+
+    @Test
+    void withAProcessTheServiceRuleIsNotTheServices() {
+        var table = new Table(Map.of(6710L, 1L), Map.of(6710L, SELF));
+        assertNull(ProxyHolder.forService(answering(6710), 6710, table, SELF));
+    }
+
+    @Test
+    void anOwnerlessHolderIsNeverAnotherUsers() {
+        // However the record is built: otherUser needs a known owner, and remedy() must not throw.
+        var holder = new ProxyHolder(42, "0.3.12", null, true);
+        assertFalse(holder.otherUser());
+        assertTrue(holder.remedy().contains("ps -o user"), holder.remedy());
+    }
 }
