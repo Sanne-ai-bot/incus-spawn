@@ -360,6 +360,12 @@ runs (default 20), reported as median, p90 and min:
 | `prepareRunning` | `isx run <instance> --action=<unknown>` | Everything `isx shell` does before attaching a terminal: instance checks, proxy health, IP/CA/resolv.conf repair |
 | `shellToPrompt` | `isx shell <instance>` | What a user waits for: from launch until the shell inside the running instance runs a command |
 | `branchToPrompt` | `isx branch <new> --from <template> --shell` | A full branch to a usable prompt: copy, start, runtime setup, CA/resolv.conf repair, identity reconcile, attach. `--branch-runs` samples (default 3), each destroyed afterwards |
+| `sshTrue` | `ssh <instance> true`, `isx ssh-proxy` as ProxyCommand | A short SSH connection: the ProxyCommand's start and its exec into the instance |
+| `scpUpload` | `scp` of 256 MiB, the same way | The relay's sustained throughput: every byte passes through the CLI. Three samples; also reported as `mibPerSec` |
+
+The two relay operations need sshd in the instance, so they run only when `--from` has the
+`sshd` tool (`tpl-isx-bench` does; `tpl-minimal` does not, and they are then skipped). They use
+an instance of their own, branched so that it starts, since only such a branch gets the SSH key.
 
 The two `ToPrompt` operations run on a pseudo-terminal and type
 `echo ISXBENCH_$((6*7))_READY; exit` straight away. The line waits in the terminal's input
@@ -389,6 +395,24 @@ This is for comparing before and after on one machine, not for gating PRs. The d
 check is `InstanceLifecycleRequestBudgetTest` in `mvn test`, which pins how many Incus round
 trips a flow makes: an extra round trip is the usual cause of a CLI latency regression, and
 counting requests needs neither timing nor a daemon.
+
+## Interleaved A/B of Builds (`ab.py`)
+
+`ab.py` runs `run.sh` or `cli.sh` over several builds of one commit, round after round, with
+the order reversed every other round (A B, B A, ...), so drift over the session falls on every
+build alike. The first build named is the baseline. It prints the median of the rounds per
+metric with the delta against the baseline, and writes them with every run's result file to
+`bench/results/ab/`.
+
+```shell
+systemctl --user stop incus-spawn-proxy
+python3 -I bench/ab.py proxy --rounds=3 --cli=/tmp/isx o3=/tmp/proxy-o3 pgo=/tmp/proxy-pgo
+systemctl --user start incus-spawn-proxy   # its build must match the CLIs'
+python3 -I bench/ab.py cli --rounds=3 os=/tmp/isx-os o3pgo=/tmp/isx-o3pgo ospgo=/tmp/isx-ospgo
+```
+
+`proxy` runs every load in `--loads` (default `maven,saturate,anthropic,vertex`) per build per
+round; `cli` runs `cli.sh` from `--from` (default `tpl-isx-bench`, so the relays are measured).
 
 ## Claude Code's First Screen (`claude-start.sh`)
 
@@ -534,6 +558,7 @@ bench/
   messages-body.py        # Writes the model calls' request body
   UpstreamStub.java       # Loopback stand-in for Central, the Messages API and Vertex
   pgo-collect.sh          # PGO profile collection over run.sh and cli.sh
+  ab.py                   # Interleaved A/B of builds over run.sh or cli.sh
   .incus-spawn/images/    # tpl-isx-bench, the template the model loads and collection branch
   README.md               # This file
   results/                # JSON result files (git-ignored)
