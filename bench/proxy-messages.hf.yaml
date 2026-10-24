@@ -1,0 +1,44 @@
+# Model calls as Claude Code makes them: a streamed Messages request of about 45 KiB (system
+# prompt, tool definitions, a conversation), answered by the upstream stub. Run from inside a
+# throwaway instance by bench/run.sh --load=anthropic|vertex, which writes the body and passes
+# the instance's own proof: the proxy injects the account's key, or translates the call for
+# Vertex, exactly as for an agent in a box. Model calls are few and large, so the ladder stays
+# at the concurrency of a few agents.
+name: proxy-messages
+http:
+  host: https://api.anthropic.com
+  sharedConnections: 32
+phases:
+- warmup:
+    always:
+      users: 4
+      duration: 5s
+      isWarmup: true
+      scenario: &call
+      - call:
+        - httpRequest:
+            POST: /v1/messages
+            headers:
+              x-api-key: !param PROOF
+              anthropic-version: "2023-06-01"
+              content-type: application/json
+            body:
+              fromFile: messages.json
+- c004:
+    always:
+      users: 4
+      duration: 10s
+      startAfter: warmup
+      scenario: *call
+- c016:
+    always:
+      users: 16
+      duration: 10s
+      startAfter: c004
+      scenario: *call
+- c032:
+    always:
+      users: 32
+      duration: 10s
+      startAfter: c016
+      scenario: *call

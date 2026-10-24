@@ -1,0 +1,11 @@
+# The template bench/run.sh and bench/cli.sh branch their throwaway instances from: a JVM for the
+# load generator the model loads run inside an instance, and an SSH server for the ssh-proxy flows.
+# Build it from bench/:  isx build tpl-isx-bench --yes
+name: tpl-isx-bench
+description: For bench/ only (load generator JVM, sshd)
+parent: tpl-minimal
+packages:
+  - java-25-openjdk-headless
+  - tar
+tools:
+  - sshd

@@ -19,9 +19,9 @@ PROMPT_MARKER = b"ISXBENCH_42_READY"
 ANSI = re.compile(rb"\x1b(\[[0-9;?<>=]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)|[@-Z\\-_])")
 
 
-def run_to_prompt(cmd, timeout_s):
+def run_to_prompt(cmd, timeout_s, env=None):
     """Milliseconds until the shell in the instance runs a typed line, which then exits it."""
-    return run_on_pty(cmd, timeout_s, lambda out: PROMPT_MARKER in out, typed=PROMPT_INPUT)[0]
+    return run_on_pty(cmd, timeout_s, lambda out: PROMPT_MARKER in out, typed=PROMPT_INPUT, env=env)[0]
 
 
 def run_to_screen(cmd, timeout_s, pattern, quit_keys=(b"\x03", b"\x03")):
@@ -41,10 +41,10 @@ def run_typed(cmd, timeout_s, typed, marker):
     return run_on_pty(cmd, timeout_s, lambda out: marker in out, typed=typed)[1]
 
 
-def run_on_pty(cmd, timeout_s, done, typed=b"", quit_keys=()):
+def run_on_pty(cmd, timeout_s, done, typed=b"", quit_keys=(), env=None):
     master, slave = os.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
-    child_env = dict(os.environ, TERM="xterm-256color")
+    child_env = dict(os.environ if env is None else env, TERM="xterm-256color")
     # Inside tmux, isx renames the window and the instance may attach tmux itself; neither
     # belongs in a measurement, and the user's own tmux must not be touched.
     child_env.pop("TMUX", None)
