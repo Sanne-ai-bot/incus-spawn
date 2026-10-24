@@ -1,5 +1,6 @@
 package dev.incusspawn.ssh;
 
+import dev.incusspawn.Warnings;
 import dev.incusspawn.util.HostLock;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -9,6 +10,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -251,5 +254,32 @@ class SshKeyManagerTest {
         return (state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING)
                 && Arrays.stream(thread.getStackTrace())
                         .anyMatch(frame -> frame.getClassName().equals(HostLock.class.getName()));
+    }
+
+    @Test
+    void removingAnInstanceWithoutAHostBlockLeavesTheConfigAlone() throws IOException {
+        SshKeyManager.addHostEntry("with-ssh");
+        var config = tempDir.resolve(".config/incus-spawn/ssh/config");
+        var before = FileTime.fromMillis(0);
+        Files.setLastModifiedTime(config, before);
+
+        SshKeyManager.cleanupInstance("without-ssh");
+
+        assertEquals(before, Files.getLastModifiedTime(config), "the config must not be rewritten");
+    }
+
+    @Test
+    void aHostBlockThatCannotBeWrittenIsReportedAsAWarning() throws IOException {
+        // A file where the managed directory should be: the config cannot be created.
+        Files.createDirectories(tempDir.resolve(".config/incus-spawn"));
+        Files.writeString(tempDir.resolve(".config/incus-spawn/ssh"), "");
+        var warnings = new ArrayList<String>();
+
+        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+            assertFalse(SshKeyManager.addHostEntry("test-instance"));
+        }
+
+        assertEquals(1, warnings.size(), "the TUI's warning log, not stderr, must get it: " + warnings);
+        assertTrue(warnings.getFirst().startsWith("Failed to update SSH config"), warnings.getFirst());
     }
 }

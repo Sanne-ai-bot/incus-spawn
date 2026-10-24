@@ -152,7 +152,7 @@ public final class SshKeyManager {
             writeAtomically(resolvedConfig, newContent);
             return true;
         } catch (IOException e) {
-            System.err.println("  Warning: failed to update ~/.ssh/config: " + e.getMessage());
+            Warnings.warn("Failed to update ~/.ssh/config: " + e.getMessage());
             return false;
         }
     }
@@ -202,7 +202,7 @@ public final class SshKeyManager {
             blocks.add("    UserKnownHostsFile /dev/null");
             blocks.add("");
 
-            writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
+            writeIfChanged(content, String.join("\n", blocks));
             return true;
         } catch (IOException | HostLock.HostLockException e) {
             Warnings.warn("Failed to update SSH config: " + e.getMessage());
@@ -219,9 +219,17 @@ public final class SshKeyManager {
             var content = Files.readString(Environment.sshConfigFile());
             afterConfigRead.run();
             var blocks = parseWithoutHostBlocks(content, instanceName);
-            writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
+            writeIfChanged(content, String.join("\n", blocks));
         } catch (IOException | HostLock.HostLockException e) {
             Warnings.warn("Failed to update SSH config: " + e.getMessage());
+        }
+    }
+
+    /** Write the managed config only when it changes, so destroying an instance without a Host block leaves it alone. */
+    private static void writeIfChanged(String content, String updated) throws IOException {
+        // Removing drops the trailing newline adding writes, which is no change to ssh.
+        if (!updated.stripTrailing().equals(content.stripTrailing())) {
+            writeAtomically(Environment.sshConfigFile(), updated);
         }
     }
 
