@@ -161,6 +161,59 @@ Interleaved A/B/A/B, 60 pairs, so drift hits both variants equally:
 `-O3` buys ~216 µs of startup for +41 MB. Verdict: **keep `-Os`.** A CLI invocation cannot
 perceive 216 µs, and 41 MB is a real download and disk cost for users.
 
+## Profile-guided optimization (issue #1637)
+
+The plan is [docs/dev/PGO.md](https://github.com/Sanne/incus-spawn/blob/d2d84713f6913f5a74128eb74f4884e8473063c0/docs/dev/PGO.md), from #1636. Outcomes of each phase are recorded here as it runs.
+
+### Phase 0, finished 2026-10-24
+
+Linux x86_64 VM, 8 cores (AMD Ryzen 9 9950X3D2 host), Oracle GraalVM 25.4.4.1.1, commit `77c5f656`.
+
+| What | Result |
+|---|---|
+| Release builds today | proxy 99,290,400 B (`-O3`), CLI 37,948,488 B (`-Os`) |
+| Instrumented builds | proxy 148 MB in 91 s, CLI 132 MB in 94 s |
+| Proxy stopped with SIGTERM | dumps its profile (12 MB), as a clean exit does |
+| CLI profile, one process | 6.3 MB, 1.2 MB gzipped |
+
+The sizes the plan quotes (86 MB, 30 MB) predate this commit; today's are above.
+
+One thing the plan did not foresee: release builds pass `-H:-ParseRuntimeOptions`, so an
+instrumented binary ignores `-XX:ProfilesDumpFile` (the CLI even takes it for an argument) and
+every process writes `default.iprof` in its working directory, over the previous one. The
+instrumented builds therefore append `-H:+ParseRuntimeOptions`
+(`-Dquarkus.native.additional-build-args-append`, which lands after the property list). The
+optimized build keeps the release's `-H:-ParseRuntimeOptions`.
+
+### Phase 1, workloads (2026-10-24)
+
+`bench/pgo-collect.sh` runs them (bench/README.md, "PGO Profile Collection"): about six
+minutes on the host above, 5 proxy profiles (11 MB gzipped) and 111 CLI profiles (141 MB).
+The credential paths now have loads of their own, `--load=anthropic` and `--load=vertex`,
+which answers open question 1 below once phase 2 measures them.
+
+A first look at what the profiles do, one optimized build each from that collection
+(`--pgo` over every file of a side, `-O3`), single runs, so indicative only until phase 2's
+interleaved A/B:
+
+| | Release build | PGO build |
+|---|---|---|
+| Proxy binary | 99,290,400 B | 42,077,472 B |
+| Proxy profile applicability / relevance | | 20.01% / 97.69% |
+| Proxy idle RSS, `--load=maven` | 60,340 KB | 35,964 KB |
+| Proxy peak RSS, `--load=maven` | 119,612 KB | 79,700 KB |
+| Proxy `--load=maven`, c008 | 290 req/s | 343 req/s |
+| Proxy `--load=anthropic`, c004 | 2,889 req/s | 4,050 req/s |
+| Proxy `--load=vertex`, c004 | 1,596 req/s | 2,682 req/s |
+| CLI binary | 37,948,488 B (`-Os`) | 38,603,848 B (`-O3` + PGO) |
+| CLI profile applicability / relevance | | 15.18% / 99.14% |
+| CLI `--help`, median of 60 interleaved | 3,682 µs | 2,921 µs |
+
+Low applicability is the point, not a defect: the code no workload reached is compiled for
+size, which is where the proxy's 57 MB went. It is also the risk phase 2 has to rule out, since
+a path the workloads miss now runs as cold code. The `maven` throughput on this VM is far below
+the 32-core figure above for both builds; only the comparison between them means anything here.
+
 ## Measurement caveats worth remembering
 
 - **Native builds are not byte-reproducible here.** The same commit and toolchain produced
