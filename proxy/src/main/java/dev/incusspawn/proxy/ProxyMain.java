@@ -73,6 +73,8 @@ public class ProxyMain implements QuarkusApplication {
         var badOverride = checkGatewayOverride(gatewayIpOption, incus);
         if (badOverride != 0) return badOverride;
 
+        if (!applyBenchConfig()) return ProxyService.EXIT_CONFIG;
+
         var loaded = ConfigFingerprint.load();
         var config = loaded.config();
         var claude = config.getClaude();
@@ -533,6 +535,28 @@ public class ProxyMain implements QuarkusApplication {
             System.out.println("  BENCHMARK:     trusting upstream certificate " + cert);
         }
         ProxyLog.warn("Benchmark upstream override active (ISX_BENCH_UPSTREAM=" + spec + ")");
+        return true;
+    }
+
+    /**
+     * bench/run.sh's model loads give the proxy Claude accounts of their own: {@code ISX_BENCH_CONFIG}
+     * names the config.yaml to read instead of the user's, which is never touched. The CA, the
+     * credential proofs and every other file stay the configuration directory's. Nothing else sets it.
+     */
+    static boolean applyBenchConfig() {
+        return applyBenchConfig(Environment.strippedEnv("ISX_BENCH_CONFIG"));
+    }
+
+    static boolean applyBenchConfig(String file) {
+        if (file.isEmpty()) return true;
+        var path = Path.of(file).toAbsolutePath();
+        if (!Files.isRegularFile(path)) {
+            System.err.println("Error: ISX_BENCH_CONFIG names no file: " + path);
+            return false;
+        }
+        SpawnConfig.useBenchFile(path);
+        System.out.println("  BENCHMARK:     reading " + path + " instead of config.yaml");
+        ProxyLog.warn("Benchmark config override active (ISX_BENCH_CONFIG=" + path + ")");
         return true;
     }
 

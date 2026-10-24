@@ -855,8 +855,30 @@ public class SpawnConfig {
         return Environment.configDir();
     }
 
+    /**
+     * The config.yaml a benchmark proxy reads instead of the user's ({@code ISX_BENCH_CONFIG}, set
+     * only by {@code bench/run.sh}), so its model loads get accounts of their own without an edit
+     * to the user's file. Null everywhere else.
+     */
+    private static volatile Path benchFile;
+
+    /** Reads {@code file} as config.yaml from now on, in this process only; see {@link #benchFile}. */
+    public static void useBenchFile(Path file) {
+        benchFile = file;
+    }
+
     public static Path file() {
-        return configDir().resolve("config.yaml");
+        return file(configDir());
+    }
+
+    /**
+     * The config.yaml read for {@code configDir}: its own, unless a benchmark named another, which
+     * is then the answer for every directory, {@code configDir} ignored. The bench file stands in for
+     * this process's one configuration, so a caller asking about any directory gets what was read.
+     */
+    public static Path file(Path configDir) {
+        var bench = benchFile;
+        return bench != null ? bench : configDir.resolve("config.yaml");
     }
 
     public static SpawnConfig load() {
@@ -894,7 +916,7 @@ public class SpawnConfig {
     public void save() {
         try {
             migrateHostPath();
-            var configFile = configDir().resolve("config.yaml");
+            var configFile = file();
             Files.createDirectories(configFile.getParent());
             Jjq.writeYaml(configFile, this);
             // Restrict permissions - config contains tokens
