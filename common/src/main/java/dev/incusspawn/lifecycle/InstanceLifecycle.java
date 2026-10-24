@@ -821,8 +821,9 @@ public final class InstanceLifecycle {
      */
     public static void removeHostIntegration(String name) {
         AutoRemoteService.removeRemotes(name, msg -> {});
-        SshKeyManager.cleanupInstance(name);
+        // The forwarder first, so it cannot pin the key again once that is removed.
         SshForwarder.stop(name);
+        SshKeyManager.cleanupInstance(name);
         ZmxSocketForward.cleanup(name);
     }
 

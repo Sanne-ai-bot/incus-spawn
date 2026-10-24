@@ -411,7 +411,8 @@ Both VS Code and JetBrains IntelliJ can connect to an instance with their UI run
 isx manages the SSH keys: `isx init` generates a dedicated passphraseless key pair at `~/.config/incus-spawn/ssh/`.
 Each start of an instance with an SSH server injects it, along with your personal `~/.ssh` key: the first of `id_ed25519.pub`, `id_ecdsa.pub` and `id_rsa.pub`.
 
-isx writes a `Host` entry per instance to `~/.config/incus-spawn/ssh/config`, included from your `~/.ssh/config`, with host key checking off.
+isx writes a `Host` entry per instance to `~/.config/incus-spawn/ssh/config`, included from your `~/.ssh/config`.
+It reaches the instance through Incus, so it needs no host key check, except on macOS behind Gateway's forwarder, where isx pins the key (below).
 So `ssh <instance-name>` just works: no passphrase prompt, no host key warning.
 isx removes the entry when it destroys an instance.
 
@@ -448,10 +449,12 @@ There the action first starts a small forwarder on `127.0.0.1`, or reuses the on
 The forwarder keeps running after the TUI quits, for as long as the instance runs, and exits when the instance stops or is destroyed.
 After the instance or the Mac restarts, press F9 on the instance once more before reopening it from Gateway's recent projects.
 
-The first connection to each instance asks you to accept its host key for `[127.0.0.1]:<port>`.
-The port stays the same for that instance afterwards, so the prompt does not come back.
+When the forwarder starts, it reads the instance's host key from inside the instance and pins it in `~/.config/incus-spawn/ssh/known_hosts`.
+Gateway and `ssh` verify that key, so no host key prompt is ever shown.
+The port stays the same for that instance afterwards, which keeps the pinned key valid.
 
-If Gateway warns that the host key for `[127.0.0.1]:<port>` changed, another instance now uses that port (a destroyed instance's port can go to a later one), and accepting the new key is safe.
+If Gateway refuses a host key for `[127.0.0.1]:<port>`, something other than the instance answered there.
+Press F9 on the instance again: the action pins the key for the port its forwarder now uses.
 
 ```yaml
 name: tpl-java-ide

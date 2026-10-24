@@ -3,6 +3,7 @@ package dev.incusspawn.ssh;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.HostLock;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -21,6 +22,10 @@ public final class SshKeyManager {
 
     private static final String INCLUDE_LINE = "Include ~/.config/incus-spawn/ssh/config";
     private static final String CONFIG_HEADER = "# Auto-managed by incus-spawn -- do not edit\n";
+    /** Ends each line isx pins, naming the instance, so destroy finds it whatever its port. */
+    private static final String PIN_TAG = "isx-forward:";
+    /** Where a {@link SshForwarder} listens, and the host its pinned key is filed under. */
+    public static final String LOOPBACK = "127.0.0.1";
     private SshKeyManager() {}
 
     public static boolean exists() {
@@ -178,14 +183,17 @@ public final class SshKeyManager {
      * @param hostname optional IP/hostname for clients that don't support ProxyCommand
      */
     public static boolean addHostEntry(String instanceName, String hostname) {
-        return addHostEntry(instanceName, hostname, 0);
+        return addHostEntry(instanceName, hostname, 0, false);
     }
 
     /**
      * @param port the port such clients dial at {@code hostname}, or 0 for SSH's default: a
      *             {@link SshForwarder} where the instance's address cannot be reached (#1600)
+     * @param pinned whether the managed known_hosts holds the host key for {@code hostname} and
+     *               {@code port} ({@link #pinLoopbackHostKey}), so clients verify it rather than
+     *               trusting whatever answers there
      */
-    public static boolean addHostEntry(String instanceName, String hostname, int port) {
+    public static boolean addHostEntry(String instanceName, String hostname, int port, boolean pinned) {
         try {
             ensureManagedConfigExists();
             var content = Files.readString(Environment.sshConfigFile());
@@ -205,8 +213,16 @@ public final class SshKeyManager {
             blocks.add("    User agentuser");
             blocks.add("    IdentityFile ~/.config/incus-spawn/ssh/id_ed25519");
             blocks.add("    IdentitiesOnly yes");
-            blocks.add("    StrictHostKeyChecking no");
-            blocks.add("    UserKnownHostsFile /dev/null");
+            if (pinned) {
+                // Only the ed25519 key is pinned: a client offered another type first would be refused.
+                blocks.add("    HostKeyAlgorithms ssh-ed25519");
+                blocks.add("    StrictHostKeyChecking yes");
+                // The file the pin was written to, not a "~" that ssh could expand to another home.
+                blocks.add("    UserKnownHostsFile \"" + Environment.sshKnownHostsFile() + "\"");
+            } else {
+                blocks.add("    StrictHostKeyChecking no");
+                blocks.add("    UserKnownHostsFile /dev/null");
+            }
             blocks.add("");
 
             var updated = String.join("\n", blocks);
@@ -232,11 +248,82 @@ public final class SshKeyManager {
         }
     }
 
+    // --- Host keys pinned for a forwarder's loopback port (#1600) ---
+
+    /**
+     * Pin {@code hostKey} ({@code <type> <base64>}) for {@code [127.0.0.1]:<port>} in the managed
+     * known_hosts, replacing any line for that port and any earlier one for this instance. An
+     * instance whose key held the port before still has a strict block naming it, which would
+     * now fail even {@code ssh} through its {@code ProxyCommand}: its block goes back to the one a
+     * branch writes, until its next Gateway action pins it again.
+     */
+    public static void pinLoopbackHostKey(String instanceName, int port, String hostKey) throws IOException {
+        rewriteKnownHosts(instanceName, port, loopbackHost(port) + " " + hostKey + " " + PIN_TAG + instanceName);
+    }
+
+    /** Remove what {@link #pinLoopbackHostKey} wrote for this instance or that port. */
+    public static void unpinLoopbackHostKey(String instanceName, int port) throws IOException {
+        rewriteKnownHosts(instanceName, port, null);
+    }
+
+    /** Whether the managed known_hosts holds this instance's key for {@code [127.0.0.1]:<port>}. */
+    public static boolean isLoopbackHostKeyPinned(String instanceName, int port) {
+        var host = loopbackHost(port) + " ";
+        var tag = " " + PIN_TAG + instanceName;
+        try {
+            return Files.readAllLines(Environment.sshKnownHostsFile()).stream()
+                    .anyMatch(line -> line.startsWith(host) && line.endsWith(tag));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Drop the lines for {@code port} (0 for none) and for this instance, then add {@code added} (null for none). */
+    private static void rewriteKnownHosts(String instanceName, int port, String added) throws IOException {
+        var file = Environment.sshKnownHostsFile();
+        if (added == null && !Files.exists(file)) return;
+        var host = loopbackHost(port) + " ";
+        var tag = " " + PIN_TAG + instanceName;
+        Files.createDirectories(file.getParent());
+        try (var lock = HostLock.acquire(Environment.lockDir().resolve("ssh-known-hosts.lock"),
+                "updating " + file, msg -> {})) {
+            var before = Files.exists(file) ? Files.readAllLines(file) : List.<String>of();
+            var lines = new ArrayList<String>();
+            var displaced = new ArrayList<String>();
+            for (var line : before) {
+                if (line.endsWith(tag)) continue;
+                if (port > 0 && line.startsWith(host)) {
+                    int at = line.lastIndexOf(" " + PIN_TAG);
+                    if (at >= 0) displaced.add(line.substring(at + 1 + PIN_TAG.length()));
+                    continue;
+                }
+                lines.add(line);
+            }
+            if (added != null) lines.add(added);
+            if (!lines.equals(before)) {
+                writeAtomically(file, lines.isEmpty() ? "" : String.join("\n", lines) + "\n");
+            }
+            for (var other : displaced) addHostEntry(other);
+        } catch (HostLock.HostLockException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    private static String loopbackHost(int port) {
+        return "[" + LOOPBACK + "]:" + port;
+    }
+
     /**
      * Clean up SSH config for a destroyed instance.
      */
     public static void cleanupInstance(String instanceName) {
         removeHostEntry(instanceName);
+        try {
+            rewriteKnownHosts(instanceName, 0, null);
+        } catch (IOException e) {
+            Warnings.warn("failed to remove the host key of " + instanceName + " from "
+                    + Environment.sshKnownHostsFile() + ": " + e.getMessage());
+        }
     }
 
     /**

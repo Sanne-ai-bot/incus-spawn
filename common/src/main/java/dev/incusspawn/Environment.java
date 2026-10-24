@@ -88,6 +88,11 @@ public final class Environment {
         return sshDir().resolve("config");
     }
 
+    /** Host keys isx pins for the managed Host blocks: a forwarder's loopback port (#1600). */
+    public static Path sshKnownHostsFile() {
+        return sshDir().resolve("known_hosts");
+    }
+
     public static Path cacheDir() {
         return home().resolve(".cache/incus-spawn");
     }

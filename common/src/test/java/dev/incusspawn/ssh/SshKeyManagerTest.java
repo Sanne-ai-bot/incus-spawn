@@ -204,4 +204,78 @@ class SshKeyManagerTest {
         assertDoesNotThrow(() -> SshKeyManager.cleanupInstance("nonexistent"));
     }
 
+
+    /** #1600: the forwarder's block verifies the key pinned for its port; a branch's block is unchanged. */
+    @Test
+    void onlyAPinnedBlockChecksTheHostKey() throws IOException {
+        SshKeyManager.addHostEntry("mac-instance", "127.0.0.1", 40222, true);
+        SshKeyManager.addHostEntry("linux-instance", "10.0.0.5");
+
+        var content = Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config"));
+        var mac = content.substring(content.indexOf("Host mac-instance"), content.indexOf("Host linux-instance"));
+        var linux = content.substring(content.indexOf("Host linux-instance"));
+        assertTrue(mac.contains("    Port 40222\n"), mac);
+        assertTrue(mac.contains("    StrictHostKeyChecking yes\n"), mac);
+        assertTrue(mac.contains("    HostKeyAlgorithms ssh-ed25519\n"), mac);
+        assertFalse(linux.contains("HostKeyAlgorithms"), linux);
+        assertTrue(mac.contains("    UserKnownHostsFile \"" + tempDir.resolve(".config/incus-spawn/ssh/known_hosts") + "\"\n"), mac);
+        assertTrue(linux.contains("    StrictHostKeyChecking no\n"), linux);
+        assertTrue(linux.contains("    UserKnownHostsFile /dev/null\n"), linux);
+    }
+
+    @Test
+    void aPinnedKeyReplacesWhateverHeldItsPortOrThisInstanceBefore() throws IOException {
+        var knownHosts = tempDir.resolve(".config/incus-spawn/ssh/known_hosts");
+        SshKeyManager.pinLoopbackHostKey("a", 2222, "ssh-ed25519 AAAA1");
+        SshKeyManager.pinLoopbackHostKey("b", 2222, "ssh-ed25519 AAAA2");
+        SshKeyManager.pinLoopbackHostKey("c", 3333, "ssh-ed25519 AAAA3");
+        SshKeyManager.pinLoopbackHostKey("c", 4444, "ssh-ed25519 AAAA3");
+
+        assertEquals(java.util.List.of(
+                "[127.0.0.1]:2222 ssh-ed25519 AAAA2 isx-forward:b",
+                "[127.0.0.1]:4444 ssh-ed25519 AAAA3 isx-forward:c"), Files.readAllLines(knownHosts));
+        assertFalse(SshKeyManager.isLoopbackHostKeyPinned("a", 2222), "another instance's key for the port");
+        assertTrue(SshKeyManager.isLoopbackHostKeyPinned("b", 2222));
+        assertFalse(SshKeyManager.isLoopbackHostKeyPinned("c", 3333), "the port c left");
+
+        SshKeyManager.unpinLoopbackHostKey("b", 2222);
+
+        assertEquals(java.util.List.of("[127.0.0.1]:4444 ssh-ed25519 AAAA3 isx-forward:c"), Files.readAllLines(knownHosts));
+    }
+
+    /**
+     * The instance whose key held the port keeps a strict block naming it, which would refuse even
+     * {@code ssh} through its ProxyCommand: it goes back to the block a branch writes (#1600).
+     */
+    @Test
+    void anInstanceWhosePortIsPinnedForAnotherLosesItsStrictBlock() throws IOException {
+        SshKeyManager.pinLoopbackHostKey("a", 2222, "ssh-ed25519 AAAA1");
+        SshKeyManager.addHostEntry("a", "127.0.0.1", 2222, true);
+
+        SshKeyManager.pinLoopbackHostKey("b", 2222, "ssh-ed25519 AAAA2");
+
+        var content = Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config"));
+        assertTrue(content.contains("Host a\n"), content);
+        assertFalse(content.contains("Port 2222"), content);
+        assertFalse(content.contains("StrictHostKeyChecking yes"), content);
+    }
+
+    /** Destroy and rename go through here: the key goes with the instance, whatever port it was pinned for. */
+    @Test
+    void cleaningUpAnInstanceRemovesItsPinnedKey() throws IOException {
+        SshKeyManager.pinLoopbackHostKey("a", 2222, "ssh-ed25519 AAAA1");
+        SshKeyManager.pinLoopbackHostKey("b", 3333, "ssh-ed25519 AAAA2");
+
+        SshKeyManager.cleanupInstance("a");
+
+        assertEquals(java.util.List.of("[127.0.0.1]:3333 ssh-ed25519 AAAA2 isx-forward:b"),
+                Files.readAllLines(tempDir.resolve(".config/incus-spawn/ssh/known_hosts")));
+    }
+
+    @Test
+    void unpinningWithNoKnownHostsCreatesNone() throws IOException {
+        SshKeyManager.unpinLoopbackHostKey("a", 2222);
+
+        assertFalse(Files.exists(tempDir.resolve(".config/incus-spawn/ssh/known_hosts")));
+    }
 }

@@ -18,6 +18,7 @@ set -euo pipefail
 NAME=test-ssh-forward
 RECORD=~/.config/incus-spawn/ssh/forward/$NAME
 KEY=~/.config/incus-spawn/ssh/id_ed25519
+KNOWN_HOSTS=~/.config/incus-spawn/ssh/known_hosts
 
 TESTS=0
 FAIL=0
@@ -35,9 +36,10 @@ check() {
 
 FORWARDER=
 FIRST=$(mktemp)
+EMPTY=$(mktemp)
 cleanup() {
     [ -n "$FORWARDER" ] && kill "$FORWARDER" 2>/dev/null || true
-    rm -f "$FIRST"
+    rm -f "$FIRST" "$EMPTY" "$EMPTY.err"
     incus delete -f "$NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -46,6 +48,19 @@ ssh_through() {
     ssh -p "$1" -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null agentuser@127.0.0.1 "${@:2}"
 }
+# As the managed Host block does once the forwarder pinned the key: verified, never prompted.
+ssh_strict() {
+    ssh -p "$1" -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 \
+        -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$2" agentuser@127.0.0.1 true 2>/dev/null
+}
+# Refused for the key, not for any other failure: ssh says which.
+refused() {
+    ! ssh -p "$1" -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 \
+        -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$2" agentuser@127.0.0.1 true 2> "$EMPTY.err" \
+        && grep -q 'Host key verification failed' "$EMPTY.err"
+}
+pinned() { grep -qx "\[127.0.0.1\]:$1 $2 isx-forward:$NAME" "$KNOWN_HOSTS"; }
+unpinned() { ! grep -q " isx-forward:$NAME\$" "$KNOWN_HOSTS" 2>/dev/null; }
 # A JVM's dual-stack socket shows its IPv4 address mapped: [::ffff:127.0.0.1]:<port>.
 listens_on_loopback_only() {
     local local_addrs
@@ -76,9 +91,16 @@ wait "$SLOW"
 check "and the first completes" [ "$(cat "$FIRST")" = first ]
 check "its port is stamped on the instance" stamped "$PORT"
 
+echo "=== The host key is pinned ==="
+HOST_KEY=$(incus exec "$NAME" -- cat /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $1" "$2}')
+check "the instance's key is pinned for its port" pinned "$PORT" "$HOST_KEY"
+check "a strict login verifies it" ssh_strict "$PORT" "$KNOWN_HOSTS"
+check "and without the pinned key it is refused, not prompted" refused "$PORT" "$EMPTY"
+
 echo "=== Destroy stops it ==="
 isx destroy "$NAME" --skip-confirmation
 check "isx destroy ends the forwarder and its record" wait_gone "$PID"
+check "and removes its pinned key" unpinned
 FORWARDER=
 
 echo "$((TESTS - FAIL))/$TESTS passed"

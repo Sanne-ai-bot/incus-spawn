@@ -140,6 +140,7 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
 - **`test-ssh-forward.sh`**: runs on the host.
   Branches `tpl-test-sshd` (`tpl-minimal` + `sshd`), runs `isx ssh-forward` by hand and logs in through its loopback port with OpenSSH and the managed key, twice at once (#1600).
   It checks the port is bound to `127.0.0.1` only and stamped on the instance, and that `isx destroy` ends the forwarder and its record.
+  It checks the instance's host key is pinned for the port in the managed known_hosts, a strict login verifies it, and one without it is refused; `isx destroy` removes it.
   Only macOS uses the forwarder, so this is the one run of it against a real Incus.
 - **`test-podman.sh`**: pushed into the podman container, tests rootless podman (pull, run, build).
 - **`test-project-proofs.sh`**: creates a project from an authenticated Git fixture served by `echo-server.py`, checks its selected account during pre-build and update, and checks revocation, shutdown and address release after success and failure.

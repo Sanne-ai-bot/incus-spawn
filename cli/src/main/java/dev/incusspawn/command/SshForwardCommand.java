@@ -34,11 +34,11 @@ public class SshForwardCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        // The port it had before, so a client that accepted the host key there keeps it.
+        // The port it had before, so the key pinned there stays valid across restarts.
         int stamped = parsePort(metadata.path("config").path(Metadata.SSH_FORWARD_PORT).asText(""));
         try (var server = SshForwarder.Server.bind(instance, stamped,
                 (in, out) -> SshProxyCommand.pipeToSshd(incus, instance, in, out, OutputStream.nullOutputStream()),
-                () -> status(incus), SshForwarder.POLL)) {
+                () -> status(incus), () -> hostKey(incus), SshForwarder.POLL)) {
             if (server.port() != stamped) {
                 incus.configSet(instance, Metadata.SSH_FORWARD_PORT, String.valueOf(server.port()));
             }
@@ -52,6 +52,23 @@ public class SshForwardCommand extends BaseCommand {
     private String status(dev.incusspawn.incus.IncusClient incus) {
         var metadata = incus.instanceMetadataOrThrow(instance);
         return metadata == null ? "" : metadata.path("status").asText("");
+    }
+
+    /** Read through the exec API, which Incus authenticates: no first contact to trust. */
+    private String hostKey(dev.incusspawn.incus.IncusClient incus) {
+        try {
+            var result = incus.shellExec(instance, "cat", SshForwarder.HOST_KEY_FILE);
+            if (!result.success()) {
+                dev.incusspawn.Warnings.warn("host key not pinned: " + result.stderr().strip());
+                return null;
+            }
+            var key = SshForwarder.hostKeyOf(result.stdout());
+            if (key != null) return key;
+            dev.incusspawn.Warnings.warn("host key not pinned: no ed25519 key in " + SshForwarder.HOST_KEY_FILE);
+        } catch (RuntimeException e) {
+            dev.incusspawn.Warnings.warn("host key not pinned: " + e.getMessage());
+        }
+        return null;
     }
 
     private static int parsePort(String value) {

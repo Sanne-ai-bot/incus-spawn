@@ -2,6 +2,7 @@ package dev.incusspawn.ssh;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
+import dev.incusspawn.Warnings;
 import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.OwnSession;
 
@@ -35,14 +36,22 @@ import java.util.function.Supplier;
  * records its pid and port in {@code ssh/forward/<instance>} under the config directory, and is
  * reused while its port answers with an SSH banner. It lives as long as the instance: it exits
  * once the instance is no longer running, and {@link #stop} ends it on destroy.
+ *
+ * <p>Before it records itself it pins the instance's host key, read through the same exec API,
+ * for {@code [127.0.0.1]:<port>} in the managed known_hosts, and the Host block then checks it
+ * strictly: no client prompts, and nothing that binds the port can pass for the instance unless
+ * it holds the same key, which only a branch of the same template does.
  */
 public final class SshForwarder {
 
     /** How often the forwarder checks that the instance still runs. */
     public static final Duration POLL = Duration.ofSeconds(10);
-    static final Duration START_WAIT = Duration.ofSeconds(10);
+    /** Covers the exec that reads the host key before the record; an early exit ends the wait sooner. */
+    static final Duration START_WAIT = Duration.ofSeconds(20);
     static final Duration BANNER_WAIT = Duration.ofSeconds(5);
     static final String COMMAND = "ssh-forward";
+    /** The instance's host key the forwarder pins; {@code ssh-keygen -A} creates it at build. */
+    public static final String HOST_KEY_FILE = "/etc/ssh/ssh_host_ed25519_key.pub";
 
     private SshForwarder() {}
 
@@ -74,10 +83,17 @@ public final class SshForwarder {
     /**
      * Point the instance's managed Host block at the forwarder's port. A client opened at that port
      * finds its User and IdentityFile only through the block, so a block left naming another port
-     * fails the action rather than opening the client somewhere it cannot log in.
+     * fails the action rather than opening the client somewhere it cannot log in. The block checks
+     * the host key strictly once the forwarder pinned it; where it could not, the block trusts the
+     * port as before rather than lock the user out, and says so.
      */
     static void pointHostBlockAt(String instance, int port) throws IOException {
-        if (!SshKeyManager.addHostEntry(instance, "127.0.0.1", port)) {
+        boolean pinned = SshKeyManager.isLoopbackHostKeyPinned(instance, port);
+        if (!pinned) {
+            Warnings.warn("the host key of " + instance + " could not be pinned, so SSH clients will not verify it; see "
+                    + logFile(instance));
+        }
+        if (!SshKeyManager.addHostEntry(instance, SshKeyManager.LOOPBACK, port, pinned)) {
             throw new IOException("could not point the entry for " + instance + " in "
                     + Environment.sshConfigFile() + " at the SSH forwarder on 127.0.0.1:" + port);
         }
@@ -129,6 +145,18 @@ public final class SshForwarder {
             Files.deleteIfExists(recordFile(instance));
             Files.deleteIfExists(logFile(instance));
         } catch (IOException ignored) {}
+    }
+
+    /**
+     * The key in {@code content}, a {@code .pub} file, as {@code ssh-ed25519 <base64>}; null for
+     * anything else. The file is the instance's to write, so nothing else reaches known_hosts.
+     */
+    public static String hostKeyOf(String content) {
+        var parts = content.strip().split("\\s+");
+        if (parts.length < 2 || !"ssh-ed25519".equals(parts[0]) || !parts[1].matches("[A-Za-z0-9+/]+={0,2}")) {
+            return null;
+        }
+        return parts[0] + " " + parts[1];
     }
 
     /**
@@ -240,14 +268,16 @@ public final class SshForwarder {
         private final ServerSocket socket;
         private final Transport transport;
         private final Supplier<String> status;
+        private final Supplier<String> hostKey;
         private final Duration poll;
 
         private Server(String instance, ServerSocket socket, Transport transport, Supplier<String> status,
-                       Duration poll) {
+                       Supplier<String> hostKey, Duration poll) {
             this.instance = instance;
             this.socket = socket;
             this.transport = transport;
             this.status = status;
+            this.hostKey = hostKey;
             this.poll = poll;
         }
 
@@ -256,10 +286,11 @@ public final class SshForwarder {
          * that accepted the host key for {@code [127.0.0.1]:<port>} keeps it across restarts.
          *
          * @param status the instance's Incus status; the server exits once it is not {@code Running}
+         * @param hostKey the instance's host key ({@link #hostKeyOf}), or null when it cannot be read
          */
         public static Server bind(String instance, int preferredPort, Transport transport, Supplier<String> status,
-                                  Duration poll) throws IOException {
-            return new Server(instance, listen(preferredPort), transport, status, poll);
+                                  Supplier<String> hostKey, Duration poll) throws IOException {
+            return new Server(instance, listen(preferredPort), transport, status, hostKey, poll);
         }
 
         private static ServerSocket listen(int preferredPort) throws IOException {
@@ -268,7 +299,7 @@ public final class SshForwarder {
                 try {
                     return new ServerSocket(preferredPort, 50, loopback);
                 } catch (IOException taken) {
-                    // Another process holds it: any port will do, at the cost of one host-key prompt.
+                    // Another process holds it: any port will do, and the key is pinned there instead.
                 }
             }
             return new ServerSocket(0, 50, loopback);
@@ -283,10 +314,12 @@ public final class SshForwarder {
         }
 
         /**
-         * Record this server and accept connections until the instance stops running. Returns why
-         * it stopped.
+         * Pin the instance's host key, record this server and accept connections until the
+         * instance stops running. Returns why it stopped. The key goes first, so {@link #ensure}
+         * cannot return, and a client cannot dial, before it is pinned.
          */
         public String serve() throws IOException {
+            pinHostKey();
             var record = new Record(ProcessHandle.current().pid(), port());
             write(instance, record);
             try {
@@ -322,6 +355,20 @@ public final class SshForwarder {
                 if (read(instance).filter(record::equals).isPresent()) {
                     Files.deleteIfExists(recordFile(instance));
                 }
+            }
+        }
+
+        /** A key that cannot be read or written leaves none for this port, so the block falls back. */
+        private void pinHostKey() {
+            try {
+                var key = hostKey.get();
+                if (key != null) {
+                    SshKeyManager.pinLoopbackHostKey(instance, port(), key);
+                    return;
+                }
+                SshKeyManager.unpinLoopbackHostKey(instance, port());
+            } catch (IOException e) {
+                Warnings.warn("cannot pin the host key of " + instance + ": " + e.getMessage());
             }
         }
 

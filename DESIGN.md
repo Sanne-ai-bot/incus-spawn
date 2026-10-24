@@ -1056,6 +1056,7 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
     id_ed25519.pub      # managed public key
     config              # per-instance Host blocks (managed by isx)
     forward/<instance>  # a running SSH forwarder's pid and port (macOS, see "Remote IDE Access")
+    known_hosts         # host keys pinned for those forwarders' loopback ports
 ```
 
 **Lifecycle:**
@@ -1065,7 +1066,7 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 2. **`isx branch`** (via `RuntimeSetup.injectSshKeyIfAvailable`): injects both the managed public key and any personal `~/.ssh/*.pub` key into the container's `authorized_keys`.
    Then, once the instance has an address (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `StrictHostKeyChecking no` and `UserKnownHostsFile /dev/null`.
    After this, `ssh <instance-name>` just works.
-3. **`isx destroy`** (and TUI delete): removes the Host block from the managed config and stops the instance's SSH forwarder, if one runs.
+3. **`isx destroy`** (and TUI delete): removes the Host block from the managed config, stops the instance's SSH forwarder, if one runs, and removes the host key pinned for it.
 
 **Design decisions:**
 
@@ -1073,8 +1074,9 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
   That is what makes it work on macOS, where the address is inside the appliance VM.
 - **`Hostname` for clients that ignore `ProxyCommand`** (4e271acb, #211): JetBrains Gateway reads the Host block (it parses `~/.ssh/config` through `ssh -G`) but dials `Hostname` itself.
   Without the line it reported "host not found" for the instance name.
-- **No host key checking**: host keys are not harvested or pinned.
+- **No host key checking** for the block a branch writes: its host key is not harvested or pinned.
   Every branch of a template shares the host keys the template's build generated, and the `ProxyCommand` reaches the instance by name through Incus, not by an address another machine could answer on.
+  The forwarder's loopback block on macOS is the exception: a port on loopback is authenticated by nothing, so its key is pinned (see "Remote IDE Access").
 - **Both keys injected**: the managed key (passphraseless) ensures tools always work, while the user's personal key is also injected so interactive SSH sessions can use their preferred key.
 - **Atomic writes**: config updates use temp-file-then-rename with restrictive permissions to avoid partial writes, and a Host block that would not change is not rewritten.
 - **Non-fatal**: SSH setup failures never block init or branching — they warn and fall back to manual `ssh agentuser@<ip>`.
@@ -1107,9 +1109,22 @@ That leaves a listener on the Mac's loopback backed by the exec API, the transpo
   There is no idle exit: Gateway reopens a project from its own recent list, and after an idle exit that list would dial a dead loopback port with nothing telling the user to press F9 again, while a loopback listener costs nothing.
   A forwarder does not survive the instance or the Mac restarting, so after either an F9 is needed before Gateway's remembered endpoint answers again.
   `isx destroy` stops it, killing a recorded pid only when that process's command line is `ssh-forward <instance>`.
-- **Host key:** the port is stamped on the instance (`user.incus-spawn.ssh-forward-port`) and tried first on the next start, so Gateway's one-time prompt for `[127.0.0.1]:<port>` stays accepted.
+- **Host key, pinned:** a loopback port is authenticated by nothing, so the block for it must not trust whatever answers there.
+  Before it writes its record, the forwarder reads the instance's `/etc/ssh/ssh_host_ed25519_key.pub` through the exec API, the channel Incus authenticates, so there is no first contact to trust and no `ssh-keyscan`.
+  It writes `[127.0.0.1]:<port> ssh-ed25519 <key> isx-forward:<instance>` to `~/.config/incus-spawn/ssh/known_hosts`, replacing any line for that port or that instance.
+  The action then writes the block with `StrictHostKeyChecking yes`, that file's absolute path as `UserKnownHostsFile` and `HostKeyAlgorithms ssh-ed25519`, so Gateway and `ssh` verify the key and never prompt.
+  The last line matters because sshd also offers RSA and ECDSA keys: a client that negotiated one of those would find no pinned key of that type and be refused.
+  The record comes after the key, so the action cannot return, and Gateway cannot dial, before the key is pinned.
+  The file holds only what the forwarder read, as one `ssh-ed25519` key: the instance writes its `.pub`, and nothing else from it reaches known_hosts.
+- **When the key cannot be read** (no ed25519 key, an exec failure), the forwarder still serves, the block falls back to `StrictHostKeyChecking no` and `/dev/null`, and the action warns that the key could not be pinned.
+  A strict block must never lock the user out of an instance whose key isx does not hold.
+- **The port is stamped** on the instance (`user.incus-spawn.ssh-forward-port`) and tried first on the next start, which keeps the pinned entry valid across restarts.
   A copy never carries the stamp, since two instances cannot share a port.
-  After the forwarder exits (the instance stops, crashes or the Mac restarts), the Host block keeps `127.0.0.1:<port>`, so another local account could bind that port; Gateway's own host-key prompt for `[127.0.0.1]:<port>` still catches it, and dropping the entries on a clean exit would not cover a restart.
+  After the forwarder exits (the instance stops, crashes or the Mac restarts), the Host block keeps `127.0.0.1:<port>` and the pinned entry stays.
+  Anything else bound to that port then fails the key check, so a stale entry fails closed.
+  The exception is a branch of the same template, which shares the key (see "No host key checking").
+  If the next start takes another port, its key is pinned there and the block follows; a mismatch on the old port is a refusal that the next F9 repairs.
+  When another instance's forwarder takes a port, the instance whose key it held gets the block a branch writes back, without `Port` or strict checking, so `ssh` through its `ProxyCommand` keeps working until its next F9.
 - **Why not on Linux too:** direct IP is the one Gateway path with real user mileage, needs no extra process, and keeps Gateway's file sync, port forwards and sessions off exec websockets.
   The forwarder's code is platform-independent, so CI tests it against a real Incus on Linux (`test-ssh-forward.sh`) even though only macOS uses it.
 

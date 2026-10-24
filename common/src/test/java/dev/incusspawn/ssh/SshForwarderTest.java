@@ -32,6 +32,7 @@ class SshForwarderTest {
 
     private static final String INSTANCE = "dev-1";
     private static final Duration FAST = Duration.ofMillis(20);
+    private static final String HOST_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHostKeyOfTheInstance";
 
     /** Stands in for sshd behind {@code nc localhost 22}: a banner, then every byte echoed. */
     private static final SshForwarder.Transport SSHD = (in, out) -> {
@@ -60,7 +61,13 @@ class SshForwarderTest {
 
     private SshForwarder.Server bind(int preferredPort, SshForwarder.Transport transport,
                                      java.util.function.Supplier<String> status) throws IOException {
-        var server = SshForwarder.Server.bind(INSTANCE, preferredPort, transport, status, FAST);
+        return bind(preferredPort, transport, status, () -> HOST_KEY);
+    }
+
+    private SshForwarder.Server bind(int preferredPort, SshForwarder.Transport transport,
+                                     java.util.function.Supplier<String> status,
+                                     java.util.function.Supplier<String> hostKey) throws IOException {
+        var server = SshForwarder.Server.bind(INSTANCE, preferredPort, transport, status, hostKey, FAST);
         servers.add(server);
         return server;
     }
@@ -263,8 +270,84 @@ class SshForwarderTest {
         }
 
         assertTrue(e.getMessage().contains("127.0.0.1:2222"), e.getMessage());
+        assertTrue(warnings.getLast().startsWith("failed to update SSH config"), warnings.toString());
+    }
+
+    /**
+     * A record means {@link SshForwarder#ensure} returns and Gateway dials, so the key it is to
+     * verify must be pinned by then (#1600).
+     */
+    @Test
+    void theHostKeyIsPinnedBeforeTheRecordIsWritten() throws Exception {
+        var recordedFirst = new AtomicReference<Boolean>();
+        var server = bind(0, SSHD, () -> "Running", () -> {
+            recordedFirst.set(Files.exists(SshForwarder.recordFile(INSTANCE)));
+            return HOST_KEY;
+        });
+        serve(server);
+
+        assertEquals(Boolean.FALSE, recordedFirst.get(), "the record was written before the key was read");
+        assertEquals(List.of("[127.0.0.1]:" + server.port() + " " + HOST_KEY + " isx-forward:" + INSTANCE),
+                Files.readAllLines(Environment.sshKnownHostsFile()));
+    }
+
+    @Test
+    void aPinnedKeyMakesTheHostBlockCheckItStrictly() throws Exception {
+        var server = bind(0, SSHD, () -> "Running");
+        serve(server);
+        var warnings = new ArrayList<String>();
+
+        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+            SshForwarder.pointHostBlockAt(INSTANCE, server.port());
+        }
+
+        var block = Files.readString(Environment.sshConfigFile());
+        assertTrue(block.contains("StrictHostKeyChecking yes"), block);
+        assertTrue(block.contains("UserKnownHostsFile \"" + Environment.sshKnownHostsFile() + "\""), block);
+        assertEquals(List.of(), warnings);
+    }
+
+    /** A strict block must never lock the user out of an instance whose key isx does not hold. */
+    @Test
+    void aHostKeyThatCannotBeReadStillServesBehindTodaysBlockAndSaysSo() throws Exception {
+        var server = bind(0, SSHD, () -> "Running", () -> null);
+        serve(server);
+        var warnings = new ArrayList<String>();
+
+        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+            SshForwarder.pointHostBlockAt(INSTANCE, server.port());
+        }
+
+        try (var client = new Socket(InetAddress.getLoopbackAddress(), server.port())) {
+            client.setSoTimeout(5000);
+            assertEquals("SSH-2.0-fake\r\n", new String(client.getInputStream().readNBytes(14), StandardCharsets.US_ASCII));
+        }
+        var block = Files.readString(Environment.sshConfigFile());
+        assertTrue(block.contains("StrictHostKeyChecking no"), block);
+        assertTrue(block.contains("UserKnownHostsFile /dev/null"), block);
         assertEquals(1, warnings.size(), warnings.toString());
-        assertTrue(warnings.get(0).startsWith("failed to update SSH config"), warnings.toString());
+        assertTrue(warnings.get(0).contains("could not be pinned"), warnings.toString());
+    }
+
+    /** A key pinned for this port by an instance before is not this one's, so it is dropped, not kept. */
+    @Test
+    void aHostKeyThatCannotBeReadLeavesNoKeyForThatPort() throws Exception {
+        var server = bind(0, SSHD, () -> "Running", () -> null);
+        SshKeyManager.pinLoopbackHostKey("dev-0", server.port(), HOST_KEY);
+
+        serve(server);
+
+        assertEquals(List.of(), Files.readAllLines(Environment.sshKnownHostsFile()));
+    }
+
+    /** The file is the instance's to write: only an ed25519 key reaches known_hosts. */
+    @Test
+    void onlyAnEd25519KeyIsTakenFromTheInstance() {
+        assertEquals(HOST_KEY, SshForwarder.hostKeyOf(HOST_KEY + " root@dev-1\n"));
+        assertNull(SshForwarder.hostKeyOf(""));
+        assertNull(SshForwarder.hostKeyOf("ssh-rsa AAAAB3NzaC1yc2E"));
+        assertNull(SshForwarder.hostKeyOf("ssh-ed25519 not*base64"));
+        assertNull(SshForwarder.hostKeyOf("ssh-ed25519"));
     }
 
     /** What the detached launch does, in this process: a forwarder that records itself. */
