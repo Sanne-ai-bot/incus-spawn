@@ -5,11 +5,15 @@
 #           running Incus daemon, Podman (for Hyperfoil container)
 #           On macOS: the VM running (isx vm start), the proxy service stopped,
 #           and --hyperfoil=DIR, an unpacked Hyperfoil distribution (no Podman)
+#           For --load=anthropic|vertex (Linux only): the tpl-isx-bench template,
+#           built from bench/ with: isx build tpl-isx-bench --yes
 #
 # Usage:
 #   bench/run.sh                    # full build + benchmark
 #   bench/run.sh --skip-build       # reuse existing native binary
 #   bench/run.sh --label "baseline" # tag results with a label
+#   bench/run.sh --proxy=BIN --cli=BIN  # measure these binaries (an A/B of build flags)
+#   bench/run.sh --collect=DIR --proxy=BIN --cli=BIN  # PGO profile collection (bench/pgo-collect.sh)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -27,6 +31,11 @@ LABEL=""
 GRAALVM_DIR=""
 BUILDER_IMAGE=""
 HYPERFOIL_DIR=""
+PROXY_BIN=""
+CLI_BIN=""
+COLLECT_DIR=""
+FROM="tpl-isx-bench"
+MODEL_LOAD=false
 
 IS_MACOS=false
 [ "$(uname -s)" = Darwin ] && IS_MACOS=true
@@ -44,8 +53,17 @@ while [ $# -gt 0 ]; do
         --load) shift; LOAD_MODE="${1:-}" ;;
         --hyperfoil=*) HYPERFOIL_DIR="${1#--hyperfoil=}" ;;
         --hyperfoil) shift; HYPERFOIL_DIR="${1:-}" ;;
+        --proxy=*) PROXY_BIN="${1#--proxy=}" ;;
+        --proxy) shift; PROXY_BIN="${1:-}" ;;
+        --cli=*) CLI_BIN="${1#--cli=}" ;;
+        --cli) shift; CLI_BIN="${1:-}" ;;
+        --collect=*) COLLECT_DIR="${1#--collect=}" ;;
+        --collect) shift; COLLECT_DIR="${1:-}" ;;
+        --from=*) FROM="${1#--from=}" ;;
+        --from) shift; FROM="${1:-}" ;;
         --help|-h)
             echo "Usage: bench/run.sh [--skip-build] [--label=NAME] [--load=MODE] [--graalvm=DIR|--builder-image=TAG] [--hyperfoil=DIR]"
+            echo "                    [--proxy=BIN --cli=BIN] [--collect=DIR] [--from=TEMPLATE]"
             echo ""
             echo "Benchmarks the native image build of the MITM proxy."
             echo "Measures: binary size, startup time, memory (RSS), throughput, latency."
@@ -60,6 +78,10 @@ while [ $# -gt 0 ]; do
             echo "                  maven: fetches a real cached artifact over the intercepted"
             echo "                  HTTPS path. The workload containers actually generate —"
             echo "                  use this to compare builds or toolchains."
+            echo "                  anthropic: streamed ~45 KiB Messages calls from inside an"
+            echo "                  instance, the proxy injecting an API key (Linux only)."
+            echo "                  vertex: the same calls, translated for Vertex AI (Linux only)."
+            echo "                  Both answer from a local stub; neither needs a real account."
             echo "  --graalvm=DIR   Build with this GraalVM instead of whatever is on PATH."
             echo "  --builder-image=TAG"
             echo "                  Build in this container image — the path Linux releases"
@@ -74,6 +96,14 @@ while [ $# -gt 0 ]; do
             echo "                  PATH, instead of in a Podman container. Required on macOS,"
             echo "                  where a container runs in Podman's VM and the load would"
             echo "                  cross its user-mode network before reaching the proxy."
+            echo "  --proxy=BIN, --cli=BIN"
+            echo "                  Measure these binaries instead of the ones in proxy/target and"
+            echo "                  cli/target (no build): how the A/B of two builds' flags is run."
+            echo "  --collect=DIR   PGO profile collection: BIN must be instrumented (--pgo-instrument,"
+            echo "                  -H:+ParseRuntimeOptions). The proxy writes DIR/proxy-<load>.iprof.gz;"
+            echo "                  no CLI timing, nothing measured is saved. Driven by bench/pgo-collect.sh."
+            echo "  --from=TEMPLATE Template the model loads branch their instance from (default"
+            echo "                  tpl-isx-bench: needs a JVM for the load generator)."
             echo ""
             echo "Requirements:"
             echo "  - Oracle GraalVM with native-image on PATH (or via --graalvm/--builder-image)"
@@ -91,9 +121,18 @@ done
 
 die() { echo "Error: $*" >&2; exit 1; }
 
+# The load generator's instance, destroyed while its proxy still runs.
+destroy_instance() {
+    [ -n "${HF_INSTANCE:-}" ] || return 0
+    cli destroy "$HF_INSTANCE" --skip-confirmation >/dev/null 2>&1 \
+        || echo "Warning: could not destroy $HF_INSTANCE; remove it with: isx destroy $HF_INSTANCE" >&2
+    HF_INSTANCE=""
+}
+
 cleanup() {
     echo ""
     echo "Cleaning up..."
+    destroy_instance
     [ -n "${PROXY_PID:-}" ] && kill "$PROXY_PID" 2>/dev/null && wait "$PROXY_PID" 2>/dev/null || true
     [ -n "${STUB_PID:-}" ] && kill "$STUB_PID" 2>/dev/null && wait "$STUB_PID" 2>/dev/null || true
     [ -n "${STUB_DIR:-}" ] && rm -rf "$STUB_DIR" || true
@@ -102,10 +141,13 @@ cleanup() {
     stop_hyperfoil
     [ -n "${TRUSTSTORE_DIR:-}" ] && rm -rf "$TRUSTSTORE_DIR" || true
     [ -n "${HF_WORK_DIR:-}" ] && rm -rf "$HF_WORK_DIR" || true
+    [ -n "${WORK_DIR:-}" ] && rm -rf "$WORK_DIR" || true
 }
 
 stop_hyperfoil() {
-    if [ -n "$HYPERFOIL_DIR" ]; then
+    if $MODEL_LOAD; then
+        return  # it ran in the instance, and goes with it
+    elif [ -n "$HYPERFOIL_DIR" ]; then
         if [ -n "${HF_PID:-}" ]; then
             # standalone.sh does not exec java, so the JVM is the launcher's child. Wait for
             # it to go: a run started straight after would find its port still taken.
@@ -244,8 +286,17 @@ case "$LOAD_MODE" in
     constant) BENCHMARK_YAML="$SCRIPT_DIR/proxy-health.hf.yaml" ;;
     saturate) BENCHMARK_YAML="$SCRIPT_DIR/proxy-saturate.hf.yaml" ;;
     maven)    BENCHMARK_YAML="$SCRIPT_DIR/proxy-maven.hf.yaml" ;;
-    *) die "Unknown --load mode '$LOAD_MODE' (expected: constant, saturate, maven)" ;;
+    anthropic|vertex) BENCHMARK_YAML="$SCRIPT_DIR/proxy-messages.hf.yaml"; MODEL_LOAD=true ;;
+    *) die "Unknown --load mode '$LOAD_MODE' (expected: constant, saturate, maven, anthropic, vertex)" ;;
 esac
+
+COLLECTING=false
+if [ -n "$COLLECT_DIR" ]; then
+    COLLECTING=true
+    [ -n "$PROXY_BIN" ] || die "--collect needs --proxy=BIN, an instrumented proxy build"
+    mkdir -p "$COLLECT_DIR" || die "Cannot create $COLLECT_DIR"
+    COLLECT_DIR="$(cd "$COLLECT_DIR" && pwd)"
+fi
 
 # Check benchmark definition
 if [ ! -f "$BENCHMARK_YAML" ]; then
@@ -270,6 +321,19 @@ if [ "$LOAD_MODE" = maven ]; then
     JAVA_MAJOR=$(java -XshowSettings:properties -version 2>&1 | sed -nE 's/^ *java\.specification\.version = ([0-9]+).*/\1/p')
     [ "${JAVA_MAJOR:-0}" -ge 21 ] || die "java ${JAVA_MAJOR:-unknown} found; the upstream stub for --load=maven needs JDK 21+"
     command -v keytool &>/dev/null || die "keytool not found; needed for --load=maven"
+fi
+
+if $MODEL_LOAD; then
+    # The proxy injects credentials only for a caller it knows by address and proof, so the
+    # load has to come from an instance: Hyperfoil runs inside one, and is driven over `incus exec`.
+    $IS_MACOS && die "--load=$LOAD_MODE drives a load generator inside an instance through the incus client; it runs on Linux only."
+    command -v incus &>/dev/null || die "incus client not found; --load=$LOAD_MODE drives its load generator through it"
+    incus info "$FROM" &>/dev/null || die "No template $FROM to branch the load generator's instance from. Build it from bench/:
+  (cd bench && isx build tpl-isx-bench --yes)"
+    command -v java &>/dev/null || die "java not found; needed to run the upstream stub for --load=$LOAD_MODE"
+    command -v keytool &>/dev/null || die "keytool not found; needed for --load=$LOAD_MODE"
+    MODEL_HOSTS=(api.anthropic.com us-east5-aiplatform.googleapis.com)
+    echo "Upstream: ${MODEL_HOSTS[*]} (served by a local stub)"
 fi
 
 # Resolve the address the proxy listens on: the Incus bridge gateway, or on macOS
@@ -318,7 +382,14 @@ resolve_runner() {
 CLI_RUNNER=$(resolve_runner "$PROJECT_DIR/cli/target/incus-spawn-*-runner")
 PROXY_RUNNER=$(resolve_runner "$PROJECT_DIR/proxy/target/incus-spawn-proxy-*-runner")
 
-if $SKIP_BUILD; then
+if [ -n "$PROXY_BIN" ] || [ -n "$CLI_BIN" ]; then
+    # Binaries built elsewhere, e.g. the two sides of an A/B of build flags: never rebuilt.
+    PROXY_RUNNER="${PROXY_BIN:-$PROXY_RUNNER}"
+    CLI_RUNNER="${CLI_BIN:-$CLI_RUNNER}"
+    [ -x "$PROXY_RUNNER" ] || die "No executable proxy binary at '${PROXY_RUNNER}'"
+    [ -x "$CLI_RUNNER" ] || die "No executable CLI binary at '${CLI_RUNNER}'"
+    echo "Using the given binaries, no build."
+elif $SKIP_BUILD; then
     [ -n "$PROXY_RUNNER" ] || die "No native proxy binary in proxy/target/. Run without --skip-build first."
     [ -n "$CLI_RUNNER" ] || die "No native CLI binary in cli/target/. Run without --skip-build first."
     echo "Skipping build, using existing binaries."
@@ -339,8 +410,21 @@ echo "  cli:   $CLI_RUNNER"
 
 # The binaries bake org.graalvm.version in, so they report the toolchain that
 # actually produced them — the only trustworthy label for a 25.2-vs-25.3 run.
-PROXY_BUILT_WITH=$("$PROXY_RUNNER" --version 2>/dev/null | tail -1 || true)
-CLI_BUILT_WITH=$("$CLI_RUNNER" --version 2>/dev/null | tail -1 || true)
+# An instrumented binary writes a profile at every exit; the ones from these setup runs are
+# no workload's, so they go to a scratch directory and are dropped.
+WORK_DIR="$(mktemp -d)"
+setup_run() {
+    local bin=$1
+    shift
+    if $COLLECTING; then
+        "$bin" -XX:ProfilesDumpFile="$WORK_DIR/setup-$RANDOM$RANDOM.iprof" "$@"
+    else
+        "$bin" "$@"
+    fi
+}
+cli() { setup_run "$CLI_RUNNER" "$@"; }
+PROXY_BUILT_WITH=$(setup_run "$PROXY_RUNNER" --version 2>/dev/null | tail -1 || true)
+CLI_BUILT_WITH=$(cli --version 2>/dev/null | tail -1 || true)
 echo "  built with: ${PROXY_BUILT_WITH:-unknown}"
 echo ""
 
@@ -376,14 +460,19 @@ cli_startup_samples() {
         done
     fi
 }
-CLI_SAMPLES=$(cli_startup_samples | sort -n | tr '\n' ' ')
-CLI_STARTUP_US=$(echo "$CLI_SAMPLES" | awk '{ print $10 }')
-echo "CLI startup:  ${CLI_STARTUP_US} us (median of 20)"
+if $COLLECTING; then
+    # Twenty --help runs would weight the profile towards --help; bench/cli.sh runs it once.
+    CLI_STARTUP_US=0
+else
+    CLI_SAMPLES=$(cli_startup_samples | sort -n | tr '\n' ' ')
+    CLI_STARTUP_US=$(echo "$CLI_SAMPLES" | awk '{ print $10 }')
+    echo "CLI startup:  ${CLI_STARTUP_US} us (median of 20)"
+fi
 
 # ── 4. Start proxy and measure startup time ─────────────────────────────────
 
 PROXY_ENV=()
-if [ "$LOAD_MODE" = maven ]; then
+if [ "$LOAD_MODE" = maven ] || $MODEL_LOAD; then
     # The proxy confirms cache hits with upstream (a HEAD for Maven Central) once their
     # artifact-cache: tiers stop trusting them, so pointed at the real repository this
     # run could send its load there and measure that repository's latency. A local stub
@@ -393,8 +482,16 @@ if [ "$LOAD_MODE" = maven ]; then
     # The payload lives at a coordinate no real repository has, so the cached copy
     # can never stand in for a real artifact; cleanup() removes it anyway.
     STUB_DIR="$(mktemp -d)"
+    if $MODEL_LOAD; then
+        # The model loads need no artifact: the stub answers their POSTs instead.
+        STUB_HOSTS=("${MODEL_HOSTS[@]}")
+        MAVEN_PATH=/isx-bench-no-artifact
+    else
+        STUB_HOSTS=("$MAVEN_HOST")
+    fi
+    STUB_SAN=$(printf 'dns:%s,' "${STUB_HOSTS[@]}")
     keytool -genkeypair -alias stub -keyalg EC -groupname secp256r1 \
-        -dname "CN=$MAVEN_HOST" -ext "SAN=dns:$MAVEN_HOST" -validity 2 \
+        -dname "CN=${STUB_HOSTS[0]}" -ext "SAN=${STUB_SAN%,}" -validity 2 \
         -keystore "$STUB_DIR/stub.p12" -storetype PKCS12 -storepass changeit &>/dev/null \
         || die "Failed to create the stub's certificate"
     keytool -exportcert -rfc -alias stub -keystore "$STUB_DIR/stub.p12" -storepass changeit \
@@ -402,7 +499,11 @@ if [ "$LOAD_MODE" = maven ]; then
     # 642 KiB, the size of the commons-lang3 jar earlier runs fetched from Central
     head -c 657408 /dev/urandom > "$STUB_DIR/payload.jar"
     STUB_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
-    java "$SCRIPT_DIR/UpstreamStub.java" "$STUB_PORT" "$STUB_DIR/stub.p12" changeit \
+    # The credentials the proxy should inject: the stub refuses a call without them.
+    STUB_API_KEY="isx-bench-api-key-$RANDOM$RANDOM"
+    STUB_VERTEX_TOKEN="isx-bench-vertex-token-$RANDOM$RANDOM"
+    java -Dstub.apiKey="$STUB_API_KEY" -Dstub.vertexToken="$STUB_VERTEX_TOKEN" \
+        "$SCRIPT_DIR/UpstreamStub.java" "$STUB_PORT" "$STUB_DIR/stub.p12" changeit \
         "$MAVEN_PATH" "$STUB_DIR/payload.jar" > "$STUB_DIR/stub.log" 2>&1 &
     STUB_PID=$!
     for _ in $(seq 1 60); do
@@ -411,15 +512,41 @@ if [ "$LOAD_MODE" = maven ]; then
         sleep 0.5
     done
     grep -q '^ready' "$STUB_DIR/stub.log" || die "Upstream stub did not start within 30s"
-    echo "Stub:        $MAVEN_HOST -> 127.0.0.1:$STUB_PORT"
-    BENCH_CACHE_DIR="$HOME/.cache/incus-spawn/maven-verified/$MAVEN_HOST$(dirname "$MAVEN_PATH")"
-    PROXY_ENV=(ISX_BENCH_UPSTREAM="$MAVEN_HOST=127.0.0.1:$STUB_PORT"
+    echo "Stub:        ${STUB_HOSTS[*]} -> 127.0.0.1:$STUB_PORT"
+    $MODEL_LOAD || BENCH_CACHE_DIR="$HOME/.cache/incus-spawn/maven-verified/$MAVEN_HOST$(dirname "$MAVEN_PATH")"
+    STUB_UPSTREAMS=$(printf "%s=127.0.0.1:$STUB_PORT," "${STUB_HOSTS[@]}")
+    PROXY_ENV=(ISX_BENCH_UPSTREAM="${STUB_UPSTREAMS%,}"
                ISX_BENCH_UPSTREAM_CERT="$STUB_DIR/stub.pem")
+fi
+
+if $MODEL_LOAD; then
+    # The proxy reads this instead of the user's config.yaml (ISX_BENCH_CONFIG), which is never
+    # edited: one Claude account, the default, so the instance needs no pin.
+    if [ "$LOAD_MODE" = vertex ]; then
+        printf 'claude:\n  default: isx-bench\n  accounts:\n    isx-bench:\n      type: vertex\n      cloudMlRegion: us-east5\n      vertexProjectId: isx-bench\n' \
+            > "$STUB_DIR/config.yaml"
+    else
+        printf 'claude:\n  default: isx-bench\n  accounts:\n    isx-bench:\n      type: api-key\n      apiKey: %s\n' \
+            "$STUB_API_KEY" > "$STUB_DIR/config.yaml"
+    fi
+    # The proxy gets its Vertex token from gcloud, so a stand-in on its PATH hands it the one
+    # the stub expects.
+    mkdir -p "$STUB_DIR/bin"
+    printf '#!/bin/sh\necho %s\n' "$STUB_VERTEX_TOKEN" > "$STUB_DIR/bin/gcloud"
+    chmod +x "$STUB_DIR/bin/gcloud"
+    PROXY_ENV+=(ISX_BENCH_CONFIG="$STUB_DIR/config.yaml" PATH="$STUB_DIR/bin:$PATH")
+fi
+
+PROXY_ARGS=(--gateway-ip "$GATEWAY_IP")
+if $COLLECTING; then
+    PROFILE="$COLLECT_DIR/proxy-$LOAD_MODE.iprof"
+    rm -f "$PROFILE" "$PROFILE.gz"
+    PROXY_ARGS=(-XX:ProfilesDumpFile="$PROFILE" "${PROXY_ARGS[@]}")
 fi
 
 echo "Starting proxy..."
 PROXY_START=$(epoch_ms)
-env ${PROXY_ENV[@]+"${PROXY_ENV[@]}"} "$PROXY_RUNNER" --gateway-ip "$GATEWAY_IP" &>/dev/null &
+env ${PROXY_ENV[@]+"${PROXY_ENV[@]}"} "$PROXY_RUNNER" "${PROXY_ARGS[@]}" &>/dev/null &
 PROXY_PID=$!
 
 HEALTH_URL="http://$HEALTH_ADDR:18080/health"
@@ -462,16 +589,74 @@ if [ "$LOAD_MODE" = maven ]; then
     echo "Cache warm:  $ARTIFACT_BYTES bytes"
 fi
 
+ensure_hyperfoil_image() {
+    if ! podman image exists "$HYPERFOIL_IMAGE" 2>/dev/null; then
+        echo "Pulling Hyperfoil image..." >&2
+        podman pull "$HYPERFOIL_IMAGE" >/dev/null 2>&1 || die "Could not pull $HYPERFOIL_IMAGE"
+    fi
+}
+
+# The Hyperfoil distribution to run inside the instance: the one given, else the image's.
+hyperfoil_distribution() {
+    if [ -n "$HYPERFOIL_DIR" ]; then
+        echo "$HYPERFOIL_DIR"
+        return
+    fi
+    ensure_hyperfoil_image
+    local cid
+    cid=$(podman create "$HYPERFOIL_IMAGE") || die "Could not create a container from $HYPERFOIL_IMAGE"
+    podman cp "$cid:/deployment" "$WORK_DIR/hyperfoil" >/dev/null || die "Could not copy Hyperfoil out of $HYPERFOIL_IMAGE"
+    podman rm "$cid" >/dev/null
+    echo "$WORK_DIR/hyperfoil"
+}
+
+HF_INSTANCE=""
+if $MODEL_LOAD; then
+    # Branched by the CLI under test, through this proxy: it starts the instance and hands it
+    # its proofs, which the proxy checks before it injects anything. No terminal, so no shell.
+    HF_INSTANCE="isx-bench-hf-$$"
+    echo "Instance:    $HF_INSTANCE (branching from $FROM)"
+    cli branch "$HF_INSTANCE" --from "$FROM" </dev/null >"$WORK_DIR/branch.log" 2>&1 \
+        || die "Could not branch $HF_INSTANCE from $FROM: $(tail -5 "$WORK_DIR/branch.log")"
+    # Read as a login reads it: the profile replaces the build's placeholder with the proof.
+    # shellcheck disable=SC2016  # expanded in the instance
+    PROOF=$(incus exec "$HF_INSTANCE" -- sh -c \
+        'ANTHROPIC_API_KEY=sk-ant-placeholder; . /run/isx/proof-tokens; printf %s "$ANTHROPIC_API_KEY"')
+    case "$PROOF" in sk-ant-isx_*) ;; *) die "$HF_INSTANCE was given no Claude proof (/run/isx/proof-tokens)" ;; esac
+    HF_SOURCE_DIR=$(hyperfoil_distribution)
+    python3 -I "$SCRIPT_DIR/messages-body.py" "$WORK_DIR/messages.json" || die "Could not write the request body"
+    # The proof goes into the definition, not a template parameter: Hyperfoil uploads no
+    # files with a template, and the body is one.
+    sed "s|!param PROOF|$PROOF|" "$BENCHMARK_YAML" > "$WORK_DIR/load.hf.yaml"
+    incus exec "$HF_INSTANCE" -- mkdir -p /opt/hyperfoil /opt/isx-bench
+    tar -C "$HF_SOURCE_DIR" -cf - . | incus exec "$HF_INSTANCE" -- tar -C /opt/hyperfoil -xf - \
+        || die "Could not copy Hyperfoil into $HF_INSTANCE"
+    tar -C "$WORK_DIR" -cf - messages.json load.hf.yaml | incus exec "$HF_INSTANCE" -- tar -C /opt/isx-bench -xf - \
+        || die "Could not copy the load into $HF_INSTANCE"
+    # One call first, so a proxy that does not inject (the stub answers 401) fails here, not
+    # as a run of errors.
+    CALL=$(incus exec "$HF_INSTANCE" -- curl -s -o /dev/null -w "%{http_code}" https://api.anthropic.com/v1/messages \
+        -H "x-api-key: $PROOF" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+        --data-binary @/opt/isx-bench/messages.json) || true
+    [ "$CALL" = 200 ] || die "A model call through the proxy returned HTTP ${CALL:-nothing} (expected 200: the stub refuses a call without the injected credential)"
+    echo "Model call:  200, credential injected ($LOAD_MODE)"
+fi
+
+# The Hyperfoil controller's REST API: on this host, or inside the instance for the model loads.
+hf_curl() {
+    if [ -n "$HF_INSTANCE" ]; then
+        incus exec "$HF_INSTANCE" -- curl "$@"
+    else
+        curl "$@"
+    fi
+}
+
 # ── 6. Start Hyperfoil ──────────────────────────────────────────────────────
 
 echo ""
 
-if [ -z "$HYPERFOIL_DIR" ]; then
-    # Ensure image is available
-    if ! podman image exists "$HYPERFOIL_IMAGE" 2>/dev/null; then
-        echo "Pulling Hyperfoil image..."
-        podman pull "$HYPERFOIL_IMAGE" >/dev/null 2>&1
-    fi
+if [ -z "$HYPERFOIL_DIR" ] && [ -z "$HF_INSTANCE" ]; then
+    ensure_hyperfoil_image
 
     # Remove any leftover container from a previous run
     podman rm -f "$HYPERFOIL_CONTAINER" 2>/dev/null || true
@@ -501,7 +686,10 @@ if [ "$LOAD_MODE" = maven ]; then
 fi
 
 echo "Starting Hyperfoil controller..."
-if [ -n "$HYPERFOIL_DIR" ]; then
+if [ -n "$HF_INSTANCE" ]; then
+    # The instance's Java trusts the isx CA through the system store, so no truststore.
+    incus exec "$HF_INSTANCE" -- sh -c 'cd /opt/hyperfoil && nohup bin/standalone.sh </dev/null > /tmp/hyperfoil.log 2>&1 &'
+elif [ -n "$HYPERFOIL_DIR" ]; then
     HF_WORK_DIR="$(mktemp -d)"
     if [ "$LOAD_MODE" = maven ]; then
         # No container, so no --add-host: the definition itself names the address to
@@ -523,7 +711,7 @@ fi
 # Wait for controller to be ready
 HF_READY=false
 for i in $(seq 1 30); do
-    if curl -sf "http://localhost:$HYPERFOIL_PORT/benchmark" &>/dev/null; then
+    if hf_curl -sf "http://localhost:$HYPERFOIL_PORT/benchmark" &>/dev/null; then
         HF_READY=true
         break
     fi
@@ -531,7 +719,9 @@ for i in $(seq 1 30); do
 done
 
 hyperfoil_logs() {
-    if [ -n "$HYPERFOIL_DIR" ]; then
+    if [ -n "$HF_INSTANCE" ]; then
+        incus exec "$HF_INSTANCE" -- cat /tmp/hyperfoil.log 2>/dev/null
+    elif [ -n "$HYPERFOIL_DIR" ]; then
         cat "$HF_WORK_DIR/hyperfoil.log" 2>/dev/null
     else
         podman logs "$HYPERFOIL_CONTAINER" 2>&1
@@ -546,20 +736,30 @@ fi
 
 # sed, not grep -oP: BSD grep has no PCRE
 HYPERFOIL_VERSION=$(hyperfoil_logs | sed -nE 's/.*Hyperfoil: ([0-9.]+).*/\1/p' | head -1)
-if [ -n "$HYPERFOIL_DIR" ]; then
-    HYPERFOIL_SOURCE="$(basename "$HYPERFOIL_DIR")"
+HYPERFOIL_SOURCE="$HYPERFOIL_IMAGE"
+[ -n "$HYPERFOIL_DIR" ] && HYPERFOIL_SOURCE="$(basename "$HYPERFOIL_DIR")"
+if [ -n "$HF_INSTANCE" ]; then
+    echo "Hyperfoil:   $HYPERFOIL_VERSION ($HYPERFOIL_SOURCE, in the instance)"
+    HYPERFOIL_SOURCE="$HYPERFOIL_SOURCE, in $FROM"
+elif [ -n "$HYPERFOIL_DIR" ]; then
     echo "Hyperfoil:   $HYPERFOIL_VERSION ($HYPERFOIL_SOURCE, no container)"
 else
-    HYPERFOIL_SOURCE="$HYPERFOIL_IMAGE"
     echo "Hyperfoil:   $HYPERFOIL_VERSION (container)"
 fi
 
 # ── 7. Run load test ────────────────────────────────────────────────────────
 
 # Upload benchmark definition
-curl -sf -X POST "http://localhost:$HYPERFOIL_PORT/benchmark" \
-    -H "Content-Type: text/vnd.yaml" \
-    --data-binary "@$BENCHMARK_UPLOAD" >/dev/null
+if [ -n "$HF_INSTANCE" ]; then
+    hf_curl -sf "http://localhost:$HYPERFOIL_PORT/benchmark" \
+        -F "benchmark=@/opt/isx-bench/load.hf.yaml;type=text/vnd.yaml" \
+        -F "messages.json=@/opt/isx-bench/messages.json;type=application/octet-stream" >/dev/null \
+        || die "Hyperfoil refused the load definition"
+else
+    curl -sf -X POST "http://localhost:$HYPERFOIL_PORT/benchmark" \
+        -H "Content-Type: text/vnd.yaml" \
+        --data-binary "@$BENCHMARK_UPLOAD" >/dev/null
+fi
 
 TARGET_URL="http://$HEALTH_ADDR:18080"
 
@@ -569,15 +769,15 @@ if grep -q '!param TARGET' "$BENCHMARK_YAML"; then
 else
     START_URL="http://localhost:$HYPERFOIL_PORT/benchmark/$BENCHMARK_NAME/start"
 fi
-RESPONSE=$(curl -sf "$START_URL")
+RESPONSE=$(hf_curl -sf "$START_URL")
 RUN_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 echo "Run started: $RUN_ID"
 
 # Poll for completion
-echo "Running benchmark (warmup 5s + steady 15s)..."
+echo "Running benchmark (the phases of $(basename "$BENCHMARK_YAML"))..."
 BENCH_OK=false
-for i in $(seq 1 60); do
-    COMPLETED=$(curl -sf "http://localhost:$HYPERFOIL_PORT/run/$RUN_ID" | \
+for i in $(seq 1 90); do
+    COMPLETED=$(hf_curl -sf "http://localhost:$HYPERFOIL_PORT/run/$RUN_ID" | \
         python3 -c "import sys,json; print(json.load(sys.stdin).get('completed', False))" 2>/dev/null)
     if [ "$COMPLETED" = "True" ]; then
         BENCH_OK=true
@@ -587,11 +787,11 @@ for i in $(seq 1 60); do
 done
 
 if ! $BENCH_OK; then
-    die "Benchmark did not complete within 60s"
+    die "Benchmark did not complete within 90s"
 fi
 
 # Fetch and display results
-STATS=$(curl -sf "http://localhost:$HYPERFOIL_PORT/run/$RUN_ID/stats/total")
+STATS=$(hf_curl -sf "http://localhost:$HYPERFOIL_PORT/run/$RUN_ID/stats/total")
 
 echo "$STATS" | python3 -c "
 import sys, json
@@ -625,9 +825,19 @@ echo "Peak RSS:    ${PEAK_RSS} KB"
 
 # ── 9. Stop proxy and Hyperfoil ─────────────────────────────────────────────
 
+destroy_instance
 kill "$PROXY_PID" 2>/dev/null; wait "$PROXY_PID" 2>/dev/null || true
 PROXY_PID=""
 stop_hyperfoil
+
+if $COLLECTING; then
+    # SIGTERM runs the shutdown hooks, and the instrumented image dumps its profile in one.
+    [ -s "$PROFILE" ] || die "The proxy wrote no profile at $PROFILE. Is $PROXY_RUNNER an instrumented build (--pgo-instrument, -H:+ParseRuntimeOptions)?"
+    gzip -f "$PROFILE"
+    echo ""
+    echo "Profile:     $PROFILE.gz ($(file_size "$PROFILE.gz") bytes); an instrumented build's numbers above are not results."
+    exit 0
+fi
 
 # ── 10. Parse Hyperfoil stats ──────────────────────────────────────────────
 
@@ -681,6 +891,10 @@ result = {
     'platform': '$(uname -sm)',
     'proxyBuiltWith': '''$PROXY_BUILT_WITH''',
     'cliBuiltWith': '''$CLI_BUILT_WITH''',
+    # The binaries measured: those --proxy/--cli named, which need not be this checkout's
+    # build (gitSha and graalvm then describe the checkout and PATH, not them).
+    'proxyBinary': '''$PROXY_RUNNER''',
+    'cliBinary': '''$CLI_RUNNER''',
     'binarySizeBytes': $BINARY_SIZE,
     'cliBinarySizeBytes': $CLI_BINARY_SIZE,
     'cliStartupUs': $CLI_STARTUP_US,
