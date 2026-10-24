@@ -385,12 +385,12 @@ fi
 
 # The timing, statistics, result file and comparison all live in Python, so each sample is
 # measured around the child process alone instead of around a `date` fork per timestamp.
-export SCRIPT_DIR PROJECT_DIR RESULTS_DIR LABEL RUNS BRANCH_RUNS FROM INSTANCE GIT_SHA GIT_SUBJECT ISX PROXY_BUILD
+export SCRIPT_DIR PROJECT_DIR RESULTS_DIR LABEL RUNS BRANCH_RUNS FROM INSTANCE GIT_SHA GIT_SUBJECT ISX PROXY_BUILD ISX_CONFIG_DIR
 export RUNTIME_SPECS
 RUNTIME_SPECS="$(printf '%s\n' "${RUNTIMES[@]}")"
 
 python3 - <<'PY'
-import json, os, shlex, subprocess, sys, time
+import atexit, json, os, shlex, shutil, subprocess, sys, tempfile, time
 from datetime import datetime, timezone
 
 sys.dont_write_bytecode = True  # keep bench/ free of __pycache__
@@ -443,6 +443,64 @@ print("Cold start (first prepare starts the instance)...")
 lifecycle["coldPrepareMs"] = round(run(lifecycle_cmd + ["run", instance, "--action", PREPARE_ACTION],
                                        1, PREPARE_MARKER), 1)
 
+# The relays: `isx ssh-proxy` as ssh's ProxyCommand. They need sshd in the instance, and the
+# key and host entry that only a branch which starts gets (#1640), so they have an instance of
+# their own, and are skipped for a template without sshd.
+SSH_INSTANCE = f"{instance}-ssh"
+SCP_MIB = 256
+SCP_RUNS = 3
+# Where isx writes it (Environment.sshConfigFile), which XDG_CONFIG_HOME does not move.
+ssh_config = os.path.join(os.path.expanduser("~"), ".config", "incus-spawn", "ssh", "config")
+
+
+def ssh_opts(base):
+    # isx's own host entry for the instance, with the runtime under test as its ProxyCommand.
+    # BatchMode: a key that does not work fails at once instead of asking for a password.
+    return ["-F", ssh_config, "-o", f"ProxyCommand={shlex.join(base)} ssh-proxy %n",
+            "-o", "BatchMode=yes", "-o", "LogLevel=ERROR"]
+
+
+def ssh_ready(base):
+    for _ in range(30):
+        if subprocess.run(["ssh", *ssh_opts(base), SSH_INSTANCE, "true"], stdin=subprocess.DEVNULL,
+                          capture_output=True).returncode == 0:
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def has_sshd():
+    # Asked of the running throwaway instance where an incus client can (not on macOS); the
+    # relay instance is then branched only for a template that can serve it.
+    if not shutil.which("incus"):
+        return True
+    return subprocess.run(["incus", "exec", instance, "--", "test", "-x", "/usr/sbin/sshd"],
+                          capture_output=True).returncode == 0
+
+
+relays = False
+if not (shutil.which("ssh") and shutil.which("scp")):
+    print("  No ssh or scp on PATH: relays skipped")
+elif not has_sshd():
+    print(f"  {source} has no sshd (the sshd tool, as tpl-isx-bench has): relays skipped")
+else:
+    print(f"Branching {SSH_INSTANCE} for the ssh-proxy relay...")
+    run(lifecycle_cmd + ["branch", SSH_INSTANCE, "--from", source])
+    relays = ssh_ready(lifecycle_cmd)
+    if not relays and shutil.which("incus"):
+        sys.exit(f"\nError: {SSH_INSTANCE} has sshd but answers no `ssh {SSH_INSTANCE} true` through isx ssh-proxy")
+    if not relays:
+        # No incus client (macOS) to ask whether the template has sshd: no answer is taken for no sshd.
+        print(f"  {SSH_INSTANCE} answers no ssh (the template needs the sshd tool, as tpl-isx-bench has): relays skipped")
+        run(lifecycle_cmd + ["destroy", SSH_INSTANCE, "--skip-confirmation"])
+scp_dir = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, scp_dir, True)
+scp_file = os.path.join(scp_dir, "scp.bin")
+if relays:
+    with open(scp_file, "wb") as f:
+        for _ in range(SCP_MIB):
+            f.write(os.urandom(1 << 20))
+
 results = {}
 for name, cmd in runtimes:
     base = shlex.split(cmd)
@@ -473,6 +531,24 @@ for name, cmd in runtimes:
     results[name]["branchToPrompt"] = s
     report("branchToPrompt", s)
 
+    if relays:
+        # A short connection, as a git-over-ssh fetch or an IDE's probe makes: dominated by the
+        # ProxyCommand's startup and its exec into the instance.
+        ssh = ssh_opts(base)
+        s = stats([run(["ssh", *ssh, SSH_INSTANCE, "true"]) for _ in range(runs)])
+        results[name]["sshTrue"] = s
+        report("sshTrue", s)
+        # Sustained throughput, every byte through the CLI's relay loop; the connection's setup
+        # (sshTrue) is inside the wall clock, so this understates the loop alone a little.
+        samples = [run(["scp", "-q", *ssh, scp_file, f"{SSH_INSTANCE}:/tmp/scp.bin"]) for _ in range(SCP_RUNS)]
+        s = stats(samples)
+        s["mibPerSec"] = round(SCP_MIB / (s["medianMs"] / 1000), 1)
+        results[name]["scpUpload"] = s
+        report("scpUpload", s)
+        print(f"  {'':<16} {s['mibPerSec']:>8.1f} MiB/s ({SCP_MIB} MiB, median)")
+
+if relays:
+    run(lifecycle_cmd + ["destroy", SSH_INSTANCE, "--skip-confirmation"])
 print("\nDestroying (timed)...")
 lifecycle["destroyMs"] = round(run(lifecycle_cmd + ["destroy", instance, "--skip-confirmation"]), 1)
 
