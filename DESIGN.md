@@ -4469,6 +4469,9 @@ That single fault surfaced in two directions and shaped several design choices:
   The fix (`IncusApi.execWebSocket`) unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint — the daemon's operation state, over a normal HTTP request — as the authoritative completion + exit-code signal, then drains and force-closes the data sockets.
   Completion no longer depends on close-frame delivery.
   Every exec fd is keepalive-pinged (each is a separate socat child that an inactivity reaper would otherwise collect on a quiet command).
+  An exec or shell keepalive stops on a flag, never an interrupt (`IncusApi.Keepalive`): an interrupt that lands during a channel write closes the socket and discards output still unread in it.
+  Stopping does not wait for a ping in flight either, since one can be stuck behind a stdin write the guest stopped reading.
+  So the socket drops a ping that would follow its close frame (`UnixWsConnection.sendPing`).
   The post-exit drain is **adaptive**: it waits a short minimum for bytes in flight, extends while output is still arriving (so trailing output isn't truncated), and closes shortly after it goes idle (`OutputDrain`).
   Idle is counted only while the drain was watching.
   When the host process pauses (a VM's vCPU descheduled, a GC), the first poll after the pause used to read the pause as quiet output and close the sockets before the reader threads, paused with it, had taken what arrived meanwhile -- truncating the output (#1062, #1084, seen on macOS CI runners).

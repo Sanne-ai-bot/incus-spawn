@@ -159,6 +159,22 @@ class WebSocketFramingTest {
     }
 
     @Test
+    void noPingFollowsTheCloseFrame() throws Exception {
+        // A keepalive is stopped without waiting for it, so its last ping can come after close.
+        var dir = java.nio.file.Files.createTempDirectory("ws-test");
+        var socket = dir.resolve("s.sock");
+        var written = serveOnce(socket, new byte[0]);
+        try (var ws = new UnixSocketTransport(socket.toString()).openWebSocket("/x")) {
+            ws.sendClose();
+            ws.sendPing();
+        }
+        var sent = written.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        // One masked CLOSE with no payload: FIN|0x8, MASK|len 0, then the 4-byte key.
+        assertEquals(6, sent.length);
+        assertEquals((byte) 0x88, sent[0]);
+    }
+
+    @Test
     void frameCutShortInItsPayloadIsAnError() {
         var wire = new ByteArrayOutputStream();
         wire.write(0x80 | TEXT);

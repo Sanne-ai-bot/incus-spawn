@@ -604,6 +604,8 @@ class UnixSocketTransport implements IncusTransport {
         private final OutputStream out;
         private final InputStream in;
         private final Object writeLock = new Object();
+        // A keepalive may still be pinging when the close frame goes; no frame may follow it.
+        private boolean closeSent; // guarded by writeLock
         private byte[] frameBuf = new byte[0]; // guarded by writeLock
         private final java.util.concurrent.atomic.AtomicBoolean closed =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -692,13 +694,14 @@ class UnixSocketTransport implements IncusTransport {
         @Override
         public void sendPing() throws IOException {
             synchronized (writeLock) {
-                send(WS_PING, new byte[0], 0, 0);
+                if (!closeSent) send(WS_PING, new byte[0], 0, 0);
             }
         }
 
         @Override
         public void sendClose() throws IOException {
             synchronized (writeLock) {
+                closeSent = true;
                 send(WS_CLOSE, new byte[0], 0, 0);
             }
         }
