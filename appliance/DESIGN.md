@@ -150,16 +150,18 @@ BusyBox init handles PID 1 responsibilities (zombie reaping, signal forwarding) 
 2. Remount root with `noatime,commit=300,compress=zstd:1,discard=async`
 3. Set hostname
 4. Apply sysctl settings (IP forwarding for Incus bridge NAT)
-5. Bring up loopback and DHCP on the first network interface (`udhcpc`)
-6. Seed clock from kernel cmdline (`isx.time`) and start `qemu-ga` for vfkit timesync
-7. Start `chronyd` for NTP clock sync (see [Clock Synchronization](#clock-synchronization))
-8. Start `dbus-daemon` (required by Incus)
-9. Start `lxcfs` (required by Incus for /proc virtualization)
-10. Start `incusd`
-11. Run `incus-spawn-vm-init` (bridge, storage pool, iptables)
-12. Run smoke test if `isx.smoke_test` is on kernel cmdline
-13. Schedule diagnostics dump (30s delay, background)
-14. Echo `=== ISX READY ===` marker
+5. Enable the swap disk (`/dev/vdb`, `mkswap` on first boot), discarding its old pages once (`swapon --discard=once`), when the disk is attached: both isx backends attach it, CI's `vm.sh` test boot does not
+6. Mount the data disk (`/dev/vdc`, `mkfs.btrfs` on first boot) on `/var/lib/incus` with the root disk's options, then grow it to the device size, when the disk is attached (as for swap)
+7. Bring up loopback and DHCP on the first network interface (`udhcpc`)
+8. Seed clock from kernel cmdline (`isx.time`) and start `qemu-ga` for vfkit timesync
+9. Start `chronyd` for NTP clock sync (see [Clock Synchronization](#clock-synchronization))
+10. Start `dbus-daemon` (required by Incus)
+11. Start `lxcfs` (required by Incus for /proc virtualization)
+12. Start `incusd`
+13. Run `incus-spawn-vm-init` (bridge, storage pool, iptables)
+14. Run smoke test if `isx.smoke_test` is on kernel cmdline
+15. Schedule diagnostics dump (30s delay, background)
+16. Echo `=== ISX READY ===` marker
 
 ### Clock Synchronization
 
