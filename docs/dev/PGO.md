@@ -17,7 +17,9 @@ Where the implementation differs from the plan, this page says so beside the pla
 Still open:
 
 - The quality floors in `.github/scripts/check-pgo-quality.sh` are 10% applicability and 80% relevance, pending Sanne's choice of 14% and 95%, just below the lowest figures measured: 15.04% applicability (the macOS aarch64 CLI in dispatch run 40183611322; 15.05% in the table below) and 97.04% relevance (the macOS aarch64 proxy).
-- Cold paths no workload reaches are deferred: npm caching and the WebSocket relay (also host routes and the MCP bridge) compile as cold code; loads for npm and WebSocket are a later step.
+- Host routes and the MCP bridge have no load, so they compile as cold code.
+  **Done (#1651):** the npm path and the WebSocket relay now have loads (`--load=npm`, `--load=websocket`) and are in the release profile, collected at a lighter weight so they do not outweigh the rest.
+  Throughput on both is unchanged on the measuring host, since TLS and the network bound them, for about 1.5 MB more proxy; see the performance notes, "The npm and WebSocket paths".
 - The Intel macOS build stays unprofiled (Phase 3 below).
 
 ## Goal
@@ -100,7 +102,8 @@ Run it on a Linux host set up with `scripts/local-incus.sh`, or in a branched in
 
 **Proxy**: one instrumented process, driven in sequence by the `maven` and `saturate` loads and a new Hyperfoil load for Anthropic header injection and Vertex translation against the upstream stub.
 
-**Implemented:** one process per load (`maven`, `saturate`, `anthropic`, `vertex`), since counts add up across files, plus the proxy that serves the CLI flows.
+**Implemented:** one process per load (`maven`, `saturate`, `npm`, `anthropic`, `vertex`, `websocket`), since counts add up across files, plus the proxy that serves the CLI flows.
+The `npm` and `websocket` loads (#1651) collect from shorter definitions of their own: at full length they made the Vertex path 12% slower.
 The model loads run Hyperfoil inside an instance branched from `tpl-isx-bench`, because the proxy injects only for a caller it knows by address and proof.
 They run on a config of their own (`ISX_BENCH_CONFIG`), never the user's.
 
