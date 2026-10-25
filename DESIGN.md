@@ -4798,6 +4798,7 @@ But the shell that follows draws over it, and the TUI redraws over that, so a wa
 `ShellLaunch.createBranchFromModal` copies every `BuildOutput.warn` of the branch into the `WarningLog` (`BuildOutput.copyWarningsTo`), as a TUI-launched build does.
 So code on the branch path warns through `BuildOutput.warn` or a sink the caller gives it, which `RuntimeSetup.setupRuntime` takes for an incomplete setup and a failed SSH host entry.
 A bare `System.err` line reaches the terminal only.
+The sites on the branch path that still print one (GUI and KVM passthrough's explanations, the CA mismatch note, a VM's deferred network config) are tracked in #1690.
 Progress stays on the terminal, where it is read while the branch runs.
 
 Each channel reports a distinct message once.

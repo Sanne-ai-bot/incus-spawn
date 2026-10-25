@@ -945,8 +945,7 @@ public final class InstanceLifecycle {
     public static void attachInbox(IncusClient incus, String name, Path inboxPath) {
         if (inboxPath == null) return;
         if (!java.nio.file.Files.isDirectory(inboxPath)) {
-            System.err.println(BuildOutput.STEP_INDENT + "Warning: inbox path '" + inboxPath +
-                    "' is not a directory, skipping.");
+            BuildOutput.warn("Inbox path '" + inboxPath + "' is not a directory, skipping.");
             return;
         }
         BuildOutput.step("Mounting inbox: " + inboxPath.toAbsolutePath() + ".");
