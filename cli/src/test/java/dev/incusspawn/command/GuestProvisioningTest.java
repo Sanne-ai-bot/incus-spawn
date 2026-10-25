@@ -137,6 +137,39 @@ class GuestProvisioningTest {
         assertEquals("/home/agentuser/quarkus", githubPaths.getField("quarkusio/quarkus").getElement(0).asText());
     }
 
+    @Test
+    void updateClaudeJsonTrustReadsAFileALoginApprovedAKeyIn() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        // The login script's approval repeats the field on the last line (ClaudeSetup.LOGIN_AUTH_SCRIPT)
+        var existingJson = """
+                {
+                  "customApiKeyResponses": {"approved": ["sk-ant-placeholder"], "rejected": []},
+                  "projects": {}
+                ,"customApiKeyResponses":{"approved":["0123456789abcdef0123"],"rejected":[]}}
+                """;
+        when(incus.shellExec(eq("test"), eq("test"), eq("-f"), anyString())).thenReturn(OK);
+        when(incus.shellExec(eq("test"), eq("cat"), anyString())).thenReturn(
+                new IncusClient.ExecResult(0, existingJson, ""));
+        when(incus.shellExec(eq("test"), eq("sh"), eq("-c"), anyString())).thenReturn(OK);
+        when(incus.shellExec(eq("test"), eq("chown"), anyString(), anyString(), anyString())).thenReturn(OK);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/quarkusio/quarkus.git");
+        repo.setPath("~/quarkus");
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-quarkus");
+        imageDef.setRepos(List.of(repo));
+
+        GuestProvisioning.updateClaudeJsonTrust(container, imageDef, Map.of());
+
+        var written = capturedWrite(incus, ".claude.json");
+        assertNotNull(written, "the repos are trusted");
+        var root = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(written);
+        assertTrue(root.path("projects").path("/home/agentuser/quarkus").path("hasTrustDialogAccepted").asBoolean(false));
+        assertEquals("sk-ant-placeholder", root.path("customApiKeyResponses").path("approved").getElement(0).asText());
+    }
+
     /**
      * A {@code .claude.json} that is not the object Claude Code writes is left alone, with a
      * warning: rewriting it from what could be read would replace the user's file with a

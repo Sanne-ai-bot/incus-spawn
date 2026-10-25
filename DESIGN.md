@@ -4306,6 +4306,7 @@ Jackson's semantics are the ones users' files were written against, so where jjq
 - A tree is immutable: code that changes one (the support-bundle redaction) rebuilds it along key/index segments, never along a dotted path re-split, since keys may contain `.` or `[`.
 - A strict-parse failure quotes the whole document; messages show `Jjq.brief`.
 - A JSON document with a repeated key is refused, where Jackson kept the last value: a request body, an MCP message or `~/.claude.json` with one fails like malformed JSON rather than being read one way or the other.
+  The one exception is the `customApiKeyResponses` approval the login script repeats on the last line of `~/.claude.json`: `ClaudeSetup.parseClaudeJson` drops that line before parsing (#1638).
 - An `Integer` field binds through `IntegerConverter`: jjq gives 0 for `.inf` and `.nan`, which for `orphan-grace-hours` in `mcp.yaml` or `max-instances` would fail open, and refuses `""`, which Jackson left unset (a word, a boolean, a fraction or an out-of-range number it refuses itself since 0.2.3).
 The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2), #131-#134 (fixed in 0.2.3) and #130 (open).
 
@@ -4940,6 +4941,8 @@ The two login scripts are named `isx-zz-*` so they sort after every other `isx-*
 Both are POSIX sh, silent, and do nothing but a grep when nothing changed.
 Neither may break the file it edits.
 Claude Code's approval is added by replacing the last line of a file shaped as Claude Code writes it (`{` first, `}` last) with the field and the closing brace -- `JSON.parse` keeps the last of a repeated key and Claude Code rewrites the file with one -- and anything else is left alone, which costs a prompt, never a config.
+isx's own readers of the file, the reconfigure merge and the repo pre-trust at build, drop that last line before their strict parse (`ClaudeSetup.parseClaudeJson`).
+Both run only at build, where that line can only approve the build's own temporary proof, revoked when the build ends; a branch gets proofs from a new seed, which its first login approves.
 Codex's file is replaced only while it still holds `sk-placeholder` or an `isx_` proof in `apikey` mode, so a `codex login` of the user's own survives.
 A child build rewrites both scripts and syncs the `gcloud` stub for a Claude or Codex it inherits without setting up again (`ToolSetup.refreshInherited`), so a parent built before #1108 does not pass on files that hold or lack the wrong thing.
 Instances branched from such a parent get them only once it is rebuilt.

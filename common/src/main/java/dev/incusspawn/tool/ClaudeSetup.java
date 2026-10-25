@@ -7,6 +7,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.io.IOException;
@@ -397,7 +398,7 @@ public class ClaudeSetup implements ToolSetup {
      */
     public static final String MANAGED_MEMORY_PATH = "/etc/claude-code/CLAUDE.md";
     static final String USER_SETTINGS_PATH = "/home/agentuser/.claude/settings.json";
-    private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
+    public static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
     private static final String API_KEY_RESPONSES = "customApiKeyResponses";
     /** The last line {@link #LOGIN_AUTH_SCRIPT} writes when it approves a start's key. */
     private static final Pattern LOGIN_APPROVAL = Pattern.compile("(?m)^,\"customApiKeyResponses\":\\{.*}}\\s*\\z");
@@ -497,12 +498,8 @@ public class ClaudeSetup implements ToolSetup {
      */
     static String mergeClaudeJson(IncusClient.ExecResult existing, String isxJson) {
         if (existing.success() && existing.stdout().isBlank()) return isxJson;
-        // The login script approves a start's key by appending the field once more, which
-        // JSON.parse takes and a strict parser refuses; isx replaces that field anyway.
-        // ClaudeCallTimeTokenTest runs the script, so this cannot drift from what it writes.
-        var json = LOGIN_APPROVAL.matcher(existing.stdout()).replaceFirst("}");
         try {
-            if (existing.success() && JqValues.parseStrict(json) instanceof JqObject previous) {
+            if (existing.success() && parseClaudeJson(existing.stdout()) instanceof JqObject previous) {
                 var isx = (JqObject) JqValues.parseStrict(isxJson);
                 return JqValues.toPrettyJsonString(previous.without(API_KEY_RESPONSES).deepMerge(isx)) + "\n";
             }
@@ -511,6 +508,19 @@ public class ClaudeSetup implements ToolSetup {
         }
         BuildOutput.warn("Could not read " + CLAUDE_JSON_PATH + " as a JSON object; rewriting it drops what earlier layers put there");
         return isxJson;
+    }
+
+    /**
+     * {@code ~/.claude.json} read strictly, less the approval a login appended. The login script
+     * approves a start's key by repeating the field on the last line, which JSON.parse takes and
+     * a strict parser refuses. Its readers run only at build, where the line can only approve the
+     * build's own temporary proof, so dropping it is safe; a branch's first login approves its own.
+     * ClaudeCallTimeTokenTest runs the script, so this cannot drift from what it writes.
+     *
+     * @throws IllegalArgumentException when the rest is not JSON
+     */
+    public static JqValue parseClaudeJson(String json) {
+        return JqValues.parseStrict(LOGIN_APPROVAL.matcher(json).replaceFirst("}"));
     }
 
     /**
