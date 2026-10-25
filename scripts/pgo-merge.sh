@@ -4,7 +4,8 @@
 # bench/pgo-collect.sh writes one profile per process (about a hundred for the CLI). native-image
 # merges what it is given and can write the result back (-H:PGODumpLoadedIprofPath), so this
 # builds the module once with every profile and keeps the merged one: <out>/<module>.iprof.gz,
-# what -Dnative.pgo=<out> reads. The build's output is discarded; its log shows the profile's
+# what -Dnative.pgo=<out> reads. The binary it builds is discarded; its output goes to
+# <out>/<module>-merge.log (and, in CI, to the job's log too) and shows the profile's
 # applicability and relevance (-H:+PGOPrintProfileQuality).
 #
 # Requires: Oracle GraalVM with native-image (--pgo is Oracle-only), run from the checkout the
@@ -42,7 +43,6 @@ echo "Merging ${#files[@]} $MODULE profiles..."
 # The build's output goes to the log and, in CI, to the job's log too: a build that stalls must
 # show where (a release run once spent its whole timeout here with nothing to show for it).
 show() { if [ -n "${CI:-}" ]; then tee "$1"; else cat > "$1"; fi; }
-set -o pipefail
 mvn -q -f "$PROJECT_DIR/pom.xml" package -Dnative -DskipTests -pl "$MODULE" -am -Dnative.optimization=-O3 \
     "-Dnative.pgo.args=,--pgo=$joined,-H:+UnlockExperimentalVMOptions,-H:+PGOPrintProfileQuality,-H:PGODumpLoadedIprofPath=$MERGED,-H:-UnlockExperimentalVMOptions" \
     2>&1 | show "$OUT/$MODULE-merge.log" || die "The merging build failed; see $OUT/$MODULE-merge.log"

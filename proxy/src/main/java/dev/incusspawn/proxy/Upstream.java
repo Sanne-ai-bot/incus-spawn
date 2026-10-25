@@ -86,9 +86,10 @@ class Upstream {
     // before its connection closes without it (LingeringClose). Package-private for tests.
     volatile long lingerMillis = 5000;
     volatile long lingerCapMillis = 30_000;
-    // For the benchmark (bench/run.sh --load=maven, via ISX_BENCH_UPSTREAM) and tests:
-    // send a host's upstream connections to a local stub. Host header and SNI still
-    // name the real host. Set before start().
+    // For the benchmark (bench/run.sh's stubbed loads, via ISX_BENCH_UPSTREAM) and tests:
+    // send a host's upstream connections to a local stub. The HTTP clients keep the real
+    // host in the Host header and SNI; a WebSocket dial puts the override's address in SNI
+    // and keeps the real host in Host (MitmProxy.handleWebSocketUpgrade). Set before start().
     private final Map<String, SocketAddress> upstreamOverrides = new ConcurrentHashMap<>();
     private volatile String extraUpstreamTrustPem;
 
