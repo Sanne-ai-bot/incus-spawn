@@ -4928,6 +4928,36 @@ Templates are only the triage signal, not the gate — `isx branch` already refu
 Anthropic credentials stay a `WARN` regardless: isx itself uses them for `isx ask`, so there is no template to check against.
 If the definitions can't be read at all, every tool counts as in use — the conservative direction is to keep reporting.
 
+### Which base image an instance runs
+
+A fix in a base image reaches only instances created after it (#1657).
+Base images before `fedora-44-20261009` restarted systemd-networkd every 30 seconds, and three long-lived instances on one host did that for weeks, found only by measuring the host's disk writes (#1656).
+So `isx list` (`base_image`), the TUI's instance details and `isx doctor` say which release an instance runs, and whether a rebuild would move it to a newer one (`BaseImageAge`).
+
+Nothing is stamped for it.
+When Incus creates an instance from an image, it copies the image's properties into the instance's config as `image.*`, and a copy keeps them.
+Every base image isx imports carries `incus-spawn.tag`, so `image.incus-spawn.tag` is already on templates built before this change and on every branch of them, which are the ones that matter.
+A stamp written at build would have left exactly those unknown.
+`BUILD_SOURCE` was not used either: a child template built on its parent records no tracked tag, so it can name an older release than the one the root actually started from.
+
+The comparison is with the instance's root definition as loaded, its base-image pin applied: what a rebuild would use offline.
+The image's fingerprint (`volatile.base_image`, a base image's tarball sha256) is compared before the tag.
+A release can re-publish an unchanged asset, and the import then reuses the image under the tag it was first imported with, which says nothing about its age.
+Otherwise the tags are compared (`<distribution>-<release>-<yyyymmdd>`, release first): a newer one, such as a tracked build of a later release, is fine, and one that does not parse is unknown, a `NOTE`.
+A later release the same day carries `-2`, `-3` and so on (incus-spawn-images' `release-tag.sh`), which orders after that day's bare tag and before the next day.
+Doctor's remediation is a rebuild the user starts: an instance cannot be rebuilt, only branched again, and that is theirs to decide.
+An older base image is a `NOTE`, so publishing a routine release does not turn every host's `isx doctor` into a list of issues to address (Sanne's decision on #1664).
+It is a `WARN` only when the instance's release predates a known fix that a rebuild would bring: `BaseImageAge.KNOWN_FIXES`, which names the fix, such as the network watchdog of `fedora-44-20261009`.
+That list is written by hand, one entry per base-image fix worth a rebuild for everyone still on an older release.
+A release lacks a fix only on the fix's own release line (`fedora-44`), since a date on another release says nothing about the scripts it was built from.
+Each release is one finding, so a rebuild is planned once, and it is a `WARN` as soon as one member lacks a known fix, which the detail names with those members.
+A note's remediation is printed under it, since only an issue's is offered after the list.
+A project template is a copy of its parent, so it moves by `isx project create` again, which replaces it.
+An instance is branched again from its template only when the listing shows that template current; a deleted one, or one whose release was not recorded, is built first.
+Building a template builds every layer under it that is not known to be current as well, parents first.
+`isx build` builds its targets in the order given and copies a child from its parent as built, so a child named first would copy the old image again.
+The expected release is never fetched, so doctor and the list work offline; the next build reports tracking a newer published one.
+
 ### Doctor and build remediations act through isx, never name an `incus` command
 
 A remediation says *what* is done, and isx does it: through `IncusClient` over REST where it can, so it works the same over the Unix socket and over the macOS vsock tunnel (#986).

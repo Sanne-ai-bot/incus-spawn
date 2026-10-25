@@ -39,6 +39,7 @@ import dev.incusspawn.util.SystemTrust;
 import dev.incusspawn.vm.VmAgentClient;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
@@ -54,6 +55,8 @@ import java.security.cert.CertificateNotYetValidException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -62,6 +65,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -307,6 +311,7 @@ public class DoctorCommand extends BaseCommand {
         }
         findings.add(checkInstanceAccounts());
         findings.addAll(checkTemplates());
+        findings.addAll(checkBaseImages());
         if (deepChecks()) {
             findings.addAll(checkInstances());
         }
@@ -1869,6 +1874,136 @@ public class DoctorCommand extends BaseCommand {
         return findings;
     }
 
+    /** Layer 6b: templates and instances on an older base image than a rebuild would use (#1657). */
+    private List<Finding> checkBaseImages() {
+        var load = loadImageDefs();
+        if (load.loaded() == null) return List.of(); // checkTemplates reports why
+        try {
+            return baseImageFindings(incus().listJsonConfig(), load.loaded().defs());
+        } catch (Exception e) {
+            return List.of(Finding.warn("Base images", "(could not check: " + e.getMessage() + ")", null));
+        }
+    }
+
+    /**
+     * One finding per release a rebuild would move to, naming the templates on an older one, the
+     * projects and instances branched from them, and what to run, parents first. It is a NOTE,
+     * or a WARN when a member lacks a known fix that rebuild would bring ({@link
+     * BaseImageAge#KNOWN_FIXES}): the network watchdog of releases before fedora-44-20261009
+     * restarted networkd every 30 s for weeks, unnoticed. Another NOTE lists those whose release
+     * Incus did not record, or that does not compare.
+     */
+    static List<Finding> baseImageFindings(JqValue listing, Map<String, ImageDef> defs) {
+        // By the release a rebuild would use, each in the listing's order. A project template is
+        // a copy of its parent, so it moves by being created again, as an instance by a new branch.
+        // Templates are keyed by their definition, which is what isx build takes.
+        record Template(String name, String definition, String tag) {}
+        // Which members lack each known fix a rebuild would bring: what makes the finding a WARN
+        record Older(List<Template> templates, List<String> projects, List<String> instances, Set<String> parents,
+                     Map<BaseImageAge.KnownFix, List<String>> lacking) {}
+        // One finding per release, so a rebuild is planned once; releases in their own order
+        var older = new TreeMap<String, Older>((a, b) -> {
+            var order = BaseImageAge.compareTags(a, b);
+            return order != null && order != 0 ? order : a.compareTo(b);
+        });
+        // The definitions whose template is on the release a rebuild would use, or a newer one
+        var current = new HashSet<String>();
+        var unrecorded = new ArrayList<String>();
+        var incomparable = new ArrayList<String>();
+        int checked = 0;
+        for (var i : InstanceListing.collectEntries(listing)) {
+            if (Metadata.TYPE_FAILED_BUILD.equals(i.type()) || i.name().endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
+            var age = BaseImageAge.assess(i.metadata(), defs);
+            if (age == null) continue;
+            checked++;
+            var name = OutputFormat.oneLine(i.name());
+            // Not null: assess found its definition
+            var definition = Metadata.templateOf(i.metadata().getField("config"));
+            switch (age.standing()) {
+                case OLDER -> {
+                    var group = older.computeIfAbsent(age.expectedTag(), k -> new Older(new ArrayList<>(),
+                            new ArrayList<>(), new ArrayList<>(), new LinkedHashSet<>(), new LinkedHashMap<>()));
+                    for (var known : BaseImageAge.missingFixes(age)) {
+                        group.lacking().computeIfAbsent(known, k -> new ArrayList<>()).add(name);
+                    }
+                    if (Metadata.TYPE_BASE.equals(i.type())) {
+                        group.templates().add(new Template(name, definition, OutputFormat.oneLine(age.tag())));
+                    } else {
+                        (Metadata.TYPE_PROJECT.equals(i.type()) ? group.projects() : group.instances()).add(name);
+                        group.parents().add(definition);
+                    }
+                }
+                case CURRENT, NEWER -> {
+                    if (Metadata.TYPE_BASE.equals(i.type())) current.add(definition);
+                }
+                case UNKNOWN -> {
+                    if (age.tag() == null) unrecorded.add(name);
+                    else incomparable.add(name + " on " + OutputFormat.oneLine(age.tag()) + " (against "
+                            + OutputFormat.oneLine(age.expectedTag()) + ")");
+                }
+            }
+        }
+        // The detail lists templates parents first, the order the build step names them in
+        var depths = new HashMap<String, Integer>();
+        Comparator<String> parentsFirst = Comparator.comparingInt(
+                d -> depths.computeIfAbsent(d, k -> ImageDef.ancestors(defs.get(k), defs).size()));
+        var findings = new ArrayList<Finding>();
+        older.forEach((release, group) -> {
+            var parts = new ArrayList<String>();
+            var steps = new ArrayList<String>();
+            // What has to be built: the older templates, and the template behind an instance or
+            // project here that is not known to be current (deleted, or its release unrecorded),
+            // each with every layer under it that is not known to be current either. Parents
+            // first: isx build builds in the order given, and copies a child from its parent as
+            // built. Each chain is root first, and a layer under an earlier entry is in that
+            // entry's chain, so no later one can come before its parent.
+            var needed = new LinkedHashSet<String>();
+            group.templates().forEach(t -> needed.add(t.definition()));
+            group.parents().stream().filter(d -> !current.contains(d)).forEach(needed::add);
+            var builds = new ArrayList<String>();
+            for (var definition : needed) {
+                for (var layer : ImageDef.chain(defs.get(definition), defs)) {
+                    if (!current.contains(layer.getName()) && !builds.contains(layer.getName())) builds.add(layer.getName());
+                }
+            }
+            if (!group.templates().isEmpty()) {
+                var templates = new ArrayList<>(group.templates());
+                templates.sort(Comparator.comparing(Template::definition, parentsFirst));
+                parts.add("templates: " + String.join(", ", templates.stream().map(t -> t.name() + " on " + t.tag()).toList()));
+            }
+            if (!builds.isEmpty()) steps.add("isx build " + String.join(" ", builds.stream().map(OutputFormat::oneLine).toList()));
+            if (!group.projects().isEmpty()) {
+                parts.add("projects: " + String.join(", ", group.projects()));
+                // One per project: each is created from its own incus-spawn.yaml
+                for (var project : group.projects()) {
+                    steps.add("run 'isx project create " + project + "' from its project's directory");
+                }
+            }
+            if (!group.instances().isEmpty()) {
+                parts.add("instances: " + String.join(", ", group.instances()));
+                steps.add("branch " + String.join(", ", group.instances()) + " again");
+            }
+            var fix = builds.isEmpty()
+                    ? capitalize(String.join(", then ", steps)) + " to pick up image fixes"
+                    : "Rebuild to pick up image fixes: " + String.join(", then ", steps);
+            // A routine newer release is a NOTE, not an issue to address (Sanne, #1664); a WARN
+            // names the known fix a rebuild would bring, and what lacks it
+            group.lacking().forEach((known, names) -> parts.add("before " + known.release() + " "
+                    + known.problem() + ": " + String.join(", ", names)));
+            findings.add(new Finding(group.lacking().isEmpty() ? Status.NOTE : Status.WARN,
+                    "Base image older than " + OutputFormat.oneLine(release),
+                    "(" + String.join("; ", parts) + ")", new Remediation(fix, false, null)));
+        });
+        var notes = new ArrayList<String>();
+        if (!unrecorded.isEmpty()) notes.add("release not recorded: " + String.join(", ", unrecorded));
+        if (!incomparable.isEmpty()) notes.add("release not comparable: " + String.join(", ", incomparable));
+        if (!notes.isEmpty()) findings.add(Finding.note("Base images", "(" + String.join("; ", notes) + ")"));
+        if (findings.isEmpty() && checked > 0) {
+            findings.add(Finding.ok("Base images", "(" + checked + " checked, none older than a rebuild would use)"));
+        }
+        return findings;
+    }
+
     /** Turn definition-loading diagnostics (image or tool) into doctor findings. */
     private static void addDefinitionFindings(List<Finding> findings,
             List<LayeredDefinitions.NameConflict> conflicts,
@@ -2023,11 +2158,15 @@ public class DoctorCommand extends BaseCommand {
         return "Redacted " + String.join(" and ", parts) + ".";
     }
 
-    private String formatFindings(List<Finding> findings) {
+    static String formatFindings(List<Finding> findings) {
         var sb = new StringBuilder();
         for (var f : findings) {
             var detail = f.detail() == null || f.detail().isBlank() ? "" : " " + f.detail();
             sb.append(f.status().symbol).append(" ").append(f.label()).append(detail).append("\n");
+            // Only an issue's remediation is offered after the list, so a note's is shown here
+            if (f.status() == Status.NOTE && f.remediation() != null) {
+                sb.append("    ").append(f.remediation().description()).append("\n");
+            }
         }
         return sb.toString();
     }
