@@ -326,6 +326,42 @@ The release smoke test passed on every build, and the keychain smoke on both mac
 The floors in `.github/scripts/check-pgo-quality.sh` stay at 10% applicability and 80% relevance until Sanne decides; the proposal is 14% and 95%, just below the lowest figures across the three dispatches (15.04% and 97.04%).
 Two earlier dispatches of this change (runs 40180623569 and 40183611322, before rebases) gave the same figures within 0.02 points.
 
+## The `ssh-proxy` relay (issue #1643)
+
+Measured 2026-10-25 on an 8-core Linux VM (AES-NI, AVX2), native `-Os` builds of one commit.
+The guest was a Fedora 44 container with sshd, and each transfer copied 256 MiB from and to `/dev/shm`.
+CPU is the relay process's and incusd's, sampled from `/proc`; figures are medians of four interleaved rounds.
+
+| 256 MiB `scp` | upload | relay CPU | incusd CPU | download | relay CPU |
+|---|---|---|---|---|---|
+| Direct to the instance's IP, no relay | ~495 MiB/s | | | ~425 MiB/s | |
+| `incus exec … nc localhost 22` (Go client) | 234 MiB/s | 0.30 s | 0.45 s | 342 MiB/s | 0.24 s |
+| `isx ssh-proxy`, before | 242 MiB/s | 0.82 s | 0.62 s | 318 MiB/s | 0.34 s |
+| `isx ssh-proxy`, after | 375 MiB/s (**+55%**) | 0.31 s | 0.30 s | 332 MiB/s | 0.29 s |
+
+A rerun of the final commit, four more rounds, agreed.
+Upload rose from 274 to 422 MiB/s (+54%), relay CPU fell from 0.76 to 0.27 s and incusd's from 0.59 to 0.26 s.
+Download measured 351 against 341 MiB/s, within noise.
+
+The upload was bound by isx's own framing, not by encryption.
+The relay does no cryptography: ssh encrypts end to end, and the Incus socket is plain.
+Stdin went in 4 KiB frames, each written as three unbuffered socket writes, with the payload masked a byte at a time.
+That kept the relay near a full core, and the small frames doubled incusd's work too.
+Frames of up to 64 KiB, written once and masked a word at a time, cut both by more than half.
+Reading frames through a read-ahead, instead of a read per header byte, trims the download side a little.
+Download was already at the Go client's rate, bounded by incusd and `nc` in the guest.
+
+What was ruled out:
+- The CLI's `-march`: it is `haswell`, like the proxy's, and nothing on this path uses AES.
+- ssh's cipher: `aes128-gcm` with AES-NI measured no faster than the default `chacha20-poly1305` (about 240 against 265 MiB/s up).
+- The JVM build, for this comparison: its half second of startup is a large share of a transfer of one to three seconds.
+
+The PGO A/B above measured the relay before this change, while it was CPU-bound in isx.
+Its relay gain (+14%) was likely that hot path's, so it may not carry over.
+Release builds are now `-O3` + PGO (phase 3), and these figures are not theirs.
+The change removes work rather than compiling it better, so a similar gain is expected there, but it was not measured.
+`ssh <instance> true` is unchanged (113 against 117 ms, twenty runs each).
+
 ## Measurement caveats worth remembering
 
 - **Native builds are not byte-reproducible here.** The same commit and toolchain produced
