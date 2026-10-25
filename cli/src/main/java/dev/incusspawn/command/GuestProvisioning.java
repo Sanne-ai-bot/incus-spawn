@@ -30,6 +30,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
+import static dev.incusspawn.tool.ClaudeSetup.CLAUDE_JSON_PATH;
 import static dev.incusspawn.command.BuildProgress.dnfCommand;
 import static dev.incusspawn.command.BuildProgress.runDnf;
 import static dev.incusspawn.command.BuildProgress.runWithSpinner;
@@ -595,8 +596,6 @@ public class GuestProvisioning {
         container.chown(CODEX_CONFIG_PATH, "agentuser:agentuser");
     }
 
-    private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
-
     /**
      * Update .claude.json to pre-trust cloned repo directories and register GitHub repo paths.
      */
@@ -616,7 +615,7 @@ public class GuestProvisioning {
         try {
             // Like the old casts: a file that is not the shape Claude Code writes is left alone,
             // never rewritten from the part that could be read.
-            if (!(JqValues.parseStrict(catResult.stdout()) instanceof JqObject root)) {
+            if (!(ClaudeSetup.parseClaudeJson(catResult.stdout()) instanceof JqObject root)) {
                 throw new IllegalStateException("not a JSON object");
             }
             var projects = objectOrEmpty(root, "projects");
