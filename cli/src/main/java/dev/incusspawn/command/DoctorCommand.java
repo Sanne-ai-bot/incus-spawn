@@ -168,6 +168,11 @@ public class DoctorCommand extends BaseCommand {
         return deep || bundle;
     }
 
+    /** The Incus every check reads; a test answers it from a {@code FakeIncusDaemon}. */
+    IncusClient incus() {
+        return RuntimeServices.incus();
+    }
+
     private CommandResult exitFor(List<Finding> findings) {
         boolean anyFail = findings.stream().anyMatch(f -> f.status() == Status.FAIL);
         return anyFail ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
@@ -245,7 +250,7 @@ public class DoctorCommand extends BaseCommand {
             // the no-reboot restart clears, that finding must not offer the VM restart first (#1277).
             var forwarderFinding = checkForwarderLeak();
             var incusFinding = incusReachableFinding(reachable, seconds,
-                    () -> RuntimeServices.incus().checkConnectivity(), forwarderFinding);
+                    () -> incus().checkConnectivity(), forwarderFinding);
             findings.add(incusFinding);
             incusUp = incusFinding.status() == Status.OK;
             findings.add(forwarderFinding);
@@ -274,7 +279,7 @@ public class DoctorCommand extends BaseCommand {
             findings.add(Finding.ok("Incus reachable", ""));
             incusUp = true;
         } else {
-            var detail = RuntimeServices.incus().checkConnectivity();
+            var detail = incus().checkConnectivity();
             findings.add(Finding.fail("Incus not reachable", detail == null ? "" : "(" + detail + ")", null));
             incusUp = false;
         }
@@ -285,7 +290,7 @@ public class DoctorCommand extends BaseCommand {
     }
 
     /** Layers 2 (storage) through 7 — shared between Linux and macOS once Incus is reachable. */
-    private void runSharedChecks(List<Finding> findings) {
+    void runSharedChecks(List<Finding> findings) {
         findings.addAll(checkStoragePool());
         findings.add(checkInotifyBudget());
         findings.addAll(checkProxy());
@@ -631,7 +636,7 @@ public class DoctorCommand extends BaseCommand {
 
     private List<Finding> checkStoragePool() {
         try {
-            var incus = RuntimeServices.incus();
+            var incus = incus();
             var pools = incus.listPools();
             String pool = null;
             for (var e : pools.entrySet()) {
@@ -1090,7 +1095,7 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkInotifyBudget() {
         try {
-            var incus = RuntimeServices.incus();
+            var incus = incus();
             int limit = new IncusDiagnostics(incus).getInotifyMaxInstances();
             if (limit < 0) return Finding.ok("Inotify budget", "(could not read)");
 
@@ -1284,7 +1289,7 @@ public class DoctorCommand extends BaseCommand {
     // ---- Layer 4: Proxy ----
 
     private List<Finding> checkProxy() {
-        var incus = RuntimeServices.incus();
+        var incus = incus();
         var findings = new ArrayList<Finding>();
         findings.add(checkProxyRunning(incus));
         ProxyHealthCheck.ProxyInfo info;
@@ -1491,7 +1496,7 @@ public class DoctorCommand extends BaseCommand {
 
     private List<Finding> checkDnsAndBridge() {
         var findings = new ArrayList<Finding>();
-        var incus = RuntimeServices.incus();
+        var incus = incus();
         findings.add(checkBridgeDns(incus));
         if (Platform.isLinux()) {
             // Linux only: on macOS the bridge is in the VM, whose routes the Mac's are not (#1202).
@@ -1544,7 +1549,7 @@ public class DoctorCommand extends BaseCommand {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }
         return bridgeDnsFinding(ProxyHealthCheck.check(incus), status, allDomains,
-                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(), allDomains));
+                () -> ProxyConfig.writeBridgeDns(incus(), allDomains));
     }
 
     /**
@@ -1624,7 +1629,7 @@ public class DoctorCommand extends BaseCommand {
             if (exitCode != 0) {
                 return Finding.warn("Firewall PREROUTING redirect", "(could not query firewalld rules)", null);
             }
-            var gatewayIp = ProxyConfig.resolveGatewayIp(RuntimeServices.incus());
+            var gatewayIp = ProxyConfig.resolveGatewayIp(incus());
             if (isPreRoutingRulePresent(output, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp)) {
                 return Finding.ok("Firewall PREROUTING redirect (firewalld)", "443 -> " + ProxyConfig.DEFAULT_MITM_PORT);
             }
@@ -1643,7 +1648,7 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkUfwRedirect() {
         try {
-            var gatewayIp = ProxyConfig.resolveGatewayIp(RuntimeServices.incus());
+            var gatewayIp = ProxyConfig.resolveGatewayIp(incus());
             var beforeRules = UfwCheck.readBeforeRules();
             if (beforeRules.isEmpty()) {
                 return Finding.warn("Firewall PREROUTING redirect", "(could not read /etc/ufw/before.rules)", null);
@@ -1680,7 +1685,7 @@ public class DoctorCommand extends BaseCommand {
      */
     private Finding checkInstanceAccounts() {
         try {
-            var incus = RuntimeServices.incus();
+            var incus = incus();
             var config = SpawnConfig.load();
             var dangling = new ArrayList<String>();
             var refused = new ArrayList<String>();
@@ -1726,7 +1731,7 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkInstanceSubnets() {
         try {
-            var incus = RuntimeServices.incus();
+            var incus = incus();
             var stale = InstanceNetwork.findStaleSubnetInstances(incus);
             if (stale.isEmpty()) {
                 return Finding.ok("Instance network config", "(all on current subnet)");
@@ -1740,7 +1745,7 @@ public class DoctorCommand extends BaseCommand {
                             + " (running ones are stopped and started again)",
                             false,
                             () -> {
-                                var incusClient = RuntimeServices.incus();
+                                var incusClient = incus();
                                 var migrated = InstanceNetwork.migrateAllInstancesToNewSubnet(
                                         incusClient);
                                 System.out.println("Migrated " + migrated + " instance"
@@ -1769,7 +1774,7 @@ public class DoctorCommand extends BaseCommand {
             return findings;
         }
         try {
-            var incus = RuntimeServices.incus();
+            var incus = incus();
             var caTrust = CertificateAuthority.CaTrust.snapshot();
             var currentVersion = BuildInfo.instance().version();
             var loaded = load.loaded();
@@ -1838,7 +1843,7 @@ public class DoctorCommand extends BaseCommand {
     private List<Finding> checkInstances() {
         var findings = new ArrayList<Finding>();
         try {
-            var incus = RuntimeServices.incus();
+            var incus = incus();
             var instances = incus.list();
             var running = instances.stream()
                     .filter(i -> "Running".equals(i.get("status")))
