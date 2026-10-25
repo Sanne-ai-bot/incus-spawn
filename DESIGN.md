@@ -2958,6 +2958,28 @@ The root fix, moving the data disk out of the state directory, needs a migration
 `isx clean state` and `isx clean all` remove the appliance (`~/.local/share/incus-spawn`) along with the rest, so the VM boots on the kept disk only after `isx init` downloads it again, after either command.
 The VM's launch agent has no `KeepAlive` (checked on a Mac in the plists 0.3.9 and this change write; 0.3.10's was not available there), so stopping the VM before booting out the agent cannot have launchd start it again.
 
+`install.sh` never writes a Homebrew prefix (#1614).
+A prefix is machine state: `/opt/homebrew` serves every account on a Mac, and `/home/linuxbrew/.linuxbrew` every account on Linux.
+It used to relink the prefix's `isx`, `isx-proxy` and `git-remote-isx` to the installer's `$INSTALL_DIR`, so the brew isx would not shadow the new build.
+Then another user's KeepAlive proxy, CLI and Git helper ran the installer's build out of the installer's home.
+Nothing a script can see says that nobody else uses a prefix: its owner is whoever installed Homebrew, and other users' PATH and launch agents are private.
+So a rule such as "relink only when the prefix is yours alone" would fail open, and copying or asking first would cross the same boundary.
+`install.sh` now only removes links of its own, and points each one back into the formula's keg (`opt/incus-spawn`, or `opt/incus-spawn-dev` for the tap's conflicting dev formula) as Homebrew links it.
+It restores only into a keg Homebrew records as linked (`var/homebrew/linked`).
+An installed but unlinked keg may be unlinked on purpose, or by a `brew upgrade` whose link step the old override made fail, so the script does not link it by hand.
+The two formulae conflict but may both be installed, one of them unlinked, so the linked one is chosen rather than the first installed.
+When nothing replaces a removed link, the script warns, since no account on the prefix has that binary there any more, and names `brew link <formula>` when a formula is installed but not linked.
+A link is its own when it resolves to the binary just installed (`-ef`, so any spelling of `INSTALL_DIR` counts), or names a file under the installing user's home, which covers an earlier install to another `INSTALL_DIR`.
+An empty or `/` HOME names nobody's home, so under `env -i`, cron or launchd it makes no link its own.
+Any other link out of the prefix came from another user's install, so it is named in a warning and not removed.
+The restore is not `brew link`, for two reasons.
+The old override replaced only the links, so Homebrew still counts the keg as linked and `brew link` answers "Already linked" without restoring anything.
+`--overwrite` would also replace every foreign link in the formula's way.
+`uninstall.sh` removes and restores its overrides by the same rule.
+Shadowing is fixed in the installer's own account: when `isx` on PATH is not the new build, the script says so and names the PATH change.
+The post-install `isx proxy install` follows the same `which isx`, so the CLI and the service stay on one build.
+Forcing the service onto the new build would only last until the next command's drift repair moved it back.
+
 `install.sh` refuses an `INSTALL_DIR` inside a Homebrew prefix, before it builds (#1666).
 Installing there renames the build over the formula's links in the prefix's `bin`, and every account on the machine then runs it.
 That is the cross-account write #1614 removes from the relink, so a warning would not do: it would still write the prefix.

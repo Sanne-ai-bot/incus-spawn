@@ -284,22 +284,78 @@ fi
 # Install git remote helper shim for isx:// URLs
 atomic_install "$SCRIPT_DIR/common/src/main/resources/git-remote-isx" "$INSTALL_DIR/git-remote-isx"
 
-# ── Override a Homebrew installation if present ───────────────────────────
-# The brew prefix bin (e.g. /opt/homebrew/bin) usually sorts ahead of
-# $INSTALL_DIR on PATH, so a brew-managed isx would shadow the build we just
-# installed. Point the brew location at our build via a symlink instead of a
-# copy: one source of truth, self-describing, and uninstall can safely detect
-# and remove only links that point back into $INSTALL_DIR.
+# ── Never write a Homebrew prefix ─────────────────────────────────────────
+# A Homebrew prefix is machine state: /opt/homebrew serves every account on a
+# Mac. Older versions of this script relinked its isx, isx-proxy and
+# git-remote-isx to $INSTALL_DIR, so another user's KeepAlive proxy, CLI and
+# Git helper then ran this user's build out of this user's home (#1614).
+# Only those links of our own are undone: one to this install's binary, or into
+# this user's home for an earlier INSTALL_DIR. Each is pointed back into the
+# formula's keg as Homebrew links it, when Homebrew counts the keg as linked.
+# Not `brew link`: it answers "Already linked" for such a keg without
+# restoring anything, and --overwrite would also replace links we did not make.
+# Any other link out of the prefix came from another user's install: it is not
+# ours to undo, so it is only named. Shadowing is reported below.
+# uninstall.sh's "Undo install.sh's Homebrew override" uses the same rule.
+BREW_FORMULA="incus-spawn"   # formula name differs from the binary name (isx); as in uninstall.sh
+# INSTALL_DIR is never in the prefix: refuse_homebrew_prefix stopped that above.
 if command -v brew >/dev/null 2>&1 \
-    && BREW_BIN="$(brew --prefix)/bin" \
-    && [ -x "$BREW_BIN/isx" ] && [ "$INSTALL_DIR" != "$BREW_BIN" ]; then
-    echo "Homebrew installation detected at $BREW_BIN/isx"
-    echo "Linking it to the locally built binary..."
-    for f in "$BINARY_NAME" isx-proxy git-remote-isx; do
-        if [ -e "$INSTALL_DIR/$f" ] && { [ -e "$BREW_BIN/$f" ] || [ -L "$BREW_BIN/$f" ]; }; then
-            ln -sf "$INSTALL_DIR/$f" "$BREW_BIN/$f"
+    && BREW_PREFIX="$(brew --prefix)" && BREW_BIN="$BREW_PREFIX/bin"; then
+    # The linked keg, relative to the prefix's opt/ and so to its bin/ too.
+    # The tap's incus-spawn-dev installs the same binaries, and the two conflict:
+    # both may be installed with one unlinked, so the linked one is chosen.
+    # One installed but unlinked gets no links back by hand: it may be unlinked on
+    # purpose, or by a `brew upgrade` whose link step an old override made fail,
+    # so the warning below names `brew link` and leaves the choice to the user.
+    KEG=""
+    for formula in incus-spawn incus-spawn-dev; do
+        if [ -e "$BREW_PREFIX/var/homebrew/linked/$formula" ]; then
+            BREW_FORMULA="$formula"
+            KEG="$(readlink "$BREW_PREFIX/opt/$formula" || true)"
+            break
         fi
     done
+    # With none linked, the first one installed is the remedy a warning names.
+    UNLINKED=""
+    for formula in incus-spawn incus-spawn-dev; do
+        if [ -L "$BREW_PREFIX/opt/$formula" ] || [ -e "$BREW_PREFIX/opt/$formula" ]; then
+            [ -n "$KEG" ] || [ -n "$UNLINKED" ] || UNLINKED="$formula"
+        fi
+    done
+    LINK_REMEDY=false
+    # An empty or "/" HOME names nobody's home, so it makes no link our own.
+    OWN_HOME="${HOME%/}"
+    for f in "$BINARY_NAME" isx-proxy git-remote-isx; do
+        target="$(readlink "$BREW_BIN/$f" 2>/dev/null || true)"
+        # -ef: the link resolves to the file just installed, however either is spelled.
+        if { [ -n "$target" ] && [ "$BREW_BIN/$f" -ef "$INSTALL_DIR/$f" ]; } \
+            || { [ -n "$OWN_HOME" ] && [[ "$target" == "$OWN_HOME"/* && "$target" != "$BREW_PREFIX"/* ]]; }; then
+            echo "Removing the Homebrew override an earlier install made: $BREW_BIN/$f"
+            if ! rm -f "$BREW_BIN/$f"; then
+                echo "Warning: could not remove $BREW_BIN/$f; every user of this prefix still runs $target." >&2
+            elif [ -n "$KEG" ] && [ -e "$BREW_PREFIX/opt/$BREW_FORMULA/bin/$f" ]; then
+                ln -s "$KEG/bin/$f" "$BREW_BIN/$f" \
+                    || echo "Warning: could not restore $BREW_BIN/$f; run: brew unlink $BREW_FORMULA && brew link $BREW_FORMULA" >&2
+            else
+                echo "Warning: nothing replaces $BREW_BIN/$f: no linked Homebrew keg has it, so no user of this prefix has it there now." >&2
+                if [ -n "$UNLINKED" ] && [ -e "$BREW_PREFIX/opt/$UNLINKED/bin/$f" ]; then
+                    LINK_REMEDY=true
+                fi
+            fi
+        # Homebrew's own links are relative, into its Cellar.
+        elif [[ "$target" == /* && "$target" != "$BREW_PREFIX"/* ]]; then
+            echo "Warning: $BREW_BIN/$f links to $target, outside Homebrew, so every user of this prefix runs that build." >&2
+            if [ -n "$KEG" ]; then
+                echo "  Whoever made it can remove the link, then run: brew unlink $BREW_FORMULA && brew link $BREW_FORMULA" >&2
+            else
+                echo "  Whoever made it can remove the link." >&2
+            fi
+        fi
+    done
+    if $LINK_REMEDY; then
+        echo "  $UNLINKED is installed but not linked; to link it, run: brew link $UNLINKED" >&2
+        echo "  It stops at any link outside Homebrew still in its way; 'brew link --overwrite $UNLINKED' replaces those too, another user's included." >&2
+    fi
 fi
 
 # Don't claim success for a binary that dies on first launch (a native image
@@ -311,10 +367,23 @@ if ! "$INSTALL_DIR/$BINARY_NAME" --version >/dev/null 2>&1; then
     exit 1
 fi
 
+# The proxy service below follows the same PATH lookup (`which isx`), so a
+# shadowed build is not what the service runs either.
+RESOLVED="$(command -v "$BINARY_NAME" || true)"
 case ":$PATH:" in
-    *":$INSTALL_DIR:"*) ;;
+    *":${INSTALL_DIR%/}:"*) ;;
     *) echo "Note: $INSTALL_DIR is not on your PATH; add it to run '$BINARY_NAME' by name." ;;
 esac
+# Compared as files (-ef), so a trailing slash or a symlinked PATH entry is
+# not taken for another isx.
+if [ -n "$RESOLVED" ] && ! [ "$RESOLVED" -ef "$INSTALL_DIR/$BINARY_NAME" ]; then
+    echo "Note: '$BINARY_NAME' on your PATH is $RESOLVED, not this build; the proxy service follows the same one."
+    echo "  To use this build, put $INSTALL_DIR ahead of ${RESOLVED%/*} on PATH, then run '$BINARY_NAME proxy install'."
+    # Only when it is the formula's own isx: removing the formula does nothing to a foreign link.
+    if [ -n "${BREW_PREFIX:-}" ] && [ "$RESOLVED" -ef "$BREW_PREFIX/opt/$BREW_FORMULA/bin/$BINARY_NAME" ]; then
+        echo "  Or, if nobody else on this machine uses Homebrew's isx: brew uninstall $BREW_FORMULA"
+    fi
+fi
 
 echo "Installed. Run 'isx' to get started."
 
