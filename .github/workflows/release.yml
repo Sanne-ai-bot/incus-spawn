@@ -109,8 +109,14 @@ jobs:
           sudo chown -R "$USER:$USER" ~/.config/incus/ 2>/dev/null || true
           sg incus-admin -c "incus profile device set default root pool=cow"
 
+      # A fresh identity, not sg: sudo -u gives the user its groups as a login would (incus-admin from
+      # the usermod above) and keeps its own primary group. sg makes incus-admin the primary group,
+      # and the model loads' rootless podman then fails ("newuidmap: Target process ... is owned by a
+      # different user"). PATH is passed on because sudo resets it.
       - name: Collect profiles
-        run: sg incus-admin -c "bench/pgo-collect.sh --proxy=$HOME/.local/bin/isx-proxy --cli=$HOME/.local/bin/isx --out=$RUNNER_TEMP/pgo-raw"
+        run: |
+          sudo --preserve-env -u "$USER" env PATH="$PATH" \
+            bench/pgo-collect.sh --proxy=$HOME/.local/bin/isx-proxy --cli=$HOME/.local/bin/isx --out=$RUNNER_TEMP/pgo-raw
 
       - name: Merge profiles
         run: |
