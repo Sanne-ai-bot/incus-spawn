@@ -934,38 +934,6 @@ class HostSetup {
      */
     static final String STORAGE_CREATE_OPTIONS_EXTENSION = "storage_create_options";
 
-    /**
-     * @param skipTrim pass {@code -K} to mkfs.btrfs, skipping the whole-device TRIM that takes
-     *                 minutes on a loop device backed by a sparse file on ext4. Only when the
-     *                 daemon supports {@code btrfs.create_options}.
-     */
-    static String[] cowPoolCreateCommand(boolean skipTrim) {
-        var cmd = new ArrayList<>(List.of("sudo", "incus", "storage", "create", "cow", "btrfs",
-                "size=100GiB"));
-        if (skipTrim) cmd.add("btrfs.create_options=-K");
-        return cmd.toArray(String[]::new);
-    }
-
-    /**
-     * Why creating the CoW pool failed, worded after Incus's own error rather than a guess:
-     * missing loop device support is only one cause, and naming it for any other sends the user
-     * after the wrong fix.
-     */
-    static List<String> cowPoolFailureExplanation(String incusError) {
-        var lines = new ArrayList<String>();
-        var error = incusError == null ? "" : incusError.strip();
-        error.lines().map(String::strip).filter(l -> !l.isEmpty()).forEach(lines::add);
-        var lower = error.toLowerCase(java.util.Locale.ROOT);
-        if (lower.contains("loop")) {
-            lines.add("This is expected inside containers or VMs without loop device");
-            lines.add("support. On bare metal, ensure the 'loop' kernel module is");
-            lines.add("loaded (sudo modprobe loop) and try again.");
-        } else if (lower.contains("mkfs.btrfs") || lower.contains("btrfs-progs")) {
-            lines.add("Install btrfs-progs on the host and try again.");
-        }
-        return lines;
-    }
-
     private void checkStorageDriver() {
         var cowProbe = init.incus.probeCowPool();
         // Guard against transient/permission/daemon errors: if we can't list pools, don't
@@ -975,12 +943,21 @@ class HostSetup {
 
         if (!anyCow) {
             System.out.println("  No copy-on-write storage pool detected. Creating one...");
-            runHostQuiet("sudo", "mkdir", "-p", "/var/lib/incus/disks");
-            var create = runHostCapturingStderr(cowPoolCreateCommand(
-                    init.incus.hasApiExtension(STORAGE_CREATE_OPTIONS_EXTENSION)));
+            var hostFs = CowPoolBacking.filesystemOf(CowPoolBacking.POOLS_DIR);
+            var created = CowPoolBacking.create(CowPoolBacking::filesystemOf,
+                    () -> init.incus.hasApiExtension(STORAGE_CREATE_OPTIONS_EXTENSION),
+                    CowPoolBacking::runCapturingStderr,
+                    () -> runHostQuiet("sudo", "mkdir", "-p", CowPoolBacking.DISKS_DIR),
+                    line -> System.err.println("  " + line));
+            var create = created.result();
             if (create.exitCode() == 0) {
-                System.out.println("  Created btrfs storage pool 'cow' (100 GiB, thin-provisioned).");
-                System.out.println("  Resize with: sudo incus storage set cow size=200GiB");
+                if (created.subvolume()) {
+                    System.out.println("  Created btrfs storage pool 'cow' as a subvolume of the host filesystem.");
+                    System.out.println("  It has no size cap of its own: it shares that filesystem's free space.");
+                } else {
+                    System.out.println("  Created btrfs storage pool 'cow' (100 GiB, thin-provisioned).");
+                    System.out.println("  Resize with: sudo incus storage set cow size=200GiB");
+                }
                 System.out.println("  All new instances will use it automatically.");
             } else {
                 System.out.println();
@@ -989,7 +966,7 @@ class HostSetup {
                 System.err.println(styled(warning, "  ║  WARNING: Failed to create btrfs storage pool!             ║"));
                 System.err.println(styled(warning, "  ╚══════════════════════════════════════════════════════════════╝"));
                 System.err.println();
-                for (var line : cowPoolFailureExplanation(create.stderr())) {
+                for (var line : CowPoolBacking.failureExplanation(create.stderr())) {
                     System.err.println("  " + styled(YELLOW, line));
                 }
                 System.err.println();
@@ -997,7 +974,7 @@ class HostSetup {
                 System.err.println("  " + styled(YELLOW, "using significantly more disk space and taking longer to create."));
                 System.err.println();
                 System.err.println("  You can create one manually later:");
-                System.err.println("    " + styled(BOLD, "sudo incus storage create cow btrfs size=100GiB"));
+                System.err.println("    " + styled(BOLD, String.join(" ", CowPoolBacking.createCommand(hostFs, false))));
                 System.err.println("  incus-spawn will automatically use it for all new instances.");
                 System.err.println();
 
@@ -1069,21 +1046,5 @@ class HostSetup {
                 yield false;
             }
         };
-    }
-
-    private record HostResult(int exitCode, String stderr) {}
-
-    /** Run a host command with stdout shown, returning stderr so the caller can word the failure. */
-    private HostResult runHostCapturingStderr(String... command) {
-        try {
-            var pb = new ProcessBuilder(command);
-            pb.redirectInput(ProcessBuilder.Redirect.INHERIT);
-            pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
-            var process = pb.start();
-            var stderr = new String(process.getErrorStream().readAllBytes());
-            return new HostResult(process.waitFor(), stderr);
-        } catch (IOException | InterruptedException e) {
-            return new HostResult(1, "Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
-        }
     }
 }

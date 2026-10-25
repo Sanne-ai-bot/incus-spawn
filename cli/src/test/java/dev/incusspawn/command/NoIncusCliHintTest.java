@@ -38,11 +38,9 @@ class NoIncusCliHintTest {
                     "\"    incus profile device add default root disk path=/ pool=\"",
                     "\"    incus profile device add default eth0 nic network=incusbr0\"",
                     "\"  Resize with: sudo incus storage set cow size=200GiB\"",
-                    "\"sudo incus storage create cow btrfs size=100GiB\"",
                     "\"    incus network set incusbr0 ipv4.address 172.20.0.1/24\""),
-            // the Linux arms of noCowPoolMsg and unknownRemoteMsg
+            // the Linux arm of unknownRemoteMsg
             "IncusClient.java", Set.of(
-                    "\" Create one with: sudo incus storage create cow btrfs size=100GiB\"",
                     "\"Add it with: incus remote add \""),
             // the Linux arm of restartAnywayHint
             "VmAgentRecovery.java", Set.of("\"To restart it anyway: incus restart --force \""),

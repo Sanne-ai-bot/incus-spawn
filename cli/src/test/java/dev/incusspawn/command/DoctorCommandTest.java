@@ -356,7 +356,7 @@ class DoctorCommandTest {
     void undersizedPoolWarnsWithResizeRemediation() {
         long thirtyGiB = 30L * 1024 * 1024 * 1024;
         var usage = new IncusClient.PoolUsage(thirtyGiB * 96 / 100, thirtyGiB);
-        var f = DoctorCommand.evaluatePoolSize("cow", usage, null);
+        var f = DoctorCommand.evaluatePoolSize("cow", usage, null, null);
         assertNotNull(f);
         assertEquals(DoctorCommand.Status.WARN, f.status());
         assertTrue(f.label().contains("undersized"), "label: " + f.label());
@@ -369,7 +369,7 @@ class DoctorCommandTest {
     void adequatePoolSuggestsDoublingWhenFull() {
         long hundredGiB = 100L * 1024 * 1024 * 1024;
         var usage = new IncusClient.PoolUsage(hundredGiB * 95 / 100, hundredGiB);
-        var f = DoctorCommand.evaluatePoolSize("cow", usage, null);
+        var f = DoctorCommand.evaluatePoolSize("cow", usage, null, null);
         assertNotNull(f);
         assertEquals(DoctorCommand.Status.WARN, f.status());
         assertTrue(f.label().contains("enlarged"), "label: " + f.label());
@@ -382,7 +382,7 @@ class DoctorCommandTest {
     void adequatePoolNotFullReturnsNull() {
         long hundredGiB = 100L * 1024 * 1024 * 1024;
         var usage = new IncusClient.PoolUsage(hundredGiB * 50 / 100, hundredGiB);
-        assertNull(DoctorCommand.evaluatePoolSize("cow", usage, null));
+        assertNull(DoctorCommand.evaluatePoolSize("cow", usage, null, null));
     }
 
     // ---- iptables PREROUTING rule detection ----
@@ -703,11 +703,15 @@ class DoctorCommandTest {
 
     @Test
     void noCowPoolFindingNamesNoIncusCommand() {
-        var linux = DoctorCommand.noCowPoolFinding(Map.of("default", "dir"), true);
+        var linux = DoctorCommand.noCowPoolFinding(Map.of("default", "dir"), true, "ext4", () -> false);
         assertNoIncusCommand(linux);
         assertNotNull(linux.remediation().action());
+        assertTrue(linux.remediation().description().contains("100 GiB"), linux.remediation().description());
+        var btrfs = DoctorCommand.noCowPoolFinding(Map.of("default", "dir"), true, "btrfs", () -> false);
+        assertNoIncusCommand(btrfs);
+        assertTrue(btrfs.remediation().description().contains("subvolume"), btrfs.remediation().description());
         // The macOS remediation is still to be decided (#1085).
-        var mac = DoctorCommand.noCowPoolFinding(Map.of("default", "dir"), false);
+        var mac = DoctorCommand.noCowPoolFinding(Map.of("default", "dir"), false, null, () -> false);
         assertNoIncusCommand(mac);
         assertNull(mac.remediation());
     }
