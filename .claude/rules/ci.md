@@ -62,7 +62,7 @@ Both arches boot under QEMU; this is worth stating precisely, because the runner
 | `test-integration.yml` → `integration-tests (aarch64)` (`ubuntu-24.04-arm`) | boots it under `qemu-system-aarch64` with **TCG** (the arm64 runners expose no `/dev/kvm`) and vsock; smoke test and tunnel checks, but not the backstop (a fixed 3-minute wait that is arch-independent) or native `isx` (CI builds no arm64 CLI). vhost-vsock works under TCG, and the appliance reaches `ISX READY` in about 20s |
 | `build-appliance.yml` → `build_x86_64`, `build_aarch64` (`ubuntu-26.04`, `ubuntu-24.04-arm`) | builds, checks size and embedded version, caches, uploads. Never boots it |
 | `test-integration.yml` → `unit-tests-macos` (`macos-15`) | nothing: runs `mvn test` on the host, the macOS half of the Java code only |
-| `release.yml` native matrix (`macos-15`, `macos-15-intel`) | builds the native CLI/proxy for macOS 15 (Intel is best effort: shipped, but this smoke test is all it gets; no Intel Mac verifies it, #1086) and smoke-tests the *binaries* -- `--version`, `--help`, completions, `templates list`; the release job then checks each one's recorded minimum macOS. Never starts a VM, and runs on `v*` tags only |
+| `release.yml` native matrix (`macos-15`, `macos-15-intel`) | builds the native CLI/proxy for macOS 15 (Intel is best effort: shipped, but this smoke test is all it gets; no Intel Mac verifies it, #1086) and smoke-tests the *binaries* -- `--version`, `--help`, completions, `templates list`; the release job then checks each one's recorded minimum macOS. Never starts a VM, and runs on `v*` tags and `workflow_dispatch` |
 
 **macOS runner labels are pinned, and retired ones are caught by a test.**
 Workflows name a versioned label (`macos-15`, `macos-15-intel`), never `macos-latest`.
@@ -262,6 +262,11 @@ Use this before and after changes to the proxy, Vert.x configuration, or native 
 They answer from `UpstreamStub.java`, on a config of the run's own (`ISX_BENCH_CONFIG`), never the user's.
 `--proxy=BIN`/`--cli=BIN` measure binaries built elsewhere, for an A/B of build flags.
 `bench/pgo-collect.sh` collects the PGO profiles of docs/dev/PGO.md (#1636, not yet on `main`) from instrumented builds: `run.sh --collect` once per load, then `cli.sh --collect`'s weighted flows, one gzipped `.iprof` per process.
+`release.yml`'s `profiles` job runs it on every release, on Linux amd64 with Incus prepared as `isx-integration-tests-native` does, merges the dumps (`scripts/pgo-merge.sh`) and uploads `pgo-profiles`.
+It runs the collection under `sudo -u "$USER"`, not `sg incus-admin`: rootless podman's `newuidmap` refuses a process whose primary group `sg` changed, so Hyperfoil cannot be extracted.
+The four `build` jobs need it, and the three on GraalVM 25.4 build with `-Dnative.pgo=$GITHUB_WORKSPACE/pgo` (an absolute path) and check `.github/scripts/check-pgo-quality.sh`; the Intel macOS build stays unprofiled.
+A `workflow_dispatch` of `release.yml` runs `profiles` and `build` alone, on a branch; `appliance`, `channel` and `release` need a pushed tag (`ReleasePgoWorkflowTest`).
+`bench/ab.py` runs an interleaved A/B of builds of one commit over `run.sh` or `cli.sh`.
 
 `bench/cli.sh` times `isx` commands against live Incus, JVM and native (`--runtime=both|jvm|native`), on a throwaway instance it branches and destroys itself.
 It also covers the preparation `isx shell` does before attaching a terminal, via `isx run <instance> --action=<unknown>`, and time to a usable prompt for `isx shell` and a full `isx branch --shell`, run on a pseudo-terminal that types a marker command.

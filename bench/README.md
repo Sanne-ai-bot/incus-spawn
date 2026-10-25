@@ -183,8 +183,7 @@ The workloads [docs/dev/PGO.md](https://github.com/Sanne/incus-spawn/blob/d2d847
 instrumented builds of both binaries. Linux only, with the proxy service stopped:
 
 ```shell
-mvn package -Dnative -DskipTests -Dnative.optimization=-O3,--pgo-instrument \
-    -Dquarkus.native.additional-build-args-append=-H:+ParseRuntimeOptions
+mvn package -Dnative -DskipTests -Dnative.pgo.instrument
 cp cli/target/incus-spawn-*-runner /tmp/isx-instr
 cp proxy/target/incus-spawn-proxy-*-runner /tmp/isx-proxy-instr
 systemctl --user stop incus-spawn-proxy
@@ -198,7 +197,21 @@ it. Every process writes one profile, gzipped: `proxy/proxy-<load>.iprof.gz`,
 An optimized build takes them all, and their counts add up, so the mix of runs is the
 weighting. About six minutes on an 8-core host.
 
-`-H:+ParseRuntimeOptions` is needed because release builds turn runtime option parsing off,
+`scripts/pgo-merge.sh` merges one binary's profiles into the single file a build applies, and
+`-Dnative.pgo=DIR` (an absolute path) builds with `DIR/cli.iprof.gz` and `DIR/proxy.iprof.gz`:
+
+```shell
+scripts/pgo-merge.sh cli /tmp/pgo/cli /tmp/pgo-merged
+scripts/pgo-merge.sh proxy /tmp/pgo/proxy /tmp/pgo-merged
+mvn package -Dnative -DskipTests -Dnative.pgo=/tmp/pgo-merged
+```
+
+That is what a release does (`release.yml`'s `profiles` job). Its merged profiles are the
+`pgo-profiles` artifact of the release's run, kept 90 days, so a local build can take a
+release's own: `gh run download <run-id> -R Sanne/incus-spawn -n pgo-profiles -D /tmp/pgo-merged`.
+Both need Oracle GraalVM; without `-Dnative.pgo` a build is unprofiled.
+
+`-Dnative.pgo.instrument` adds `--pgo-instrument` and `-H:+ParseRuntimeOptions`, the second because release builds turn runtime option parsing off,
 and without it every process would write `default.iprof` in its working directory, over the
 last one. `cli.sh --collect` puts a wrapper first on `PATH` that adds
 `-XX:ProfilesDumpFile` for each process, so the `isx` git's `git-remote-isx` and ssh's

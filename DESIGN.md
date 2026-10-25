@@ -59,10 +59,10 @@ Three Maven modules under a parent POM:
   The test-jar is built even under `-Dmaven.test.skip=true`, since `cli` could not resolve it otherwise.
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`).
   Depends on common.
-  Native image: serial GC, `-Os` (size-optimized).
+  Native image: serial GC, `-Os` (size-optimized); release builds are `-O3` with a PGO profile, see "Profile-guided optimization" below.
 - **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`).
   Depends on common.
-  Native image: G1 GC on Linux and serial GC on macOS, `-O3` (throughput-optimized), on x86_64 `-march=haswell` and on aarch64 `-march=armv8.1-a+aes` — see "Native image CPU baseline" and "Proxy garbage collector per platform" below.
+  Native image: G1 GC on Linux and serial GC on macOS, `-O3` (throughput-optimized) with a PGO profile in release builds, on x86_64 `-march=haswell` and on aarch64 `-march=armv8.1-a+aes` — see "Native image CPU baseline", "Profile-guided optimization" and "Proxy garbage collector per platform" below.
   Splitting this out removed Vert.x from the CLI, which means the CLI can no longer serve the proxy itself — see "Every install channel ships both binaries" below.
 
 ### Every install channel ships both binaries
@@ -3599,6 +3599,43 @@ The startup gain is unexplained; `haswell` adds CLMUL over `x86-64-v3` alongside
 
 Reproduce with `bench/run.sh --load=maven`.
 Use that harness rather than a shell loop of `curl`: process-spawn overhead caps such a loop around 550 req/s, which silently pins every build faster than v3 to the same wrong number and hides the differences between them.
+
+### Profile-guided optimization
+
+**Chosen:** release binaries are built with profiles collected from instrumented builds of the same commit, in the same release run (#1637).
+The proxy builds at `-O3` with its profile, and the CLI at `-O3` with its own instead of `-Os`.
+Measured in interleaved A/B (docs/dev/PERFORMANCE-NOTES.md, "Phase 2"): the proxy is 57.6% smaller and 39% lighter when idle, and faster on every load.
+The gain ranges from 19% on cached artifacts to 83% on Vertex calls, at the same startup.
+The CLI starts 17 to 20% faster than at `-Os`, relays `scp` about 14% faster (a noisy figure), and costs 0.66 MB.
+
+Why it shrinks the proxy: PGO compiles the code the profile marks hot at full speed and everything else for size.
+About 20% of the proxy's methods and 15% of the CLI's have a profile.
+That is also the cost: a path no workload reaches runs as cold code.
+The workloads are `bench/pgo-collect.sh`'s, listed in `bench/README.md`: the proxy under the `maven`, `saturate`, `anthropic` and `vertex` loads and serving the CLI flows, and the CLI's branch, shell, list, `ssh-proxy`, `git-remote-isx` and TUI flows.
+An unrepresentative profile is worse than none, so `--help` is run once, never as a workload.
+
+**How a release collects them.**
+The `profiles` job runs on the Linux amd64 runner, prepares Incus as `isx-integration-tests-native` does, and builds both binaries with `-Dnative.pgo.instrument`.
+It runs the collection through `sudo -u "$USER"`, never `sg incus-admin`: `sg` makes `incus-admin` the primary group, and rootless podman's `newuidmap`, which the model loads need for Hyperfoil, refuses such a process.
+It runs the collection and merges each binary's per-process dumps into one profile with `scripts/pgo-merge.sh` (a build with `-H:PGODumpLoadedIprofPath`).
+The merged profiles are a workflow artifact kept 90 days, so a local build can fetch them.
+Each build job applies them with `-Dnative.pgo=<dir>` and `-H:+PGOPrintProfileQuality`, and `check-pgo-quality.sh` fails it unless both binaries print an applicability and relevance above the floors.
+Profiles key on methods, so one collected on Linux x86_64 applies elsewhere, OS-specific code falling back to inferred profiles.
+The Intel macOS build runs GraalVM 25.0, whose builds would take a 25.4 profile only past its version check, so it stays unprofiled.
+Nothing is stored between releases, so the profile always matches the released commit, and a collection that fails fails the release: there is no older profile to fall back on.
+`ReleasePgoWorkflowTest` holds the profiled builds to the profiles job's GraalVM.
+
+**Instrumented builds parse runtime options.**
+Release builds pass `-H:-ParseRuntimeOptions`, so an instrumented binary would ignore `-XX:ProfilesDumpFile` and every process would overwrite `default.iprof` in its working directory.
+The `pgo-instrument` profile appends `-H:+ParseRuntimeOptions`, after the list's own, for that build alone.
+`cli.sh --collect` puts a wrapper first on `PATH` that gives every `isx` process its own dump file, git's `git-remote-isx` and ssh's `ProxyCommand` included.
+
+**Credential paths need an instance.**
+The proxy injects only for a caller it knows by address and proof, so the model-call loads run Hyperfoil inside a throwaway instance, against a loopback stub, on a config of their own (`ISX_BENCH_CONFIG`).
+
+**Rejected:** Quarkus's `quarkus.native.pgo.enabled`, which ties the profile to the native integration tests and so to their workload.
+A profile kept in the repository or a release asset would go stale with every commit and need a checksum.
+`-Os` with a profile for the CLI saves 0.46 MB over `-O3` with one and relays as fast, but gives back a sixth to a quarter of the startup gain.
 
 ### Proxy garbage collector per platform
 
