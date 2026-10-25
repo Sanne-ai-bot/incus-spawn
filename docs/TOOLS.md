@@ -442,6 +442,8 @@ On the host, install [JetBrains Gateway](https://www.jetbrains.com/remote-develo
 Press F9 on a running instance and choose **Open repo '*name*' in Gateway**, one entry per repository, to open it.
 Gateway connects with isx's managed SSH key through the instance's entry in `~/.ssh/config`, so no key or host setup is needed.
 
+With the `shell-status-bar` feature on, `g` in the F12 menu of `isx shell` opens the repository the session starts in, or else the first one.
+
 If Gateway shows its connection dialog, keep the instance name as the host.
 The instance's IP matches no entry, and on macOS the host cannot reach it.
 
