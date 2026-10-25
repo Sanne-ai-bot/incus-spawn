@@ -183,6 +183,11 @@ class BaseImageAgeTest {
         var current = new BaseImageAge.Assessment(Standing.CURRENT, "fedora-44-20261001", "fedora-44-20261021");
         assertEquals(List.of(), BaseImageAge.missingFixes(current, fixes), "the same file as the current release");
         assertEquals(List.of(), BaseImageAge.missingFixes(null, fixes));
+        // Only on the fix's own release line: another release's date says nothing about it
+        var otherRelease = new BaseImageAge.Assessment(Standing.OLDER, "fedora-43-20261020", "fedora-44-20261021");
+        assertEquals(List.of(), BaseImageAge.missingFixes(otherRelease, fixes));
+        var earlierOnOtherRelease = new BaseImageAge.Assessment(Standing.OLDER, "fedora-43-20260901", "fedora-44-20261021");
+        assertEquals(List.of(), BaseImageAge.missingFixes(earlierOnOtherRelease, fixes));
     }
 
     @Test

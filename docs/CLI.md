@@ -417,6 +417,10 @@ Each finding carries a mark:
 | `✗` | Broken |
 | `·` | A note, which does not affect the exit code |
 
+A fix in a base image reaches only instances built after it.
+So doctor notes the templates on an older base image than a rebuild would use, and the instances branched from them.
+That is a note, not an issue to address, unless the older release lacks a known fix a rebuild would bring, such as the network watchdog one.
+
 `--bundle` creates an archive to attach to a GitHub issue.
 isx redacts credentials before it writes anything, and `REDACTIONS.txt` in the archive lists what it removed.
 

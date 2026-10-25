@@ -117,6 +117,13 @@ A VM's file is pushed once the VM is up, applies at its next boot or `networkctl
 
 A watchdog (`isx-network-watchdog.timer`, 10 seconds after boot and every 30 seconds) restarts systemd-networkd when the address is missing or the gateway does not answer, as after the host sleeps.
 
+Base images before `fedora-44-20261009` read the address of `eth0` with `awk`.
+The container image has no `awk`, and a VM's network interface is not named `eth0`, so containers and VMs were both affected.
+Their watchdog restarts systemd-networkd on every run, and logs `IP mismatch` with an empty current address each time (`journalctl -t isx-watchdog`).
+
+An instance keeps its base image for life, so rebuild its template and branch it again.
+`isx doctor` warns about the templates and instances on such a base image when a rebuild would bring the fix.
+
 Nothing in the instance manages `/etc/resolv.conf`: isx writes it, naming the bridge gateway as the one nameserver, and checks it on use.
 The `resolve` entry is removed from `/etc/nsswitch.conf`, so `.local` names go to the gateway's DNS instead of multicast DNS.
 
