@@ -4167,6 +4167,16 @@ A test that leans on GNU tools or Linux kernel behaviour fails on a Mac, and wit
 A test that genuinely needs Linux skips with `assumeTrue(Platform.isLinux())` and a reason.
 Intel Macs are not covered: arm64 is what Mac users run, and macOS runners are scarce and, where billed, cost several times Linux ones (#974).
 
+**An artifact upload that other jobs need is retried once.**
+A hosted runner now and then times out reaching GitHub's artifact service (`CreateArtifact: ETIMEDOUT`), failing a job whose build had passed, and every job downloading its artifact with it (#1672).
+`actions/upload-artifact` has no retry input, and its client does not retry a network error such as `ETIMEDOUT`.
+So deliverable uploads go through the local composite action `.github/actions/upload-artifact-retry`.
+Its first attempt continues on error, and a second one with `overwrite: true` runs only when it failed, 15 seconds later, replacing any partial artifact under that name.
+The second does not continue on error, so two failures still fail the job, and one timeout costs a retry rather than a re-run.
+A local action keeps the pair in one place with no third-party dependency in the release path.
+Diagnostic uploads keep a single attempt, since nothing downloads them.
+`WorkflowArtifactUploadRetryTest` checks both the action and that no deliverable upload bypasses it.
+
 **The test JVM keeps `AESCrypt.makeSessionKey` out of the JIT.**
 CI tests on GraalVM 25, whose JIT now and then gives one AES-256 cipher a wrong key schedule while it deoptimizes the compiled and OSR versions of `com.sun.crypto.provider.AESCrypt.makeSessionKey` during warm-up.
 TLS 1.3 prefers `TLS_AES_256_GCM_SHA384`, so that connection fails with `bad_record_mac` (or `Tag mismatch`, followed by a "record" of zeros, which is the JDK wiping the plaintext it refused).
