@@ -253,6 +253,8 @@ Architecture-aware with KVM acceleration when available:
 - **x86_64**: `-machine pc`, `-cpu host -enable-kvm` when `/dev/kvm` exists
 - **aarch64**: `-machine virt`, `-cpu host -enable-kvm` when `/dev/kvm` exists
 - Console: `ttyS0` (x86_64) or `ttyAMA0` (aarch64)
+- Drives: every image is attached `discard=unmap` (`VmManager.qemuDriveArgs`), so the guest's discards punch holes in the host file and the sparse images shrink again (#1683).
+  QEMU's default is `discard=ignore`: virtio-blk still advertises discard, btrfs's online trim and `fstrim` report success, and the images only grow.
 
 ## VM Management (`vm.sh`)
 
