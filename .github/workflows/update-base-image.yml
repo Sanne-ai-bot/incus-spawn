@@ -7,9 +7,14 @@ name: Update base image
 #
 # Event-driven (push model): the images repo fires a `base-image-released`
 # repository_dispatch when it publishes a release, carrying the tag and checksums
-# in the payload — so there is nothing to poll or re-derive. The manual
-# `workflow_dispatch` path is a backstop that re-derives the newest release from
-# the images repo's release list (used if a dispatch is ever missed).
+# in the payload, so there is nothing to poll. The manual `workflow_dispatch` path
+# is a backstop that takes the newest release from the images repo's release list
+# (used if a dispatch is ever missed).
+#
+# Either way only the tag is taken as given (#1678). Every checksum comes from the
+# release's own SHA256SUMS and SHA256SUMS.v2, for the asset names minimal.yaml's
+# URLs download (.github/scripts/base-image-sums.sh), and a payload whose checksums
+# differ from them stops the run. verify-base-image-checksums.yml checks the PR again.
 #
 # A release carries two VM images (#1255): the stock-based -vm.tar.xz, listed in
 # SHA256SUMS for isx releases before this reader, and the one built from scratch,
@@ -49,70 +54,78 @@ jobs:
           YAML="common/src/main/resources/images/minimal.yaml"
           CURRENT_TAG="$(yq -r '.image_tag' "$YAML")"
 
+          IMAGE_URL="$(yq -r '.image_url' "$YAML")"
+          VM_URL="$(yq -r '.vm_image_url' "$YAML")"
+          . .github/scripts/base-image-sums.sh
+          # Single source of truth: derive the owning repo from the URLs.
+          IMAGES_REPO="$(release_repo "$IMAGE_URL" "$VM_URL")"
+
           if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
-            # The images repo already computed the tag + checksums; trust the payload.
-            TAG="$(jq -r '.tag' <<<"$PAYLOAD")"
-            C_X86="$(jq -r '.sha256.container.x86_64' <<<"$PAYLOAD")"
-            C_ARM="$(jq -r '.sha256.container.aarch64' <<<"$PAYLOAD")"
-            V_X86="$(jq -r '.sha256.vm.x86_64' <<<"$PAYLOAD")"
-            V_ARM="$(jq -r '.sha256.vm.aarch64' <<<"$PAYLOAD")"
-            D_X86="$(jq -r '.sha256.vm_direct.x86_64 // empty' <<<"$PAYLOAD")"
-            D_ARM="$(jq -r '.sha256.vm_direct.aarch64 // empty' <<<"$PAYLOAD")"
+            # The tag is the push signal; the sums still come from the release itself (#1678).
+            TAG="$(jq -r '.tag // empty' <<<"$PAYLOAD")"
           else
-            # Manual backstop: derive from the images repo's newest release.
-            # Single source of truth: derive the owning repo from the image_url.
-            IMAGES_REPO="$(yq -r '.image_url' "$YAML" \
-              | sed -E 's#https://github.com/([^/]+/[^/]+)/.*#\1#')"
+            # Manual backstop: the images repo's newest release.
             TAG="$(gh api "repos/$IMAGES_REPO/releases" \
               --jq '[.[] | select(.tag_name | startswith("fedora-"))][0].tag_name')"
-            SUMS_URL="$(gh api "repos/$IMAGES_REPO/releases/tags/$TAG" \
-              --jq '.assets[] | select(.name == "SHA256SUMS") | .browser_download_url')"
-            if [[ -z "$SUMS_URL" ]]; then
-              echo "Release $TAG has no SHA256SUMS asset; aborting." >&2
-              exit 1
-            fi
-            curl -fsSL "$SUMS_URL" -o SHA256SUMS
-            # <sha>  <filename>, looked up by exact name.
-            sha_for() { awk -v f="$1" '$2 == f { print $1 }' "$2"; }
-            C_X86="$(sha_for "fedora-44-x86_64.tar.xz" SHA256SUMS)"
-            C_ARM="$(sha_for "fedora-44-aarch64.tar.xz" SHA256SUMS)"
-            V_X86="$(sha_for "fedora-44-x86_64-vm.tar.xz" SHA256SUMS)"
-            V_ARM="$(sha_for "fedora-44-aarch64-vm.tar.xz" SHA256SUMS)"
-            D_X86=""
-            D_ARM=""
-            V2_URL="$(gh api "repos/$IMAGES_REPO/releases/tags/$TAG" \
-              --jq '.assets[] | select(.name == "SHA256SUMS.v2") | .browser_download_url')"
-            if [[ -n "$V2_URL" ]]; then
-              curl -fsSL "$V2_URL" -o SHA256SUMS.v2
-              D_X86="$(sha_for "fedora-44-x86_64-vm-direct.tar.xz" SHA256SUMS.v2)"
-              D_ARM="$(sha_for "fedora-44-aarch64-vm-direct.tar.xz" SHA256SUMS.v2)"
-            fi
-            rm -f SHA256SUMS SHA256SUMS.v2
           fi
+          SUMS="$(mktemp -d)"
+          trap 'rm -rf "$SUMS"' EXIT
+          fetch_release_sums "$IMAGES_REPO" "$TAG" "$SUMS"
+
+          # The names come from the built-in's own URLs: the VM file is either kind, so both are
+          # derived from whichever it names now.
+          CURRENT_VM_FILE="${VM_URL##*/}"
+          case "$CURRENT_VM_FILE" in
+            *-vm.tar.xz | *-vm-direct.tar.xz) VM_BASE="${CURRENT_VM_FILE%-vm*.tar.xz}" ;;
+            *) echo "vm_image_url names neither a -vm.tar.xz nor a -vm-direct.tar.xz: $VM_URL; aborting." >&2
+               exit 1 ;;
+          esac
+          STOCK_VM_FILE="$VM_BASE-vm.tar.xz"
+          DIRECT_VM_FILE="$VM_BASE-vm-direct.tar.xz"
+          C_X86_ASSET="$(asset_name "$IMAGE_URL" "$TAG" x86_64)"
+          C_ARM_ASSET="$(asset_name "$IMAGE_URL" "$TAG" aarch64)"
+          C_X86="$(release_sum "$SUMS" "$C_X86_ASSET")"
+          C_ARM="$(release_sum "$SUMS" "$C_ARM_ASSET")"
 
           # The direct image for both arches, or not at all: one arch's would leave the
           # other with a URL and no checksum.
           VM_KIND=stock
-          if [[ "$D_X86" =~ ^[0-9a-f]{64}$ && "$D_ARM" =~ ^[0-9a-f]{64}$ ]]; then
+          WANT_VM_FILE="$STOCK_VM_FILE"
+          if release_lists "$SUMS" "$(asset_name "$DIRECT_VM_FILE" "$TAG" x86_64)" \
+              && release_lists "$SUMS" "$(asset_name "$DIRECT_VM_FILE" "$TAG" aarch64)"; then
             VM_KIND=direct
-            V_X86="$D_X86"
-            V_ARM="$D_ARM"
-          elif [[ "$(yq -r '.vm_image_url' "$YAML")" == *-vm-direct.tar.xz ]]; then
+            WANT_VM_FILE="$DIRECT_VM_FILE"
+          elif [[ "$CURRENT_VM_FILE" == "$DIRECT_VM_FILE" ]]; then
             # Never back to the stock image unasked: a release missing the direct one is a
             # broken release, not a reason to move every user's VMs.
             echo "Release $TAG lacks -vm-direct for both arches, and the built-in already uses it; aborting." >&2
             exit 1
           fi
+          V_X86_ASSET="$(asset_name "$WANT_VM_FILE" "$TAG" x86_64)"
+          V_ARM_ASSET="$(asset_name "$WANT_VM_FILE" "$TAG" aarch64)"
+          V_X86="$(release_sum "$SUMS" "$V_X86_ASSET")"
+          V_ARM="$(release_sum "$SUMS" "$V_ARM_ASSET")"
 
-          for pair in "tag:$TAG" \
-                      "container/x86_64:$C_X86" "container/aarch64:$C_ARM" \
-                      "vm/x86_64:$V_X86" "vm/aarch64:$V_ARM"; do
-            val="${pair#*:}"
-            if [[ -z "$val" || "$val" == "null" ]]; then
-              echo "Missing ${pair%%:*} in resolved release; aborting." >&2
-              exit 1
-            fi
-          done
+          # A sum the payload carries must be the release's: a difference means the images repo's
+          # release and its dispatch are out of step, and neither can be picked.
+          if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+            mismatch=0
+            for check in "container.x86_64:$C_X86_ASSET" "container.aarch64:$C_ARM_ASSET" \
+                         "vm.x86_64:$(asset_name "$STOCK_VM_FILE" "$TAG" x86_64)" \
+                         "vm.aarch64:$(asset_name "$STOCK_VM_FILE" "$TAG" aarch64)" \
+                         "vm_direct.x86_64:$(asset_name "$DIRECT_VM_FILE" "$TAG" x86_64)" \
+                         "vm_direct.aarch64:$(asset_name "$DIRECT_VM_FILE" "$TAG" aarch64)"; do
+              field="${check%%:*}" asset="${check#*:}"
+              sent="$(jq -r ".sha256.$field // empty" <<<"$PAYLOAD")"
+              [[ -z "$sent" ]] && continue
+              derived="$(release_sum "$SUMS" "$asset" || true)"
+              if [[ "$sent" != "$derived" ]]; then
+                echo "The payload's sha256.$field ($sent) is not the release's sum for $asset (${derived:-none})." >&2
+                mismatch=1
+              fi
+            done
+            [[ "$mismatch" == 0 ]] || { echo "Release $TAG and its dispatch disagree; aborting." >&2; exit 1; }
+          fi
 
           {
             echo "tag=$TAG"
@@ -122,15 +135,13 @@ jobs:
             echo "v_x86=$V_X86"
             echo "v_arm=$V_ARM"
             echo "vm_kind=$VM_KIND"
+            echo "vm_file=$WANT_VM_FILE"
           } >> "$GITHUB_OUTPUT"
 
           echo "Current built-in tag: $CURRENT_TAG"
           echo "Incoming release tag: $TAG"
           # Current means the same tag, VM image and checksums: a stock-image bump of this
           # very release, already merged, still leaves the switch to -vm-direct to make.
-          CURRENT_VM_FILE="$(yq -r '.vm_image_url' "$YAML" | sed -E 's#.*/##')"
-          WANT_VM_FILE="fedora-44-{arch}-vm.tar.xz"
-          [[ "$VM_KIND" == direct ]] && WANT_VM_FILE="fedora-44-{arch}-vm-direct.tar.xz"
           CURRENT_SUMS="$(yq -r '[.image_sha256.x86_64, .image_sha256.aarch64, .vm_image_sha256.x86_64, .vm_image_sha256.aarch64] | join(" ")' "$YAML")"
           # Said in the PR, since the trust root changes with them: the same tag with other
           # checksums is a release published again, and a new VM file is a switch of image.
@@ -159,13 +170,12 @@ jobs:
           C_ARM: ${{ steps.resolve.outputs.c_arm }}
           V_X86: ${{ steps.resolve.outputs.v_x86 }}
           V_ARM: ${{ steps.resolve.outputs.v_arm }}
-          VM_KIND: ${{ steps.resolve.outputs.vm_kind }}
+          VM_FILE: ${{ steps.resolve.outputs.vm_file }}
         run: |
           set -euo pipefail
           YAML="common/src/main/resources/images/minimal.yaml"
-          VM_FILE="fedora-44-{arch}-vm.tar.xz"
-          [[ "$VM_KIND" == direct ]] && VM_FILE="fedora-44-{arch}-vm-direct.tar.xz"
-          VM_URL="$(yq -r '.vm_image_url' "$YAML" | sed -E "s#[^/]+\$#$VM_FILE#")"
+          VM_URL="$(yq -r '.vm_image_url' "$YAML")"
+          VM_URL="${VM_URL%/*}/$VM_FILE"
           yq -i "
             .vm_image_url = \"$VM_URL\" |
             .image_tag = \"$TAG\" |
@@ -215,6 +225,10 @@ jobs:
             exit 0
           fi
 
+          # The PR check's own report on the bumped file: each checksum beside the asset it was matched
+          # to, and the command that lists them, so a reviewer can repeat the check in one line.
+          SUMS_TABLE="$(bash .github/scripts/verify-base-image-sums.sh common/src/main/resources/images/minimal.yaml)"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
@@ -227,6 +241,12 @@ jobs:
             --body "$SUMMARY
 
           VM image: \`$VM_KIND\` (\`direct\` is the image built from scratch, \`-vm-direct.tar.xz\`, listed in SHA256SUMS.v2; \`stock\` is \`-vm.tar.xz\`).
+
+          Each checksum was taken from the release's own sums files, for the asset its URL downloads:
+
+          $SUMS_TABLE
+
+          The \`verify-base-image-checksums\` check does the same on this PR; do not merge it unless that check ran and passed.
 
           Builds already track the latest release at build time when unpinned; this keeps the offline fallback current." \
             --base main \

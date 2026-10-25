@@ -38,9 +38,13 @@ Key jobs:
   It needs Incus's nftables firewall driver on the runner
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
-The **`update-base-image-steps`** job in `test-integration.yml` runs `.github/scripts/test-update-base-image.sh`: `update-base-image.yml`'s three steps, as its `workflow_dispatch` backstop runs them, against a fake images release with `-vm-direct` and `SHA256SUMS.v2`, `gh`, `curl` and the remote faked (#1255).
+The **`update-base-image-steps`** job in `test-integration.yml` runs `.github/scripts/test-update-base-image.sh`: `update-base-image.yml`'s three steps, as its `workflow_dispatch` backstop and its `repository_dispatch` path run them, against a fake images release with `-vm-direct` and `SHA256SUMS.v2`, `gh` and the remote faked (#1255).
 It checks the switch to `-vm-direct` with both arches' checksums, also after a stock-image bump of the same release was merged or while its branch is open; a routine bump of a built-in already on `-vm-direct` (plain title, `-vm-direct` branch); the refusal to move such a built-in back to stock when a release lacks `-vm-direct`; and that the PR title names the switch and a release published again under its tag.
+It checks that both events take every checksum from the release for the names the URLs download, that a payload disagreeing with the release or a missing, malformed or contradicted sum stops the run, and that the PR pairs each checksum with its asset (#1678).
+The same script runs `verify-base-image-sums.sh` against the fake release: a swapped arch, a stock sum under a `-vm-direct` URL and a rootfs sum paired with a VM disk must each fail it.
 It starts from a stock built-in written in the script, whose keys, nested ones included, must match `minimal.yaml`'s, and finds the workflow's steps by name, so renaming a key or a step fails it too.
+`.github/workflows/verify-base-image-checksums.yml` (**`verify-base-image-checksums`**) runs `.github/scripts/verify-base-image-sums.sh` on a PR or push that changes `minimal.yaml` or the scripts: the four checksums must be the release's own for the assets `image_url` and `vm_image_url` download (#1678).
+It reads the real release, so it needs no secret and runs on a fork's PR too.
 `.github/workflows/test-vm-kernel.yml` (**`boot (x86_64)`**, **`boot (aarch64)`**) runs when `appliance/kernel/**`, `appliance/test-vm-kernel.sh` or `minimal.yaml` change (#1255).
 It builds the VM base image's kernel with `build-kernel.sh vm` and boots it with `appliance/test-vm-kernel.sh` on the VM image `minimal.yaml` pins, downloaded and checked against `vm_image_sha256`.
 x86_64 boots under KVM, aarch64 under TCG; the console logs and `systemd-analyze plot`s are uploaded.

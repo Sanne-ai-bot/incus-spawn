@@ -124,7 +124,7 @@ jobs:
           retention-days: 7
 
   # update-base-image.yml only runs on a release or by hand, so its steps are run here against a
-  # fake release carrying -vm-direct and SHA256SUMS.v2 (#1255), with gh, curl and the remote faked.
+  # fake release carrying -vm-direct and SHA256SUMS.v2 (#1255), with gh and the remote faked.
   update-base-image-steps:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: ubuntu-26.04

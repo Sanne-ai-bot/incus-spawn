@@ -283,9 +283,17 @@ Swapping the release into the definition made every rebuild stamp a fingerprint 
 So a plain `isx build tpl-minimal` always installs the latest base image.
 Any failure to reach or read the release list leaves the built-in tag in place and the build proceeds.
 An event-driven CI job (`.github/workflows/update-base-image.yml`) keeps that built-in fallback from drifting by opening a PR to bump it whenever the images repo publishes a newer release.
-`Sanne/incus-spawn-images` fires a `base-image-released` `repository_dispatch` (carrying the new tag and the container/VM checksums it just computed).
-So this repo neither polls nor re-parses `SHA256SUMS`.
-A manual `workflow_dispatch` re-derives the newest release from the images repo's release list as a backstop if a dispatch is ever missed.
+`Sanne/incus-spawn-images` fires a `base-image-released` `repository_dispatch` (carrying the new tag and the container/VM checksums it just computed), so this repo does not poll.
+A manual `workflow_dispatch` takes the newest release from the images repo's release list as a backstop if a dispatch is ever missed.
+
+**The bump takes only the tag on trust** (#1678).
+The checksums in `minimal.yaml` are what every base-image download is verified against, and they were merged wrong more than once while the dispatch path copied them from the payload.
+Both events now read every checksum from the release's own `SHA256SUMS` and `SHA256SUMS.v2` (`.github/scripts/base-image-sums.sh`).
+The names looked up are those `image_url` and `vm_image_url` download, with the tag and arch filled in, so a Fedora release change moves them too.
+A missing or malformed sum, or one the two files disagree on, stops the run naming the asset.
+A payload whose checksums differ from the release's also stops it, printing both, since the images repo's release and its dispatch are then out of step.
+The PR lists each checksum beside its asset, with the `gh release download` command that repeats the check.
+`verify-base-image-checksums.yml` checks the four checksums against the release on every PR that changes `minimal.yaml`, a bump by hand included, so the pairing of rootfs, VM disk and arch is checked as well as the digits.
 
 `isx update-base` manages the pin: it fetches the release list from the GitHub API, retrieves per-architecture container **and VM** SHA256 checksums, and writes them to `~/.config/incus-spawn/base-image-pin.yaml` when pinning a specific version.
 `--latest` (or menu option 1) simply removes that file, restoring build-time latest tracking — it does not itself download anything.
