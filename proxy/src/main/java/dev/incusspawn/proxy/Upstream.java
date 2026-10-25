@@ -103,6 +103,11 @@ class Upstream {
         return upstreamOverrides.get(host);
     }
 
+    /** For tests: drop an override, so the host is dialled as it resolves again. */
+    void clearUpstreamOverride(String host) {
+        upstreamOverrides.remove(host);
+    }
+
     /** Trust a stub's certificate for upstream connections, alongside the system CAs. Set before start(). */
     void trustUpstreamCertificate(String pemPath) {
         extraUpstreamTrustPem = pemPath;
