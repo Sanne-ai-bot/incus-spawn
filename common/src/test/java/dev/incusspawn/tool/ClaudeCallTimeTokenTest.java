@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -154,6 +155,34 @@ class ClaudeCallTimeTokenTest {
         assertEquals(List.of("sk-ant-short"), JSON.convertValue(
                 JSON.readTree(claudeJson.toFile()).at("/customApiKeyResponses/approved"), List.class));
     }
+
+    @Test
+    void aRebuildKeepsMcpServersInAFileALoginApprovedAKeyIn() throws Exception {
+        // A parent's file as isx merged it, then approved by a login: a repeated key (#1638)
+        var parent = ClaudeSetup.mergeClaudeJson(new IncusClient.ExecResult(0,
+                "{\"mcpServers\": {\"intellij-index\": {\"type\": \"http\"}}}", ""), FRESH_CLAUDE_JSON);
+        var claudeJson = home.resolve(".claude.json");
+        Files.writeString(claudeJson, parent);
+        login(Map.of("ANTHROPIC_API_KEY", PROOF), "true");
+        assertTrue(Files.readString(claudeJson).contains(PROOF.substring(PROOF.length() - 20)),
+                "the login script recognises a file isx merged");
+
+        var child = JSON.readTree(ClaudeSetup.mergeClaudeJson(
+                new IncusClient.ExecResult(0, Files.readString(claudeJson), ""), FRESH_CLAUDE_JSON));
+
+        assertEquals("http", child.at("/mcpServers/intellij-index/type").asText());
+        assertEquals(List.of("sk-ant-placeholder"), JSON.convertValue(child.at("/customApiKeyResponses/approved"), List.class));
+    }
+
+    private static final String FRESH_CLAUDE_JSON = """
+            {
+              "hasCompletedOnboarding": true,
+              "customApiKeyResponses": {
+                "approved": ["sk-ant-placeholder"],
+                "rejected": []
+              }
+            }
+            """;
 
     @Test
     void loginLeavesAnAlreadyApprovedKeyAlone() throws Exception {

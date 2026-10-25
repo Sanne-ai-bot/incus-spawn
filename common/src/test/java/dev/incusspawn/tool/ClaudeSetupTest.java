@@ -4,6 +4,9 @@ import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -147,6 +150,85 @@ class ClaudeSetupTest {
         // The login script names the field too, to approve the key of each start (#1108)
         verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
                 and(contains("cat > '/home/agentuser/.claude.json'"), contains("customApiKeyResponses")));
+    }
+
+    @Test
+    void reconfigureKeepsMcpServersAnAncestorRegistered() {
+        // idea-backend's index-mcp ran `claude mcp add --scope user` in the parent (#1638)
+        var existing = """
+                {
+                  "hasCompletedOnboarding": true,
+                  "numStartups": 7,
+                  "mcpServers": {
+                    "intellij-index": {"type": "http", "url": "http://127.0.0.1:29170/index-mcp/streamable-http"}
+                  },
+                  "projects": {
+                    "/home/agentuser": {"hasTrustDialogAccepted": false, "mcpServers": {"local": {"command": "x"}}},
+                    "/home/agentuser/work": {"hasTrustDialogAccepted": true}
+                  }
+                }
+                """;
+        var incus = incusWithClaudeJson(existing);
+
+        new ClaudeSetup().reconfigure(new Container(incus, CONTAINER), Map.of("model", "claude-opus-5-5"));
+
+        var written = JqValues.parseStrict(writtenClaudeJson(incus));
+        assertEquals("http://127.0.0.1:29170/index-mcp/streamable-http",
+                written.path("mcpServers").path("intellij-index").path("url").asText());
+        var home = written.path("projects").path("/home/agentuser");
+        assertTrue(home.path("hasTrustDialogAccepted").asBoolean(false), "isx's own keys still win");
+        assertEquals("x", home.path("mcpServers").path("local").path("command").asText());
+        assertTrue(written.path("projects").path("/home/agentuser/work").path("hasTrustDialogAccepted").asBoolean(false));
+        assertEquals(List.of("sk-ant-placeholder"), written.path("customApiKeyResponses").path("approved")
+                .asList().stream().map(JqValue::asText).toList());
+    }
+
+    @Test
+    void configureSettingsDropsAnInheritedApiKeyApprovalInOauthMode() {
+        var claude = new SpawnConfig.ClaudeConfig();
+        claude.setOauthToken("sk-ant-oat01-real-token-on-host");
+        var existing = """
+                {"customApiKeyResponses": {"approved": ["sk-ant-placeholder"], "rejected": []}, "mcpServers": {}}
+                """;
+        var incus = incusWithClaudeJson(existing);
+
+        new ClaudeSetup().configureSettings(new Container(incus, CONTAINER), claude, Map.of());
+
+        var written = (JqObject) JqValues.parseStrict(writtenClaudeJson(incus));
+        assertFalse(written.has("customApiKeyResponses"));
+        assertTrue(written.has("mcpServers"));
+    }
+
+    @Test
+    void configureSettingsWritesAFreshFileWhenTheOldOneIsUnreadable() {
+        var incus = incusWithClaudeJson("{not json");
+
+        new ClaudeSetup().configureSettings(new Container(incus, CONTAINER), new SpawnConfig.ClaudeConfig(), Map.of());
+
+        var written = writtenClaudeJson(incus);
+        assertTrue(JqValues.parseStrict(written).path("hasCompletedOnboarding").asBoolean(false));
+        // The login script approves each start's key only in a file shaped like this (#1108)
+        assertTrue(written.startsWith("{\n") && written.endsWith("\n}\n"), written);
+    }
+
+    private static IncusClient incusWithClaudeJson(String existing) {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.shellExec(CONTAINER, "sh", "-c",
+                "[ ! -e /home/agentuser/.claude.json ] || cat /home/agentuser/.claude.json"))
+                .thenReturn(new IncusClient.ExecResult(0, existing, ""));
+        return incus;
+    }
+
+    private static String writtenClaudeJson(IncusClient incus) {
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), captor.capture());
+        var redirect = "cat > '/home/agentuser/.claude.json' << '";
+        var write = captor.getAllValues().stream().filter(cmd -> cmd.contains(redirect)).findFirst().orElseThrow();
+        var start = write.indexOf(redirect) + redirect.length();
+        var marker = write.substring(start, write.indexOf('\'', start));
+        var body = write.substring(write.indexOf('\n') + 1);
+        return body.substring(0, body.lastIndexOf(marker));
     }
 
     @Test

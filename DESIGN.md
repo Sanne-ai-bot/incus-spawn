@@ -1129,7 +1129,8 @@ Its `index-mcp` parameter (default `false`) installs the third-party IDE Index M
 It is opt-in because it is a third-party download every build would otherwise depend on: the Marketplace's build-matched URL it first used began answering 404, which failed every `idea-backend` build.
 The plugin comes from the author's GitHub release, pinned to the sha256 GitHub publishes for that asset; the Marketplace publishes no checksum, and its copy is re-signed, so it differs.
 `mcp-plugin.xml` pins `serverPort` to the port the registration names, so the two agree by construction rather than through the plugin's per-IDE default.
-The registration is a build step, not start-time reconciliation like `McpClientRegistration`: `ClaudeSetup` rewrites `~/.claude.json` whole, so Claude Code must already be installed (a parent template or earlier in the tool list), and the step fails the build rather than skip it, since `run_as_user` output is discarded on success and a skip would go unseen.
+The registration is a build step, not start-time reconciliation like `McpClientRegistration`: `claude mcp add` needs Claude Code already installed (a parent template or earlier in the tool list), and the step fails the build rather than skip it, since `run_as_user` output is discarded on success and a skip would go unseen.
+`ClaudeSetup` lays its own keys of `~/.claude.json` over the file a parent left rather than rewriting it, so a child template that reconfigures `claude` (a different `model`, say) keeps the registration (#1638).
 
 ### GUI and Audio Passthrough
 
