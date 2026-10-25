@@ -53,6 +53,10 @@ Nested inside an isx instance it also works around what a user namespace refuses
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
 
+**An artifact a later job or the release needs is uploaded through `.github/actions/upload-artifact-retry`**, which tries once more when the first attempt fails (#1672, DESIGN.md "Testing").
+Diagnostic uploads (`if: always()` or `failure()`) call `actions/upload-artifact` directly.
+`WorkflowArtifactUploadRetryTest` fails when a deliverable upload bypasses the action, or the action stops retrying.
+
 **No CI job boots the appliance under vfkit.**
 Both arches boot under QEMU; this is worth stating precisely, because the runner list makes it look like more:
 

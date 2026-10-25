@@ -109,7 +109,7 @@ jobs:
           key: ${{ steps.cache_key.outputs.key }}
 
       - name: Upload as artifact
-        uses: actions/upload-artifact@v6
+        uses: ./.github/actions/upload-artifact-retry
         with:
           name: appliance-x86_64
           path: appliance/build/
@@ -202,7 +202,7 @@ jobs:
           key: ${{ steps.cache_key.outputs.key }}
 
       - name: Upload as artifact
-        uses: actions/upload-artifact@v6
+        uses: ./.github/actions/upload-artifact-retry
         with:
           name: appliance-aarch64
           path: appliance/build/

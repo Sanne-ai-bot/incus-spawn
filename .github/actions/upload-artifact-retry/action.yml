@@ -1,0 +1,47 @@
+# actions/upload-artifact, tried once more when the first attempt fails (#1672).
+# A runner sometimes cannot reach GitHub's artifact service and the upload fails with
+# "CreateArtifact: ETIMEDOUT", which the action's client does not retry, after the job's build
+# already passed. The retry overwrites whatever partial artifact the first attempt left under the
+# name, and does not continue on error, so two failures still fail the job.
+# Every upload a later job or the release downloads goes through here
+# (WorkflowArtifactUploadRetryTest); diagnostic uploads on always() or failure() do not.
+name: Upload artifact, retried once
+description: actions/upload-artifact with one retry on failure
+inputs:
+  name:
+    description: Artifact name
+    required: true
+  path:
+    description: Files to upload, as actions/upload-artifact takes them
+    required: true
+  retention-days:
+    description: Days to keep the artifact; empty keeps the repository default
+    default: ''
+  if-no-files-found:
+    description: warn, error or ignore
+    default: warn
+runs:
+  using: composite
+  steps:
+    - id: upload
+      continue-on-error: true
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ${{ inputs.if-no-files-found }}
+
+    # The first attempt can fail on a route that is down for a moment; give it that moment.
+    - if: steps.upload.outcome == 'failure'
+      shell: bash
+      run: sleep 15
+
+    - if: steps.upload.outcome == 'failure'
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ${{ inputs.if-no-files-found }}
+        overwrite: true

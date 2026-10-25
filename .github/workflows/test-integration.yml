@@ -55,14 +55,14 @@ jobs:
         run: mvn package
 
       - name: Upload isx build
-        uses: actions/upload-artifact@v6
+        uses: ./.github/actions/upload-artifact-retry
         with:
           name: isx-quarkus-app
           path: cli/target/quarkus-app/
           retention-days: 1
 
       - name: Upload proxy build
-        uses: actions/upload-artifact@v6
+        uses: ./.github/actions/upload-artifact-retry
         with:
           name: isx-proxy-quarkus-app
           path: proxy/target/quarkus-app/
@@ -223,7 +223,7 @@ jobs:
         run: mvn package -Dnative -DskipTests -Dnative.optimization=-Ob -pl cli -am
 
       - name: Upload CLI native binary
-        uses: actions/upload-artifact@v6
+        uses: ./.github/actions/upload-artifact-retry
         with:
           name: isx-native-cli
           path: cli/target/incus-spawn-*-runner
@@ -254,7 +254,7 @@ jobs:
         run: mvn package -Dnative -DskipTests -Dnative.optimization=-Ob -pl proxy -am
 
       - name: Upload proxy native binary
-        uses: actions/upload-artifact@v6
+        uses: ./.github/actions/upload-artifact-retry
         with:
           name: isx-native-proxy
           path: proxy/target/incus-spawn-proxy-*-runner
