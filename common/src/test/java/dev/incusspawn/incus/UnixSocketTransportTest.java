@@ -5,7 +5,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.channels.Channels;
+import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
@@ -44,6 +47,41 @@ class UnixSocketTransportTest {
 
     private static String text(IncusTransport.RawResponse r) {
         return new String(r.body(), StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void aResponseHeadCostsNoReadPerByte() throws IOException {
+        var head = new StringBuilder("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n");
+        for (int i = 0; i < 10; i++) head.append("X-Header-").append(i).append(": some value\r\n");
+        var body = "{\"type\":\"sync\",\"status_code\":200,\"metadata\":[]}";
+        var wire = head.append("Content-Length: ").append(body.length()).append("\r\n\r\n").append(body)
+                .toString().getBytes(StandardCharsets.US_ASCII);
+        var reads = new int[1];
+        var raw = new ByteArrayInputStream(wire) {
+            @Override
+            public synchronized int read(byte[] b, int off, int len) {
+                reads[0]++;
+                return super.read(b, off, len);
+            }
+        };
+
+        var resp = HttpResponseReader.read(UnixSocketTransport.socketInput(Channels.newChannel(raw)));
+
+        assertEquals(body, new String(resp.body(), StandardCharsets.US_ASCII));
+        assertTrue(reads[0] <= 2, "a " + wire.length + "-byte response should take a read or two, took " + reads[0]);
+    }
+
+    @Test
+    void everyIncusSocketIsReadThroughTheReadAhead() throws IOException {
+        // No socket counts its own reads, so the source says it: the one bare channel stream is
+        // the one socketInput wraps.
+        var dir = java.nio.file.Path.of("src/main/java/dev/incusspawn/incus");
+        for (var file : new String[]{"UnixSocketTransport.java", "KeepAliveConnection.java"}) {
+            var src = Files.readString(dir.resolve(file));
+            long bare = src.lines().filter(l -> l.contains("Channels.newInputStream(")).count();
+            long wrapped = src.lines().filter(l -> l.contains("new SocketInput(Channels.newInputStream(")).count();
+            assertEquals(wrapped, bare, file + " reads a socket without its read-ahead");
+        }
     }
 
     @Test
