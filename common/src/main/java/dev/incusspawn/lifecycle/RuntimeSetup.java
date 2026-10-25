@@ -105,8 +105,7 @@ public final class RuntimeSetup {
      * on the host before it starts ({@link ProxyOnlyAcl}), so nothing here restricts it.
      * GUI and the inbox are NOT handled here — they must be configured before start.
      *
-     * @param prefetched config read before start to avoid seccomp lock contention;
-     *                   if null, config is read live (slower on macOS)
+     * @param prefetched config read before start to avoid seccomp lock contention
      * @param secret     the instance secret to put in place (#934), or null for none
      * @param mcpCaller  whether the instance holds the {@code mcp-caller} grant, which the same
      *                   exec reconciles its Claude Code registration with (#1182)
@@ -119,10 +118,8 @@ public final class RuntimeSetup {
         // ownership, terminfo, and tool readiness — all in one exec call.
         // Each additional exec round trip blocks for seconds due to
         // seccomp_notify lock contention during container startup.
-        var buildSourceJson = prefetched != null ? prefetched.buildSourceJson()
-                : incus.configGet(name, Metadata.BUILD_SOURCE);
-        var sshKeys = prefetched != null && prefetched.hasSshKeys() ? sshKeysToInject() : List.<String>of();
-        var setupScript = buildSetupScript(prefetched, buildSourceJson, networkMode, sshKeys, secret != null);
+        var sshKeys = prefetched.hasSshKeys() ? sshKeysToInject() : List.<String>of();
+        var setupScript = buildSetupScript(prefetched, prefetched.buildSourceJson(), networkMode, sshKeys, secret != null);
         BuildOutput.stepStart("Waiting for container...");
         var env = secret != null ? InstanceSecret.guestEnv(secret, mcpCaller, placeholders) : Map.<String, String>of();
         if (!incus.pollUntilReady(name, 30, env, "sh", "-c", setupScript)) {
@@ -132,38 +129,7 @@ public final class RuntimeSetup {
             BuildOutput.stepDone();
         }
 
-        boolean sshCapable;
-        if (prefetched != null) {
-            sshCapable = prefetched.hasSshKeys();
-        } else {
-            sshCapable = hasSshCapability(incus, name);
-            if (sshCapable) {
-                injectSshKeyIfAvailable(incus, name, null);
-            }
-        }
-
-        configureSshHostEntry(incus, name, sshCapable);
-    }
-
-    public static void setupRuntime(IncusClient incus, String name, NetworkMode networkMode) {
-        setupRuntime(incus, name, networkMode, null, null, false, List.of());
-    }
-
-    public static void awaitToolReadiness(IncusClient incus, String name, String buildSourceJson) {
-        var buildSource = BuildSource.fromJson(buildSourceJson);
-        if (buildSource == null) return;
-
-        for (var tool : buildSource.getTools().values()) {
-            if (tool.getReady() == null || tool.getReady().isBlank()) continue;
-            var toolName = tool.getName();
-            BuildOutput.stepStart("Waiting for " + toolName + "...");
-            if (!incus.pollUntilReady(name, 15, "sh", "-c", tool.getReady())) {
-                BuildOutput.stepBreak();
-                System.err.println(BuildOutput.STEP_INDENT + "Warning: " + toolName + " did not become ready in time.");
-            } else {
-                BuildOutput.stepDone();
-            }
-        }
+        configureSshHostEntry(incus, name, prefetched.hasSshKeys());
     }
 
     /**
@@ -244,31 +210,6 @@ public final class RuntimeSetup {
     }
 
     /**
-     * @param hasSshKeys pre-fetched from stopped container config; null to check live
-     */
-    public static void injectSshKeyIfAvailable(IncusClient incus, String name, Boolean hasSshKeys) {
-        if (hasSshKeys != null) {
-            if (!hasSshKeys) return;
-        } else {
-            var check = incus.shellExec(name, "test", "-f", "/home/agentuser/.ssh/authorized_keys");
-            if (!check.success()) return;
-        }
-
-        var keys = sshKeysToInject();
-        if (keys.isEmpty()) return;
-
-        try {
-            // Push with agentuser ownership (uid=1000) and mode 0600 directly,
-            // avoiding a separate chown+chmod exec round trip
-            incus.filePushContent(String.join("\n", keys) + "\n", name, "/home/agentuser/.ssh/authorized_keys",
-                    "1000", "1000", "0600");
-        } catch (IOException e) {
-            System.err.println(BuildOutput.STEP_INDENT + "Warning: failed to inject SSH key: " + e.getMessage());
-            return;
-        }
-    }
-
-    /**
      * The public keys an SSH-capable instance should accept: the isx-managed key (created on
      * first use) plus the user's own default key, if any. Host-side only; empty, with a
      * notice, when there is none.
@@ -314,10 +255,6 @@ public final class RuntimeSetup {
      * Configure the SSH host entry with Hostname directive. Must be called after
      * the container is started so the IPv4 address is available.
      */
-    public static void configureSshHostEntry(IncusClient incus, String name) {
-        configureSshHostEntry(incus, name, hasSshCapability(incus, name));
-    }
-
     static void configureSshHostEntry(IncusClient incus, String name, boolean hasSsh) {
         if (!SshKeyManager.exists()) return;
         if (!hasSsh) return;
@@ -341,16 +278,10 @@ public final class RuntimeSetup {
     }
 
     /**
-     * Check whether an instance was built with SSH capability (sshd tool or
-     * explicit ssh-setup config). Used to avoid advertising SSH access for
-     * containers that don't have sshd installed.
+     * Whether an instance was built with SSH capability (sshd tool or explicit ssh-setup
+     * config), from config values the caller already read. Used to avoid advertising SSH
+     * access for containers that don't have sshd installed.
      */
-    public static boolean hasSshCapability(IncusClient incus, String name) {
-        var config = incus.instanceMetadata(name).path("config");
-        return hasSshCapability(config.pathText(Metadata.SSH_SETUP, ""), config.pathText(Metadata.BUILD_SOURCE, ""));
-    }
-
-    /** {@link #hasSshCapability(IncusClient, String)} from config values the caller already read. */
     public static boolean hasSshCapability(String sshSetup, String buildSourceJson) {
         return !sshSetup.isEmpty() || hasSshdTool(buildSourceJson);
     }
