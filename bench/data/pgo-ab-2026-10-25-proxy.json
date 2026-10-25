@@ -1,0 +1,740 @@
+{
+  "timestamp": "2026-10-25T00:20:15Z",
+  "side": "proxy",
+  "rounds": 3,
+  "builds": {
+    "o3": "/tmp/pgo/bin/proxy-base",
+    "pgo": "/tmp/pgo/bin/proxy-pgo"
+  },
+  "minutes": 25.5,
+  "medians": {
+    "constant": {
+      "o3": {
+        "binaryBytes": 99290400,
+        "startupMs": 260,
+        "idleRssKb": 62600,
+        "peakRssKb": 81996,
+        "bestReqPerSec": 5013.9,
+        "steadyReqPerSec": 5013.9,
+        "steadyP50Us": 120.3
+      },
+      "pgo": {
+        "binaryBytes": 42077472,
+        "startupMs": 260,
+        "idleRssKb": 34840,
+        "peakRssKb": 50104,
+        "bestReqPerSec": 4969.4,
+        "steadyReqPerSec": 4969.4,
+        "steadyP50Us": 102.4
+      }
+    },
+    "saturate": {
+      "o3": {
+        "binaryBytes": 99290400,
+        "startupMs": 260,
+        "idleRssKb": 60392,
+        "peakRssKb": 85500,
+        "bestReqPerSec": 16240.8,
+        "c016ReqPerSec": 15904.7,
+        "c016P50Us": 938.0,
+        "c064ReqPerSec": 15997.4,
+        "c064P50Us": 3948.5,
+        "c128ReqPerSec": 16088.6,
+        "c128P50Us": 7995.4,
+        "c256ReqPerSec": 16105.1,
+        "c256P50Us": 16121.9
+      },
+      "pgo": {
+        "binaryBytes": 42077472,
+        "startupMs": 261,
+        "idleRssKb": 36756,
+        "peakRssKb": 53416,
+        "bestReqPerSec": 21772.6,
+        "c016ReqPerSec": 20853.9,
+        "c016P50Us": 725.0,
+        "c064ReqPerSec": 20977.0,
+        "c064P50Us": 3047.4,
+        "c128ReqPerSec": 20728.4,
+        "c128P50Us": 6160.4,
+        "c256ReqPerSec": 21242.8,
+        "c256P50Us": 12451.8
+      }
+    },
+    "maven": {
+      "o3": {
+        "binaryBytes": 99290400,
+        "startupMs": 261,
+        "idleRssKb": 60164,
+        "peakRssKb": 132404,
+        "bestReqPerSec": 287.1,
+        "c008ReqPerSec": 283.1,
+        "c008P50Us": 25034.8,
+        "c032ReqPerSec": 283.9,
+        "c032P50Us": 111149.1,
+        "c064ReqPerSec": 280.1,
+        "c064P50Us": 225443.8
+      },
+      "pgo": {
+        "binaryBytes": 42077472,
+        "startupMs": 262,
+        "idleRssKb": 36520,
+        "peakRssKb": 87316,
+        "bestReqPerSec": 342.8,
+        "c008ReqPerSec": 342.8,
+        "c008P50Us": 21233.7,
+        "c032ReqPerSec": 334.9,
+        "c032P50Us": 93847.6,
+        "c064ReqPerSec": 332.9,
+        "c064P50Us": 191889.4
+      }
+    },
+    "anthropic": {
+      "o3": {
+        "binaryBytes": 99290400,
+        "startupMs": 262,
+        "idleRssKb": 63044,
+        "peakRssKb": 106576,
+        "bestReqPerSec": 3006.6,
+        "c004ReqPerSec": 2903.1,
+        "c004P50Us": 1318.9,
+        "c016ReqPerSec": 2975.9,
+        "c016P50Us": 5210.1,
+        "c032ReqPerSec": 2991.3,
+        "c032P50Us": 10354.7
+      },
+      "pgo": {
+        "binaryBytes": 42077472,
+        "startupMs": 262,
+        "idleRssKb": 36680,
+        "peakRssKb": 77580,
+        "bestReqPerSec": 4171.0,
+        "c004ReqPerSec": 4087.1,
+        "c004P50Us": 921.6,
+        "c016ReqPerSec": 4167.3,
+        "c016P50Us": 3735.6,
+        "c032ReqPerSec": 4171.0,
+        "c032P50Us": 7438.3
+      }
+    },
+    "vertex": {
+      "o3": {
+        "binaryBytes": 99290400,
+        "startupMs": 265,
+        "idleRssKb": 63248,
+        "peakRssKb": 101492,
+        "bestReqPerSec": 1732.4,
+        "c004ReqPerSec": 1607.8,
+        "c004P50Us": 2310.1,
+        "c016ReqPerSec": 1705.9,
+        "c016P50Us": 8978.4,
+        "c032ReqPerSec": 1732.4,
+        "c032P50Us": 17956.9
+      },
+      "pgo": {
+        "binaryBytes": 42077472,
+        "startupMs": 264,
+        "idleRssKb": 36732,
+        "peakRssKb": 73752,
+        "bestReqPerSec": 3172.0,
+        "c004ReqPerSec": 2764.6,
+        "c004P50Us": 1318.9,
+        "c016ReqPerSec": 3172.0,
+        "c016P50Us": 4882.4,
+        "c032ReqPerSec": 3107.1,
+        "c032P50Us": 10027.0
+      }
+    }
+  },
+  "samples": {
+    "constant": {
+      "o3": [
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 262,
+          "idleRssKb": 62904,
+          "peakRssKb": 82176,
+          "bestReqPerSec": 5013.9,
+          "steadyReqPerSec": 5013.9,
+          "steadyP50Us": 119.8
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 260,
+          "idleRssKb": 62600,
+          "peakRssKb": 81676,
+          "bestReqPerSec": 5021.5,
+          "steadyReqPerSec": 5021.5,
+          "steadyP50Us": 120.8
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 260,
+          "idleRssKb": 60228,
+          "peakRssKb": 81996,
+          "bestReqPerSec": 4980.1,
+          "steadyReqPerSec": 4980.1,
+          "steadyP50Us": 120.3
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 260,
+          "idleRssKb": 35000,
+          "peakRssKb": 50244,
+          "bestReqPerSec": 5004.9,
+          "steadyReqPerSec": 5004.9,
+          "steadyP50Us": 102.4
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 260,
+          "idleRssKb": 34796,
+          "peakRssKb": 50020,
+          "bestReqPerSec": 4969.4,
+          "steadyReqPerSec": 4969.4,
+          "steadyP50Us": 101.9
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 261,
+          "idleRssKb": 34840,
+          "peakRssKb": 50104,
+          "bestReqPerSec": 4967.8,
+          "steadyReqPerSec": 4967.8,
+          "steadyP50Us": 102.4
+        }
+      ]
+    },
+    "saturate": {
+      "o3": [
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 260,
+          "idleRssKb": 60256,
+          "peakRssKb": 86244,
+          "bestReqPerSec": 16105.1,
+          "c016ReqPerSec": 15904.7,
+          "c016P50Us": 938.0,
+          "c064ReqPerSec": 15967.6,
+          "c064P50Us": 3948.5,
+          "c128ReqPerSec": 16088.6,
+          "c128P50Us": 7995.4,
+          "c256ReqPerSec": 16105.1,
+          "c256P50Us": 16121.9
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 261,
+          "idleRssKb": 60392,
+          "peakRssKb": 85484,
+          "bestReqPerSec": 16396.4,
+          "c016ReqPerSec": 15884.3,
+          "c016P50Us": 938.0,
+          "c064ReqPerSec": 16040.0,
+          "c064P50Us": 3948.5,
+          "c128ReqPerSec": 16396.4,
+          "c128P50Us": 7864.3,
+          "c256ReqPerSec": 16116.2,
+          "c256P50Us": 16121.9
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 260,
+          "idleRssKb": 62676,
+          "peakRssKb": 85500,
+          "bestReqPerSec": 16240.8,
+          "c016ReqPerSec": 16240.8,
+          "c016P50Us": 938.0,
+          "c064ReqPerSec": 15997.4,
+          "c064P50Us": 3964.9,
+          "c128ReqPerSec": 15990.7,
+          "c128P50Us": 7995.4,
+          "c256ReqPerSec": 16053.6,
+          "c256P50Us": 16121.9
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 261,
+          "idleRssKb": 36708,
+          "peakRssKb": 54008,
+          "bestReqPerSec": 21772.6,
+          "c016ReqPerSec": 20861.3,
+          "c016P50Us": 725.0,
+          "c064ReqPerSec": 21208.5,
+          "c064P50Us": 3031.0,
+          "c128ReqPerSec": 20717.5,
+          "c128P50Us": 6193.2,
+          "c256ReqPerSec": 21772.6,
+          "c256P50Us": 12320.8
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 260,
+          "idleRssKb": 36880,
+          "peakRssKb": 53356,
+          "bestReqPerSec": 21795.9,
+          "c016ReqPerSec": 20383.4,
+          "c016P50Us": 737.3,
+          "c064ReqPerSec": 20898.2,
+          "c064P50Us": 3047.4,
+          "c128ReqPerSec": 21795.9,
+          "c128P50Us": 6127.6,
+          "c256ReqPerSec": 21242.8,
+          "c256P50Us": 12451.8
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 261,
+          "idleRssKb": 36756,
+          "peakRssKb": 53416,
+          "bestReqPerSec": 20977.0,
+          "c016ReqPerSec": 20853.9,
+          "c016P50Us": 725.0,
+          "c064ReqPerSec": 20977.0,
+          "c064P50Us": 3047.4,
+          "c128ReqPerSec": 20728.4,
+          "c128P50Us": 6160.4,
+          "c256ReqPerSec": 20778.9,
+          "c256P50Us": 12451.8
+        }
+      ]
+    },
+    "maven": {
+      "o3": [
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 261,
+          "idleRssKb": 60076,
+          "peakRssKb": 138428,
+          "bestReqPerSec": 283.9,
+          "c008ReqPerSec": 282.3,
+          "c008P50Us": 24903.7,
+          "c032ReqPerSec": 283.9,
+          "c032P50Us": 109051.9,
+          "c064ReqPerSec": 280.1,
+          "c064P50Us": 225443.8
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 261,
+          "idleRssKb": 62808,
+          "peakRssKb": 117124,
+          "bestReqPerSec": 338.5,
+          "c008ReqPerSec": 283.1,
+          "c008P50Us": 25034.8,
+          "c032ReqPerSec": 279.5,
+          "c032P50Us": 111673.3,
+          "c064ReqPerSec": 338.5,
+          "c064P50Us": 174063.6
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 261,
+          "idleRssKb": 60164,
+          "peakRssKb": 132404,
+          "bestReqPerSec": 287.1,
+          "c008ReqPerSec": 283.7,
+          "c008P50Us": 25165.8,
+          "c032ReqPerSec": 287.1,
+          "c032P50Us": 111149.1,
+          "c064ReqPerSec": 277.7,
+          "c064P50Us": 227541.0
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 261,
+          "idleRssKb": 34752,
+          "peakRssKb": 99420,
+          "bestReqPerSec": 331.1,
+          "c008ReqPerSec": 331.1,
+          "c008P50Us": 21364.7,
+          "c032ReqPerSec": 327.9,
+          "c032P50Us": 94896.1,
+          "c064ReqPerSec": 328.3,
+          "c064P50Us": 193986.6
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 262,
+          "idleRssKb": 36520,
+          "peakRssKb": 73016,
+          "bestReqPerSec": 346.9,
+          "c008ReqPerSec": 346.9,
+          "c008P50Us": 21233.7,
+          "c032ReqPerSec": 334.9,
+          "c032P50Us": 93847.6,
+          "c064ReqPerSec": 332.9,
+          "c064P50Us": 190840.8
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 262,
+          "idleRssKb": 36828,
+          "peakRssKb": 87316,
+          "bestReqPerSec": 342.8,
+          "c008ReqPerSec": 342.8,
+          "c008P50Us": 21102.6,
+          "c032ReqPerSec": 337.3,
+          "c032P50Us": 92799.0,
+          "c064ReqPerSec": 339.3,
+          "c064P50Us": 191889.4
+        }
+      ]
+    },
+    "anthropic": {
+      "o3": [
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 262,
+          "idleRssKb": 62676,
+          "peakRssKb": 109180,
+          "bestReqPerSec": 3006.6,
+          "c004ReqPerSec": 2903.1,
+          "c004P50Us": 1318.9,
+          "c016ReqPerSec": 3006.6,
+          "c016P50Us": 5210.1,
+          "c032ReqPerSec": 2991.3,
+          "c032P50Us": 10354.7
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 261,
+          "idleRssKb": 63044,
+          "peakRssKb": 106576,
+          "bestReqPerSec": 3044.0,
+          "c004ReqPerSec": 2901.1,
+          "c004P50Us": 1335.3,
+          "c016ReqPerSec": 2975.9,
+          "c016P50Us": 5210.1,
+          "c032ReqPerSec": 3044.0,
+          "c032P50Us": 10223.6
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 265,
+          "idleRssKb": 63088,
+          "peakRssKb": 102280,
+          "bestReqPerSec": 2978.1,
+          "c004ReqPerSec": 2926.4,
+          "c004P50Us": 1318.9,
+          "c016ReqPerSec": 2967.6,
+          "c016P50Us": 5210.1,
+          "c032ReqPerSec": 2978.1,
+          "c032P50Us": 10485.8
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 264,
+          "idleRssKb": 36812,
+          "peakRssKb": 77580,
+          "bestReqPerSec": 4167.3,
+          "c004ReqPerSec": 4087.1,
+          "c004P50Us": 929.8,
+          "c016ReqPerSec": 4167.3,
+          "c016P50Us": 3735.6,
+          "c032ReqPerSec": 4031.6,
+          "c032P50Us": 7634.9
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 262,
+          "idleRssKb": 36680,
+          "peakRssKb": 75356,
+          "bestReqPerSec": 4171.0,
+          "c004ReqPerSec": 4113.5,
+          "c004P50Us": 921.6,
+          "c016ReqPerSec": 4154.3,
+          "c016P50Us": 3751.9,
+          "c032ReqPerSec": 4171.0,
+          "c032P50Us": 7438.3
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 262,
+          "idleRssKb": 36660,
+          "peakRssKb": 81636,
+          "bestReqPerSec": 4198.7,
+          "c004ReqPerSec": 4032.3,
+          "c004P50Us": 917.5,
+          "c016ReqPerSec": 4198.7,
+          "c016P50Us": 3702.8,
+          "c032ReqPerSec": 4171.3,
+          "c032P50Us": 7438.3
+        }
+      ]
+    },
+    "vertex": {
+      "o3": [
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 267,
+          "idleRssKb": 63248,
+          "peakRssKb": 101412,
+          "bestReqPerSec": 1751.4,
+          "c004ReqPerSec": 1607.8,
+          "c004P50Us": 2310.1,
+          "c016ReqPerSec": 1705.9,
+          "c016P50Us": 8978.4,
+          "c032ReqPerSec": 1751.4,
+          "c032P50Us": 17563.6
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 265,
+          "idleRssKb": 63264,
+          "peakRssKb": 101492,
+          "bestReqPerSec": 1725.0,
+          "c004ReqPerSec": 1627.5,
+          "c004P50Us": 2293.8,
+          "c016ReqPerSec": 1725.0,
+          "c016P50Us": 8912.9,
+          "c032ReqPerSec": 1703.1,
+          "c032P50Us": 18087.9
+        },
+        {
+          "binaryBytes": 99290400,
+          "startupMs": 264,
+          "idleRssKb": 63068,
+          "peakRssKb": 102256,
+          "bestReqPerSec": 1732.4,
+          "c004ReqPerSec": 1607.2,
+          "c004P50Us": 2326.5,
+          "c016ReqPerSec": 1701.4,
+          "c016P50Us": 9044.0,
+          "c032ReqPerSec": 1732.4,
+          "c032P50Us": 17956.9
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 264,
+          "idleRssKb": 36960,
+          "peakRssKb": 79172,
+          "bestReqPerSec": 3170.6,
+          "c004ReqPerSec": 2776.3,
+          "c004P50Us": 1327.1,
+          "c016ReqPerSec": 3170.6,
+          "c016P50Us": 4849.7,
+          "c032ReqPerSec": 3134.7,
+          "c032P50Us": 9830.4
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 263,
+          "idleRssKb": 36660,
+          "peakRssKb": 73752,
+          "bestReqPerSec": 3172.0,
+          "c004ReqPerSec": 2757.8,
+          "c004P50Us": 1302.5,
+          "c016ReqPerSec": 3172.0,
+          "c016P50Us": 4915.2,
+          "c032ReqPerSec": 3036.1,
+          "c032P50Us": 10158.1
+        },
+        {
+          "binaryBytes": 42077472,
+          "startupMs": 264,
+          "idleRssKb": 36732,
+          "peakRssKb": 70180,
+          "bestReqPerSec": 3181.1,
+          "c004ReqPerSec": 2764.6,
+          "c004P50Us": 1318.9,
+          "c016ReqPerSec": 3181.1,
+          "c016P50Us": 4882.4,
+          "c032ReqPerSec": 3107.1,
+          "c032P50Us": 10027.0
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "constant",
+      "file": "/home/agentuser/incus-spawn/bench/results/fe1d7c7c-20261024-235524.json"
+    },
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "saturate",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261024-235629.json"
+    },
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261024-235726.json"
+    },
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261024-235812.json"
+    },
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261024-235859.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "constant",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261024-235939.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "saturate",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000044.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000141.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000228.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000315.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "constant",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000355.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "saturate",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000501.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000558.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000644.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000730.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "constant",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000810.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "saturate",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-000915.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001012.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001058.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001146.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "constant",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001226.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "saturate",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001331.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001428.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001515.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001601.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "constant",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001641.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "saturate",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001746.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001843.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-001929.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/f7ec4070-20261025-002015.json"
+    }
+  ]
+}

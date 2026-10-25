@@ -1,0 +1,225 @@
+{
+  "timestamp": "2026-10-24T23:54:30Z",
+  "side": "cli",
+  "rounds": 3,
+  "builds": {
+    "os": "/tmp/pgo/bin/cli-base",
+    "o3pgo": "/tmp/pgo/bin/cli-pgo",
+    "ospgo": "/tmp/pgo/bin/cli-ospgo"
+  },
+  "minutes": 4.1,
+  "medians": {
+    "cli": {
+      "os": {
+        "binaryBytes": 37948488,
+        "startupMs": 3.5,
+        "instancesMs": 6.7,
+        "accountShowMs": 11.2,
+        "prepareRunningMs": 77.9,
+        "shellToPromptMs": 270.0,
+        "branchToPromptMs": 2074.0,
+        "sshTrueMs": 155.2,
+        "scpUploadMs": 1005.0,
+        "scpUploadMiBPerSec": 254.7
+      },
+      "o3pgo": {
+        "binaryBytes": 38603848,
+        "startupMs": 2.9,
+        "instancesMs": 6.0,
+        "accountShowMs": 9.7,
+        "prepareRunningMs": 74.0,
+        "shellToPromptMs": 275.9,
+        "branchToPromptMs": 2089.8,
+        "sshTrueMs": 152.6,
+        "scpUploadMs": 776.3,
+        "scpUploadMiBPerSec": 329.8
+      },
+      "ospgo": {
+        "binaryBytes": 38145096,
+        "startupMs": 3.0,
+        "instancesMs": 6.3,
+        "accountShowMs": 9.9,
+        "prepareRunningMs": 75.7,
+        "shellToPromptMs": 273.5,
+        "branchToPromptMs": 1935.7,
+        "sshTrueMs": 155.5,
+        "scpUploadMs": 848.8,
+        "scpUploadMiBPerSec": 301.6
+      }
+    }
+  },
+  "samples": {
+    "cli": {
+      "os": [
+        {
+          "binaryBytes": 37948488,
+          "startupMs": 3.4,
+          "instancesMs": 6.7,
+          "accountShowMs": 10.8,
+          "prepareRunningMs": 76.4,
+          "shellToPromptMs": 276.6,
+          "branchToPromptMs": 2074.0,
+          "sshTrueMs": 159.3,
+          "scpUploadMs": 994.3,
+          "scpUploadMiBPerSec": 257.5
+        },
+        {
+          "binaryBytes": 37948488,
+          "startupMs": 3.5,
+          "instancesMs": 7.2,
+          "accountShowMs": 12.2,
+          "prepareRunningMs": 79.6,
+          "shellToPromptMs": 270.0,
+          "branchToPromptMs": 2117.6,
+          "sshTrueMs": 151.5,
+          "scpUploadMs": 1008.9,
+          "scpUploadMiBPerSec": 253.7
+        },
+        {
+          "binaryBytes": 37948488,
+          "startupMs": 3.5,
+          "instancesMs": 6.7,
+          "accountShowMs": 11.2,
+          "prepareRunningMs": 77.9,
+          "shellToPromptMs": 268.0,
+          "branchToPromptMs": 1337.6,
+          "sshTrueMs": 155.2,
+          "scpUploadMs": 1005.0,
+          "scpUploadMiBPerSec": 254.7
+        }
+      ],
+      "o3pgo": [
+        {
+          "binaryBytes": 38603848,
+          "startupMs": 2.9,
+          "instancesMs": 6.0,
+          "accountShowMs": 9.7,
+          "prepareRunningMs": 73.8,
+          "shellToPromptMs": 275.8,
+          "branchToPromptMs": 2089.8,
+          "sshTrueMs": 152.6,
+          "scpUploadMs": 776.3,
+          "scpUploadMiBPerSec": 329.8
+        },
+        {
+          "binaryBytes": 38603848,
+          "startupMs": 2.8,
+          "instancesMs": 5.9,
+          "accountShowMs": 9.6,
+          "prepareRunningMs": 74.0,
+          "shellToPromptMs": 275.9,
+          "branchToPromptMs": 2173.5,
+          "sshTrueMs": 153.1,
+          "scpUploadMs": 914.2,
+          "scpUploadMiBPerSec": 280.0
+        },
+        {
+          "binaryBytes": 38603848,
+          "startupMs": 3.3,
+          "instancesMs": 6.2,
+          "accountShowMs": 9.7,
+          "prepareRunningMs": 81.8,
+          "shellToPromptMs": 278.5,
+          "branchToPromptMs": 1151.1,
+          "sshTrueMs": 152.3,
+          "scpUploadMs": 725.5,
+          "scpUploadMiBPerSec": 352.9
+        }
+      ],
+      "ospgo": [
+        {
+          "binaryBytes": 38145096,
+          "startupMs": 2.9,
+          "instancesMs": 6.2,
+          "accountShowMs": 9.9,
+          "prepareRunningMs": 74.3,
+          "shellToPromptMs": 280.5,
+          "branchToPromptMs": 2078.5,
+          "sshTrueMs": 155.5,
+          "scpUploadMs": 1063.8,
+          "scpUploadMiBPerSec": 240.6
+        },
+        {
+          "binaryBytes": 38145096,
+          "startupMs": 3.0,
+          "instancesMs": 6.3,
+          "accountShowMs": 9.7,
+          "prepareRunningMs": 76.6,
+          "shellToPromptMs": 262.8,
+          "branchToPromptMs": 1153.2,
+          "sshTrueMs": 154.1,
+          "scpUploadMs": 828.6,
+          "scpUploadMiBPerSec": 309.0
+        },
+        {
+          "binaryBytes": 38145096,
+          "startupMs": 3.0,
+          "instancesMs": 6.3,
+          "accountShowMs": 9.9,
+          "prepareRunningMs": 75.7,
+          "shellToPromptMs": 273.5,
+          "branchToPromptMs": 1935.7,
+          "sshTrueMs": 158.9,
+          "scpUploadMs": 848.8,
+          "scpUploadMiBPerSec": 301.6
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "build": "os",
+      "round": 1,
+      "series": "cli",
+      "file": "/home/agentuser/incus-spawn/bench/results/cli/fe1d7c7c-20261024-235053.json"
+    },
+    {
+      "build": "o3pgo",
+      "round": 1,
+      "series": "cli",
+      "file": "/home/agentuser/incus-spawn/bench/results/cli/fe1d7c7c-20261024-235119.json"
+    },
+    {
+      "build": "ospgo",
+      "round": 1,
+      "series": "cli",
+      "file": "/home/agentuser/incus-spawn/bench/results/cli/fe1d7c7c-20261024-235147.json"
+    },
+    {
+      "build": "ospgo",
+      "round": 2,
+      "series": "cli",
+      "file": "/home/agentuser/incus-spawn/bench/results/cli/fe1d7c7c-20261024-235214.json"
+    },
+    {
+      "build": "o3pgo",
+      "round": 2,
+      "series": "cli",
+      "file": "/home/agentuser/incus-spawn/bench/results/cli/fe1d7c7c-20261024-235242.json"
+    },
+    {
+      "build": "os",
+      "round": 2,
+      "series": "cli",
+      "file": "/home/agentuser/incus-spawn/bench/results/cli/fe1d7c7c-20261024-235310.json"
+    },
+    {
+      "build": "os",
+      "round": 3,
+      "series": "cli",
+      "file": "/home/agentuser/incus-spawn/bench/results/cli/fe1d7c7c-20261024-235337.json"
+    },
+    {
+      "build": "o3pgo",
+      "round": 3,
+      "series": "cli",
+      "file": "/home/agentuser/incus-spawn/bench/results/cli/fe1d7c7c-20261024-235403.json"
+    },
+    {
+      "build": "ospgo",
+      "round": 3,
+      "series": "cli",
+      "file": "/home/agentuser/incus-spawn/bench/results/cli/fe1d7c7c-20261024-235430.json"
+    }
+  ]
+}

@@ -1,0 +1,387 @@
+{
+  "timestamp": "2026-10-25T01:53:54Z",
+  "side": "cli",
+  "rounds": 6,
+  "builds": {
+    "os": "/tmp/pgo/bin/cli-base",
+    "o3pgo": "/tmp/pgo/bin/cli-pgo",
+    "ospgo": "/tmp/pgo/bin/cli-ospgo"
+  },
+  "minutes": 8.1,
+  "medians": {
+    "cli": {
+      "os": {
+        "binaryBytes": 37948488.0,
+        "startupMs": 3.5,
+        "instancesMs": 6.9,
+        "accountShowMs": 10.95,
+        "prepareRunningMs": 78.0,
+        "shellToPromptMs": 274.05,
+        "branchToPromptMs": 1183.25,
+        "sshTrueMs": 157.7,
+        "scpUploadMs": 991.2,
+        "scpUploadMiBPerSec": 258.29999999999995
+      },
+      "o3pgo": {
+        "binaryBytes": 38603848.0,
+        "startupMs": 2.8,
+        "instancesMs": 6.15,
+        "accountShowMs": 9.649999999999999,
+        "prepareRunningMs": 76.55000000000001,
+        "shellToPromptMs": 270.55,
+        "branchToPromptMs": 2060.3,
+        "sshTrueMs": 156.3,
+        "scpUploadMs": 954.9,
+        "scpUploadMiBPerSec": 270.0
+      },
+      "ospgo": {
+        "binaryBytes": 38145096.0,
+        "startupMs": 3.0,
+        "instancesMs": 6.4,
+        "accountShowMs": 10.4,
+        "prepareRunningMs": 76.3,
+        "shellToPromptMs": 277.04999999999995,
+        "branchToPromptMs": 1230.6,
+        "sshTrueMs": 156.3,
+        "scpUploadMs": 909.6,
+        "scpUploadMiBPerSec": 282.0
+      }
+    }
+  },
+  "samples": {
+    "cli": {
+      "os": [
+        {
+          "binaryBytes": 37948488,
+          "startupMs": 3.6,
+          "instancesMs": 6.9,
+          "accountShowMs": 11.1,
+          "prepareRunningMs": 80.4,
+          "shellToPromptMs": 269.3,
+          "branchToPromptMs": 1140.2,
+          "sshTrueMs": 175.5,
+          "scpUploadMs": 1589.5,
+          "scpUploadMiBPerSec": 161.1
+        },
+        {
+          "binaryBytes": 37948488,
+          "startupMs": 3.5,
+          "instancesMs": 7.0,
+          "accountShowMs": 11.4,
+          "prepareRunningMs": 76.3,
+          "shellToPromptMs": 274.0,
+          "branchToPromptMs": 1195.7,
+          "sshTrueMs": 157.8,
+          "scpUploadMs": 982.1,
+          "scpUploadMiBPerSec": 260.7
+        },
+        {
+          "binaryBytes": 37948488,
+          "startupMs": 3.5,
+          "instancesMs": 6.6,
+          "accountShowMs": 10.9,
+          "prepareRunningMs": 79.3,
+          "shellToPromptMs": 277.4,
+          "branchToPromptMs": 1192.9,
+          "sshTrueMs": 155.8,
+          "scpUploadMs": 992.7,
+          "scpUploadMiBPerSec": 257.9
+        },
+        {
+          "binaryBytes": 37948488,
+          "startupMs": 3.5,
+          "instancesMs": 6.9,
+          "accountShowMs": 10.6,
+          "prepareRunningMs": 76.7,
+          "shellToPromptMs": 280.4,
+          "branchToPromptMs": 1153.4,
+          "sshTrueMs": 160.2,
+          "scpUploadMs": 989.7,
+          "scpUploadMiBPerSec": 258.7
+        },
+        {
+          "binaryBytes": 37948488,
+          "startupMs": 3.7,
+          "instancesMs": 7.0,
+          "accountShowMs": 11.0,
+          "prepareRunningMs": 79.7,
+          "shellToPromptMs": 274.1,
+          "branchToPromptMs": 2133.1,
+          "sshTrueMs": 153.7,
+          "scpUploadMs": 913.2,
+          "scpUploadMiBPerSec": 280.3
+        },
+        {
+          "binaryBytes": 37948488,
+          "startupMs": 3.4,
+          "instancesMs": 6.9,
+          "accountShowMs": 10.7,
+          "prepareRunningMs": 75.7,
+          "shellToPromptMs": 262.4,
+          "branchToPromptMs": 1173.6,
+          "sshTrueMs": 157.6,
+          "scpUploadMs": 1125.2,
+          "scpUploadMiBPerSec": 227.5
+        }
+      ],
+      "o3pgo": [
+        {
+          "binaryBytes": 38603848,
+          "startupMs": 2.8,
+          "instancesMs": 6.1,
+          "accountShowMs": 9.5,
+          "prepareRunningMs": 76.9,
+          "shellToPromptMs": 274.8,
+          "branchToPromptMs": 1255.2,
+          "sshTrueMs": 171.4,
+          "scpUploadMs": 1050.2,
+          "scpUploadMiBPerSec": 243.8
+        },
+        {
+          "binaryBytes": 38603848,
+          "startupMs": 2.9,
+          "instancesMs": 6.2,
+          "accountShowMs": 9.6,
+          "prepareRunningMs": 76.2,
+          "shellToPromptMs": 274.0,
+          "branchToPromptMs": 2129.0,
+          "sshTrueMs": 157.0,
+          "scpUploadMs": 874.5,
+          "scpUploadMiBPerSec": 292.7
+        },
+        {
+          "binaryBytes": 38603848,
+          "startupMs": 2.8,
+          "instancesMs": 6.1,
+          "accountShowMs": 9.6,
+          "prepareRunningMs": 77.2,
+          "shellToPromptMs": 268.6,
+          "branchToPromptMs": 2154.3,
+          "sshTrueMs": 155.6,
+          "scpUploadMs": 752.8,
+          "scpUploadMiBPerSec": 340.1
+        },
+        {
+          "binaryBytes": 38603848,
+          "startupMs": 2.8,
+          "instancesMs": 6.3,
+          "accountShowMs": 10.2,
+          "prepareRunningMs": 77.9,
+          "shellToPromptMs": 268.2,
+          "branchToPromptMs": 1993.1,
+          "sshTrueMs": 167.6,
+          "scpUploadMs": 1074.4,
+          "scpUploadMiBPerSec": 238.3
+        },
+        {
+          "binaryBytes": 38603848,
+          "startupMs": 2.8,
+          "instancesMs": 6.0,
+          "accountShowMs": 9.7,
+          "prepareRunningMs": 74.7,
+          "shellToPromptMs": 265.3,
+          "branchToPromptMs": 2127.5,
+          "sshTrueMs": 154.6,
+          "scpUploadMs": 862.1,
+          "scpUploadMiBPerSec": 296.9
+        },
+        {
+          "binaryBytes": 38603848,
+          "startupMs": 2.8,
+          "instancesMs": 6.2,
+          "accountShowMs": 9.9,
+          "prepareRunningMs": 74.6,
+          "shellToPromptMs": 272.5,
+          "branchToPromptMs": 1305.8,
+          "sshTrueMs": 151.1,
+          "scpUploadMs": 1035.3,
+          "scpUploadMiBPerSec": 247.3
+        }
+      ],
+      "ospgo": [
+        {
+          "binaryBytes": 38145096,
+          "startupMs": 3.1,
+          "instancesMs": 7.4,
+          "accountShowMs": 11.0,
+          "prepareRunningMs": 87.3,
+          "shellToPromptMs": 285.8,
+          "branchToPromptMs": 1119.5,
+          "sshTrueMs": 173.6,
+          "scpUploadMs": 997.5,
+          "scpUploadMiBPerSec": 256.6
+        },
+        {
+          "binaryBytes": 38145096,
+          "startupMs": 3.3,
+          "instancesMs": 6.7,
+          "accountShowMs": 11.1,
+          "prepareRunningMs": 87.7,
+          "shellToPromptMs": 279.9,
+          "branchToPromptMs": 2140.1,
+          "sshTrueMs": 152.1,
+          "scpUploadMs": 799.2,
+          "scpUploadMiBPerSec": 320.3
+        },
+        {
+          "binaryBytes": 38145096,
+          "startupMs": 3.0,
+          "instancesMs": 6.3,
+          "accountShowMs": 10.4,
+          "prepareRunningMs": 75.6,
+          "shellToPromptMs": 277.4,
+          "branchToPromptMs": 1149.5,
+          "sshTrueMs": 156.8,
+          "scpUploadMs": 870.2,
+          "scpUploadMiBPerSec": 294.2
+        },
+        {
+          "binaryBytes": 38145096,
+          "startupMs": 2.9,
+          "instancesMs": 6.2,
+          "accountShowMs": 10.0,
+          "prepareRunningMs": 75.7,
+          "shellToPromptMs": 276.7,
+          "branchToPromptMs": 2066.0,
+          "sshTrueMs": 154.7,
+          "scpUploadMs": 1030.1,
+          "scpUploadMiBPerSec": 248.5
+        },
+        {
+          "binaryBytes": 38145096,
+          "startupMs": 3.0,
+          "instancesMs": 6.3,
+          "accountShowMs": 10.2,
+          "prepareRunningMs": 75.8,
+          "shellToPromptMs": 264.3,
+          "branchToPromptMs": 1275.2,
+          "sshTrueMs": 156.8,
+          "scpUploadMs": 819.9,
+          "scpUploadMiBPerSec": 312.2
+        },
+        {
+          "binaryBytes": 38145096,
+          "startupMs": 3.0,
+          "instancesMs": 6.5,
+          "accountShowMs": 10.4,
+          "prepareRunningMs": 76.8,
+          "shellToPromptMs": 267.5,
+          "branchToPromptMs": 1186.0,
+          "sshTrueMs": 155.8,
+          "scpUploadMs": 949.0,
+          "scpUploadMiBPerSec": 269.8
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "build": "os",
+      "round": 1,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-014615.json"
+    },
+    {
+      "build": "o3pgo",
+      "round": 1,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-014641.json"
+    },
+    {
+      "build": "ospgo",
+      "round": 1,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-014709.json"
+    },
+    {
+      "build": "ospgo",
+      "round": 2,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-014736.json"
+    },
+    {
+      "build": "o3pgo",
+      "round": 2,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-014804.json"
+    },
+    {
+      "build": "os",
+      "round": 2,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-014831.json"
+    },
+    {
+      "build": "os",
+      "round": 3,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-014858.json"
+    },
+    {
+      "build": "o3pgo",
+      "round": 3,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-014924.json"
+    },
+    {
+      "build": "ospgo",
+      "round": 3,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-014950.json"
+    },
+    {
+      "build": "ospgo",
+      "round": 4,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-015017.json"
+    },
+    {
+      "build": "o3pgo",
+      "round": 4,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-015046.json"
+    },
+    {
+      "build": "os",
+      "round": 4,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-015113.json"
+    },
+    {
+      "build": "os",
+      "round": 5,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-015141.json"
+    },
+    {
+      "build": "o3pgo",
+      "round": 5,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-015208.json"
+    },
+    {
+      "build": "ospgo",
+      "round": 5,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-015235.json"
+    },
+    {
+      "build": "ospgo",
+      "round": 6,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-015302.json"
+    },
+    {
+      "build": "o3pgo",
+      "round": 6,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-015328.json"
+    },
+    {
+      "build": "os",
+      "round": 6,
+      "series": "cli",
+      "file": "/tmp/ab-wt/bench/results/cli/adb78df0-20261025-015354.json"
+    }
+  ]
+}
