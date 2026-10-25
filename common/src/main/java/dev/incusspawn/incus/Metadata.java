@@ -1,5 +1,7 @@
 package dev.incusspawn.incus;
 
+import io.hyperfoil.tools.jjq.value.JqValue;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -25,8 +27,17 @@ public final class Metadata {
      * (which names a clone when the instance was branched from one). Null when neither is set.
      */
     public static String templateOf(Map<String, String> config) {
-        var profile = config.getOrDefault(PROFILE, "");
-        var template = profile.isBlank() ? config.getOrDefault(PARENT, "") : profile;
+        return templateOf(config.getOrDefault(PROFILE, ""), config.getOrDefault(PARENT, ""));
+    }
+
+    /** As {@link #templateOf(Map)}, from an instance's {@code config} as an Incus listing gives it. */
+    public static String templateOf(JqValue config) {
+        if (config == null) return null;
+        return templateOf(config.pathText(PROFILE, ""), config.pathText(PARENT, ""));
+    }
+
+    private static String templateOf(String profile, String parent) {
+        var template = profile.isBlank() ? parent : profile;
         return template.isBlank() ? null : template;
     }
     public static final String NETWORK_MODE = PREFIX + "network-mode";
