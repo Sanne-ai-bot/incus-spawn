@@ -238,6 +238,32 @@ class WebSocketProxyTest {
     }
 
     @Test
+    void aBenchmarkUpstreamOverrideIsDialedForWebSocketsToo() throws Exception {
+        // bench/run.sh --load=websocket points api.openai.com at a loopback stub through
+        // ISX_BENCH_UPSTREAM; with the port it would otherwise dial left unreachable, only the
+        // override can answer
+        var port = proxy.upstreamWsPort;
+        proxy.overrideUpstream("api.openai.com", "127.0.0.1", port);
+        proxy.upstreamWsPort = 9;
+        try {
+            var client = createClient();
+            var result = new CompletableFuture<String>();
+            connect(client, connectOptions("/v1/bench-override"), ws -> {
+                ws.textMessageHandler(result::complete);
+                ws.writeTextMessage("via-override");
+            });
+            assertEquals("echo:via-override", result.get(5, TimeUnit.SECONDS));
+            var dial = upstreamDials.stream().filter(o -> "/v1/bench-override".equals(o.getURI())).findFirst().orElseThrow();
+            assertEquals("127.0.0.1", dial.getHost(), "dialled at the override's address");
+            assertEquals("api.openai.com", dial.getHeaders().get("Host"), "the Host header still names the real host");
+            close(client);
+        } finally {
+            proxy.upstreamWsPort = port;
+            proxy.upstream.clearUpstreamOverride("api.openai.com");
+        }
+    }
+
+    @Test
     void binaryFramesAreRelayed() throws Exception {
         var client = createClient();
         var result = new CompletableFuture<Buffer>();

@@ -1625,12 +1625,22 @@ public class MitmProxy {
             }
         }
 
+        // The benchmark's loopback stub (ISX_BENCH_UPSTREAM). The HTTP clients dial it with the
+        // real host in SNI and Host, but a WebSocket dials the host it names (Vert.x ignores
+        // setServer here), so it names the stub's address, which the stub's certificate carries;
+        // the Host header still names the real host. The one place the dial names an address.
+        var override = upstream.upstreamOverride(domain);
+        if (override != null) {
+            wsOptions.setHost(override.host()).setPort(override.port()).putHeader("Host", domain);
+        }
+
         injectWebSocketAuth(wsOptions, ctx);
         presentInheritedProofs(wsOptions.getHeaders(), ctx);
 
         // Let Vert.x resolve DNS via its built-in resolver (configured on the
         // Vertx instance).  Unlike HTTP requests, WebSocket ignores setServer(),
-        // so manual resolveHost() + setHost(ip) would break TLS SNI.
+        // so manual resolveHost() + setHost(ip) would break TLS SNI (the
+        // benchmark override above is the exception: its stub expects that).
         // Uses wsUpstreamClient which has no read-idle timeout (WebSocket
         // sessions can be idle between prompts for minutes).
         connectUpstreamWebSocket(wsOptions).onSuccess(upstreamWs -> {
