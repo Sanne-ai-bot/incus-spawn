@@ -918,7 +918,7 @@ class IncusApi {
                 var f12Parser = inputParserFor(statusBar);
                 var stdinThread = Thread.ofPlatform().daemon().start(() -> {
                     try {
-                        var buf = java.nio.ByteBuffer.allocate(4096);
+                        var buf = java.nio.ByteBuffer.allocate(STDIN_CHUNK); // a paste or a pipe, too
                         while (stdinChannel.read(buf) != -1) {
                             buf.flip();
                             if (f12Parser != null) {
@@ -1406,14 +1406,26 @@ class IncusApi {
             return;
         }
         try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + secret)) {
-            var buf = new byte[4096];
-            int n;
-            while ((n = src.read(buf)) != -1) {
-                ws.sendData(buf, 0, n);
-            }
+            forwardStdin(src, ws);
             ws.sendClose();
         } catch (IOException e) {
             // EOF or closed — normal when the git pack exchange completes.
+        }
+    }
+
+    /**
+     * The most one stdin frame carries. A read returns what is there, so an interactive byte still
+     * goes at once; a bulk stream (scp through {@code isx ssh-proxy}, a git pack) goes in frames
+     * this large. At 4 KiB the relay spent most of a core framing an upload (#1643).
+     */
+    static final int STDIN_CHUNK = 64 * 1024;
+
+    /** Send everything {@code src} holds to {@code ws}, one frame per read. */
+    static void forwardStdin(InputStream src, IncusTransport.WsConnection ws) throws IOException {
+        var buf = new byte[STDIN_CHUNK];
+        int n;
+        while ((n = src.read(buf)) != -1) {
+            ws.sendData(buf, 0, n);
         }
     }
 
