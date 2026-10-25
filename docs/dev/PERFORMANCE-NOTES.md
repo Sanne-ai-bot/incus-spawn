@@ -322,7 +322,7 @@ A profile is fully relevant on the platform that collected it.
 Profiles collected on Linux x86_64 fit the other platforms almost as well: relevance is 97% at the lowest, macOS's proxy.
 Every profiled platform's proxy is about half its released size; the unprofiled Intel macOS build is unchanged.
 The release smoke test passed on every build, and the keychain smoke on both macOS builds.
-The floors in `.github/scripts/check-pgo-quality.sh` stay at 10% applicability and 80% relevance until Sanne decides; the proposal is 14% and 95%, just below the lowest figures above (15.04% and 97.04%).
+The floors in `.github/scripts/check-pgo-quality.sh` stay at 10% applicability and 80% relevance until Sanne decides; the proposal is 14% and 95%, just below the lowest figures across the three dispatches (15.04% and 97.04%).
 Two earlier dispatches of this change (runs 40180623569 and 40183611322, before rebases) gave the same figures within 0.02 points.
 
 ## Measurement caveats worth remembering

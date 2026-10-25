@@ -1,8 +1,24 @@
 # Profile-guided optimization plan
 
-Plan, agreed 2026-10-24, for building the native binaries with real profiles instead of the ML-inferred ones `-O3` uses today.
-Nothing here is shipped yet.
+Plan, agreed 2026-10-24, for building the native binaries with real profiles instead of the ML-inferred ones `-O3` used.
 Each phase records its outcome in [PERFORMANCE-NOTES.md](PERFORMANCE-NOTES.md) when it runs.
+Where the implementation differs from the plan, this page says so beside the plan's text, marked **Implemented:**.
+
+## Status (2026-10-25)
+
+| Phase | State |
+|---|---|
+| 0, feasibility | Done (#1639) |
+| 1, workloads | Done (#1639) |
+| 2, measurement | Done (#1641): adopt PGO for both binaries |
+| 3, release wiring | Done in #1642, verified by a `workflow_dispatch`, not yet released |
+| 4, docs | Done in #1642 |
+
+Still open:
+
+- The quality floors in `.github/scripts/check-pgo-quality.sh` are 10% applicability and 80% relevance, pending Sanne's choice of 14% and 95%, just below the lowest figures measured across the three verification dispatches (15.04% and 97.04%).
+- Cold paths no workload reaches are deferred: npm caching and the WebSocket relay (also host routes and the MCP bridge) compile as cold code; loads for npm and WebSocket are a later step.
+- The Intel macOS build stays unprofiled (Phase 3 below).
 
 ## Goal
 
@@ -14,6 +30,10 @@ The release artifacts come out of it measurably better on three axes, in this or
 1. **Faster** on the paths users wait on: proxy throughput on the credential and artifact loads, CLI startup, and the ssh and git relays.
 2. **Leaner on memory**: proxy idle RSS and RSS under load no higher, and lower where PGO's smaller cold code allows it.
 3. **Smaller**, or at least no larger: the proxy under its 86 MB and the CLI near its 30 MB.
+
+**Implemented:** those sizes were stale when the plan was written.
+The release builds at the time measured 99.3 MB (proxy) and 37.9 MB (CLI), and the goal was judged against those.
+With PGO the proxy is 39.5 to 42.9 MB on the profiled platforms and the CLI 38.6 to 40.3 MB (Phase 3 below).
 
 Every axis has a measurement in `bench/`, and no change from this plan merges without the measurements below showing the goal is met.
 A result that is faster but larger, or smaller but slower, is a trade to decide on explicitly, not to merge by default.
@@ -39,9 +59,13 @@ No toolchain change is needed.
 - Two builds per binary: an instrumented one runs the workload and dumps a profile at exit, then an optimized one reads it.
 - The existing property plumbing carries both with no pom change: `-Dnative.optimization=-O3,--pgo-instrument`, later `-Dnative.optimization=-O3,--pgo=<file>`.
   Once adopted, the flag gets its own placeholder in the argument list so `NativeImageInitializationTest` keeps its guarantees.
+  **Implemented:** the placeholder is `native.pgo.args`, last in each module's list, set by two pom profiles: `-Dnative.pgo.instrument` and `-Dnative.pgo=<dir>` (an absolute path holding `cli.iprof.gz` and `proxy.iprof.gz`; the CLI then builds at `-O3`).
 - Each instrumented process writes one profile.
   Name each with `-XX:ProfilesDumpFile=<flow>-<n>.iprof`, pass them all to `--pgo`, and have the optimized build write the merged result with `-H:PGODumpLoadedIprofPath`.
   Counts add up, so the mix of runs is the weighting.
+  **Implemented:** release builds pass `-H:-ParseRuntimeOptions`, so an instrumented binary ignored `-XX:ProfilesDumpFile` and every process overwrote `default.iprof`.
+  The instrument profile appends `-H:+ParseRuntimeOptions`.
+  `scripts/pgo-merge.sh` merges one binary's dumps with a build using `-H:PGODumpLoadedIprofPath`.
 - `-H:+PGOPrintProfileQuality` prints relevance and applicability at the optimized build.
   That is the gate for cross-platform profiles.
 - An unrepresentative profile is worse than none: PGO optimizes what the counters call hot and compiles the rest for size.
@@ -66,6 +90,8 @@ A clean exit dumps the profile.
 Most of the file is the type and method tables, so size grows little with workload.
 Still to check: that the proxy dumps when the bench stops it with `kill`, and the CLI's instrumented build.
 
+**Done:** SIGTERM dumps the profile, and the CLI builds instrumented (132 MB, 94 s on an 8-core VM).
+
 ## Phase 1: workloads
 
 Collection needs a real Incus.
@@ -73,6 +99,10 @@ The fake daemon the tests use is an in-process transport, not a socket server, s
 Run it on a Linux host set up with `scripts/local-incus.sh`, or in a branched instance with Incus inside.
 
 **Proxy**: one instrumented process, driven in sequence by the `maven` and `saturate` loads and a new Hyperfoil load for Anthropic header injection and Vertex translation against the upstream stub.
+
+**Implemented:** one process per load (`maven`, `saturate`, `anthropic`, `vertex`), since counts add up across files, plus the proxy that serves the CLI flows.
+The model loads run Hyperfoil inside an instance branched from `tpl-isx-bench`, because the proxy injects only for a caller it knows by address and proof.
+They run on a config of their own (`ISX_BENCH_CONFIG`), never the user's.
 
 **CLI**, by weight:
 
@@ -87,6 +117,10 @@ Run it on a Linux host set up with `scripts/local-incus.sh`, or in a branched in
 
 The collection scripts live in `bench/` as a collect mode of `bench/run.sh` and `bench/cli.sh`, writing profiles to a known directory.
 
+**Implemented:** `bench/pgo-collect.sh` runs both (`--collect=DIR`).
+The TUI is scripted on a pseudo-terminal with `bench/isxbench.py`, not tmux.
+`isx` has no `stop` command, so the cycle stops the instance with `incus stop` and shells into it again.
+
 ## Phase 2: measurement
 
 Interleaved A/B in one session, per the caveats in the performance notes.
@@ -100,6 +134,12 @@ Decision rules are fixed before measuring.
 Both new CLI metrics go into `bench/cli.sh` so they are reproducible on demand.
 RSS is the noisiest of these figures, as the notes record, so it is measured with repetition and counterbalanced order, never from a single run.
 
+**Done** with `bench/ab.py`; the tables are in the performance notes, "Phase 2".
+Proxy with PGO: 57.6% smaller, 39% lighter idle, faster on every load (cached artifacts +19%, Vertex calls +83%), same startup.
+Adopted.
+CLI at `-O3` with PGO: starts 17 to 20% faster than `-Os` at 0.66 MB more, and nothing regresses; its scp relay gains about 14%, a noisy figure.
+Adopted.
+
 ## Verification before merging
 
 The PR that turns PGO on for releases carries the evidence for each axis of the goal, in this order:
@@ -111,6 +151,17 @@ The PR that turns PGO on for releases carries the evidence for each axis of the 
 
 A later PR that changes build flags, bumps GraalVM or changes the collection flows repeats items 2 and 3, and item 1 when it claims a speed or memory change.
 
+**Done for #1642**, from `workflow_dispatch` run 40186966586 of `release.yml` (on the bot's fork); items 2 and 3:
+
+| Platform | CLI applicability / relevance | Proxy applicability / relevance | `isx-proxy`, v0.4.2 → PGO | `isx`, v0.4.2 → PGO |
+|---|---|---|---|---|
+| Linux amd64 | 15.21% / 100.00% | 20.04% / 100.00% | 99.09 → 42.21 MB | 37.88 → 38.60 MB |
+| Linux aarch64 | 15.16% / 99.75% | 20.00% / 99.96% | 89.59 → 42.93 MB | 39.39 → 40.04 MB |
+| macOS aarch64 | 15.05% / 98.49% | 19.58% / 97.04% | 79.46 → 39.49 MB | 39.53 → 40.25 MB |
+| macOS x86_64 | unprofiled | unprofiled | 83.31 → 83.56 MB | 38.51 → 38.64 MB |
+
+Item 4: the release smoke test passed on all four platforms, and the keychain smoke on both macOS builds.
+
 ## Phase 3: collecting and applying profiles in the release run
 
 Profiles are produced inside the release workflow and never stored anywhere else.
@@ -120,16 +171,23 @@ Nothing goes stale, no repository grows, and no asset or cache needs a checksum.
 The release workflow gains a `profiles` job that the four platform `build` jobs depend on:
 
 1. On the Linux amd64 runner, set up Incus the way the integration workflow does.
+   **Implemented:** the collection itself runs under `sudo --preserve-env -u "$USER" env PATH="$PATH"`, never `sg incus-admin`.
+   `sg` makes `incus-admin` the primary group, and the model loads' rootless podman (which extracts Hyperfoil) then fails: `newuidmap` refuses a process "owned by a different user".
+   `sudo -u` gives the user its groups as a login would, `incus-admin` included, and keeps its own primary group.
 2. Build both binaries instrumented, run the phase 1 collection flows against them, and merge the per-process dumps into one profile per binary.
 3. Upload the two merged profiles as a workflow artifact, kept long enough for a local build to fetch them.
+   **Implemented:** the `pgo-profiles` artifact (`cli.iprof.gz`, 1.7 MB; `proxy.iprof.gz`, 2.5 MB; `commit`) is kept 90 days.
 
 Each `build` job then downloads the artifact and builds both binaries once, with `--pgo` and `-H:+PGOPrintProfileQuality`.
 
 - Collect on Linux x86_64 and apply to all four platforms.
   Profiles key on methods, so OS-specific code falls back to inferred profiles.
   Print applicability per platform in the build log and fail under a floor.
+  **Implemented:** `.github/scripts/check-pgo-quality.sh` fails a build unless both binaries print their quality line at or above 10% applicability and 80% relevance; the floors are provisional, pending the choice under "Status".
+  Each build also refuses profiles collected from another commit (the artifact's `commit` file).
 - The Intel macOS build runs GraalVM 25.0, so its profile version may mismatch.
   Use `PGOIgnoreVersionCheck` there or skip PGO on that legacy platform.
+  **Implemented:** skipped; that build stays unprofiled (`pgo: false` in the matrix), and `ReleasePgoWorkflowTest` holds every profiled build to the profiles job's GraalVM.
 - A release whose collection fails, fails.
   There is no older profile to fall back on, and shipping an unprofiled binary silently would defeat the goal.
   A flaky collection step is fixed, not tolerated, and the job can be rerun.
@@ -140,3 +198,5 @@ Each `build` job then downloads the artifact and builds both binaries once, with
 ## Phase 4: docs in the same PR
 
 Performance notes, a DESIGN.md subsection beside "Native image CPU baseline", the module lines in CLAUDE.md that describe `-O3` as ML-inferred PGO, `bench/README.md` and `.claude/rules/native-image.md`.
+
+**Done** in #1642, which also updates `.claude/rules/ci.md` and this page.
