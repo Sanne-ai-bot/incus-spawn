@@ -1777,11 +1777,21 @@ public class BuildCommand extends BaseCommand {
         if (builtin == null || builtin.getImageTag() == null) return;
         var pinnedTag = imageDef.getImageTag();
         var builtinTag = builtin.getImageTag();
-        if (pinnedTag != null && builtinTag.compareTo(pinnedTag) > 0) {
+        if (pinnedTag != null && isNewerRelease(builtinTag, pinnedTag)) {
             BuildOutput.step("Warning: base image is pinned to " + pinnedTag
                     + ", but " + builtinTag + " is available."
                     + " Run 'isx update-base --latest' to update.");
         }
+    }
+
+    /**
+     * Whether release tag {@code a} is newer than {@code b}, as {@link BaseImageAge} orders them:
+     * {@code fedora-44-...} is newer than {@code fedora-9-...}, which a string comparison denies.
+     * Tags of another shape fall back to the string order.
+     */
+    static boolean isNewerRelease(String a, String b) {
+        var order = BaseImageAge.compareTags(a, b);
+        return order != null ? order > 0 : a.compareTo(b) > 0;
     }
 
     /**
