@@ -199,6 +199,7 @@ See DESIGN.md "Host trust on macOS: the admin domain only".
 
 **Host CA propagation** is opt-in via `host-ca: { propagate: true }` in `config.yaml`.
 When enabled, `CertificateAuthority.collectTrustAnchors()` collects the MITM CA and host anchors from `/etc/pki/ca-trust/source/anchors/` into one trust set, each keyed by SHA-256 fingerprint (`isx-<fp>.crt`).
+On macOS the set also holds the Keychain's admin-trusted CAs, less what it denies (`MacKeychainTrust`, #1530).
 The stamp is the CA's fingerprint, plus `+<host anchors' fingerprint>` when there are any, so `CaTrust` still reads which CA built an image after the host anchors change.
 `fixContainerCaIfNeeded` reconciles the whole set in one exec: stamps `<ca>+pending`, removes old anchors, writes the current set via heredoc, and re-stamps.
 It holds a per-instance `HostLock` (`~/.cache/incus-spawn/locks/trust/<instance>.lock`) from re-reading the stamp to the final stamp, and collects the set under it, so two overlapping reconciles cannot leave a removed CA trusted under the newer stamp (#1381).

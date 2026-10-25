@@ -10,6 +10,8 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.HostLock;
+import dev.incusspawn.util.MacKeychainTrust;
+import dev.incusspawn.util.SystemTrust;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -30,12 +32,15 @@ import java.security.interfaces.RSAPublicKey;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import static dev.incusspawn.DerEncoder.*;
 
@@ -173,11 +178,14 @@ public class CertificateAuthority {
 
     /** Where {@code host-ca.propagate} reads the host's anchors from. Tests point it elsewhere. */
     static Path hostAnchorsDir = Path.of("/etc/pki/ca-trust/source/anchors");
+    /** What {@code host-ca.propagate} reads from the macOS Keychain; none elsewhere. Tests replace it. */
+    static Supplier<MacKeychainTrust.Trust> hostKeychain = SystemTrust::keychain;
     private static final String GUEST_ANCHORS_DIR = "/etc/pki/ca-trust/source/anchors/";
 
     /**
      * The trust anchors an instance should hold: the MITM proxy CA, plus host CA anchors when
-     * {@code host-ca.propagate} is enabled. {@code files} is keyed by {@code isx-<sha256>.crt}
+     * {@code host-ca.propagate} is enabled: the host's anchor files and, on macOS, what an
+     * administrator trusts for SSL in the Keychain, less what the Keychain denies (#1530). {@code files} is keyed by {@code isx-<sha256>.crt}
      * (the SHA-256 of the X.509 DER), with PEM content as the value. Content-addressable naming
      * eliminates filename collisions and shell-injection via filenames.
      */
@@ -209,7 +217,7 @@ public class CertificateAuthority {
         var files = new TreeMap<String, String>();
         files.put(anchorFile(caFingerprint), ca.caCertPem().strip());
         if (SpawnConfig.load().hostCa().propagate()) {
-            addHostAnchors(files);
+            addHostAnchors(files, hostKeychain.get());
         }
         return new TrustAnchors(caFingerprint, files);
     }
@@ -224,25 +232,62 @@ public class CertificateAuthority {
      * attributes, its line endings) reaches a guest or the stamp. A file that does not parse as
      * certificates throws, so it is refused whole. A host copy of the local CA lands on the CA's
      * own entry and is skipped.
+     * <p>
+     * Then the {@code keychain}'s admin-trusted certificates, the same that isx itself trusts on
+     * macOS ({@link SystemTrust}): a TLS-inspection CA is there, not in an anchors directory.
+     * The Keychain trusts them for SSL alone, so they are written as an OpenSSL
+     * {@code TRUSTED CERTIFICATE} for TLS server and client authentication, which keeps them out of
+     * the guest's email and code-signing bundles; a plain certificate in the anchors directory is
+     * trusted for every purpose.
+     * Whatever the Keychain denies is left out, from either source, as isx leaves it out of its
+     * own trust. A Keychain not fully read adds nothing and is reported: guests lose its CAs until
+     * a later use reads it, narrower rather than a set nobody could check.
      */
-    private static void addHostAnchors(SortedMap<String, String> anchors) {
-        if (!Files.isDirectory(hostAnchorsDir)) return;
-        CertificateFactory factory;
-        try {
-            factory = CertificateFactory.getInstance("X.509");
-        } catch (java.security.cert.CertificateException e) {
-            throw new IllegalStateException("X.509 unavailable", e);
+    private static void addHostAnchors(SortedMap<String, String> anchors, MacKeychainTrust.Trust keychain) {
+        for (var cert : hostAnchorFiles()) {
+            if (!keychain.denies(cert)) addAnchor(anchors, cert, "CERTIFICATE", new byte[0]);
         }
+        if (keychain.problem() != null) {
+            // Without the problem, which ClientLog has: one message however a read fails, as the TUI re-collects
+            Warnings.warn("host-ca: the Keychain could not be fully read, so its CAs are left out of instances"
+                    + " (`isx doctor` says why)");
+            return;
+        }
+        for (var cert : keychain.trusted()) {
+            if (!keychain.denies(cert)) addAnchor(anchors, cert, "TRUSTED CERTIFICATE", TLS_TRUST);
+        }
+    }
+
+    /**
+     * OpenSSL's auxiliary trust ({@code X509_CERT_AUX}) that follows a {@code TRUSTED CERTIFICATE}'s
+     * DER: trusted for serverAuth and clientAuth, as {@code openssl x509 -addtrust serverAuth
+     * -addtrust clientAuth -trustout} writes it, and nothing else. p11-kit reads it from the anchors
+     * directory and extracts such a CA into the TLS bundle alone.
+     */
+    private static final byte[] TLS_TRUST = derSequence(derSequence(concat(
+            new byte[] {0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01},     // id-kp-serverAuth
+            new byte[] {0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02})));  // id-kp-clientAuth
+
+    /** Keyed by the certificate's own fingerprint, whatever trust follows it; the first source to name it wins. */
+    private static void addAnchor(SortedMap<String, String> anchors, X509Certificate cert, String label, byte[] trust) {
+        try {
+            anchors.putIfAbsent(anchorFile(fingerprintOf(cert)), toPem(label, concat(cert.getEncoded(), trust)).strip());
+        } catch (Exception e) {
+            Warnings.warn("host-ca: skipped " + cert.getSubjectX500Principal() + ", which cannot be encoded: " + e.getMessage());
+        }
+    }
+
+    /** The certificates of the {@code .crt} and {@code .pem} files in {@link #hostAnchorsDir}, a file that does not parse skipped. */
+    private static List<X509Certificate> hostAnchorFiles() {
+        if (!Files.isDirectory(hostAnchorsDir)) return List.of();
+        var certs = new ArrayList<X509Certificate>();
         try (var stream = Files.list(hostAnchorsDir)) {
             for (var path : stream.toList()) {
                 var name = path.getFileName().toString();
                 if (!name.endsWith(".crt") && !name.endsWith(".pem")) continue;
                 if (!Files.isRegularFile(path)) continue;
                 try (var in = Files.newInputStream(path)) {
-                    for (var cert : factory.generateCertificates(in)) {
-                        var x509 = (X509Certificate) cert;
-                        anchors.putIfAbsent(anchorFile(fingerprintOf(x509)), toPem("CERTIFICATE", x509.getEncoded()).strip());
-                    }
+                    certs.addAll(SystemTrust.certificates(in));
                 } catch (Exception e) {
                     Warnings.warn("host-ca: skipped " + name + ", which must hold only X.509 certificates"
                             + " (a private key or anything else in it refuses the whole file): " + e.getMessage());
@@ -251,6 +296,7 @@ public class CertificateAuthority {
         } catch (IOException e) {
             Warnings.warn("host-ca: cannot list " + hostAnchorsDir + ": " + e.getMessage());
         }
+        return certs;
     }
 
     /** A fingerprint over a set of anchors: changes when any is added, removed or modified. */

@@ -5,6 +5,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.MacKeychainTrust;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,13 +23,16 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import java.util.TreeMap;
+import java.util.function.Supplier;
 
 import static dev.incusspawn.DerEncoder.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,18 +55,22 @@ class CertificateAuthorityTest {
     private String savedHome;
 
     private final Path savedAnchorsDir = CertificateAuthority.hostAnchorsDir;
+    private final Supplier<MacKeychainTrust.Trust> savedKeychain = CertificateAuthority.hostKeychain;
 
     @BeforeEach
     void redirectHome() {
         savedHome = System.getProperty("user.home");
         System.setProperty("user.home", tempHome.toString());
         CertificateAuthority.hostAnchorsDir = tempHome.resolve("host-anchors");
+        // Never the Keychain of the Mac running the tests
+        CertificateAuthority.hostKeychain = () -> MacKeychainTrust.Trust.NONE;
     }
 
     @AfterEach
     void restoreHome() {
         if (savedHome != null) System.setProperty("user.home", savedHome);
         CertificateAuthority.hostAnchorsDir = savedAnchorsDir;
+        CertificateAuthority.hostKeychain = savedKeychain;
     }
 
     @Test
@@ -279,6 +287,52 @@ class CertificateAuthorityTest {
         CertificateAuthority.loadOrCreate();
         writeHostAnchor("corp.crt", selfSigned("corp root"));
         assertEquals(1, CertificateAuthority.collectTrustAnchors().files().size());
+    }
+
+    @Test
+    void theKeychainsAdminTrustedCasArePropagatedLessItsDenies() throws Exception {
+        // On macOS an inspection CA is in the Keychain, not in an anchors directory (#1530)
+        propagateHostAnchors();
+        var ca = CertificateAuthority.loadOrCreate();
+        var inspecting = parse(selfSigned("inspection root"));
+        var deniedInDir = parse(selfSigned("denied root"));
+        writeHostAnchor("denied.crt", toPem("CERTIFICATE", deniedInDir.getEncoded()));
+        var deniedTrusted = parse(selfSigned("denied keychain root"));
+        CertificateAuthority.hostKeychain = () -> new MacKeychainTrust.Trust(List.of(inspecting, deniedTrusted),
+                Set.of(MacKeychainTrust.sha1(deniedInDir), MacKeychainTrust.sha1(deniedTrusted)), null);
+
+        var trust = CertificateAuthority.collectTrustAnchors();
+        assertEquals(Set.of("isx-" + ca.caFingerprint() + ".crt", "isx-" + fingerprint(inspecting) + ".crt"),
+                trust.files().keySet(), "the Keychain's admin-trusted CA, and nothing it denies");
+        // Trusted for TLS alone, as the Keychain trusts it for SSL: the bytes `openssl x509 -addtrust serverAuth
+        // -addtrust clientAuth -trustout` appends, which p11-kit extracts into the TLS bundle and no other
+        var tlsOnly = HexFormat.of().parseHex("3016301406082b0601050507030106082b06010505070302");
+        assertEquals(toPem("TRUSTED CERTIFICATE", concat(inspecting.getEncoded(), tlsOnly)).strip(),
+                trust.files().get("isx-" + fingerprint(inspecting) + ".crt"));
+        assertNotEquals(ca.caFingerprint(), trust.stamp(), "a Keychain CA is a host anchor, so instances are reconciled");
+    }
+
+    @Test
+    void theKeychainIsNotReadUnlessPropagationIsOn() {
+        CertificateAuthority.loadOrCreate();
+        CertificateAuthority.hostKeychain = () -> { throw new AssertionError("read without host-ca.propagate"); };
+        assertEquals(1, CertificateAuthority.collectTrustAnchors().files().size());
+    }
+
+    @Test
+    void aKeychainNotFullyReadAddsNothing() throws Exception {
+        propagateHostAnchors();
+        var ca = CertificateAuthority.loadOrCreate();
+        var corp = parse(selfSigned("corp root"));
+        writeHostAnchor("corp.crt", toPem("CERTIFICATE", corp.getEncoded()));
+        // A failed read keeps the denies it could read; whatever it calls trusted is not used
+        var denied = parse(selfSigned("denied root"));
+        writeHostAnchor("denied.crt", toPem("CERTIFICATE", denied.getEncoded()));
+        var partlyRead = parse(selfSigned("partly read root"));
+        CertificateAuthority.hostKeychain = () -> new MacKeychainTrust.Trust(List.of(partlyRead), Set.of(MacKeychainTrust.sha1(denied)), "timed out");
+
+        assertEquals(Set.of("isx-" + ca.caFingerprint() + ".crt", "isx-" + fingerprint(corp) + ".crt"),
+                CertificateAuthority.collectTrustAnchors().files().keySet(), "its denies still apply");
     }
 
     @Test

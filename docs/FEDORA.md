@@ -76,7 +76,13 @@ host-ca:
 ```
 
 With that, the certificates in the `.crt` and `.pem` files of the host's `/etc/pki/ca-trust/source/anchors/` are installed beside the isx CA in every instance, of every template, as `isx-<sha256>.crt`.
-That directory is Fedora's and RHEL's; other hosts have none there to propagate.
+That directory is Fedora's and RHEL's; other Linux hosts have none there to propagate.
+
+On macOS, the CAs an administrator trusts for SSL in the Keychain are installed too, the same ones isx itself trusts there.
+They are trusted for TLS alone, as the Keychain trusts them.
+
+A CA that only your own trust settings trust, not an administrator's, is not installed, and neither is one the Keychain denies.
+A deny does not remove the instance's own Fedora roots, though.
 
 Only certificates cross, re-encoded from each file; a file holding anything else, such as a private key, is refused with a warning.
 
