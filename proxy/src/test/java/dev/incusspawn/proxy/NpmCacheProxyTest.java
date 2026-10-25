@@ -416,6 +416,56 @@ class NpmCacheProxyTest {
         assertEquals(lookups, hits.get("/republished/1.0.0").get(), "served without a lookup");
     }
 
+    /** Two cold misses for one tarball share its version lookup (#1567); the downloads are their own. */
+    @Test
+    void overlappingMissesForOneTarballShareOneLookup() throws Exception {
+        var path = publish("joined");
+        var lookup = "/joined/1.0.0";
+        stalledLookup = lookup;
+        var first = getAsync(path);
+        ArtifactCacheProxyTest.await("the first lookup to be held", () -> stalled.size() == 1);
+        var second = ArtifactCacheProxyTest.joinedOrAskedAgain(proxy.artifactCache.npmLookups,
+                () -> getAsync(path), () -> stalled.size() == 2);
+        stalledLookup = null;
+        for (var held : stalled) answerHeld(held, new String(routes.get(lookup), StandardCharsets.UTF_8));
+
+        assertEquals(new Response(200, "tarball of joined"), first.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+        assertEquals(new Response(200, "tarball of joined"), second.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+        assertEquals(1, hits.get(lookup).get(), "the second miss joined the first one's lookup");
+        awaitCached(path);
+        ArtifactCacheProxyTest.await("both downloads to be settled",
+                () -> ArtifactCacheProxyTest.noDownloadInFlight(cached(path).getParent()));
+    }
+
+    /**
+     * A 5xx retry is each caller's own, decided on its own silence budget: a caller whose budget is
+     * spent does not retry, and one that joined its lookup but has budget left asks again (#1567).
+     */
+    @Test
+    void aJoinedNpmLookupRetriesAFiveHundredOnItsOwnBudget() throws Exception {
+        publish("retried");
+        var lookup = "/retried/1.0.0";
+        stalledLookup = lookup;
+        var cache = proxy.artifactCache;
+        var spent = System.nanoTime() - TimeUnit.SECONDS.toNanos(proxy.upstream.clientSilenceBudgetSeconds);
+        var exhausted = cache.fetchNpmVersion(REGISTRY, "retried", "1.0.0", spent);
+        ArtifactCacheProxyTest.await("the first lookup to be held", () -> stalled.size() == 1);
+        var joined = cache.npmLookups.joined();
+        var fresh = cache.fetchNpmVersion(REGISTRY, "retried", "1.0.0", System.nanoTime());
+        assertEquals(joined + 1, cache.npmLookups.joined(), "the second caller joined the first one's ask");
+
+        stalledLookup = null;
+        var held = stalled.getFirst();
+        assertTrue(stalled.remove(held));
+        held.response().setStatusCode(503).end("unavailable");
+
+        assertEquals(503, exhausted.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS).answer().status(),
+                "no budget left for a retry");
+        assertEquals(200, fresh.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS).answer().status(),
+                "asked again on its own budget");
+        assertEquals(2, hits.get(lookup).get());
+    }
+
     /** Answer a held request with {@code body}, taking it from the drain. */
     static void answerHeld(HttpServerRequest req, String body) {
         assertTrue(stalled.remove(req));

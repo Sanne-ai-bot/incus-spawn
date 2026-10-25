@@ -51,6 +51,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
@@ -161,6 +162,11 @@ class ArtifactCacheProxyTest {
     static final AtomicInteger rangesToRefuse = new AtomicInteger();
     /** Error answers (4xx, 5xx) left to stall halfway through their body. */
     static final AtomicInteger errorsToStall = new AtomicInteger();
+    /**
+     * Requests held until their gate opens, keyed like {@link #hits}, then answered as their route is
+     * by then. Opened by {@link #openGates} before every drain, so none outlives its test.
+     */
+    static final Map<String, CompletableFuture<Void>> gates = new ConcurrentHashMap<>();
 
     @BeforeAll
     static void start() throws Exception {
@@ -209,6 +215,12 @@ class ArtifactCacheProxyTest {
         var host = req.authority().host();
         var key = host + " " + req.path();
         hits.computeIfAbsent(req.method() + " " + key, k -> new AtomicInteger()).incrementAndGet();
+        var gate = gates.get(req.method() + " " + key);
+        if (gate != null && !gate.isDone()) {
+            var context = vertx.getOrCreateContext();
+            gate.thenRun(() -> context.runOnContext(v -> reply(req, key)));
+            return;
+        }
         if (req.method() == HttpMethod.HEAD) {
             headVersions.add(req.version());
             headConnections.add(req.connection());
@@ -410,6 +422,7 @@ class ArtifactCacheProxyTest {
     @AfterEach
     void drainBackgroundConfirmations() throws Exception {
         resetHoldBudgets();
+        openGates();
         // Closed and removed in one pass, on every check: the event loop can still add a cut it began serving,
         // which a clear() after a snapshot, or a single pass, would leave open to hold this drain until it times out
         awaitBackgroundConfirmations(proxy, () -> {
@@ -418,6 +431,12 @@ class ArtifactCacheProxyTest {
                 held.remove();
             }
         });
+    }
+
+    /** Every request held at a gate is answered, and none is held again. */
+    static void openGates() {
+        gates.values().forEach(gate -> gate.complete(null));
+        gates.clear();
     }
 
     /** No request is left to hold: what {@link #hold} counts down. */
@@ -437,7 +456,10 @@ class ArtifactCacheProxyTest {
     static void awaitBackgroundConfirmations(MitmProxy proxy, Runnable release) throws Exception {
         await("this test's background confirmations to finish", () -> {
             release.run();
-            return proxy.artifactCache.backgroundConfirmations.isEmpty();
+            var cache = proxy.artifactCache;
+            // Joined lookups too: one left in flight would answer the next test's request from this one's routes
+            return cache.backgroundConfirmations.isEmpty() && cache.confirmations.isEmpty()
+                    && cache.sidecarSettles.isEmpty() && cache.hostImports.isEmpty() && cache.npmLookups.isEmpty();
         });
     }
 
@@ -1840,6 +1862,84 @@ class ArtifactCacheProxyTest {
         assertEquals("sig-2", Files.readString(storedAsc), "sig-0 was fetched before the copy it would describe");
     }
 
+    /**
+     * Two requests for one signature on Central, the second sent while the first one's sidecar GET is
+     * held, where the answer disagrees with the stored copy so the header settles it (#1567). Asked
+     * twice, the answer settled last overwrote or dropped what the other stored; the second request
+     * joins the first and gets its answer instead.
+     */
+    @Test
+    void overlappingRequestsForOneSignatureShareOneLookup() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        var asc = CENTRAL + " " + JAR + ".asc";
+        routes.put(asc, new Reply(200, "sig-1".getBytes(), null));
+        get(CENTRAL, JAR);
+        var artifact = cached(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR + ".asc");
+        var storedAsc = Sidecar.ASC.storedFile(artifact);
+        awaitFile(storedAsc, "sig-1");
+        routes.put(asc, new Reply(200, "sig-2".getBytes(), null));
+        hits.clear();
+
+        var gate = new CompletableFuture<Void>();
+        gates.put("GET " + asc, gate);
+        var first = getAsync(CENTRAL, JAR + ".asc");
+        await("the first sidecar fetch", () -> hitsOn(CENTRAL, JAR + ".asc") == 1);
+        var second = joinedOrAskedAgain(proxy.artifactCache.sidecarSettles,
+                () -> getAsync(CENTRAL, JAR + ".asc"), () -> hitsOn(CENTRAL, JAR + ".asc") == 2);
+        gate.complete(null);
+
+        for (var answer : List.of(first, second)) {
+            var response = answer.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+            assertEquals(200, response.status());
+            assertEquals("sig-2", response.text());
+        }
+        assertEquals(1, hitsOn(CENTRAL, JAR + ".asc"), "the second request joined the first one's lookup");
+        assertEquals(1, headsOn(CENTRAL, JAR), "settled by one header");
+        assertEquals("sig-2", Files.readString(storedAsc));
+    }
+
+    /** Two requests for an artifact whose confirmation has expired share one probe (#1567). */
+    @Test
+    void overlappingConfirmationsOfOneCopyShareOneProbe() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitStoredJar(CENTRAL, JAR, "v1");
+        hits.clear();
+
+        var gate = new CompletableFuture<Void>();
+        gates.put("HEAD " + CENTRAL + " " + JAR, gate);
+        var first = getAsync(CENTRAL, JAR);
+        await("the first probe", () -> headsOn(CENTRAL, JAR) == 1);
+        var second = joinedOrAskedAgain(proxy.artifactCache.confirmations,
+                () -> getAsync(CENTRAL, JAR), () -> headsOn(CENTRAL, JAR) == 2);
+        gate.complete(null);
+
+        var responses = List.of(first.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS),
+                second.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS));
+        assertEquals(1, headsOn(CENTRAL, JAR), "the second request joined the first one's probe");
+        for (var response : responses) {
+            assertEquals(200, response.status());
+            assertEquals("v1", response.text());
+            // Probed twice, the later renewal superseded the other answer, which then went out without it
+            assertEquals(hex("SHA-1", "v1".getBytes()), response.checksumHeader(), "confirmed by upstream's header");
+        }
+        assertEquals(0, hitsOn(CENTRAL, JAR), "served from the cache");
+    }
+
+    /**
+     * Send a request while another one's lookup is held, and wait until it either joined that lookup or
+     * asked upstream itself ({@code askedAgain}), so the test releases the held one only after either.
+     */
+    static <T> Future<T> joinedOrAskedAgain(SingleFlight<?, ?> lookups, Supplier<Future<T>> request,
+                                            Condition askedAgain) throws Exception {
+        var joinedBefore = lookups.joined();
+        var sent = request.get();
+        await("the second request to join or ask", () -> lookups.joined() > joinedBefore || askedAgain.holds());
+        return sent;
+    }
+
     @Test
     void requestWithQueryIsRelayedUncached() throws Exception {
         publishJar(CENTRAL, JAR, "v1");
@@ -2019,6 +2119,35 @@ class ArtifactCacheProxyTest {
         assertEquals(1, headsOn(CENTRAL, JAR), "its checksum is needed before deciding");
         assertEquals(hex("SHA-1", "v1".getBytes()), response.checksumHeader());
         assertFalse(Files.isSameFile(m2, cached(CENTRAL, JAR)));
+    }
+
+    /**
+     * Two misses for an artifact with a ~/.m2 copy share one probe and import (#1567). Probed apart, the
+     * import settled second was superseded by the first, and its request downloaded the whole artifact.
+     */
+    @Test
+    void overlappingMissesWithAHostM2CopyShareOneImport() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        var m2 = Environment.m2Repository().resolve("org/example/lib/1.0/lib-1.0.jar");
+        Files.createDirectories(m2.getParent());
+        Files.writeString(m2, "v1");
+
+        var gate = new CompletableFuture<Void>();
+        gates.put("HEAD " + CENTRAL + " " + JAR, gate);
+        var first = getAsync(CENTRAL, JAR);
+        await("the first probe", () -> headsOn(CENTRAL, JAR) == 1);
+        var second = joinedOrAskedAgain(proxy.artifactCache.hostImports,
+                () -> getAsync(CENTRAL, JAR), () -> headsOn(CENTRAL, JAR) == 2);
+        gate.complete(null);
+
+        var responses = List.of(first.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS),
+                second.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS));
+        assertEquals(1, headsOn(CENTRAL, JAR), "the second miss joined the first one's probe");
+        assertEquals(0, hitsOn(CENTRAL, JAR), "both served from the imported copy, not downloaded");
+        for (var response : responses) {
+            assertEquals("v1", response.text());
+            assertEquals(hex("SHA-1", "v1".getBytes()), response.checksumHeader());
+        }
     }
 
     @Test
