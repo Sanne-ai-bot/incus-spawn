@@ -1138,6 +1138,7 @@ The plugin comes from the author's GitHub release, pinned to the sha256 GitHub p
 `mcp-plugin.xml` pins `serverPort` to the port the registration names, so the two agree by construction rather than through the plugin's per-IDE default.
 The registration is a build step, not start-time reconciliation like `McpClientRegistration`: `claude mcp add` needs Claude Code already installed (a parent template or earlier in the tool list), and the step fails the build rather than skip it, since `run_as_user` output is discarded on success and a skip would go unseen.
 `ClaudeSetup` lays its own keys of `~/.claude.json` over the file a parent left rather than rewriting it, so a child template that reconfigures `claude` (a different `model`, say) keeps the registration (#1638).
+`IdeaBackendIndexMcpTest` runs the substituted step against stub commands, for both values of the parameter.
 
 ### GUI and Audio Passthrough
 

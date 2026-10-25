@@ -13,6 +13,15 @@ final class GuestShell {
 
     /** {@code command}'s output, with {@code HOME} at {@code home} and {@code env} set; fails unless it exits 0. */
     static String run(Path home, Map<String, String> env, String... command) throws Exception {
+        var result = exec(home, env, command);
+        assertEquals(0, result.exitCode(), result.output());
+        return result.output();
+    }
+
+    record Result(int exitCode, String output) {}
+
+    /** {@code command}'s exit code and output, in the environment {@link #run} gives it. */
+    static Result exec(Path home, Map<String, String> env, String... command) throws Exception {
         var pb = new ProcessBuilder(command).redirectErrorStream(true);
         var path = pb.environment().get("PATH");
         pb.environment().clear();
@@ -21,8 +30,7 @@ final class GuestShell {
         pb.environment().putAll(env);
         var process = pb.start();
         var out = new String(process.getInputStream().readAllBytes());
-        assertEquals(0, process.waitFor(), out);
-        return out;
+        return new Result(process.waitFor(), out);
     }
 
     /** Sources {@code script} as a login shell would, then runs {@code then}. */
