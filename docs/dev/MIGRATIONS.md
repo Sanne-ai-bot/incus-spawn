@@ -8,13 +8,15 @@ This page is not published; once a migration is common enough for users, it move
 
 ### Why it matters
 
-`isx init` creates the pool with `incus storage create cow btrfs size=100GiB` (`HostSetup.cowPoolCreateCommand`).
+`isx init` used to create the pool with `incus storage create cow btrfs size=100GiB`, whatever the host filesystem.
 Without a `source`, Incus backs it with a sparse file, `/var/lib/incus/disks/cow.img`, attached as a loop device.
 On Fedora the host filesystem is btrfs, so the layout is btrfs inside a loop file inside btrfs.
 Every write in an instance is copy-on-write in the pool, then the loop's write into `cow.img` is copy-on-write again in the host filesystem.
-Incus marks the file no-compress (`m` in `lsattr`) but not nodatacow (`C`), so it fragments without bound: one host counted 2,974,635 extents for about 187 GB of data.
+The file is not nodatacow (`C` in `lsattr`), so it fragments without bound: one host counted 2,974,635 extents for about 187 GB of data.
+That host's file also showed `m` (no-compress), but Incus sets neither flag: its `ensureSparseFile` only truncates, so another host's file may be compressed by the host as well.
 On that host three quarters of all NVMe writes were filesystem metadata and rewrites rather than data, about 540 GB a day with the machine mostly idle.
-Issue 1656 tracks making `isx init` do the right thing; this section is the migration for hosts set up before that.
+Since issue 1656, `isx init` creates the pool as a subvolume on a btrfs host (`CowPoolBacking`), and `isx doctor` flags a loop file on btrfs and links here.
+This section is the migration for hosts set up before that, and for a host where the subvolume create failed and init fell back to a loop file.
 
 ### How to tell
 
@@ -44,9 +46,7 @@ Templates can be rebuilt instead of moved, since `isx build` reproduces them; mo
 Incus re-caches images in the new pool on its own.
 
 ```shell
-sudo btrfs subvolume create /var/lib/incus-pool
-sudo incus storage create cow2 btrfs source=/var/lib/incus-pool
-sudo incus storage set cow2 btrfs.mount_options noatime,commit=300,compress=zstd:1
+sudo incus storage create cow2 btrfs source=/var/lib/incus/storage-pools/cow2 </dev/null
 
 for i in $(incus list -c n --format csv); do incus stop "$i" 2>/dev/null; incus move "$i" --storage cow2; done
 incus storage volume move cow/dnf-cache cow2/dnf-cache
@@ -54,23 +54,41 @@ sudo incus profile device set default root pool=cow2
 
 incus storage show cow | grep -c '/1.0/'       # 0 once nothing uses it
 sudo incus storage delete cow                  # removes cow.img
+isx init                                       # points disk accounting at cow2
 ```
 
-Nothing in isx depends on the pool's name: `HostSetup` and `DoctorCommand` only use `cow` when they create one, and the pool probe accepts any btrfs pool.
-If SELinux denies Incus the new path, `sudo restorecon -R /var/lib/incus-pool`.
+The source is the new pool's own mount path, the only path Incus accepts under its own directory, and what `isx init` uses.
+Incus creates the subvolume there itself.
+Keep it there: isx reads per-instance disk usage from `btrfs subvolume list` and only recognises `storage-pools/<pool>/containers/<name>`.
+A subvolume elsewhere, such as `/var/lib/incus-pool`, leaves the TUI without per-template sizes and the orphan check without a listing it trusts.
+`incus storage create` reads a config from stdin when stdin is not a terminal, hence the `</dev/null` in a script.
+
+Set no `btrfs.mount_options` on the new pool.
+For a path source, Incus bind-mounts it and then remounts with the pool's options, `MS_REMOUNT` without `MS_BIND`, which changes the options of the whole host filesystem until its next mount.
+That makes them host tuning: choose it deliberately in [Host write tuning](#host-write-tuning), through `/etc/fstab`.
+Even with none set, Incus remounts the host filesystem with its default, `user_subvol_rm_allowed`, when it mounts the pool on the host; it skips that inside a container and when the pool is already mounted.
+A host migrated with an earlier version of this page, which set them, undoes it with `sudo incus storage unset cow2 btrfs.mount_options`.
+
+Nothing in isx depends on the pool's name: `CowPoolBacking` only uses `cow` when it creates one, and the pool probe accepts any btrfs pool.
+The final `isx init` rewrites the disk-accounting sudoers rule, which names the pool's mount path.
+It takes the first btrfs, zfs or lvm pool Incus lists, so with another CoW pool still present, check that `/etc/sudoers.d/incus-spawn-btrfs` names `storage-pools/cow2`.
+If SELinux denies Incus the new path, `sudo restorecon -R /var/lib/incus/storage-pools`.
 Do not defragment `cow.img` in place instead: it would write the whole file once and fragment again immediately.
 
 ### Pool mount options where a loop stays
 
 A host whose filesystem is not btrfs keeps the loop file.
-Set the pool's mount options so the pool itself does less work:
+`isx init` creates new loop pools with these options, and `isx doctor` offers them for an existing one, both leaving out compression where the file's filesystem is btrfs or cannot be read; by hand:
 
 ```shell
-sudo incus storage set cow btrfs.mount_options noatime,commit=300,compress=zstd:1
+sudo incus storage set cow btrfs.mount_options user_subvol_rm_allowed,noatime,commit=300,compress=zstd:1
 ```
 
-The options apply when the pool is next mounted, so after a reboot.
-Compression in the pool is safe because Incus marks `cow.img` no-compress, so the host does not compress the same bytes again.
+Keep `user_subvol_rm_allowed`: it is Incus's default, and a value set here replaces it.
+A pool set with an earlier version of this page lacks it; `isx doctor` offers to put it back.
+Incus applies a changed value at once, by remounting the pool, except when it runs inside a container.
+Compression in the pool is safe where the host filesystem does not compress.
+On a btrfs host leave it out: Incus marks nothing no-compress, so the host may compress the same bytes again, and such a host should move to a subvolume anyway.
 The appliance already mounts its btrfs with `noatime,commit=300,compress=zstd:1` (`appliance/config.sh`).
 
 ## Host write tuning
