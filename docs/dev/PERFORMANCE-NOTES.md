@@ -296,6 +296,22 @@ the proxy: the rest is compiled for size. A path no workload reaches therefore r
 code. Phase 2 measured the paths the plan names; npm caching, the WebSocket relay, host routes
 and the MCP bridge are not among them.
 
+### Phase 3, release wiring (2026-10-25)
+
+`release.yml` collects and applies the profiles (DESIGN.md "Profile-guided optimization").
+Its `profiles` job and the Linux amd64 build were reproduced on the host above, from templates
+not yet built: collection, merge and the two profiled builds took 10.5 minutes.
+The merged profiles are 1.7 MB (CLI) and 2.5 MB (proxy) gzipped.
+
+| Linux amd64 | v0.4.2 release | PGO build | Profile applicability / relevance |
+|---|---|---|---|
+| `isx` | 37,882,184 B | 38,603,848 B | 15.19% / 100.00% |
+| `isx-proxy` | 99,093,024 B | 41,880,864 B | 20.02% / 100.00% |
+
+A profile is fully relevant on the platform that collected it. The other release platforms'
+figures come from the first `workflow_dispatch` run of `release.yml`; the floors in
+`.github/scripts/check-pgo-quality.sh` (10% applicability, 80% relevance) are to be set from them.
+
 ## Measurement caveats worth remembering
 
 - **Native builds are not byte-reproducible here.** The same commit and toolchain produced

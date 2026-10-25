@@ -121,11 +121,13 @@ Three Maven modules under a parent POM:
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`).
   Depends on common.
   Native image: serial GC, `-Os` (size-optimized), `-H:-AllowVMInternalThreads`, on x86_64 `-march=haswell` and on aarch64 `-march=armv8.1-a+aes` (arch-gated in `cli/pom.xml`, same as the proxy).
+  Release builds take a PGO profile and are then `-O3` (see "PGO" below).
   It downloads tool tarballs and VM images over HTTPS.
   On x86_64 the default `x86-64-v3` omits AES/CLMUL: 79 MB/s vs ~3100 MB/s for AES-256-GCM, with byte-identical binary size and ~11% faster startup, so it costs nothing here (x86_64 measurements; the CLI was not measured on aarch64).
 - **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`).
   Depends on common.
-  Native image: G1 GC on Linux and serial GC on macOS (measured: G1 buys nothing on Apple Silicon, see `docs/dev/PERFORMANCE-NOTES.md`), `-O3` (throughput-optimized, enables ML-inferred PGO), on x86_64 `-march=haswell`, on aarch64 `-march=armv8.1-a+aes`.
+  Native image: G1 GC on Linux and serial GC on macOS (measured: G1 buys nothing on Apple Silicon, see `docs/dev/PERFORMANCE-NOTES.md`), `-O3` (throughput-optimized), on x86_64 `-march=haswell`, on aarch64 `-march=armv8.1-a+aes`.
+  Without a profile `-O3` uses ML-inferred profiles; release builds take a real one (see "PGO" below).
   The `-march` value is set by arch-gated Maven profiles in `proxy/pom.xml` (one per arch: an x86 `-march` fails an aarch64 build and vice versa).
   x86_64: GraalVM's default `-march=x86-64-v3` omits AES and CLMUL, so the image cannot use AES-NI/GHASH intrinsics and TLS falls back to software AES -- measured 73 MB/s vs 960 MB/s serving a cached Maven artifact (~13x).
   `haswell` costs no hardware support: AES-NI predates the v3 baseline by three years.
@@ -134,6 +136,13 @@ Three Maven modules under a parent POM:
   aarch64, measured separately: GraalVM's default `armv8.1-a` has no AES/PMULL either (proxy, cached Maven artifact on Apple Silicon: 74 vs 627 MB/s, #1144).
   `+aes` enables AES and PMULL, and GraalVM has no runtime CPU dispatch on aarch64, so it is a build-time choice.
   It drops no hardware the default ran on in practice: ARMv8.0 cores (Raspberry Pi 3/4) already fail `armv8.1-a`'s LSE check.
+
+**PGO**: release binaries are built with profiles collected in the same release run (#1637, DESIGN.md "Profile-guided optimization").
+`release.yml`'s `profiles` job builds both binaries instrumented (`-Dnative.pgo.instrument`), runs `bench/pgo-collect.sh` against a real Incus, and merges each binary's dumps into one profile (`scripts/pgo-merge.sh`).
+The build jobs apply them with `-Dnative.pgo=<dir>`, and `.github/scripts/check-pgo-quality.sh` fails a build whose binaries did not both take their profile above a floor.
+The Intel macOS build, on GraalVM 25.0, stays unprofiled.
+The arguments join the one list through the `native.pgo.args` placeholder; without `-Dnative.pgo` a build is unprofiled, so Community Edition still builds.
+A change to build flags, the GraalVM version or the collection flows is verified with a `workflow_dispatch` run of `release.yml` before merging; that run publishes nothing.
 
 Both `cli` and `proxy` are independent Quarkus applications that produce separate native binaries.
 The CLI has no Vert.x dependency, so it **cannot** run the proxy in-process.
