@@ -444,7 +444,7 @@ public final class BranchFlow {
         // The grant is the request's own: a copy never carries its source's (configureBranch)
         var booted = InstanceLifecycle.withCurrentProofs(incus, name, secret, current -> {
             RuntimeSetup.setupRuntime(incus, name, networkMode, prefetched, current,
-                    Metadata.isMcpCaller(req.extraConfig()), placeholders.join());
+                    Metadata.isMcpCaller(req.extraConfig()), placeholders.join(), BuildOutput::warn);
             // Or the first shell would take this boot for one isx did not start.
             return InstanceLifecycle.recordSecretBoot(incus, name, machineType, current.proofGeneration());
         });

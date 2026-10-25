@@ -222,6 +222,7 @@ Each caller routes it: the CLI to `System.out::println`, the TUI to its warning 
 Pass plain stdout from the TUI only where it has provably released the terminal (e.g. `ShellLaunch.shellInto`, after the runner closes), and say so in a comment.
 Code with no caller to take a sink from -- e.g. a definition loader built several layers down, as `ToolProxyResolver` builds `ToolDefLoader`s -- reports through `Warnings.warn()` (`common`): each distinct message once per channel (a long-running process that re-reads definitions calls `Warnings.forgetReported()`, as the proxy does on each reload), to stderr by default, and into the TUI's `WarningLog` while the TUI draws or reloads (#872).
 In the TUI, a warning sink is `warningLog::add`, never the status line directly: the status line holds one message until the next key, so warnings from several operations would overwrite each other.
+A TUI branch runs on the released terminal, and the shell after it draws over that, so `ShellLaunch` copies its `BuildOutput.warn`s into the log (`BuildOutput.copyWarningsTo`), as for a build: branch-path code warns through that or a sink, never a bare `System.err` (#1646).
 The same holds before the TUI opens.
 Bare `isx` holds `Warnings` raised while it gets ready (VM start, init) for the TUI's log, and waits for Enter before opening the TUI if anything else was printed (`PreTuiOutput`, #1154).
 So a pre-TUI notice is a `Warnings.warn`, not a bare print.
