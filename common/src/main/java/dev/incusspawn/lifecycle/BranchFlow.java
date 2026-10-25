@@ -395,7 +395,7 @@ public final class BranchFlow {
                 incus.configSet(name, Metadata.GUI_ENABLED, "true");
             } else {
                 GuiPassthrough.removeGui(incus, name);
-                System.err.println("Continuing without GUI passthrough.");
+                BuildOutput.warn("Continuing without GUI passthrough.");
             }
         } else {
             // Clean up inherited GUI devices/env from incus copy
@@ -420,7 +420,7 @@ public final class BranchFlow {
 
         // Inherited KVM passthrough was already dropped by configureBranch when not enabled.
         if (enableKvm && !KvmPassthrough.configureKvm(incus, name)) {
-            System.err.println("Continuing without KVM — VMs inside this branch will not work.");
+            BuildOutput.warn("Continuing without KVM — VMs inside this branch will not work.");
         }
 
         // Before the --no-start return: the inbox is plain device config, so it is there
@@ -460,7 +460,8 @@ public final class BranchFlow {
             // InstancePrep, so an instance used via incus exec, SSH or an IDE is right too.
             // Needs the CA and resolv.conf above -- re-deriving goes through the proxy. From the
             // read before the start: nothing since has written a pin or a stamp.
-            InstanceLifecycle.reconcileAccountIdentities(incus, name, prefetched.instance());
+            InstanceLifecycle.reconcileAccountIdentities(incus, name, prefetched.instance(),
+                    BuildOutput::step, BuildOutput::warn);
         }
         return prefetched;
     }

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -33,8 +34,12 @@ import static org.mockito.Mockito.spy;
 class BranchSetupWarningsTest {
 
     private static List<String> branchWarnings(IncusClient incus) {
+        return branchWarnings(incus, null);
+    }
+
+    private static List<String> branchWarnings(IncusClient incus, Path inbox) {
         var request = new BranchFlow.Request("tpl-dev", "dev-1", false, false, NetworkMode.AIRGAP,
-                null, null, null, null, List.of(), true, Map.of());
+                inbox, null, null, null, List.of(), true, Map.of());
         var warnings = new ArrayList<String>();
         try (var ignored = BuildOutput.copyWarningsTo(warnings::add)) {
             BranchFlow.create(incus, BranchFlow.preflight(incus, request, Map.of()));
@@ -72,6 +77,18 @@ class BranchSetupWarningsTest {
         var warnings = branchWarnings(incus);
 
         assertTrue(warnings.stream().anyMatch(w -> w.contains("Failed to configure SSH host entry: no address yet")),
+                "warned " + warnings);
+    }
+
+    @Test
+    void anInboxThatIsNoDirectoryIsWarnedOfInTheLog() throws IOException {
+        var notADirectory = Files.writeString(Path.of(System.getProperty("user.home"), "inbox"), "");
+        var daemon = new FakeIncusDaemon().container("tpl-dev",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
+
+        var warnings = branchWarnings(settingUp(daemon, true), notADirectory);
+
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("is not a directory, skipping")),
                 "warned " + warnings);
     }
 }

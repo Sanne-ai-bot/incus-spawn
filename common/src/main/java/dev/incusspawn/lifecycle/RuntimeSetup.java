@@ -42,9 +42,9 @@ public final class RuntimeSetup {
     public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, MachineType machineType) {
         var prefetched = prefetchRuntimeConfig(incus, name);
         BuildOutput.stepStart(machineType == MachineType.VM ? "Starting VM..." : "Starting container...");
-        // Plain stderr for the fallback warning, like the rest of BranchFlow's output: the TUI
-        // branches only as a pendingAction, after its runner has released the terminal.
-        InstanceLifecycle.startInstance(incus, name);
+        // BuildOutput.warn, like the rest of BranchFlow's warnings: the TUI branches on the released
+        // terminal and copies them into its warning log, since the shell after it draws over them.
+        InstanceLifecycle.startInstance(incus, name, BuildOutput::warn);
         BuildOutput.stepDone();
         return prefetched;
     }
