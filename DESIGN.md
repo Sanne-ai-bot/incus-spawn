@@ -1552,6 +1552,20 @@ Only isx processes on this host take the lock; isx on another host using the sam
 A stamp read again at the end of a build could name a set the guest does not hold (the CA, a host anchor or propagation changed meanwhile) and make the template read as current.
 The config follows the same raw-YAML pattern as `artifact-cache:` and `ready-timeouts:` (`HostCaConfig.of(raw)`): a mistyped section is ignored, not a fatal config error.
 
+On macOS the set also holds what `MacKeychainTrust` yields, through `SystemTrust.keychain()` (#1530): a Mac has no anchors directory, and a TLS-inspection CA is in the Keychain.
+That is the same trust isx itself takes there ("Host trust on macOS: the admin domain only"): the certificates an administrator trusts for SSL, never one only the user's domain trusts, and without any certificate the Keychain denies, from either source.
+So isx adds to a guest no CA the host's isx would refuse, and nothing a user-level process could add, since admin trust takes root.
+A deny, of one public root or of the default roots as a whole, does not reach the guest's own Fedora roots, which isx does not manage.
+A Keychain CA is written as an OpenSSL `TRUSTED CERTIFICATE` trusted for serverAuth and clientAuth alone, the DER followed by the auxiliary trust `openssl x509 -addtrust serverAuth -addtrust clientAuth -trustout` appends.
+The Keychain trusts it for SSL only, while a plain certificate in the anchors directory lands in the guest's email and code-signing bundles too; p11-kit extracts the trusted form into the TLS bundle alone.
+The anchor files' certificates stay plain, as the host trusts them for every purpose, and the file name stays the SHA-256 of the certificate's DER.
+A Keychain not fully read adds no CA, whatever it returned as trusted: the guests lose its CAs until a later use reads it, which narrows, and the failure goes to `Warnings`.
+That costs a reconcile each way on a transient failure; keeping the guest's set instead could keep a CA the Keychain has denied since, unread.
+Read twice when the stamp differs, once to decide and once under the lock: reusing the first read would bring back the race of #1381.
+Elsewhere `SystemTrust.keychain()` is empty and runs nothing.
+The Keychain is read only with propagation on, so the cost lands only there: about 10 ms of parallel `security` runs per `collectTrustAnchors()`, which `fixContainerCaIfNeeded` calls on every `isx shell`.
+It is not cached across processes, since a stale read could keep handing guests a CA the Keychain has since denied.
+
 **Leaf certificate persistence (clock-skew safety)**: Per-domain leaf certs are not minted fresh on every proxy start.
 `CertStore` persists them under `~/.config/incus-spawn/certs/` (keyed by domain — `<domain>.crt`/`.key`, wildcards as `_wildcard.<domain>`) and reuses them across restarts, re-minting only when a cert is missing, was signed by a rotated CA, or is within 30 days of expiry.
 

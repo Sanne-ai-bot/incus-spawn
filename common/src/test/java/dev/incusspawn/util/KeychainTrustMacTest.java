@@ -3,6 +3,8 @@ package dev.incusspawn.util;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import dev.incusspawn.DerEncoder;
+import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.proxy.CertificateAuthority;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +38,9 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The real macOS Keychain (#1467): a local HTTPS server whose CA is trusted, or not, in the System
@@ -64,6 +68,7 @@ class KeychainTrustMacTest {
 
     private Path caPem;
     private String caSha1;
+    private X509Certificate ca;
     private HttpsServer server;
     /** What to delete from the System keychain after the test, by SHA-1. */
     private final List<String> toDelete = new ArrayList<>();
@@ -104,7 +109,6 @@ class KeychainTrustMacTest {
                 "-days", "1", "-out", leafPem.toString(), "-extfile", cnf.toString(), "-extensions", "leaf");
 
         var factory = CertificateFactory.getInstance("X.509");
-        X509Certificate ca;
         X509Certificate leaf;
         try (var in = Files.newInputStream(caPem)) { ca = (X509Certificate) factory.generateCertificate(in); }
         try (var in = Files.newInputStream(leafPem)) { leaf = (X509Certificate) factory.generateCertificate(in); }
@@ -189,6 +193,23 @@ class KeychainTrustMacTest {
             assertThrows(SSLHandshakeException.class, () -> get(chainServer));
         } finally {
             chainServer.stop(0);
+        }
+    }
+
+    @Test
+    void hostCaPropagationHandsGuestsWhatAnAdministratorTrusts() throws Exception {
+        // #1530: the set host-ca.propagate installs in instances, from the real Keychain
+        var anchor = "isx-" + CertificateAuthority.fingerprintOf(ca) + ".crt";
+        var savedHome = System.getProperty("user.home");
+        try {
+            System.setProperty("user.home", temp.toString());
+            Files.createDirectories(SpawnConfig.configDir());
+            Files.writeString(SpawnConfig.configDir().resolve("config.yaml"), "host-ca:\n  propagate: true\n");
+            assertFalse(CertificateAuthority.collectTrustAnchors().files().containsKey(anchor), "propagated before the CA was added");
+            adminTrust("-r", "trustRoot");
+            assertTrue(CertificateAuthority.collectTrustAnchors().files().containsKey(anchor));
+        } finally {
+            System.setProperty("user.home", savedHome);
         }
     }
 
