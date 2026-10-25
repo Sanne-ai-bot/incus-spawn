@@ -385,10 +385,10 @@ public final class InstanceNetwork {
             // and that instance must not start without it: its failure stands (#1137)
             if (ProxyOnlyAcl.anyKey(nic.config())) return false;
             incus.deviceConfigSet(name, nic.name(), "security.ipv4_filtering", "false");
-            warn.accept(BuildOutput.STEP_INDENT
-                    + "Warning: this host cannot enforce IP spoofing protection, so it has been"
-                    + " disabled on " + name + ".\n" + BuildOutput.STEP_INDENT
-                    + "Instances on this host can impersonate each other's credential accounts.");
+            // One line, marked as a warning: some sinks print it as it comes (isx shell's, a start's
+            // progress sink), while BuildOutput.warn and the TUI's log drop the marker for their own
+            warn.accept("Warning: this host cannot enforce IP spoofing protection, so it has been disabled on "
+                    + name + ": instances on this host can impersonate each other's credential accounts.");
             return true;
         } catch (RuntimeException ignored) {
             return false;

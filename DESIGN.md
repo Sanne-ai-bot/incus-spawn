@@ -4800,6 +4800,7 @@ So code on the branch path warns through `BuildOutput.warn` or a sink the caller
 A bare `System.err` line reaches the terminal only.
 The sites on the branch path that still print one (GUI and KVM passthrough's explanations, the CA mismatch note, a VM's deferred network config) are tracked in #1690.
 Progress stays on the terminal, where it is read while the branch runs.
+A start's warning that may reach a sink printing it as it comes (isx shell's, a progress sink) marks itself `Warning:` on one line, and `BuildOutput.warn` drops that marker for its own ⚠, as the `WarningLog` does.
 
 Each channel reports a distinct message once.
 The same files are loaded many times in one command (every fresh loader re-reads them), and before this `isx branch` could print one broken tool file's warning several times.

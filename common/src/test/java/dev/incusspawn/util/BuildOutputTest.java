@@ -265,6 +265,18 @@ class BuildOutputTest {
         assertTrue(text().contains("⚠ after the build"), "still printed: " + text());
     }
 
+    /** A message marked for a sink that prints it as it comes gets the ⚠ alone, here and in the copy. */
+    @Test
+    void aWarningThatMarksItselfIsMarkedOnce() {
+        var copied = new java.util.ArrayList<String>();
+        try (var ignored = BuildOutput.copyWarningsTo(copied::add)) {
+            BuildOutput.warn("Warning: filtering disabled on box");
+        }
+        assertEquals(List.of("filtering disabled on box"), copied);
+        assertTrue(text().contains("⚠ filtering disabled on box"), text());
+        assertFalse(text().contains("Warning:"), text());
+    }
+
     @Test
     void warningsAndNotesGoToStderr() {
         var out = new ByteArrayOutputStream();
