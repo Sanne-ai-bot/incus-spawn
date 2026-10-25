@@ -338,9 +338,17 @@ os.remove(big)
 
 print(f"  git-remote-isx: {GIT_ROUNDS} rounds of clone, push and fetch")
 guest("git init -q --bare ~/bench.git")
+# The project's own tree as one commit: a realistic size, and none of the history a shallow
+# checkout (the release's) could not push.
 seed = os.path.join(work, "seed")
-subprocess.run(["git", "clone", "-q", "--no-local", env.get("SEED_REPO", os.path.dirname(env["SCRIPT_DIR"])), seed],
-               check=True)
+project = os.path.dirname(env["SCRIPT_DIR"])
+os.makedirs(seed)
+archive = subprocess.run(["git", "-C", project, "archive", "HEAD"], check=True, capture_output=True).stdout
+subprocess.run(["tar", "-C", seed, "-xf", "-"], input=archive, check=True)
+git_id = ["-c", "user.name=isx bench", "-c", "user.email=bench@isx.invalid"]
+subprocess.run(["git", "-C", seed, "init", "-q", "-b", "main"], check=True)
+subprocess.run(["git", "-C", seed, "add", "-A"], check=True)
+subprocess.run(["git", "-C", seed, *git_id, "commit", "-q", "-m", "seed"], check=True)
 run("git", ["git", "-C", seed, "push", "-q", f"isx://{instance}/~/bench.git", "HEAD:refs/heads/main"])
 for i in range(GIT_ROUNDS):
     clone = os.path.join(work, f"clone-{i}")
@@ -348,8 +356,7 @@ for i in range(GIT_ROUNDS):
     with open(os.path.join(clone, "bench.txt"), "a") as f:
         f.write(f"round {i}\n" * 1000)
     subprocess.run(["git", "-C", clone, "add", "bench.txt"], check=True)
-    subprocess.run(["git", "-C", clone, "-c", "user.name=isx bench", "-c", "user.email=bench@isx.invalid",
-                    "commit", "-q", "-m", f"round {i}"], check=True)
+    subprocess.run(["git", "-C", clone, *git_id, "commit", "-q", "-m", f"round {i}"], check=True)
     run("git", ["git", "-C", clone, "push", "-q", "origin", "main"])
     run("git", ["git", "-C", seed, "fetch", "-q", f"isx://{instance}/~/bench.git", "main"])
     shutil.rmtree(clone)

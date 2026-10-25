@@ -41,7 +41,8 @@ class NativeImageInitializationTest {
 
     /** Pom properties through which a platform adds its own arguments to its module's one list. */
     private static final List<String> PLATFORM_PLACEHOLDERS =
-            List.of("svm.target.name.args", "macos.plist.args", "macos.min.args", "native.march.args", "native.optimization");
+            List.of("svm.target.name.args", "macos.plist.args", "macos.min.args", "native.march.args", "native.optimization",
+                    "native.pgo.args");
 
     private static final List<Class<?>> GUARDS =
             List.of(SyscallReachabilityFeature.class, BakedHostStateFeature.class);
@@ -113,9 +114,9 @@ class NativeImageInitializationTest {
 
         var required = Map.of(
                 Path.of("src/main/resources-filtered/application.properties"),
-                List.of("svm.target.name.args", "macos.plist.args", "macos.min.args"),
+                List.of("svm.target.name.args", "macos.plist.args", "macos.min.args", "native.pgo.args"),
                 Path.of("../proxy/src/main/resources-filtered/application.properties"),
-                List.of("svm.target.name.args", "macos.min.args"));
+                List.of("svm.target.name.args", "macos.min.args", "native.pgo.args"));
         for (var module : required.entrySet()) {
             var list = rawValue(module.getKey());
             for (var placeholder : module.getValue()) {
