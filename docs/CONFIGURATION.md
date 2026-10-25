@@ -251,6 +251,35 @@ ready-timeouts:
 The same section holds `container` and `vm`: how long a start waits for the instance to answer before it fails.
 Their defaults are 30s and 2m.
 
+## Storage pool
+
+Every instance lives on one btrfs copy-on-write pool, which `isx init` creates when Incus has none.
+On Linux, how isx backs it depends on the filesystem under `/var/lib/incus`.
+
+| Host filesystem | Backing | Size |
+|---|---|---|
+| btrfs | a subvolume of that filesystem | shares the filesystem's free space |
+| anything else | a sparse loop file, `/var/lib/incus/disks/cow.img` | 100 GiB, thin-provisioned |
+
+A loop file on btrfs would nest one btrfs inside another.
+Every write in an instance would then be copied twice, with two sets of metadata.
+
+isx mounts the loop file to commit every 300 seconds, not 30, since instances are scratch space.
+It also compresses inside the pool, since nothing below it does.
+
+On macOS the pool lives on the appliance's own disk; `isx vm resize` grows it.
+
+A subvolume pool has no cap of its own, so it can fill the host's disk.
+`isx doctor` warns when the pool is over 90% full; each instance's `--disk` limit still applies.
+
+A subvolume pool also changes the host filesystem as a whole.
+Incus enables btrfs quotas to enforce the `--disk` limit, and they cover the whole filesystem.
+Each time Incus starts on the host, it mounts the filesystem with `user_subvol_rm_allowed`.
+That lets a user delete any subvolume they can write to, not only in the pool.
+
+`isx init` sets up a new pool only.
+For a pool that is already a loop file on btrfs, `isx doctor` warns and links to the steps for moving it.
+
 ## Caching
 
 The proxy and build system cache downloads on the host, shared by all templates and branches.

@@ -2728,6 +2728,53 @@ A common trigger for stale profile state is setting up Incus before `isx init` (
 Supported CoW drivers: **btrfs**, **zfs**, **lvm**.
 If btrfs pool creation fails during init (e.g. unsupported filesystem), the user is warned and can continue with the `dir` driver, but clones will be full copies.
 
+#### How the pool is backed: a subvolume on btrfs, a loop file elsewhere (#1656)
+
+`isx init` used to create the pool as `size=100GiB` with no `source`, which Incus backs with a sparse loop file, `/var/lib/incus/disks/cow.img`.
+On a btrfs host (Fedora's default, with `compress=zstd:1`) that is btrfs inside a file on btrfs: every instance write is a CoW extent plus metadata in the pool, then a second extent plus extent-tree, csum-tree and commit work on the host, and the file fragments over time.
+A compressed file cannot be `nodatacow`, so the outer copy is not avoidable.
+Measured on a laptop with 26 instances: about 540 GB/day written while mostly idle, seven eighths of it filesystem work rather than any process's writes.
+
+So when `/var/lib/incus/storage-pools` is on btrfs (`CowPoolBacking.filesystemOf`, from `Files.getFileStore` on its nearest existing ancestor), init creates the pool with `source=/var/lib/incus/storage-pools/cow`.
+Incus accepts exactly one source path under its own directory, the pool's mount path, and turns it into a subvolume itself (`btrfs.Create`, "New btrfs subvolume on existing btrfs filesystem"), so isx runs no `btrfs` command and needs no new privilege.
+It is what nested Incus in a dev container and the macOS appliance (`incus-spawn-vm-init`) already do.
+One filesystem, one set of metadata, and the host's compression applies once.
+If the subvolume create fails (a leftover non-empty `storage-pools/cow`, an Incus with another directory), init falls back to the loop file and says doctor will explain the move: a loop on btrfs writes twice, but no CoW pool makes every branch a full copy.
+Doctor's "no CoW pool" remediation, where `noCowPoolMsg` sends every user, takes the same path (`CowPoolBacking.create`), and `CowPoolBacking.failureExplanation` names the leftover directory when that is what Incus refused.
+Note that `incus admin init --minimal` itself makes such a subvolume pool on a btrfs host; isx's path runs when Incus came up with a `dir` pool, or when the pool predates that.
+
+Elsewhere (ext4, xfs) the loop file stays, as the only option, and is mounted with `btrfs.mount_options=user_subvol_rm_allowed,noatime,commit=300,compress=zstd:1`, the appliance's options and those `docs/dev/MIGRATIONS.md` gives for a loop that stays.
+Incus replaces its own default (`user_subvol_rm_allowed`) with whatever is set, so it is repeated.
+The 300 s commit is the appliance's trade (`appliance/config.sh`): instances are scratch space, and fsync is still honoured.
+Compression happens once, inside the pool: the loop file init makes on a host filesystem other than btrfs compresses, and the fallback loop on a btrfs host does not, since the host may compress the file again.
+Both init and doctor judge that by the filesystem holding the file (`/var/lib/incus/disks`), and treat one that cannot be read as possibly compressing (`compressesLoop`), so the two never disagree about a pool init made.
+`IncusClient.listPoolInfo` throws when Incus cannot list its pools, so doctor says it could not check rather than offering to create a pool that may exist; `listPools` keeps answering empty for its other callers, from the same parser.
+`DoctorPoolBackingTest` drives the whole path through doctor's checks on a `FakeIncusDaemon` whose pools carry config.
+The merge also puts back `user_subvol_rm_allowed` where a value set without it dropped it, as an earlier version of `docs/dev/MIGRATIONS.md` had people do.
+Doctor's merge adds `compress=zstd:1` only where the user chose no `compress` option of their own and no `nodatacow` or `nodatasum`, which compression turns off, and never for a loop file on btrfs.
+Incus itself sets no no-compress attribute on the file (`ensureSparseFile` only truncates), so on a btrfs host the outer layer may compress again; that host is told to migrate anyway.
+A subvolume pool gets no `btrfs.mount_options` from isx.
+Incus bind-mounts it and then remounts the bind with the pool's options (its default `user_subvol_rm_allowed` included), and a btrfs remount without `MS_BIND` changes the options of the whole host filesystem until the next mount.
+So options set on a subvolume pool are host tuning in disguise; `docs/dev/MIGRATIONS.md` "Host write tuning" is where that choice is made, deliberately, through `/etc/fstab`.
+
+**Doctor**: `CowPoolBacking.doctorFindings` reads the pool config from the listing doctor already makes (`IncusClient.listPoolInfo`) and says two things about a loop pool: a WARN without remediation when the file is on btrfs, pointing at the migration in `docs/dev/MIGRATIONS.md` (`CowPoolBacking.MIGRATION_NOTES`, a GitHub link because the maintainer notes are not published; moving instances to a new pool is not something to do behind a yes/no prompt), and a WARN that offers the mount options, merged into what the user set (`withLoopMountOptions`), applied through `IncusClient.setPoolConfig`; Incus remounts the pool live.
+The issue also asked for a warning when the loop file lacks `chattr +C`.
+It is not checked: reading the flag needs root, and `+C` takes effect only on an empty file, so for an existing pool the only remedy is the migration the first warning already gives.
+Doctor offers a resize only for a loop file, a pool whose source is a `.img` (`CowPoolBacking.isLoopFile`): a subvolume pool's total is its filesystem's, and Incus has no size to grow.
+
+**The cap and #414**: the 100 GiB `size` came from #414, where creating the pool inside a VM consumed over 32 GB of RAM; the suspect was `mkfs.btrfs` on a large loop device.
+A subvolume pool runs no `mkfs` and allocates no device, so that concern does not apply to it, and the loop path keeps the cap.
+What a subvolume pool loses is the ceiling: instances can fill the host filesystem.
+Incus reports a subvolume pool's usage as its filesystem's, so doctor's existing "nearly full" warning above 90% covers the host disk, and each instance's root `size` (`--disk`, default 100GB) still bounds one runaway instance.
+No pool-wide quota is set: a qgroup limit on the pool subvolume would not bound the host's own writes, and it is the full disk that hurts.
+
+**Quotas on the host filesystem**: Incus enables btrfs quotas lazily, the first time it applies a volume size (`btrfs quota enable` on the volume's path), and on a subvolume pool that is the host filesystem: qgroup accounting then covers the host's own subvolumes too, and `BtrfsUsage`'s `quota rescan` walks the whole filesystem.
+Incus also mounts the host filesystem with `user_subvol_rm_allowed` each time it starts with such a pool: `btrfs.Mount` bind-mounts a path source and then remounts it with the pool's options, `MS_REMOUNT` without `MS_BIND`, which sets them on the whole filesystem.
+It skips that remount inside a user namespace (nested Incus in a container) and when the pool path is already mounted, so it is a change only a host install makes.
+That lets an unprivileged user delete any subvolume they can write to on it, not only in the pool.
+Sanne accepted both host-wide changes as the price of one filesystem (2026-10-25, on #1663), documented in `docs/CONFIGURATION.md` rather than avoided.
+`InstanceSubvolumes.refFromPath` already reads the deeper `.../storage-pools/<pool>/containers/<name>` paths a subvolume pool's `subvolume list` prints.
+
 **Disk-space visibility in the TUI**: All instances (and templates — templates are just stopped instances) share this one pool, so the pool's total is the real disk budget.
 On the macOS appliance the `cow` pool is a fixed-size VM disk, so its `space.total` *is* the VM's disk.
 The TUI surfaces this with a full-width **storage gauge** above the panels (green/amber/red by fill percentage) plus a per-row **DISK** column on both panels.
@@ -4865,7 +4912,9 @@ Until #986 the hint was checked after the create and so could never fire.
 A base image imported by another project stays a trust gate: at a terminal the build offers to delete it (`--yes` does not answer for it) and stops either way.
 Without a terminal it says to re-run in one.
 A new `isx image delete` or `isx move` command, or "run it in `isx vm shell`", were the alternatives, rejected because each exposes an operation the user should not need to know about.
-The hints `isx init` prints during Linux setup, before isx manages a pool or profile, are the exception, along with `noCowPoolMsg`'s Linux arm. #1139 extended the rule to `incus network` and `incus remote`: the bridge-subnet conflict diagnostic now says only to run `isx doctor`, which offers to move the bridge to a free subnet (#1203), and is shown on Linux only, since on macOS nothing reconfigures the bridge and the Mac's routes are not the VM's (#1202); an image naming an unknown remote says on macOS which remotes isx knows and which file it reads others from, and the `incus remote add` hint stays on Linux.
+The hints `isx init` prints during Linux setup, before isx manages a pool or profile, are the exception.
+`noCowPoolMsg`'s Linux arm was one until #1656, when its `size=100GiB` command would have made the nested loop file on a btrfs host; it names `isx doctor`, whose remediation picks the backing.
+#1139 extended the rule to `incus network` and `incus remote`: the bridge-subnet conflict diagnostic now says only to run `isx doctor`, which offers to move the bridge to a free subnet (#1203), and is shown on Linux only, since on macOS nothing reconfigures the bridge and the Mac's routes are not the VM's (#1202); an image naming an unknown remote says on macOS which remotes isx knows and which file it reads others from, and the `incus remote add` hint stays on Linux.
 `gatewayUnavailableHint` and the proxy's `--gateway-ip` check already named `incus network` only on Linux.
 `NoIncusCliHintTest` allowlists those literals one by one, scanning `cli`, `common` and `proxy`, and fails on any other.
 #1139 then covered `incus console` and `incus config`: a VM agent failure saves the console log on the host and names that file, and an inbox removed for a missing directory is mounted again by the start that finds it back.
