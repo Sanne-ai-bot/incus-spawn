@@ -252,7 +252,7 @@ if $COLLECTING; then
 # weighting. Heavy: the branch, shell and stop/start cycle, the ssh-proxy and git-remote-isx
 # relays, isx list. Moderate: the TUI. Once: --help and templates list, so their code is in the
 # profile without weight. Left out: doctor, builds, init, accounts, completion (rare, and a
-# build's own work is native git, not isx). See docs/dev/PGO.md (#1636).
+# build's own work is native git, not isx). See docs/dev/PGO.md.
 import collections, glob, gzip, os, shutil, subprocess, sys
 
 sys.dont_write_bytecode = True
