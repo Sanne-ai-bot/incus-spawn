@@ -222,6 +222,8 @@ order reversed every other round; every figure is the median of the three. The r
 [pgo-ab-2026-10-25-proxy.json](../../bench/data/pgo-ab-2026-10-25-proxy.json) (25 minutes) and
 [pgo-ab-2026-10-24-cli.json](../../bench/data/pgo-ab-2026-10-24-cli.json) (4 minutes).
 The decision rules are the plan's, fixed before measuring.
+Each file's `provenance` (builds' commit, GraalVM and flags, host) was added afterwards from this
+page, since `ab.py` did not record it yet; it does now.
 
 **Proxy, `-O3` against `-O3` + PGO.** Rule: adopt if any load gains about 5% with no size, RSS
 or startup regression.

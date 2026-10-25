@@ -7,6 +7,74 @@
     "o3pgo": "/tmp/pgo/bin/cli-pgo",
     "ospgo": "/tmp/pgo/bin/cli-ospgo"
   },
+  "provenance": {
+    "note": "Added after the run, from docs/dev/PERFORMANCE-NOTES.md and the build names: ab.py did not record provenance yet and the binaries are gone. Build commits are abbreviated, as the notes give them. null is what nobody recorded.",
+    "checkout": {
+      "commit": null,
+      "dirty": null,
+      "nativeImageOnPath": null
+    },
+    "builds": {
+      "os": {
+        "sha256": null,
+        "bytes": 37948488,
+        "version": null,
+        "commit": "77c5f656",
+        "graalvm": "25.4.4.1.1",
+        "buildReport": null,
+        "graalCompiler": {
+          "march": "haswell",
+          "optimization_level": "s"
+        },
+        "garbageCollector": null,
+        "cCompiler": null
+      },
+      "o3pgo": {
+        "sha256": null,
+        "bytes": 38603848,
+        "version": null,
+        "commit": "77c5f656",
+        "graalvm": "25.4.4.1.1",
+        "buildReport": null,
+        "graalCompiler": {
+          "march": "haswell",
+          "optimization_level": "3",
+          "pgo": [
+            "user-provided"
+          ]
+        },
+        "garbageCollector": null,
+        "cCompiler": null
+      },
+      "ospgo": {
+        "sha256": null,
+        "bytes": 38145096,
+        "version": null,
+        "commit": "77c5f656",
+        "graalvm": "25.4.4.1.1",
+        "buildReport": null,
+        "graalCompiler": {
+          "march": "haswell",
+          "optimization_level": "s",
+          "pgo": [
+            "user-provided"
+          ]
+        },
+        "garbageCollector": null,
+        "cCompiler": null
+      }
+    },
+    "host": {
+      "os": null,
+      "kernel": null,
+      "arch": "x86_64",
+      "cpu": "AMD Ryzen 9 9950X3D2 16-Core Processor",
+      "cores": 8,
+      "memoryKb": null,
+      "vm": "kvm",
+      "container": null
+    }
+  },
   "minutes": 4.1,
   "medians": {
     "cli": {
