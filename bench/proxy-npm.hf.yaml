@@ -1,0 +1,39 @@
+# npm installs through the proxy's npm path: each iteration fetches a packument, which the proxy
+# relays and whose ETag it stores, then the tarball, served from the cache once warmed. Both are
+# answered upstream by the stub (UpstreamStub.java): the packument, the version document the
+# proxy verifies a tarball by (dist.integrity), and the tarball. The package exists nowhere else.
+name: proxy-npm
+http:
+  host: https://registry.npmjs.org:18443
+  sharedConnections: 64
+phases:
+- warmup:
+    always:
+      users: 8
+      duration: 5s
+      isWarmup: true
+      scenario: &install
+      - packument:
+        - httpRequest:
+            GET: /isx-bench-payload
+      - tarball:
+        - httpRequest:
+            GET: /isx-bench-payload/-/isx-bench-payload-1.0.0.tgz
+- c008:
+    always:
+      users: 8
+      duration: 10s
+      startAfter: warmup
+      scenario: *install
+- c032:
+    always:
+      users: 32
+      duration: 10s
+      startAfter: c008
+      scenario: *install
+- c064:
+    always:
+      users: 64
+      duration: 10s
+      startAfter: c032
+      scenario: *install

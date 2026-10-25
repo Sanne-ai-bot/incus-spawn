@@ -93,7 +93,7 @@ if [ ${#missing[@]} -gt 0 ]; then
     stop_proxy
 fi
 
-for load in maven saturate anthropic vertex; do
+for load in maven saturate npm anthropic vertex websocket; do
     echo ""
     echo "=== Proxy: --load=$load ==="
     "$SCRIPT_DIR/run.sh" --load="$load" --collect="$OUT_DIR/proxy" --proxy="$PROXY_BIN" --cli="$CLI_BIN"
