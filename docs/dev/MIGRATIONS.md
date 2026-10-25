@@ -122,9 +122,12 @@ Leave `vm.dirty_background_bytes` alone unless builds still show heavy writes: o
 
 Verify with `/sys/fs/btrfs/<uuid>/commit_stats` (one commit per five minutes at idle) and the device and cgroup counters above over the same window.
 
-## Instances built from base images before fedora-44-20261010
+## Instances built from base images before fedora-44-20261009
 
-Those images' network watchdog read the address with `awk`, which the container image lacks, so it restarted systemd-networkd every 30 seconds for the instance's whole life (issue 1657).
+Those images' network watchdog read the address of `eth0` with `awk`, so it restarted systemd-networkd every 30 seconds for the instance's whole life (issue 1657).
+The container image has no `awk`, and a VM's NIC is not named `eth0`, so containers and VMs alike are affected.
+`fedora-44-20261009` is the first release with the fix (incus-spawn-images `2f77305`, from `git tag --contains`).
+`isx doctor` warns about the templates and instances still on such an image.
 An affected instance shows a steady `isx-watchdog: IP mismatch: expected=<ip> current=, restarting networkd` in its journal.
 
 ```shell
