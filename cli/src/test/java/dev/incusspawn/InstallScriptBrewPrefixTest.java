@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * A Homebrew prefix serves every account on the machine, so {@code install.sh} never writes one
@@ -174,6 +175,53 @@ class InstallScriptBrewPrefixTest {
                 result.output());
     }
 
+    /** A broken brew (or one for another architecture) did not abort an install before the check either. */
+    @Test
+    void installsWhenBrewPrefixFails() throws Exception {
+        stub("brew", "exit 1");
+
+        var result = run(null);
+
+        assertEquals(0, result.exit(), result.output());
+        assertTrue(Files.isRegularFile(home.resolve(".local/bin/isx"), LinkOption.NOFOLLOW_LINKS),
+                result.output());
+    }
+
+    /** The error names the directory it could not enter, not an empty path. */
+    @Test
+    void namesTheDirectoryItCannotResolve() throws Exception {
+        assumeTrue(!"root".equals(System.getProperty("user.name")), "root enters a mode-000 directory");
+        var locked = Files.createDirectories(tmp.resolve("locked"));
+        Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("---------"));
+        try {
+            var result = run(locked.resolve("bin").toString());
+
+            assertEquals(1, result.exit(), result.output());
+            assertTrue(result.output().contains(": " + locked + " is not accessible."), result.output());
+            assertFalse(Files.exists(tmp.resolve("built")), result.output());
+        } finally {
+            Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+    }
+
+    /**
+     * A relative INSTALL_DIR is written relative to the caller's directory, so an exported CDPATH
+     * must not make the check resolve it elsewhere: here it would judge a harmless {@code safe/bin}
+     * while mkdir -p and the install write the prefix's {@code bin}.
+     */
+    @Test
+    void refusesARelativePrefixBinDespiteCdpath() throws Exception {
+        var safe = Files.createDirectories(tmp.resolve("safe"));
+        Files.createDirectories(safe.resolve("bin"));
+
+        var result = run(Map.of("CDPATH", safe.toString()), "bin", brew);
+
+        assertEquals(1, result.exit(), result.output());
+        assertTrue(result.output().contains(", which install.sh never writes: other accounts may use it."), result.output());
+        assertFalse(Files.exists(tmp.resolve("built")), result.output());
+        assertHomebrewLinks(result, BINARIES.size());
+    }
+
     private void assertRefused(String installDir) throws Exception {
         assertRefused(Map.of(), installDir, BINARIES.size());
     }
@@ -219,7 +267,12 @@ class InstallScriptBrewPrefixTest {
     }
 
     private Result run(Map<String, String> env, String installDir) throws IOException, InterruptedException {
-        var pb = new ProcessBuilder("bash", checkout.resolve("install.sh").toString()).redirectErrorStream(true);
+        return run(env, installDir, tmp);
+    }
+
+    private Result run(Map<String, String> env, String installDir, Path cwd) throws IOException, InterruptedException {
+        var pb = new ProcessBuilder("bash", checkout.resolve("install.sh").toString())
+                .redirectErrorStream(true).directory(cwd.toFile());
         pb.environment().remove("JAVA_HOME");
         pb.environment().remove("INSTALL_DIR");
         pb.environment().remove("HOMEBREW_PREFIX");
