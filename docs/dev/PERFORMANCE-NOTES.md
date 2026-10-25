@@ -308,9 +308,22 @@ The merged profiles are 1.7 MB (CLI) and 2.5 MB (proxy) gzipped.
 | `isx` | 37,882,184 B | 38,603,848 B | 15.19% / 100.00% |
 | `isx-proxy` | 99,093,024 B | 41,880,864 B | 20.02% / 100.00% |
 
-A profile is fully relevant on the platform that collected it. The other release platforms'
-figures come from the first `workflow_dispatch` run of `release.yml`; the floors in
-`.github/scripts/check-pgo-quality.sh` (10% applicability, 80% relevance) are to be set from them.
+A profile is fully relevant on the platform that collected it. The first `workflow_dispatch` of
+`release.yml` (run 40180623569, on `Sanne-ai-bot/incus-spawn`, commit `d9a30a34`) built all four
+platforms; its profiles job took 19 minutes and each build 6 to 8:
+
+| Platform | `isx` (v0.4.2 → PGO) | CLI applicability / relevance | `isx-proxy` (v0.4.2 → PGO) | Proxy applicability / relevance |
+|---|---|---|---|---|
+| Linux amd64 | 37,882,184 → 38,603,080 B | 15.21% / 100.00% | 99,093,024 → 42,142,240 B | 20.03% / 100.00% |
+| Linux aarch64 | 39,389,296 → 40,044,656 B | 15.16% / 99.75% | 89,590,168 → 42,863,000 B | 20.00% / 99.96% |
+| macOS aarch64 | 39,526,904 → 40,237,216 B | 15.04% / 98.49% | 79,463,872 → 39,493,288 B | 19.58% / 97.04% |
+| macOS x86_64 (unprofiled) | 38,511,200 → 38,634,384 B | | 83,309,152 → 83,567,352 B | |
+
+Profiles collected on Linux x86_64 fit the other platforms almost as well (relevance 97% at the
+lowest, macOS's proxy), and every platform's proxy is about half its released size. The release
+smoke test and the macOS keychain smoke passed on every build. The floors in
+`.github/scripts/check-pgo-quality.sh` stay at 10% applicability and 80% relevance until they are
+set from these figures.
 
 ## Measurement caveats worth remembering
 
