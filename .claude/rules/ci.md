@@ -260,6 +260,7 @@ Results are saved as JSON to `bench/results/` and automatically compared with th
 Use this before and after changes to the proxy, Vert.x configuration, or native image settings to catch regressions.
 `--load=anthropic` and `--load=vertex` drive streamed model calls from Hyperfoil inside an instance branched from `tpl-isx-bench` (`bench/.incus-spawn/images/`), since the proxy injects only for a caller it knows by address and proof.
 They answer from `UpstreamStub.java`, on a config of the run's own (`ISX_BENCH_CONFIG`), never the user's.
+`--load=npm` drives the npm path (packument relay, cached tarball) from the host, and `--load=websocket` Codex-shaped WebSockets from `bench/WsLoad.java` inside the instance, Hyperfoil having no WebSocket support.
 `--proxy=BIN`/`--cli=BIN` measure binaries built elsewhere, for an A/B of build flags.
 `bench/pgo-collect.sh` collects the PGO profiles of docs/dev/PGO.md from instrumented builds: `run.sh --collect` once per load, then `cli.sh --collect`'s weighted flows, one gzipped `.iprof` per process.
 `release.yml`'s `profiles` job runs it on every release, on Linux amd64 with Incus prepared as `isx-integration-tests-native` does, merges the dumps (`scripts/pgo-merge.sh`) and uploads `pgo-profiles`.

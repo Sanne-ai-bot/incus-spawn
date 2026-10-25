@@ -89,7 +89,7 @@ bench/run.sh --label "after"
 
 ## Load Profiles
 
-Five profiles, measuring genuinely different things. Picking the wrong one is how you get a
+Seven profiles, measuring genuinely different things. Picking the wrong one is how you get a
 confident number that answers no question you actually had.
 
 | Mode | Endpoint | What it tells you |
@@ -99,6 +99,8 @@ confident number that answers no question you actually had.
 | `maven` | intercepted HTTPS, cached artifact | **The workload containers actually generate** |
 | `anthropic` | intercepted HTTPS, streamed model calls | API-key injection, from inside an instance |
 | `vertex` | the same calls, translated for Vertex AI | The streaming body rewrite and the `gcloud` token |
+| `npm` | intercepted HTTPS, npm packument and cached tarball | The npm path: packument relay, `dist.integrity` check, tarball cache |
+| `websocket` | Codex's WebSocket to `api.openai.com`, from inside an instance | The WebSocket relay: handshake, key injection, streamed frames |
 
 `constant` drives 5,000 req/s, roughly 3% of what `/health` can serve. Cheap, but structurally
 blind to throughput: a faster and a slower proxy both report ~5,000 req/s at 100% success.
@@ -166,6 +168,28 @@ and one call is checked before the load starts. The proxy runs on a config of th
 one Claude account (`ISX_BENCH_CONFIG`, read instead of `config.yaml`, which is never touched),
 and a `gcloud` stand-in on its `PATH` hands it the token the stub expects.
 
+### npm (`npm`)
+
+Each iteration does what `npm install` does for one package: it fetches the packument, which the
+proxy relays and whose ETag it keeps, then the tarball. The first tarball is fetched and
+verified against the version document's `dist.integrity`; after the warmup every one is a cache
+hit. The stub answers for `registry.npmjs.org` with a package no registry has
+(`isx-bench-payload`), and the harness removes it from the cache afterwards. No MB/s column: half
+the requests are packuments.
+
+### WebSocket (`websocket`)
+
+Codex keeps a WebSocket to `api.openai.com` and the proxy relays it, injecting the OpenAI key on
+the handshake. Hyperfoil speaks no WebSocket, so `WsLoad.java` runs inside the instance, with its
+JDK: each socket presents the instance's OpenAI proof, sends ten turns of about 2 KiB and opens
+the next, every turn answered by the stub's streamed reply (twenty delta events and a
+`response.completed`). The phases are in `proxy-websocket.yaml`. A request is one turn, timed
+from sending it to the last event; a refused handshake counts as failed.
+
+The stub runs a TLS WebSocket server on a port of its own and refuses a handshake without the
+injected key. `ISX_BENCH_UPSTREAM` points `api.openai.com` there; a WebSocket dials it at the
+stub's address, which the stub's certificate carries, since Vert.x does not reroute one.
+
 ## Measuring Binaries Built Elsewhere
 
 `--proxy=BIN` and `--cli=BIN` (both scripts take `--cli`) measure those binaries and build
@@ -191,7 +215,7 @@ bench/pgo-collect.sh --proxy=/tmp/isx-proxy-instr --cli=/tmp/isx-instr --out=/tm
 ```
 
 It builds `tpl-isx-bench` if it is missing, then runs `run.sh --collect` once per load (`maven`,
-`saturate`, `anthropic`, `vertex`) and `cli.sh --collect` with the instrumented proxy serving
+`saturate`, `npm`, `anthropic`, `vertex`, `websocket`) and `cli.sh --collect` with the instrumented proxy serving
 it. Every process writes one profile, gzipped: `proxy/proxy-<load>.iprof.gz`,
 `proxy/proxy-cli-flows.iprof.gz`, and `cli/cli-<flow>-<time>-<pid>.iprof.gz` (about a hundred).
 An optimized build takes them all, and their counts add up, so the mix of runs is the
@@ -210,6 +234,13 @@ That is what a release does (`release.yml`'s `profiles` job). Its merged profile
 `pgo-profiles` artifact of the release's run, kept 90 days, so a local build can take a
 release's own: `gh run download <run-id> -R Sanne/incus-spawn -n pgo-profiles -D /tmp/pgo-merged`.
 Both need Oracle GraalVM; without `-Dnative.pgo` a build is unprofiled.
+
+`pgo-coverage.py` says whether a path is in a profile at all: for a class and a name filter, the
+methods it counted calls into, and the ones it never saw, which run as cold code.
+
+```shell
+python3 -I bench/pgo-coverage.py /tmp/pgo-merged/proxy.iprof.gz dev.incusspawn.proxy.MitmProxy WebSocket
+```
 
 `-Dnative.pgo.instrument` adds `--pgo-instrument` and `-H:+ParseRuntimeOptions`, the second because release builds turn runtime option parsing off,
 and without it every process would write `default.iprof` in its working directory, over the
@@ -424,7 +455,7 @@ systemctl --user start incus-spawn-proxy   # its build must match the CLIs'
 python3 -I bench/ab.py cli --rounds=3 os=/tmp/isx-os o3pgo=/tmp/isx-o3pgo ospgo=/tmp/isx-ospgo
 ```
 
-`proxy` runs every load in `--loads` (default `maven,saturate,anthropic,vertex`) per build per
+`proxy` runs every load in `--loads` (default `maven,saturate,anthropic,vertex`; `npm` and `websocket` too, when named) per build per
 round; `cli` runs `cli.sh` from `--from` (default `tpl-isx-bench`, so the relays are measured).
 
 The output's `provenance` says what was measured, so the file stands without the prose around
@@ -580,6 +611,10 @@ bench/
   proxy-maven.hf.yaml     # Cached-artifact ladder over TLS (--load=maven)
   proxy-messages.hf.yaml  # Streamed model calls, run inside an instance (--load=anthropic|vertex)
   messages-body.py        # Writes the model calls' request body
+  proxy-npm.hf.yaml       # npm packument and cached tarball (--load=npm)
+  proxy-websocket.yaml    # WsLoad.java's phases (--load=websocket)
+  WsLoad.java             # The WebSocket load, run inside the instance
+  pgo-coverage.py         # Which methods of a class a PGO profile counts
   UpstreamStub.java       # Loopback stand-in for Central, the Messages API and Vertex
   pgo-collect.sh          # PGO profile collection over run.sh and cli.sh
   ab.py                   # Interleaved A/B of builds over run.sh or cli.sh

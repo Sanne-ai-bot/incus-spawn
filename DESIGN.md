@@ -1812,6 +1812,8 @@ Hashing a large artifact happens outside the lock, re-checked under it against t
 The benchmark (`bench/run.sh --load=maven`) points Central at a loopback stub through `ISX_BENCH_UPSTREAM`, since a confirmed hit makes a `HEAD` (with the default tiers, the benchmark's warm hits are fresh and make none).
 The end-to-end tests use the same hook.
 The model-call loads (`--load=anthropic|vertex`) point the Messages API and Vertex at the same stub, and run the proxy on Claude accounts of their own.
+`--load=websocket` points `api.openai.com` at the stub's WebSocket server, with an OpenAI account of its own.
+A WebSocket dials an overridden host at the stub's address (`MitmProxy.handleWebSocketUpgrade`): Vert.x ignores `setServer` for one, so its SNI and Host name the address, which the stub's certificate carries.
 `ISX_BENCH_CONFIG` names the file it reads instead of `config.yaml` (`SpawnConfig.useBenchFile`), so a benchmark never edits the user's file.
 The CA, the credential proofs and the rest of the configuration directory stay the user's, so the instance the load comes from proves itself as any other does.
 Nothing but `bench/run.sh` sets it, and the proxy refuses to start when it names no file.
@@ -3623,7 +3625,8 @@ That relay figure predates #1643, which removed most of the relay's CPU work ("A
 Why it shrinks the proxy: PGO compiles the code the profile marks hot at full speed and everything else for size.
 About 20% of the proxy's methods and 15% of the CLI's have a profile.
 That is also the cost: a path no workload reaches runs as cold code.
-The workloads are `bench/pgo-collect.sh`'s, listed in `bench/README.md`: the proxy under the `maven`, `saturate`, `anthropic` and `vertex` loads and serving the CLI flows, and the CLI's branch, shell, list, `ssh-proxy`, `git-remote-isx` and TUI flows.
+The workloads are `bench/pgo-collect.sh`'s, listed in `bench/README.md`: the proxy under the `maven`, `saturate`, `npm`, `anthropic`, `vertex` and `websocket` loads and serving the CLI flows, and the CLI's branch, shell, list, `ssh-proxy`, `git-remote-isx` and TUI flows.
+Host routes and the MCP bridge have no load, so they run as cold code; `bench/pgo-coverage.py` says which methods of a class a profile counts.
 An unrepresentative profile is worse than none, so `--help` is run once, never as a workload.
 
 **How a release collects them.**

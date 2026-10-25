@@ -298,6 +298,7 @@ Key design:
   It answers from `allInterceptedDomains` (every account's domains, as bridge DNS and certificates have them), never the default account's entries alone: an instance pinned to an account whose entry the default lacks would be relayed with nothing injected.
   `ProxyCredentials` only has Anthropic-specific fields (`anthropicApiKey`, `oauthToken`, Vertex settings) -- `ghToken`/`bobApiKey`/`openaiApiKey` have been removed
 - WebSocket passthrough: handles Upgrade requests by establishing an upstream WebSocket connection (with credential injection via both Anthropic auth and tool proxy lookup), then relaying frames bidirectionally with keepalive pings and close-code propagation.
+  A host that `ISX_BENCH_UPSTREAM` overrides is dialled at the override's address, with the real host in the `Host` header (Vert.x ignores `setServer` for a WebSocket), so `bench/run.sh --load=websocket` reaches its stub.
   `routeWebSocket` completes the client's handshake (`completeHandshake`, the deprecated `ServerWebSocket.accept()` on purpose) before injecting anything or dialling, because the handler runs before Netty validates the handshake (#972); keep any new rejection (e.g. `reject(502)`) before it.
   Used by Codex CLI for `api.openai.com`
 - Caches OCI blobs by SHA256, Maven/Gradle artifacts by repository path (confirmed with upstream per `ArtifactCacheTiers`, see below), and npm tarballs from `registry.npmjs.org` with ETag-based packument verification.
