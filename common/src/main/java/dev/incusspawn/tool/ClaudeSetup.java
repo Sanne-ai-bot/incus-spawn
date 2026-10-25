@@ -3,15 +3,18 @@ package dev.incusspawn.tool;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 public class ClaudeSetup implements ToolSetup {
 
@@ -394,6 +397,10 @@ public class ClaudeSetup implements ToolSetup {
      */
     public static final String MANAGED_MEMORY_PATH = "/etc/claude-code/CLAUDE.md";
     static final String USER_SETTINGS_PATH = "/home/agentuser/.claude/settings.json";
+    private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
+    private static final String API_KEY_RESPONSES = "customApiKeyResponses";
+    /** The last line {@link #LOGIN_AUTH_SCRIPT} writes when it approves a start's key. */
+    private static final Pattern LOGIN_APPROVAL = Pattern.compile("(?m)^,\"customApiKeyResponses\":\\{.*}}\\s*\\z");
     private static final String STATUSLINE_PATH = "/etc/claude-code/statusline.sh";
 
     void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig) {
@@ -469,13 +476,41 @@ public class ClaudeSetup implements ToolSetup {
                   }
                 }
                 """);
-        var claudeJson = claudeJsonBuilder.toString();
+        var claudeJson = mergeClaudeJson(c.sh("[ ! -e " + CLAUDE_JSON_PATH + " ] || cat " + CLAUDE_JSON_PATH),
+                claudeJsonBuilder.toString());
         c.sh("mkdir -p /home/agentuser/.claude");
         c.writeFile(USER_SETTINGS_PATH, settingsJson);
-        c.writeFile("/home/agentuser/.claude.json", claudeJson);
+        c.writeFile(CLAUDE_JSON_PATH, claudeJson);
         c.chown("/home/agentuser/.claude", "agentuser:agentuser");
-        c.chown("/home/agentuser/.claude.json", "agentuser:agentuser");
+        c.chown(CLAUDE_JSON_PATH, "agentuser:agentuser");
         BuildOutput.stepDone();
+    }
+
+    /**
+     * isx's keys of {@code ~/.claude.json} laid over the file a parent image left (#1638).
+     * A child template that reconfigures Claude must keep what its ancestors' tools put there,
+     * such as the {@code mcpServers} that {@code claude mcp add --scope user} writes. An
+     * approval of the placeholder API key is isx's own, so it goes when isx no longer writes it.
+     * A missing file gets isx's keys alone, as does an unreadable one, with a warning.
+     *
+     * @param existing the file's content, empty when there is none
+     */
+    static String mergeClaudeJson(IncusClient.ExecResult existing, String isxJson) {
+        if (existing.success() && existing.stdout().isBlank()) return isxJson;
+        // The login script approves a start's key by appending the field once more, which
+        // JSON.parse takes and a strict parser refuses; isx replaces that field anyway.
+        // ClaudeCallTimeTokenTest runs the script, so this cannot drift from what it writes.
+        var json = LOGIN_APPROVAL.matcher(existing.stdout()).replaceFirst("}");
+        try {
+            if (existing.success() && JqValues.parseStrict(json) instanceof JqObject previous) {
+                var isx = (JqObject) JqValues.parseStrict(isxJson);
+                return JqValues.toPrettyJsonString(previous.without(API_KEY_RESPONSES).deepMerge(isx)) + "\n";
+            }
+        } catch (IllegalArgumentException e) {
+            // reported below
+        }
+        BuildOutput.warn("Could not read " + CLAUDE_JSON_PATH + " as a JSON object; rewriting it drops what earlier layers put there");
+        return isxJson;
     }
 
     /**
