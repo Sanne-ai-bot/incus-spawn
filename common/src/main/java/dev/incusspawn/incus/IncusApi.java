@@ -778,14 +778,14 @@ class IncusApi {
                 // hanging forever.
                 var teardown = Thread.ofVirtual().start(() -> {
                     drainQuietly(controlWs);          // blocks until the daemon closes control (process exited)
-                    dataAlive.interrupt();
+                    dataAlive.stop();
                     awaitDrain(lastData, new DataReader(dataThread, dataWs));
                     dataWs.close();                   // force-close fd "0" so the daemon can finalize the op
                     joinQuietly(dataThread);
                 });
 
                 int exitCode = waitForExecOp(exec.opPath);
-                keepalive.interrupt();
+                keepalive.stop();
                 return exitCode;
             } catch (IOException e) {
                 throw new IncusException("Failed to open exec WebSocket", e);
@@ -856,20 +856,13 @@ class IncusApi {
         }
         try {
             var controlThread = Thread.ofVirtual().start(() -> {
-                var keepalive = Thread.ofVirtual().start(() -> {
-                    try {
-                        while (!Thread.currentThread().isInterrupted()) {
-                            Thread.sleep(pingIntervalMs);
-                            controlWs.sendPing();
-                        }
-                    } catch (IOException | InterruptedException ignored) {}
-                });
+                var keepalive = startKeepalive(controlWs);
                 try {
                     while (controlWs.readPayload() != null) {}
                 } catch (IOException e) {
                     controlLostConnection.set(true);
                 } finally {
-                    keepalive.interrupt();
+                    keepalive.stop();
                 }
             });
             assertAllFdsConnected(exec.fds, Set.of("0", "control"));
@@ -882,14 +875,7 @@ class IncusApi {
                 });
 
                 // Keepalive: periodic pings to prevent idle connection timeout.
-                var keepaliveThread = Thread.ofVirtual().start(() -> {
-                    try {
-                        while (!Thread.currentThread().isInterrupted()) {
-                            Thread.sleep(pingIntervalMs);
-                            ws.sendPing();
-                        }
-                    } catch (IOException | InterruptedException ignored) {}
-                });
+                var keepalive = startKeepalive(ws);
 
                 // Terminal resize: poll for size changes and send window-resize control messages.
                 var resizeThread = Thread.ofVirtual().start(() -> {
@@ -957,7 +943,7 @@ class IncusApi {
                     // closes the channel and aborts the read (InterruptibleChannel contract).
                     stdinThread.interrupt();
                     try { stdinThread.join(500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-                    keepaliveThread.interrupt();
+                    keepalive.stop();
                     resizeThread.interrupt();
                     if (statusBar != null) {
                         statusBar.cleanup();
@@ -1107,19 +1093,19 @@ class IncusApi {
                 exitCode = waitForExecOp(exec.opPath, deadline, controlWs);
             } catch (IncusException timedOut) {
                 // Given up on: stop every helper now, the sockets close on the way out.
-                stdoutAlive.interrupt();
-                stderrAlive.interrupt();
-                keepalive.interrupt();
+                stdoutAlive.stop();
+                stderrAlive.stop();
+                keepalive.stop();
                 throw timedOut;
             }
 
             // Process has exited: stop pinging the data fds, drain, then force-close so the
             // reader threads unblock even if no close frame arrives.
-            stdoutAlive.interrupt();
-            stderrAlive.interrupt();
+            stdoutAlive.stop();
+            stderrAlive.stop();
             drainThenClose(lastData, stdoutThread, stderrThread, stdoutWs, stderrWs);
 
-            keepalive.interrupt();
+            keepalive.stop();
             controlWs.close();
             joinQuietly(controlDrain);
 
@@ -1140,16 +1126,40 @@ class IncusApi {
         return exec.opPath + "/websocket?secret=" + exec.fds.pathText(fd, "");
     }
 
-    /** Start a virtual thread that pings the socket until interrupted (idle-timeout guard). */
-    private Thread startKeepalive(IncusTransport.WsConnection ws) {
-        return Thread.ofVirtual().start(() -> {
-            try {
-                while (!Thread.currentThread().isInterrupted()) {
-                    Thread.sleep(pingIntervalMs);
-                    ws.sendPing();
-                }
-            } catch (IOException | InterruptedException ignored) {}
-        });
+    /** Start pinging the socket until {@link Keepalive#stop} (idle-timeout guard). */
+    private Keepalive startKeepalive(IncusTransport.WsConnection ws) {
+        return new Keepalive(ws, pingIntervalMs);
+    }
+
+    /**
+     * Pings a socket on a virtual thread until stopped. Stopping never interrupts the thread:
+     * an interrupt that lands during a channel write closes the socket
+     * ({@code ClosedByInterruptException}), discarding output still unread in it. Nor does it
+     * wait for a ping in flight, which can be stuck behind a stalled write on the same socket;
+     * the socket itself drops a ping that would follow its close frame.
+     */
+    static final class Keepalive {
+        private boolean stopped; // guarded by this
+
+        Keepalive(IncusTransport.WsConnection ws, long intervalMs) {
+            Thread.ofVirtual().start(() -> {
+                try {
+                    while (awaitNextPing(intervalMs)) ws.sendPing();
+                } catch (IOException | InterruptedException ignored) {}
+            });
+        }
+
+        /** Wait out one interval; whether to ping, false once stopped. */
+        private synchronized boolean awaitNextPing(long intervalMs) throws InterruptedException {
+            if (!stopped) wait(intervalMs);
+            return !stopped;
+        }
+
+        /** Stop pinging. Returns at once: a ping already being written is left to finish. */
+        synchronized void stop() {
+            stopped = true;
+            notifyAll();
+        }
     }
 
     /** Read and discard all frames until the socket closes. */
@@ -1221,18 +1231,11 @@ class IncusApi {
     private void wsDiscardTrackedWithKeepalive(String opPath, String secret,
                                                java.util.concurrent.atomic.AtomicBoolean connectionLost) {
         try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + secret)) {
-            var keepalive = Thread.ofVirtual().start(() -> {
-                try {
-                    while (!Thread.currentThread().isInterrupted()) {
-                        Thread.sleep(pingIntervalMs);
-                        ws.sendPing();
-                    }
-                } catch (IOException | InterruptedException ignored) {}
-            });
+            var keepalive = startKeepalive(ws);
             try {
                 while (ws.readPayload() != null) {}
             } finally {
-                keepalive.interrupt();
+                keepalive.stop();
             }
         } catch (IOException e) {
             connectionLost.set(true);

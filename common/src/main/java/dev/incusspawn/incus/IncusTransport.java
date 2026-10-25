@@ -98,7 +98,7 @@ interface IncusTransport {
             var bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
             sendData(bytes, 0, bytes.length);
         }
-        /** Send a WebSocket ping frame (keepalive). */
+        /** Send a WebSocket ping frame (keepalive); nothing once a close frame has been sent. */
         void sendPing() throws IOException;
         /** Send a WebSocket close frame. */
         void sendClose() throws IOException;
