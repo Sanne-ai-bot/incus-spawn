@@ -16,6 +16,8 @@ Only code running after the runner has closed (the `pendingAction` switch, e.g. 
 **The screen is cleared before the first frame and on Ctrl+L** (#1681, DESIGN.md "Terminals the TUI cannot assume").
 Open runners through `Tui.openRunner`, never `TuiRunner.create`; `TuiScreenClearTest` checks `openRunner` and Ctrl+L, not that the TUI calls it.
 
+**`TuiTheme` holds no RGB colours**, only named ANSI colours and `Color.indexed` entries (#1681); `TuiThemeTest` fails on one.
+
 **Warnings go to the `WarningLog`, not the status line** (#872).
 `runTuiSessions()` redirects `Warnings` (`common`) to its own `warningChannel` around each `reloadData()` and the runner, but **not** while the terminal is released (`pendingAction`: a build, a template edit, a shell), so those print their own warnings -- even ones the TUI has already logged, since each channel remembers what it reported separately.
 And TUI code passes `warningLog::add` as the warn sink of shared code (`InstanceLifecycle.startForUse`, `StaticIpAllocator.Output`, the host-firewall advisory `FirewallDetector.warnIfNotRunning(banner)` that `isx shell` prints as a banner, #1458), or the `InstancePrep.Notices` that carry them.
