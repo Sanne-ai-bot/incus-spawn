@@ -8,6 +8,7 @@ paths:
   - "common/src/main/java/dev/incusspawn/ClientLog.java"
   - "appliance/**"
   - "cli/src/main/java/dev/incusspawn/command/BuildCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/CowPoolBacking.java"
   - "cli/src/main/java/dev/incusspawn/command/BuildProgress.java"
   - "cli/src/main/java/dev/incusspawn/command/BuildTools.java"
   - "cli/src/main/java/dev/incusspawn/command/GuestProvisioning.java"
@@ -186,6 +187,12 @@ A CoW pool is **required** for instance creation and copying -- `requireCowPool(
 `importImage()` sends `X-Incus-Pool` targeting the CoW pool so base images don't pile up on a non-CoW default.
 `isx branch` and `BuildCommand.buildFromParent()` warn when a copy will be full (non-CoW), and `isx doctor` surfaces three cases -- no CoW pool (FAIL with Linux remediation), default profile root disk on a non-CoW pool (WARN with auto-fix remediation), and instances on non-CoW pools (WARN with rebuild/move guidance).
 `isCowDriver()` and `rootDiskPoolFromDevices()` are the unit-testable helpers.
+
+**Pool backing** (#1656, `CowPoolBacking` in `cli/command`): on a host whose `/var/lib/incus/storage-pools` is on btrfs, `isx init` creates `cow` with `source=/var/lib/incus/storage-pools/cow` (Incus makes the subvolume; no size cap), never a loop file, which would make every write copy-on-write twice.
+If the subvolume create fails, init and doctor's remediation fall back to a loop without compression (`CowPoolBacking.create`).
+Elsewhere it keeps the 100 GiB loop file with `btrfs.mount_options=user_subvol_rm_allowed,noatime,commit=300,compress=zstd:1`.
+`isx doctor` warns about a loop file on btrfs (linking the migration in `docs/dev/MIGRATIONS.md`, `CowPoolBacking.MIGRATION_NOTES`), offers the loop mount options, and offers a resize only for a loop file (a `.img` source, `CowPoolBacking.isLoopFile`).
+On a subvolume pool Incus's lazy `btrfs quota enable` covers the whole host filesystem, and any `btrfs.mount_options` remount the host filesystem, so isx sets none there; see DESIGN.md "How the pool is backed".
 
 **Default profile pool upgrade**: When Incus is set up before `isx init` (common on Ubuntu, where `incus admin init --minimal` creates a `default` dir pool), the default profile's root disk may point to the `dir` pool even after init creates a `cow` btrfs pool.
 `ensureDefaultProfile()` now detects this: after ensuring the profile has a root disk and NIC, `upgradeProfilePoolIfNeeded()` checks whether the existing root disk is on a non-CoW pool while a CoW pool is available, and updates it.
