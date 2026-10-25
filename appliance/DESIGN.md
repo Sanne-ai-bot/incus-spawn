@@ -233,9 +233,12 @@ It holds for vfkit only: the QEMU backend attaches the images without `discard=u
   The compressor was lzo, the only one this kernel has: there is no `CRYPTO_LZ4` or `CRYPTO_ZSTD`, so `zswap.compressor=lz4` would fall back to it.
   A fifth fewer swap writes for a sixth of the VM's memory, and nothing for a VM that does not swap, is not worth turning on.
   `CONFIG_ZSWAP=y` stays for the cgroup `memory.zswap.*` controls.
-- **Swap space does not come back.**
-  `swapon` runs without `--discard`, so `swap.img` keeps its high-water mark until `isx vm reset`: 7.9 GB after the run above, with the swap empty again.
-  The 12 GB device bounds it.
+- **Swap space comes back at the next boot.**
+  Without discard, `swap.img` kept its high-water mark until `isx vm reset`: 7.9 GB after the run above, with the swap empty again, and 12 GB at worst.
+  `rcS` now runs `swapon --discard=once`, which discards the whole device when swap is enabled; nothing in swap survives a boot anyway.
+  Measured: `swap.img` went from 12.0 GB on disk to 12 KB across one restart, and the kernel log flags the swap `Ds`.
+  The discard of a fully allocated 12 GB image did not show in the boot: swap was on at 0.74 s and `ISX READY` came at 3.50 s.
+  Discarding freed pages as they are freed (`--discard=pages`) is left off: it would turn swap churn into APFS hole punches while the VM runs.
 
 ## Boot Backends
 

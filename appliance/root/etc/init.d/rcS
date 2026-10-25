@@ -39,7 +39,14 @@ if [ -b /dev/vdb ]; then
     if ! blkid /dev/vdb | grep -q swap; then
         mkswap /dev/vdb >/dev/null
     fi
-    swapon /dev/vdb
+    # Swap pages are worthless across a boot: discard them all once, so the
+    # host's sparse swap image gives back what the last boot paged out.
+    # Fall back to plain swapon: rcS runs under set -e, and a swapon without
+    # the option must not stop the boot; say so, or the lost discard leaves no trace.
+    if ! swapon --discard=once /dev/vdb; then
+        echo "incus-spawn: swapon --discard=once failed; swap is on without discard"
+        swapon /dev/vdb
+    fi
 fi
 
 #-- Data disk: persistent Incus state (survives root disk upgrades) --#
