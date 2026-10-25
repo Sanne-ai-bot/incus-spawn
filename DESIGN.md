@@ -4840,6 +4840,17 @@ Deferring a warning keeps the common case free of a keypress, while progress and
 A TUI that never opens (init declined) prints the held warnings as it closes, so none is lost.
 Without a terminal there is nothing to wait on and no TUI to cover anything, so no pause.
 
+### Terminals the TUI cannot assume
+
+What looked fine in Ghostty broke in Termius (#1681).
+
+**The screen is cleared before the first frame.**
+tamboui sends only the cells that differ from the previous frame, and its first frame is compared with a blank one, so a cell the TUI leaves blank is never sent.
+A terminal that keeps its old contents on entering the alternate screen showed them through those cells, such as the cursor gutter left of each table.
+`Tui.openRunner` clears the screen once the runner is open.
+Ctrl+L clears it again in any mode, for output something else wrote over the TUI, after its reload so the screen is not blank meanwhile.
+tamboui clears on resize only, so this belongs upstream too; until then isx does it.
+
 ## VM Appliance
 
 A minimal Alpine Linux VM image with Incus pre-installed, providing CI integration testing and macOS support.
