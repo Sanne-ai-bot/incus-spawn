@@ -16,7 +16,7 @@ Where the implementation differs from the plan, this page says so beside the pla
 
 Still open:
 
-- The quality floors in `.github/scripts/check-pgo-quality.sh` are 10% applicability and 80% relevance, pending Sanne's choice of 14% and 95%, just below the lowest figures measured across the three verification dispatches (15.04% and 97.04%).
+- The quality floors in `.github/scripts/check-pgo-quality.sh` are 10% applicability and 80% relevance, pending Sanne's choice of 14% and 95%, just below the lowest figures measured: 15.04% applicability (the macOS aarch64 CLI in dispatch run 40183611322; 15.05% in the table below) and 97.04% relevance (the macOS aarch64 proxy).
 - Cold paths no workload reaches are deferred: npm caching and the WebSocket relay (also host routes and the MCP bridge) compile as cold code; loads for npm and WebSocket are a later step.
 - The Intel macOS build stays unprofiled (Phase 3 below).
 
