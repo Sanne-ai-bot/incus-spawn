@@ -53,6 +53,8 @@ vfkit's own stdout/stderr go to `Environment.vfkitLogFile()`, not `vm.log`: vfki
 A port must be chosen before vfkit binds it, and vfkit exits fatally when its REST address is in use, so a port taken in between meant no VM.
 `VmManager.vfkitCommand` builds the command line, `startVfkit` removes a socket file a killed vfkit left (vfkit does not start on a path that exists), and `VfkitRest.post` sends the request through `UnixSocketHttp`, the public door to `UnixSocketTransport` for a peer that is not Incus, because `java.net.http.HttpClient` cannot connect to a Unix socket.
 Do not write a second HTTP-over-Unix-socket client, the transport's watchdog and its strict response parser are the tested ones.
+Every response is read through `UnixSocketTransport.socketInput` (#1650): `HttpResponseReader` parses a head a byte at a time, and a bare channel stream made each byte a read call.
+A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past one response belong to the next.
 vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so a state directory whose path contains `#`, `?` or `%xx` would give the two different paths (the vsock `socketURL=` arguments have the same exposure).
 `vm.rest-uri` holds `unix://<path>`; `VfkitRest` still understands the `http://localhost:<port>` an older isx wrote, so a VM started before an upgrade is still asked to shut down rather than signalled.
 

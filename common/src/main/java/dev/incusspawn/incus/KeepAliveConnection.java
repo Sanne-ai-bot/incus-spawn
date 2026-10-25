@@ -60,7 +60,7 @@ final class KeepAliveConnection {
             // so the connection gauge and the fail-open concurrency semaphore still see them.
             boolean permit = UnixSocketTransport.connectionOpened();
             return new KeepAliveConnection(socketPath, channel,
-                    Channels.newInputStream(channel), Channels.newOutputStream(channel), permit);
+                    UnixSocketTransport.socketInput(channel), Channels.newOutputStream(channel), permit);
         } catch (IOException e) {
             try { channel.close(); } catch (IOException ignored) {}
             throw e;

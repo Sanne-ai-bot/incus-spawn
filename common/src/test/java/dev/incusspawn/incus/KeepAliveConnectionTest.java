@@ -36,6 +36,7 @@ class KeepAliveConnectionTest {
     private volatile int closeAfterRequests = Integer.MAX_VALUE;
     private volatile boolean corruptResponse = false;
     private volatile boolean stallResponses = false;
+    private volatile boolean answerAhead = false;
 
     @BeforeEach
     void start() throws IOException {
@@ -96,6 +97,13 @@ class KeepAliveConnectionTest {
                     var bodyStr = "{\"n\":" + handled + "}";
                     resp = "HTTP/1.1 200 OK\r\nContent-Length: " + bodyStr.length() + "\r\n\r\n" + bodyStr;
                 }
+                if (answerAhead) {
+                    // The next request's answer too, in the same write: whatever the client reads
+                    // ahead of the first response must still be there for the second.
+                    var next = "{\"n\":" + (handled + 1) + "}";
+                    resp += "HTTP/1.1 200 OK\r\nContent-Length: " + next.length() + "\r\n\r\n" + next;
+                    handled++;
+                }
                 out.write(resp.getBytes(StandardCharsets.US_ASCII));
                 out.flush();
             }
@@ -125,6 +133,18 @@ class KeepAliveConnectionTest {
         assertTrue(r2.isSuccess());
         assertEquals(1, connectionsAccepted.get(), "both requests must ride one socket");
         assertEquals(2, requestsHandled.get());
+    }
+
+    @Test
+    @Timeout(10)
+    void bytesReadAheadOfOneResponseServeTheNext() throws IOException {
+        answerAhead = true;
+        var conn = KeepAliveConnection.open(sock.toString());
+        var r1 = conn.execute("GET", "/1.0", null, Map.of(), new byte[0], 5);
+        var r2 = conn.execute("GET", "/1.0", null, Map.of(), new byte[0], 5);
+        conn.close();
+        assertEquals("{\"n\":1}", new String(r1.body(), StandardCharsets.US_ASCII));
+        assertEquals("{\"n\":2}", new String(r2.body(), StandardCharsets.US_ASCII));
     }
 
     @Test

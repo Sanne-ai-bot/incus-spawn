@@ -11,6 +11,7 @@ import java.net.UnixDomainSocketAddress;
 import java.nio.ByteOrder;
 import java.nio.channels.Channels;
 import java.nio.channels.ClosedChannelException;
+import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -192,7 +193,7 @@ class UnixSocketTransport implements IncusTransport {
                 opened = true;
                 permit = connectionOpened();
                 var out = Channels.newOutputStream(channel);
-                var in  = Channels.newInputStream(channel);
+                var in  = socketInput(channel);
                 writeRequest(out, method, path, contentType, extraHeaders, bodyBytes);
                 // Do NOT shutdownOutput() — Incus cancels the request context on half-close.
                 // Connection: close makes the server close its end after the response, which
@@ -221,7 +222,7 @@ class UnixSocketTransport implements IncusTransport {
                 opened = true;
                 permit = connectionOpened();
                 var out = Channels.newOutputStream(channel);
-                var in  = Channels.newInputStream(channel);
+                var in  = socketInput(channel);
                 writeRequestFromFile(out, method, path, contentType, extraHeaders, bodyFile);
                 return readResponse(in);
             } catch (ClosedChannelException e) {
@@ -245,7 +246,7 @@ class UnixSocketTransport implements IncusTransport {
         try {
             channel.connect(addr);
             var out = Channels.newOutputStream(channel);
-            var in  = new SocketInput(Channels.newInputStream(channel));
+            var in  = socketInput(channel);
             wsHandshake(out, in, wsPath);
             if (!watchdog.cancel()) throw timeoutException(loggablePath, timeoutSeconds);
             boolean permit = connectionOpened();
@@ -430,18 +431,31 @@ class UnixSocketTransport implements IncusTransport {
         }
     }
 
-    /** Bytes per {@link #SocketInput} fill: a frame header and most frames come from one read. */
+    /**
+     * What every Incus response is read through.
+     * A response head is parsed a byte at a time, so a bare channel stream cost one read call per
+     * head byte (#1650).
+     * A pooled connection keeps the one it opened with: what it read ahead belongs to the next response.
+     */
+    static InputStream socketInput(ReadableByteChannel channel) {
+        return new SocketInput(Channels.newInputStream(channel));
+    }
+
+    /** Bytes per {@link #SocketInput} fill: a frame header and most frames, or a response, come from one read. */
     static final int READ_BUFFER = 64 * 1024;
     /**
-     * What a {@link #SocketInput} starts with: room for the handshake's answer and control messages.
+     * What a {@link #SocketInput} starts with: room for a response head and small body, the
+     * handshake's answer and control messages.
      * It grows to {@link #READ_BUFFER} once more arrives at a time, so a socket that reads only
-     * small messages -- an exec's control and stdin fds -- never zeroes 64 KiB.
+     * small messages -- an exec's control and stdin fds, most REST answers -- never zeroes 64 KiB.
+     * A pooled connection holds its buffer for life, at most {@link #READ_BUFFER} each.
      */
     static final int FIRST_READ_BUFFER = 4 * 1024;
 
     /**
-     * The socket's bytes, read ahead in large reads. Without it every frame header byte was a
-     * read call of its own (#1643).
+     * The socket's bytes, read ahead in large reads, for every Incus socket: REST, pooled and
+     * WebSocket alike. Without it every frame header byte was a read call of its own (#1643), and
+     * every response head byte too (#1650).
      * Not a {@link java.io.BufferedInputStream}: its lock would hold {@link #available} -- the
      * drain's {@code hasUnread()} -- behind a reader parked in {@code read()} until bytes came.
      * One thread reads; {@code available()} may be asked from any, and reads the count the reader

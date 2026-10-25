@@ -4501,6 +4501,9 @@ That single fault surfaced in two directions and shaped several design choices:
   A tunnel that drops connections mid-exchange turns any parser that reads EOF as "end of line" or "end of headers" into a source of silent data loss.
   The one-shot request path used to: a response cut off in its headers came back as a 200 with an empty body, a cut-off chunked body spun until the watchdog fired, and a WebSocket upgrade the peer hung up on "succeeded" -- handing exec a dead fd whose output then came back empty while the exit code (from `/wait`) looked fine.
   So there is one strict parser, `HttpResponseReader`, shared by the one-shot path, `KeepAliveConnection` and the WebSocket handshake.
+  It reads a head a byte at a time, so every path hands it the socket through `UnixSocketTransport.socketInput`, the read-ahead WebSocket frames use (#1650).
+  A bare channel stream cost a read call per head byte: `isx list -q` made 331 one-byte reads for its one request.
+  A pooled connection keeps the read-ahead it opened with for its whole life, since what it read past one response belongs to the next.
   Every early EOF is an `EOFException` (EOF before the first byte is `NoResponseException`, which the keep-alive path maps to its retry-safe stale case), and malformed numbers are `IOException`s rather than runtime exceptions that escape callers' handlers.
   WebSocket frames follow the same rule (EOF inside a frame is an error; EOF between frames is end-of-stream).
   The WebSocket connect + handshake is bounded by the transport timeout like any request, since a wedged tunnel accepts and then says nothing.
