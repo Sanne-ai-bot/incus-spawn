@@ -1,11 +1,14 @@
 #!/bin/bash
-# Runs update-base-image.yml's three steps, as the workflow_dispatch backstop runs them, against a
-# fake images release that carries -vm-direct and SHA256SUMS.v2 (#1255), with gh, curl and the
-# remote faked. Checks the switch to -vm-direct, with both arches' checksums, from a stock
+# Runs update-base-image.yml's three steps, as the workflow_dispatch backstop and the
+# repository_dispatch path run them, against a fake images release that carries -vm-direct and
+# SHA256SUMS.v2 (#1255), with gh and the remote faked. Checks the switch to -vm-direct, with both arches' checksums, from a stock
 # built-in; after a stock-image bump of the same release was merged; and while that bump's
 # branch is still open; a routine bump of a built-in already on -vm-direct; the refusal to move
 # such a built-in back to the stock image when a release lacks -vm-direct; and that the PR names
-# a switch of VM image and a release published again under its tag. The built-in it starts from is
+# a switch of VM image and a release published again under its tag. Both events take every checksum
+# from the release's sums files, for the names the built-in's URLs download, and stop on a payload
+# that disagrees, a sum the release lacks or a malformed one (#1678); the PR lists each sum beside its
+# asset. Then runs verify-base-image-sums.sh, the pull-request check, against the same release. The built-in it starts from is
 # written here, held to minimal.yaml's keys. Needs bash, git and mikefarah yq.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -30,17 +33,14 @@ cat > "$WORK/bin/gh" <<EOF
 #!/bin/bash
 case "\$*" in
   *"/releases --jq"*) echo $TAG ;;
-  *"releases/tags/$TAG"*"SHA256SUMS.v2"*) [ -n "\${NO_V2:-}" ] || echo https://example.invalid/SHA256SUMS.v2 ;;
-  *"releases/tags/$TAG"*'SHA256SUMS")'*) echo https://example.invalid/SHA256SUMS ;;
+  "release download $TAG -R Sanne/incus-spawn-images -p SHA256SUMS -p SHA256SUMS.v2 -D "*)
+      rel="\${RELEASE:-$WORK/release}"
+      cp "\$rel/SHA256SUMS" "\${@: -1}"
+      [ -n "\${NO_V2:-}" ] || cp "\$rel/SHA256SUMS.v2" "\${@: -1}" ;;
+  "release download "*) echo "release not found" >&2; exit 1 ;;
   "pr create"*) printf '%s\n' "\$@" >> "$WORK/prs" ;;
   *) echo "unexpected: gh \$*" >&2; exit 2 ;;
 esac
-EOF
-cat > "$WORK/bin/curl" <<EOF
-#!/bin/bash
-url=""; out=""
-while [ \$# -gt 0 ]; do case "\$1" in -o) out=\$2; shift ;; https://*) url=\$1 ;; esac; shift; done
-cp "$WORK/release/\${url##*/}" "\$out"
 EOF
 chmod +x "$WORK/bin/"*
 
@@ -51,6 +51,8 @@ run() {
     local dir="$WORK/run-$RANDOM"
     mkdir -p "$dir/common/src/main/resources/images"
     cp "$1" "$dir/common/src/main/resources/images/minimal.yaml"
+    mkdir -p "$dir/.github/scripts"
+    cp "$REPO/.github/scripts/base-image-sums.sh" "$REPO/.github/scripts/verify-base-image-sums.sh" "$dir/.github/scripts/"
     (
         cd "$dir"
         git init -q -b main && git add -A && git -c user.name=t -c user.email=t@t commit -qm init
@@ -58,23 +60,27 @@ run() {
         [ -n "${2:-}" ] && git push -q origin "main:refs/heads/$2"
         export PATH="$WORK/bin:$PATH" GITHUB_OUTPUT="$dir/out" GH_TOKEN=x
         rm -f "$WORK/prs"
-        EVENT_NAME=workflow_dispatch PAYLOAD=null bash -eo pipefail "$WORK/resolve.sh" >/dev/null
+        EVENT_NAME="${EVENT_NAME:-workflow_dispatch}" PAYLOAD="${PAYLOAD:-null}" bash -eo pipefail "$WORK/resolve.sh" >/dev/null
         set -a; . "$dir/out"; set +a
         [ "$changed" = true ] || { echo "UNCHANGED"; exit 0; }
-        TAG=$tag C_X86=$c_x86 C_ARM=$c_arm V_X86=$v_x86 V_ARM=$v_arm VM_KIND=$vm_kind \
+        TAG=$tag C_X86=$c_x86 C_ARM=$c_arm V_X86=$v_x86 V_ARM=$v_arm VM_KIND=$vm_kind VM_FILE=${vm_file:-} \
             bash -eo pipefail "$WORK/update.sh" >/dev/null
         TAG=$tag CURRENT_TAG=$current VM_KIND=$vm_kind REPUBLISHED=${republished:-} VM_SWITCH=${vm_switch:-} \
             C_X86=$c_x86 C_ARM=$c_arm V_X86=$v_x86 V_ARM=$v_arm bash -eo pipefail "$WORK/pr.sh" >/dev/null 2>&1
         [ -f "$WORK/prs" ] || { echo "NO-PR"; exit 0; }
         cat common/src/main/resources/images/minimal.yaml
         sed -n '/^--title$/{n;s/^/title: /;p}' "$WORK/prs"
+        sed -n '/^--body$/,/^--base$/{s/^/body: /;p}' "$WORK/prs"
         echo "branch: $(git branch --show-current)"
     )
 }
 
+# yaml_of <run output>: the resulting minimal.yaml alone.
+yaml_of() { grep -v '^title: \|^branch: \|^body: ' <<<"$1"; }
+
 expect_direct() {
     local out what="$2"
-    out="$(grep -v '^title: \|^branch: ' <<<"$1")"
+    out="$(yaml_of "$1")"
     grep -q 'vm_image_url: .*/{tag}/fedora-44-{arch}-vm-direct.tar.xz$' <<<"$out" || fail "$what: vm_image_url not -vm-direct: $out"
     grep -q "image_tag: $TAG" <<<"$out" || fail "$what: tag not $TAG"
     [ "$(yq -r '.vm_image_sha256.x86_64' <<<"$out")" = "$(H 15)" ] || fail "$what: x86_64 VM checksum is not -vm-direct's"
@@ -154,3 +160,83 @@ NAMED="$(printf '%s %s %s %s' "$(H 14)" "$(H 12)" "$(H 15)" "$(H 16)" | sha256su
 grep -qx "branch: bot/update-base-image-$TAG-vm-direct-$NAMED" <<<"$out" \
     || fail "a re-publish's branch is not named by all four checksums: $(grep '^branch:' <<<"$out")"
 echo "ok: re-publish named, branch by all four checksums"
+
+# The PR lists each checksum beside the asset it was matched to, and how to repeat the check.
+out="$(run "$BUILTIN")"
+grep -qx "body: | \`vm_image_sha256.aarch64\` | \`fedora-44-aarch64-vm-direct.tar.xz\` | \`$(H 16)\` |" <<<"$out" \
+    || fail "the PR does not pair each checksum with its asset: $(grep '^body:' <<<"$out")"
+grep -q "^body: .*gh release download $TAG -R Sanne/incus-spawn-images -p SHA256SUMS.v2 -O -" <<<"$out" \
+    || fail "the PR does not give the command to repeat the check"
+echo "ok: PR body pairs each checksum with its asset"
+
+# repository_dispatch: the payload's tag is used, its checksums only checked against the release (#1678).
+payload() { # <container x86> <container arm> <vm x86> <vm arm> <direct x86> <direct arm>
+    printf '{"tag":"%s","sha256":{"container":{"x86_64":"%s","aarch64":"%s"},"vm":{"x86_64":"%s","aarch64":"%s"},"vm_direct":{"x86_64":"%s","aarch64":"%s"}}}' \
+        "$TAG" "$@"
+}
+expect_direct "$(EVENT_NAME=repository_dispatch PAYLOAD="$(payload "$(H 14)" "$(H 12)" "$(H 13)" "$(H 11)" "$(H 15)" "$(H 16)")" run "$BUILTIN")" \
+    "dispatch whose payload agrees with the release"
+expect_direct "$(EVENT_NAME=repository_dispatch PAYLOAD="{\"tag\":\"$TAG\"}" run "$BUILTIN")" "dispatch carrying only the tag"
+# The images repo sends empty strings for a -vm-direct it did not build.
+out="$(NO_V2=1 EVENT_NAME=repository_dispatch PAYLOAD="$(payload "$(H 14)" "$(H 12)" "$(H 13)" "$(H 11)" "" "")" run "$BUILTIN")"
+[ "$(yq -r '.vm_image_sha256.x86_64' <<<"$(yaml_of "$out")")" = "$(H 13)" ] || fail "dispatch of a stock-only release: $out"
+echo "ok: dispatch of a release without -vm-direct, empty direct sums in the payload"
+
+EVENT_NAME=repository_dispatch PAYLOAD="$(payload "$(H 14)" "$(H 77)" "$(H 13)" "$(H 11)" "$(H 15)" "$(H 16)")" \
+    run "$BUILTIN" > "$WORK/out" 2> "$WORK/err" && fail "a payload checksum that differs from the release's was accepted: $(cat "$WORK/out")"
+grep -q "sha256.container.aarch64 ($(H 77)) is not the release's sum for fedora-44-aarch64.tar.xz ($(H 12))" "$WORK/err" \
+    || fail "a payload mismatch does not print both checksums: $(cat "$WORK/err")"
+echo "ok: payload that disagrees with the release stops the run"
+
+EVENT_NAME=repository_dispatch PAYLOAD='{"tag":"fedora-44-20991230"}' run "$BUILTIN" >/dev/null 2>&1 \
+    && fail "a dispatch for a tag with no release was accepted"
+EVENT_NAME=repository_dispatch PAYLOAD='{"tag":"../../x"}' run "$BUILTIN" >/dev/null 2>&1 \
+    && fail "a dispatch with a malformed tag was accepted"
+echo "ok: dispatch for a missing or malformed tag"
+
+# release_variant <name> <sed on SHA256SUMS> [<sed on SHA256SUMS.v2>, the same by default]: a copy
+# of the release, edited.
+release_variant() {
+    mkdir -p "$WORK/$1"
+    sed "$2" "$WORK/release/SHA256SUMS" > "$WORK/$1/SHA256SUMS"
+    sed "${3:-$2}" "$WORK/release/SHA256SUMS.v2" > "$WORK/$1/SHA256SUMS.v2"
+}
+release_variant no-arm-rootfs '/ fedora-44-aarch64.tar.xz$/d'
+RELEASE="$WORK/no-arm-rootfs" run "$BUILTIN" > "$WORK/out" 2> "$WORK/err" \
+    && fail "a release without one container rootfs was accepted: $(cat "$WORK/out")"
+grep -q "lists no fedora-44-aarch64.tar.xz" "$WORK/err" || fail "a missing sum does not name its asset: $(cat "$WORK/err")"
+release_variant short-sum "s/^$(H 14)/$(H 14 | cut -c1-63)/"
+RELEASE="$WORK/short-sum" run "$BUILTIN" > "$WORK/out" 2> "$WORK/err" \
+    && fail "a malformed sum was accepted: $(cat "$WORK/out")"
+grep -q "malformed sum for fedora-44-x86_64.tar.xz" "$WORK/err" || fail "a malformed sum does not name its asset: $(cat "$WORK/err")"
+release_variant disagree '' "s/^$(H 12)/$(H 66)/"
+RELEASE="$WORK/disagree" run "$BUILTIN" >/dev/null 2>&1 && fail "SHA256SUMS and SHA256SUMS.v2 disagreeing was accepted"
+echo "ok: a missing, malformed or contradicted sum stops the run"
+
+# The asset names are the built-in's URLs', not literals: a release of another Fedora.
+release_variant fedora-45 's/fedora-44-/fedora-45-/'
+sed 's/fedora-44-{arch}/fedora-45-{arch}/' "$BUILTIN" > "$WORK/fedora-45.yaml"
+out="$(RELEASE="$WORK/fedora-45" run "$WORK/fedora-45.yaml")"
+grep -q 'vm_image_url: .*/{tag}/fedora-45-{arch}-vm-direct.tar.xz$' <<<"$out" || fail "fedora-45 vm_image_url: $out"
+[ "$(yq -r '.image_sha256.aarch64' <<<"$(yaml_of "$out")")" = "$(H 12)" ] \
+    || fail "fedora-45 container checksum: $out"
+echo "ok: asset names come from the URLs"
+
+# verify-base-image-sums.sh, the pull-request check, against the same fake release.
+verify() { PATH="$WORK/bin:$PATH" bash "$REPO/.github/scripts/verify-base-image-sums.sh" "$1"; }
+for y in direct stock-bump; do
+    sed "s/^image_tag: .*/image_tag: $TAG/" "$WORK/$y.yaml" > "$WORK/verify-$y.yaml"
+    verify "$WORK/verify-$y.yaml" >/dev/null || fail "verify rejects the release's own sums ($y)"
+done
+expect_rejected() { # <what> <yq edit of a correct -vm-direct minimal.yaml> <expected message>
+    yq "$2" "$WORK/verify-direct.yaml" > "$WORK/verify-bad.yaml"
+    verify "$WORK/verify-bad.yaml" >/dev/null 2> "$WORK/err" && fail "verify accepted $1"
+    grep -q "$3" "$WORK/err" || fail "verify's message for $1: $(cat "$WORK/err")"
+}
+expect_rejected "the VM arches swapped" ".vm_image_sha256.x86_64 = \"$(H 16)\" | .vm_image_sha256.aarch64 = \"$(H 15)\"" \
+    "vm_image_sha256.x86_64 is $(H 16), but release $TAG lists $(H 15) for fedora-44-x86_64-vm-direct.tar.xz"
+expect_rejected "the stock VM sums under a -vm-direct URL" ".vm_image_sha256.x86_64 = \"$(H 13)\"" "vm_image_sha256.x86_64 is $(H 13)"
+expect_rejected "a container sum paired with the VM disk" ".image_sha256.x86_64 = \"$(H 15)\"" "image_sha256.x86_64 is $(H 15)"
+expect_rejected "a tag with no release" ".image_tag = \"fedora-44-20991230\"" "Cannot download the sums files"
+expect_rejected "an asset the release lacks" '.image_url |= sub("fedora-44-"; "fedora-43-")' "lists no fedora-43-x86_64.tar.xz"
+echo "ok: verify-base-image-sums.sh checks each sum against its asset"

@@ -40,11 +40,10 @@ Probing instances, running package managers and reading build output by hand fil
 **Base-image checksums are verified against the release, never trusted.**
 The `image_sha256` and `vm_image_sha256` values in `common/src/main/resources/images/minimal.yaml` are what makes a base-image download safe, so a wrong one is either a broken install or a silently unverified image.
 They have been wrong on `main` more than once -- most recently `fedora-44-20261001`, merged wrong in `99d8d9dc` and repaired in `cf7be662`.
-The cause is structural: `update-base-image.yml` has two paths, and only the manual backstop derives the sums from the release's own `SHA256SUMS`.
-The `repository_dispatch` path -- the one that actually runs -- takes the payload the images repo sent and comments "trust the payload".
-**Never merge a base-image bump on the payload alone.**
-Check all four against the authoritative asset.
-Mind that the pairing is as easy to get wrong as the digits (`-vm` is the VM disk, the bare name is the container rootfs, and each has an x86_64 and an aarch64):
+The cause was structural: the `repository_dispatch` path of `update-base-image.yml` copied the sums from the payload the images repo sent.
+Both paths now derive them from the release's own sums files and stop on a payload that disagrees, and `verify-base-image-checksums.yml` checks all four on every PR that changes `minimal.yaml` (#1678).
+**Never merge a base-image bump whose `verify-base-image-checksums` job did not run or did not pass.**
+Mind that the pairing is as easy to get wrong as the digits (`-vm` is the VM disk, the bare name is the container rootfs, and each has an x86_64 and an aarch64); the job checks it, and its log and the bump's PR give the command to repeat the check:
 
 ```shell
 gh release download <tag> -R Sanne/incus-spawn-images -p SHA256SUMS -O -
