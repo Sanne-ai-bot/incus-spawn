@@ -163,7 +163,7 @@ perceive 216 µs, and 41 MB is a real download and disk cost for users.
 
 ## Profile-guided optimization (issue #1637)
 
-The plan is [docs/dev/PGO.md](https://github.com/Sanne/incus-spawn/blob/d2d84713f6913f5a74128eb74f4884e8473063c0/docs/dev/PGO.md), from #1636. Outcomes of each phase are recorded here as it runs.
+The plan is [PGO.md](PGO.md). Outcomes of each phase are recorded here as it runs.
 
 ### Phase 0, finished 2026-10-24
 

@@ -261,7 +261,7 @@ Use this before and after changes to the proxy, Vert.x configuration, or native 
 `--load=anthropic` and `--load=vertex` drive streamed model calls from Hyperfoil inside an instance branched from `tpl-isx-bench` (`bench/.incus-spawn/images/`), since the proxy injects only for a caller it knows by address and proof.
 They answer from `UpstreamStub.java`, on a config of the run's own (`ISX_BENCH_CONFIG`), never the user's.
 `--proxy=BIN`/`--cli=BIN` measure binaries built elsewhere, for an A/B of build flags.
-`bench/pgo-collect.sh` collects the PGO profiles of docs/dev/PGO.md (#1636, not yet on `main`) from instrumented builds: `run.sh --collect` once per load, then `cli.sh --collect`'s weighted flows, one gzipped `.iprof` per process.
+`bench/pgo-collect.sh` collects the PGO profiles of docs/dev/PGO.md from instrumented builds: `run.sh --collect` once per load, then `cli.sh --collect`'s weighted flows, one gzipped `.iprof` per process.
 `release.yml`'s `profiles` job runs it on every release, on Linux amd64 with Incus prepared as `isx-integration-tests-native` does, merges the dumps (`scripts/pgo-merge.sh`) and uploads `pgo-profiles`.
 It runs the collection under `sudo -u "$USER"`, not `sg incus-admin`: rootless podman's `newuidmap` refuses a process whose primary group `sg` changed, so Hyperfoil cannot be extracted.
 The four `build` jobs need it, and the three on GraalVM 25.4 build with `-Dnative.pgo=$GITHUB_WORKSPACE/pgo` (an absolute path) and check `.github/scripts/check-pgo-quality.sh`; the Intel macOS build stays unprofiled.

@@ -179,7 +179,7 @@ bench/run.sh --load=anthropic --proxy=/tmp/b/isx-proxy --cli=/tmp/b/isx --label=
 
 ## PGO Profile Collection (`pgo-collect.sh`)
 
-The workloads [docs/dev/PGO.md](https://github.com/Sanne/incus-spawn/blob/d2d84713f6913f5a74128eb74f4884e8473063c0/docs/dev/PGO.md) (#1636) collects profiles from, against
+The workloads [docs/dev/PGO.md](../docs/dev/PGO.md) collects profiles from, against
 instrumented builds of both binaries. Linux only, with the proxy service stopped:
 
 ```shell

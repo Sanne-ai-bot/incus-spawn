@@ -1,7 +1,7 @@
 #!/bin/bash
 # bench/pgo-collect.sh — Collect the PGO profiles the release binaries are optimized with
 #
-# Runs instrumented builds of isx-proxy and isx through the workloads docs/dev/PGO.md (#1636) lists:
+# Runs instrumented builds of isx-proxy and isx through the workloads docs/dev/PGO.md lists:
 # the proxy under the maven, saturate, anthropic and vertex loads of bench/run.sh, then the
 # weighted CLI flows of bench/cli.sh with the proxy serving them. Every process writes one
 # gzipped .iprof; the optimized build takes them all (--pgo=a,b,...), and their counts add up.
