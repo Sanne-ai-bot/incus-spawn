@@ -118,7 +118,9 @@ jobs:
           sudo --preserve-env -u "$USER" env PATH="$PATH" \
             bench/pgo-collect.sh --proxy=$HOME/.local/bin/isx-proxy --cli=$HOME/.local/bin/isx --out=$RUNNER_TEMP/pgo-raw
 
+      # About 7 minutes when it works; a merge that stalls fails here instead of using up the job
       - name: Merge profiles
+        timeout-minutes: 25
         run: |
           scripts/pgo-merge.sh cli "$RUNNER_TEMP/pgo-raw/cli" pgo
           scripts/pgo-merge.sh proxy "$RUNNER_TEMP/pgo-raw/proxy" pgo
