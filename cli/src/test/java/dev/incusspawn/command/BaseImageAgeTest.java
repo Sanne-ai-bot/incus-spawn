@@ -170,6 +170,16 @@ class BaseImageAgeTest {
     }
 
     @Test
+    void thePinnedImageWarningOrdersReleasesTheSameWay() {
+        assertTrue(BuildCommand.isNewerRelease("fedora-44-20261021", "fedora-9-20250101"));
+        assertFalse(BuildCommand.isNewerRelease("fedora-9-20250101", "fedora-44-20261021"));
+        assertTrue(BuildCommand.isNewerRelease("fedora-44-20261021", "fedora-44-20261001"));
+        assertFalse(BuildCommand.isNewerRelease("fedora-44-20261021", "fedora-44-20261021"));
+        assertTrue(BuildCommand.isNewerRelease("nightly-b", "nightly-a"), "another shape keeps the string order");
+        assertTrue(BuildCommand.isNewerRelease("fedora-44-20261021-2", "fedora-44-20261021"), "a second release that day");
+    }
+
+    @Test
     void aKnownFixIsMissingOnlyWhenTheReleaseIsBeforeItAndARebuildWouldBringIt() {
         var fixes = List.of(new BaseImageAge.KnownFix("fedora-44-20261009", "breaks"));
         var before = new BaseImageAge.Assessment(Standing.OLDER, "fedora-44-20261001", "fedora-44-20261021");
