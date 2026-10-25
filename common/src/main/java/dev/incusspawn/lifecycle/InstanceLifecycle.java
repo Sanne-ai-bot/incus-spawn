@@ -260,32 +260,20 @@ public final class InstanceLifecycle {
      * an identity its {@code .gitconfig} never got. Its first reconcile with an account
      * configured asks the guest once, re-derives what is missing and sets the marker -- one
      * exec and one write for such an instance, none for one whose template this isx built.
-     */
-    public static void reconcileAccountIdentities(IncusClient incus, String name) {
-        reconcileAccountIdentities(incus, name, null);
-    }
-
-    /**
-     * As {@link #reconcileAccountIdentities(IncusClient, String)}, from the instance as the
-     * caller already read it -- the shell path's, which would otherwise read it again. Its
-     * account pins, stamps and network mode are all this looks at.
-     */
-    public static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance) {
-        reconcileAccountIdentities(incus, name, instance, BuildOutput::step,
-                msg -> System.err.println("Warning: " + msg));
-    }
-
-    /**
-     * As {@link #reconcileAccountIdentities(IncusClient, String)}, reporting through sinks rather
-     * than the terminal -- the TUI's, where a line printed from a background thread would be
-     * drawn over and lost.
+     *
+     * <p>It reports through the caller's sinks, never the terminal: the TUI's, where a line
+     * printed from a background thread would be drawn over and lost, or a branch's, which the
+     * TUI keeps in its warning log (#1646).
      */
     public static void reconcileAccountIdentities(IncusClient incus, String name,
                                                   Consumer<String> progress, Consumer<String> warnings) {
         reconcileAccountIdentities(incus, name, null, SpawnConfig.load(), null, progress, warnings);
     }
 
-    /** Both of the above: from the caller's read, reporting through sinks. */
+    /**
+     * As above, from the instance as the caller already read it -- the shell path's, which would
+     * otherwise read it again. Its account pins, stamps and network mode are all this looks at.
+     */
     public static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance,
                                                   Consumer<String> progress, Consumer<String> warnings) {
         reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, progress, warnings);
