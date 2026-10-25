@@ -1294,6 +1294,8 @@ The user domain is any user-level process's to write, so it can only narrow.
 When none exists (`security` reports "No Trust Settings"), the admin domain's result stands, and a failed admin read keeps the user's denies.
 When one exists but cannot be read (a timeout, another exit status, a plist that does not parse), its denies are unknown, so the read counts as failed: no Keychain CA is trusted, the admin domain's denies still apply, and the problem is reported (#1530).
 It once let the admin result stand, which trusted a CA the user had denied unseen; `host-ca` propagation would also have installed it in every instance and kept it there under the stamp.
+This holds for isx's own TLS, the CLI's and the proxy's, as well as for what propagation installs in guests: a failed read has one meaning everywhere, which keeps `isx doctor` and the client log truthful.
+A flag that dropped the CAs from guests alone was rejected: the host would then trust a CA its user may have denied, while reporting the Keychain as not fully read.
 The cost is availability: such a process can deny the roots isx needs and break its TLS, and denying every one stops the proxy from starting.
 It could already kill the proxy or edit `~/.config/incus-spawn`, so this gives it nothing new; the proxy's error and `isx doctor` name `security dump-trust-settings`, with and without `-d`, to find the deny.
 
