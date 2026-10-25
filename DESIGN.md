@@ -4469,6 +4469,8 @@ That single fault surfaced in two directions and shaped several design choices:
   The fix (`IncusApi.execWebSocket`) unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint — the daemon's operation state, over a normal HTTP request — as the authoritative completion + exit-code signal, then drains and force-closes the data sockets.
   Completion no longer depends on close-frame delivery.
   Every exec fd is keepalive-pinged (each is a separate socat child that an inactivity reaper would otherwise collect on a quiet command).
+  That includes stdin, which carries no output back, so an `isx ssh-proxy` session nobody types into for 180 s would otherwise lose its input (#1647).
+  Its pongs are drained, and however the exec ends, its stdin socket closes with it (`StdinSocket`), even one still being opened.
   An exec or shell keepalive stops on a flag, never an interrupt (`IncusApi.Keepalive`): an interrupt that lands during a channel write closes the socket and discards output still unread in it.
   Stopping does not wait for a ping in flight either, since one can be stuck behind a stdin write the guest stopped reading.
   So the socket drops a ping that would follow its close frame (`UnixWsConnection.sendPing`).
