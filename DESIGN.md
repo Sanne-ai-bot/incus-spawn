@@ -4842,7 +4842,7 @@ Without a terminal there is nothing to wait on and no TUI to cover anything, so 
 
 ### Terminals the TUI cannot assume
 
-What looked fine in Ghostty broke in Termius (#1681).
+Two things that looked fine in Ghostty broke in Termius (#1681).
 
 **The screen is cleared before the first frame.**
 tamboui sends only the cells that differ from the previous frame, and its first frame is compared with a blank one, so a cell the TUI leaves blank is never sent.
@@ -4850,6 +4850,14 @@ A terminal that keeps its old contents on entering the alternate screen showed t
 `Tui.openRunner` clears the screen once the runner is open.
 Ctrl+L clears it again in any mode, for output something else wrote over the TUI, after its reload so the screen is not blank meanwhile.
 tamboui clears on resize only, so this belongs upstream too; until then isx does it.
+
+**The theme uses no RGB colours.**
+tamboui writes an RGB colour as a 24-bit escape whatever the terminal supports, and Termius drew every one of them in the same green.
+The `isx` badge, the disabled function keys and the scrollbar track became green, and RGB backgrounds became black.
+`TuiTheme` takes a 256-colour palette entry instead, the nearest one unless that would merge two colours that sit together, such as a modal and its inactive input.
+The dark theme's dialogs lose their slight blue tint and become grey.
+It is used everywhere rather than when `COLORTERM` is unset, because SSH does not pass `COLORTERM` on, so most remote sessions would lose it anyway.
+`TuiThemeTest` fails on an RGB colour in either theme.
 
 ## VM Appliance
 
