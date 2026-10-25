@@ -135,10 +135,7 @@ public final class MacKeychainTrust {
                 // the user's own domain, read for its denies alone
                 var userExport = temp(temps, "isx-user-trust-settings", ".plist");
                 var exportingUser = start(temps, running, deadline, SECURITY, "trust-settings-export", userExport.toString());
-                user = () -> {
-                    outputOf(exportingUser);
-                    return Files.readString(userExport);
-                };
+                user = () -> exportOrNull(exportingUser, userExport);
             } catch (IOException e) {
                 user = () -> { throw e; };
             }
@@ -190,29 +187,39 @@ public final class MacKeychainTrust {
                                Running findingSystem, Running findingLogin) throws Exception {
         var export = temp(temps, "isx-trust-settings", ".plist");
         var exporting = start(temps, running, deadline, SECURITY, "trust-settings-export", "-d", export.toString());
+        var settings = exportOrNull(exporting, export);
+        // With no admin trust settings at all, there is nothing to trust or deny
+        if (settings == null) return Trust.NONE;
+        return evaluate(settings, () -> certificatesOf(findingSystem), certificatesOrNone(findingLogin));
+    }
+
+    /** A domain's exported trust settings, or null when it has none; throws when the export fails or times out. */
+    private static String exportOrNull(Running exporting, Path export) throws IOException, InterruptedException {
         var exported = exporting.finish();
-        if (exported.exit() != 0) {
-            // With no admin trust settings at all, there is nothing to trust or deny
-            if (exported.output().contains("No Trust Settings")) return Trust.NONE;
-            return Trust.failed("security trust-settings-export exited " + exported.exit() + ": " + exported.output().strip());
-        }
-        return evaluate(Files.readString(export), () -> certificatesOf(findingSystem), certificatesOrNone(findingLogin));
+        if (exported.exit() == 0) return Files.readString(export);
+        if (exported.output().contains("No Trust Settings")) return null;
+        throw new IOException("security trust-settings-export exited " + exported.exit() + ": " + exported.output().strip());
     }
 
     /**
      * {@code admin} with the user domain's denies added, as macOS refuses what a user marked "Never
      * Trust" (#1552). Its trusts are never used: no certificate body is passed, so it cannot trust,
      * and a user's trust that macOS lets override an administrator's deny does not override it here.
-     * The user domain is anyone's running as the user to write, so it only ever narrows: when it
-     * cannot be read (none exists, a timeout, output that does not parse), {@code admin} stands.
+     * The user domain is anyone's running as the user to write, so it only ever narrows. When there
+     * is none ({@code userDomain} returns null), {@code admin} stands. When it cannot be read (a
+     * timeout, an exit status, output that does not parse), its denies are unknown, so nothing is
+     * trusted: {@code admin}'s denies with a {@code problem}, as for an admin domain not read (#1530).
      */
     static Trust withUserDenies(Trust admin, Callable<String> userDomain) {
         Trust user;
         try {
-            user = evaluate(userDomain.call(), List.of());
+            var exported = userDomain.call();
+            if (exported == null) return admin;
+            user = evaluate(exported, List.of());
         } catch (Exception e) {
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            return admin;
+            var problem = "your own trust settings: " + failed(e).problem();
+            return new Trust(List.of(), admin.denied(), admin.defaultRootsDenied(),
+                    admin.problem() == null ? problem : admin.problem() + "; " + problem, admin.deniedKeys());
         }
         if (user.denied().isEmpty() && !user.defaultRootsDenied()) return admin;
         var trusted = new ArrayList<>(admin.trusted());

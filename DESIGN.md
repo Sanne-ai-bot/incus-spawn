@@ -1290,7 +1290,10 @@ This is narrower than refusing only the named certificate, and possibly than mac
 
 The user's own trust domain is read for its denies alone (`security trust-settings-export` without `-d`, a fourth run under the same deadline, #1552): macOS refuses what a user marked "Never Trust", so isx does too, a certificate or the default roots as a whole.
 Its trusts are never used, since no certificate body is passed with it; a user's trust that macOS lets override an administrator's deny does not override it here, which is narrower than macOS.
-The user domain is any user-level process's to write, so it can only narrow: when it cannot be read (none exists, a timeout, a plist that does not parse), the admin domain's result stands, and a failed admin read keeps the user's denies.
+The user domain is any user-level process's to write, so it can only narrow.
+When none exists (`security` reports "No Trust Settings"), the admin domain's result stands, and a failed admin read keeps the user's denies.
+When one exists but cannot be read (a timeout, another exit status, a plist that does not parse), its denies are unknown, so the read counts as failed: no Keychain CA is trusted, the admin domain's denies still apply, and the problem is reported (#1530).
+It once let the admin result stand, which trusted a CA the user had denied unseen; `host-ca` propagation would also have installed it in every instance and kept it there under the stamp.
 The cost is availability: such a process can deny the roots isx needs and break its TLS, and denying every one stops the proxy from starting.
 It could already kill the proxy or edit `~/.config/incus-spawn`, so this gives it nothing new; the proxy's error and `isx doctor` name `security dump-trust-settings`, with and without `-d`, to find the deny.
 

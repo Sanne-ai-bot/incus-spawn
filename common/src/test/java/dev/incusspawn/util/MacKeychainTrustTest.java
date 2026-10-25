@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.cert.X509Certificate;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.Map;
 import java.util.Set;
 
@@ -18,6 +19,7 @@ import static dev.incusspawn.util.MacKeychainTrust.Decision.DENY;
 import static dev.incusspawn.util.MacKeychainTrust.Decision.NONE;
 import static dev.incusspawn.util.MacKeychainTrust.Decision.TRUST;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -231,13 +233,21 @@ class MacKeychainTrustTest {
     }
 
     @Test
-    void aUserDomainThatCannotBeReadLeavesTheAdminDomainsResult() throws Exception {
+    void aUserDomainThatCannotBeReadTrustsNothingAndKeepsTheAdminDomainsDenies() throws Exception {
         var trusted = ca("trusted");
         var denied = ca("denied");
         var admin = MacKeychainTrust.evaluate(plist(record(trusted, "<array/>") + record(denied, entries(result(3)))), List.of(trusted));
-        // None exists (`security` exits with "No Trust Settings"), a timeout, output that does not parse
-        assertEquals(admin, MacKeychainTrust.withUserDenies(admin, () -> { throw new java.io.IOException("exited 1"); }));
-        assertEquals(admin, MacKeychainTrust.withUserDenies(admin, () -> "not xml"));
+        // None exists (`security` exits with "No Trust Settings"): nothing to deny
+        assertEquals(admin, MacKeychainTrust.withUserDenies(admin, () -> null));
+        // A timeout, an exit status, output that does not parse: a deny there is unknown, so a CA the user
+        // denied is not trusted unseen, nor handed to every instance by host-ca propagation (#1530)
+        for (Callable<String> unread : List.<Callable<String>>of(
+                () -> { throw new java.io.IOException("exited 1"); }, () -> "not xml")) {
+            var trust = MacKeychainTrust.withUserDenies(admin, unread);
+            assertEquals(List.of(), trust.trusted());
+            assertEquals(admin.denied(), trust.denied());
+            assertNotNull(trust.problem());
+        }
         // And an admin domain that cannot be read keeps the user's denies
         var failed = MacKeychainTrust.withUserDenies(MacKeychainTrust.Trust.failed("timed out"), () -> plist(record(denied, entries(result(3)))));
         assertEquals(Set.of(MacKeychainTrust.sha1(denied)), failed.denied());
