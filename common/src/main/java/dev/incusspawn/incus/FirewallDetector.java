@@ -34,15 +34,15 @@ public final class FirewallDetector {
 
     /** What the check asks the host. A probe that could not run throws rather than answering. */
     interface Probes {
-        boolean firewalldActive() throws IOException, InterruptedException;
+        FirewalldCheck.State firewalldState() throws IOException, InterruptedException;
         boolean ufwActive() throws IOException;
         boolean firewalldInstalled();
         boolean ufwInstalled();
     }
 
     private static final Probes HOST = new Probes() {
-        @Override public boolean firewalldActive() throws IOException, InterruptedException {
-            return FirewalldCheck.probeActive();
+        @Override public FirewalldCheck.State firewalldState() throws IOException, InterruptedException {
+            return FirewalldCheck.probeState();
         }
         @Override public boolean ufwActive() throws IOException { return UfwCheck.probeActive(); }
         @Override public boolean firewalldInstalled() { return FirewalldCheck.isInstalled(); }
@@ -51,8 +51,11 @@ public final class FirewallDetector {
 
     /** The firewall that is installed but not running, or null when there is nothing to warn about. */
     static Stopped findStopped(Probes probes) throws IOException, InterruptedException {
-        if (probes.firewalldActive() || probes.ufwActive()) return null;
-        if (probes.firewalldInstalled()) return FirewalldCheck.STOPPED;
+        var firewalld = probes.firewalldState();
+        if (firewalld == FirewalldCheck.State.ACTIVE || probes.ufwActive()) return null;
+        if (probes.firewalldInstalled()) {
+            return firewalld == FirewalldCheck.State.FAILED ? FirewalldCheck.CRASHED : FirewalldCheck.STOPPED;
+        }
         if (probes.ufwInstalled()) return UfwCheck.STOPPED;
         return null;
     }

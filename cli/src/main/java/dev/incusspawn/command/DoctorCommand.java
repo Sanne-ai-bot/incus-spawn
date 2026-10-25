@@ -1580,21 +1580,38 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private Finding checkIptablesRedirect() {
-        if (FirewalldCheck.isActive()) {
+        var firewalld = FirewalldCheck.state();
+        if (firewalld == FirewalldCheck.State.ACTIVE) {
             return checkFirewalldRedirect();
         }
         if (UfwCheck.isActive()) {
             return checkUfwRedirect();
         }
         if (FirewalldCheck.isInstalled()) {
-            return Finding.fail("Firewall not running", "(firewalld installed but inactive)",
-                    new Remediation("Enable firewalld and re-run 'isx init'", false, null));
+            return firewalldNotRunningFinding(firewalld);
         }
         if (UfwCheck.isInstalled()) {
             return Finding.fail("Firewall not running", "(UFW installed but inactive)",
                     new Remediation("Enable UFW and re-run 'isx init'", false, null));
         }
         return Finding.warn("Firewall redirect", "(no firewall installed, cannot verify)", null);
+    }
+
+    /**
+     * An installed firewalld that is not running. One systemd reports {@code failed} is already
+     * enabled and may have left its rules in the kernel, so it is restarted rather than enabled (#1654).
+     */
+    static Finding firewalldNotRunningFinding(FirewalldCheck.State state) {
+        if (state == FirewalldCheck.State.FAILED) {
+            return Finding.fail("Firewall not running",
+                    "(firewalld failed: rules it loaded before failing may remain until the next reboot"
+                            + " or reload; see 'systemctl status firewalld')",
+                    new Remediation("Restart firewalld ('sudo systemctl restart firewalld'),"
+                            + " then re-run 'isx init' if the redirect is missing;"
+                            + " if systemd refuses, 'sudo systemctl reset-failed firewalld' first", false, null));
+        }
+        return Finding.fail("Firewall not running", "(firewalld installed but inactive)",
+                new Remediation("Enable firewalld and re-run 'isx init'", false, null));
     }
 
     private Finding checkFirewalldRedirect() {
