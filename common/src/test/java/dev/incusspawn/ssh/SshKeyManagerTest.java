@@ -269,6 +269,19 @@ class SshKeyManagerTest {
     }
 
     @Test
+    void reAddingTheLastHostBlockUnchangedLeavesTheConfigAlone() throws IOException {
+        SshKeyManager.addHostEntry("first", "10.0.0.1");
+        SshKeyManager.addHostEntry("last", "10.0.0.2");
+        var config = tempDir.resolve(".config/incus-spawn/ssh/config");
+        var before = FileTime.fromMillis(0);
+        Files.setLastModifiedTime(config, before);
+
+        assertTrue(SshKeyManager.addHostEntry("last", "10.0.0.2"));
+
+        assertEquals(before, Files.getLastModifiedTime(config), "the config must not be rewritten");
+    }
+
+    @Test
     void aHostBlockThatCannotBeWrittenIsReportedAsAWarning() throws IOException {
         // A file where the managed directory should be: the config cannot be created.
         Files.createDirectories(tempDir.resolve(".config/incus-spawn"));
