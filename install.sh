@@ -98,7 +98,43 @@ if $NATIVE && [ "$(uname -s)" = "Darwin" ]; then
     fi
 fi
 
+# A Homebrew prefix may serve every account on the machine, so an install there would hand every
+# account's isx, KeepAlive proxy and Git helper this build (#1614, #1666). Refuse INSTALL_DIR
+# anywhere in one. Each ancestor of its physical path is compared by inode (-ef), so a trailing
+# slash, a symlink or another letter case on macOS cannot spell around it. A directory that does
+# not exist yet is judged by its nearest existing parent, where mkdir -p will create it; a `..`
+# would let mkdir -p climb out of what it created, so it is refused there.
+refuse_homebrew_prefix() {
+    local dir="$INSTALL_DIR" brew_prefix="" prefix
+    if [ ! -d "$dir" ]; then
+        case "/$dir/" in
+            */../*) echo "Error: INSTALL_DIR does not exist yet; name it without '..': $INSTALL_DIR"; exit 1 ;;
+        esac
+        while [ ! -d "$dir" ]; do dir="$(dirname "$dir")"; done
+    fi
+    if ! dir="$(cd -P -- "$dir" 2>/dev/null && pwd -P)"; then
+        echo "Error: cannot tell whether $INSTALL_DIR is in a Homebrew prefix: $dir is not accessible."
+        exit 1
+    fi
+    command -v brew >/dev/null 2>&1 && brew_prefix="$(brew --prefix 2>/dev/null)"
+    while :; do
+        for prefix in "$brew_prefix" "$HOMEBREW_PREFIX" /opt/homebrew /usr/local /home/linuxbrew/.linuxbrew; do
+            [ -n "$prefix" ] && ! [ "$prefix" -ef / ] || continue
+            # Past brew's own answer, a location counts only where Homebrew is installed, not every /usr/local.
+            [ "$prefix" = "$brew_prefix" ] || [ -x "$prefix/bin/brew" ] || continue
+            if [ "$dir" -ef "$prefix" ]; then
+                echo "Error: $INSTALL_DIR is in the Homebrew prefix $prefix, which install.sh never writes: other accounts may use it."
+                echo "  Install to a directory of your own instead, e.g. INSTALL_DIR=~/.local/bin $0 $*"
+                exit 1
+            fi
+        done
+        [ "$dir" != / ] || return 0
+        dir="$(dirname "$dir")"
+    done
+}
+
 # Check we can install the result *before* spending minutes on a native build.
+refuse_homebrew_prefix "$@"
 mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then
     echo "Error: $INSTALL_DIR is not a writable directory."
