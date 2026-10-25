@@ -13,34 +13,53 @@ public final class FirewalldCheck {
         return HostPath.isOnPath("firewall-cmd");
     }
 
+    /**
+     * What {@code systemctl is-active firewalld} says, in the three states a user is told apart:
+     * a daemon that crashed left its rules in the kernel, one that never ran or stopped cleanly did not.
+     */
+    public enum State {
+        ACTIVE,
+        /** Never started, cleanly stopped, or on its way up or down. */
+        INACTIVE,
+        /** systemd's {@code failed}: the daemon crashed, was killed or exited with an error. */
+        FAILED
+    }
+
     public static boolean isActive() {
+        return state() == State.ACTIVE;
+    }
+
+    /** The daemon's state; a probe that could not run reads as {@link State#INACTIVE}. */
+    public static State state() {
         try {
-            return probeActive();
+            return probeState();
         } catch (IOException e) {
-            return false;
+            return State.INACTIVE;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return false;
+            return State.INACTIVE;
         }
     }
 
     /**
-     * Like {@link #isActive()}, but a probe that was cut short throws rather than reading as
-     * stopped. A host without {@code systemctl} (macOS, Linux without systemd) is an answer: not active.
+     * Like {@link #state()}, but a probe that was cut short throws rather than reading as
+     * stopped. A host without {@code systemctl} (macOS, Linux without systemd) is an answer: inactive.
      */
-    static boolean probeActive() throws IOException, InterruptedException {
+    static State probeState() throws IOException, InterruptedException {
         // systemctl is-active does not require root, unlike firewall-cmd --state
         // which needs polkit authorization and fails with exit 253 as a normal user
-        return probeActive(List.of("systemctl", "is-active", "firewalld"));
+        return probeState(List.of("systemctl", "is-active", "firewalld"));
     }
 
-    static boolean probeActive(List<String> command) throws IOException, InterruptedException {
-        if (!HostPath.isOnPath(command.getFirst())) return false;
+    static State probeState(List<String> command) throws IOException, InterruptedException {
+        if (!HostPath.isOnPath(command.getFirst())) return State.INACTIVE;
         var pb = new ProcessBuilder(command);
         pb.redirectError(ProcessBuilder.Redirect.DISCARD);
         var process = pb.start();
         var output = new String(process.getInputStream().readAllBytes()).strip();
-        return process.waitFor() == 0 && "active".equals(output);
+        // it prints the state either way, and exits non-zero for every state but active
+        if (process.waitFor() == 0 && "active".equals(output)) return State.ACTIVE;
+        return "failed".equals(output) ? State.FAILED : State.INACTIVE;
     }
 
     static final FirewallDetector.Stopped STOPPED = new FirewallDetector.Stopped(
@@ -51,6 +70,23 @@ public final class FirewalldCheck {
             + "Fix:\n"
             + "  sudo systemctl enable --now firewalld\n"
             + "  isx init");
+
+    /**
+     * systemd's {@code failed} covers a daemon that died after installing its rules, which stay in
+     * the kernel, and one that never got that far. An unprivileged check cannot read the ruleset to
+     * tell them apart, so the banner says "may" and covers both.
+     */
+    static final FirewallDetector.Stopped CRASHED = new FirewallDetector.Stopped(
+            "firewalld has failed:",
+            "Possible cause: firewalld crashed or exited with an error (systemd reports it failed).\n"
+            + "If it ran before failing, the rules it installed (masquerading, FORWARD,\n"
+            + "PREROUTING redirect) may still be in the kernel, so containers may keep working\n"
+            + "until the next reboot or firewall reload. Otherwise they cannot reach the internet.\n\n"
+            + "Fix:\n"
+            + "  sudo systemctl restart firewalld\n"
+            + "  isx init    (if the redirect rules are missing)\n"
+            + "If systemd refuses the restart, run 'sudo systemctl reset-failed firewalld' first.\n\n"
+            + "Why it stopped: systemctl status firewalld, or coredumpctl info firewalld");
 
     /**
      * Whether a line matches the PREROUTING redirect rule pattern (incusbr0, port 443 → mitmPort).

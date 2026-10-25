@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.proxy.BridgeDns;
@@ -818,6 +819,25 @@ class DoctorCommandTest {
         } finally {
             Files.deleteIfExists(tmp);
         }
+    }
+
+    // ---- Firewall not-running finding selection ----
+
+    @Test
+    void aFailedFirewalldIsRestartedNotEnabled() {
+        var f = DoctorCommand.firewalldNotRunningFinding(FirewalldCheck.State.FAILED);
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertTrue(f.detail().contains("firewalld failed"), f.detail());
+        assertFalse(f.detail().contains("inactive"), f.detail());
+        assertTrue(f.remediation().description().contains("systemctl restart firewalld"));
+    }
+
+    @Test
+    void anInactiveFirewalldIsEnabled() {
+        var f = DoctorCommand.firewalldNotRunningFinding(FirewalldCheck.State.INACTIVE);
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertTrue(f.detail().contains("installed but inactive"));
+        assertTrue(f.remediation().description().startsWith("Enable firewalld"));
     }
 
     // ---- Proxy not-running finding selection ----

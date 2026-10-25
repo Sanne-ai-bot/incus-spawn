@@ -72,18 +72,19 @@ class FirewallDetectorTest {
 
     /** Answers as configured, counting each probe; {@code failure} makes the first probe throw. */
     private static final class FakeProbes implements FirewallDetector.Probes {
-        boolean firewalldActive, ufwActive, firewalldInstalled, ufwInstalled;
+        FirewalldCheck.State firewalld = FirewalldCheck.State.INACTIVE;
+        boolean ufwActive, firewalldInstalled, ufwInstalled;
         Exception failure;
         /** When set, firewalld is asked through the real probe, running this command. */
         List<String> systemctl;
         final AtomicInteger probes = new AtomicInteger();
 
-        @Override public boolean firewalldActive() throws IOException, InterruptedException {
+        @Override public FirewalldCheck.State firewalldState() throws IOException, InterruptedException {
             probes.incrementAndGet();
             if (failure instanceof IOException e) throw e;
             if (failure instanceof InterruptedException e) throw e;
-            if (systemctl != null) return FirewalldCheck.probeActive(systemctl);
-            return firewalldActive;
+            if (systemctl != null) return FirewalldCheck.probeState(systemctl);
+            return firewalld;
         }
         @Override public boolean ufwActive() { probes.incrementAndGet(); return ufwActive; }
         @Override public boolean firewalldInstalled() { probes.incrementAndGet(); return firewalldInstalled; }
@@ -104,7 +105,7 @@ class FirewallDetectorTest {
     @Test
     void aCheckWithNothingToWarnAboutRunsOncePerProcess() {
         var probes = new FakeProbes();
-        probes.firewalldActive = true;
+        probes.firewalld = FirewalldCheck.State.ACTIVE;
         var banners = new ArrayList<String>();
         var check = check(probes, banners);
         for (int i = 0; i < 3; i++) assertFalse(check.warnIfNotRunning());
@@ -124,7 +125,7 @@ class FirewallDetectorTest {
         // each probe asked once per check: is firewalld active, is UFW, is firewalld installed
         assertEquals(6, probes.probes.get());
 
-        probes.firewalldActive = true; // the user started it
+        probes.firewalld = FirewalldCheck.State.ACTIVE; // the user started it
         assertFalse(check.warnIfNotRunning());
         assertFalse(check.warnIfNotRunning());
         assertEquals(7, probes.probes.get());
@@ -176,11 +177,55 @@ class FirewallDetectorTest {
         assertNull(FirewallDetector.findStopped(probes));
     }
 
+    /** A {@code systemctl is-active} that prints {@code state} and exits as systemctl does for it. */
+    private static List<String> systemctlSays(String state, int exit) {
+        return List.of("sh", "-c", "echo " + state + "; exit " + exit);
+    }
+
+    @Test
+    void theProbeTellsACrashedFirewalldFromOneThatIsNotRunning() throws Exception {
+        assertEquals(FirewalldCheck.State.ACTIVE, FirewalldCheck.probeState(systemctlSays("active", 0)));
+        assertEquals(FirewalldCheck.State.FAILED, FirewalldCheck.probeState(systemctlSays("failed", 3)));
+        assertEquals(FirewalldCheck.State.INACTIVE, FirewalldCheck.probeState(systemctlSays("inactive", 3)));
+        assertEquals(FirewalldCheck.State.INACTIVE, FirewalldCheck.probeState(systemctlSays("activating", 3)));
+    }
+
+    @Test
+    void aCrashedFirewalldSaysItsRulesMayStillBeLoadedAndToRestartIt() {
+        // #1654: firewalld died after installing its rules, and containers still worked, while
+        // the banner said they could not reach the internet and to enable an enabled service.
+        var probes = new FakeProbes();
+        probes.systemctl = systemctlSays("failed", 3);
+        probes.firewalldInstalled = true;
+        var diagnostics = new ArrayList<String>();
+        var check = new FirewallDetector.Check(probes);
+        assertTrue(check.warnIfNotRunning((title, diagnostic) -> diagnostics.add(title + "\n" + diagnostic)));
+        var banner = diagnostics.getFirst();
+        assertTrue(banner.startsWith("firewalld has failed:"), banner);
+        assertTrue(banner.contains("may still be in the kernel"), banner);
+        assertTrue(banner.contains("sudo systemctl restart firewalld"), banner);
+        assertFalse(banner.contains("so containers cannot reach the internet"), banner);
+        assertFalse(banner.contains("enable --now"), banner);
+    }
+
+    @Test
+    void findStoppedNamesACrashedFirewalldOnlyWhenNoFirewallRuns() throws Exception {
+        var probes = new FakeProbes();
+        probes.firewalldInstalled = true;
+        probes.firewalld = FirewalldCheck.State.FAILED;
+        assertSame(FirewalldCheck.CRASHED, FirewallDetector.findStopped(probes));
+        probes.firewalld = FirewalldCheck.State.INACTIVE;
+        assertSame(FirewalldCheck.STOPPED, FirewallDetector.findStopped(probes));
+        probes.firewalld = FirewalldCheck.State.FAILED;
+        probes.ufwActive = true;
+        assertNull(FirewallDetector.findStopped(probes));
+    }
+
     private static final List<String> MISSING_SYSTEMCTL = List.of("isx-test-no-such-systemctl-870", "is-active", "firewalld");
 
     @Test
     void aHostWithoutSystemctlHasNoFirewalldRunningRatherThanAFailedProbe() throws Exception {
-        assertFalse(FirewalldCheck.probeActive(MISSING_SYSTEMCTL));
+        assertEquals(FirewalldCheck.State.INACTIVE, FirewalldCheck.probeState(MISSING_SYSTEMCTL));
     }
 
     @Test
