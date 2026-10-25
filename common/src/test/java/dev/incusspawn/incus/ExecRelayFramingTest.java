@@ -69,6 +69,20 @@ class ExecRelayFramingTest {
         }
     }
 
+    @Test
+    void frameBufferGrowthStopsAtTheLargestStdinFrame() throws IOException {
+        var out = OutputStream.nullOutputStream();
+        var data = new byte[IncusApi.STDIN_CHUNK + 1];
+        var buf = UnixSocketTransport.wsSendMasked(out, new byte[0], 0x2, data, 0, 20_000);
+        buf = UnixSocketTransport.wsSendMasked(out, buf, 0x2, data, 0, 30_000);
+        assertEquals(2 * (20_000 + 14), buf.length, "below the cap it doubles");
+        buf = UnixSocketTransport.wsSendMasked(out, buf, 0x2, data, 0, 60_000);
+        buf = UnixSocketTransport.wsSendMasked(out, buf, 0x2, data, 0, IncusApi.STDIN_CHUNK);
+        assertEquals(IncusApi.STDIN_CHUNK + 14, buf.length, "doubling is capped at a full stdin frame");
+        buf = UnixSocketTransport.wsSendMasked(out, buf, 0x2, data, 0, data.length);
+        assertEquals(data.length + 14, buf.length, "a larger frame still fits");
+    }
+
     /** The payload of one masked client frame, unmasked byte by byte as RFC 6455 §5.3 says. */
     private static byte[] unmask(byte[] frame) {
         assertEquals(0x82, frame[0] & 0xFF, "FIN + binary");
