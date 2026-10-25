@@ -282,4 +282,18 @@ class SshKeyManagerTest {
         assertEquals(1, warnings.size(), "the TUI's warning log, not stderr, must get it: " + warnings);
         assertTrue(warnings.getFirst().startsWith("Failed to update SSH config"), warnings.getFirst());
     }
+
+    @Test
+    void anIncludeThatCannotBeWrittenIsReportedAsAWarning() throws IOException {
+        // A file where ~/.ssh should be: ~/.ssh/config cannot be written.
+        Files.writeString(tempDir.resolve(".ssh"), "");
+        var warnings = new ArrayList<String>();
+
+        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+            assertFalse(SshKeyManager.ensureSshConfigInclude());
+        }
+
+        assertEquals(1, warnings.size(), "the TUI's warning log, not stderr, must get it: " + warnings);
+        assertTrue(warnings.getFirst().startsWith("Failed to update ~/.ssh/config"), warnings.getFirst());
+    }
 }
