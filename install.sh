@@ -2,6 +2,9 @@
 # Build and install incus-spawn as 'isx'
 # -E so the ERR trap also fires for failures inside the helper functions.
 set -eE
+# An exported CDPATH would make a relative `cd` land in one of its entries (and print it), so
+# SCRIPT_DIR and the Homebrew-prefix check could each resolve a different directory than meant.
+unset CDPATH
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="isx"
@@ -105,18 +108,23 @@ fi
 # not exist yet is judged by its nearest existing parent, where mkdir -p will create it; a `..`
 # would let mkdir -p climb out of what it created, so it is refused there.
 refuse_homebrew_prefix() {
-    local dir="$INSTALL_DIR" brew_prefix="" prefix
+    local dir="$INSTALL_DIR" real answer brew_prefix="" prefix
     if [ ! -d "$dir" ]; then
         case "/$dir/" in
             */../*) echo "Error: INSTALL_DIR does not exist yet; name it without '..': $INSTALL_DIR"; exit 1 ;;
         esac
         while [ ! -d "$dir" ]; do dir="$(dirname "$dir")"; done
     fi
-    if ! dir="$(cd -P -- "$dir" 2>/dev/null && pwd -P)"; then
+    if ! real="$(cd -P -- "$dir" 2>/dev/null && pwd -P)"; then
         echo "Error: cannot tell whether $INSTALL_DIR is in a Homebrew prefix: $dir is not accessible."
         exit 1
     fi
-    command -v brew >/dev/null 2>&1 && brew_prefix="$(brew --prefix 2>/dev/null)"
+    dir="$real"
+    # A broken brew (or one for another architecture) must not abort an install: its answer is
+    # only one of the places checked below.
+    if command -v brew >/dev/null 2>&1 && answer="$(brew --prefix 2>/dev/null)"; then
+        brew_prefix="$answer"
+    fi
     while :; do
         for prefix in "$brew_prefix" "$HOMEBREW_PREFIX" /opt/homebrew /usr/local /home/linuxbrew/.linuxbrew; do
             [ -n "$prefix" ] && ! [ "$prefix" -ef / ] || continue
