@@ -6,6 +6,57 @@
     "o3": "/tmp/pgo/bin/proxy-base",
     "pgo": "/tmp/pgo/bin/proxy-pgo"
   },
+  "provenance": {
+    "note": "Added after the run, from docs/dev/PERFORMANCE-NOTES.md and the build names: ab.py did not record provenance yet and the binaries are gone. Build commits are abbreviated, as the notes give them. null is what nobody recorded. The checkout was fe1d7c7c for the first run and f7ec4070 for the others.",
+    "checkout": {
+      "commit": null,
+      "dirty": null,
+      "nativeImageOnPath": null
+    },
+    "builds": {
+      "o3": {
+        "sha256": null,
+        "bytes": 99290400,
+        "version": null,
+        "commit": "77c5f656",
+        "graalvm": "25.4.4.1.1",
+        "buildReport": null,
+        "graalCompiler": {
+          "march": "haswell",
+          "optimization_level": "3"
+        },
+        "garbageCollector": null,
+        "cCompiler": null
+      },
+      "pgo": {
+        "sha256": null,
+        "bytes": 42077472,
+        "version": null,
+        "commit": "77c5f656",
+        "graalvm": "25.4.4.1.1",
+        "buildReport": null,
+        "graalCompiler": {
+          "march": "haswell",
+          "optimization_level": "3",
+          "pgo": [
+            "user-provided"
+          ]
+        },
+        "garbageCollector": null,
+        "cCompiler": null
+      }
+    },
+    "host": {
+      "os": null,
+      "kernel": null,
+      "arch": "x86_64",
+      "cpu": "AMD Ryzen 9 9950X3D2 16-Core Processor",
+      "cores": 8,
+      "memoryKb": null,
+      "vm": "kvm",
+      "container": null
+    }
+  },
   "minutes": 25.5,
   "medians": {
     "constant": {

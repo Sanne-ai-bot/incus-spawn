@@ -414,6 +414,17 @@ python3 -I bench/ab.py cli --rounds=3 os=/tmp/isx-os o3pgo=/tmp/isx-o3pgo ospgo=
 `proxy` runs every load in `--loads` (default `maven,saturate,anthropic,vertex`) per build per
 round; `cli` runs `cli.sh` from `--from` (default `tpl-isx-bench`, so the relays are measured).
 
+The output's `provenance` says what was measured, so the file stands without the prose around
+it: the checkout's commit and whether it was dirty, the `native-image` on `PATH`, and the host
+(OS, kernel, CPU model, usable cores, memory, and the hypervisor or container it runs in). Per build it records
+the binary's SHA-256 and size, the commit and GraalVM its `--version` reports, and the native
+build flags (optimization level, `-march`, PGO, GC). A binary does not carry its flags, so they
+come from the build's report: Quarkus writes it to
+`target/<runner>-native-image-source-jar/<runner>-build-output-stats.json`. When you copy a
+binary elsewhere, copy that file beside it as `<binary>-build-output-stats.json`; without it
+`ab.py` warns and records the flags as `null`. It also warns when the builds report different
+commits.
+
 ## Claude Code's First Screen (`claude-start.sh`)
 
 `cli.sh` stops at a shell prompt and keeps a template's default action out. For a template
