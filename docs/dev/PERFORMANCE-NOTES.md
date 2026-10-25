@@ -214,6 +214,86 @@ size, which is where the proxy's 57 MB went. It is also the risk phase 2 has to 
 a path the workloads miss now runs as cold code. The `maven` throughput on this VM is far below
 the 32-core figure above for both builds; only the comparison between them means anything here.
 
+### Phase 2, measurement (2026-10-25)
+
+Same host and toolchain as phase 0, builds of commit `77c5f656`, profiles from one
+`bench/pgo-collect.sh` run of that commit. Interleaved with `bench/ab.py`, three rounds, the
+order reversed every other round; every figure is the median of the three. The raw runs are in
+[pgo-ab-2026-10-25-proxy.json](../../bench/data/pgo-ab-2026-10-25-proxy.json) (25 minutes) and
+[pgo-ab-2026-10-24-cli.json](../../bench/data/pgo-ab-2026-10-24-cli.json) (4 minutes).
+The decision rules are the plan's, fixed before measuring.
+
+**Proxy, `-O3` against `-O3` + PGO.** Rule: adopt if any load gains about 5% with no size, RSS
+or startup regression.
+
+| | `-O3` | `-O3` + PGO |
+|---|---|---|
+| Binary | 99,290,400 B | 42,077,472 B (**−57.6%**) |
+| Startup | 261 ms | 262 ms (+0.4%, 1 ms: within noise) |
+| Idle RSS (`maven` run) | 60,164 KB | 36,520 KB (**−39.3%**) |
+| Peak RSS, `maven` | 132,404 KB | 87,316 KB (−34.1%) |
+| Peak RSS, `anthropic` | 106,576 KB | 77,580 KB (−27.2%) |
+| `constant`, 5,000 req/s | p50 120 µs | p50 102 µs (−14.9%) |
+| `saturate`, best rung | 16,241 req/s | 21,773 req/s (**+34.1%**) |
+| `maven`, best rung | 287 req/s | 343 req/s (**+19.4%**) |
+| `anthropic`, best rung | 3,007 req/s | 4,171 req/s (**+38.7%**) |
+| `vertex`, best rung | 1,732 req/s | 3,172 req/s (**+83.1%**) |
+
+Every load gains, every latency percentile measured falls, and nothing regresses. Verdict:
+**adopt PGO for the proxy.** The Vertex path gains most, as the plan expected: its body
+rewrite is Java per byte. On this VM `maven` is far below the 32-core headline for both builds
+(180 and 215 MB/s, against 960), so its absolute figures describe this host only.
+
+**CLI, `-Os` against `-O3` + PGO and `-Os` + PGO.** Rule: adopt only if startup is at or below
+`-Os` and the size stays near it, or the relays gain clearly at a size the download justifies.
+
+| | `-Os` | `-O3` + PGO | `-Os` + PGO |
+|---|---|---|---|
+| Binary | 37,948,488 B | 38,603,848 B (+1.7%) | 38,145,096 B (+0.5%) |
+| `isx --help` | 3.5 ms | 2.9 ms (**−17.1%**) | 3.0 ms (−14.3%) |
+| `isx list -q` | 6.7 ms | 6.0 ms (−10.4%) | 6.3 ms (−6.0%) |
+| `isx account show` | 11.2 ms | 9.7 ms (−13.4%) | 9.9 ms (−11.6%) |
+| `isx run` preparation | 77.9 ms | 74.0 ms (−5.0%) | 75.7 ms (−2.8%) |
+| `isx shell` to a prompt | 270 ms | 276 ms (+2.2%) | 274 ms (+1.3%) |
+| `isx branch --shell` to a prompt | 2,074 ms | 2,090 ms (+0.8%) | 1,936 ms (−6.7%) |
+| `ssh <instance> true` | 155 ms | 153 ms (−1.7%) | 156 ms (+0.2%) |
+| `scp` 256 MiB through `ssh-proxy`, setup included | 255 MiB/s | 330 MiB/s (**+29.5%**) | 302 MiB/s (+18.4%) |
+
+The CLI A/B was run again, six rounds, to see whether `isx shell`'s +2.2% was real: in the three
+rounds above, `-O3` + PGO sat at or above `-Os`'s median every time (275.8, 275.9, 278.5 ms against
+276.6, 270.0, 268.0). Six more rounds, same binaries and host
+([pgo-ab-2026-10-25-cli-rerun.json](../../bench/data/pgo-ab-2026-10-25-cli-rerun.json)):
+
+| Six rounds | `-Os` | `-O3` + PGO | `-Os` + PGO |
+|---|---|---|---|
+| `isx --help` | 3.5 ms | 2.8 ms (**−20.0%**) | 3.0 ms (−14.3%) |
+| `isx list -q` / `account show` | 6.9 / 10.9 ms | 6.2 / 9.6 ms | 6.4 / 10.4 ms |
+| `isx run` preparation | 78.0 ms | 76.6 ms (−1.9%) | 76.3 ms (−2.2%) |
+| `isx shell` to a prompt | 274.1 ms | 270.6 ms (−1.3%) | 277.0 ms (+1.1%) |
+| `ssh <instance> true` | 157.7 ms | 156.3 ms (−0.9%) | 156.3 ms (−0.9%) |
+| `scp` 256 MiB, setup included | 258 MiB/s | 270 MiB/s (+4.5%) | 282 MiB/s (+9.2%) |
+
+`isx shell` does not regress: over six rounds `-O3` + PGO is below `-Os` (per round 265 to 275 ms
+against 262 to 280), and the three-round pattern did not recur. The relay's gain is smaller than
+the first run said. `scp` varies widely between runs (161 to 340 MiB/s within one build), and over
+all nine rounds the medians are 258 (`-Os`), 293 (`-O3` + PGO, +14%) and 294 MiB/s (`-Os` + PGO,
++14%). `isx branch --shell` to a prompt is bimodal for every build (about 1.2 s or 2.1 s, with no
+pattern by build), so it is not compared here.
+
+Verdict: **adopt `-O3` + PGO for the CLI.** By the plan's first rule it starts faster than `-Os`
+(by 17 to 20%) at a size near it (+0.66 MB), and nothing measured regresses. `-Os` + PGO saves
+0.46 MB of that and relays as fast, but gives back a sixth to a quarter of the startup gain, the
+gain every command has.
+
+The proxy A/B's first result file records checkout `fe1d7c7c` and the other 29 `f7ec4070`: a
+commit was made while it ran. It added `bench/ab.py` (already running) and `bench/README.md`, and
+changed nothing `run.sh` or the binaries use.
+
+Low applicability (20% of the proxy's methods, 15% of the CLI's, have a profile) is what shrinks
+the proxy: the rest is compiled for size. A path no workload reaches therefore runs as cold
+code. Phase 2 measured the paths the plan names; npm caching, the WebSocket relay, host routes
+and the MCP bridge are not among them.
+
 ## Measurement caveats worth remembering
 
 - **Native builds are not byte-reproducible here.** The same commit and toolchain produced
