@@ -147,7 +147,7 @@ BusyBox init handles PID 1 responsibilities (zombie reaping, signal forwarding) 
 ### Boot Sequence (`rcS`)
 
 1. Mount virtual filesystems (`/proc`, `/sys`, `/dev`, `/dev/pts`, `/dev/shm`, `/run`, `/tmp`)
-2. Remount root with `noatime,commit=300`
+2. Remount root with `noatime,commit=300,compress=zstd:1,discard=async`
 3. Set hostname
 4. Apply sysctl settings (IP forwarding for Incus bridge NAT)
 5. Bring up loopback and DHCP on the first network interface (`udhcpc`)
@@ -217,15 +217,15 @@ Two questions matter: does space come back when the guest frees it, and how much
 Measured on a 16 GB Mac with the VM at 6.4 GB, kernel 7.2.9 and vfkit, on 2026-10-25.
 It holds for vfkit only: the QEMU backend attaches the images without `discard=unmap`, and QEMU's default drops the guest's discards.
 
-
 - **Trim reaches the image already.**
   All three virtio-blk devices advertise discard (`discard_max_bytes` is the device size).
-  btrfs mounts a discard-capable device with `discard=async` by default since Linux 6.2, so `/var/lib/incus` shows `discard=async` in `mount` although neither `rcS` nor the fstab asks for it.
+  btrfs mounts a discard-capable device with `discard=async` by default since Linux 6.2, so the measurement below needed no option of its own.
   Virtualization.framework turns the guest's discards into holes in the raw file.
   Writing a 2 GiB file in an instance grew `data.img` from 392 MB to 2.44 GB on disk (`du`).
   Two minutes after deleting it the image was back at 391 MB, with no `fstrim`.
   A manual `fstrim` afterwards returned only 22 MB more.
-  Deleted instances therefore give their space back to the Mac by themselves: `isx vm` runs no `fstrim`, and the mounts do not repeat the default.
+  Deleted instances therefore give their space back to the Mac by themselves, and `isx vm` runs no `fstrim`.
+  `rcS` and the fstab still name `discard=async` on both disks, so a kernel that changed its default or a mount line that gained an option cannot turn reclaiming off unseen.
 - **Swap stays a plain disk, without zswap.**
   The VM does not swap at rest (`pswpout 0`).
   Forcing it, by filling 12 GB of tmpfs with copies of `/usr` and reading them back, wrote 10.2 GB to the swap disk.

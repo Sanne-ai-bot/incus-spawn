@@ -18,8 +18,8 @@ mount -t cgroup2 cgroup2 /sys/fs/cgroup
 ts() { cut -d' ' -f1 /proc/uptime; }
 echo "incus-spawn: starting... ($(ts)s)"
 
-#-- Remount root with fstab options (noatime, compression) --#
-mount -o remount,noatime,commit=300,compress=zstd:1 /
+#-- Remount root with fstab options (noatime, compression, online trim) --#
+mount -o remount,noatime,commit=300,compress=zstd:1,discard=async /
 
 #-- Expand btrfs to fill disk (disk may have been extended after image creation) --#
 btrfs filesystem resize max / 2>/dev/null || true
@@ -56,7 +56,7 @@ if [ -b /dev/vdc ]; then
         mkfs.btrfs -q -L isxdata /dev/vdc
     fi
     mkdir -p /var/lib/incus
-    mount -o noatime,commit=300,compress=zstd:1 /dev/vdc /var/lib/incus
+    mount -o noatime,commit=300,compress=zstd:1,discard=async /dev/vdc /var/lib/incus
     # Expand btrfs to fill the device (the host image may have been grown by 'isx vm resize')
     btrfs filesystem resize max /var/lib/incus 2>/dev/null || true
     echo "incus-spawn: data disk mounted ($(ts)s)"
