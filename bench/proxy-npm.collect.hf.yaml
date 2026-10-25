@@ -1,0 +1,38 @@
+# What a PGO collection runs instead of proxy-npm.hf.yaml (bench/run.sh --collect): the same
+# load, a seventh as long, so the npm path is profiled without outweighing the other loads, whose
+# mix is the profile's weighting. The full-length run made the Vertex path 12% slower.
+name: proxy-npm
+http:
+  host: https://registry.npmjs.org:18443
+  sharedConnections: 64
+phases:
+- warmup:
+    always:
+      users: 8
+      duration: 2s
+      isWarmup: true
+      scenario: &install
+      - packument:
+        - httpRequest:
+            GET: /isx-bench-payload
+      - tarball:
+        - httpRequest:
+            GET: /isx-bench-payload/-/isx-bench-payload-1.0.0.tgz
+- c008:
+    always:
+      users: 8
+      duration: 1s
+      startAfter: warmup
+      scenario: *install
+- c032:
+    always:
+      users: 32
+      duration: 1s
+      startAfter: c008
+      scenario: *install
+- c064:
+    always:
+      users: 64
+      duration: 1s
+      startAfter: c032
+      scenario: *install

@@ -307,6 +307,13 @@ if [ -n "$COLLECT_DIR" ]; then
     COLLECT_DIR="$(cd "$COLLECT_DIR" && pwd)"
 fi
 
+# A collection's weighting is the mix of its runs, so a load that would outweigh the others in a
+# profile collects from a shorter definition of its own beside it (<name>.collect.hf.yaml):
+# full-length npm and WebSocket runs made the Vertex path 12% slower (PERFORMANCE-NOTES.md).
+if $COLLECTING && [ -f "${BENCHMARK_YAML%.hf.yaml}.collect.hf.yaml" ]; then
+    BENCHMARK_YAML="${BENCHMARK_YAML%.hf.yaml}.collect.hf.yaml"
+fi
+
 # Check benchmark definition
 if [ ! -f "$BENCHMARK_YAML" ]; then
     die "Benchmark definition not found at $BENCHMARK_YAML"
@@ -344,7 +351,8 @@ if $MODEL_LOAD; then
     command -v keytool &>/dev/null || die "keytool not found; needed for --load=$LOAD_MODE"
     if $WS_LOAD; then
         MODEL_HOSTS=(api.openai.com)
-        WS_PHASES=$(awk '/^phases:/ { print $2; exit }' "$BENCHMARK_YAML")
+        # The same rule as the collect definitions above: a collection runs collect-phases
+        WS_PHASES=$(awk -v key="$($COLLECTING && echo collect-phases: || echo phases:)" '$1 == key { print $2; exit }' "$BENCHMARK_YAML")
         [ -n "$WS_PHASES" ] || die "No 'phases:' in $BENCHMARK_YAML"
     else
         MODEL_HOSTS=(api.anthropic.com us-east5-aiplatform.googleapis.com)

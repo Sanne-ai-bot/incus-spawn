@@ -5,3 +5,6 @@
 name: proxy-websocket
 sharedConnections: 32
 phases: warmup=4x5,c004=4x10,c016=16x10,c032=32x10
+# What a PGO collection runs (bench/pgo-collect.sh): enough for every WebSocket method to be
+# profiled, short enough not to outweigh the other loads in the profile.
+collect-phases: warmup=2x2,c004=4x3
