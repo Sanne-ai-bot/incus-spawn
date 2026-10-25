@@ -13,7 +13,9 @@ import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
@@ -32,6 +34,7 @@ class ForeignHolderBindTest {
     private Vertx vertx;
     private ServerSocket mitmHolder;
     private HttpServer healthHolder;
+    private final AtomicInteger healthProbes = new AtomicInteger();
 
     @BeforeEach
     void setUp() {
@@ -56,14 +59,15 @@ class ForeignHolderBindTest {
         assumeFalse(owner.equals(System.getProperty("user.name")), "the test runs as another user than pid 1's");
 
         var proxy = holdPortsAndBuildProxy(1);
-        long started = System.nanoTime();
         var failure = assertThrows(Exception.class, () -> proxy.start(null));
-        long millis = (System.nanoTime() - started) / 1_000_000;
 
         assertTrue(failure.getMessage().contains("pid 1, owned by user " + owner), failure.getMessage());
         assertTrue(failure.getMessage().contains("0.3.12"), failure.getMessage());
-        // The wait for an own predecessor is 30 tries 200 ms apart; this one is not waited for.
-        assertTrue(millis < 3000, "waited " + millis + " ms for a proxy it cannot end");
+        // The wait for an own predecessor asks the holder again after each failed bind, up to 29
+        // times; this one is asked once. Counted rather than timed: start() first mints a fresh CA
+        // and a leaf per intercepted domain, whose RSA key generation takes seconds on a few slow
+        // cores.
+        assertEquals(1, healthProbes.get(), "asked the holder again, waiting for a proxy it cannot end");
     }
 
     private MitmProxy holdPortsAndBuildProxy(long holderPid) throws Exception {
@@ -71,6 +75,7 @@ class ForeignHolderBindTest {
         mitmHolder = new ServerSocket(0, 50, loopback);
         healthHolder = HttpServer.create(new InetSocketAddress(loopback, 0), 0);
         healthHolder.createContext("/health", exchange -> {
+            healthProbes.incrementAndGet();
             var body = ("{\"status\":\"ok\",\"version\":\"0.3.12\",\"pid\":" + holderPid + "}")
                     .getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
