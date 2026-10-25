@@ -29,7 +29,6 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.SequencedMap;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -1087,13 +1086,16 @@ class ArtifactCacheHandler {
      * tarball's head still has time: without a digest the tarball is relayed uncached, and a
      * relayed body that stalls cannot be resumed (#925, #929). A 429 is not: asked again at
      * once, it would only be refused again.
+     * <p>
+     * Each ask joins one of the same version already in flight (#1567), but the retry is each
+     * caller's own, decided on its own budget, so a joined caller does not depend on the first one's client.
      */
     Future<NpmLookup> fetchNpmVersion(String domain, String packageName, String version, long started) {
         var path = "/" + packageName.replace("/", "%2F") + "/" + version;
-        Supplier<Future<NpmLookup>> ask = () -> {
+        Supplier<Future<NpmLookup>> ask = () -> npmLookups.join(domain + path, () -> {
             var asked = Instant.now();
             return fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES).map(answer -> new NpmLookup(answer, asked));
-        };
+        });
         return ask.get().compose(lookup -> lookup.answer().status() >= 500
                 && upstream.silenceLeftMillis(started) > TimeUnit.SECONDS.toMillis(upstream.clientSilenceBudgetSeconds) / 2
                 ? ask.get()
@@ -1362,9 +1364,9 @@ class ArtifactCacheHandler {
                 }
             } else if (local.hostCopy() && !inBackoff(domain)) {
                 // The checksum is needed before deciding whether to download at all
-                var lookedUp = Instant.now();
-                probe(domain, clientReq.path(), revalidation, target.checksum()).onSuccess(answer ->
-                        importOrDownload(clientReq, started, domain, revalidation, target, ref, answer, lookedUp));
+                hostImports.join(target.artifact(), () -> importHostCopy(domain, clientReq.path(), revalidation, target, ref))
+                        .onSuccess(imported -> importOrDownload(clientReq, started, domain, revalidation, target, ref, imported))
+                        .onFailure(err -> download(clientReq, started, domain, revalidation, target, ref));
             } else {
                 // No copy to fall back on, so even in a backoff upstream is asked
                 download(clientReq, started, domain, revalidation, target, ref);
@@ -1442,8 +1444,13 @@ class ArtifactCacheHandler {
         if (summary != null) System.out.println(summary);
     }
 
-    // Artifacts with a background confirmation queued or in flight, so overlapping hits share one
-    final Set<Path> backgroundConfirmations = ConcurrentHashMap.newKeySet();
+    // Artifacts with a background confirmation queued or in flight, so overlapping hits queue one; the
+    // confirmation itself, once it runs, goes through confirmations below like a foreground one
+    final SingleFlight<Path, Void> backgroundConfirmations = new SingleFlight<>();
+    // Confirmations asking upstream, foreground and background alike, so overlapping ones share one (#1567)
+    final SingleFlight<Path, Confirmed> confirmations = new SingleFlight<>();
+    // npm version lookups in flight, by domain and path, so overlapping ones share one (#1567)
+    final SingleFlight<String, NpmLookup> npmLookups = new SingleFlight<>();
     // Past the limit they wait their turn here; guarded by itself, as is confirmationsInFlight
     private final java.util.ArrayDeque<Runnable> queuedConfirmations = new java.util.ArrayDeque<>();
     private int confirmationsInFlight;
@@ -1484,19 +1491,29 @@ class ArtifactCacheHandler {
      * queued or in flight for it; past {@link #maxBackgroundConfirmations} it waits its turn.
      */
     private void inBackground(Path key, Supplier<Future<?>> confirmation) {
-        if (!backgroundConfirmations.add(key)) return;
-        Runnable run = () -> confirmation.get().onComplete(ar -> {
-            backgroundConfirmations.remove(key);
-            startNextConfirmation();
-        });
-        synchronized (queuedConfirmations) {
-            if (confirmationsInFlight >= maxBackgroundConfirmations) {
-                queuedConfirmations.add(run);
-                return;
+        backgroundConfirmations.join(key, () -> {
+            var done = Promise.<Void>promise();
+            Runnable run = () -> {
+                Future<?> running;
+                try {
+                    running = confirmation.get();
+                } catch (RuntimeException e) {
+                    running = Future.failedFuture(e);
+                }
+                running.onComplete(ar -> {
+                    done.complete();
+                    startNextConfirmation();
+                });
+            };
+            boolean queued;
+            synchronized (queuedConfirmations) {
+                queued = confirmationsInFlight >= maxBackgroundConfirmations;
+                if (queued) queuedConfirmations.add(run);
+                else confirmationsInFlight++;
             }
-            confirmationsInFlight++;
-        }
-        run.run();
+            if (!queued) run.run();
+            return done.future();
+        });
     }
 
     private void startNextConfirmation() {
@@ -1523,8 +1540,16 @@ class ArtifactCacheHandler {
     /** Upstream's answer, and what it did to the cached copy: no outcome when upstream was unreachable. */
     private record Confirmed(SidecarAnswer answer, VerifiedArtifactStore.Outcome outcome) {}
 
-    /** Ask upstream about a cached artifact and reconcile the copy with the answer. */
+    /**
+     * Ask upstream about a cached artifact and reconcile the copy with the answer, or join a
+     * confirmation of it still in flight when this caller asked (#1567): its probe may have been
+     * answered just before, but its writes precede the reply, as with a lookup of the caller's own.
+     */
     private Future<Confirmed> confirm(String domain, String path, Revalidation revalidation, ArtifactTarget target) {
+        return confirmations.join(target.artifact(), () -> confirmNow(domain, path, revalidation, target));
+    }
+
+    private Future<Confirmed> confirmNow(String domain, String path, Revalidation revalidation, ArtifactTarget target) {
         var lookedUp = Instant.now();
         var probed = inBackoff(domain)
                 ? Future.succeededFuture(SidecarAnswer.UNREACHABLE)
@@ -1578,34 +1603,45 @@ class ArtifactCacheHandler {
         serveCachedFile(clientReq.response(), artifact, null);
     }
 
+    // Host-copy imports probing upstream, by artifact, so overlapping misses share one (#1567)
+    final SingleFlight<Path, HostImport> hostImports = new SingleFlight<>();
+
+    /** Upstream's checksum for an artifact with a host copy, and the size imported: -1 when it was not. */
+    record HostImport(SidecarAnswer answer, long importedSize) {}
+
+    /** Probe upstream, then import the host copy if it matches the answer. */
+    private Future<HostImport> importHostCopy(String domain, String path, Revalidation revalidation, ArtifactTarget target,
+                                              String ref) {
+        var checksum = target.checksum();
+        var lookedUp = Instant.now();
+        return probe(domain, path, revalidation, checksum).compose(answer -> {
+            if (answer == SidecarAnswer.UNREACHABLE || answer.status() != 200 || checksum.hex(answer.body()) == null) {
+                return Future.succeededFuture(new HostImport(answer, -1));
+            }
+            // Superseded too goes to upstream: the copy confirmed meanwhile may not be what this answer describes
+            return vertx.executeBlocking(() -> {
+                if (VerifiedArtifactStore.importCopy(target.hostCopy(), target.artifact(), checksum, answer.body(), lookedUp)
+                        == VerifiedArtifactStore.Commit.COMMITTED) {
+                    return new HostImport(answer, Files.size(target.artifact()));
+                }
+                System.out.println("Maven .m2 copy not imported (differs from upstream, or superseded): " + ref);
+                return new HostImport(answer, -1);
+            }, false);
+        }).onFailure(err -> System.err.println("Maven .m2 import error for " + ref + ": " + err.getMessage()));
+    }
+
     private void importOrDownload(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
-                                  ArtifactTarget target, String ref, SidecarAnswer answer, Instant lookedUp) {
+                                  ArtifactTarget target, String ref, HostImport imported) {
+        var answer = imported.answer();
         if (answer == SidecarAnswer.UNREACHABLE) {
             // Downloading would only wait out the same failed connection
             upstream.sendError(clientReq.response(), 502, "Upstream unreachable");
-            return;
-        }
-        var checksum = target.checksum();
-        if (answer.status() != 200 || checksum.hex(answer.body()) == null) {
+        } else if (imported.importedSize() >= 0) {
+            recordHit(ArtifactCacheStats.Hit.HOST_COPY, imported.importedSize());
+            serveConfirmed(clientReq, target.artifact(), revalidation, answer);
+        } else {
             download(clientReq, started, domain, revalidation, target, ref);
-            return;
         }
-        // Superseded too goes to upstream: the copy confirmed meanwhile may not be what this answer describes
-        vertx.executeBlocking(() -> VerifiedArtifactStore.importCopy(
-                target.hostCopy(), target.artifact(), checksum, answer.body(), lookedUp)
-                == VerifiedArtifactStore.Commit.COMMITTED ? Files.size(target.artifact()) : -1L, false
-        ).onSuccess(importedSize -> {
-            if (importedSize >= 0) {
-                recordHit(ArtifactCacheStats.Hit.HOST_COPY, importedSize);
-                serveConfirmed(clientReq, target.artifact(), revalidation, answer);
-            } else {
-                System.out.println("Maven .m2 copy not imported (differs from upstream, or superseded): " + ref);
-                download(clientReq, started, domain, revalidation, target, ref);
-            }
-        }).onFailure(err -> {
-            System.err.println("Maven .m2 import error for " + ref + ": " + err.getMessage());
-            download(clientReq, started, domain, revalidation, target, ref);
-        });
     }
 
     /**
@@ -1651,81 +1687,111 @@ class ArtifactCacheHandler {
                 }
             } else {
                 // Without a stored copy, upstream may still answer even in a backoff
-                fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, target, stored, false);
+                fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, target, stored);
             }
         });
     }
 
+    // Sidecar requests settling with upstream, by domain and path, so overlapping ones share one (#1567)
+    final SingleFlight<String, SidecarReply> sidecarSettles = new SingleFlight<>();
+
     /**
+     * What a sidecar request is answered with: a body, or an error with its message. An unreachable
+     * upstream on the first ask is left to each caller, which serves its own stored copy if it has one.
+     */
+    record SidecarReply(int status, byte[] body, String error, boolean unreachable) {
+        static SidecarReply of(int status, byte[] body) {
+            return new SidecarReply(status, body, null, false);
+        }
+
+        static SidecarReply error(int status, String message) {
+            return new SidecarReply(status, null, message, false);
+        }
+    }
+
+    /**
+     * Answer a sidecar request as upstream has it now, joining a request for the same sidecar
+     * that is already settling (#1567): two answers looked up at about the same time could only
+     * disagree, and the one settled last overwrote or dropped what the other stored.
      * {@code stored}: the stored copy, served in upstream's place when it cannot be reached.
-     * {@code askedAgain}: this is the second ask, after the first answer predated the copy's confirmation.
      */
     private void fetchAndServeSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                                      Sidecar sidecar, ArtifactTarget target, byte[] stored, boolean askedAgain) {
+                                      Sidecar sidecar, ArtifactTarget target, byte[] stored) {
         var path = clientReq.path();
-        var clientResp = clientReq.response();
-        var artifact = target.artifact();
+        sidecarSettles.join(domain + path, () -> settleSidecar(domain, path, revalidation, sidecar, target, false)
+                        .onFailure(err -> System.err.println("Sidecar check error for " + domain + path + ": " + err.getMessage())))
+                .otherwise(err -> SidecarReply.error(502, "Sidecar check failed"))
+                .onSuccess(reply -> {
+                    var resp = clientReq.response();
+                    if (reply.unreachable() && stored != null) {
+                        sendSidecar(resp, 200, stored);
+                    } else if (reply.error() != null) {
+                        upstream.sendError(resp, reply.status(), reply.error());
+                    } else {
+                        sendSidecar(resp, reply.status(), reply.body());
+                    }
+                });
+    }
 
+    /**
+     * Ask upstream for a sidecar, reconcile the cached copy with the answer, and decide the reply.
+     * It touches no client response, since every request that joined it is answered with the result.
+     * {@code askedAgain}: this is the second ask, after the first answer predated the copy's confirmation;
+     * unreachable then, it is an error, since a caller's stored copy may describe the bytes replaced.
+     */
+    private Future<SidecarReply> settleSidecar(String domain, String path, Revalidation revalidation, Sidecar sidecar,
+                                               ArtifactTarget target, boolean askedAgain) {
+        var artifact = target.artifact();
         var lookedUp = Instant.now();
-        fetchSidecar(domain, path).onSuccess(answer -> {
+        return fetchSidecar(domain, path).compose(answer -> {
             if (answer.unreachable()) {
-                if (stored != null) {
-                    sendSidecar(clientResp, 200, stored);
-                } else {
-                    upstream.sendError(clientResp, answer.errorStatus(), "Upstream unreachable");
-                }
-                return;
+                return Future.succeededFuture(new SidecarReply(answer.errorStatus(), null, "Upstream unreachable", !askedAgain));
             }
             if (answer == SidecarAnswer.UNUSABLE) {
-                upstream.sendError(clientResp, 502, "Unusable upstream answer");
-                return;
+                return Future.succeededFuture(SidecarReply.error(502, "Unusable upstream answer"));
             }
             var artifactPath = sidecar.artifactPath(path);
             // Reconcile before answering, so the client's next request sees any eviction
-            vertx.executeBlocking(() -> VerifiedArtifactStore.reconcileCopy(artifact, target.checksum(), sidecar,
+            return vertx.executeBlocking(() -> VerifiedArtifactStore.reconcileCopy(artifact, target.checksum(), sidecar,
                     answer.status(), answer.body(), revalidation.sidecarsAuthoritative(), lookedUp), false
             ).compose(reconciled -> reconciled.outcome() == VerifiedArtifactStore.Outcome.DISAGREES
                     ? settleWithHeader(domain, artifactPath, artifact, reconciled.copy(), revalidation, sidecar, answer)
                     : Future.succeededFuture(reconciled.outcome())
-            ).onComplete(ar -> {
+            ).transform(ar -> {
                 if (ar.failed()) {
                     System.err.println("Sidecar check error for " + domain + path + ": " + ar.cause().getMessage());
                 } else if (ar.result() == VerifiedArtifactStore.Outcome.SUPERSEDED) {
                     // Upstream confirmed the copy after this lookup (#1542): the copy's own sidecar
                     // describes the bytes served, where the answer may describe others
-                    serveKeptSidecar(clientReq, domain, revalidation, sidecar, target, askedAgain);
-                    return;
+                    return keptSidecar(domain, path, revalidation, sidecar, target, askedAgain);
                 } else {
                     logEviction(ar.result(), domain + artifactPath, sidecar, answer);
                 }
-                sendSidecar(clientResp, answer.status(), answer.body());
+                return Future.succeededFuture(SidecarReply.of(answer.status(), answer.body()));
             });
         });
     }
 
     /**
-     * Answer a sidecar request whose upstream answer predates the cached copy's confirmation, and may
-     * describe other bytes: with the copy's stored sidecar, else by asking upstream once more, now
-     * after that confirmation. Never with the older answer.
+     * The reply to a sidecar request whose upstream answer predates the cached copy's confirmation, and may
+     * describe other bytes: the copy's stored sidecar, else upstream's answer to one more ask, now
+     * after that confirmation. Never the older answer.
      */
-    private void serveKeptSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                                  Sidecar sidecar, ArtifactTarget target, boolean askedAgain) {
-        vertx.executeBlocking(() -> VerifiedArtifactStore.cachedCopy(target.artifact(), target.checksum(), sidecar), false)
-                .onComplete(ar -> {
+    private Future<SidecarReply> keptSidecar(String domain, String path, Revalidation revalidation,
+                                             Sidecar sidecar, ArtifactTarget target, boolean askedAgain) {
+        return vertx.executeBlocking(() -> VerifiedArtifactStore.cachedCopy(target.artifact(), target.checksum(), sidecar), false)
+                .transform(ar -> {
                     if (ar.failed()) {
-                        System.err.println("Stored sidecar read error for " + domain + clientReq.path() + ": "
+                        System.err.println("Stored sidecar read error for " + domain + path + ": "
                                 + ar.cause().getMessage());
                     }
                     var kept = ar.succeeded() && ar.result() != null ? ar.result().sidecar() : null;
-                    if (kept != null) {
-                        sendSidecar(clientReq.response(), 200, kept);
-                    } else if (!askedAgain) {
-                        fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, target, null, true);
-                    } else {
-                        // Superseded twice: the copy was committed or confirmed again during each ask, so
-                        // neither answer is known to describe it
-                        upstream.sendError(clientReq.response(), 502, "Upstream answers predate the cached copy");
-                    }
+                    if (kept != null) return Future.succeededFuture(SidecarReply.of(200, kept));
+                    // Asked again within this settle, not joined to it: it is still in flight
+                    if (!askedAgain) return settleSidecar(domain, path, revalidation, sidecar, target, true);
+                    // Superseded twice: the copy was committed or confirmed again during each ask, so
+                    // neither answer is known to describe it
+                    return Future.succeededFuture(SidecarReply.error(502, "Upstream answers predate the cached copy"));
                 });
     }
 

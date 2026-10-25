@@ -1671,6 +1671,16 @@ Only an unreachable upstream serves an older one.
   Younger than `max-stale` (default 7 days), it is served at once and confirmed again in the background: a match renews the confirmation, a change or withdrawal evicts the copy so the *next* request fetches it, and an answer that settles neither (a 403, an unusable sidecar) expires the confirmation, so the next hit gets the confirm-first path's handling.
   Older, it is confirmed before it is served, as below.
   Background confirmations are single-flight per artifact, at most 16 in flight with the rest queued (dropping them would leave copies unconfirmed build after build under a parallel resolver), and confirm nothing during a domain's backoff.
+  Overlapping lookups share one (`SingleFlight`, #1567).
+  A request that arrives while the same sidecar settle, confirmation (foreground or background), host-copy import or npm version lookup is in flight joins it and gets its result.
+  Two answers looked up at about the same time are both correct, but each was settled on its own.
+  On Central the answer settled last overwrote or dropped the signature the other had stored.
+  For two confirmations, the later probe's renewal superseded the other answer, whose request then went out without its checksum header.
+  Every lookup is made by the proxy itself, with no client header, so its result belongs to no one caller.
+  What depends on a caller stays its own: an npm lookup's 5xx is retried on each caller's own silence budget, and an unreachable sidecar falls back to each caller's own stored copy.
+  The key is released before anyone is answered, so a request after that asks again, and its lookup follows the first one's writes.
+  Downloads are not joined: concurrent downloads of one file are already safe (#1538), and joining one in flight would mean streaming each follower from a growing spool and resuming it on its own, for bandwidth alone.
+  The store-side ordering rules stay, since joining covers only one proxy's lookups in flight.
   A domain that can withdraw releases never gets the tiers (`Revalidation.mayWithdraw`: the Plugin Portal), so its every hit is confirmed first.
   npm tarballs get the same tiers, keyed on the stored shasum's modification time (see "Proxy caching" above).
   `artifact-cache:` is read from the raw YAML value, so a mistyped section (`artifact-cache: 0`) is warned about and ignored instead of failing config.yaml, which would leave the proxy with no credentials.
