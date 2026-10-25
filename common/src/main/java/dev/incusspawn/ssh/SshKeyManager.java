@@ -226,7 +226,10 @@ public final class SshKeyManager {
         }
     }
 
-    /** Write the managed config only when it changes, so destroying an instance without a Host block leaves it alone. */
+    /**
+     * Write the managed config only when it changes: destroying an instance without a Host block,
+     * or re-adding the last block unchanged, leaves it alone. An earlier block moves to the end.
+     */
     private static void writeIfChanged(String content, String updated) throws IOException {
         // Removing drops the trailing newline adding writes, which is no change to ssh.
         if (!updated.stripTrailing().equals(content.stripTrailing())) {
