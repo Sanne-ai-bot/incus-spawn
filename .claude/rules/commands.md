@@ -49,7 +49,7 @@ No value reaches the terminal with a control character raw (#1118): `plain` turn
 `isx list` outside the TUI (`ListCommand.printListing`) reads the instance listing once (`-q` at `recursion=1`, since completion runs it on every TAB) and never loads definitions.
 Templates are excluded by the `base` type, never by the `tpl-` prefix (which is why `BranchFlow` stamps `clone` in the copy request: a half-made branch must not pass for a template).
 Its request count is pinned.
-Its fields are `name`, `status`, `ipv4`, `parent`, `runtime`, `created`, `mcp_state`, `mcp_purpose` (#1053: `McpStanding`, `null` for an instance no `isx mcp` session made); `docs/CLI.md`'s "Scripting isx" lists them.
+Its fields are `name`, `status`, `ipv4`, `parent`, `runtime`, `created`, `mcp_state`, `mcp_purpose` (#1053: `McpStanding`, `null` for an instance no `isx mcp` session made), `base_image` (#1657: `BaseImageAge.tag`, the `image.incus-spawn.tag` Incus copied from the image); `docs/CLI.md`'s "Scripting isx" lists them.
 Every query command has it, plus `isx branch` (the new name alone).
 `isx templates` adds build state and staleness from `TemplateStaleness`, the same judgement as the TUI's `! △ ↑` marks and `isx build --out-of-sync` (`Staleness.outOfSync()` says which count), so a change to what counts as stale goes there, never into one caller.
 `--out-of-sync` calls `assess` on the same one listing; a named build's parents go through `BuildCommand.isImageOutdated`, which calls its `versionOutdated`, `definitionChanged` and `parentRebuilt`.

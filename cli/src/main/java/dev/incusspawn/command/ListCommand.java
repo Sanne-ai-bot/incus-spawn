@@ -155,6 +155,8 @@ public class ListCommand extends BaseCommand {
             // #1053: which instances an isx mcp session made, how they stand, and what for.
             record.put("mcp_state", i.mcp() == null ? null : i.mcp().state().label());
             record.put("mcp_purpose", i.mcp() == null ? null : i.mcp().purpose());
+            // #1657: the base image release it runs, which a rebuild from a newer one would change.
+            record.put("base_image", BaseImageAge.tag(i.metadata()));
             records.add(record);
         }
         return records;

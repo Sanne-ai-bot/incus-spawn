@@ -1,5 +1,6 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.command.BaseImageAge;
 import dev.incusspawn.command.TemplateStaleness;
 import dev.incusspawn.command.ListCommand;
 import dev.incusspawn.command.TemplatesCommand;
@@ -1683,7 +1684,9 @@ public class Tui {
             }
             case INSTANCE_DETAIL -> {
                 var selected = selectedEntry(instanceTableState);
-                if (selected != null) instanceDetail.render(frame, screen, selected, detailAccountUses);
+                // Assessed from the same snapshot as its tag row: pure, and a few map lookups
+                if (selected != null) instanceDetail.render(frame, screen, selected, detailAccountUses,
+                        BaseImageAge.assess(selected.metadata(), imageDefs));
             }
             case ACCOUNTS -> accountsModal.render(frame, screen);
             case INFO -> about.render(frame, screen);

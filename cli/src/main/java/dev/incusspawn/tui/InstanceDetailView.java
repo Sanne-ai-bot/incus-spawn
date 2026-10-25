@@ -3,6 +3,7 @@ package dev.incusspawn.tui;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.command.BaseImageAge;
 import dev.incusspawn.mcp.McpStanding;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
@@ -86,8 +87,8 @@ public final class InstanceDetailView {
 
     /** Render the details of {@code selected}, with the credential accounts the TUI resolved for it. */
     void render(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen, InstanceInfo selected,
-                List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses) {
-        var contentLines = buildInstanceDetailLines(selected, detailAccountUses);
+                List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses, BaseImageAge.Assessment baseImage) {
+        var contentLines = buildInstanceDetailLines(selected, detailAccountUses, baseImage);
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F2", "Shell");
         if (selected.mcp() != null) modal.addKey(hintSpans, "⇧F2", "Join task");
@@ -158,8 +159,32 @@ public final class InstanceDetailView {
         return rows;
     }
 
+    /**
+     * The detail pane's rows for the base image release an instance runs (#1657), and whether a
+     * rebuild would change it; none when Incus recorded no release and there is nothing to say.
+     */
+    public static List<DetailRow> baseImageRows(String tag, BaseImageAge.Assessment age) {
+        var rows = new ArrayList<DetailRow>();
+        if (tag == null && (age == null || age.standing() != BaseImageAge.Standing.UNKNOWN)) return rows;
+        rows.add(new DetailRow("Base image:", tag == null ? "unknown" : OutputFormat.oneLine(tag)));
+        if (age != null && age.standing() == BaseImageAge.Standing.OLDER) {
+            // Its template may be current already: doctor, which sees the listing, says what to do
+            rows.add(new DetailRow(null, "older than " + OutputFormat.oneLine(age.expectedTag())
+                    + ": 'isx doctor' says what to rebuild to pick up image fixes"));
+            for (var known : BaseImageAge.missingFixes(age)) {
+                rows.add(new DetailRow(null, "before " + known.release() + " " + known.problem()));
+            }
+        } else if (age != null && age.standing() == BaseImageAge.Standing.CURRENT && tag != null
+                && !tag.equals(age.expectedTag())) {
+            // A release that re-published an unchanged asset: the image keeps its first tag
+            rows.add(new DetailRow(null, "the same file as " + OutputFormat.oneLine(age.expectedTag())));
+        }
+        return rows;
+    }
+
     private List<Line> buildInstanceDetailLines(InstanceInfo info,
-                                             List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses) {
+                                             List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses,
+                                             BaseImageAge.Assessment baseImage) {
         var lines = new ArrayList<Line>();
         var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
         var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
@@ -198,8 +223,10 @@ public final class InstanceDetailView {
                     Span.styled("  (" + age + ")", dimStyle))));
         }
 
+        var rows = new ArrayList<>(baseImageRows(BaseImageAge.tag(info.metadata()), baseImage));
         // #1053: no column for it in the instance table, which has no width to spare.
-        for (var row : mcpDetailRows(info.mcp())) {
+        rows.addAll(mcpDetailRows(info.mcp()));
+        for (var row : rows) {
             lines.add(row.label() == null
                     ? Line.from(List.of(Span.styled(" ".repeat(16) + row.value(), dimStyle)))
                     : Line.from(List.of(Span.styled(String.format("%-16s", row.label()), labelStyle),
