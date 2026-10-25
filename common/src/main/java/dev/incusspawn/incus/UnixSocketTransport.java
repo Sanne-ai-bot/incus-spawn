@@ -519,7 +519,11 @@ class UnixSocketTransport implements IncusTransport {
      */
     static byte[] wsSendMasked(OutputStream out, byte[] buf, int opcode,
                                byte[] data, int offset, int length) throws IOException {
-        if (buf.length < length + 14) buf = new byte[Math.max(length + 14, 2 * buf.length)];
+        // Doubling stops at a full stdin frame, so a connection keeps no more than that
+        // unless one frame needs more.
+        if (buf.length < length + 14) {
+            buf = new byte[Math.max(length + 14, Math.min(2 * buf.length, IncusApi.STDIN_CHUNK + 14))];
+        }
 
         // Frame header: FIN + opcode, MASK + payload length (max 14 bytes with the mask)
         int pos = 0;
