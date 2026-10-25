@@ -593,7 +593,8 @@ fi
 ensure_hyperfoil_image() {
     if ! podman image exists "$HYPERFOIL_IMAGE" 2>/dev/null; then
         echo "Pulling Hyperfoil image..." >&2
-        podman pull "$HYPERFOIL_IMAGE" >/dev/null 2>&1 || die "Could not pull $HYPERFOIL_IMAGE"
+        podman pull "$HYPERFOIL_IMAGE" >/dev/null 2>"$WORK_DIR/pull.log" \
+            || die "Could not pull $HYPERFOIL_IMAGE: $( (grep -i 'error' "$WORK_DIR/pull.log" || cat "$WORK_DIR/pull.log") | tail -5)"
     fi
 }
 
