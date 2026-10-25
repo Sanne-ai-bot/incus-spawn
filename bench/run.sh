@@ -37,6 +37,8 @@ CLI_BIN=""
 COLLECT_DIR=""
 FROM="tpl-isx-bench"
 MODEL_LOAD=false
+CACHE_LOAD=false
+WS_LOAD=false
 
 IS_MACOS=false
 [ "$(uname -s)" = Darwin ] && IS_MACOS=true
@@ -286,9 +288,12 @@ fi
 case "$LOAD_MODE" in
     constant) BENCHMARK_YAML="$SCRIPT_DIR/proxy-health.hf.yaml" ;;
     saturate) BENCHMARK_YAML="$SCRIPT_DIR/proxy-saturate.hf.yaml" ;;
-    maven)    BENCHMARK_YAML="$SCRIPT_DIR/proxy-maven.hf.yaml" ;;
+    maven)    BENCHMARK_YAML="$SCRIPT_DIR/proxy-maven.hf.yaml"; CACHE_LOAD=true ;;
+    npm)      BENCHMARK_YAML="$SCRIPT_DIR/proxy-npm.hf.yaml"; CACHE_LOAD=true ;;
     anthropic|vertex) BENCHMARK_YAML="$SCRIPT_DIR/proxy-messages.hf.yaml"; MODEL_LOAD=true ;;
-    *) die "Unknown --load mode '$LOAD_MODE' (expected: constant, saturate, maven, anthropic, vertex)" ;;
+    # Hyperfoil speaks no WebSocket: WsLoad.java drives this one, from inside the instance
+    websocket) BENCHMARK_YAML="$SCRIPT_DIR/proxy-websocket.yaml"; MODEL_LOAD=true; WS_LOAD=true ;;
+    *) die "Unknown --load mode '$LOAD_MODE' (expected: constant, saturate, maven, npm, anthropic, vertex, websocket)" ;;
 esac
 
 COLLECTING=false
@@ -310,18 +315,19 @@ BENCHMARK_NAME=$(awk '/^name:/ { print $2; exit }' "$BENCHMARK_YAML")
 [ -n "$BENCHMARK_NAME" ] || die "No 'name:' in $BENCHMARK_YAML"
 echo "Load:     $LOAD_MODE ($BENCHMARK_NAME)"
 
-if [ "$LOAD_MODE" = maven ]; then
+if $CACHE_LOAD; then
     # e.g. "host: https://repo1.maven.org:18443" -> repo1.maven.org
-    MAVEN_HOST=$(awk '/^  host:/ { print $2; exit }' "$BENCHMARK_YAML" | sed -E 's#^https?://##; s#:[0-9]+$##')
-    MAVEN_PORT=$(awk '/^  host:/ { print $2; exit }' "$BENCHMARK_YAML" | sed -nE 's#.*:([0-9]+)$#\1#p')
-    MAVEN_PATH=$(awk '/GET:/ { print $2; exit }' "$BENCHMARK_YAML")
-    [ -n "$MAVEN_HOST" ] && [ -n "$MAVEN_PATH" ] || die "Could not parse host/GET path from $BENCHMARK_YAML"
-    MAVEN_URL="https://$MAVEN_HOST:$MAVEN_PORT$MAVEN_PATH"
-    echo "Artifact: $MAVEN_URL (served by a local stub)"
-    command -v java &>/dev/null || die "java not found; needed to run the upstream stub for --load=maven"
+    CACHE_HOST=$(awk '/^  host:/ { print $2; exit }' "$BENCHMARK_YAML" | sed -E 's#^https?://##; s#:[0-9]+$##')
+    CACHE_PORT=$(awk '/^  host:/ { print $2; exit }' "$BENCHMARK_YAML" | sed -nE 's#.*:([0-9]+)$#\1#p')
+    # The last GET is the cached artifact (npm's packument, before it, is relayed every time)
+    CACHE_PATH=$(awk '/GET:/ { p = $2 } END { print p }' "$BENCHMARK_YAML")
+    [ -n "$CACHE_HOST" ] && [ -n "$CACHE_PATH" ] || die "Could not parse host/GET path from $BENCHMARK_YAML"
+    CACHE_URL="https://$CACHE_HOST:$CACHE_PORT$CACHE_PATH"
+    echo "Artifact: $CACHE_URL (served by a local stub)"
+    command -v java &>/dev/null || die "java not found; needed to run the upstream stub for --load=$LOAD_MODE"
     JAVA_MAJOR=$(java -XshowSettings:properties -version 2>&1 | sed -nE 's/^ *java\.specification\.version = ([0-9]+).*/\1/p')
-    [ "${JAVA_MAJOR:-0}" -ge 21 ] || die "java ${JAVA_MAJOR:-unknown} found; the upstream stub for --load=maven needs JDK 21+"
-    command -v keytool &>/dev/null || die "keytool not found; needed for --load=maven"
+    [ "${JAVA_MAJOR:-0}" -ge 21 ] || die "java ${JAVA_MAJOR:-unknown} found; the upstream stub for --load=$LOAD_MODE needs JDK 21+"
+    command -v keytool &>/dev/null || die "keytool not found; needed for --load=$LOAD_MODE"
 fi
 
 if $MODEL_LOAD; then
@@ -333,7 +339,13 @@ if $MODEL_LOAD; then
   (cd bench && isx build tpl-isx-bench --yes)"
     command -v java &>/dev/null || die "java not found; needed to run the upstream stub for --load=$LOAD_MODE"
     command -v keytool &>/dev/null || die "keytool not found; needed for --load=$LOAD_MODE"
-    MODEL_HOSTS=(api.anthropic.com us-east5-aiplatform.googleapis.com)
+    if $WS_LOAD; then
+        MODEL_HOSTS=(api.openai.com)
+        WS_PHASES=$(awk '/^phases:/ { print $2; exit }' "$BENCHMARK_YAML")
+        [ -n "$WS_PHASES" ] || die "No 'phases:' in $BENCHMARK_YAML"
+    else
+        MODEL_HOSTS=(api.anthropic.com us-east5-aiplatform.googleapis.com)
+    fi
     echo "Upstream: ${MODEL_HOSTS[*]} (served by a local stub)"
 fi
 
@@ -473,7 +485,7 @@ fi
 # ── 4. Start proxy and measure startup time ─────────────────────────────────
 
 PROXY_ENV=()
-if [ "$LOAD_MODE" = maven ] || $MODEL_LOAD; then
+if $CACHE_LOAD || $MODEL_LOAD; then
     # The proxy confirms cache hits with upstream (a HEAD for Maven Central) once their
     # artifact-cache: tiers stop trusting them, so pointed at the real repository this
     # run could send its load there and measure that repository's latency. A local stub
@@ -486,13 +498,14 @@ if [ "$LOAD_MODE" = maven ] || $MODEL_LOAD; then
     if $MODEL_LOAD; then
         # The model loads need no artifact: the stub answers their POSTs instead.
         STUB_HOSTS=("${MODEL_HOSTS[@]}")
-        MAVEN_PATH=/isx-bench-no-artifact
+        CACHE_PATH=/isx-bench-no-artifact
     else
-        STUB_HOSTS=("$MAVEN_HOST")
+        STUB_HOSTS=("$CACHE_HOST")
     fi
-    STUB_SAN=$(printf 'dns:%s,' "${STUB_HOSTS[@]}")
+    # The address too: a WebSocket dials an overridden host at the stub's address (MitmProxy)
+    STUB_SAN="$(printf 'dns:%s,' "${STUB_HOSTS[@]}")ip:127.0.0.1"
     keytool -genkeypair -alias stub -keyalg EC -groupname secp256r1 \
-        -dname "CN=${STUB_HOSTS[0]}" -ext "SAN=${STUB_SAN%,}" -validity 2 \
+        -dname "CN=${STUB_HOSTS[0]}" -ext "SAN=$STUB_SAN" -validity 2 \
         -keystore "$STUB_DIR/stub.p12" -storetype PKCS12 -storepass changeit &>/dev/null \
         || die "Failed to create the stub's certificate"
     keytool -exportcert -rfc -alias stub -keystore "$STUB_DIR/stub.p12" -storepass changeit \
@@ -503,9 +516,12 @@ if [ "$LOAD_MODE" = maven ] || $MODEL_LOAD; then
     # The credentials the proxy should inject: the stub refuses a call without them.
     STUB_API_KEY="isx-bench-api-key-$RANDOM$RANDOM"
     STUB_VERTEX_TOKEN="isx-bench-vertex-token-$RANDOM$RANDOM"
+    STUB_WS_PORT=0
+    $WS_LOAD && STUB_WS_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     java -Dstub.apiKey="$STUB_API_KEY" -Dstub.vertexToken="$STUB_VERTEX_TOKEN" \
+        -Dstub.wsPort="$STUB_WS_PORT" -Dstub.openaiKey="$STUB_API_KEY" \
         "$SCRIPT_DIR/UpstreamStub.java" "$STUB_PORT" "$STUB_DIR/stub.p12" changeit \
-        "$MAVEN_PATH" "$STUB_DIR/payload.jar" > "$STUB_DIR/stub.log" 2>&1 &
+        "$CACHE_PATH" "$STUB_DIR/payload.jar" > "$STUB_DIR/stub.log" 2>&1 &
     STUB_PID=$!
     for _ in $(seq 1 60); do
         grep -q '^ready' "$STUB_DIR/stub.log" 2>/dev/null && break
@@ -514,8 +530,16 @@ if [ "$LOAD_MODE" = maven ] || $MODEL_LOAD; then
     done
     grep -q '^ready' "$STUB_DIR/stub.log" || die "Upstream stub did not start within 30s"
     echo "Stub:        ${STUB_HOSTS[*]} -> 127.0.0.1:$STUB_PORT"
-    $MODEL_LOAD || BENCH_CACHE_DIR="$HOME/.cache/incus-spawn/maven-verified/$MAVEN_HOST$(dirname "$MAVEN_PATH")"
-    STUB_UPSTREAMS=$(printf "%s=127.0.0.1:$STUB_PORT," "${STUB_HOSTS[@]}")
+    case "$LOAD_MODE" in
+        maven) BENCH_CACHE_DIR="$HOME/.cache/incus-spawn/maven-verified/$CACHE_HOST$(dirname "$CACHE_PATH")" ;;
+        npm) BENCH_CACHE_DIR="$HOME/.cache/incus-spawn/npm/${CACHE_PATH#/}"; BENCH_CACHE_DIR="${BENCH_CACHE_DIR%%/-/*}" ;;
+    esac
+    if $WS_LOAD; then
+        # The WebSocket server is on a port of its own
+        STUB_UPSTREAMS="api.openai.com=127.0.0.1:$STUB_WS_PORT,"
+    else
+        STUB_UPSTREAMS=$(printf "%s=127.0.0.1:$STUB_PORT," "${STUB_HOSTS[@]}")
+    fi
     PROXY_ENV=(ISX_BENCH_UPSTREAM="${STUB_UPSTREAMS%,}"
                ISX_BENCH_UPSTREAM_CERT="$STUB_DIR/stub.pem")
 fi
@@ -526,6 +550,10 @@ if $MODEL_LOAD; then
     if [ "$LOAD_MODE" = vertex ]; then
         printf 'claude:\n  default: isx-bench\n  accounts:\n    isx-bench:\n      type: vertex\n      cloudMlRegion: us-east5\n      vertexProjectId: isx-bench\n' \
             > "$STUB_DIR/config.yaml"
+    elif $WS_LOAD; then
+        # Codex's credential (CodexSetup): an OpenAI key, sent as a bearer token
+        printf 'openai:\n  default: isx-bench\n  accounts:\n    isx-bench:\n      apiKey: %s\n' \
+            "$STUB_API_KEY" > "$STUB_DIR/config.yaml"
     else
         printf 'claude:\n  default: isx-bench\n  accounts:\n    isx-bench:\n      type: api-key\n      apiKey: %s\n' \
             "$STUB_API_KEY" > "$STUB_DIR/config.yaml"
@@ -578,16 +606,18 @@ IDLE_RSS=$(get_rss_kb "$PROXY_PID")
 echo "Idle RSS:    ${IDLE_RSS} KB"
 
 ARTIFACT_BYTES=0
-if [ "$LOAD_MODE" = maven ]; then
+if $CACHE_LOAD; then
     # Prime the on-disk cache and prove the intercepted path works before handing
     # it to the load generator; a cold first request would otherwise be measured
     # as an upstream fetch and skew the whole run.
     WARM=$(curl -s -o /dev/null -w "%{http_code}:%{size_download}" \
-        --resolve "$MAVEN_HOST:$MAVEN_PORT:$GATEWAY_IP" --cacert "$ISX_CONFIG_DIR/ca.crt" \
-        "$MAVEN_URL") || die "Artifact fetch through the proxy failed"
+        --resolve "$CACHE_HOST:$CACHE_PORT:$GATEWAY_IP" --cacert "$ISX_CONFIG_DIR/ca.crt" \
+        "$CACHE_URL") || die "Artifact fetch through the proxy failed"
     [ "${WARM%%:*}" = "200" ] || die "Artifact fetch returned HTTP ${WARM%%:*} (expected 200)"
     ARTIFACT_BYTES="${WARM##*:}"
     echo "Cache warm:  $ARTIFACT_BYTES bytes"
+    # npm's load also fetches the packument, so its requests are not all the artifact
+    [ "$LOAD_MODE" = npm ] && ARTIFACT_BYTES=0
 fi
 
 ensure_hyperfoil_image() {
@@ -620,7 +650,28 @@ if $MODEL_LOAD; then
     echo "Instance:    $HF_INSTANCE (branching from $FROM)"
     cli branch "$HF_INSTANCE" --from "$FROM" </dev/null >"$WORK_DIR/branch.log" 2>&1 \
         || die "Could not branch $HF_INSTANCE from $FROM: $(tail -5 "$WORK_DIR/branch.log")"
-    # Read as a login reads it: the profile replaces the build's placeholder with the proof.
+    if $WS_LOAD; then
+        # Read as a login reads it: the profile replaces the build's placeholder with the proof.
+        # shellcheck disable=SC2016  # expanded in the instance
+        PROOF=$(incus exec "$HF_INSTANCE" -- sh -c \
+            'OPENAI_API_KEY=sk-placeholder; . /run/isx/proof-tokens; printf %s "$OPENAI_API_KEY"')
+        case "$PROOF" in sk-isx_*) ;; *) die "$HF_INSTANCE was given no OpenAI proof (/run/isx/proof-tokens)" ;; esac
+        incus exec "$HF_INSTANCE" -- mkdir -p /opt/isx-bench
+        incus file push "$SCRIPT_DIR/WsLoad.java" "$HF_INSTANCE/opt/isx-bench/WsLoad.java" >/dev/null \
+            || die "Could not copy WsLoad.java into $HF_INSTANCE"
+        ws_load() {
+            incus exec "$HF_INSTANCE" -- java /opt/isx-bench/WsLoad.java wss://api.openai.com/v1/responses "$PROOF" "$1"
+        }
+        # Five seconds of one socket first (time for a cold JVM's first handshake), so a proxy
+        # that does not inject (the stub refuses the handshake) fails here, not as a run of errors.
+        CHECK=$(ws_load check=1x5) || die "WsLoad failed in $HF_INSTANCE"
+        python3 -c 'import json, sys; s = json.load(sys.stdin)["statistics"][0]["summary"]; sys.exit(0 if s["extensions"]["http"]["status_2xx"] > 0 and s["requestCount"] == s["extensions"]["http"]["status_2xx"] else 1)' \
+            <<<"$CHECK" || die "WebSocket turns through the proxy failed (the stub refuses a socket without the injected credential): $CHECK"
+        echo "WebSocket:   turns answered, credential injected"
+    fi
+fi
+if $MODEL_LOAD && ! $WS_LOAD; then
+    # As above, for the Claude proof.
     # shellcheck disable=SC2016  # expanded in the instance
     PROOF=$(incus exec "$HF_INSTANCE" -- sh -c \
         'ANTHROPIC_API_KEY=sk-ant-placeholder; . /run/isx/proof-tokens; printf %s "$ANTHROPIC_API_KEY"')
@@ -657,6 +708,12 @@ hf_curl() {
 
 echo ""
 
+if $WS_LOAD; then
+    echo "Running WsLoad in the instance ($WS_PHASES)..."
+    STATS=$(ws_load "$WS_PHASES") || die "WsLoad failed in $HF_INSTANCE"
+    HYPERFOIL_SOURCE="WsLoad.java, in $FROM"
+else
+
 if [ -z "$HYPERFOIL_DIR" ] && [ -z "$HF_INSTANCE" ]; then
     ensure_hyperfoil_image
 
@@ -672,7 +729,7 @@ BENCHMARK_UPLOAD="$BENCHMARK_YAML"
 # so the generator needs (a) repo1.maven.org pointed at the gateway instead of
 # the internet and (b) trust in the leaf cert the proxy mints, which is signed by
 # our own CA. Without the truststore every request fails the handshake.
-if [ "$LOAD_MODE" = maven ]; then
+if $CACHE_LOAD; then
     TRUSTSTORE_DIR="$(mktemp -d)"
     TRUSTSTORE="$TRUSTSTORE_DIR/isx-truststore.p12"
     keytool -importcert -noprompt -trustcacerts -alias isx-ca \
@@ -680,7 +737,7 @@ if [ "$LOAD_MODE" = maven ]; then
         -keystore "$TRUSTSTORE" -storetype PKCS12 -storepass changeit &>/dev/null \
         || die "Failed to build truststore from $ISX_CONFIG_DIR/ca.crt"
     HF_RUN_ARGS+=(
-        --add-host "$MAVEN_HOST:$GATEWAY_IP"
+        --add-host "$CACHE_HOST:$GATEWAY_IP"
         -v "$TRUSTSTORE:/ca/truststore.p12:ro,Z"
         -e JAVA_OPTS="-Djavax.net.ssl.trustStore=/ca/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"
     )
@@ -693,11 +750,11 @@ if [ -n "$HF_INSTANCE" ]; then
     incus exec "$HF_INSTANCE" -- sh -c 'cd /opt/hyperfoil && nohup bin/standalone.sh </dev/null > /tmp/hyperfoil.log 2>&1 &'
 elif [ -n "$HYPERFOIL_DIR" ]; then
     HF_WORK_DIR="$(mktemp -d)"
-    if [ "$LOAD_MODE" = maven ]; then
+    if $CACHE_LOAD; then
         # No container, so no --add-host: the definition itself names the address to
         # connect to, and the host stays repo1.maven.org for SNI and the Host header.
         BENCHMARK_UPLOAD="$HF_WORK_DIR/$(basename "$BENCHMARK_YAML")"
-        awk -v addr="$GATEWAY_IP:$MAVEN_PORT" '
+        awk -v addr="$GATEWAY_IP:$CACHE_PORT" '
             { print }
             /^  host:/ { print "  addresses:"; print "  - " addr }
         ' "$BENCHMARK_YAML" > "$BENCHMARK_UPLOAD"
@@ -794,6 +851,7 @@ fi
 
 # Fetch and display results
 STATS=$(hf_curl -sf "http://localhost:$HYPERFOIL_PORT/run/$RUN_ID/stats/total")
+fi  # the Hyperfoil run; WsLoad printed the same totals
 
 echo "$STATS" | python3 -c "
 import sys, json

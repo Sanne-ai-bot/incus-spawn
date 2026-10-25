@@ -1,0 +1,7 @@
+# Codex's WebSocket sessions through the proxy (bench/run.sh --load=websocket). Hyperfoil speaks
+# no WebSocket, so WsLoad.java drives this from inside the instance: per phase, <users> sockets
+# for <seconds>, each sending ten turns of about 2 KiB before it reconnects, every turn answered
+# by the stub's streamed reply. run.sh reads the name, the connection count and the phases.
+name: proxy-websocket
+sharedConnections: 32
+phases: warmup=4x5,c004=4x10,c016=16x10,c032=32x10
