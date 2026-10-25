@@ -130,6 +130,45 @@ class ExecRelayFramingTest {
     }
 
     @Test
+    void aSocketOfSmallMessagesKeepsItsFirstBuffer() throws IOException {
+        // What a control socket reads: the handshake's answer, then a small frame now and then,
+        // each arriving on its own.
+        var arrivals = new java.util.ArrayDeque<byte[]>();
+        arrivals.add("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+                .getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        for (int i = 0; i < 100; i++) {
+            var frame = new byte[2 + 120];
+            frame[0] = (byte) 0x82;
+            frame[1] = 120;
+            arrivals.add(frame);
+        }
+        var largestAsked = new int[1];
+        var raw = new InputStream() {
+            @Override
+            public int read() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public int read(byte[] b, int off, int len) {
+                largestAsked[0] = Math.max(largestAsked[0], len);
+                var next = arrivals.poll();
+                if (next == null) return -1;
+                System.arraycopy(next, 0, b, off, next.length);
+                return next.length;
+            }
+        };
+        var in = new UnixSocketTransport.SocketInput(raw);
+        assertEquals(101, HttpResponseReader.readHead(in).statusCode());
+        int frames = 0;
+        while (UnixSocketTransport.wsReadFrame(in, p -> {}) != null) frames++;
+
+        assertEquals(100, frames);
+        assertEquals(UnixSocketTransport.FIRST_READ_BUFFER, largestAsked[0],
+                "a socket of small messages reads into its first buffer, never a 64 KiB one");
+    }
+
+    @Test
     void aStreamOfLargerFramesGrowsTheReadAhead() throws IOException {
         var wire = new ByteArrayOutputStream();
         int frameBytes = 8 * 1024; // above the first buffer, below a full read-ahead
