@@ -10,6 +10,7 @@ import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.config.YamlErrors;
+import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.BtrfsUsage;
 import dev.incusspawn.incus.FirewalldCheck;
@@ -293,14 +294,39 @@ public class DoctorCommand extends BaseCommand {
     void runSharedChecks(List<Finding> findings) {
         findings.addAll(checkStoragePool());
         findings.add(checkInotifyBudget());
-        findings.addAll(checkProxy());
-        findings.addAll(checkDnsAndBridge());
-        findings.add(checkInstanceSubnets());
+        var missingBridge = checkBridgeExists();
+        // On macOS the proxy runs on the Mac and answers at 127.0.0.1, bridge or not
+        if (missingBridge == null || Platform.isMacOS()) {
+            findings.addAll(checkProxy());
+        }
+        if (missingBridge == null) {
+            findings.addAll(checkDnsAndBridge());
+            findings.add(checkInstanceSubnets());
+        } else {
+            findings.add(missingBridge);
+        }
         findings.add(checkInstanceAccounts());
         findings.addAll(checkTemplates());
         if (deepChecks()) {
             findings.addAll(checkInstances());
         }
+    }
+
+    /**
+     * The bridge DNS and instance network checks read incusbr0, and so does the proxy's on Linux:
+     * without it they would only repeat its absence, or end the run (#1665). Null when it exists
+     * or Incus cannot say, in which case those checks report for themselves.
+     */
+    private Finding checkBridgeExists() {
+        try {
+            if (incus().networkExists(BridgeAddress.BRIDGE)) return null;
+        } catch (Exception e) {
+            return null;
+        }
+        return Finding.fail("Bridge " + BridgeAddress.BRIDGE + " missing",
+                Platform.isMacOS() ? "(bridge DNS and instance network checks skipped)"
+                        : "(proxy, bridge DNS and instance network checks skipped)",
+                new Remediation("Run 'isx init' to create it", false, null));
     }
 
     // ---- Layer 1: Host configuration ----
@@ -1386,7 +1412,12 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private Finding checkProxyRunning(IncusClient incus) {
-        var status = ProxyHealthCheck.check(incus);
+        ProxyHealthCheck.ProxyStatus status;
+        try {
+            status = ProxyHealthCheck.check(incus);
+        } catch (Exception e) {
+            return Finding.warn("Proxy running", "(could not check: " + e.getMessage() + ")", null);
+        }
         return switch (status) {
             case RUNNING -> Finding.ok("Proxy running", "");
             case WAITING_FOR_DNS -> Finding.warn("Proxy running", "(waiting for DNS configuration)", null);
@@ -1542,13 +1573,15 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkBridgeDns(IncusClient incus) {
         Set<String> allDomains;
         BridgeDns.Status status;
+        ProxyHealthCheck.ProxyStatus proxy;
         try {
             allDomains = ProxyConfig.bridgeDnsDomains(SpawnConfig.load());
             status = ProxyConfig.bridgeDnsStatus(incus, allDomains);
+            proxy = ProxyHealthCheck.check(incus);
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }
-        return bridgeDnsFinding(ProxyHealthCheck.check(incus), status, allDomains,
+        return bridgeDnsFinding(proxy, status, allDomains,
                 () -> ProxyConfig.writeBridgeDns(incus(), allDomains));
     }
 

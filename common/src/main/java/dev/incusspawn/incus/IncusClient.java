@@ -997,12 +997,7 @@ public class IncusClient {
      * @return {@code true} if the network was created, {@code false} if it already existed.
      */
     public boolean createBridgeIfMissing(String networkName, String gatewayIp) {
-        var resp = http().get("/1.0/networks/" + networkName);
-        if (resp.isSuccess()) return false;
-        if (resp.statusCode() != 404) {
-            throw new IncusException("Failed to check network " + networkName
-                    + " (HTTP " + resp.statusCode() + ")");
-        }
+        if (networkExists(networkName)) return false;
         var config = Map.of(
                 "ipv4.address", gatewayIp + "/24",
                 "ipv4.nat", "true",
@@ -1111,6 +1106,15 @@ public class IncusClient {
             throw new IncusException("Failed to delete network " + networkName
                     + " (HTTP " + resp.statusCode() + ")");
         }
+    }
+
+    /** Whether a network exists; throws when Incus cannot say. */
+    public boolean networkExists(String networkName) {
+        var resp = http().get("/1.0/networks/" + networkName);
+        if (resp.isSuccess()) return true;
+        if (resp.statusCode() == 404) return false;
+        throw new IncusException("Failed to check network " + networkName
+                + " (HTTP " + resp.statusCode() + "): " + resp.body().pathText("error", "unknown error"));
     }
 
     /**
