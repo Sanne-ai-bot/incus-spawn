@@ -2958,6 +2958,17 @@ The root fix, moving the data disk out of the state directory, needs a migration
 `isx clean state` and `isx clean all` remove the appliance (`~/.local/share/incus-spawn`) along with the rest, so the VM boots on the kept disk only after `isx init` downloads it again, after either command.
 The VM's launch agent has no `KeepAlive` (checked on a Mac in the plists 0.3.9 and this change write; 0.3.10's was not available there), so stopping the VM before booting out the agent cannot have launchd start it again.
 
+`install.sh` refuses an `INSTALL_DIR` inside a Homebrew prefix, before it builds (#1666).
+Installing there renames the build over the formula's links in the prefix's `bin`, and every account on the machine then runs it.
+That is the cross-account write #1614 removes from the relink, so a warning would not do: it would still write the prefix.
+Each ancestor of the directory's physical path is compared with each prefix by inode (`-ef`).
+So a trailing slash, a symlink, a `..` or another letter case on a case-insensitive Mac volume cannot spell around it.
+A directory that does not exist yet is judged by its nearest existing parent, before `mkdir -p` creates anything.
+Such a directory may not contain `..`, since `mkdir -p` would create the part before it and then climb out of it, perhaps into a prefix.
+A directory whose physical path cannot be read is refused, since the check would otherwise pass it unseen.
+The prefixes are the one `brew --prefix` names, `$HOMEBREW_PREFIX`, and the standard `/opt/homebrew`, `/usr/local` and `/home/linuxbrew/.linuxbrew` wherever they hold `bin/brew`, so an account without `brew` on PATH is refused too.
+The marker keeps a plain `/usr/local/bin` usable where Homebrew is not installed there.
+
 ### Repo Cloning and Reference Optimization
 
 Repos declared in an image definition are cloned into the container during build as `agentuser`.
