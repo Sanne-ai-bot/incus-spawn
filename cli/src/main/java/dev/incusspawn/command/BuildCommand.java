@@ -1830,6 +1830,8 @@ public class BuildCommand extends BaseCommand {
 
     /** Image property recording the URL a base image was imported from, {@code {arch}} and {@code {tag}} filled in. */
     static final String IMAGE_SOURCE_PROPERTY = "incus-spawn.source";
+    /** The base image release an import came from; Incus copies it onto each instance as {@code image.*}. */
+    static final String IMAGE_TAG_PROPERTY = "incus-spawn.tag";
 
     /**
      * Local image aliases are shared by every template on the host, so a project-local template
@@ -1870,7 +1872,7 @@ public class BuildCommand extends BaseCommand {
                         + "  Give it an image name of its own, or, if you trust it, move it to "
                         + ImageDef.userImagesDir() + " or a configured search path.");
             }
-            var installedTag = incus.getImageProperty(existingFingerprint, "incus-spawn.tag");
+            var installedTag = incus.getImageProperty(existingFingerprint, IMAGE_TAG_PROPERTY);
             // The tag alone does not say which file of a release was imported: one release carries
             // two VM images (#1255), and an alias imported from one must not pass for the other.
             // A base image is imported from one tarball, whose sha256 Incus makes its fingerprint,
@@ -1937,7 +1939,7 @@ public class BuildCommand extends BaseCommand {
         // metadata carried must not survive a write that did not land, or it could vouch for a
         // file this import is not.
         var stamps = new HashMap<String, String>();
-        if (tag != null) stamps.put("incus-spawn.tag", tag);
+        if (tag != null) stamps.put(IMAGE_TAG_PROPERTY, tag);
         stamps.put(IMAGE_SOURCE_PROPERTY, resolvedUrl);
         incus.setImageProperties(fingerprint, stamps);
         if (!resolvedUrl.equals(incus.getImageProperty(fingerprint, IMAGE_SOURCE_PROPERTY))) {
