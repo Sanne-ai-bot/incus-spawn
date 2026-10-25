@@ -212,6 +212,34 @@ public final class SshKeyManager {
     }
 
     /**
+     * Whether the managed SSH config has a Host block for the instance, with {@code hostname} as
+     * its Hostname when one is given: a block for an address the instance no longer has is none.
+     */
+    public static boolean hasHostEntry(String instanceName, String hostname) {
+        List<String> lines;
+        try {
+            lines = Files.readAllLines(Environment.sshConfigFile());
+        } catch (IOException e) {
+            // None yet, or unreadable: addHostEntry reports the latter
+            return false;
+        }
+        boolean in = false;
+        for (var line : lines) {
+            var trimmed = line.strip();
+            if (trimmed.startsWith("Host ")) {
+                in = isHostFor(trimmed, instanceName);
+                if (in && (hostname == null || hostname.isEmpty())) return true;
+            } else if (in && !trimmed.isEmpty() && !trimmed.startsWith("#") && !Character.isWhitespace(line.charAt(0))) {
+                // An unindented line ends the block, as parseWithoutHostBlocks reads it
+                in = false;
+            } else if (in && trimmed.equals("Hostname " + hostname)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Remove a Host block from the managed SSH config.
      */
     public static void removeHostEntry(String instanceName) {
@@ -266,7 +294,7 @@ public final class SshKeyManager {
         for (var line : lines) {
             var trimmed = line.strip();
             if (trimmed.startsWith("Host ")) {
-                skipping = trimmed.substring(5).strip().equals(instanceName);
+                skipping = isHostFor(trimmed, instanceName);
                 if (!skipping) result.add(line);
             } else if (skipping) {
                 if (!trimmed.isEmpty() && !trimmed.startsWith("#") && !Character.isWhitespace(line.charAt(0))) {
@@ -283,6 +311,11 @@ public final class SshKeyManager {
             result.remove(result.size() - 1);
         }
         return result;
+    }
+
+    /** @param hostLine a stripped line starting with {@code "Host "} */
+    private static boolean isHostFor(String hostLine, String instanceName) {
+        return hostLine.substring(5).strip().equals(instanceName);
     }
 
     private static String resolveIsxPath() {

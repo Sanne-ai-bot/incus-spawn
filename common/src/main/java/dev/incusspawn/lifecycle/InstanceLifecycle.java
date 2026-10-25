@@ -519,11 +519,24 @@ public final class InstanceLifecycle {
             startInstance(incus, name, warn);
             return delivery;
         });
-        return withCurrentProofs(incus, name, secret, current -> {
-            incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
+        // The SSH keys ride in the same probe, and the Host entry is a local file (#1640): a
+        // --no-start branch is first started here, with neither
+        var ssh = RuntimeSetup.hasSshCapability(instance);
+        var guestScript = InstanceSecret.GUEST_SCRIPT + (ssh ? RuntimeSetup.sshStartScript() : "");
+        var started = withCurrentProofs(incus, name, secret, current -> {
+            incus.waitForReady(name, machineType, guestScript,
                     InstanceSecret.guestEnv(current, Metadata.isMcpCaller(instance), placeholders.join()));
             return recordSecretBoot(incus, name, machineType, current.proofGeneration());
         });
+        if (ssh) {
+            try {
+                RuntimeSetup.ensureSshHostEntry(name, instance);
+            } catch (RuntimeException e) {
+                // A convenience: the instance is up, and isx shell still reaches it
+                warn.accept(BuildOutput.STEP_INDENT + "Warning: failed to configure SSH host entry: " + e.getMessage());
+            }
+        }
+        return started;
     }
 
     /**
@@ -581,8 +594,11 @@ public final class InstanceLifecycle {
             incus.restart(name);
             return delivery;
         });
+        // The keys ride in the probe as on a start (#1640), from the listing: no request of their own
+        var guestScript = InstanceSecret.GUEST_SCRIPT
+                + (RuntimeSetup.hasSshCapability(instance) ? RuntimeSetup.sshStartScript() : "");
         withCurrentProofs(incus, name, secret, current -> {
-            incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
+            incus.waitForReady(name, machineType, guestScript,
                     InstanceSecret.guestEnv(current, mcpCaller, placeholders.join()));
             return recordSecretBoot(incus, name, machineType, current.proofGeneration());
         });

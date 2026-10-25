@@ -147,6 +147,26 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void anSshInstancesKeyAndHostEntryCostAStartNoRequest() throws Exception {
+        // The key rides in the readiness probe and the Host entry is a local file (#1640): an
+        // SSH-capable start asks Incus exactly what any other start asks
+        SshOnStartTest.givenManagedKey();
+        var requests = new java.util.ArrayList<List<String>>();
+        for (var ssh : List.of(false, true)) {
+            var config = stableProofConfig();
+            config.put(Metadata.STATIC_IP, "10.166.11.42");
+            if (ssh) config.put(Metadata.SSH_SETUP, "true");
+            var daemon = new FakeIncusDaemon().container(NAME, config).ipFiltering(NAME, "true");
+            var incus = spy(daemon.client());
+            doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
+            InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});
+            requests.add(daemon.requests());
+        }
+        assertEquals(requests.get(0), requests.get(1));
+        assertTrue(java.nio.file.Files.readString(dev.incusspawn.Environment.sshConfigFile()).contains("Host " + NAME));
+    }
+
+    @Test
     void aTuiRestartReusesItsListingWithoutAnotherMetadataReadBeforeRestart() {
         var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", stableProofConfig());
         var listed = JacksonTrees.fromJsonNode(daemon.instance(NAME));

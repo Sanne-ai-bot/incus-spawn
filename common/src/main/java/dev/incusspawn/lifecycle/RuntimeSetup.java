@@ -226,7 +226,18 @@ public final class RuntimeSetup {
             }
         } catch (Exception ignored) {}
 
-        // Collect keys to inject — managed key plus any personal key
+        var keys = acceptedKeys();
+        if (keys.isEmpty()) {
+            BuildOutput.step("SSH is available but no public key found.");
+        }
+        return keys;
+    }
+
+    /**
+     * The isx-managed key and the user's own default key, those that exist, read without creating
+     * either and without a word: the start path, which the TUI reaches, may not print.
+     */
+    static List<String> acceptedKeys() {
         var keys = new java.util.ArrayList<String>();
 
         if (SshKeyManager.exists()) {
@@ -241,18 +252,89 @@ public final class RuntimeSetup {
             if (Files.exists(candidate)) {
                 try {
                     var personalKey = Files.readString(candidate).strip();
-                    if (!keys.contains(personalKey)) {
+                    if (!personalKey.isEmpty() && !keys.contains(personalKey)) {
                         keys.add(personalKey);
                     }
                 } catch (IOException ignored) {}
                 break;
             }
         }
-
-        if (keys.isEmpty()) {
-            BuildOutput.step("SSH is available but no public key found.");
-        }
         return keys;
+    }
+
+    /**
+     * What a start for use of an SSH-capable instance adds to the guest script its readiness probe
+     * runs (#1640): the accepted keys, so a {@code --no-start} branch is reachable after its first
+     * start as a started branch is. Empty when there are none.
+     */
+    static String sshStartScript() {
+        var keys = acceptedKeys();
+        return keys.isEmpty() ? "" : "\n" + authorizeKeysScript(keys);
+    }
+
+    /**
+     * Shell setting {@code b} to the base64 blob of the key line in {@code k}: a key is the same
+     * key whatever its comment or options, so a user's {@code from="..."} copy of one counts.
+     */
+    private static final String KEY_BLOB = "b=${k#* }; b=${b%% *};";
+
+    /**
+     * Shell, run as agentuser with its home as {@code $1}, that adds each key on its stdin which
+     * {@code authorized_keys} lacks, keeping what it already accepts: unlike a branch, whose file
+     * is new, a started instance may hold keys its user added.
+     */
+    static final String APPEND_KEYS = "d=$1/.ssh; f=$d/authorized_keys; umask 077; mkdir -p $d && chmod 700 $d;"
+            + " [ -s $f ] && [ -n \"$(tail -c1 $f)\" ] && echo >> $f;"
+            + " while IFS= read -r k; do " + KEY_BLOB + " [ -n \"$b\" ] && ! " + activeLinesHold("$f")
+            + " && printf \"%s\\n\" \"$k\" >> $f; done; chmod 600 $f";
+
+    /**
+     * Shell, run as root on the keys on its stdin, that succeeds only when {@code file} holds every
+     * one on a line that is not commented out. agentuser controls that file, so the read is
+     * bounded in time: a huge line or a FIFO swapped in fails it, which counts as a key missing and
+     * leaves the decision to {@link #APPEND_KEYS}, under its own bound.
+     */
+    static String keysPresentCheck(String file) {
+        return "timeout -k 1 2 sh -c 'while IFS= read -r k; do " + KEY_BLOB
+                + " [ -z \"$b\" ] || " + activeLinesHold("\"$1\"") + " || exit 1; done' isx-check " + file;
+    }
+
+    /** Shell testing whether a line of {@code file} that is not a comment holds the key blob {@code $b}. */
+    private static String activeLinesHold(String file) {
+        return "grep -v \"^[[:space:]]*#\" " + file + " 2>/dev/null | grep -qF -- \"$b\"";
+    }
+
+    /**
+     * Add {@code keys} to agentuser's {@code authorized_keys} ({@link #APPEND_KEYS}). As agentuser,
+     * never as root: the user owns that directory, and a symlink there must not steer a root write
+     * (#1640). Root first only reads, under a time bound ({@link #keysPresentCheck}), to skip the
+     * user switch on the usual start, where every key is already there. It skips a symlinked
+     * {@code ~/.ssh} or file and anything but a regular file. agentuser can still swap one in
+     * between that test and the read, which then only tells root whether another file holds a
+     * public key, within the same bound. Idempotent and never fails, as a readiness probe's script
+     * must be.
+     */
+    static String authorizeKeysScript(List<String> keys) {
+        var d = "/home/agentuser/.ssh";
+        var f = d + "/authorized_keys";
+        return "{ [ -d /home/agentuser ] && { " + Container.heredoc("keys=$(cat", String.join("\n", keys)) + "\n);"
+                + " { [ ! -L " + d + " ] && [ ! -L " + f + " ] && [ -f " + f + " ]"
+                + " && printf '%s\\n' \"$keys\" | " + keysPresentCheck(f) + "; }"
+                + " || printf '%s\\n' \"$keys\" | timeout 10 runuser -u agentuser -- sh -c '" + APPEND_KEYS
+                + "' isx-keys /home/agentuser; }; } >/dev/null 2>&1; true";
+    }
+
+    /**
+     * Give a started SSH-capable instance its {@code Host} entry if it has none, or one for an
+     * address it no longer has (#1640). A local file read when it is current, so the start path
+     * pays nothing on every later start; the address is the one {@code configureBranch} stamped,
+     * so it costs no request either.
+     */
+    static void ensureSshHostEntry(String name, JqValue instance) {
+        var address = instance.path("config").pathText(Metadata.STATIC_IP, "");
+        if (!SshKeyManager.exists() || SshKeyManager.hasHostEntry(name, address)) return;
+        SshKeyManager.ensureSshConfigInclude();
+        SshKeyManager.addHostEntry(name, address);
     }
 
     /**
@@ -281,6 +363,13 @@ public final class RuntimeSetup {
         }
     }
 
+    /** {@link #hasSshCapability(String, String)} from the instance the caller already read; false for null. */
+    static boolean hasSshCapability(JqValue instance) {
+        if (instance == null) return false;
+        var config = instance.path("config");
+        return hasSshCapability(config.pathText(Metadata.SSH_SETUP, ""), config.pathText(Metadata.BUILD_SOURCE, ""));
+    }
+
     /**
      * Whether an instance was built with SSH capability (sshd tool or explicit ssh-setup
      * config), from config values the caller already read. Used to avoid advertising SSH
@@ -291,6 +380,8 @@ public final class RuntimeSetup {
     }
 
     static boolean hasSshdTool(String buildSourceJson) {
+        // Parsed only when it can name the tool: the start path asks this of every instance
+        if (buildSourceJson == null || !buildSourceJson.contains("sshd")) return false;
         var bs = BuildSource.fromJson(buildSourceJson);
         return bs != null && bs.getTools().containsKey("sshd");
     }

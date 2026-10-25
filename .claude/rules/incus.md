@@ -173,6 +173,8 @@ For a VM it polls the console log for `VmAgentFailure` signatures and fails fast
 Every VM failure names the agent (#844) and the console log it saved on the host (`VmAgentFailure.save`, `Environment.consoleLogFile`), never `incus console` (#1139).
 A VM is exec-probed only once `GET /state` reports `processes >= 0` (its agent connected; #954), and a probe counts only if it printed `ready`, not on exit 0 alone.
 While the gate is shut exec still gets one probe per `gatedProbeInterval` (5s), since Incus also reports -1 when its query to a connected agent fails.
+The probe's guest script runs as root with no time limit of its own, so whatever it adds must be bounded and must not trust paths agentuser controls.
+`startForUse` adds an SSH-capable instance's keys to it (#1640): root only reads `authorized_keys` under a two-second `timeout`, and the write runs as agentuser (`RuntimeSetup.authorizeKeysScript`).
 A state without `processes` falls back to plain probing, and containers never read `/state`.
 Timings are a `ReadyTimeouts` record that `WaitForReadyTest` shortens through the package-private setter.
 A running VM whose agent does not answer on `isx shell`/`isx run`/the TUI goes through `InstanceLifecycle.ensureReady` -> `lifecycle/VmAgentRecovery.restartForAgent` -- never a bare `forceStop` + start.

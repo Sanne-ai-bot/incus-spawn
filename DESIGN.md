@@ -1096,7 +1096,19 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 2. **`isx branch`** (via `RuntimeSetup.injectSshKeyIfAvailable`): injects the managed public key and the user's first default key (`~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`) into the container's `authorized_keys`.
    Then, once the instance has an address (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `StrictHostKeyChecking no` and `UserKnownHostsFile /dev/null`.
    After this, `ssh <instance-name>` just works.
-3. **`isx destroy`** (and TUI delete): removes the Host block from the managed config.
+3. **Every later start for use** (`InstanceLifecycle.startForUse`, behind `isx shell`, `isx run` and the TUI) does the same for an instance with SSH, so a `--no-start` branch is reachable after its first start (#1640).
+   The keys ride in the readiness probe's guest script (`RuntimeSetup.sshStartScript`), which adds only the ones `authorized_keys` lacks, so a key added inside the box survives.
+   A TUI restart (`restartForUse`) adds them to its probe the same way, from its listing.
+   A key counts as present by its base64 blob, so a copy the user restricted with `from="..."` is not added again unrestricted.
+   That script writes as agentuser through `runuser`, never as root, since agentuser owns `~/.ssh` and a symlink there must not steer a root write.
+   Root first only reads the file, so the usual start, with every key in place, skips the user switch.
+   That read is bounded to two seconds, and a timeout counts as a key missing, since agentuser controls the file and the probe exec has no time limit of its own.
+   It is skipped when `~/.ssh` or the file is a symlink, or the file is not a regular one.
+   agentuser can still swap one in between that test and the read, which then only tells root whether another file holds a public key, within the same bound.
+   A commented-out line does not count as the key.
+   The Host block is written only when the managed config has none, or one with another `Hostname`, from the stamped static address.
+   So a start pays no Incus request and no write for either.
+4. **`isx destroy`** (and TUI delete): removes the Host block from the managed config.
 
 **Design decisions:**
 
