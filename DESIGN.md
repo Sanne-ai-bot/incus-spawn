@@ -5077,3 +5077,12 @@ It is deferred because proof-only identity is simpler and sufficient for now.
 What it would close is replay of one instance's tokens from another, which needs that instance to leak them first, and it would cost a long-lived relay on the data path, PROXY protocol in the native proxy, the anti-forgery rule and validation on a real Mac.
 It is worth revisiting for full per-instance traffic accounting on macOS (cached Maven or npm traffic carries no proof), or for a threat model where one user's instances are mutually adversarial.
 The full reasoning is in #1584.
+
+### MCP `ask` answered from the host
+
+`ask` runs its producer and a tool-less `claude -p` inside the instance, so a template without Claude Code cannot answer it, and every answer spends Claude Code quota.
+A host-side answerer was considered: the bulky output would come back to the host `isx mcp` process, which would ask the Messages API through the accounts AI Help uses.
+It is deferred because it reverses the rule that `ask` runs in the instance, never on the host.
+Up to 400 KB of untrusted guest output would pass through a host process, and the call would bypass the proxy, so `instance_activity` would not count it.
+It is worth revisiting when Codex-only coordinator targets lose real work to the missing `ask`, or when an answerer without Claude Code can run in the instance through its own proxied connection.
+The proposal is in #1676.
