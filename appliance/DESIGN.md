@@ -210,6 +210,33 @@ The `chmod 755` is required because the container rootfs root directory has `drw
 
 Disk images are sparse: a 60 GB image consumes ~540 MB actual disk space on APFS (macOS) or any CoW filesystem.
 
+### What the disks cost the Mac (#1673)
+
+All three disks reach the Mac's SSD as writes to sparse raw files on APFS.
+Two questions matter: does space come back when the guest frees it, and how much does swap write.
+Measured on a 16 GB Mac with the VM at 6.4 GB, kernel 7.2.9 and vfkit, on 2026-10-25.
+It holds for vfkit only: the QEMU backend attaches the images without `discard=unmap`, and QEMU's default drops the guest's discards.
+
+
+- **Trim reaches the image already.**
+  All three virtio-blk devices advertise discard (`discard_max_bytes` is the device size).
+  btrfs mounts a discard-capable device with `discard=async` by default since Linux 6.2, so `/var/lib/incus` shows `discard=async` in `mount` although neither `rcS` nor the fstab asks for it.
+  Virtualization.framework turns the guest's discards into holes in the raw file.
+  Writing a 2 GiB file in an instance grew `data.img` from 392 MB to 2.44 GB on disk (`du`).
+  Two minutes after deleting it the image was back at 391 MB, with no `fstrim`.
+  A manual `fstrim` afterwards returned only 22 MB more.
+  Deleted instances therefore give their space back to the Mac by themselves: `isx vm` runs no `fstrim`, and the mounts do not repeat the default.
+- **Swap stays a plain disk, without zswap.**
+  The VM does not swap at rest (`pswpout 0`).
+  Forcing it, by filling 12 GB of tmpfs with copies of `/usr` and reading them back, wrote 10.2 GB to the swap disk.
+  The same run with zswap on wrote 8.1 GB, about a fifth less, while its pool held 1.15 GB of the guest's 6.4 GB.
+  The compressor was lzo, the only one this kernel has: there is no `CRYPTO_LZ4` or `CRYPTO_ZSTD`, so `zswap.compressor=lz4` would fall back to it.
+  A fifth fewer swap writes for a sixth of the VM's memory, and nothing for a VM that does not swap, is not worth turning on.
+  `CONFIG_ZSWAP=y` stays for the cgroup `memory.zswap.*` controls.
+- **Swap space does not come back.**
+  `swapon` runs without `--discard`, so `swap.img` keeps its high-water mark until `isx vm reset`: 7.9 GB after the run above, with the swap empty again.
+  The 12 GB device bounds it.
+
 ## Boot Backends
 
 ### vfkit (macOS)
@@ -289,7 +316,7 @@ Lifecycle script with subcommands: `start`, `stop`, `status`, `console`.
 1. Waits for DNS readiness (nameserver entry in `/etc/resolv.conf`, populated by `udhcpc`)
 2. Waits for the Incus daemon to become ready (up to 30 seconds)
 3. Creates the `incusbr0` bridge network with the configured gateway IP and NAT
-4. Creates a btrfs storage pool (`cow`) backed by a loop file, adaptively sized (half of free disk, capped at 30 GB, minimum 1 GB)
+4. Creates the btrfs storage pool (`cow`) as a subvolume of the data disk (`source=/var/lib/incus/storage-pools/cow`), so it has no loop file and no size of its own: it grows with the data disk, which `isx vm resize` enlarges
 5. Installs an iptables PREROUTING redirect rule (port 443 -> MITM proxy port) on the bridge interface
 6. Starts the vsock forwarder if `isx.vsock_incus` is set — via the shared `isx-start-vsock-forwarder` launcher (`socat -T 180 VSOCK-LISTEN:<port>,reuseaddr,fork UNIX-CONNECT:/var/lib/incus/unix.socket`)
 7. Test only: if `isx.test_silent_vsock` is set, starts the same launcher on that port in front of `/run/isx-test-silent.sock`, a `socat -u ... OPEN:/dev/null` listener that accepts and never answers, with no timeout of its own. `test-tunnel.sh` times the `-T` backstop against it, since incusd now closes a silent connection after 3 s. isx never sets the parameter
