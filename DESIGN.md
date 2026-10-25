@@ -1085,7 +1085,7 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 
 1. **`isx init`** generates the ed25519 key pair (via `ssh-keygen`) and prepends an `Include ~/.config/incus-spawn/ssh/config` directive to `~/.ssh/config` (idempotent, resolves symlinks for dotfile managers).
    The key pair is also created lazily at first branch for users upgrading from older versions.
-2. **`isx branch`** (via `RuntimeSetup.injectSshKeyIfAvailable`): injects both the managed public key and any personal `~/.ssh/*.pub` key into the container's `authorized_keys`.
+2. **`isx branch`** (via `RuntimeSetup.injectSshKeyIfAvailable`): injects the managed public key and the user's first default key (`~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`) into the container's `authorized_keys`.
    Then, once the instance has an address (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `StrictHostKeyChecking no` and `UserKnownHostsFile /dev/null`.
    After this, `ssh <instance-name>` just works.
 3. **`isx destroy`** (and TUI delete): removes the Host block from the managed config.
@@ -1103,7 +1103,7 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 - **Atomic writes**: config updates use temp-file-then-rename with restrictive permissions to avoid partial writes, and a config that would not change is not rewritten.
   A rename does not stop two isx processes from each rewriting the managed config from the same old copy, so a Host block is added or removed under a `HostLock` (`ssh-config.lock`), held from the read to the rename (#1632).
 - **Non-fatal**: SSH setup failures never block init or branching.
-  They are reported through `Warnings` and fall back to manual `ssh agentuser@<ip>`.
+  `SshKeyManager` reports them through `Warnings`; the fallback is a manual `ssh agentuser@<ip>`.
 
 ### Remote IDE Access
 
