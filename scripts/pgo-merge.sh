@@ -39,10 +39,14 @@ MERGED="$OUT/$MODULE.iprof"
 rm -f "$MERGED" "$MERGED.gz"
 echo "Merging ${#files[@]} $MODULE profiles..."
 # -O3 is what the CLI builds at with a profile (the pgo profile in cli/pom.xml); the proxy's own.
+# The build's output goes to the log and, in CI, to the job's log too: a build that stalls must
+# show where (a release run once spent its whole timeout here with nothing to show for it).
+show() { if [ -n "${CI:-}" ]; then tee "$1"; else cat > "$1"; fi; }
+set -o pipefail
 mvn -q -f "$PROJECT_DIR/pom.xml" package -Dnative -DskipTests -pl "$MODULE" -am -Dnative.optimization=-O3 \
     "-Dnative.pgo.args=,--pgo=$joined,-H:+UnlockExperimentalVMOptions,-H:+PGOPrintProfileQuality,-H:PGODumpLoadedIprofPath=$MERGED,-H:-UnlockExperimentalVMOptions" \
-    > "$OUT/$MODULE-merge.log" 2>&1 || die "The merging build failed; see $OUT/$MODULE-merge.log"
-grep -F '[PGO]' "$OUT/$MODULE-merge.log" || true
+    2>&1 | show "$OUT/$MODULE-merge.log" || die "The merging build failed; see $OUT/$MODULE-merge.log"
+[ -n "${CI:-}" ] || grep -F '[PGO]' "$OUT/$MODULE-merge.log" || true
 [ -s "$MERGED" ] || die "The build wrote no merged profile at $MERGED"
 gzip -9 "$MERGED"
 echo "Merged: $MERGED.gz ($(wc -c < "$MERGED.gz" | tr -d ' ') bytes)"
