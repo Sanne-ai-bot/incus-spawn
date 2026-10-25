@@ -1278,8 +1278,8 @@ public class Tui {
                 // removeHostIntegration just deleted.
                 if (SshKeyManager.exists()
                         && RuntimeSetup.hasSshCapability(config.pathText(Metadata.SSH_SETUP, ""), buildSource)) {
-                    // The instance is stopped, so its address is the one it is stamped with:
-                    // Gateway dials Hostname, never the ProxyCommand (#1612).
+                    // The instance is stopped, so its address is the one it is stamped with.
+                    // Gateway resolves Hostname before it runs the ProxyCommand (#211, #1612).
                     SshKeyManager.addHostEntry(newName, config.pathText(Metadata.STATIC_IP, ""));
                 }
                 AutoRemoteService.addRemotes(newName, instance, msg -> {}, warningLog::add);
