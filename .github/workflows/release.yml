@@ -22,7 +22,7 @@ jobs:
 
   channel:
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       is_dev: ${{ steps.detect.outputs.is_dev }}
       homebrew_formula: ${{ steps.detect.outputs.homebrew_formula }}

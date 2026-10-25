@@ -15,7 +15,7 @@ permissions:
 jobs:
   cleanup:
     if: github.event.pull_request.head.repo.fork != true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Delete preview deployments
         env:

@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   bump:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       # Check out with BOT_TOKEN so the branch push and PR are made by that token
       # rather than the default GITHUB_TOKEN — this both avoids needing the org

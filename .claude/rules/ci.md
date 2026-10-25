@@ -64,14 +64,15 @@ Both arches boot under QEMU; this is worth stating precisely, because the runner
 | `test-integration.yml` → `unit-tests-macos` (`macos-15`) | nothing: runs `mvn test` on the host, the macOS half of the Java code only |
 | `release.yml` native matrix (`macos-15`, `macos-15-intel`) | builds the native CLI/proxy for macOS 15 (Intel is best effort: shipped, but this smoke test is all it gets; no Intel Mac verifies it, #1086) and smoke-tests the *binaries* -- `--version`, `--help`, completions, `templates list`; the release job then checks each one's recorded minimum macOS. Never starts a VM, and runs on `v*` tags and `workflow_dispatch` |
 
-**macOS runner labels are pinned, and retired ones are caught by a test.**
-Workflows name a versioned label (`macos-15`, `macos-15-intel`), never `macos-latest`.
+**Runner labels are pinned, and retired ones are caught by a test.**
+Workflows name a versioned label (`ubuntu-26.04`, `ubuntu-24.04-arm`, `macos-15`, `macos-15-intel`), never `ubuntu-latest` or `macos-latest`.
+That holds for API-only jobs too: GitHub annotates every run of a job on a floating label before it migrates, and a migration should be a change someone makes (#1679).
 The binaries' minimum macOS no longer follows the runner.
 It is the root pom's `macos.deployment.target` (15.0, Sequoia, #1086), linked in by a macOS-activated profile.
 The release job's "Check macOS binaries' minimum macOS" step (`scripts/check-macos-minos.py`) fails unless every macOS artifact the release uploads records exactly that `minos` (see DESIGN.md "The minimum macOS is set by the build").
 The Homebrew formulas declare it as `depends_on macos: :sequoia`, which `release.yml`'s tap step writes from `MACOS_MIN` on every release; README and `docs/dev/HOMEBREW.md` state it.
 GitHub retires old images (`macos-14` with its `-large`/`-xlarge` variants, #1000), and a job on a removed label waits for a runner that never comes.
-Because `release.yml` runs only on `v*` tags, nothing but the next release would notice, so `WorkflowRunnerLabelsTest` fails on `macos-14` or older and on `macos-latest` in any workflow.
+Because `release.yml` runs only on `v*` tags, nothing but the next release would notice, so `WorkflowRunnerLabelsTest` fails on `macos-14` or older and on `ubuntu-latest` or `macos-latest` in any workflow.
 It also fails when `MACOS_MIN` is not Homebrew's name for the deployment target, when a release runner is older than the target, and when the release job no longer runs the check over `artifacts/native-macos-*/*`.
 When GitHub announces the next retirement, raise its bound and move the labels together; a newer runner does not move the minimum.
 

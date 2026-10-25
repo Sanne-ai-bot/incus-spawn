@@ -18,13 +18,17 @@ import static org.junit.jupiter.api.Assertions.*;
  * next release, which then ships no macOS binaries (#1000). The released binaries' minimum macOS is
  * set by the build rather than the runner (#1086), and the Homebrew formula and a release check
  * both follow it.
+ * <p>
+ * Floating labels move under the jobs: {@code ubuntu-latest} moves to Ubuntu 26.04 in a rollout
+ * from 2026-10-19, and GitHub annotates every run of a job on it meanwhile (#1679). Every job names
+ * the image it runs on, so a migration is a change someone makes.
  */
 class WorkflowRunnerLabelsTest {
 
     private static final Path WORKFLOWS = Path.of("../.github/workflows");
 
-    /** Labels GitHub has retired or announced for retirement: {@code macos-14} and older. */
-    private static final Pattern UNUSABLE = Pattern.compile("\\bmacos-(?:1[0-4]|latest)\\b");
+    /** Labels GitHub has retired or announced for retirement ({@code macos-14} and older), and floating ones. */
+    private static final Pattern UNUSABLE = Pattern.compile("\\b(?:macos-(?:1[0-4]|latest)|ubuntu-latest)\\b");
 
     private static final Pattern MACOS_RUNNER = Pattern.compile("macos-(\\d+)(?:-.*)?");
     private static final Pattern MACOS_MIN = Pattern.compile("(?m)^\\s*MACOS_MIN=(\\w+)$");
@@ -37,7 +41,7 @@ class WorkflowRunnerLabelsTest {
             26, "tahoe");
 
     @Test
-    void noWorkflowUsesARetiredOrMovingMacOsLabel() throws IOException {
+    void noWorkflowUsesARetiredOrFloatingRunnerLabel() throws IOException {
         var offenders = new ArrayList<String>();
         try (var files = Files.list(WORKFLOWS)) {
             for (var file : files.filter(f -> f.toString().matches(".*\\.ya?ml")).sorted().toList()) {
@@ -50,8 +54,8 @@ class WorkflowRunnerLabelsTest {
                 }
             }
         }
-        assertTrue(offenders.isEmpty(), "use a pinned, supported macOS runner label such as macos-15 "
-                + "(see .claude/rules/ci.md):\n" + String.join("\n", offenders));
+        assertTrue(offenders.isEmpty(), "use a pinned, supported runner label such as ubuntu-26.04 or "
+                + "macos-15 (see .claude/rules/ci.md):\n" + String.join("\n", offenders));
     }
 
     /**

@@ -37,7 +37,7 @@ jobs:
   # "Destination file path /tmp/gitleaks.tmp already exists".
   scan-stock:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -51,7 +51,7 @@ jobs:
 
   scan-leaktk:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -69,7 +69,7 @@ jobs:
   # test file must be reported by both configs.
   allowlist-test:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Runs a script from the PR itself, so it gets none of the pull-requests scope above.
     permissions:
       contents: read

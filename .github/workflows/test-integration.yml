@@ -127,7 +127,7 @@ jobs:
   # fake release carrying -vm-direct and SHA256SUMS.v2 (#1255), with gh, curl and the remote faked.
   update-base-image-steps:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -189,7 +189,7 @@ jobs:
   cancel-on-unit-failure:
     needs: [unit-tests]
     if: failure()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       actions: write  # needed for gh run cancel
     steps:
