@@ -299,31 +299,31 @@ and the MCP bridge are not among them.
 ### Phase 3, release wiring (2026-10-25)
 
 `release.yml` collects and applies the profiles (DESIGN.md "Profile-guided optimization").
-Its `profiles` job and the Linux amd64 build were reproduced on the host above, from templates
-not yet built: collection, merge and the two profiled builds took 10.5 minutes.
-The merged profiles are 1.7 MB (CLI) and 2.5 MB (proxy) gzipped.
+Its `profiles` job and the Linux amd64 build were first reproduced on the host above, from templates not yet built.
+Collection, merge and the two profiled builds took 10.5 minutes.
 
-| Linux amd64 | v0.4.2 release | PGO build | Profile applicability / relevance |
+| Linux amd64, on the host above | v0.4.2 release | PGO build | Profile applicability / relevance |
 |---|---|---|---|
 | `isx` | 37,882,184 B | 38,603,848 B | 15.19% / 100.00% |
 | `isx-proxy` | 99,093,024 B | 41,880,864 B | 20.02% / 100.00% |
 
-A profile is fully relevant on the platform that collected it. The first `workflow_dispatch` of
-`release.yml` (run 40180623569, on `Sanne-ai-bot/incus-spawn`, commit `d9a30a34`) built all four
-platforms; its profiles job took 19 minutes and each build 6 to 8:
+Then a `workflow_dispatch` of `release.yml` built all four platforms: run 40183611322 on `Sanne-ai-bot/incus-spawn`, commit `1b975845`, the commit before this note.
+Its profiles job took 26 minutes, and each build 5 to 20.
+The merged profiles are 1.7 MB (CLI) and 2.5 MB (proxy) gzipped.
 
 | Platform | `isx` (v0.4.2 → PGO) | CLI applicability / relevance | `isx-proxy` (v0.4.2 → PGO) | Proxy applicability / relevance |
 |---|---|---|---|---|
-| Linux amd64 | 37,882,184 → 38,603,080 B | 15.21% / 100.00% | 99,093,024 → 42,142,240 B | 20.03% / 100.00% |
-| Linux aarch64 | 39,389,296 → 40,044,656 B | 15.16% / 99.75% | 89,590,168 → 42,863,000 B | 20.00% / 99.96% |
-| macOS aarch64 | 39,526,904 → 40,237,216 B | 15.04% / 98.49% | 79,463,872 → 39,493,288 B | 19.58% / 97.04% |
-| macOS x86_64 (unprofiled) | 38,511,200 → 38,634,384 B | | 83,309,152 → 83,567,352 B | |
+| Linux amd64 | 37,882,184 → 38,603,080 B | 15.20% / 100.00% | 99,093,024 → 42,469,920 B | 20.02% / 100.00% |
+| Linux aarch64 | 39,389,296 → 40,044,656 B | 15.16% / 99.75% | 89,590,168 → 43,059,608 B | 19.99% / 99.96% |
+| macOS aarch64 | 39,526,904 → 40,253,712 B | 15.04% / 98.50% | 79,463,872 → 39,691,368 B | 19.57% / 97.06% |
+| macOS x86_64 (unprofiled) | 38,511,200 → 38,638,480 B | | 83,309,152 → 83,567,352 B | |
 
-Profiles collected on Linux x86_64 fit the other platforms almost as well (relevance 97% at the
-lowest, macOS's proxy), and every platform's proxy is about half its released size. The release
-smoke test and the macOS keychain smoke passed on every build. The floors in
-`.github/scripts/check-pgo-quality.sh` stay at 10% applicability and 80% relevance until they are
-set from these figures.
+A profile is fully relevant on the platform that collected it.
+Profiles collected on Linux x86_64 fit the other platforms almost as well: relevance is 97% at the lowest, macOS's proxy.
+Every profiled platform's proxy is about half its released size; the unprofiled Intel macOS build is unchanged.
+The release smoke test passed on every build, and the keychain smoke on both macOS builds.
+The floors in `.github/scripts/check-pgo-quality.sh` stay at 10% applicability and 80% relevance until Sanne decides; the proposal is 14% and 95%, just below the lowest figures above.
+An earlier dispatch of this change (run 40180623569) gave the same figures within 0.02 points.
 
 ## Measurement caveats worth remembering
 
