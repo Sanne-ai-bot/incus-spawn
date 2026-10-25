@@ -146,7 +146,7 @@ fi
 if $BINARIES_ONLY; then
     echo "This will remove only the binaries:"
     echo "  - Binaries:          $INSTALL_DIR/{$BINARY_NAME,isx-proxy,git-remote-isx}"
-    echo "  - Homebrew override: (if install.sh made one; the Homebrew version is relinked)"
+    echo "  - Homebrew override: (if install.sh made one; Homebrew's own link is put back when it counts the formula as linked, otherwise the command to link it is named)"
     echo ""
     echo "Kept: instances, templates, configuration, cache, state and services."
     echo "Services that start these binaries are pointed at the isx that remains on PATH."
@@ -320,31 +320,80 @@ for f in isx-proxy git-remote-isx; do
 done
 
 # ── Undo install.sh's Homebrew override ───────────────────────────────────
-# install.sh points the brew prefix bin entries at our build (a symlink into
-# $INSTALL_DIR; older installs left a real-file copy). Remove only our own
-# override — a symlink back into $INSTALL_DIR, or a legacy copy when the
-# formula is no longer tracked — then relink so `isx` resolves to the
-# Homebrew-managed version again if that formula is still installed.
+# install.sh before #1614 pointed the brew prefix bin entries at our build (a
+# symlink into $INSTALL_DIR; still older installs left a real-file copy).
+# Remove only our own override, and point each removed link back into the
+# formula's keg when Homebrew counts it as linked, so `isx` resolves to the
+# Homebrew-managed version again. Not `brew link`: it answers "Already linked"
+# for such a keg, and --overwrite would replace links we did not make.
+# Our own is a symlink to our binary or into this user's home (an earlier
+# INSTALL_DIR), or a legacy copy when the formula is no longer installed.
+# install.sh reverts its own links by the same rule: keep the two in sync.
 BREW_FORMULA="incus-spawn"   # formula name differs from the binary name (isx)
 if command -v brew >/dev/null 2>&1; then
-    BREW_BIN="$(brew --prefix)/bin"
+    BREW_PREFIX="$(brew --prefix)"
+    BREW_BIN="$BREW_PREFIX/bin"
     if [ "$INSTALL_DIR" != "$BREW_BIN" ]; then
+        # The linked keg, relative to the prefix's opt/ and so to its bin/ too.
+        # The tap's incus-spawn-dev installs the same binaries, and the two conflict:
+        # both may be installed with one unlinked, so the linked one is chosen.
+        # One installed but unlinked gets no links back by hand: it may be unlinked on
+        # purpose, or by a `brew upgrade` whose link step an old override made fail,
+        # so the warning below names `brew link` and leaves the choice to the user.
+        KEG=""
+        for formula in incus-spawn incus-spawn-dev; do
+            if [ -e "$BREW_PREFIX/var/homebrew/linked/$formula" ]; then
+                BREW_FORMULA="$formula"
+                KEG="$(readlink "$BREW_PREFIX/opt/$formula" || true)"
+                break
+            fi
+        done
+        # Installed at all: a dangling opt/ link counts, so a file that may be
+        # Homebrew's is never taken for a legacy copy.
+        # With none linked, the first one installed is the remedy a warning names.
         FORMULA_INSTALLED=false
-        brew list --formula "$BREW_FORMULA" >/dev/null 2>&1 && FORMULA_INSTALLED=true
+        UNLINKED=""
+        for formula in incus-spawn incus-spawn-dev; do
+            if [ -L "$BREW_PREFIX/opt/$formula" ] || [ -e "$BREW_PREFIX/opt/$formula" ]; then
+                FORMULA_INSTALLED=true
+                [ -n "$KEG" ] || [ -n "$UNLINKED" ] || UNLINKED="$formula"
+            fi
+        done
+        LINK_REMEDY=false
+        # An empty or "/" HOME names nobody's home, so it makes no link our own.
+        OWN_HOME="${HOME%/}"
         for f in "$BINARY_NAME" isx-proxy git-remote-isx; do
             target="$(readlink "$BREW_BIN/$f" 2>/dev/null || true)"
-            if [ "$target" = "$INSTALL_DIR/$f" ]; then
+            # By name, or its directory by -ef as install.sh compares the file:
+            # $INSTALL_DIR/$f is already removed above, but any spelling still counts.
+            if [ -n "$target" ] && { [ "$target" = "$INSTALL_DIR/$f" ] \
+                || { [ "${target##*/}" = "$f" ] && [ "${target%/*}" -ef "$INSTALL_DIR" ]; } \
+                || { [ -n "$OWN_HOME" ] && [[ "$target" == "$OWN_HOME"/* && "$target" != "$BREW_PREFIX"/* ]]; }; }; then
                 echo "Removing Homebrew override symlink: $BREW_BIN/$f"
-                rm -f "$BREW_BIN/$f"
+                if ! rm -f "$BREW_BIN/$f"; then
+                    echo "Warning: could not remove $BREW_BIN/$f; every user of this prefix still runs $target." >&2
+                elif [ -n "$KEG" ] && [ -e "$BREW_PREFIX/opt/$BREW_FORMULA/bin/$f" ]; then
+                    if ln -s "$KEG/bin/$f" "$BREW_BIN/$f"; then
+                        echo "Restored Homebrew-managed $BREW_BIN/$f"
+                    else
+                        echo "Warning: could not restore $BREW_BIN/$f; run: brew unlink $BREW_FORMULA && brew link $BREW_FORMULA" >&2
+                    fi
+                elif $FORMULA_INSTALLED; then
+                    # Without any formula, removing it is all an uninstall asks for.
+                    echo "Warning: nothing replaces $BREW_BIN/$f: no linked Homebrew keg has it, so no user of this prefix has it there now." >&2
+                    if [ -n "$UNLINKED" ] && [ -e "$BREW_PREFIX/opt/$UNLINKED/bin/$f" ]; then
+                        LINK_REMEDY=true
+                    fi
+                fi
             elif [ -f "$BREW_BIN/$f" ] && [ ! -L "$BREW_BIN/$f" ] && ! $FORMULA_INSTALLED; then
                 # Legacy real-file copy left by an older install.sh.
                 echo "Removing Homebrew copy: $BREW_BIN/$f"
-                rm -f "$BREW_BIN/$f"
+                rm -f "$BREW_BIN/$f" || echo "Warning: could not remove $BREW_BIN/$f." >&2
             fi
         done
-        if $FORMULA_INSTALLED; then
-            echo "Restoring Homebrew-managed $BREW_FORMULA link..."
-            brew link --overwrite "$BREW_FORMULA" >/dev/null 2>&1 || true
+        if $LINK_REMEDY; then
+            echo "  $UNLINKED is installed but not linked; to link it, run: brew link $UNLINKED" >&2
+            echo "  It stops at any link outside Homebrew still in its way; 'brew link --overwrite $UNLINKED' replaces those too, another user's included." >&2
         fi
     fi
 fi

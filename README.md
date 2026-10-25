@@ -395,6 +395,8 @@ isx proxy restart
 The `curl` script installs the `isx` and `isx-proxy` native binaries to `~/.local/bin` (set `INSTALL_DIR` to change it), with no JVM needed.
 JBang installs need both commands, and `jbang` must stay on your PATH.
 
+A source build (`./install.sh` in a checkout) leaves a Homebrew install alone, since other accounts may use it: whichever `isx` comes first on your PATH is the one you and your proxy service run.
+
 To uninstall, run `uninstall.sh`:
 
 - It keeps your configuration in `~/.config/incus-spawn/` and the caches in `~/.cache/incus-spawn/` unless you pass `--purge`.

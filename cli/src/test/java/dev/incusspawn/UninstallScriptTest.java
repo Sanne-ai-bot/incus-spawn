@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
@@ -370,6 +371,137 @@ class UninstallScriptTest {
         assertEquals(2, result.exit(), result.output());
         assertTrue(Files.exists(dataDisk), result.output());
         assertTrue(Files.exists(bin.resolve("isx")), result.output());
+    }
+
+    /**
+     * Its own override is a link into this user's home, from any INSTALL_DIR, and goes back into the
+     * formula's keg; another user's stays. Never through {@code brew}, as in install.sh.
+     */
+    @Test
+    void removesOnlyItsOwnHomebrewOverride() throws Exception {
+        var brew = tmp.resolve("brew");
+        var keg = Path.of("../Cellar/incus-spawn/1.0");
+        var kegBin = Files.createDirectories(brew.resolve("Cellar/incus-spawn/1.0/bin"));
+        for (var binary : List.of("isx", "isx-proxy")) Files.writeString(kegBin.resolve(binary), "");
+        Files.createSymbolicLink(Files.createDirectories(brew.resolve("opt")).resolve("incus-spawn"), keg);
+        Files.createSymbolicLink(Files.createDirectories(brew.resolve("var/homebrew/linked")).resolve("incus-spawn"),
+                Path.of("../../../Cellar/incus-spawn/1.0"));
+        var brewBin = Files.createDirectories(brew.resolve("bin"));
+        stub("brew", """
+                case "$1" in
+                  --prefix) echo '%s' ;;
+                  *) echo "$*" >> '%s'; exit 1 ;;
+                esac""".formatted(brew, tmp.resolve("brew-asked")));
+        // Not INSTALL_DIR (bin): an earlier install's, still in this user's home.
+        var earlier = Files.createDirectories(home.resolve(".local/bin"));
+        assertNotEquals(bin, earlier);
+        Files.writeString(earlier.resolve("isx"), "");
+        Files.createSymbolicLink(brewBin.resolve("isx"), earlier.resolve("isx"));
+        var other = Files.createDirectories(tmp.resolve("other/.local/bin"));
+        Files.writeString(other.resolve("isx-proxy"), "");
+        Files.createSymbolicLink(brewBin.resolve("isx-proxy"), other.resolve("isx-proxy"));
+
+        var result = run("--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertEquals(keg.resolve("bin/isx"), Files.readSymbolicLink(brewBin.resolve("isx")), result.output());
+        assertEquals(other.resolve("isx-proxy"), Files.readSymbolicLink(brewBin.resolve("isx-proxy")), result.output());
+        assertFalse(Files.exists(tmp.resolve("brew-asked")), result.output());
+    }
+
+    /** With incus-spawn installed but unlinked beside a linked incus-spawn-dev, the dev keg is restored. */
+    @Test
+    void restoresTheLinkedKegBesideAnUnlinkedOne() throws Exception {
+        var brew = tmp.resolve("brew");
+        for (var formula : List.of("incus-spawn", "incus-spawn-dev")) {
+            var kegBin = Files.createDirectories(brew.resolve("Cellar/" + formula + "/1.0/bin"));
+            Files.writeString(kegBin.resolve("isx"), "");
+            Files.createSymbolicLink(Files.createDirectories(brew.resolve("opt")).resolve(formula),
+                    Path.of("../Cellar/" + formula + "/1.0"));
+        }
+        Files.createSymbolicLink(Files.createDirectories(brew.resolve("var/homebrew/linked")).resolve("incus-spawn-dev"),
+                Path.of("../../../Cellar/incus-spawn-dev/1.0"));
+        var brewBin = Files.createDirectories(brew.resolve("bin"));
+        stub("brew", "[ \"$1\" = --prefix ] && echo '" + brew + "'");
+        Files.createSymbolicLink(brewBin.resolve("isx"), bin.resolve("isx"));
+
+        var result = run("--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertEquals(Path.of("../Cellar/incus-spawn-dev/1.0/bin/isx"), Files.readSymbolicLink(brewBin.resolve("isx")),
+                result.output());
+        assertFalse(result.output().contains("nothing replaces"), result.output());
+    }
+
+    /** Installed but unlinked: the override goes, nothing replaces it, and the script says so. */
+    @Test
+    void warnsWhenNothingReplacesItsOverride() throws Exception {
+        var brewBin = homebrewPrefix();
+        Files.writeString(Files.createDirectories(tmp.resolve("brew/Cellar/incus-spawn/1.0/bin")).resolve("isx"), "");
+        Files.createSymbolicLink(Files.createDirectories(brewBin.resolveSibling("opt")).resolve("incus-spawn"),
+                Path.of("../Cellar/incus-spawn/1.0"));
+        Files.createSymbolicLink(brewBin.resolve("isx"), bin.resolve("isx"));
+
+        var result = run("--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertFalse(Files.exists(brewBin.resolve("isx"), LinkOption.NOFOLLOW_LINKS), result.output());
+        assertTrue(result.output().contains("Warning: nothing replaces " + brewBin.resolve("isx")), result.output());
+        assertTrue(result.output().contains("run: brew link incus-spawn"), result.output());
+    }
+
+    /**
+     * An install.sh run with {@code INSTALL_DIR=<dir>/} wrote {@code <dir>//isx}: that link is its own,
+     * whichever spelling the uninstall is given.
+     */
+    @Test
+    void removesItsOverrideSpelledWithATrailingSlash() throws Exception {
+        var brewBin = homebrewPrefix();
+        // Outside HOME, so only the INSTALL_DIR match can claim it.
+        var elsewhere = Files.createDirectories(tmp.resolve("elsewhere"));
+        for (var binary : List.of("isx", "isx-proxy", "git-remote-isx")) Files.writeString(elsewhere.resolve(binary), "");
+        // ln, not Files.createSymbolicLink: Path would normalise the double slash away.
+        var ln = new ProcessBuilder("ln", "-s", elsewhere + "//isx", brewBin.resolve("isx").toString()).start();
+        assertEquals(0, ln.waitFor());
+
+        var result = run(Map.of("INSTALL_DIR", elsewhere.toString()), "--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertFalse(Files.exists(brewBin.resolve("isx"), LinkOption.NOFOLLOW_LINKS), result.output());
+    }
+
+    /** Without any formula, removing the override is all an uninstall asks for: no warning. */
+    @Test
+    void removesItsOverrideQuietlyWithoutAFormula() throws Exception {
+        var brewBin = homebrewPrefix();
+        Files.createSymbolicLink(brewBin.resolve("isx"), bin.resolve("isx"));
+
+        var result = run("--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertFalse(Files.exists(brewBin.resolve("isx"), LinkOption.NOFOLLOW_LINKS), result.output());
+        assertFalse(result.output().contains("nothing replaces"), result.output());
+    }
+
+    /** A dangling opt/ link still means a formula: a real file beside it may be Homebrew's, so it stays. */
+    @Test
+    void keepsARealFileWhileAFormulaIsStillRecorded() throws Exception {
+        var brewBin = homebrewPrefix();
+        Files.createSymbolicLink(Files.createDirectories(brewBin.resolveSibling("opt")).resolve("incus-spawn"),
+                Path.of("../Cellar/incus-spawn/gone"));
+        Files.writeString(brewBin.resolve("isx"), "homebrew isx");
+
+        var result = run("--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertTrue(Files.exists(brewBin.resolve("isx")), result.output());
+    }
+
+    /** An empty Homebrew prefix at {@code tmp/brew}, and a brew that only answers {@code --prefix}. */
+    private Path homebrewPrefix() throws IOException {
+        var brewBin = Files.createDirectories(tmp.resolve("brew/bin"));
+        stub("brew", "[ \"$1\" = --prefix ] && echo '" + brewBin.getParent() + "'");
+        return brewBin;
     }
 
     private void stub(String name, String body) throws IOException {
