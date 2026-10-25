@@ -191,6 +191,12 @@ class FirewallDetectorTest {
     }
 
     @Test
+    void aReloadingFirewalldIsActiveNotStopped() throws Exception {
+        // systemctl is-active exits 0 while a unit reloads; its rules stay loaded meanwhile
+        assertEquals(FirewalldCheck.State.ACTIVE, FirewalldCheck.probeState(systemctlSays("reloading", 0)));
+    }
+
+    @Test
     void aCrashedFirewalldSaysItsRulesMayStillBeLoadedAndToRestartIt() {
         // #1654: firewalld died after installing its rules, and containers still worked, while
         // the banner said they could not reach the internet and to enable an enabled service.

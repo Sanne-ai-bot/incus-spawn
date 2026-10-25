@@ -4,6 +4,7 @@ import dev.incusspawn.util.HostPath;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 
 public final class FirewalldCheck {
 
@@ -51,6 +52,9 @@ public final class FirewalldCheck {
         return probeState(List.of("systemctl", "is-active", "firewalld"));
     }
 
+    /** The states systemctl is-active counts as active: a reload keeps the rules loaded. */
+    private static final Set<String> RUNNING = Set.of("active", "reloading", "refreshing");
+
     static State probeState(List<String> command) throws IOException, InterruptedException {
         if (!HostPath.isOnPath(command.getFirst())) return State.INACTIVE;
         var pb = new ProcessBuilder(command);
@@ -58,7 +62,7 @@ public final class FirewalldCheck {
         var process = pb.start();
         var output = new String(process.getInputStream().readAllBytes()).strip();
         // it prints the state either way, and exits non-zero for every state but active
-        if (process.waitFor() == 0 && "active".equals(output)) return State.ACTIVE;
+        if (process.waitFor() == 0 && RUNNING.contains(output)) return State.ACTIVE;
         return "failed".equals(output) ? State.FAILED : State.INACTIVE;
     }
 
