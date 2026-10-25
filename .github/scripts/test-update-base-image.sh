@@ -48,7 +48,10 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # run <minimal.yaml> [branch already on the remote]: prints the resulting minimal.yaml
 run() {
-    local dir="$WORK/run-$RANDOM"
+    # mktemp, not $RANDOM: every $(run ...) subshell starts from the same RANDOM state, so two runs
+    # would share a directory and the second would find the first's repository.
+    local dir
+    dir="$(mktemp -d "$WORK/run-XXXXXX")"
     mkdir -p "$dir/common/src/main/resources/images"
     cp "$1" "$dir/common/src/main/resources/images/minimal.yaml"
     mkdir -p "$dir/.github/scripts"
