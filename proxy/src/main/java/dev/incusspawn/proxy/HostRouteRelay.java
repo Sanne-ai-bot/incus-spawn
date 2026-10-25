@@ -202,7 +202,7 @@ final class HostRouteRelay {
             Future<HttpClientResponse> answered;
             if (Upstream.hasBody(req)) {
                 // The client sends no body until it is told to; the controller never sees the Expect
-                if ("100-continue".equalsIgnoreCase(req.getHeader("Expect"))) req.response().writeContinue();
+                if (Upstream.expectsContinue(req)) req.response().writeContinue();
                 answered = upReq.send(req);
             } else {
                 req.resume();

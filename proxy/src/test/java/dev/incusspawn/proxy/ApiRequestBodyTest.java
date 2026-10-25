@@ -316,16 +316,22 @@ class ApiRequestBodyTest {
     @ParameterizedTest
     @FieldSource("HOSTS")
     void earlyAnswerReachesTheClient(String host) throws Exception {
-        var reply = exchange(proxy, host, head("POST", host, "/early/upload", "Content-Length: 100000")
-                + "only the start of it");
-        assertTrue(reply.startsWith("HTTP/1.1 413"), reply);
-        assertTrue(reply.endsWith("too large"), reply);
+        // The rest never comes: the connection closes once it has paused for the linger
+        withLinger(proxy, 200, 60_000, () -> {
+            var reply = exchange(proxy, host, head("POST", host, "/early/upload", "Content-Length: 100000")
+                    + "only the start of it");
+            assertTrue(reply.startsWith("HTTP/1.1 413"), reply);
+            assertTrue(reply.endsWith("too large"), reply);
+        });
     }
 
-    /** A relay whose connect fails answers and closes, without reading the rest of the upload. */
+    /**
+     * A relay whose connect fails answers, and closes once the rest of the upload has stopped
+     * coming; a client that waits for 100 Continue sends none, so its connection closes at once.
+     */
     @ParameterizedTest
     @FieldSource("HOSTS")
-    void failedConnectClosesWithoutReadingTheUpload(String host) throws Exception {
+    void failedConnectAnswersAndCloses(String host) throws Exception {
         // A port nothing holds, so the connect is refused (ArtifactCacheProxyTest.refused)
         int port;
         try (var closed = new java.net.Socket()) {
@@ -334,9 +340,17 @@ class ApiRequestBodyTest {
         }
         proxy.overrideUpstream(host, "127.0.0.1", port);
         try {
-            var reply = exchange(proxy, host, head("POST", host, "/upload", "Content-Length: 100000")
-                    + "only the start of it");
-            assertTrue(reply.startsWith("HTTP/1.1 502"), reply);
+            withLinger(proxy, 200, 60_000, () -> {
+                var reply = exchange(proxy, host, head("POST", host, "/upload", "Content-Length: 100000")
+                        + "only the start of it");
+                assertTrue(reply.startsWith("HTTP/1.1 502"), reply);
+            });
+            withLinger(proxy, 60_000, 60_000, () -> {
+                var reply = exchange(proxy, host, head("POST", host, "/upload",
+                        "Expect: 100-continue", "Content-Length: 100000"));
+                assertTrue(reply.startsWith("HTTP/1.1 502"), reply);
+                assertFalse(reply.contains("100 Continue"), reply);
+            });
         } finally {
             proxy.overrideUpstream(host, "127.0.0.1", upstreamPorts.get(host));
             proxy.upstream.clearUnreachable();
@@ -615,15 +629,20 @@ class ApiRequestBodyTest {
 
     /** Runs {@code body} with a refused body's connection lingering {@code idle} ms after its last read, {@code cap} ms at most. */
     static void withLinger(long idle, long cap, Body body) throws Exception {
-        var linger = vertexProxy.refusalLingerMillis;
-        var lingerCap = vertexProxy.refusalLingerCapMillis;
-        vertexProxy.refusalLingerMillis = idle;
-        vertexProxy.refusalLingerCapMillis = cap;
+        withLinger(vertexProxy, idle, cap, body);
+    }
+
+    /** As above, on {@code p}. */
+    static void withLinger(MitmProxy p, long idle, long cap, Body body) throws Exception {
+        var linger = p.upstream.lingerMillis;
+        var lingerCap = p.upstream.lingerCapMillis;
+        p.upstream.lingerMillis = idle;
+        p.upstream.lingerCapMillis = cap;
         try {
             body.run();
         } finally {
-            vertexProxy.refusalLingerMillis = linger;
-            vertexProxy.refusalLingerCapMillis = lingerCap;
+            p.upstream.lingerMillis = linger;
+            p.upstream.lingerCapMillis = lingerCap;
         }
     }
 

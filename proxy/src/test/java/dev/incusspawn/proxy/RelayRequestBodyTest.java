@@ -323,12 +323,71 @@ class RelayRequestBodyTest {
     @Test
     void earlyAnswerReachesTheClient() throws Exception {
         var host = "ghcr.io";
-        var reply = exchange(host, Buffer.buffer("PUT /early/v2/app/blobs/uploads/1 HTTP/1.1\r\n"
-                + "Host: " + host + "\r\n"
-                + "Content-Length: 100000\r\n\r\n"
-                + "only the start of it"));
-        assertTrue(reply.startsWith("HTTP/1.1 413"), reply);
-        assertTrue(reply.endsWith("too large"), reply);
+        // The rest never comes: the connection closes once it has paused for the linger
+        ApiRequestBodyTest.withLinger(proxy, 200, 60_000, () -> {
+            var reply = exchange(host, Buffer.buffer("PUT /early/v2/app/blobs/uploads/1 HTTP/1.1\r\n"
+                    + "Host: " + host + "\r\n"
+                    + "Content-Length: 100000\r\n\r\n"
+                    + "only the start of it"));
+            assertTrue(reply.startsWith("HTTP/1.1 413"), reply);
+            assertTrue(reply.endsWith("too large"), reply);
+        });
+    }
+
+    /**
+     * A client still sending when upstream answers early may send the rest before it reads (#1623):
+     * the proxy reads and drops it, and closes once it has ended, since closing with some of it
+     * unread resets the connection, and a reset can take upstream's answer with it. The wait is
+     * longer than the test, so only the upload's end can close the connection. A client that
+     * awaited upstream's 100 Continue was told to send its body, and is read the same way.
+     */
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void earlyAnswerReadsTheRestBeforeClosing(boolean expectContinue) throws Exception {
+        var host = "ghcr.io";
+        ApiRequestBodyTest.withLinger(proxy, 60_000, 60_000, () -> {
+            var socket = connect(host);
+            var bytes = new StringBuffer();
+            var answered = new CompletableFuture<Void>();
+            var closed = new CompletableFuture<Void>();
+            var errors = new java.util.concurrent.CopyOnWriteArrayList<Throwable>();
+            socket.handler(b -> {
+                bytes.append(b.toString(StandardCharsets.UTF_8));
+                if (bytes.indexOf("too large") >= 0) answered.complete(null);
+            });
+            socket.exceptionHandler(errors::add);
+            socket.closeHandler(v -> closed.complete(null));
+            try {
+                var body = "x".repeat(256 * 1024);
+                // Awaiting the 100, the client sends nothing before the answer
+                var split = expectContinue ? 0 : 128 * 1024;
+                socket.write("PUT /early/v2/app/blobs/uploads/1 HTTP/1.1\r\n"
+                        + "Host: " + host + "\r\n"
+                        + (expectContinue ? "Expect: 100-continue\r\n" : "")
+                        + "Content-Length: " + body.length() + "\r\n\r\n"
+                        + body.substring(0, split));
+                answered.get(5, TimeUnit.SECONDS);
+                assertFalse(closed.isDone(), "closed before the upload had ended");
+                var slices = 20;
+                var slice = (body.length() - split + slices - 1) / slices;
+                var writes = new java.util.ArrayList<io.vertx.core.Future<Void>>();
+                for (int at = split; at < body.length(); at += slice) {
+                    writes.add(socket.write(body.substring(at, Math.min(body.length(), at + slice))));
+                    Thread.sleep(100);
+                }
+                closed.get(10, TimeUnit.SECONDS);
+                for (var write : writes) {
+                    assertDoesNotThrow(() -> write.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS),
+                            "the rest of the upload could not be sent");
+                }
+                assertEquals(List.of(), errors, "the connection was reset");
+                var reply = bytes.toString();
+                assertTrue(reply.startsWith(expectContinue ? "HTTP/1.1 100" : "HTTP/1.1 413"), reply);
+                assertTrue(reply.contains("HTTP/1.1 413"), reply);
+            } finally {
+                socket.close();
+            }
+        });
     }
 
     /**

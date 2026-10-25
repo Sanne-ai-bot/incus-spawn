@@ -82,6 +82,10 @@ class Upstream {
     // pending: the upstream client's read-idle timeout (300s) outlasts it. Waiting for a
     // response head and every resume get only what is left of it.
     int clientSilenceBudgetSeconds = MitmProxy.MITM_IDLE_TIMEOUT_SECONDS - 10;
+    // How long the rest of a body the proxy answered without reading may pause, and take in all,
+    // before its connection closes without it (LingeringClose). Package-private for tests.
+    volatile long lingerMillis = 5000;
+    volatile long lingerCapMillis = 30_000;
     // For the benchmark (bench/run.sh --load=maven, via ISX_BENCH_UPSTREAM) and tests:
     // send a host's upstream connections to a local stub. Host header and SNI still
     // name the real host. Set before start().
@@ -112,6 +116,11 @@ class Upstream {
     Upstream(Vertx vertx, HostLookup hostLookup) {
         this.vertx = vertx;
         this.hostLookup = hostLookup;
+    }
+
+    /** Closes {@code clientReq}'s connection once the rest of its body is read and dropped ({@link LingeringClose}). */
+    void lingeringClose(HttpServerRequest clientReq, boolean bodyComing, Runnable close) {
+        LingeringClose.after(vertx, clientReq, bodyComing, close, lingerMillis, lingerCapMillis);
     }
 
     /** Creates the upstream clients; {@link MitmProxy#start} calls it before it listens. */
@@ -439,7 +448,7 @@ class Upstream {
             }
             var clientResp = clientReq.response();
             copyResponseHead(upResp, clientResp);
-            // Upstream answered before the upload ended: the rest of it is never read (RelayWatchdog)
+            // Upstream answered before the upload ended: the rest of it is dropped (RelayWatchdog)
             if (watchdog.uploadUnread()) clientResp.putHeader("Connection", "close");
             watchdog.upResp = upResp;
             pipeResponse(upResp, clientResp, watchdog, hooks.responseTap());
@@ -476,12 +485,17 @@ class Upstream {
                 });
             }
         };
-        if ("100-continue".equalsIgnoreCase(clientReq.getHeader("Expect"))) {
+        if (expectsContinue(clientReq)) {
             // The client sends no body until it is told to: send upstream the head now, and relay its
             // 100. Waiting for that is upstream's time; the client's starts with its first byte
-            upReq.continueHandler(v -> clientReq.response().writeContinue());
+            upReq.continueHandler(v -> {
+                watchdog.bodyAsked = true;
+                clientReq.response().writeContinue();
+            });
             upReq.sendHead();
             clientReq.handler(first -> {
+                // Sent without a 100 too, once the client's own wait for one is over
+                watchdog.bodyAsked = true;
                 watchdog.uploading(true);
                 clientReq.handler(pump);
                 pump.handle(first);
@@ -498,6 +512,11 @@ class Upstream {
         clientReq.resume();
     }
 
+    /** The client sends no body until it is told to. */
+    static boolean expectsContinue(HttpServerRequest clientReq) {
+        return "100-continue".equalsIgnoreCase(clientReq.getHeader("Expect"));
+    }
+
     /**
      * Ends a relay whose client has gone {@link #clientSilenceBudgetSeconds} without a byte either
      * way, with a line and a 502, or a reset once the head was sent (#929). Just short of the MITM
@@ -508,8 +527,10 @@ class Upstream {
      * the upload still does, so each direction keeps its own wait: neither ends the other's.
      * <p>
      * A response that ends, an error included, before the upload it answers was read closes the
-     * client's connection: reading the rest only to discard it could be gigabytes (#1175), and the
-     * unread body would otherwise sit on a keep-alive connection, in front of its next request.
+     * client's connection once the rest has been read and dropped, or has stopped coming
+     * ({@link LingeringClose}, #1623): closed with some of it unread, the connection is reset, and a
+     * client still sending loses the answer. The wait is capped, since the rest could be gigabytes
+     * (#1175), and the connection is not kept: its next request would wait behind the upload.
      */
     final class RelayWatchdog {
         private final HttpServerRequest clientReq;
@@ -523,6 +544,8 @@ class Upstream {
         private boolean uploading;
         // The client holds the response back
         private boolean holdingResponse;
+        // The client sends the body: it did not wait for a 100 Continue, has had it, or sent anyway
+        boolean bodyAsked;
         private boolean over;
         private long clientActive;
         // Vert.x numbers timers from 0: cancelling 0 before one is set would cancel another's
@@ -539,6 +562,7 @@ class Upstream {
             this.clientReq = clientReq;
             this.domain = domain;
             this.streaming = streaming;
+            bodyAsked = !expectsContinue(clientReq);
             this.clientActive = since;
             this.upResp = upResp;
             if (upResp != null) upReq = upResp.request();
@@ -550,10 +574,11 @@ class Upstream {
             clientResp.endHandler(v -> {
                 ended.handle(null);
                 if (uploadUnread()) {
-                    clientResp.close();
                     // An upstream that answered early may read no more: a half-sent request would
                     // hold its pooled connection until the read-idle timeout
                     if (upReq != null) upReq.reset();
+                    // A client cut for its silence sends nothing more
+                    lingeringClose(clientReq, bodyAsked && !cut, clientReq.connection()::close);
                 }
             });
             clientResp.closeHandler(v -> {

@@ -1624,7 +1624,7 @@ So the heap held for bodies is the budget plus what Netty holds for any connecti
 `DiskReserve` keeps the host's disk from filling: the spool leaves free min(15% of the filesystem, 4 GiB), journald's `SystemKeepFree` default, the rule the same host's logger keeps (3 GiB on 20 GiB, 4 GiB on 2 TiB; 5% would keep about 100 GiB on 2 TiB).
 Free space is sampled off the event loop every 8 MiB written or every second, and a write is admitted only if the sample, less every write pending and every write completed since the sample began, leaves the reserve free.
 A body that does not fit is answered `507 Insufficient Storage`, naming the host's free space and not the body, with nothing sent upstream.
-The connection closes once the rest of the body has been read and dropped, once none has come for 5 s, or 30 s after the 507 however it keeps coming (#1617): nginx's `lingering_timeout` and `lingering_time`.
+The connection closes once the rest of the body has been read and dropped, once none has come for 5 s, or 30 s after the 507 however it keeps coming (#1617): nginx's `lingering_timeout` and `lingering_time` (`LingeringClose`, which the plain relay shares).
 The cap is what stops a client trickling bytes from holding a refused connection, which every read would otherwise keep open.
 Closed with some of it unread, the connection is reset, and a client still sending its body loses the 507 with it.
 A client refused before it was told to continue sends no body, and its connection closes at once.
@@ -1755,8 +1755,12 @@ Only an unreachable upstream serves an older one.
   So a body left unread until the upstream connection was ready was lost whenever it beat the connect -- a small POST that found no idle pooled connection, such as npm's audit request after an install, which sends its tarballs with `Connection: close` -- and the relay waited forever with nothing to cut it.
   An upload is never held whole: buffered, a registry push of a 64 MiB layer exhausted the native proxy's 256 MB heap, failing uploads from every instance, and a Vert.x buffer cannot hold 2 GiB at all.
   There is no upload size limit: the relay stays transparent, and with nothing held there is nothing to protect.
-  A relay whose response ends, an error included, before the upload was all read closes the client's connection (`Connection: close` on a response not yet sent) rather than read the rest only to discard it; left unread on a keep-alive connection, it would stall the next request.
-  So upstream's early answer (a `413`, a `401`) reaches the client while it is still sending, and a failed connect reads no more of the upload.
+  A relay whose response ends, an error included, before the upload was all read closes the client's connection (`Connection: close` on a response not yet sent); left unread on a keep-alive connection, the upload would stall the next request.
+  So upstream's early answer (a `413`, a `401`) reaches the client while it is still sending.
+  The connection closes as the Vertex `507` does (#1623): once the rest has been read and dropped, after 5 s with none, or 30 s after the answer.
+  Closed at once, with some of the upload unread, it was reset, and a client that writes its whole body before it reads lost the answer.
+  The cap keeps the drop bounded, since an upload may be gigabytes.
+  Upstream's half-sent request is reset at once, and a client still waiting for `100 Continue` sends no body, so its connection closes at once.
   A client that sends `Expect: 100-continue` (curl above 1 MB) gets upstream's `100`: the relay sends upstream the head at once instead of on the first body byte, which the client withheld until its own timeout, about a second per upload.
   A request with a body is therefore never served from a cache (all of them are keyed by path alone).
   A relay whose client left before its body was all sent resets its upstream request, also when it left while the body was paused, which gives the connection back to the pool instead of holding it for good.
