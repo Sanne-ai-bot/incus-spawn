@@ -1041,10 +1041,9 @@ public final class VmManager {
                 "-nographic",
                 "-nodefaults",
                 "-serial", "stdio",
-                "-kernel", Environment.applianceKernel().toString(),
-                "-drive", "id=root,file=" + Environment.vmDiskImage() + ",format=raw,if=virtio",
-                "-drive", "id=swap,file=" + Environment.vmSwapImage() + ",format=raw,if=virtio",
-                "-drive", "id=data,file=" + Environment.vmDataImage() + ",format=raw,if=virtio",
+                "-kernel", Environment.applianceKernel().toString()));
+        cmd.addAll(qemuDriveArgs());
+        cmd.addAll(List.of(
                 "-netdev", "user,id=net0",
                 "-device", "virtio-net-pci,netdev=net0",
                 "-append", kernelCmdline(console)
@@ -1053,6 +1052,22 @@ public final class VmManager {
         // qemu's console is its own stdout, so the wrapper's errors can share its append-mode vm.log.
         long pid = launchInOwnSession(cmd, "qemu", Environment.vmLogFile(), Environment.vmPidFile()).pid();
         BuildOutput.stepDone("pid=" + pid + noSessionNote());
+    }
+
+    /**
+     * QEMU's {@code -drive} arguments for the appliance's root, swap and data images.
+     * <p>
+     * {@code discard=unmap} punches the guest's discards into the host file, as vfkit does (#1682
+     * measured it). QEMU's default is {@code discard=ignore}: virtio-blk still advertises discard,
+     * so btrfs's online trim and {@code fstrim} report success while the images only grow (#1683).
+     * Swap is discarded only when the guest's {@code swapon} asks for it.
+     */
+    static List<String> qemuDriveArgs() {
+        var options = ",format=raw,if=virtio,discard=unmap";
+        return List.of(
+                "-drive", "id=root,file=" + Environment.vmDiskImage() + options,
+                "-drive", "id=swap,file=" + Environment.vmSwapImage() + options,
+                "-drive", "id=data,file=" + Environment.vmDataImage() + options);
     }
 
     // --- Internal: disk management ---

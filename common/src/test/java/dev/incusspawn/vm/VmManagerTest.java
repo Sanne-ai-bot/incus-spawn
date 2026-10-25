@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
@@ -53,6 +54,19 @@ class VmManagerTest {
         assertEquals("unix://" + Environment.vmStateDir().resolve("vm.rest.sock"),
                 cmd.get(cmd.indexOf("--restful-uri") + 1));
         assertTrue(cmd.stream().noneMatch(arg -> arg.contains("tcp://")), cmd.toString());
+    }
+
+    /**
+     * #1683: QEMU's default {@code discard=ignore} drops the guest's discards, so btrfs's online
+     * trim and {@code fstrim} never shrink the host's images. Each drive passes them through.
+     */
+    @Test
+    void qemuPassesTheGuestsDiscardsThroughToEveryImage() {
+        assertEquals(List.of(
+                "-drive", "id=root,file=" + Environment.vmDiskImage() + ",format=raw,if=virtio,discard=unmap",
+                "-drive", "id=swap,file=" + Environment.vmSwapImage() + ",format=raw,if=virtio,discard=unmap",
+                "-drive", "id=data,file=" + Environment.vmDataImage() + ",format=raw,if=virtio,discard=unmap"),
+                VmManager.qemuDriveArgs());
     }
 
     @Test
