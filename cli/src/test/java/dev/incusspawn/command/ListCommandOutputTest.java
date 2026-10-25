@@ -39,7 +39,8 @@ class ListCommandOutputTest {
                     Metadata.TYPE, Metadata.TYPE_CLONE,
                     Metadata.PARENT, "tpl-java",
                     Metadata.STATIC_IP, "10.166.11.20",
-                    Metadata.CREATED, "2026-10-05T10:15:30"))
+                    Metadata.CREATED, "2026-10-05T10:15:30",
+                    BaseImageAge.TAG, "fedora-44-20261001"))
             .instance("dev-2", "virtual-machine", "Stopped", Map.of(
                     Metadata.TYPE, Metadata.TYPE_CLONE,
                     Metadata.PARENT, "tpl-java",
@@ -79,9 +80,9 @@ class ListCommandOutputTest {
     @Test
     void plainIsOneTabSeparatedRecordPerInstance() {
         assertEquals("""
-                dev-1\trunning\t10.166.11.20\ttpl-java\tcontainer\t2026-10-05T10:15:30+02:00\t-\t-
-                dev-2\tstopped\t-\ttpl-java\tvirtual-machine\t2026-09-01\t-\t-
-                tpl-scratch\tstopped\t-\tdev-1\tcontainer\t2026-10-05T11:00:00+02:00\t-\t-
+                dev-1\trunning\t10.166.11.20\ttpl-java\tcontainer\t2026-10-05T10:15:30+02:00\t-\t-\tfedora-44-20261001
+                dev-2\tstopped\t-\ttpl-java\tvirtual-machine\t2026-09-01\t-\t-\t-
+                tpl-scratch\tstopped\t-\tdev-1\tcontainer\t2026-10-05T11:00:00+02:00\t-\t-\t-
                 """, list(cmd("plain")));
     }
 
@@ -97,10 +98,11 @@ class ListCommandOutputTest {
         var listing = io.hyperfoil.tools.jjq.value.JqValues.parse(list(cmd("json")));
         assertEquals(3, listing.arrayValue().size());
         var first = (io.hyperfoil.tools.jjq.value.JqObject) listing.arrayValue().get(0);
-        assertEquals(List.of("name", "status", "ipv4", "parent", "runtime", "created", "mcp_state", "mcp_purpose"),
+        assertEquals(List.of("name", "status", "ipv4", "parent", "runtime", "created", "mcp_state", "mcp_purpose",
+                        "base_image"),
                 List.copyOf(first.keys()));
         assertEquals(Arrays.asList("dev-1", "running", "10.166.11.20", "tpl-java", "container",
-                "2026-10-05T10:15:30+02:00", null, null),
+                "2026-10-05T10:15:30+02:00", null, null, "fedora-44-20261001"),
                 new ArrayList<>(first.keys().stream().map(key -> {
                     var v = first.get(key);
                     return v == null || v.isNull() ? null : v.asText();
@@ -217,7 +219,7 @@ class ListCommandOutputTest {
     void aCreatedStampThatCannotBeReadIsNull() throws Exception {
         var daemon = new FakeIncusDaemon().container("odd", Map.of(
                 Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.CREATED, "sometime"));
-        assertEquals("odd\tstopped\t-\t-\tcontainer\t-\t-\t-\n", list(cmd("plain"), daemon));
+        assertEquals("odd\tstopped\t-\t-\tcontainer\t-\t-\t-\t-\n", list(cmd("plain"), daemon));
         var created = io.hyperfoil.tools.jjq.value.JqValues.parse(list(cmd("json"), daemon));
         var createdAt = ((io.hyperfoil.tools.jjq.value.JqObject) created.arrayValue().get(0)).get("created");
         assertTrue(createdAt == null || createdAt.isNull());
@@ -261,11 +263,11 @@ class ListCommandOutputTest {
         var mcp = mcpDaemon();
         // Fields at the end only: what a script reads by position stays where it was.
         assertEquals("""
-                coord\tstopped\t-\ttpl-java\tcontainer\t-\t-\t-
-                worker\tstopped\t-\ttpl-java\tcontainer\t-\theld\t#870 implement
-                stray\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\t-
-                released\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\treview #12
-                mine-now\tstopped\t-\ttpl-java\tcontainer\t-\tkept\tspike
+                coord\tstopped\t-\ttpl-java\tcontainer\t-\t-\t-\t-
+                worker\tstopped\t-\ttpl-java\tcontainer\t-\theld\t#870 implement\t-
+                stray\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\t-\t-
+                released\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\treview #12\t-
+                mine-now\tstopped\t-\ttpl-java\tcontainer\t-\tkept\tspike\t-
                 """, list(cmd("plain"), mcp));
         var stated = io.hyperfoil.tools.jjq.value.JqValues.parse(list(cmd("json"), mcp));
         var first = (io.hyperfoil.tools.jjq.value.JqObject) stated.arrayValue().get(0);
@@ -312,7 +314,7 @@ class ListCommandOutputTest {
         var purpose = "\u001b[2J\u009b2Jhi";
         var daemon = new FakeIncusDaemon().container("w", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
                 Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, "garbled", Metadata.MCP_PURPOSE, purpose));
-        assertEquals("w\tstopped\t-\t-\tcontainer\t-\theld\t [2J 2Jhi\n", list(cmd("plain"), daemon));
+        assertEquals("w\tstopped\t-\t-\tcontainer\t-\theld\t [2J 2Jhi\t-\n", list(cmd("plain"), daemon));
         var table = list(cmd(null), daemon);
         assertFalse(table.contains("\u009b"), table);
         assertTrue(table.contains("held:  [2J 2Jhi"), table);

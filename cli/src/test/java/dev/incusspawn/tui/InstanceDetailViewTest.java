@@ -1,5 +1,6 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.command.BaseImageAge;
 import dev.incusspawn.command.InstanceListing.InstanceInfo;
 import dev.incusspawn.config.AccountUsage;
 import dev.tamboui.tui.event.KeyCode;
@@ -47,7 +48,7 @@ class InstanceDetailViewTest {
         var view = view();
         var uses = List.of(new AccountUsage.Use("github", "work", null, "", "", "", ""));
         TuiSnapshot.assertMatches("instance-detail-view-80x24",
-                TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses)));
+                TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses, null)));
     }
 
     @Test
@@ -57,6 +58,29 @@ class InstanceDetailViewTest {
                 "virtual-machine", "tpl-dev", "4", "8GiB", "50GiB", "", "", "x86_64",
                 "", "", "instance", "", "", "", -1, -1, "", false, null, false, null);
         TuiSnapshot.assertMatches("instance-detail-view-vm-80x24",
-                TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of())));
+                TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of(), null)));
+    }
+
+    @Test
+    void theBaseImageRowSaysWhenARebuildWouldPickUpImageFixes() {
+        var older = new BaseImageAge.Assessment(BaseImageAge.Standing.OLDER, "fedora-44-20261001", "fedora-44-20261021");
+        assertEquals(List.of(
+                        new InstanceDetailView.DetailRow("Base image:", "fedora-44-20261001"),
+                        new InstanceDetailView.DetailRow(null,
+                                "older than fedora-44-20261021: 'isx doctor' says what to rebuild to pick up image fixes"),
+                        new InstanceDetailView.DetailRow(null,
+                                "before fedora-44-20261009 its network watchdog restarts systemd-networkd every 30 seconds")),
+                InstanceDetailView.baseImageRows("fedora-44-20261001", older));
+        var current = new BaseImageAge.Assessment(BaseImageAge.Standing.CURRENT, "fedora-44-20261021", "fedora-44-20261021");
+        assertEquals(List.of(new InstanceDetailView.DetailRow("Base image:", "fedora-44-20261021")),
+                InstanceDetailView.baseImageRows("fedora-44-20261021", current));
+        var sameFile = new BaseImageAge.Assessment(BaseImageAge.Standing.CURRENT, "fedora-44-20261001", "fedora-44-20261021");
+        assertEquals(List.of(new InstanceDetailView.DetailRow("Base image:", "fedora-44-20261001"),
+                        new InstanceDetailView.DetailRow(null, "the same file as fedora-44-20261021")),
+                InstanceDetailView.baseImageRows("fedora-44-20261001", sameFile));
+        var unknown = new BaseImageAge.Assessment(BaseImageAge.Standing.UNKNOWN, null, "fedora-44-20261021");
+        assertEquals(List.of(new InstanceDetailView.DetailRow("Base image:", "unknown")),
+                InstanceDetailView.baseImageRows(null, unknown));
+        assertEquals(List.of(), InstanceDetailView.baseImageRows(null, null), "nothing recorded, nothing to say");
     }
 }

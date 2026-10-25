@@ -645,8 +645,8 @@ For a clean log, redirect both streams or set `NO_COLOR=1`.
 
 ### Fields of `isx list`
 
-`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state` and `mcp_purpose`, in that order.
-The last two are `null` (`-`) unless an [`isx mcp`](MCP.md#delegating-from-an-agent-on-your-host-mcp) session made the instance.
+`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state`, `mcp_purpose` and `base_image`, in that order.
+`mcp_state` and `mcp_purpose` are `null` (`-`) unless an [`isx mcp`](MCP.md#delegating-from-an-agent-on-your-host-mcp) session made the instance.
 `mcp_purpose` is then what the agent said the instance is for, or `null`, and `mcp_state` is one of:
 
 | `mcp_state` | Meaning |
@@ -654,6 +654,10 @@ The last two are `null` (`-`) unless an [`isx mcp`](MCP.md#delegating-from-an-ag
 | `held` | A session holds it |
 | `orphaned` | Its session ended and nobody has adopted it yet |
 | `kept` | An agent handed it to you with `keep_instance` |
+
+`base_image` is the base image release the instance was built from, such as `fedora-44-20261001`.
+It is `null` when Incus recorded none, as for an instance built from an image of your own.
+A fix in a base image reaches only instances built after it, and `isx doctor` names the ones a rebuild would move to a newer release.
 
 For names alone, use `isx list -q`:
 
