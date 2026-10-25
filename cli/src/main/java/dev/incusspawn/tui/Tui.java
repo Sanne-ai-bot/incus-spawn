@@ -340,6 +340,32 @@ public class Tui {
         return warningLog.entries().stream().map(WarningLog.Entry::message).toList();
     }
 
+    /** The runner's settings, less its backend. */
+    static TuiConfig.Builder runnerConfig() {
+        return TuiConfig.builder()
+                .bindings(ShiftTabBindings.createWithBacktab())
+                .tickRate(Duration.ofMillis(100));
+    }
+
+    /**
+     * Opens the runner on a cleared screen. Blank cells are never sent, so without the clear a
+     * terminal that does not give a fresh alternate screen shows its old output through them (#1681).
+     */
+    static TuiRunner openRunner(TuiConfig config) throws Exception {
+        var runner = TuiRunner.create(config);
+        try {
+            runner.terminal().clear();
+        } catch (RuntimeException e) {
+            try {
+                runner.close();
+            } catch (RuntimeException closing) {
+                e.addSuppressed(closing);
+            }
+            throw e;
+        }
+        return runner;
+    }
+
     /** Draws the TUI until the user quits; overridable so a test can stand in for the terminal. */
     void runTuiLoop() {
         try {
@@ -427,11 +453,7 @@ public class Tui {
 
             ProxyLog.setSuppressStderr(true);
             try (var ignored = Warnings.redirect(warningChannel);
-                 var runner = TuiRunner.create(TuiConfig.builder()
-                    .backend(new PanamaBackend())
-                    .bindings(ShiftTabBindings.createWithBacktab())
-                    .tickRate(Duration.ofMillis(100))
-                    .build())) {
+                 var runner = openRunner(runnerConfig().backend(new PanamaBackend()).build())) {
                 runner.run(this::handleEvent, this::render);
             } catch (Exception e) {
                 System.err.println("TUI unavailable: " + e.getMessage());
@@ -633,6 +655,13 @@ public class Tui {
         if (!(event instanceof KeyEvent key)) return false;
         // Browse mode releases the hold itself, before the key sets its own message
         if (holdingStatus && (searchActive || mode != Mode.BROWSE)) releaseHeldStatus();
+        // Ctrl+L redraws the whole screen in any mode, wiping anything else that wrote to the
+        // terminal (#1681). In browse mode it reloads first, so the screen is not blank meanwhile.
+        if (key.hasCtrl() && key.isCharIgnoreCase('l')) {
+            if (!searchActive && mode == Mode.BROWSE) handleBrowseEvent(key, tui, tableState);
+            tui.terminal().clear();
+            return true;
+        }
         if (searchActive) return handleSearchEvent(key, tableState);
         return switch (mode) {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
@@ -695,7 +724,7 @@ public class Tui {
             return true;
         }
         // Refresh data. 'r' is the TUI-idiomatic binding (k9s/lazygit/btop);
-        // Ctrl+L is kept as an alias for the terminal "redraw screen" reflex.
+        // Ctrl+L is kept as an alias for the terminal "redraw screen" reflex; handleEvent clears.
         if ((!key.hasCtrl() && key.isCharIgnoreCase('r')) || (key.hasCtrl() && key.isCharIgnoreCase('l'))) {
             // An explicit reload reports definition problems again, so a warning that is still
             // true is announced again rather than silently deduplicated.

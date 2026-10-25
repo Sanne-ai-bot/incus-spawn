@@ -6,7 +6,7 @@ import dev.tamboui.layout.Size;
 import dev.tamboui.terminal.Backend;
 
 /** A terminal that is never drawn on: lets a test hold a real {@code TuiRunner} to quit or draw. */
-final class HeadlessBackend implements Backend {
+class HeadlessBackend implements Backend {
     private final Size size;
 
     HeadlessBackend(int width, int height) {
