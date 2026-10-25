@@ -439,7 +439,7 @@ It declares `requires: [sshd]`, so the SSH server is installed automatically.
 
 On the host, install [JetBrains Gateway](https://www.jetbrains.com/remote-development/gateway/).
 
-Press F9 on a running instance and choose **Open repo in Gateway** to open one of its repositories.
+Press F9 on a running instance and choose **Open repo '*name*' in Gateway**, one entry per repository, to open it.
 Gateway connects with isx's managed SSH key through the instance's entry in `~/.ssh/config`, so no key or host setup is needed.
 
 If Gateway shows its connection dialog, keep the instance name as the host.
@@ -605,7 +605,7 @@ actions:
   - label: "Open repo '${repo_name}' in Gateway"
     type: url
     expand: repos
-    url: "jetbrains-gateway://connect#host=${name}&port=22&user=agentuser&type=ssh&projectPath=${repo_path}"
+    url: "jetbrains-gateway://connect#idePath=%2Fopt%2Fidea&host=${name}&port=22&user=agentuser&type=ssh&deploy=false&projectPath=${repo_path}"
   - label: "Launch agent"
     id: launch
     type: shell
