@@ -41,7 +41,7 @@ public class IncusClient {
         return "No copy-on-write storage pool found — every branch would be a slow full copy."
                 + (Platform.isMacOS()
                         ? " Recreate the appliance with: isx vm delete && isx init"
-                        : " Create one with: sudo incus storage create cow btrfs size=100GiB");
+                        : " Create one with: isx doctor");
     }
 
     private volatile boolean apiInitialized;
@@ -741,15 +741,44 @@ public class IncusClient {
         return null;
     }
 
+    /** Each pool's driver by name; empty when the listing cannot be read. */
     public Map<String, String> listPools() {
-        var resp = http().get("/1.0/storage-pools?recursion=1");
-        if (!resp.isSuccess()) return Map.of();
+        var pools = poolListing();
+        return pools == null ? Map.of() : drivers(pools);
+    }
+
+    /** {@link #listPools()}'s view of a {@link #listPoolInfo()} listing: each pool's driver. */
+    public static Map<String, String> drivers(Map<String, PoolInfo> pools) {
         var result = new LinkedHashMap<String, String>();
+        pools.forEach((name, info) -> result.put(name, info.driver()));
+        return result;
+    }
+
+    /** A storage pool's driver and config keys. */
+    public record PoolInfo(String driver, Map<String, String> config) {}
+
+    /**
+     * Every pool by name, with its driver and config, from one listing. Throws when Incus cannot
+     * say, so a caller never takes a failed listing for a host with no pools.
+     */
+    public Map<String, PoolInfo> listPoolInfo() {
+        var pools = poolListing();
+        if (pools == null) throw new IncusException("Failed to list storage pools");
+        return pools;
+    }
+
+    private Map<String, PoolInfo> poolListing() {
+        var resp = http().get("/1.0/storage-pools?recursion=1");
+        if (!resp.isSuccess()) return null;
+        var result = new LinkedHashMap<String, PoolInfo>();
         for (var pool : resp.body().getField("metadata").asList()) {
             var name = pool.path("name").asText("");
-            if (!name.isEmpty()) {
-                result.put(name, pool.path("driver").asText(""));
+            if (name.isEmpty()) continue;
+            var config = new LinkedHashMap<String, String>();
+            if (pool.path("config") instanceof JqObject entries) {
+                for (var entry : entries.entries()) config.put(entry.getKey(), entry.getValue().asText(""));
             }
+            result.put(name, new PoolInfo(pool.path("driver").asText(""), config));
         }
         return result;
     }
@@ -2433,18 +2462,16 @@ public class IncusClient {
         return result;
     }
 
-    public String getPoolSource(String poolName) {
-        var resp = http().get("/1.0/storage-pools/" + poolName);
-        if (!resp.isSuccess()) return null;
-        var source = resp.body().path("metadata").path("config").path("source").asText("");
-        return source.isEmpty() ? null : source;
+    public void resizePool(String poolName, String newSize) {
+        setPoolConfig(poolName, "size", newSize);
     }
 
-    public void resizePool(String poolName, String newSize) {
+    /** Sets one config key of a pool; Incus applies a changed {@code btrfs.mount_options} with a remount. */
+    public void setPoolConfig(String poolName, String key, String value) {
         var resp = http().requestAndWait("PATCH", "/1.0/storage-pools/" + poolName,
-                Map.of("config", Map.of("size", newSize)));
+                Map.of("config", Map.of(key, value)));
         if (!resp.isSuccess()) {
-            throw new IncusException("Failed to resize pool " + poolName + ": "
+            throw new IncusException("Failed to set " + key + " on pool " + poolName + ": "
                     + resp.body().path("error").asText(""));
         }
     }

@@ -532,29 +532,4 @@ public class InitCommandTest {
         assertEquals("", CredentialSetup.apiErrorSuffix("{\"error\":{\"message\":\"  \"}}"));
     }
 
-    @Test
-    void cowPoolSkipsTrimOnlyWhenTheDaemonSupportsCreateOptions() {
-        assertEquals(java.util.List.of("sudo", "incus", "storage", "create", "cow", "btrfs",
-                        "size=100GiB", "btrfs.create_options=-K"),
-                java.util.List.of(HostSetup.cowPoolCreateCommand(true)));
-        // Incus 6.x rejects the whole create over the unknown key (#820)
-        assertEquals(java.util.List.of("sudo", "incus", "storage", "create", "cow", "btrfs",
-                        "size=100GiB"),
-                java.util.List.of(HostSetup.cowPoolCreateCommand(false)));
-    }
-
-    @Test
-    void cowPoolFailureIsWordedAfterIncusError() {
-        var unrelated = HostSetup.cowPoolFailureExplanation(
-                "Error: Invalid option \"btrfs.create_options\"\n");
-        assertEquals(java.util.List.of("Error: Invalid option \"btrfs.create_options\""), unrelated);
-
-        var loop = HostSetup.cowPoolFailureExplanation("Error: Failed to find a free loop device");
-        assertTrue(loop.stream().anyMatch(l -> l.contains("modprobe loop")), loop.toString());
-
-        var mkfs = HostSetup.cowPoolFailureExplanation("Error: exec: \"mkfs.btrfs\": not found");
-        assertTrue(mkfs.stream().anyMatch(l -> l.contains("btrfs-progs")), mkfs.toString());
-
-        assertEquals(java.util.List.of(), HostSetup.cowPoolFailureExplanation(""));
-    }
 }

@@ -69,6 +69,9 @@ public final class FakeIncusDaemon implements IncusTransport {
     private JsonNode listingOverride;
     /** Storage pools by name, with their driver; empty means one btrfs pool, {@code default}. */
     private final Map<String, String> pools = new LinkedHashMap<>();
+    /** Each pool's config, as the listing and a pool PATCH see it. */
+    private final Map<String, Map<String, String>> poolConfigs = new LinkedHashMap<>();
+    private boolean poolListingFails;
     private final java.util.Set<String> customVolumes = new java.util.LinkedHashSet<>();
     private RawResponse customVolumeFailure;
     private String subvolumeListing;
@@ -230,6 +233,22 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** A storage pool; once one is declared, only declared pools are listed. */
     public synchronized FakeIncusDaemon pool(String name, String driver) {
         pools.put(name, driver);
+        return this;
+    }
+
+    /** A pool's config keys, such as a loop file's {@code source} and {@code size}. */
+    public synchronized FakeIncusDaemon poolConfig(String name, Map<String, String> config) {
+        poolConfigs.put(name, new LinkedHashMap<>(config));
+        return this;
+    }
+
+    public synchronized Map<String, String> poolConfigOf(String name) {
+        return Map.copyOf(poolConfigs.getOrDefault(name, Map.of()));
+    }
+
+    /** Answer the pool listing with a 500 from now on, as a daemon that cannot say would. */
+    public synchronized FakeIncusDaemon failPoolListing() {
+        poolListingFails = true;
         return this;
     }
 
@@ -671,10 +690,21 @@ public final class FakeIncusDaemon implements IncusTransport {
             return sync(JSON.createObjectNode());
         }
         if (path.startsWith("/1.0/storage-pools?") && method.equals("GET")) {
+            if (poolListingFails) return error(500, "pool listing failed");
             var list = JSON.createArrayNode();
-            (pools.isEmpty() ? Map.of("default", "btrfs") : pools).forEach((name, driver) ->
-                    list.addObject().put("name", name).put("driver", driver));
+            (pools.isEmpty() ? Map.of("default", "btrfs") : pools).forEach((name, driver) -> {
+                var pool = list.addObject().put("name", name).put("driver", driver);
+                var config = pool.putObject("config");
+                poolConfigs.getOrDefault(name, Map.of()).forEach(config::put);
+            });
             return sync(list);
+        }
+        if (path.startsWith("/1.0/storage-pools/") && !path.substring("/1.0/storage-pools/".length()).contains("/")
+                && method.equals("PATCH")) {
+            // Incus merges a PATCH's config keys into the pool's
+            var config = poolConfigs.computeIfAbsent(path.substring("/1.0/storage-pools/".length()), k -> new LinkedHashMap<>());
+            JSON.readTree(body).path("config").properties().forEach(e -> config.put(e.getKey(), e.getValue().asText()));
+            return sync(JSON.createObjectNode());
         }
         if (path.equals("/1.0/instances") && method.equals("POST")) {
             var request = JSON.readTree(body);

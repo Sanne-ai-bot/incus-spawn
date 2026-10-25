@@ -663,17 +663,23 @@ public class DoctorCommand extends BaseCommand {
     private List<Finding> checkStoragePool() {
         try {
             var incus = incus();
-            var pools = incus.listPools();
+            var poolInfo = incus.listPoolInfo();
+            var pools = IncusClient.drivers(poolInfo);
             String pool = null;
             for (var e : pools.entrySet()) {
                 if (IncusClient.isCowDriver(e.getValue())) { pool = e.getKey(); break; }
             }
-            if (pool == null) return List.of(noCowPoolFinding(pools, Platform.isLinux()));
+            if (pool == null) return List.of(noCowPoolFinding(pools, Platform.isLinux(),
+                    Platform.isLinux() ? CowPoolBacking.filesystemOf(CowPoolBacking.POOLS_DIR) : null,
+                    () -> incus.hasApiExtension(HostSetup.STORAGE_CREATE_OPTIONS_EXTENSION)));
             var findings = new ArrayList<Finding>();
             findings.addAll(checkProfilePool(incus, pool, pools));
             findings.addAll(checkInstancesOffCowPool(incus, pool, pools));
             findings.addAll(checkDiskAccounting(pool, pools.get(pool)));
             findings.addAll(checkSubvolumes(incus, pool, pools.get(pool)));
+            var info = poolInfo.get(pool);
+            findings.addAll(CowPoolBacking.doctorFindings(pool, info, CowPoolBacking::filesystemType,
+                    incus::setPoolConfig));
             var usage = incus.getPoolUsageBytes(pool);
             if (usage == null) {
                 findings.add(Finding.ok("Storage pool " + pool, "(no usage info)"));
@@ -682,7 +688,7 @@ public class DoctorCommand extends BaseCommand {
             var usageString = formatPoolUsage(pool, usage);
             findings.add(evaluateStorageUsage(pool, usageString));
             if (usage.percent() > 90) {
-                findings.addAll(analyzePoolUsage(incus, pool, usage));
+                findings.addAll(analyzePoolUsage(incus, pool, usage, info.config()));
             }
             return findings;
         } catch (Exception e) {
@@ -690,7 +696,8 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    static Finding noCowPoolFinding(Map<String, String> pools, boolean linux) {
+    static Finding noCowPoolFinding(Map<String, String> pools, boolean linux, String hostFs,
+                                    java.util.function.BooleanSupplier skipTrim) {
         var poolDesc = pools.isEmpty() ? "no storage pools configured"
                 : String.join(", ", pools.entrySet().stream()
                         .map(e -> "'" + e.getKey() + "' (" + e.getValue() + ")")
@@ -698,24 +705,32 @@ public class DoctorCommand extends BaseCommand {
         Remediation remediation = null;
         if (linux) {
             remediation = new Remediation(
-                    "Create a 100 GiB btrfs copy-on-write pool 'cow'",
+                    "btrfs".equals(hostFs) ? "Create a btrfs copy-on-write pool 'cow' as a subvolume of the host filesystem"
+                            : "Create a 100 GiB btrfs copy-on-write pool 'cow'",
                     false,
                     () -> {
-                        var r1 = new ProcessBuilder("sudo", "mkdir", "-p", "/var/lib/incus/disks")
-                                .inheritIO().start().waitFor();
-                        if (r1 != 0) throw new RuntimeException(
-                                "Failed to create /var/lib/incus/disks directory");
-                        var r2 = new ProcessBuilder("sudo", "incus", "storage", "create",
-                                "cow", "btrfs", "size=100GiB")
-                                .inheritIO().start().waitFor();
-                        if (r2 != 0) throw new RuntimeException(
-                                "Failed to create pool — ensure the 'loop' kernel module is loaded (sudo modprobe loop)");
+                        var created = CowPoolBacking.create(CowPoolBacking::filesystemOf, skipTrim,
+                                CowPoolBacking::runCapturingStderr, DoctorCommand::makeDisksDir,
+                                line -> System.err.println("  " + line));
+                        if (created.result().exitCode() != 0) {
+                            var why = CowPoolBacking.failureExplanation(created.result().stderr());
+                            throw new RuntimeException("Failed to create pool: " + (why.isEmpty()
+                                    ? "Incus gave no reason; check that the 'loop' kernel module is loaded (sudo modprobe loop)"
+                                    : String.join(" ", why)));
+                        }
                     });
         }
         return Finding.fail("No copy-on-write storage pool",
                 poolDesc + " — every branch and derived build is a full rsync copy:"
                         + " minutes instead of seconds, and the template's full size on disk each time",
                 remediation);
+    }
+
+    private static void makeDisksDir() {
+        var mkdir = CowPoolBacking.runCapturingStderr("sudo", "mkdir", "-p", CowPoolBacking.DISKS_DIR);
+        if (mkdir.exitCode() != 0) {
+            throw new RuntimeException("Failed to create " + CowPoolBacking.DISKS_DIR + ": " + mkdir.stderr().strip());
+        }
     }
 
     static List<Finding> checkProfilePool(IncusClient incus, String cowPool,
@@ -979,13 +994,16 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private List<Finding> analyzePoolUsage(IncusClient incus, String pool,
-                                            IncusClient.PoolUsage usage) {
+                                            IncusClient.PoolUsage usage, Map<String, String> config) {
         var findings = new ArrayList<Finding>();
 
-        // 1. Pool too small — suggest resize
-        var resizeFinding = evaluatePoolSize(pool, usage, incus);
-        if (resizeFinding != null) {
-            findings.add(resizeFinding);
+        // 1. Pool too small — suggest resize. Only a loop file has a size to grow; a pool on a
+        // subvolume or a device is as large as what holds it.
+        if (CowPoolBacking.isLoopFile(config)) {
+            var resizeFinding = evaluatePoolSize(pool, usage, config.get("source"), incus);
+            if (resizeFinding != null) {
+                findings.add(resizeFinding);
+            }
         }
 
         var instances = incus.list();
@@ -1011,10 +1029,10 @@ public class DoctorCommand extends BaseCommand {
         return findings;
     }
 
-    static Finding evaluatePoolSize(String pool, IncusClient.PoolUsage usage,
+    static Finding evaluatePoolSize(String pool, IncusClient.PoolUsage usage, String source,
                                      IncusClient incus) {
         long total = usage.totalBytes();
-        long maxSize = maxResizeBytes(incus, pool, total);
+        long maxSize = maxResizeBytes(source, total);
 
         if (total >= MIN_POOL_SIZE) {
             if (usage.percent() > 90) {
@@ -1051,11 +1069,9 @@ public class DoctorCommand extends BaseCommand {
                         () -> incus.resizePool(pool, targetStr)));
     }
 
-    static long maxResizeBytes(IncusClient incus, String pool, long currentPoolSize) {
+    static long maxResizeBytes(String source, long currentPoolSize) {
         try {
-            if (incus == null) return 0;
-            var source = incus.getPoolSource(pool);
-            if (source == null) return 0;
+            if (source == null || source.isEmpty()) return 0;
             var path = Path.of(source);
             long freeSpace = Files.getFileStore(path).getUsableSpace();
             return currentPoolSize + freeSpace;
