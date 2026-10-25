@@ -326,6 +326,62 @@ The release smoke test passed on every build, and the keychain smoke on both mac
 The floors in `.github/scripts/check-pgo-quality.sh` stay at 10% applicability and 80% relevance until Sanne decides; the proposal is 14% and 95%, just below the lowest figures across the three dispatches (15.04% and 97.04%).
 Two earlier dispatches of this change (runs 40180623569 and 40183611322, before rebases) gave the same figures within 0.02 points.
 
+### The npm and WebSocket paths (issue #1651)
+
+The release profile left two proxy paths as cold code: the npm path (packument relay, version lookup, tarball cache) and the WebSocket relay Codex uses.
+`bench/pgo-coverage.py` on that profile (run 40186966586) counted calls into 1 of `ArtifactCacheHandler`'s 29 npm methods and none of `MitmProxy`'s 17 WebSocket methods.
+Two loads now drive them: `--load=npm` from the host, `--load=websocket` from `WsLoad.java` inside an instance.
+Same host and toolchain as phase 0.
+
+**Weighting matters.**
+A collection's profile is weighted by the mix of its runs.
+With both loads at full length (35 s each, like the others), an interleaved A/B against the release profile, three rounds, measured:
+
+| Full-length loads | Release profile | With npm and WebSocket |
+|---|---|---|
+| Proxy binary | 42,143,008 B | 44,436,768 B (+5.4%) |
+| Idle RSS (`npm` run) | 35,020 KB | 37,648 KB (+7.5%) |
+| `npm`, best rung | 332 req/s | 321 req/s (−3.5%) |
+| `websocket`, best rung | 2,434 turns/s | 2,539 turns/s (+4.3%) |
+| `maven`, best rung | 348 req/s | 344 req/s (−1.3%) |
+| `vertex`, best rung | 3,097 req/s | 2,728 req/s (**−11.9%**) |
+
+The Vertex loss was the same in every round, so the full-length loads outweighed the rest of the profile.
+Collected at about a seventh of their length (`proxy-npm.collect.hf.yaml`, the WebSocket load's `collect-phases`), they profile the same methods and leave Vertex alone.
+These two A/Bs' raw files were lost with a scratch worktree; their medians come from the runs' printed tables.
+
+**The final change, as a release collects it.**
+`workflow_dispatch` run 40215545458 of `release.yml`, commit `7b384046`:
+
+| Platform | Proxy applicability / relevance, before → after | `isx-proxy`, before → after |
+|---|---|---|
+| Linux amd64 | 20.04% / 100.00% → 21.63% / 100.00% | 42,207,776 → 43,715,104 B |
+| Linux aarch64 | 20.00% / 99.96% → 21.60% / 99.96% | 42,928,536 → 44,108,184 B |
+| macOS aarch64 | 19.58% / 97.04% → 21.16% / 97.24% | 39,493,272 → 40,731,560 B |
+| macOS x86_64 (unprofiled) | | 83,555,056 → 83,542,784 B |
+
+"Before" is run 40186966586, the release profile on `main`.
+The CLI's profile and sizes are unchanged: 15.21% / 99.14% at the merge.
+In that run's profile, 18 of the 29 npm methods and 12 of the 17 WebSocket methods are counted; those not counted are error, retry and keepalive paths.
+`ArtifactCacheHandler` as a whole goes from 31 to 62 of 152 methods, and `MitmProxy` from 104 to 121 of 208.
+
+Interleaved A/B on this host, the two profiles built at that commit, three rounds ([pgo-ab-2026-10-25-npm-ws-final.json](../../bench/data/pgo-ab-2026-10-25-npm-ws-final.json)):
+
+| | Release profile | With npm and WebSocket |
+|---|---|---|
+| Proxy binary | 41,946,400 B | 43,650,336 B (+4.1%) |
+| Idle RSS, across the five loads | 35.4 to 37.2 MB | 36.9 to 39.1 MB |
+| `npm`, best rung | 324 req/s | 325 req/s (+0.1%) |
+| `websocket`, best rung | 2,574 turns/s | 2,560 turns/s (−0.5%) |
+| `maven`, best rung | 343 req/s | 341 req/s (−0.5%) |
+| `anthropic`, best rung | 4,082 req/s | 4,143 req/s (+1.5%) |
+| `vertex`, best rung | 2,730 req/s | 3,094 req/s (+13.3%) |
+
+The npm and WebSocket paths are now compiled from their profile, but neither got measurably faster on this host.
+Like `maven`, they are bound by TLS, the network and the stub, not by the Java PGO compiles.
+The cost is about 1.5 MB of proxy in the release build (3.6%), and 0.1 to 2 MB of idle RSS.
+Vertex is noisy here (2,441 to 3,099 req/s across the release profile's rounds), but it gained 12% in the lighter-weighted A/B against a profile collected the same way without the two loads, too.
+
 ## The `ssh-proxy` relay (issue #1643)
 
 Measured 2026-10-25 on an 8-core Linux VM (AES-NI, AVX2), native `-Os` builds of one commit.
