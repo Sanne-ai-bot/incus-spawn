@@ -1057,6 +1057,7 @@ class IncusApi {
                               long deadline) {
         var outDst = stdout != null ? stdout : OutputStream.nullOutputStream();
         var errDst = stderr != null ? stderr : OutputStream.nullOutputStream();
+        var stdinSocket = stdin != null ? new StdinSocket() : null;
         try (var controlWs = transport.openWebSocket(wsUrl(exec, "control"));
              var stdoutWs  = transport.openWebSocket(wsUrl(exec, "1"));
              var stderrWs  = transport.openWebSocket(wsUrl(exec, "2"))) {
@@ -1067,7 +1068,8 @@ class IncusApi {
             // vsock connection (a separate forwarder child in the VM), so an inactivity
             // reaper in the forwarder would otherwise collect the stdout/stderr connections
             // of a long, quiet command and truncate it. Pings keep every live connection
-            // visibly alive so only genuinely-dead ones can be reaped.
+            // visibly alive so only genuinely-dead ones can be reaped. Stdin too: it carries no
+            // output back, so a session nobody types into is quiet on it in both directions.
             var keepalive    = startKeepalive(controlWs);
             var stdoutAlive  = startKeepalive(stdoutWs);
             var stderrAlive  = startKeepalive(stderrWs);
@@ -1080,8 +1082,8 @@ class IncusApi {
 
             Thread stdinThread = null;
             if (stdin != null) {
-                stdinThread = Thread.ofVirtual().start(() ->
-                        wsForward(exec.opPath, exec.fds.pathText("0", ""), stdin));
+                // The forwarder opens the stdin fd off this thread, so no handshake is added here.
+                stdinThread = Thread.ofVirtual().start(() -> wsForward(wsUrl(exec, "0"), stdin, stdinSocket));
             } else {
                 wsCloseOnly(exec.opPath, exec.fds.pathText("0", ""));
             }
@@ -1119,6 +1121,10 @@ class IncusApi {
             return exitCode;
         } catch (IOException e) {
             throw new IncusException("Failed to open exec WebSocket", e);
+        } finally {
+            // However the exec ends, its stdin ends with it: a read still blocked is abandoned,
+            // but its socket, keepalive and pong drain need not outlive the exec.
+            if (stdinSocket != null) stdinSocket.close();
         }
     }
 
@@ -1401,16 +1407,46 @@ class IncusApi {
     }
 
     /**
-     * Open a WebSocket, read from src and send frames, close when src reaches EOF.
+     * The stdin fd's socket, which its forwarder opens on its own thread. Closing it ends the
+     * socket and its keepalive whenever it is called: before the open, the forwarder closes the
+     * socket as soon as it has one.
      */
-    private void wsForward(String opPath, String secret, InputStream src) {
-        if (src == null) {
-            wsCloseOnly(opPath, secret);
-            return;
+    private static final class StdinSocket {
+        private IncusTransport.WsConnection ws; // guarded by this
+        private Keepalive keepalive;            // guarded by this
+        private boolean closed;                 // guarded by this
+
+        /** Take the opened socket; false if the exec is already over and it must close. */
+        synchronized boolean opened(IncusTransport.WsConnection ws, Keepalive keepalive) {
+            if (closed) return false;
+            this.ws = ws;
+            this.keepalive = keepalive;
+            return true;
         }
-        try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + secret)) {
-            forwardStdin(src, ws);
-            ws.sendClose();
+
+        synchronized void close() {
+            closed = true;
+            if (keepalive != null) keepalive.stop();
+            if (ws != null) ws.close();
+        }
+    }
+
+    /**
+     * Open a WebSocket, read from src and send frames, close when src reaches EOF. The socket
+     * is pinged meanwhile; the transport drops a ping that would follow the close frame.
+     */
+    private void wsForward(String url, InputStream src, StdinSocket socket) {
+        try (var ws = transport.openWebSocket(url)) {
+            var keepalive = startKeepalive(ws);
+            try {
+                if (!socket.opened(ws, keepalive)) return;
+                // Take the pongs the pings draw, which would otherwise pile up unread in the socket.
+                Thread.ofVirtual().start(() -> drainQuietly(ws));
+                forwardStdin(src, ws);
+                ws.sendClose();
+            } finally {
+                keepalive.stop();
+            }
         } catch (IOException e) {
             // EOF or closed — normal when the git pack exchange completes.
         }

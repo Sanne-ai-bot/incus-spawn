@@ -316,6 +316,42 @@ class IncusApiLossyTunnelTest {
 
     @Test
     @Timeout(10)
+    void keepalivePingsReachAQuietStdin() throws IOException {
+        server.sendCloseFrames = false;
+        server.runMillis = 600;
+        // An ssh-proxy session nobody types into: stdin stays open and sends nothing, and only
+        // a ping keeps its forwarder child from reaping the connection.
+        try (var quiet = new java.io.PipedInputStream(); var typist = new java.io.PipedOutputStream(quiet)) {
+            // Hang up only near the end, so the exec need not wait out an abandoned stdin read.
+            Thread.ofVirtual().start(() -> {
+                try { Thread.sleep(500); typist.close(); } catch (Exception ignored) {}
+            });
+            new IncusApi(new UnixSocketTransport(server.socketPath()), 50).execBidirectional(
+                    "c1", List.of("cat"), null, null, null, null,
+                    quiet, OutputStream.nullOutputStream(), OutputStream.nullOutputStream());
+        }
+        assertTrue(server.pings("0") >= 2, "stdin got " + server.pings("0") + " pings");
+    }
+
+    @Test
+    @Timeout(10)
+    void anAbandonedStdinReadDoesNotKeepItsSocket() throws IOException {
+        server.sendCloseFrames = false;
+        // Nobody ever closes this stdin, as with System.in under ssh-proxy: the exec abandons the
+        // read after its grace. The stdin socket must close then, not when the read returns,
+        // which stop() checks once the server is gone and the idle HTTP connections with it.
+        try (var quiet = new java.io.PipedInputStream(); var typist = new java.io.PipedOutputStream(quiet)) {
+            new IncusApi(new UnixSocketTransport(server.socketPath()), 50).execBidirectional(
+                    "c1", List.of("cat"), null, null, null, null,
+                    quiet, OutputStream.nullOutputStream(), OutputStream.nullOutputStream());
+            server.close();
+            assertEquals(openBefore, UnixSocketTransport.openConnectionCount(),
+                    "the stdin socket outlived the exec");
+        }
+    }
+
+    @Test
+    @Timeout(10)
     void execFailsLoudlyWhenAnFdHandshakeIsCutOff() {
         // The tunnel hangs up on the fd WebSocket before answering the upgrade. This used to
         // "connect" a dead socket, so that stream's output came back empty with no error.

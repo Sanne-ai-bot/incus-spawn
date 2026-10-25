@@ -59,7 +59,7 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
 **macOS vsock robustness**: the vfkit vsock tunnel does not reliably propagate connection close/EOF, which drives several design choices (see DESIGN.md "Transport" and appliance/DESIGN.md):
 - **Exec completion via `/wait`, not close frames.**
   `IncusApi.execWebSocket` unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint (daemon operation state over HTTP) as the authoritative completion + exit-code signal, then drains and force-closes the data sockets -- so a lost close frame can't hang exec.
-  Every exec fd is keepalive-pinged.
+  Every exec fd is keepalive-pinged, stdin included (#1647).
   `IncusApi.Keepalive` stops on a flag, never an interrupt or a wait for the ping in flight; a socket sends no ping after its close frame.
   The drain is adaptive (`OutputDrain`), and counts idle only while it was watching: a gap between polls counts for at most half the idle window, and a late poll ends the drain only after an idle poll before it, since a pause of the host process is no sign the output stopped (#1062, #1084) -- but polls late again and again must not hold it to its ceiling (#1122).
   Bytes waiting unread in a data socket count as output arriving now, since the force-close would discard them and a reader late to take them is no sign the output stopped either (#1208, `WsConnection.hasUnread`).
