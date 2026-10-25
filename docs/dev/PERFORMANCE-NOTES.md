@@ -163,7 +163,8 @@ perceive 216 µs, and 41 MB is a real download and disk cost for users.
 
 ## Profile-guided optimization (issue #1637)
 
-The plan is [PGO.md](PGO.md). Outcomes of each phase are recorded here as it runs.
+The plan is [PGO.md](PGO.md).
+Outcomes of each phase are recorded here as it runs.
 
 ### Phase 0, finished 2026-10-24
 

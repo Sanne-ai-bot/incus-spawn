@@ -3617,7 +3617,7 @@ An unrepresentative profile is worse than none, so `--help` is run once, never a
 **How a release collects them.**
 The `profiles` job runs on the Linux amd64 runner, prepares Incus as `isx-integration-tests-native` does, and builds both binaries with `-Dnative.pgo.instrument`.
 It runs the collection through `sudo -u "$USER"`, never `sg incus-admin`: `sg` makes `incus-admin` the primary group, and rootless podman's `newuidmap`, which the model loads need for Hyperfoil, refuses such a process.
-It runs the collection and merges each binary's per-process dumps into one profile with `scripts/pgo-merge.sh` (a build with `-H:PGODumpLoadedIprofPath`).
+It then merges each binary's per-process dumps into one profile with `scripts/pgo-merge.sh` (a build with `-H:PGODumpLoadedIprofPath`).
 The merged profiles are a workflow artifact kept 90 days, so a local build can fetch them.
 Each build job applies them with `-Dnative.pgo=<dir>` and `-H:+PGOPrintProfileQuality`, and `check-pgo-quality.sh` fails it unless both binaries print an applicability and relevance above the floors.
 Profiles key on methods, so one collected on Linux x86_64 applies elsewhere, OS-specific code falling back to inferred profiles.
