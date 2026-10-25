@@ -1094,6 +1094,7 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 
 - **`ProxyCommand` through the exec API** (a1086a1e, #128): `isx ssh-proxy` pipes the connection to `nc localhost 22` in the instance, so a client needs no route to the instance's address.
   That is what makes it work on macOS, where the address is inside the appliance VM.
+  Its throughput is the exec relay's: see "A bulk exec stream is framed large and read ahead".
 - **`Hostname` as a label** (4e271acb, #211): JetBrains Gateway resolves the host before it runs the `ProxyCommand`, and without the line it reported the instance name as not resolvable.
   It never dials that address: Gateway 2026.2 runs the `ProxyCommand` on macOS too, and logs the connection as `<Hostname>:<Port>` (#1600).
 - **No host key checking**: the host key is not harvested or pinned.
@@ -3613,6 +3614,7 @@ The proxy builds at `-O3` with its profile, and the CLI at `-O3` with its own in
 Measured in interleaved A/B (docs/dev/PERFORMANCE-NOTES.md, "Phase 2"): the proxy is 57.6% smaller and 39% lighter when idle, and faster on every load.
 The gain ranges from 19% on cached artifacts to 83% on Vertex calls, at the same startup.
 The CLI starts 17 to 20% faster than at `-Os`, relays `scp` about 14% faster (a noisy figure), and costs 0.66 MB.
+That relay figure predates #1643, which removed most of the relay's CPU work ("A bulk exec stream is framed large and read ahead").
 
 Why it shrinks the proxy: PGO compiles the code the profile marks hot at full speed and everything else for size.
 About 20% of the proxy's methods and 15% of the CLI's have a profile.
@@ -4475,7 +4477,7 @@ That single fault surfaced in two directions and shaped several design choices:
   The ceiling stays wall time, so pauses never hold the caller past it.
   The drain also waits for bytes that reached the host but that no reader has taken yet.
   Closing a socket discards what is queued in it, so a reader held up by a slow sink or woken late lost the end of output that had already arrived (#1208).
-  Any byte waiting unread in a data socket counts as output arriving now (`WsConnection.hasUnread`, the socket's `available()`); the ceiling still bounds a sink that never takes it.
+  Any byte waiting unread in a data socket counts as output arriving now (`WsConnection.hasUnread`: the bytes read ahead plus the socket's `available()`); the ceiling still bounds a sink that never takes it.
   A caller that asks a guest it cannot trust to answer (`isx mcp` counting another session's tasks, or sweeping orphans) passes a limit (`execStreamWithin`, `IncusClient.execProbe`, which also skips the login shell).
   The wait's long-polls shrink to it, the process is then sent SIGKILL over the control fd, and after a short grace the caller is released either way, since a killed process whose child still holds its output keeps the operation open.
   The kill goes out on every way the bounded wait can end before the command was reported finished -- a `/wait` that overran its slack (likely over the vsock tunnel), an operation lost, an interrupt -- so giving up on a bounded exec never leaves its command running unowned.
@@ -4494,6 +4496,16 @@ That single fault surfaced in two directions and shaped several design choices:
   WebSocket frames follow the same rule (EOF inside a frame is an error; EOF between frames is end-of-stream).
   The WebSocket connect + handshake is bounded by the transport timeout like any request, since a wedged tunnel accepts and then says nothing.
   Only the handshake is bounded -- an open exec or shell socket legitimately stays quiet, and its liveness comes from the keepalive pings.
+
+- **A bulk exec stream is framed large and read ahead (#1643).**
+  `isx ssh-proxy` relays scp and every other ssh byte through an exec's fds, and git's pack exchange does the same.
+  Each frame and each socket read costs the same however small it is.
+  So stdin goes in frames of up to 64 KiB (`IncusApi.STDIN_CHUNK`; a read returns what is there, so a typed key still goes at once).
+  Each client frame is masked a word at a time and written in one write (`UnixSocketTransport.wsSendMasked`).
+  Received frames are parsed from a read-ahead (`SocketInput`), not a read per header byte.
+  It starts at 4 KiB and grows to 64 KiB once a read fills it or a frame wants more, so a socket that reads only its handshake and control messages never zeroes 64 KiB.
+  At 4 KiB frames in three writes each, an upload kept the relay near a full core and incusd at twice its work, for 240 to 275 MiB/s; it now relays 375 to 420 MiB/s at under half the CPU (native `-Os` builds, before PGO; docs/dev/PERFORMANCE-NOTES.md).
+  The read-ahead is not a `BufferedInputStream`: its lock would hold the drain's `hasUnread()` behind a reader parked in `read()`, the very wait the drain must see past.
 
 - **One silent connection can wedge the whole API.**
   Before lxc/incus@2cb2549, incusd wraps its local Unix listener in a `StarttlsListener` whose `Accept()` peeks 8 bytes to detect a STARTTLS upgrade, synchronously and with no deadline.

@@ -4,8 +4,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
+import java.nio.ByteOrder;
 import java.nio.channels.Channels;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SocketChannel;
@@ -242,7 +245,7 @@ class UnixSocketTransport implements IncusTransport {
         try {
             channel.connect(addr);
             var out = Channels.newOutputStream(channel);
-            var in  = Channels.newInputStream(channel);
+            var in  = new SocketInput(Channels.newInputStream(channel));
             wsHandshake(out, in, wsPath);
             if (!watchdog.cancel()) throw timeoutException(loggablePath, timeoutSeconds);
             boolean permit = connectionOpened();
@@ -371,9 +374,19 @@ class UnixSocketTransport implements IncusTransport {
                 throw new IOException("WebSocket frame length out of range: " + payloadLen);
             }
 
-            var payload = in.readNBytes((int) payloadLen);
-            if (payload.length < payloadLen) {
-                throw new java.io.EOFException("WebSocket frame cut off (" + payload.length + "/" + payloadLen + " bytes)");
+            // A frame of a size Incus sends is read into one array; a larger length is believed only
+            // as far as bytes arrive, since a corrupt one must not allocate its claim up front.
+            byte[] payload;
+            int got;
+            if (payloadLen <= READ_BUFFER) {
+                payload = new byte[(int) payloadLen];
+                got = in.readNBytes(payload, 0, payload.length);
+            } else {
+                payload = in.readNBytes((int) payloadLen);
+                got = payload.length;
+            }
+            if (got < payloadLen) {
+                throw new java.io.EOFException("WebSocket frame cut off (" + got + "/" + payloadLen + " bytes)");
             }
 
             if (opcode == WS_CLOSE) return null;
@@ -417,35 +430,126 @@ class UnixSocketTransport implements IncusTransport {
         }
     }
 
-    /** Send a masked WebSocket frame (client frames MUST be masked per RFC 6455). */
-    private static void wsSendMasked(OutputStream out, int opcode,
-                                     byte[] data, int offset, int length)
-            throws IOException {
-        var mask = new byte[4];
-        ThreadLocalRandom.current().nextBytes(mask);
+    /** Bytes per {@link #SocketInput} fill: a frame header and most frames come from one read. */
+    static final int READ_BUFFER = 64 * 1024;
+    /**
+     * What a {@link #SocketInput} starts with: room for the handshake's answer and control messages.
+     * It grows to {@link #READ_BUFFER} once more arrives at a time, so a socket that reads only
+     * small messages -- an exec's control and stdin fds -- never zeroes 64 KiB.
+     */
+    static final int FIRST_READ_BUFFER = 4 * 1024;
 
-        // Frame header: FIN + opcode, MASK + payload length (max 14 bytes)
-        var header = new byte[14];
-        int pos = 0;
-        header[pos++] = (byte) (0x80 | opcode);
-        if (length < 126) {
-            header[pos++] = (byte) (0x80 | length);
-        } else if (length < 65536) {
-            header[pos++] = (byte) (0x80 | 126);
-            header[pos++] = (byte) (length >> 8);
-            header[pos++] = (byte) (length & 0xFF);
-        } else {
-            header[pos++] = (byte) (0x80 | 127);
-            for (int i = 7; i >= 0; i--) header[pos++] = (byte) ((length >> (8 * i)) & 0xFF);
+    /**
+     * The socket's bytes, read ahead in large reads. Without it every frame header byte was a
+     * read call of its own (#1643).
+     * Not a {@link java.io.BufferedInputStream}: its lock would hold {@link #available} -- the
+     * drain's {@code hasUnread()} -- behind a reader parked in {@code read()} until bytes came.
+     * One thread reads; {@code available()} may be asked from any, and reads the count the reader
+     * publishes after each read, never its position and limit, which a fill may change in between.
+     */
+    static final class SocketInput extends InputStream {
+        private final InputStream raw;
+        private byte[] buf = new byte[FIRST_READ_BUFFER];
+        private int pos, limit;
+        private volatile int unread;
+
+        SocketInput(InputStream raw) {
+            this.raw = raw;
         }
-        out.write(header, 0, pos);
-        out.write(mask);
 
-        // Masked payload
-        var masked = new byte[length];
-        for (int i = 0; i < length; i++) masked[i] = (byte) (data[offset + i] ^ mask[i % 4]);
-        out.write(masked);
+        /** Read ahead, for a caller that wants {@code want} bytes; the buffer holds nothing unread. */
+        private boolean fill(int want) throws IOException {
+            // A read that filled the buffer, or a caller wanting more than it holds, means a stream.
+            if (buf.length < READ_BUFFER && (limit == buf.length || want > buf.length)) {
+                buf = new byte[READ_BUFFER];
+            }
+            int n = raw.read(buf, 0, buf.length);
+            if (n <= 0) return false;
+            pos = 0;
+            limit = n;
+            unread = n; // out of the socket now: publish before the caller takes any
+            return true;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (pos == limit && !fill(1)) return -1;
+            int b = buf[pos++] & 0xFF;
+            unread = limit - pos;
+            return b;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            if (len == 0) return 0;
+            int buffered = limit - pos;
+            if (buffered == 0) {
+                if (len >= READ_BUFFER) return raw.read(b, off, len); // nothing to gain by copying
+                if (!fill(len)) return -1;
+                buffered = limit - pos;
+            }
+            int n = Math.min(len, buffered);
+            System.arraycopy(buf, pos, b, off, n);
+            pos += n;
+            unread = limit - pos;
+            return n;
+        }
+
+        @Override
+        public int available() throws IOException {
+            return unread + raw.available();
+        }
+
+        @Override
+        public void close() throws IOException {
+            raw.close();
+        }
+    }
+
+    private static final VarHandle INTS =
+            MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.nativeOrder());
+    private static final VarHandle LONGS =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
+
+    /**
+     * Send a masked WebSocket frame (client frames MUST be masked per RFC 6455) in one write,
+     * encoded in {@code buf} when it is large enough.
+     * A header, mask and payload written apiece were three socket writes per frame (#1643).
+     * @return the buffer to pass next time: {@code buf}, or a larger one
+     */
+    static byte[] wsSendMasked(OutputStream out, byte[] buf, int opcode,
+                               byte[] data, int offset, int length) throws IOException {
+        if (buf.length < length + 14) buf = new byte[Math.max(length + 14, 2 * buf.length)];
+
+        // Frame header: FIN + opcode, MASK + payload length (max 14 bytes with the mask)
+        int pos = 0;
+        buf[pos++] = (byte) (0x80 | opcode);
+        if (length < 126) {
+            buf[pos++] = (byte) (0x80 | length);
+        } else if (length < 65536) {
+            buf[pos++] = (byte) (0x80 | 126);
+            buf[pos++] = (byte) (length >> 8);
+            buf[pos++] = (byte) (length & 0xFF);
+        } else {
+            buf[pos++] = (byte) (0x80 | 127);
+            for (int i = 7; i >= 0; i--) buf[pos++] = (byte) (((long) length >> (8 * i)) & 0xFF);
+        }
+        int mask = ThreadLocalRandom.current().nextInt();
+        INTS.set(buf, pos, mask);
+        int maskAt = pos;
+        pos += 4;
+
+        // Masked payload, eight bytes at a time: byte i takes mask byte i % 4, and every eighth
+        // byte starts the mask over, so a long holding it twice masks each word.
+        long mask8 = (mask & 0xFFFFFFFFL) | ((long) mask << 32);
+        int i = 0;
+        for (; i + 8 <= length; i += 8) {
+            LONGS.set(buf, pos + i, (long) LONGS.get(data, offset + i) ^ mask8);
+        }
+        for (; i < length; i++) buf[pos + i] = (byte) (data[offset + i] ^ buf[maskAt + (i & 3)]);
+        out.write(buf, 0, pos + length);
         out.flush();
+        return buf;
     }
 
     private static Watchdog startWatchdog(SocketChannel channel, int timeoutSeconds) {
@@ -500,6 +604,7 @@ class UnixSocketTransport implements IncusTransport {
         private final OutputStream out;
         private final InputStream in;
         private final Object writeLock = new Object();
+        private byte[] frameBuf = new byte[0]; // guarded by writeLock
         private final java.util.concurrent.atomic.AtomicBoolean closed =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
         private final boolean permit;
@@ -558,16 +663,21 @@ class UnixSocketTransport implements IncusTransport {
             lastReceivedNanos = System.nanoTime();
         }
 
+        /** Caller holds {@code writeLock}. */
+        private void send(int opcode, byte[] data, int offset, int length) throws IOException {
+            frameBuf = wsSendMasked(out, frameBuf, opcode, data, offset, length);
+        }
+
         private void sendPong(byte[] payload) throws IOException {
             synchronized (writeLock) {
-                wsSendMasked(out, WS_PONG, payload, 0, payload.length);
+                send(WS_PONG, payload, 0, payload.length);
             }
         }
 
         @Override
         public void sendData(byte[] data, int offset, int length) throws IOException {
             synchronized (writeLock) {
-                wsSendMasked(out, WS_BINARY, data, offset, length);
+                send(WS_BINARY, data, offset, length);
             }
         }
 
@@ -575,22 +685,21 @@ class UnixSocketTransport implements IncusTransport {
         public void sendText(String text) throws IOException {
             var bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
             synchronized (writeLock) {
-                wsSendMasked(out, 0x1 /* WS_TEXT */, bytes, 0, bytes.length);
+                send(0x1 /* WS_TEXT */, bytes, 0, bytes.length);
             }
         }
 
         @Override
         public void sendPing() throws IOException {
             synchronized (writeLock) {
-                wsSendMasked(out, WS_PING, new byte[0], 0, 0);
+                send(WS_PING, new byte[0], 0, 0);
             }
         }
 
         @Override
         public void sendClose() throws IOException {
             synchronized (writeLock) {
-                wsSendMasked(out, WS_CLOSE, new byte[0], 0, 0);
-                out.flush();
+                send(WS_CLOSE, new byte[0], 0, 0);
             }
         }
 

@@ -62,10 +62,14 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   Every exec fd is keepalive-pinged.
   The drain is adaptive (`OutputDrain`), and counts idle only while it was watching: a gap between polls counts for at most half the idle window, and a late poll ends the drain only after an idle poll before it, since a pause of the host process is no sign the output stopped (#1062, #1084) -- but polls late again and again must not hold it to its ceiling (#1122).
   Bytes waiting unread in a data socket count as output arriving now, since the force-close would discard them and a reader late to take them is no sign the output stopped either (#1208, `WsConnection.hasUnread`).
+  They include the bytes `SocketInput` has read ahead, and its `available()` takes no lock, so the drain is never held behind a parked reader (never swap it for a `BufferedInputStream`).
   `execStreamWithin` (`IncusClient.execProbe`: a uid, no `su -`, so no login profile) bounds an exec in a guest that may never answer.
   At the limit it sends `signalMessage(9)` on the control fd, then gives up `KILL_GRACE_SECONDS` later whether or not the operation ended (a child holding the output can keep it open), throwing.
   Any other exit before the command finished (a `/wait` overrunning its slack, a lost op, an interrupt) sends the kill too, from `waitForExecOp`'s `finally`.
   `IncusApiLossyTunnelTest` pins all three.
+- **Bulk exec streams are framed large (#1643).**
+  Stdin goes in frames of up to `IncusApi.STDIN_CHUNK` (64 KiB), each masked a word at a time and written in one write (`wsSendMasked`), and frames are parsed from a read-ahead that grows from 4 to 64 KiB once a read fills it or a frame wants more.
+  This is `isx ssh-proxy`'s scp throughput: `ExecRelayFramingTest` pins it, and DESIGN.md "A bulk exec stream is framed large and read ahead" has the figures.
 - **Long-lived event subscription.**
   `IncusApi.openEvents(types)` (public via `IncusClient.openLifecycleEvents()`, returning `IncusEventStream`) is the one WebSocket meant to stay open indefinitely (the TUI's `InstanceEventWatcher`).
   Incus pings its event listeners about every 10s and drops those that never answer, so `readMessage()` answers PINGs with PONGs (`ControlFrames`) and reassembles fragmented frames (one JSON document per message).

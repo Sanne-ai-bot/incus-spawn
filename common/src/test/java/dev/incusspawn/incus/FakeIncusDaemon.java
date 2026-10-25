@@ -103,6 +103,10 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, String> execOutputs = new LinkedHashMap<>();
     /** What each served exec's stdout socket delivers, by its secret. */
     private final Map<String, byte[]> execStdout = new LinkedHashMap<>();
+    /** The size of every frame sent to a served exec's stdin, in order. */
+    private final List<Integer> execStdinFrames = new ArrayList<>();
+    /** The secret of each served exec's stdin fd. */
+    private final java.util.Set<String> execStdinSecrets = new java.util.HashSet<>();
     private int nextExec = 1;
 
     public FakeIncusDaemon() {
@@ -520,7 +524,16 @@ public final class FakeIncusDaemon implements IncusTransport {
         var marker = "/websocket?secret=";
         var secret = wsPath.contains(marker) ? wsPath.substring(wsPath.indexOf(marker) + marker.length()) : null;
         if (!servesExecs || secret == null) throw new IOException("FakeIncusDaemon does not serve WebSockets");
-        return new ExecSocket(execStdout.getOrDefault(secret, new byte[0]));
+        return new ExecSocket(execStdout.getOrDefault(secret, new byte[0]), execStdinSecrets.contains(secret));
+    }
+
+    private synchronized void stdinFrame(int length) {
+        execStdinFrames.add(length);
+    }
+
+    /** The size of every frame sent to a served exec's stdin, in order. */
+    public synchronized List<Integer> execStdinFrames() {
+        return List.copyOf(execStdinFrames);
     }
 
     /** An exec, started: an operation whose fds' sockets carry {@code stdout} and then close. */
@@ -532,15 +545,18 @@ public final class FakeIncusDaemon implements IncusTransport {
         var fds = metadata.putObject("metadata").putObject("fds");
         for (var fd : List.of("0", "1", "2", "control")) fds.put(fd, id + "-" + fd);
         execStdout.put(id + "-1", stdout.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        execStdinSecrets.add(fds.get("0").asText());
         return async(id, metadata);
     }
 
     /** One fd of a served exec: its bytes, if any, then end of stream. */
-    private static final class ExecSocket implements WsConnection {
+    private final class ExecSocket implements WsConnection {
         private byte[] pending;
+        private final boolean stdin; // fd "0": a control message on another fd is no stdin frame
 
-        ExecSocket(byte[] data) {
+        ExecSocket(byte[] data, boolean stdin) {
             pending = data.length > 0 ? data : null;
+            this.stdin = stdin;
         }
 
         @Override
@@ -553,7 +569,7 @@ public final class FakeIncusDaemon implements IncusTransport {
         @Override public byte[] readMessage() { return readPayload(); }
         @Override public long millisSinceLastReceived() { return 0; }
         @Override public synchronized boolean hasUnread() { return pending != null; }
-        @Override public void sendData(byte[] data, int offset, int length) {}
+        @Override public void sendData(byte[] data, int offset, int length) { if (stdin) stdinFrame(length); }
         @Override public void sendPing() {}
         @Override public void sendClose() {}
         @Override public void close() {}
