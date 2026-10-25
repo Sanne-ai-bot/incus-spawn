@@ -3,11 +3,14 @@ package dev.incusspawn.lifecycle;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -68,7 +71,7 @@ class IpFilteringFallbackTest {
     void theLossOfProtectionIsReportedToTheCallersSink() {
         var incus = withFilteringOn();
         doThrow(new IncusException(NFT_BRIDGE_FAILURE)).doNothing().when(incus).start(NAME);
-        var warnings = new java.util.ArrayList<String>();
+        var warnings = new ArrayList<String>();
 
         // The TUI's warning log: stderr would be drawn over while the TUI owns the terminal.
         InstanceLifecycle.startInstance(incus, NAME, warnings::add);
@@ -77,6 +80,39 @@ class IpFilteringFallbackTest {
         assertTrue(warnings.get(0).contains("cannot enforce IP spoofing protection, so it has been disabled on box"),
                 warnings.get(0));
         assertTrue(warnings.get(0).contains("impersonate each other's credential accounts"), warnings.get(0));
+    }
+
+    /**
+     * One line, marked as a warning for the sinks that print it as it comes (isx shell's), and
+     * through {@link BuildOutput#warn}, which a branch's start uses and the TUI's log copies
+     * (#1646), one warning with no second marker and no indent run into it.
+     */
+    @Test
+    void theLossOfProtectionReadsAsOneWarningThroughBuildOutput() {
+        var incus = withFilteringOn();
+        doThrow(new IncusException(NFT_BRIDGE_FAILURE)).doNothing().when(incus).start(NAME);
+        var copied = new ArrayList<String>();
+
+        try (var ignored = BuildOutput.copyWarningsTo(copied::add)) {
+            // The default sink, which build-time starts use, is BuildOutput's too
+            InstanceLifecycle.startInstance(incus, NAME);
+        }
+
+        assertEquals(List.of("this host cannot enforce IP spoofing protection, so it has been disabled"
+                + " on box: instances on this host can impersonate each other's credential accounts."), copied);
+    }
+
+    @Test
+    void theLossOfProtectionMarksItselfForASinkThatPrintsAsItComes() {
+        var incus = withFilteringOn();
+        doThrow(new IncusException(NFT_BRIDGE_FAILURE)).doNothing().when(incus).start(NAME);
+        var printed = new ArrayList<String>();
+
+        InstanceLifecycle.startInstance(incus, NAME, printed::add);
+
+        assertEquals(1, printed.size(), printed.toString());
+        assertTrue(printed.get(0).startsWith("Warning: this host cannot enforce IP spoofing protection"), printed.get(0));
+        assertFalse(printed.get(0).contains("\n"), printed.get(0));
     }
 
     /**

@@ -124,7 +124,7 @@ public class UpdateAllCommand extends BaseCommand {
     private UpdateResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
         var instance = incus.instanceMetadataOrThrow(name);
         var machineType = IncusClient.machineType(instance);
-        InstanceLifecycle.startTemplate(incus, name, instance, System.err::println);
+        InstanceLifecycle.startTemplate(incus, name, instance, BuildOutput::warn);
         // Stopped however the update ends: a template left running fails the next update-all's start
         var failedSteps = new LinkedHashSet<String>();
         boolean primesSkipped;

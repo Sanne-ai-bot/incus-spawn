@@ -792,7 +792,7 @@ public final class InstanceLifecycle {
      * {@code BuildAccounts.start}) start an instance just created, which has it set already.
      */
     static void startInstance(IncusClient incus, String name) {
-        startInstance(incus, name, System.err::println);
+        startInstance(incus, name, BuildOutput::warn);
     }
 
     /**

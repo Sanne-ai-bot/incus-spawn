@@ -582,10 +582,13 @@ public final class BuildOutput {
     /**
      * Print a yellow warning line and any dim {@code details} under it (e.g. what to do about
      * it), then a blank line separating them from the regular flow. Blank messages are skipped.
-     * To stderr, so stdout holds only what a command reports.
+     * To stderr, so stdout holds only what a command reports. A message that marks itself
+     * ({@code "Warning: ..."}, for a sink that may print it as it comes) loses that marker for
+     * the ⚠, as the TUI's log drops it.
      */
     public static void warn(String msg, String... details) {
         if (msg == null || msg.isBlank()) return;
+        msg = msg.strip().replaceFirst("^Warning:\\s*", "");
         var listener = warningListener;
         if (listener != null) {
             // Each line made safe: messages can quote template text, and the TUI's log renders it
