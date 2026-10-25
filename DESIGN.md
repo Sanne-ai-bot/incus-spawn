@@ -1823,7 +1823,7 @@ The benchmark (`bench/run.sh --load=maven`) points Central at a loopback stub th
 The end-to-end tests use the same hook.
 The model-call loads (`--load=anthropic|vertex`) point the Messages API and Vertex at the same stub, and run the proxy on Claude accounts of their own.
 `--load=websocket` points `api.openai.com` at the stub's WebSocket server, with an OpenAI account of its own.
-A WebSocket dials an overridden host at the stub's address (`MitmProxy.handleWebSocketUpgrade`): Vert.x ignores `setServer` for one, so its SNI and Host name the address, which the stub's certificate carries.
+A WebSocket dials an overridden host at the stub's address (`MitmProxy.handleWebSocketUpgrade`): Vert.x ignores `setServer` for one, so its SNI names the stub's address, which the stub's certificate carries, while the Host header keeps the real host.
 `ISX_BENCH_CONFIG` names the file it reads instead of `config.yaml` (`SpawnConfig.useBenchFile`), so a benchmark never edits the user's file.
 The CA, the credential proofs and the rest of the configuration directory stay the user's, so the instance the load comes from proves itself as any other does.
 Nothing but `bench/run.sh` sets it, and the proxy refuses to start when it names no file.

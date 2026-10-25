@@ -973,7 +973,7 @@ result = {
     'idleRssKb': $IDLE_RSS,
     'peakRssKb': $PEAK_RSS,
     'throughput': throughput,
-    'loadTool': 'hyperfoil',
+    'loadTool': '$($WS_LOAD && echo wsload || echo hyperfoil)',
     'loadMode': '''$LOAD_MODE''',
     'benchmarkName': '''$BENCHMARK_NAME''',
     # Read the shape of the load off the definition that actually ran; the old
