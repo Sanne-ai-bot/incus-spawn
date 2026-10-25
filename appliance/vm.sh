@@ -168,7 +168,7 @@ start_qemu() {
         -nodefaults \
         -serial stdio \
         -kernel "$APPLIANCE_DIR/vmlinuz" \
-        -drive id=root,file="$DISK_IMG",format=raw,if=virtio \
+        -drive id=root,file="$DISK_IMG",format=raw,if=virtio,discard=unmap \
         -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
         -append "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=$console quiet isx.gateway=${ISX_GATEWAY:-10.166.11.1} isx.mitm_port=${ISX_MITM_PORT:-18443}" \
         > "$LOG_FILE" 2>&1 &
@@ -279,7 +279,7 @@ cmd_shell() {
                 -nodefaults \
                 -serial stdio \
                 -kernel "$APPLIANCE_DIR/vmlinuz" \
-                -drive file="$DISK_IMG",format=raw,if=virtio \
+                -drive file="$DISK_IMG",format=raw,if=virtio,discard=unmap \
                 -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
                 -append "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=$console isx.gateway=${ISX_GATEWAY:-10.166.11.1} isx.mitm_port=${ISX_MITM_PORT:-18443}"
             ;;
