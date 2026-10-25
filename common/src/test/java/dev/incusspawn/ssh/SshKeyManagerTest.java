@@ -88,6 +88,21 @@ class SshKeyManagerTest {
     }
 
     @Test
+    void aHostnameAfterTheBlockEndsIsNotTheBlocks() throws IOException {
+        // An unindented line ends a Host block, as removing one reads it: a later top-level
+        // Hostname (or anything under a Match) is not this instance's address
+        SshKeyManager.addHostEntry("test-instance");
+        var config = tempDir.resolve(".config/incus-spawn/ssh/config");
+        Files.writeString(config, Files.readString(config) + "Match all\nHostname 10.0.0.42\n");
+
+        assertTrue(SshKeyManager.hasHostEntry("test-instance", ""));
+        assertFalse(SshKeyManager.hasHostEntry("test-instance", "10.0.0.42"));
+
+        SshKeyManager.addHostEntry("test-instance", "10.0.0.42");
+        assertTrue(SshKeyManager.hasHostEntry("test-instance", "10.0.0.42"));
+    }
+
+    @Test
     void addHostEntryWithHostname() {
         SshKeyManager.addHostEntry("test-instance", "10.0.0.42");
 
