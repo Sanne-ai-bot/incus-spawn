@@ -85,7 +85,9 @@ final class ShellLaunch {
         RuntimeSetup.RuntimeConfig prefetched;
         // Held through the branch's start, so a rebuild cannot swap the template away meanwhile (#1212).
         // Plain stdout: the TUI has released the terminal for the branch and the shell after it.
-        try (var held = TemplateLock.reading(source, System.out::println)) {
+        // The shell draws over what the branch printed, so its warnings are kept in the log too.
+        try (var held = TemplateLock.reading(source, System.out::println);
+             var warnings = BuildOutput.copyWarningsTo(tui.warningLog::add)) {
             preflight = BranchFlow.preflight(tui.incus, request, tui.imageDefs);
             prefetched = BranchFlow.create(tui.incus, preflight);
         }

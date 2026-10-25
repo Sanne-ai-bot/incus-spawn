@@ -4774,6 +4774,14 @@ Taking a sink from the caller stays the first choice; `Warnings` is for code whe
 The loaders also keep what they found (`ToolDefLoader.warnings()`, like `conflicts()` and `parseFailures()`), so tests and callers that want to act on it need not listen.
 The default sinks of `ImageDef.loadAll()`/`loadAllWithConflicts()` go through it too, since `BranchFlow` -- which the TUI branches through -- calls `loadAll()`.
 
+**A branch made from the TUI keeps its warnings in the log** (#1646).
+The TUI branches on the released terminal, so `BranchFlow` prints there as `isx branch` does.
+But the shell that follows draws over it, and the TUI redraws over that, so a warning printed then was gone before anyone read it.
+`ShellLaunch.createBranchFromModal` copies every `BuildOutput.warn` of the branch into the `WarningLog` (`BuildOutput.copyWarningsTo`), as a TUI-launched build does.
+So code on the branch path warns through `BuildOutput.warn` or a sink the caller gives it, which `RuntimeSetup.setupRuntime` takes for an incomplete setup and a failed SSH host entry.
+A bare `System.err` line reaches the terminal only.
+Progress stays on the terminal, where it is read while the branch runs.
+
 Each channel reports a distinct message once.
 The same files are loaded many times in one command (every fresh loader re-reads them), and before this `isx branch` could print one broken tool file's warning several times.
 The memory is per channel, not per process.
