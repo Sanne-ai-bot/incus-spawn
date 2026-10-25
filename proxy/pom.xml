@@ -25,6 +25,8 @@
         <svm.target.name.args/>
 <!-- Empty by default: -march values are architecture-specific, and passing an x86 one to an aarch64 build fails (or vice versa). Set by the arch-gated profiles below. -->
         <native.march.args/>
+<!-- Empty unless a PGO profile below is active. -->
+        <native.pgo.args/>
     </properties>
 
     <dependencies>
@@ -171,6 +173,34 @@
         </plugins>
     </build>
     <profiles>
+        <!--
+          Profile-guided optimization (docs/dev/PGO.md, #1637). -Dnative.pgo=DIR builds with the
+          profiles in DIR, an absolute path (proxy.iprof.gz here; the release's profiles job publishes it),
+          -Dnative.pgo.instrument builds the instrumented binary that bench/pgo-collect.sh collects
+          them with. Oracle GraalVM only, like G1 on macOS; without either a build is unprofiled,
+          so a Community Edition build from source still works. The pgo and pgo-instrument
+          profiles are duplicated in cli/pom.xml: change both together.
+        -->
+        <profile>
+            <id>pgo</id>
+            <activation>
+                <property><name>native.pgo</name></property>
+            </activation>
+            <properties>
+                <native.pgo.args>,--pgo=${native.pgo}/proxy.iprof.gz,-H:+UnlockExperimentalVMOptions,-H:+PGOPrintProfileQuality,-H:-UnlockExperimentalVMOptions</native.pgo.args>
+            </properties>
+        </profile>
+        <profile>
+            <!-- -H:+ParseRuntimeOptions undoes the list's -H:-ParseRuntimeOptions for this build only:
+                 each process needs -XX:ProfilesDumpFile to write a profile of its own. -->
+            <id>pgo-instrument</id>
+            <activation>
+                <property><name>native.pgo.instrument</name></property>
+            </activation>
+            <properties>
+                <native.pgo.args>,--pgo-instrument,-H:+ParseRuntimeOptions</native.pgo.args>
+            </properties>
+        </profile>
 <!-- The -march profiles (x86-march-amd64, x86-march-x86_64, aarch64-march) are duplicated in cli/pom.xml: change both together, same ids, activation and values. -->
         <!--
           GraalVM's default -march=x86-64-v3 does NOT include AES or CLMUL, so the

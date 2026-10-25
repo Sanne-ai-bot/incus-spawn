@@ -18,6 +18,8 @@
 <!-- Platform-only arguments, joined into the one list in application.properties. Set by the linux and macos-native profiles below; never redefine the list itself (#489). -->
         <svm.target.name.args/>
         <macos.plist.args/>
+<!-- Empty unless a PGO profile below is active. -->
+        <native.pgo.args/>
     </properties>
 
     <dependencies>
@@ -216,6 +218,38 @@
     </build>
 
     <profiles>
+        <!--
+          Profile-guided optimization (docs/dev/PGO.md, #1637). -Dnative.pgo=DIR builds with the
+          profiles in DIR, an absolute path (cli.iprof.gz here; the release's profiles job publishes it),
+          -Dnative.pgo.instrument builds the instrumented binary that bench/pgo-collect.sh collects
+          them with. Oracle GraalVM only, like G1 on macOS; without either a build is unprofiled,
+          so a Community Edition build from source still works. The pgo and pgo-instrument
+          profiles are duplicated in proxy/pom.xml: change both together.
+          With a profile the CLI builds at -O3: hot code fast, cold code still small, and it measured
+          faster than -Os at 0.66 MB more (docs/dev/PERFORMANCE-NOTES.md, "Phase 2").
+        -->
+        <profile>
+            <id>pgo</id>
+            <activation>
+                <property><name>native.pgo</name></property>
+            </activation>
+            <properties>
+                <native.optimization>-O3</native.optimization>
+                <native.pgo.args>,--pgo=${native.pgo}/cli.iprof.gz,-H:+UnlockExperimentalVMOptions,-H:+PGOPrintProfileQuality,-H:-UnlockExperimentalVMOptions</native.pgo.args>
+            </properties>
+        </profile>
+        <profile>
+            <!-- -H:+ParseRuntimeOptions undoes the list's -H:-ParseRuntimeOptions for this build only:
+                 each process needs -XX:ProfilesDumpFile to write a profile of its own. -->
+            <id>pgo-instrument</id>
+            <activation>
+                <property><name>native.pgo.instrument</name></property>
+            </activation>
+            <properties>
+                <native.optimization>-O3</native.optimization>
+                <native.pgo.args>,--pgo-instrument,-H:+ParseRuntimeOptions</native.pgo.args>
+            </properties>
+        </profile>
 <!-- The -march profiles (x86-march-amd64, x86-march-x86_64, aarch64-march) are duplicated in proxy/pom.xml: change both together, same ids, activation and values. -->
         <!--
           GraalVM's default -march=x86-64-v3 omits AES and CLMUL, so the image cannot

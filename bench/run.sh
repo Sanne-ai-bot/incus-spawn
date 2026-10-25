@@ -20,7 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RESULTS_DIR="$SCRIPT_DIR/results"
 
-HYPERFOIL_IMAGE="quay.io/hyperfoil/hyperfoil:latest"
+# A release pins it by digest (release.yml's profiles job)
+HYPERFOIL_IMAGE="${HYPERFOIL_IMAGE:-quay.io/hyperfoil/hyperfoil:latest}"
 HYPERFOIL_CONTAINER="isx-bench-hf"
 HYPERFOIL_PORT=8090
 BENCHMARK_YAML="$SCRIPT_DIR/proxy-health.hf.yaml"

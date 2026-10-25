@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - 'v*'
+  # The profiles and build jobs alone, on a branch, to check a change to how the binaries are
+  # built before a tag does (docs/dev/PGO.md, "Verification before merging"). Nothing is published:
+  # appliance, channel and release run for a pushed tag only.
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -11,11 +15,13 @@ concurrency:
 
 jobs:
   appliance:
+    if: github.event_name == 'push'
     uses: ./.github/workflows/build-appliance.yml
     with:
       version: ${{ github.ref_name }}
 
   channel:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       is_dev: ${{ steps.detect.outputs.is_dev }}
@@ -41,7 +47,93 @@ jobs:
             echo "Stable release detected: $TAG"
           fi
 
+  # PGO profiles for this exact commit (docs/dev/PGO.md): instrumented builds of both binaries
+  # run the bench/ workloads against a real Incus, and the per-process dumps are merged into one
+  # profile per binary. Collected on Linux amd64 and applied on every platform that builds with
+  # the same GraalVM. Nothing is kept between releases, and a failed collection fails the release:
+  # there is no older profile to fall back on.
+  profiles:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # Pinned: the load generator runs in this job, so a moved tag would change what it runs.
+      HYPERFOIL_IMAGE: quay.io/hyperfoil/hyperfoil@sha256:caf92d80a32d81f531ef8adc1cf17e143b11c22199f0d8174d8c6bdb5dd7a918
+    steps:
+      - name: Checkout
+        run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The same GraalVM as the builds that apply the profiles: a profile's version must match.
+      - name: Install Oracle GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.4'
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Set version
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then VERSION=${GITHUB_REF_NAME#v}; else VERSION=0.0.0-dispatch.$GITHUB_RUN_NUMBER; fi
+          mvn versions:set -DnewVersion=$VERSION -DgenerateBackupPoms=false -DprocessAllModules=true
+
+      # As isx-integration-tests-native in test-integration.yml prepares it.
+      - name: Install Incus
+        run: |
+          set -o pipefail  # a failed key download must fail here, not as a later NO_PUBKEY
+          curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor \
+            | sudo tee /etc/apt/keyrings/zabbly.gpg >/dev/null
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
+            | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq incus btrfs-progs
+          sudo usermod -aG incus-admin "$USER"
+
+      - name: Build instrumented binaries
+        run: |
+          mvn package -Dnative -DskipTests -Dnative.pgo.instrument
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 cli/target/incus-spawn-*-runner "$HOME/.local/bin/isx"
+          install -m 755 proxy/target/incus-spawn-proxy-*-runner "$HOME/.local/bin/isx-proxy"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # In a scratch directory: an instrumented process given no -XX:ProfilesDumpFile writes
+      # default.iprof where it runs, and these runs are no workload's.
+      - name: Initialize isx
+        working-directory: ${{ runner.temp }}
+        run: |
+          sg incus-admin -c "isx init </dev/null"
+          sudo chown -R "$USER:$USER" ~/.config/incus/ 2>/dev/null || true
+          sg incus-admin -c "incus profile device set default root pool=cow"
+
+      - name: Collect profiles
+        run: sg incus-admin -c "bench/pgo-collect.sh --proxy=$HOME/.local/bin/isx-proxy --cli=$HOME/.local/bin/isx --out=$RUNNER_TEMP/pgo-raw"
+
+      - name: Merge profiles
+        run: |
+          scripts/pgo-merge.sh cli "$RUNNER_TEMP/pgo-raw/cli" pgo
+          scripts/pgo-merge.sh proxy "$RUNNER_TEMP/pgo-raw/proxy" pgo
+          # The commit they were collected from: a build of any other refuses them
+          git rev-parse HEAD > pgo/commit
+          ls -l pgo
+
+      # Kept for a local build to fetch: mvn package -Dnative -Dnative.pgo=<the unpacked directory>
+      - name: Upload profiles
+        uses: actions/upload-artifact@v6
+        with:
+          name: pgo-profiles
+          path: |
+            pgo/cli.iprof.gz
+            pgo/proxy.iprof.gz
+            pgo/commit
+          retention-days: 90
+          if-no-files-found: error
+
   build:
+    needs: [profiles]
     strategy:
       matrix:
         include:
@@ -49,21 +141,30 @@ jobs:
             os: linux
             arch: amd64
             graalvm-version: '25.4'
+            pgo: true
           - runner: ubuntu-24.04-arm
             os: linux
             arch: aarch64
             graalvm-version: '25.4'
+            pgo: true
           - runner: macos-15
             os: macos
             arch: aarch64
             graalvm-version: '25.4'
+            pgo: true
+          # Best effort (#1086), and on GraalVM 25.0, whose builds would take a 25.4 profile only
+          # past its version check: built unprofiled, as before.
           - runner: macos-15-intel
             os: macos
             arch: x86_64
             graalvm-version: '25.0'
+            pgo: false
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+    env:
+      # -Dnative.pgo=<dir> applies <dir>/cli.iprof.gz and <dir>/proxy.iprof.gz (cli/pom.xml, proxy/pom.xml)
+      PGO_ARGS: ${{ matrix.pgo && format('-Dnative.pgo={0}/pgo', github.workspace) || '' }}
     steps:
       - name: Checkout
         run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
@@ -79,8 +180,24 @@ jobs:
 
       - name: Set version from tag
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          if [ "$GITHUB_EVENT_NAME" = push ]; then VERSION=${GITHUB_REF_NAME#v}; else VERSION=0.0.0-dispatch.$GITHUB_RUN_NUMBER; fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           mvn versions:set -DnewVersion=$VERSION -DgenerateBackupPoms=false -DprocessAllModules=true
+
+      - name: Download PGO profiles
+        if: matrix.pgo
+        uses: actions/download-artifact@v6
+        with:
+          name: pgo-profiles
+          path: pgo
+
+      # Each job clones the ref afresh, so a branch pushed to (or a tag moved) during the run
+      # would otherwise build one commit with another's profile.
+      - name: Check the profiles are this commit's
+        if: matrix.pgo
+        run: |
+          [ "$(cat pgo/commit)" = "$(git rev-parse HEAD)" ] \
+            || { echo "::error::the profiles are of $(cat pgo/commit), this build is of $(git rev-parse HEAD)"; exit 1; }
 
       # Both uber-jars: the JBang catalog installs `isx` and `isx-proxy` as separate aliases, and
       # an installation with only the CLI cannot run the proxy at all (see jbang-catalog.json).
@@ -95,7 +212,8 @@ jobs:
       - name: Build native image (Linux)
         if: matrix.os == 'linux'
         run: |
-          mvn package -Dnative -DskipTests
+          set -o pipefail  # tee must not hide a failed build
+          mvn package -Dnative -DskipTests $PGO_ARGS | tee native-build.log
           mkdir -p dist
           cp cli/target/incus-spawn-*-runner dist/incus-spawn-linux-${{ matrix.arch }}
           cp proxy/target/incus-spawn-proxy-*-runner dist/isx-proxy-linux-${{ matrix.arch }}
@@ -103,14 +221,20 @@ jobs:
       - name: Build native image (macOS)
         if: matrix.os == 'macos'
         run: |
-          mvn package -Dnative -DskipTests -Dmacos.info.plist="$(pwd)/cli/src/main/resources/Info.plist"
+          set -o pipefail  # tee must not hide a failed build
+          mvn package -Dnative -DskipTests $PGO_ARGS -Dmacos.info.plist="$(pwd)/cli/src/main/resources/Info.plist" | tee native-build.log
           mkdir -p dist
           cp cli/target/incus-spawn-*-runner dist/incus-spawn-macos-${{ matrix.arch }}
           cp proxy/target/incus-spawn-proxy-*-runner dist/isx-proxy-macos-${{ matrix.arch }}
 
+      # Both binaries must have been built with the profile, and found most of it relevant: a
+      # profile that does not fit this platform's image would make the code PGO chose fast slow.
+      - name: Check PGO profile quality
+        if: matrix.pgo
+        run: .github/scripts/check-pgo-quality.sh native-build.log
+
       - name: Smoke-test native binaries
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
           CLI=dist/incus-spawn-${{ matrix.os }}-${{ matrix.arch }}
           PROXY=dist/isx-proxy-${{ matrix.os }}-${{ matrix.arch }}
           chmod +x "$CLI" "$PROXY"
@@ -169,6 +293,7 @@ jobs:
           path: dist/
 
   release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [build, appliance, channel]
     runs-on: ubuntu-26.04
     permissions:

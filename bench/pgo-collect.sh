@@ -8,12 +8,11 @@
 #
 # Requires: what bench/run.sh and bench/cli.sh require (isx init, a running Incus, Podman for
 #           Hyperfoil, git, ssh), Linux, and nothing serving the proxy's ports: stop the
-#           service first (systemctl --user stop incus-spawn-proxy). Builds tpl-isx-bench when
-#           it is missing.
-#           The binaries: an instrumented build of both, from one commit, e.g.
-#             mvn package -Dnative -DskipTests -Dnative.optimization=-O3,--pgo-instrument \
-#               -Dquarkus.native.additional-build-args-append=-H:+ParseRuntimeOptions
-#           (release builds turn runtime option parsing off; each process needs
+#           service first (systemctl --user stop incus-spawn-proxy). Builds tpl-minimal and
+#           tpl-isx-bench when they are missing (the release's profiles job starts with neither).
+#           The binaries: an instrumented build of both, from one commit:
+#             mvn package -Dnative -DskipTests -Dnative.pgo.instrument
+#           (it also turns runtime option parsing back on: each process needs
 #           -XX:ProfilesDumpFile to write a profile of its own).
 #
 # Usage:
@@ -80,11 +79,17 @@ start_proxy() {
     die "The proxy did not answer on $HEALTH_URL within 15s"
 }
 
-if ! incus info tpl-isx-bench &>/dev/null; then
-    echo "=== Building tpl-isx-bench (profiles discarded) ==="
+missing=()
+for template in tpl-minimal tpl-isx-bench; do
+    incus info "$template" &>/dev/null || missing+=("$template")
+done
+if [ ${#missing[@]} -gt 0 ]; then
+    echo "=== Building ${missing[*]} (profiles discarded) ==="
     start_proxy "$WORK_DIR/setup-proxy.iprof"
-    (cd "$SCRIPT_DIR" && "$CLI_BIN" -XX:ProfilesDumpFile="$WORK_DIR/setup-cli.iprof" build tpl-isx-bench --yes) \
-        || die "Could not build tpl-isx-bench"
+    for template in "${missing[@]}"; do
+        (cd "$SCRIPT_DIR" && "$CLI_BIN" -XX:ProfilesDumpFile="$WORK_DIR/setup-cli-$template.iprof" build "$template" --yes) \
+            || die "Could not build $template"
+    done
     stop_proxy
 fi
 
@@ -111,5 +116,6 @@ for side in proxy cli; do
     echo "  $side: $count files, $(du -sh "$OUT_DIR/$side" | cut -f1), in $OUT_DIR/$side"
 done
 echo ""
-echo "Build with them (one comma-separated list per binary):"
-echo "  -Dnative.optimization=-O3,--pgo=\$(ls $OUT_DIR/proxy/*.iprof.gz | paste -sd,)"
+echo "Merge each side into the file a build applies, then build with them:"
+echo "  scripts/pgo-merge.sh cli $OUT_DIR/cli <dir> && scripts/pgo-merge.sh proxy $OUT_DIR/proxy <dir>"
+echo "  mvn package -Dnative -DskipTests -Dnative.pgo=<dir>   # an absolute path"
