@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -90,5 +91,24 @@ class BranchSetupWarningsTest {
 
         assertTrue(warnings.stream().anyMatch(w -> w.contains("is not a directory, skipping")),
                 "warned " + warnings);
+    }
+
+    /** Configuring the branch, before its start: a host that refuses the filtering is told of in the log too. */
+    @Test
+    void ipFilteringTheHostRefusedIsWarnedOfInTheLog() {
+        var daemon = new FakeIncusDaemon().container("dev-1", Map.of())
+                .refuseWritesContaining("security.ipv4_filtering");
+        var warnings = new ArrayList<String>();
+
+        try (var ignored = BuildOutput.copyWarningsTo(warnings::add)) {
+            InstanceLifecycle.configureBranch(daemon.client(), "dev-1", new InstanceLifecycle.BranchSettings(
+                    null, "8GiB", "20GiB", NetworkMode.FULL, "tpl-dev", Map.of(), false));
+        }
+
+        // One warning, naming the instance and what it means
+        assertEquals(1, warnings.size(), "warned " + warnings);
+        assertTrue(warnings.get(0).startsWith("could not enable IP spoofing protection on dev-1: "), warnings.get(0));
+        assertTrue(warnings.get(0).endsWith("; instances on this host can impersonate each other's credential accounts."),
+                warnings.get(0));
     }
 }
