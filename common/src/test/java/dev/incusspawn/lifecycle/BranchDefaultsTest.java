@@ -22,17 +22,22 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith({TempHome.class, LinuxBranching.class})
 class BranchDefaultsTest {
 
-    private java.util.function.BooleanSupplier sessionCheck;
+    private java.util.function.Supplier<Map<String, String>> environment;
+    private java.util.function.Predicate<String> hostPathExists;
 
+    /** A Wayland session, its socket there: the one hooks configureGui reads too, so both agree. */
     @BeforeEach
     void inAWaylandSession() {
-        sessionCheck = BranchFlow.waylandSession;
-        BranchFlow.waylandSession = () -> true;
+        environment = BranchFlow.environment;
+        hostPathExists = BranchFlow.hostPathExists;
+        BranchFlow.environment = () -> Map.of("XDG_RUNTIME_DIR", "/run/user/1000", "WAYLAND_DISPLAY", "wayland-0");
+        BranchFlow.hostPathExists = path -> true;
     }
 
     @AfterEach
-    void restoreSessionCheck() {
-        BranchFlow.waylandSession = sessionCheck;
+    void restoreSession() {
+        BranchFlow.environment = environment;
+        BranchFlow.hostPathExists = hostPathExists;
     }
 
     private static Map<String, ImageDef> template(String type, boolean gui) {
@@ -127,7 +132,7 @@ class BranchDefaultsTest {
     @Test
     void outsideAWaylandSessionGuiIsNotTheDefaultAndSaysWhy() {
         // Both front ends ask defaultsFor, so the dialog does not tick what isx branch would skip
-        BranchFlow.waylandSession = () -> false;
+        BranchFlow.environment = Map::of;
         var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of());
         var defaults = BranchFlow.defaultsFor("tpl-dev", daemon.client().instanceMetadata("tpl-dev"),
                 template("container", true));

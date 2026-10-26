@@ -63,13 +63,6 @@ public final class BranchFlow {
     /** Whether a host path exists, which KVM passthrough asks; replaced by tests, so a host can lack /dev/kvm anywhere. */
     static java.util.function.Predicate<String> hostPathExists = path -> java.nio.file.Files.exists(Path.of(path));
 
-    /**
-     * Whether isx runs in a Wayland session, from the two hooks above; replaced by tests, so they do
-     * not depend on where they run.
-     */
-    static java.util.function.BooleanSupplier waylandSession =
-            () -> GuiPassthrough.waylandProblem(environment.get(), hostPathExists) == null;
-
     /** The CA fingerprints a template is checked against; replaced by tests, which hold no CA. */
     static java.util.function.Supplier<CertificateAuthority.CaTrust> caTrust = CertificateAuthority.CaTrust::snapshot;
 
@@ -161,7 +154,7 @@ public final class BranchFlow {
         if (wantsGui && projectLocal(def, config)) {
             guiNote = "'" + source + "' asks for GUI passthrough from a project-local definition, "
                     + "so it is off unless chosen (--gui, or the branch dialog's GUI box).";
-        } else if (wantsGui && !waylandSession.getAsBoolean()) {
+        } else if (wantsGui && GuiPassthrough.waylandProblem(environment.get(), hostPathExists) != null) {
             guiNote = "'" + source + "' asks for GUI passthrough, but isx is not running in a "
                     + "Wayland session, so it is off.";
         }
