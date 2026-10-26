@@ -64,7 +64,7 @@ public final class VmAgentRecovery {
                     + VmAgentFailure.pointer("Its boot log may say why: ", VmAgentFailure.save(name, incus.consoleLog(name))));
         }
 
-        out.step("VM agent not responding, restarting " + name + "...");
+        out.header("Restarting " + name, "VM agent not responding");
         var placeholders = ProofToken.declaredInBackground();
         try {
             incus.stop(name, GRACEFUL_STOP_SECONDS);

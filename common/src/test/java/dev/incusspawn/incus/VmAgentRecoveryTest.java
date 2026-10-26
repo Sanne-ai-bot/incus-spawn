@@ -68,7 +68,7 @@ class VmAgentRecoveryTest {
 
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(client(), "vm1", daemon.instance("vm1"), MachineType.VM, RecordingOutput.into(said)));
         assertEquals(List.of("vm1 stop", "vm1 start"), daemon.stateActions());
-        assertEquals(List.of("VM agent not responding, restarting vm1..."), said);
+        assertEquals(List.of("Restarting vm1 VM agent not responding"), said);
     }
 
     @Test

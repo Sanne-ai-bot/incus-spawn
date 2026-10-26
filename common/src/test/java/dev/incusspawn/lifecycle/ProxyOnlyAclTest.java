@@ -143,6 +143,9 @@ class ProxyOnlyAclTest {
         assertTrue(write >= 0 && start > write, "restricted before the start:\n" + String.join("\n", requests));
         // A warning, which the TUI's log keeps: a step would go unsaid there
         assertTrue(out.warnings().stream().anyMatch(s -> s.contains("now enforced on the host")), out.warnings()::toString);
+        // A start is a header, the steps of the start under it
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.HEADER, "Starting box")),
+                out.events(RecordingOutput.Kind.HEADER));
     }
 
     @Test

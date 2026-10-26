@@ -95,7 +95,7 @@ public class InstancePrep {
             }
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
-            repairBeforeUse(incus, name, machineType, new Notices(out, BuildOutput::warnBanner));
+            repairBeforeUse(incus, name, machineType, new Notices(out, out::warnBanner));
         }
 
         // Read after the repair above, so a VM it just reassigned is seen to owe its file
