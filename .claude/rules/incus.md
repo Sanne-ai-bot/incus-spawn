@@ -175,6 +175,7 @@ A VM is exec-probed only once `GET /state` reports `processes >= 0` (its agent c
 While the gate is shut exec still gets one probe per `gatedProbeInterval` (5s), since Incus also reports -1 when its query to a connected agent fails.
 The probe's guest script runs as root with no time limit of its own, so whatever it adds must be bounded and must not trust paths agentuser controls.
 `startForUse` adds an SSH-capable instance's keys to it (#1640): root only reads `authorized_keys` under a two-second `timeout`, and the write runs as agentuser (`RuntimeSetup.authorizeKeysScript`).
+A branch's setup script writes the keys as agentuser too (`RuntimeSetup.WRITE_KEYS`, #1698): root never touches `~/.ssh`, which a branch of an instance copies from its source.
 A state without `processes` falls back to plain probing, and containers never read `/state`.
 Timings are a `ReadyTimeouts` record that `WaitForReadyTest` shortens through the package-private setter.
 A running VM whose agent does not answer on `isx shell`/`isx run`/the TUI goes through `InstanceLifecycle.ensureReady` -> `lifecycle/VmAgentRecovery.restartForAgent` -- never a bare `forceStop` + start.
