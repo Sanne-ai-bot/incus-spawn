@@ -170,6 +170,8 @@ public class InstancePrep {
         // Ensure the container is running so we can push the cert
         JqValue started = null;
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
+            // A header, as ensureReady's start has: the start's own steps go under it
+            out.output().header("Starting " + container, null);
             started = InstanceLifecycle.startForUse(incus, container, machineType, out.output());
         }
 

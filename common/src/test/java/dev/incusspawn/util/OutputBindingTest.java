@@ -147,8 +147,9 @@ class OutputBindingTest {
     }
 
     /**
-     * The recorder skips what a terminal skips, and only that: a blank warning, but not a blank
-     * failed step, which still ends the live step, nor a banner with no title, which still prints.
+     * The recorder reads as a terminal shows it: it skips a blank warning or note, but not a blank
+     * failed step, which still ends the live step, nor a banner with no title, which still prints;
+     * it drops a warning's own marker and prints a null detail as one.
      */
     @Test
     void theRecorderSkipsOnlyWhatATerminalSkips() {
@@ -156,11 +157,16 @@ class OutputBindingTest {
         out.warn(" ");
         out.warnAside(null);
         out.stepWarn("");
+        out.note(null);
+        out.note("  ");
         out.stepFail(null);
         out.warnBanner("", "rebuild the template");
+        out.warn("Warning: marked", (String) null);
 
-        assertEquals(List.of(RecordingOutput.Kind.STEP_FAIL, RecordingOutput.Kind.WARN_BANNER),
+        assertEquals(List.of(RecordingOutput.Kind.STEP_FAIL, RecordingOutput.Kind.WARN_BANNER, RecordingOutput.Kind.WARN),
                 out.events().stream().map(RecordingOutput.Event::kind).toList());
+        // Its own marker dropped for the ⚠, and a null detail printed as one
+        assertEquals(new RecordingOutput.Event(RecordingOutput.Kind.WARN, "marked", "null"), out.events().getLast());
     }
 
     /** A header reads as one line, as a terminal draws it; a warning's advice goes under it. */

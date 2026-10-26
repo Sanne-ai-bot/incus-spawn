@@ -1,6 +1,7 @@
 package dev.incusspawn.util;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
@@ -37,12 +38,19 @@ public final class RecordingOutput implements Output {
     private static final Set<Kind> DIAGNOSTICS =
             EnumSet.of(Kind.WARN, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.WARN_BANNER, Kind.STEP_FAIL);
     /** The kinds a terminal skips when blank ({@link TerminalOutput}). */
-    private static final Set<Kind> SKIPPED_WHEN_BLANK = EnumSet.of(Kind.WARN, Kind.WARN_ASIDE, Kind.STEP_WARN);
+    private static final Set<Kind> SKIPPED_WHEN_BLANK =
+            EnumSet.of(Kind.WARN, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.STEP_NOTE, Kind.NOTE);
+    /** The kinds whose own {@code Warning:} marker a terminal drops for its ⚠ ({@link BuildOutput#warningText}). */
+    private static final Set<Kind> MARKER_DROPPED = EnumSet.of(Kind.WARN, Kind.WARN_ASIDE);
+    /** The kinds {@link TerminalOutput} prints through {@link BuildOutput#safeLines}. */
+    private static final Set<Kind> SAFE_LINES =
+            EnumSet.of(Kind.WARN, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.STEP_FAIL, Kind.STEP_NOTE);
 
     /** One message: its kind, its text (null for a kind that has none) and the lines under it. */
     public record Event(Kind kind, String msg, List<String> details) {
         public Event(Kind kind, String msg, String... details) {
-            this(kind, msg, List.of(details));
+            // A null detail reads "null", as a terminal prints it
+            this(kind, msg, Arrays.stream(details).map(String::valueOf).toList());
         }
 
         /**
@@ -102,9 +110,17 @@ public final class RecordingOutput implements Output {
     }
 
     private synchronized void record(Kind kind, String msg, String... details) {
-        // A blank warning is skipped by every output, so none is recorded either; a blank failed step
+        // What a terminal skips is not recorded either (a blank warning or note); a blank failed step
         // still ends the live step, and a banner with no title still prints its lines
+        // A note is one line, and every diagnostic's lines are made safe, as a terminal prints them
+        if (kind == Kind.NOTE && msg != null) msg = OutputFormat.oneLine(msg);
         if (SKIPPED_WHEN_BLANK.contains(kind) && (msg == null || msg.isBlank())) return;
+        if (MARKER_DROPPED.contains(kind)) msg = BuildOutput.warningText(msg);
+        // What a terminal makes safe, and only that: a banner it prints as given
+        if (SAFE_LINES.contains(kind)) {
+            msg = BuildOutput.safeLines(msg);
+            details = Arrays.stream(details).map(BuildOutput::safeLines).toArray(String[]::new);
+        }
         var event = new Event(kind, msg, details);
         events.add(event);
         if (mirror != null && isLine(event)) mirror.add(event.text());
