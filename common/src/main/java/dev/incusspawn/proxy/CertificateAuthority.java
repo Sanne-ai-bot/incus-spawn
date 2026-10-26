@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
@@ -639,7 +640,7 @@ public class CertificateAuthority {
     }
 
     private static CertificateAuthority generate() throws Exception {
-        System.out.println("Generating MITM CA certificate...");
+        BuildOutput.step("Generating MITM CA certificate...");
         Files.createDirectories(caKeyFile().getParent());
         // A new key pair is a real rotation, not an SKI upgrade: drop any record of a
         // superseded cert so images built against it are not mistaken for repairable.
@@ -665,8 +666,8 @@ public class CertificateAuthority {
         Files.setPosixFilePermissions(caCertFile(),
                 PosixFilePermissions.fromString("rw-------"));
 
-        System.out.println("  CA certificate saved to " + caCertFile());
-        System.out.println("  CA private key saved to " + caKeyFile());
+        BuildOutput.stepNote("CA certificate saved to " + caCertFile());
+        BuildOutput.stepNote("CA private key saved to " + caKeyFile());
 
         var cert = (X509Certificate) CertificateFactory.getInstance("X.509")
                 .generateCertificate(new ByteArrayInputStream(certDer));

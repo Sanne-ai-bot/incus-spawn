@@ -15,6 +15,7 @@ abstract class ForwardingOutput implements Output {
 
     @Override public List<Output> destinations() { return delegate().destinations(); }
     @Override public void warn(String msg, String... details) { delegate().warn(msg, details); }
+    @Override public void error(String msg, String... details) { delegate().error(msg, details); }
     @Override public void warnAside(String msg) { delegate().warnAside(msg); }
     @Override public void stepWarn(String msg) { delegate().stepWarn(msg); }
     @Override public void warnBanner(String title, String... lines) { delegate().warnBanner(title, lines); }

@@ -12,6 +12,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -22,8 +24,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith({TempHome.class, LinuxBranching.class})
 class BranchDefaultsTest {
 
-    private java.util.function.Supplier<Map<String, String>> environment;
-    private java.util.function.Predicate<String> hostPathExists;
+    private Supplier<Map<String, String>> environment;
+    private Predicate<String> hostPathExists;
 
     /** A Wayland session, its socket there: the one hooks configureGui reads too, so both agree. */
     @BeforeEach

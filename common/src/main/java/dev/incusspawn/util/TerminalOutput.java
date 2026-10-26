@@ -16,6 +16,7 @@ import static dev.incusspawn.util.BuildOutput.CROSS;
 import static dev.incusspawn.util.BuildOutput.CYAN;
 import static dev.incusspawn.util.BuildOutput.DIM;
 import static dev.incusspawn.util.BuildOutput.GREEN;
+import static dev.incusspawn.util.BuildOutput.RED;
 import static dev.incusspawn.util.BuildOutput.RESET;
 import static dev.incusspawn.util.BuildOutput.STEP_INDENT;
 import static dev.incusspawn.util.BuildOutput.YELLOW;
@@ -401,6 +402,17 @@ public final class TerminalOutput implements Output {
             err.get().println(indent() + GROUP_INDENT + styled(DIM, safeLines(detail)));
         }
         endWithBlankLine();
+    }
+
+    /** On stderr, red, and no closing blank line: the command stops here, there is no flow to separate. */
+    @Override
+    public void error(String msg, String... details) {
+        if (msg == null || msg.isBlank()) return;
+        blankLineEnded = false;
+        err.get().println(indent() + styled(RED, "Error: " + safeLines(msg.strip())));
+        for (var detail : details) {
+            err.get().println(indent() + GROUP_INDENT + styled(DIM, safeLines(detail)));
+        }
     }
 
     /** One line on stderr, and no closing blank line, which would go to stdout. */

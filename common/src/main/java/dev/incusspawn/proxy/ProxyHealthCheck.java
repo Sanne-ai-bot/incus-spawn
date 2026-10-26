@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
@@ -8,6 +9,8 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.IncusClient;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URI;
@@ -141,7 +144,7 @@ public final class ProxyHealthCheck {
     public static boolean awaitHealthy(int maxWaitSeconds) {
         var addr = resolveHealthAddress();
         if (addr == null) {
-            System.err.println("Could not determine proxy health address; skipping health check.");
+            BuildOutput.warn("Could not determine proxy health address; skipping health check.");
             return true;
         }
         if (isHealthy(addr)) return true;
@@ -327,8 +330,8 @@ public final class ProxyHealthCheck {
         }
     }
 
-    public static java.util.List<String> checkDrift(ProxyInfo proxyInfo) {
-        var drifts = new java.util.ArrayList<String>();
+    public static List<String> checkDrift(ProxyInfo proxyInfo) {
+        var drifts = new ArrayList<String>();
         var version = checkVersionDrift(proxyInfo);
         if (!version.isEmpty()) drifts.add(version);
         var tool = checkToolProxyDrift(proxyInfo);
@@ -355,7 +358,7 @@ public final class ProxyHealthCheck {
      * ({@code futileReason}), or null when it can. Every consumer reads this one report, so
      * none can forget to ask whether a restart would help.
      */
-    public record DriftReport(java.util.List<String> drifts, String futileReason) {
+    public record DriftReport(List<String> drifts, String futileReason) {
         public boolean isEmpty() { return drifts.isEmpty(); }
         public boolean restartHelps() { return !drifts.isEmpty() && futileReason == null; }
     }
@@ -394,52 +397,66 @@ public final class ProxyHealthCheck {
         return "(config has changed since the proxy started)";
     }
 
-    public static String formatError(ProxyStatus status) {
-        var separator = BuildOutput.styled(BuildOutput.YELLOW, "─".repeat(60));
+    private static final String RERUN = "Then re-run this command.";
+    private static final String RESTART = "  isx proxy stop && isx proxy start";
+
+    /**
+     * Why {@code status} refuses a command, as a banner's title and then its lines; empty when it
+     * does not. Plain text: the banner styles its title, and the TUI's log keeps the lines as they are.
+     */
+    static List<String> refusal(ProxyStatus status) {
         return switch (status) {
-            case STALE_DNS -> separator + "\n"
-                    + bold("The MITM proxy is not running, but DNS overrides are\n"
-                    + "still active from a previous session.") + "\n\n"
-                    + "Intercepted domains (Maven repos, GitHub, Docker registries)\n"
-                    + "are resolving to the gateway where nothing is listening.\n\n"
-                    + "Start the proxy to restore connectivity:\n"
-                    + "  " + bold("isx proxy start") + "\n\n"
-                    + "Then re-run this command.\n"
-                    + separator;
-            case STALE_GATEWAY -> separator + "\n"
-                    + bold("The MITM proxy is running, but on an old address of\n"
-                    + "the Incus bridge.") + "\n\n"
-                    + "The address of incusbr0 changed after the proxy started, so\n"
-                    + "intercepted domains resolve to an address nothing answers on.\n\n"
-                    + "Restart the proxy so it binds the bridge's current address:\n"
-                    + "  " + bold("isx proxy stop && isx proxy start") + "\n\n"
-                    + "Then re-run this command.\n"
-                    + separator;
-            case NOT_RUNNING -> separator + "\n"
-                    + bold("The MITM proxy is not running.") + "\n\n"
-                    + "The proxy provides authentication for Claude, GitHub,\n"
-                    + "and caches Maven/Docker artifacts during builds.\n\n"
-                    + "Start it in a separate terminal:\n"
-                    + "  " + bold("isx proxy start") + "\n\n"
-                    + "Or install it as a service (auto-starts on boot):\n"
-                    + "  " + bold("isx init") + "\n\n"
-                    + "Then re-run this command.\n"
-                    + separator;
-            case WAITING_FOR_DNS -> separator + "\n"
-                    + bold("The MITM proxy is running but DNS overrides are not\n"
-                    + "yet configured.") + "\n\n"
-                    + "The proxy is waiting for the VM to become reachable so it\n"
-                    + "can configure bridge DNS. Containers cannot reach intercepted\n"
-                    + "domains until this completes.\n\n"
-                    + "Check VM status:  " + bold("isx vm status") + "\n"
-                    + "Proxy status:     " + bold("isx proxy status") + "\n"
-                    + separator;
-            case RUNNING -> "";
+            case STALE_DNS -> List.of(
+                    "The MITM proxy is not running, but DNS overrides are still active from a previous session.",
+                    "",
+                    "Intercepted domains (Maven repos, GitHub, Docker registries)",
+                    "are resolving to the gateway where nothing is listening.",
+                    "",
+                    "Start the proxy to restore connectivity:",
+                    "  isx proxy start",
+                    "",
+                    RERUN);
+            case STALE_GATEWAY -> List.of(
+                    "The MITM proxy is running, but on an old address of the Incus bridge.",
+                    "",
+                    "The address of incusbr0 changed after the proxy started, so",
+                    "intercepted domains resolve to an address nothing answers on.",
+                    "",
+                    "Restart the proxy so it binds the bridge's current address:",
+                    RESTART,
+                    "",
+                    RERUN);
+            case NOT_RUNNING -> List.of(
+                    "The MITM proxy is not running.",
+                    "",
+                    "The proxy provides authentication for Claude, GitHub,",
+                    "and caches Maven/Docker artifacts during builds.",
+                    "",
+                    "Start it in a separate terminal:",
+                    "  isx proxy start",
+                    "",
+                    "Or install it as a service (auto-starts on boot):",
+                    "  isx init",
+                    "",
+                    RERUN);
+            case WAITING_FOR_DNS -> List.of(
+                    "The MITM proxy is running but DNS overrides are not yet configured.",
+                    "",
+                    "The proxy is waiting for the VM to become reachable so it",
+                    "can configure bridge DNS. Containers cannot reach intercepted",
+                    "domains until this completes.",
+                    "",
+                    "Check VM status:  isx vm status",
+                    "Proxy status:     isx proxy status");
+            case RUNNING -> List.of();
         };
     }
 
-    private static String bold(String text) {
-        return BuildOutput.styled(BuildOutput.BOLD, text);
+    /** {@code status}'s refusal as a banner, through the bound output, which the TUI's log keeps. */
+    static void warnRefusal(ProxyStatus status) {
+        var refusal = refusal(status);
+        if (refusal.isEmpty()) return;
+        BuildOutput.warnBanner(refusal.getFirst(), refusal.subList(1, refusal.size()).toArray(String[]::new));
     }
 
     public static void requireProxy(IncusClient incus) {
@@ -450,13 +467,13 @@ public final class ProxyHealthCheck {
         }
         if (status == ProxyStatus.WAITING_FOR_DNS) {
             if (waitForDns(incus)) { warnIfDrifted(incus); return; }
-            System.err.println(formatError(ProxyStatus.WAITING_FOR_DNS));
+            warnRefusal(ProxyStatus.WAITING_FOR_DNS);
             System.exit(1);
         }
         if (serviceRestartCanHelp(status) && tryAutoRestart(incus)) {
             if (waitForDns(incus)) { warnIfDrifted(incus); return; }
         }
-        System.err.println(formatError(check(incus)));
+        warnRefusal(check(incus));
         System.exit(1);
     }
 
@@ -468,13 +485,13 @@ public final class ProxyHealthCheck {
         }
         if (status == ProxyStatus.WAITING_FOR_DNS) {
             if (waitForDns(incus)) { warnIfDrifted(incus); return true; }
-            System.err.println(formatError(ProxyStatus.WAITING_FOR_DNS));
+            warnRefusal(ProxyStatus.WAITING_FOR_DNS);
             return false;
         }
         if (serviceRestartCanHelp(status) && tryAutoRestart(incus)) {
             if (waitForDns(incus)) { warnIfDrifted(incus); return true; }
         }
-        System.err.println(formatError(check(incus)));
+        warnRefusal(check(incus));
         return false;
     }
 
@@ -494,15 +511,21 @@ public final class ProxyHealthCheck {
     }
 
     public static boolean tryAutoRestart(IncusClient incus) {
-        return tryAutoRestart(incus, System.err::println);
+        return tryAutoRestart(incus, BuildOutput.bound());
     }
 
-    public static boolean tryAutoRestart(IncusClient incus, java.util.function.Consumer<String> log) {
+    /** Restart an unhealthy proxy service: its progress as notes to {@code out}, why it failed as warnings. */
+    public static boolean tryAutoRestart(IncusClient incus, Output out) {
         if (!ProxyService.isInstalled()) return false;
         var addr = healthAddress(incus);
-        log.accept("Proxy is not reachable, restarting service...");
-        // A restart refused until init runs has said so through log, and has nothing to wait for.
-        if (!ProxyService.restartIfUnhealthy(addr, log) && !Environment.hasBeenInitialized()) return false;
+        out.note("Proxy is not reachable, restarting service...");
+        // A restart refused until init runs has said why, and has nothing to wait for. ProxyService
+        // still marks its own errors and warnings, so they are told from its progress here.
+        java.util.function.Consumer<String> service = line -> {
+            var marked = line.strip();
+            if (marked.startsWith("Error:") || marked.startsWith("Warning:")) out.warn(line); else out.note(line);
+        };
+        if (!ProxyService.restartIfUnhealthy(addr, service) && !Environment.hasBeenInitialized()) return false;
         for (int i = 0; i < 30; i++) {
             try { Thread.sleep(500); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -510,30 +533,31 @@ public final class ProxyHealthCheck {
             }
             if (isHealthy(addr)) {
                 invalidateCache();
-                log.accept("Proxy service restarted successfully.");
+                out.note("Proxy service restarted successfully.");
                 return true;
             }
         }
         if (ProxyService.failedWithConfigError()) {
-            log.accept("Proxy service failed to start due to a configuration problem "
-                    + "(exit " + ProxyService.EXIT_CONFIG + ").");
-            log.accept("  systemctl --user status " + Environment.PROXY_SERVICE_NAME);
+            out.warn("Proxy service failed to start due to a configuration problem "
+                    + "(exit " + ProxyService.EXIT_CONFIG + ").",
+                    "systemctl --user status " + Environment.PROXY_SERVICE_NAME);
         } else {
-            log.accept("Proxy service did not become healthy after restart.");
+            out.warn("Proxy service did not become healthy after restart.");
         }
         return false;
     }
 
     public static boolean waitForDns(IncusClient incus) {
-        return waitForDns(incus, System.err::println);
+        return waitForDns(incus, BuildOutput.bound());
     }
 
-    public static boolean waitForDns(IncusClient incus, java.util.function.Consumer<String> log) {
+    /** Wait for the proxy's DNS overrides: progress as notes to {@code out}, a timeout as a warning. */
+    public static boolean waitForDns(IncusClient incus, Output out) {
         var addr = healthAddress(incus);
         var result = checkHealth(addr);
         if (result.healthy() && result.dnsConfigured()) return true;
         if (!result.healthy()) return false;
-        log.accept("Waiting for proxy DNS configuration...");
+        out.note("Waiting for proxy DNS configuration...");
         for (int i = 0; i < 120; i++) {
             try { Thread.sleep(500); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -543,11 +567,11 @@ public final class ProxyHealthCheck {
             if (!result.healthy()) return false;
             if (result.dnsConfigured()) {
                 invalidateCache();
-                log.accept("Proxy DNS overrides configured.");
+                out.note("Proxy DNS overrides configured.");
                 return true;
             }
         }
-        log.accept("Proxy DNS overrides were not configured within 60 seconds.");
+        out.warn("Proxy DNS overrides were not configured within 60 seconds.");
         return false;
     }
 
@@ -556,29 +580,24 @@ public final class ProxyHealthCheck {
             var info = fetchProxyInfo(healthAddress(incus));
             var report = assessDrift(info);
             if (report.isEmpty()) return;
-            var sep = BuildOutput.styled(BuildOutput.YELLOW, "─".repeat(60));
-            System.err.println(sep);
-            System.err.println(BuildOutput.styled(BuildOutput.BOLD + BuildOutput.YELLOW, "Proxy drift detected:")
-                    + " " + String.join(" ", report.drifts()));
-            if (ProxyService.isActive()) {
-                if (report.futileReason() != null) {
-                    System.err.println(report.futileReason());
-                } else {
-                    // Not a bare restart: the service files may still exec a binary from a
-                    // previous installation, and restarting that would leave the drift in place.
-                    ProxyService.reinstallIfChanged(incus, info);
-                }
+            var lines = new ArrayList<String>();
+            var active = ProxyService.isActive();
+            if (active) {
+                lines.add(report.futileReason() != null ? report.futileReason()
+                        : "Reinstalling the proxy service to pick up the changes.");
             } else {
-                System.err.println("Restart the proxy to pick up changes:");
-                System.err.println("  " + bold("isx proxy stop && isx proxy start"));
+                lines.add("Restart the proxy to pick up changes:");
+                lines.add(RESTART);
                 if (!info.configDrifted()) {
                     // A foreground proxy leaves no record of what it runs, so this cannot tell
                     // whether a restart would help; say what to do if it does not.
-                    System.err.println("If the drift remains afterwards, install isx and isx-proxy"
-                            + " from the same build.");
+                    lines.add("If the drift remains afterwards, install isx and isx-proxy from the same build.");
                 }
             }
-            System.err.println(sep);
+            BuildOutput.warnBanner("Proxy drift detected: " + String.join(" ", report.drifts()), lines.toArray(String[]::new));
+            // Not a bare restart: the service files may still exec a binary from a previous
+            // installation, and restarting that would leave the drift in place.
+            if (active && report.futileReason() == null) ProxyService.reinstallIfChanged(incus, info);
         } catch (Exception ignored) {}
     }
 

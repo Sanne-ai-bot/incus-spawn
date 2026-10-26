@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.SystemTrust;
 
 import javax.net.ssl.SSLSocket;
@@ -38,21 +39,19 @@ public class DumpProxy {
 
     public void start() throws IOException {
         var server = new ServerSocket(port, 50, InetAddress.getLoopbackAddress());
-        System.out.println("API dump proxy listening on http://localhost:" + port);
-        System.out.println("Logs: " + log.logDir());
-        System.out.println();
-        System.out.println("Usage:");
-        System.out.println("  ANTHROPIC_BASE_URL=http://localhost:" + port + " claude");
-        System.out.println();
-        System.out.println("Press Ctrl+C to stop.");
-        System.out.println();
+        BuildOutput.header("API dump proxy listening on http://localhost:" + port, null);
+        BuildOutput.step("Logs: " + log.logDir());
+        BuildOutput.step("Usage:");
+        BuildOutput.stepNote("ANTHROPIC_BASE_URL=http://localhost:" + port + " claude");
+        BuildOutput.step("Press Ctrl+C to stop.");
 
         while (true) {
             try {
                 var client = server.accept();
                 executor.submit(() -> handleConnection(client));
             } catch (IOException e) {
-                System.err.println("Accept error: " + e.getMessage());
+                // Beside the flow, on stderr alone: a burst of them must not fill stdout with blank lines
+                BuildOutput.current().warnAside("Accept error: " + e.getMessage());
             }
         }
     }
@@ -81,7 +80,7 @@ public class DumpProxy {
         } catch (IOException e) {
             // Connection closed
         } catch (Exception e) {
-            System.err.println("Dump proxy error: " + e.getMessage());
+            BuildOutput.current().warnAside("Dump proxy error: " + e.getMessage());
         }
     }
 

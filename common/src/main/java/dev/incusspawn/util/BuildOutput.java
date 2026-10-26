@@ -351,6 +351,11 @@ public final class BuildOutput {
         bound.warn(msg, details);
     }
 
+    /** Print why the command failed, in red on stderr, and any lines of advice under it. */
+    public static void error(String msg, String... details) {
+        bound.error(msg, details);
+    }
+
     private static final java.util.regex.Pattern WARNING_MARKER = java.util.regex.Pattern.compile("^Warning:\\s*");
 
     /**

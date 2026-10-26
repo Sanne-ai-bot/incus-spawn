@@ -66,9 +66,10 @@ public class ProxyMain implements QuarkusApplication {
         }
 
         installLogTee();
-        // The daemon's warnings are its log lines: what shared code reports, the proxy logs, a
-        // line of advice under a warning its own timestamped line.
-        BuildOutput.bind(Output.diagnosticsTo(warning -> warning.lines().forEach(ProxyLog::warn)));
+        // The daemon's messages are its log lines: what shared code reports, the proxy logs,
+        // progress as info, notes (a request's debug line) on stderr alone and warnings as
+        // warnings, each line its own timestamped line.
+        BuildOutput.bind(Output.logTo(ProxyLog::info, ProxyLog::trace, ProxyLog::warn));
 
         ExitWith.watchIfAsked(args);
 

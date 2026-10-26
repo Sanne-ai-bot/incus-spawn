@@ -181,6 +181,25 @@ class OutputBindingTest {
                 out.lines());
     }
 
+    /** The proxy's log keeps what shared code reports: progress as info, notes apart, warnings as warnings, one line each. */
+    @Test
+    void aDaemonsLogKeepsProgressAsInfoAndWarningsAsWarnings() {
+        var info = new ArrayList<String>();
+        var notes = new ArrayList<String>();
+        var warned = new ArrayList<String>();
+        try (var ignored = BuildOutput.bind(Output.logTo(info::add, notes::add, warned::add))) {
+            BuildOutput.step("DNS overrides: 3 domains");
+            BuildOutput.stepStart("Waiting...");
+            BuildOutput.stepDone();
+            BuildOutput.note("[debug] GET /v1 -> 1.txt");
+            BuildOutput.warn("Warning: could not persist cert", "disk full");
+        }
+
+        assertEquals(List.of("DNS overrides: 3 domains", "Waiting..."), info);
+        assertEquals(List.of("[debug] GET /v1 -> 1.txt"), notes);
+        assertEquals(List.of("could not persist cert", "disk full"), warned);
+    }
+
     @Test
     void bindingsClosedOutOfOrderAreRefused() {
         var outer = BuildOutput.bind(Output.diagnosticsTo(m -> {}));

@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.DerEncoder;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.proxy.CertificateAuthority.CertEntry;
@@ -167,7 +168,7 @@ public class CertStore {
         } catch (Exception e) {
             // Best-effort: an in-memory cert still serves this run; it just won't
             // have a stable notBefore across restarts until persistence succeeds.
-            System.err.println("Warning: could not persist cert for " + domain + ": " + e.getMessage());
+            BuildOutput.warn("could not persist cert for " + domain + ": " + e.getMessage());
         }
     }
 

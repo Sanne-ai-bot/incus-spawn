@@ -28,7 +28,7 @@ public final class RecordingOutput implements Output {
 
     /** What kind of message an event is: one per method of {@link Output} that reports. */
     public enum Kind {
-        WARN, WARN_ASIDE, STEP_WARN, WARN_BANNER, STEP_FAIL, NOTE,
+        WARN, ERROR, WARN_ASIDE, STEP_WARN, WARN_BANNER, STEP_FAIL, NOTE,
         HEADER, BUILD_HEADER, BRANCH_HEADER, SECTION, GROUP, GROUP_END,
         STEP, STEP_NOTE, OK, SUCCESS, LIST,
         STEP_START, STEP_PROGRESS, STEP_DONE, STEP_BREAK, RELEASE_TERMINAL, ABANDON_STEP
@@ -36,15 +36,15 @@ public final class RecordingOutput implements Output {
 
     /** The kinds {@link Output} treats as diagnostics: those that default to {@link Output#warn}. */
     private static final Set<Kind> DIAGNOSTICS =
-            EnumSet.of(Kind.WARN, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.WARN_BANNER, Kind.STEP_FAIL);
+            EnumSet.of(Kind.WARN, Kind.ERROR, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.WARN_BANNER, Kind.STEP_FAIL);
     /** The kinds a terminal skips when blank ({@link TerminalOutput}). */
     private static final Set<Kind> SKIPPED_WHEN_BLANK =
-            EnumSet.of(Kind.WARN, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.STEP_NOTE, Kind.NOTE);
+            EnumSet.of(Kind.WARN, Kind.ERROR, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.STEP_NOTE, Kind.NOTE);
     /** The kinds whose own {@code Warning:} marker a terminal drops for its ⚠ ({@link BuildOutput#warningText}). */
     private static final Set<Kind> MARKER_DROPPED = EnumSet.of(Kind.WARN, Kind.WARN_ASIDE);
     /** The kinds {@link TerminalOutput} prints through {@link BuildOutput#safeLines}. */
     private static final Set<Kind> SAFE_LINES =
-            EnumSet.of(Kind.WARN, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.STEP_FAIL, Kind.STEP_NOTE);
+            EnumSet.of(Kind.WARN, Kind.ERROR, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.STEP_FAIL, Kind.STEP_NOTE);
 
     /** One message: its kind, its text (null for a kind that has none) and the lines under it. */
     public record Event(Kind kind, String msg, List<String> details) {
@@ -127,6 +127,7 @@ public final class RecordingOutput implements Output {
     }
 
     @Override public void warn(String msg, String... details) { record(Kind.WARN, msg, details); }
+    @Override public void error(String msg, String... details) { record(Kind.ERROR, msg, details); }
     @Override public void warnAside(String msg) { record(Kind.WARN_ASIDE, msg); }
     @Override public void stepWarn(String msg) { record(Kind.STEP_WARN, msg); }
     @Override public void warnBanner(String title, String... lines) { record(Kind.WARN_BANNER, title, lines); }
