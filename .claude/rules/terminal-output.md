@@ -33,6 +33,8 @@ So the live line, the plain failure line on stdout, the printed log and the save
 `Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` print a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
 `VmAgentFailure` quotes a VM's console lines through it too, since whatever runs in the guest can write its console.
 `AnsiEscapeGateTest` fails on any raw CSI/OSC literal (`\033[`, `\033]`) whose line lacks a `// raw ANSI: <why>` comment, apart from the gates, `TerminalProgress` and `ShellStatusBar` (#1082).
+`RawOutputGateTest` fails on raw stream use or replacement (`System.setOut`/`setErr`), console or `printStackTrace()` use and on a print literal that starts with spaces, outside the gate classes (#1703).
+Older offenders are counted per file in `cli/src/test/resources/raw-output-baseline.txt`: a file may not exceed its count, and a count it no longer reaches must be lowered.
 Escapes follow stdout: `System.console()` never looks at stderr, so `2>log` alone keeps colour (documented, not fixable without native code).
 A warning's closing blank line goes to stdout, so stdout's flow keeps its layout when stderr is redirected.
 A styled string is never a `static final` (it would be decided when the native image is built): `InitCommand`'s borders are methods for that reason.
