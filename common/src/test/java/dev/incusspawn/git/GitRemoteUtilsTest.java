@@ -58,6 +58,17 @@ class GitRemoteUtilsTest {
         assertNull(GitRemoteUtils.parseIsxUrl("isx:///path"));
     }
 
+    @Test
+    void aPathFromAnOlderShimDropsItsDoubleSlash() {
+        // A shim from before #1704 forwards isx://inst//~/repo as "//~/repo", and isx init never
+        // replaces an installed shim, so isx git-remote-helper decodes the double slash itself.
+        assertEquals("/home/agentuser/repo", GitRemoteUtils.containerPath("//~/repo"));
+        assertEquals("/home/agentuser", GitRemoteUtils.containerPath("//~"));
+        assertEquals("/home/agentuser/p", GitRemoteUtils.containerPath("//home/agentuser/p"));
+        assertEquals("/home/agentuser/p", GitRemoteUtils.containerPath("/home/agentuser/p"));
+        assertEquals("/home/agentuser/repo", GitRemoteUtils.containerPath("/~/repo"));
+    }
+
     // ── repoNameFromUrl ────────────────────────────────────────────────────
 
     @Test

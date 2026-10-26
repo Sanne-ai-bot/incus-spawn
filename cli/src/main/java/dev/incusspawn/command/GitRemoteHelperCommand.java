@@ -49,7 +49,7 @@ public class GitRemoteHelperCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        var resolvedPath = GitRemoteUtils.expandContainerTilde(path);
+        var resolvedPath = GitRemoteUtils.containerPath(path);
 
         var stderrOut = new GuestStderr(System.err);
         int exitCode;
@@ -60,7 +60,7 @@ public class GitRemoteHelperCommand extends BaseCommand {
             stderrOut.close();  // a last line without a break, even when the exec fails
         }
         if (exitCode != 0 && stderrOut.sawNotARepository()) {
-            printRepoHints(incus);
+            printRepoHints(incus, resolvedPath);
         }
         return CommandResult.valueOf(exitCode);
     }
@@ -84,12 +84,12 @@ public class GitRemoteHelperCommand extends BaseCommand {
         }
     }
 
-    private void printRepoHints(dev.incusspawn.incus.IncusClient incus) {
+    private void printRepoHints(dev.incusspawn.incus.IncusClient incus, String resolvedPath) {
         var repos = GitRemoteUtils.collectReposForInstance(instance, incus);
         if (repos.isEmpty()) return;
 
         System.err.println();
-        repoHints(instance, path, repos).forEach(System.err::println);
+        repoHints(instance, resolvedPath, repos).forEach(System.err::println);
     }
 
     /**

@@ -3178,7 +3178,9 @@ The hints quote each repository's path and URL, and the requested path, through 
 
 `isx://<instance-name>/<path-to-repo>` where a double slash marks an absolute path and tilde expands to `/home/agentuser`.
 For example, `isx://fix-auth//home/agentuser/quarkus` or `isx://fix-auth/~/quarkus`.
-Old-style URLs with a single slash before an absolute path (`isx://fix-auth/home/agentuser/quarkus`) are still accepted by the parser and matched by cleanup.
+Old-style URLs with a single slash before an absolute path (`isx://fix-auth/home/agentuser/quarkus`) are still accepted by the shim and the helper, and matched by cleanup.
+The shim strips the double slash, and `isx git-remote-helper` strips one still there (`GitRemoteUtils.containerPath`, #1709).
+`isx init` never replaces an installed shim, so a shim from before the double slash forwards `//~/repo`, whose tilde would otherwise not expand.
 
 **Auto-remote management**
 
