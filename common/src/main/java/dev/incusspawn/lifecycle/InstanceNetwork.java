@@ -185,7 +185,8 @@ public final class InstanceNetwork {
             // before the start: see "Why nothing is pushed into an instance just before it
             // starts".
             if (!vm && pushNetworkConfig) {
-                pushStaticNetworkConfig(incus, name, ip, bridge.gateway(), bridge.prefixLen());
+                pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, ip, bridge.gateway(),
+                        bridge.prefixLen(), output.warn());
             }
             try {
                 incus.update(name, read, update);
@@ -204,7 +205,7 @@ public final class InstanceNetwork {
             }
         });
         // After the claim: the address is written, so no one need wait on this write
-        if (filteringRefused.get()) applyIpFiltering(incus, name, nicDevice);
+        if (filteringRefused.get()) applyIpFiltering(incus, name, nicDevice, output.warn());
         return assigned;
     }
 
@@ -331,20 +332,15 @@ public final class InstanceNetwork {
      * <p>Incus enforces this with nftables/ebtables rules and requires the pinned
      * {@code ipv4.address} set with it. A host whose kernel or firewall backend cannot do
      * it warns rather than failing the branch: the instance still works, it is only the
-     * separation between instances that is not enforced.
+     * separation between instances that is not enforced, in one warning to {@code warn}.
      */
-    public static void applyIpFiltering(IncusClient incus, String name, String nicDevice) {
-        applyIpFiltering(incus, name, nicDevice, STDERR_WARN);
-    }
-
     private static void applyIpFiltering(IncusClient incus, String name, String nicDevice,
                                          Consumer<String> warn) {
         try {
             incus.deviceConfigSet(name, nicDevice, "security.ipv4_filtering", "true");
         } catch (RuntimeException e) {
-            warn.accept("could not enable IP spoofing protection on " + name + ": "
-                    + e.getMessage());
-            warn.accept("Instances on this host can impersonate each other's credential accounts.");
+            warn.accept("could not enable IP spoofing protection on " + name + ": " + e.getMessage()
+                    + "; instances on this host can impersonate each other's credential accounts.");
         }
     }
 
@@ -399,13 +395,9 @@ public final class InstanceNetwork {
         return BridgeAddress.read(incus).map(BridgeAddress::prefixLen).orElse(24);
     }
 
-    /** Warnings from flows that print them, as the terminal shows them. */
-    private static final Consumer<String> STDERR_WARN =
-            msg -> System.err.println(BuildOutput.STEP_INDENT + "Warning: " + msg);
-
     static void pushStaticNetworkConfig(IncusClient incus, String name,
                                         String ip, String gateway, int prefixLen) {
-        pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, ip, gateway, prefixLen, STDERR_WARN);
+        pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, ip, gateway, prefixLen, BuildOutput::warn);
     }
 
     static final String NETWORK_FILE = "/etc/systemd/network/10-eth0.network";
@@ -455,7 +447,7 @@ public final class InstanceNetwork {
     public static JqValue pushDeferredVmFiles(IncusClient incus, String name, NetworkMode networkMode) {
         if (networkMode == NetworkMode.AIRGAP) return null;
         var instance = incus.instanceMetadata(name);
-        pushVmNetworkConfig(incus, name, instance, bridgePrefixLen(incus), STDERR_WARN);
+        pushVmNetworkConfig(incus, name, instance, bridgePrefixLen(incus), BuildOutput::warn);
         return instance.isMissingNode() ? null : instance;
     }
 
