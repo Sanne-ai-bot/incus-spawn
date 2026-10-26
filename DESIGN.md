@@ -1103,6 +1103,13 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 - **`ProxyCommand` through the exec API** (a1086a1e, #128): `isx ssh-proxy` pipes the connection to `nc localhost 22` in the instance, so a client needs no route to the instance's address.
   That is what makes it work on macOS, where the address is inside the appliance VM.
   Its throughput is the exec relay's: see "A bulk exec stream is framed large and read ahead".
+- **The ProxyCommand waits for sshd, the start does not** (#1699): a start returns about a second before sshd listens, so `ssh` straight after `isx run` was refused.
+  The guest side first polls `/proc/net/tcp` for a socket listening on port 22, and only then runs `nc`.
+  It polls only while `systemctl is-system-running` says the guest is still starting, and for at most 20 s by the wall clock.
+  After boot, a stopped or failed sshd will not come, so the refusal is reported at once, as before.
+  Waiting on the sshd tool's `ready:` check at every start was the alternative, but it would charge that second to starts that never use SSH.
+  Retrying the exec after a refusal cannot work, since ssh has already written its banner into the first one's stdin.
+  The probe reads the socket table rather than connecting, so a ready instance pays one `grep` and sshd logs nothing.
 - **`Hostname` as a label** (4e271acb, #211): JetBrains Gateway resolves the host before it runs the `ProxyCommand`, and without the line it reported the instance name as not resolvable.
   It never dials that address: Gateway 2026.2 runs the `ProxyCommand` on macOS too, and logs the connection as `<Hostname>:<Port>` (#1600).
 - **No host key checking**: the host key is not harvested or pinned.
