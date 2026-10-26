@@ -75,7 +75,7 @@ class SshOnStartTest {
         doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), script.capture(), anyMap());
 
         InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false,
-                dev.incusspawn.incus.JacksonTrees.fromJsonNode(daemon.instance(NAME)));
+                daemon.instance(NAME));
 
         assertTrue(script.getValue().contains(KEY), script.getValue());
     }
