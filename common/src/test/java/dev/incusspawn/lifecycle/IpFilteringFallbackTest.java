@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.Output;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
@@ -93,7 +94,7 @@ class IpFilteringFallbackTest {
         doThrow(new IncusException(NFT_BRIDGE_FAILURE)).doNothing().when(incus).start(NAME);
         var copied = new ArrayList<String>();
 
-        try (var ignored = BuildOutput.copyWarningsTo(copied::add)) {
+        try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(copied::add)))) {
             // The default sink, which build-time starts use, is BuildOutput's too
             InstanceLifecycle.startInstance(incus, NAME);
         }

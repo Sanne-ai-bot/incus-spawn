@@ -29,6 +29,7 @@ import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.mcp.TaskJoin;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -99,13 +100,14 @@ public class Tui {
     /** Warnings from any operation while the TUI runs; the status line holds only one. */
     final WarningLog warningLog = new WarningLog();
     /**
-     * Where {@link Warnings} go while the TUI draws or reloads (#872). Its own channel, so what it
-     * has reported is remembered across TUI sessions, while a build run on the released terminal
-     * still prints the same warning on stderr.
+     * Where every warning goes while the TUI draws or reloads (#872, #1703): its log, and progress
+     * nowhere, since a line printed under the TUI is drawn over. One output for the TUI's life, so
+     * what {@link Warnings} reported is remembered across sessions, while a build run on the
+     * released terminal still prints the same warning.
      */
-    private final Warnings.Channel warningChannel = new Warnings.Channel(warningLog::add);
+    private final Output drawing = Output.diagnosticsTo(warningLog::add);
     private final WarningsModal warningsModal = new WarningsModal(modal, theme, warningLog,
-            warningChannel::forgetReported);
+            () -> Warnings.forgetReported(drawing));
     /** The status line last set by a warning announcement, which a newer one may replace. */
     private String warningAnnouncement;
     /**
@@ -317,7 +319,7 @@ public class Tui {
         // Before anything else, so no failure here can skip the pause, and before the
         // first reload, so a pause for the user does not leave the listing stale.
         if (preTui != null) {
-            preTui.handOver(warningChannel::report, this::waitForUser);
+            preTui.handOver(warning -> Warnings.warn(drawing, warning), this::waitForUser);
             preTui = null;
         }
         this.incus = RuntimeServices.incus();
@@ -402,7 +404,7 @@ public class Tui {
     /** The TUI has closed: warnings nobody opened the dialog for must not vanish with it. */
     private void printUnreadWarnings() {
         for (var entry : warningLog.unreadEntries()) {
-            System.err.println("Warning: " + entry.message());
+            BuildOutput.warn(entry.message());
         }
     }
 
@@ -438,10 +440,9 @@ public class Tui {
     private void runTuiSessions() {
         while (true) {
             String reloadError = null;
-            // Anything reporting through Warnings (definition loaders built deep in shared code)
-            // goes to the warning log, like everything raised while the runner below draws, but
-            // not while the terminal is released to a build or a shell, which print their own.
-            try (var ignored = Warnings.redirect(warningChannel)) {
+            // Every warning goes to the log while the TUI reloads or draws; a build or a shell
+            // on the released terminal binds its own output.
+            try (var ignored = BuildOutput.bind(drawing)) {
                 loader.reloadData();
             } catch (IncusException e) {
                 reloadError = e.getMessage();
@@ -452,7 +453,7 @@ public class Tui {
             enterSession(reloadError);
 
             ProxyLog.setSuppressStderr(true);
-            try (var ignored = Warnings.redirect(warningChannel);
+            try (var ignored = BuildOutput.bind(drawing);
                  var runner = openRunner(runnerConfig().backend(new PanamaBackend()).build())) {
                 runner.run(this::handleEvent, this::render);
             } catch (Exception e) {
@@ -467,87 +468,88 @@ public class Tui {
             var tpl = selectedTemplate();
             if (tpl != null) returnToTemplate = tpl.name();
 
-            switch (pendingAction) {
-                case SHELL -> {
-                    returnToInstance = pendingActionTarget.name();
-                    shellLaunch.shellInto(pendingActionTarget);
-                }
-                case SHELL_WITH_COMMAND -> {
-                    returnToInstance = pendingActionTarget.name();
-                    shellLaunch.shellInto(pendingActionTarget, pendingShellCommand, pendingCommandOnly);
-                }
-                case BRANCH -> {
-                    returnToInstance = pendingActionTarget.name();
-                    try {
-                        shellLaunch.createBranchFromModal(pendingActionTarget.name());
-                        statusMessage = "Created branch " + pendingActionTarget.name();
-                    } catch (Exception e) {
-                        statusMessage = "Failed to create branch " + pendingActionTarget.name() + ": " + e.getMessage();
+            // The terminal is lent out to the action, and the TUI redraws over whatever it prints
+            // once it returns: every warning is printed and kept in the log (#1646, #1703).
+            try (var released = BuildOutput.bind(Output.copying(BuildOutput.terminal(), drawing))) {
+                switch (pendingAction) {
+                    case SHELL -> {
+                        returnToInstance = pendingActionTarget.name();
+                        shellLaunch.shellInto(pendingActionTarget);
                     }
-                }
-                case BUILD_TEMPLATE, BUILD_THEN_BRANCH -> {
-                    var args = java.util.Arrays.copyOf(pendingBuildArgs, pendingBuildArgs.length + 1);
-                    args[args.length - 1] = "--yes";
-                    // The one template the build names, if just one: a batch has no report to show
-                    var buildTarget = singleBuildTarget(pendingBuildArgs);
-                    if (buildTarget != null) returnToTemplate = buildTarget;
-                    try {
-                        // Delete any stale report so freshFailureReport cannot mistake it for this build's.
-                        // The build writes a new one on failure; on success no report should be shown.
-                        // If the delete fails, suppress the report path entirely (buildStart = null)
-                        // rather than risk showing a stale report from the same filesystem second.
-                        java.time.Instant buildStart = null;
-                        if (buildTarget != null) {
-                            try {
-                                java.nio.file.Files.deleteIfExists(Environment.buildFailureLogFile(buildTarget));
+                    case SHELL_WITH_COMMAND -> {
+                        returnToInstance = pendingActionTarget.name();
+                        shellLaunch.shellInto(pendingActionTarget, pendingShellCommand, pendingCommandOnly);
+                    }
+                    case BRANCH -> {
+                        returnToInstance = pendingActionTarget.name();
+                        try {
+                            shellLaunch.createBranchFromModal(pendingActionTarget.name());
+                            statusMessage = "Created branch " + pendingActionTarget.name();
+                        } catch (Exception e) {
+                            statusMessage = "Failed to create branch " + pendingActionTarget.name() + ": " + e.getMessage();
+                        }
+                    }
+                    case BUILD_TEMPLATE, BUILD_THEN_BRANCH -> {
+                        var args = java.util.Arrays.copyOf(pendingBuildArgs, pendingBuildArgs.length + 1);
+                        args[args.length - 1] = "--yes";
+                        // The one template the build names, if just one: a batch has no report to show
+                        var buildTarget = singleBuildTarget(pendingBuildArgs);
+                        if (buildTarget != null) returnToTemplate = buildTarget;
+                        try {
+                            // Delete any stale report so freshFailureReport cannot mistake it for this build's.
+                            // The build writes a new one on failure; on success no report should be shown.
+                            // If the delete fails, suppress the report path entirely (buildStart = null)
+                            // rather than risk showing a stale report from the same filesystem second.
+                            java.time.Instant buildStart = null;
+                            if (buildTarget != null) {
+                                try {
+                                    java.nio.file.Files.deleteIfExists(Environment.buildFailureLogFile(buildTarget));
+                                    buildStart = java.time.Instant.now();
+                                } catch (Exception ignored) {}
+                            } else {
                                 buildStart = java.time.Instant.now();
-                            } catch (Exception ignored) {}
-                        } else {
-                            buildStart = java.time.Instant.now();
+                            }
+                            // The build's warnings reach the log through the released terminal's binding
+                            // (a deprecated parent, #1195; dropped tools)
+                            var buildResult = org.aesh.AeshRuntimeRunner.builder().command(BuildCommand.class).args(args).execute();
+                            int exitCode = buildResult != null ? buildResult.getResultValue() : 1;
+                            statusMessage = buildStatusMessage(pendingBuildArgs, exitCode == 0, buildStart);
+                            if (exitCode != 0) pendingAction = PendingAction.BUILD_TEMPLATE;
+                        } catch (Exception e) {
+                            statusMessage = "Build failed: " + e.getMessage();
+                            pendingAction = PendingAction.BUILD_TEMPLATE;
                         }
-                        // The build prints its warnings on the released terminal, which the TUI is about
-                        // to redraw over: the log keeps them (a deprecated parent, #1195; dropped tools)
-                        org.aesh.command.CommandResult buildResult;
-                        try (var ignored = BuildOutput.copyWarningsTo(warningLog::add)) {
-                            buildResult = org.aesh.AeshRuntimeRunner.builder().command(BuildCommand.class).args(args).execute();
+                    }
+                    case NEW_TEMPLATE -> {
+                        returnToTemplate = pendingActionTarget.name();
+                        try {
+                            var parent = newTemplate.parent();
+                            var dir = newTemplate.locationDir();
+                            var targetPath = TemplatesCommand.createTemplateFile(pendingActionTarget.name(), parent, dir);
+                            TemplatesCommand.editLoop(targetPath, pendingActionTarget.name(), false);
+                            statusMessage = "Created template " + pendingActionTarget.name();
+                        } catch (Exception e) {
+                            statusMessage = "Failed to create template: " + e.getMessage();
                         }
-                        int exitCode = buildResult != null ? buildResult.getResultValue() : 1;
-                        statusMessage = buildStatusMessage(pendingBuildArgs, exitCode == 0, buildStart);
-                        if (exitCode != 0) pendingAction = PendingAction.BUILD_TEMPLATE;
-                    } catch (Exception e) {
-                        statusMessage = "Build failed: " + e.getMessage();
-                        pendingAction = PendingAction.BUILD_TEMPLATE;
                     }
-                }
-                case NEW_TEMPLATE -> {
-                    returnToTemplate = pendingActionTarget.name();
-                    try {
-                        var parent = newTemplate.parent();
-                        var dir = newTemplate.locationDir();
-                        var targetPath = TemplatesCommand.createTemplateFile(pendingActionTarget.name(), parent, dir);
-                        TemplatesCommand.editLoop(targetPath, pendingActionTarget.name(), false);
-                        statusMessage = "Created template " + pendingActionTarget.name();
-                    } catch (Exception e) {
-                        statusMessage = "Failed to create template: " + e.getMessage();
+                    case EDIT_TEMPLATE -> {
+                        returnToTemplate = pendingActionTarget.name();
+                        try { var editCmd = new TemplatesCommand.Edit(); editCmd.name = pendingActionTarget.name(); editCmd.doExecute(); }
+                        catch (Exception e) { statusMessage = "Edit failed: " + e.getMessage(); }
                     }
-                }
-                case EDIT_TEMPLATE -> {
-                    returnToTemplate = pendingActionTarget.name();
-                    try { var editCmd = new TemplatesCommand.Edit(); editCmd.name = pendingActionTarget.name(); editCmd.doExecute(); }
-                    catch (Exception e) { statusMessage = "Edit failed: " + e.getMessage(); }
-                }
-                case EXECUTE_ACTION -> {
-                    var result = pendingToolAction.execute(pendingActionTarget);
-                    System.out.println(result.message());
-                    if (pendingToolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
-                        waitForKeypress();
+                    case EXECUTE_ACTION -> {
+                        var result = pendingToolAction.execute(pendingActionTarget);
+                        System.out.println(result.message());
+                        if (pendingToolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
+                            waitForKeypress();
+                        }
                     }
+                    case NONE -> { return; }
                 }
-                case NONE -> { return; }
+                // An action that failed mid-step (a branch whose copy or start threw) must not leave the
+                // step animating over the TUI we are about to redraw, nor System.out/err guarded.
+                BuildOutput.abandonStep();
             }
-            // An action that failed mid-step (a branch whose copy or start threw) must not leave the
-            // step animating over the TUI we are about to redraw, nor System.out/err guarded.
-            BuildOutput.abandonStep();
         }
     }
 
@@ -728,7 +730,7 @@ public class Tui {
         if ((!key.hasCtrl() && key.isCharIgnoreCase('r')) || (key.hasCtrl() && key.isCharIgnoreCase('l'))) {
             // An explicit reload reports definition problems again, so a warning that is still
             // true is announced again rather than silently deduplicated.
-            warningChannel.forgetReported();
+            Warnings.forgetReported(drawing);
             refreshData(tableState);
             return true;
         }

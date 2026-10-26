@@ -1,5 +1,7 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.tool.ToolDef;
 import io.hyperfoil.tools.jjq.mapper.JqName;
 import org.junit.jupiter.api.Test;
@@ -913,7 +915,7 @@ class ImageDefTest {
         var defs = Map.of("tpl-a", a, "tpl-b", b);
         var warnings = new java.util.ArrayList<String>();
 
-        try (var ignored = dev.incusspawn.Warnings.redirect(new dev.incusspawn.Warnings.Channel(warnings::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(warnings::add))) {
             assertEquals(List.of(b), ImageDef.ancestors(a, defs));
             assertEquals(List.of(b, a), ImageDef.chain(a, defs));
             assertEquals(List.of(a, b), ImageDef.chain(b, defs));

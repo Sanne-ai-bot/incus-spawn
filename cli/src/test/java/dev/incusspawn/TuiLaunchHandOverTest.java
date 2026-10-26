@@ -74,8 +74,8 @@ class TuiLaunchHandOverTest {
         assertEquals(List.of(SKEW), tui.warningsAtStart);
         var shown = terminal();
         assertTrue(shown.contains("Starting incus-spawn VM"), shown);
-        assertTrue(shown.contains("Warning: " + SKEW), shown);
-        assertTrue(shown.indexOf("Starting incus-spawn VM") < shown.indexOf("Warning: " + SKEW),
+        assertTrue(shown.contains("⚠ " + SKEW), shown);
+        assertTrue(shown.indexOf("Starting incus-spawn VM") < shown.indexOf("⚠ " + SKEW),
                 "the warning is shown above the pause as well, so Ctrl-C there does not lose it");
     }
 
@@ -85,6 +85,6 @@ class TuiLaunchHandOverTest {
             Warnings.warn(SKEW);
             return false;
         }, () -> fail("no TUI when isx is not ready")));
-        assertTrue(terminal().contains("Warning: " + SKEW));
+        assertTrue(terminal().contains("⚠ " + SKEW));
     }
 }

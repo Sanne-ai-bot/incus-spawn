@@ -27,7 +27,8 @@ class AnsiEscapeGateTest {
     private static final String MARKER = "raw ANSI:";
 
     private static final Map<String, String> EXEMPT = Map.of(
-            "BuildOutput.java", "the colour gate and its live step",
+            "BuildOutput.java", "the colour gate",
+            "TerminalOutput.java", "the terminal printer and its live step",
             "TerminalLink.java", "the hyperlink gate",
             "TerminalProgress.java", "animated lines and the terminal check itself",
             "ShellStatusBar.java", "drawn inside an interactive shell, which needs a terminal");

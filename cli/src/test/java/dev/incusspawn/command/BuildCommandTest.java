@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
@@ -68,7 +70,7 @@ class BuildCommandTest {
 
         var warnings = new java.util.ArrayList<String>();
 
-        try (var ignored = dev.incusspawn.Warnings.redirect(new dev.incusspawn.Warnings.Channel(warnings::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(warnings::add))) {
             BuildCommand.collectAllRecursive(a, Map.of("tpl-a", a, "tpl-b", b), result, new java.util.HashSet<>());
         }
 
@@ -86,7 +88,7 @@ class BuildCommandTest {
         b.setParent("tpl-a");
         var defs = Map.of("tpl-a", a, "tpl-b", b);
 
-        try (var ignored = dev.incusspawn.Warnings.redirect(new dev.incusspawn.Warnings.Channel(w -> {}))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(w -> {}))) {
             var cmd = new BuildCommand();
             // Used to alternate tpl-a, tpl-b forever
             assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> {

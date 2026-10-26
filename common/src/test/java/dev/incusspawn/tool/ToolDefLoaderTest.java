@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
-import dev.incusspawn.Warnings;
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -297,7 +298,7 @@ class ToolDefLoaderTest {
         fallbackDef.setName("evil-fallback");
         fallbackDef.setProxy(proxy);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.find("podman");
             loader.addFallbacks(Map.of("evil-fallback", fallbackDef));
@@ -384,7 +385,7 @@ class ToolDefLoaderTest {
                     token:
                 """);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 
@@ -415,7 +416,7 @@ class ToolDefLoaderTest {
                       description: Token
                 """);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 
@@ -447,7 +448,7 @@ class ToolDefLoaderTest {
                       token: "${token}"
                 """);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 
@@ -479,7 +480,7 @@ class ToolDefLoaderTest {
                       token: "${token}"
                 """);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 
@@ -501,7 +502,7 @@ class ToolDefLoaderTest {
                     -
                 """);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 
@@ -520,7 +521,7 @@ class ToolDefLoaderTest {
                   - loginctl enable-linger agentuser
                 """);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
             assertNotNull(loader.find("lingers"), "a warning, not a refusal");
@@ -562,7 +563,7 @@ class ToolDefLoaderTest {
                       token: "${token}"
                 """);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
             assertNotNull(loader.find("mytool"), "a warning, not a refusal");
@@ -608,7 +609,7 @@ class ToolDefLoaderTest {
                       type: bearer
                       token: "${token}"
                 """);
-        try (var ignored = Warnings.redirect(new Warnings.Channel(msg -> {}))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(msg -> {}))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
             loader.find("mytool");
@@ -657,7 +658,7 @@ class ToolDefLoaderTest {
                       token: "${token}"
                 """);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
             assertNotNull(loader.find("mytool"));
@@ -692,7 +693,7 @@ class ToolDefLoaderTest {
                       type: bearer
                       token: "${token}"
                 """);
-        try (var ignored = Warnings.redirect(new Warnings.Channel(w -> {}))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(w -> {}))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
             assertEquals(2, loader.warnings().size(), loader.warnings().toString());
@@ -768,7 +769,7 @@ class ToolDefLoaderTest {
         var stderr = new ByteArrayOutputStream();
         var originalErr = System.err;
         System.setErr(new PrintStream(stderr, true));
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 
@@ -937,7 +938,7 @@ class ToolDefLoaderTest {
                       token: "${token}"
                 """);
         var reported = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
             assertNotNull(loader.find("typos"), "a warning, not a refusal");
@@ -961,7 +962,7 @@ class ToolDefLoaderTest {
     @Test
     void aToolWithAMisspelledNameIsNotSkippedWithoutAWord(@TempDir Path tempDir) throws Exception {
         Files.writeString(tempDir.resolve("nameless.yaml"), "nmae: nameless\npackages: [git]\n");
-        try (var ignored = Warnings.redirect(new Warnings.Channel(w -> {}))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(w -> {}))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 
@@ -976,7 +977,7 @@ class ToolDefLoaderTest {
         Files.writeString(tempDir.resolve("nameless.yaml"), "packages: [git]\n");
         Files.writeString(tempDir.resolve("empty.yaml"), "~\n");
         Files.writeString(tempDir.resolve("blank.yaml"), "name: ''\npackages: [git]\n");
-        try (var ignored = Warnings.redirect(new Warnings.Channel(w -> {}))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(w -> {}))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
 

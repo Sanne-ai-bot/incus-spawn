@@ -1,5 +1,7 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
@@ -311,7 +313,7 @@ class PerInstanceCredentialsTest {
         tools.put("gh-twin", new dev.incusspawn.tool.GhSetup());
 
         var reported = new java.util.ArrayList<String>();
-        try (var ignored = dev.incusspawn.Warnings.redirect(new dev.incusspawn.Warnings.Channel(reported::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             ToolProxyResolver.resolveAcrossAccounts(config, tools);
         }
         assertEquals(1, reported.size(), reported.toString());

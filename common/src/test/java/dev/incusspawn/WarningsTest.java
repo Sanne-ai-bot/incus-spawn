@@ -1,5 +1,7 @@
 package dev.incusspawn;
 
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -10,25 +12,25 @@ import static org.junit.jupiter.api.Assertions.*;
 class WarningsTest {
 
     private final List<String> received = new ArrayList<>();
-    private final Warnings.Channel channel = new Warnings.Channel(received::add);
+    private final Output channel = Output.diagnosticsTo(received::add);
 
     @Test
-    void aRedirectReceivesWarningsUntilClosed() {
+    void aBindingReceivesWarningsUntilClosed() {
         var outer = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(outer::add))) {
-            try (var inner = Warnings.redirect(channel)) {
-                Warnings.warn("to the inner channel");
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(outer::add))) {
+            try (var inner = BuildOutput.bind(channel)) {
+                Warnings.warn("to the inner output");
             }
-            Warnings.warn("back to the outer channel");
+            Warnings.warn("back to the outer output");
         }
 
-        assertEquals(List.of("to the inner channel"), received);
-        assertEquals(List.of("back to the outer channel"), outer);
+        assertEquals(List.of("to the inner output"), received);
+        assertEquals(List.of("back to the outer output"), outer);
     }
 
     @Test
-    void aChannelReportsAMessageOnce() {
-        try (var ignored = Warnings.redirect(channel)) {
+    void anOutputReportsAMessageOnce() {
+        try (var ignored = BuildOutput.bind(channel)) {
             Warnings.warn("repeated");
             Warnings.warn("repeated");
             Warnings.warn("another");
@@ -38,11 +40,11 @@ class WarningsTest {
     }
 
     @Test
-    void aChannelRemembersWhatItReportedAcrossRedirects() {
-        try (var ignored = Warnings.redirect(channel)) {
+    void anOutputRemembersWhatItReportedAcrossBindings() {
+        try (var ignored = BuildOutput.bind(channel)) {
             Warnings.warn("seen in the first session");
         }
-        try (var ignored = Warnings.redirect(channel)) {
+        try (var ignored = BuildOutput.bind(channel)) {
             Warnings.warn("seen in the first session");
         }
 
@@ -51,12 +53,12 @@ class WarningsTest {
 
     /** A build run on the TUI's released terminal must still print what the TUI logged. */
     @Test
-    void anotherChannelReportsWhatThisOneAlreadyDid() {
+    void anotherOutputReportsWhatThisOneAlreadyDid() {
         var other = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(channel)) {
+        try (var ignored = BuildOutput.bind(channel)) {
             Warnings.warn("broken tool file");
         }
-        try (var ignored = Warnings.redirect(new Warnings.Channel(other::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(other::add))) {
             Warnings.warn("broken tool file");
         }
 
@@ -66,9 +68,9 @@ class WarningsTest {
 
     @Test
     void forgettingLetsAMessageBeReportedAgain() {
-        try (var ignored = Warnings.redirect(channel)) {
+        try (var ignored = BuildOutput.bind(channel)) {
             Warnings.warn("still true");
-            channel.forgetReported();
+            Warnings.forgetReported(channel);
             Warnings.warn("still true");
         }
 
@@ -77,7 +79,7 @@ class WarningsTest {
 
     @Test
     void blankMessagesAreIgnored() {
-        try (var ignored = Warnings.redirect(channel)) {
+        try (var ignored = BuildOutput.bind(channel)) {
             Warnings.warn(null);
             Warnings.warn("  ");
         }
@@ -86,10 +88,10 @@ class WarningsTest {
     }
 
     @Test
-    void forgettingLetsTheCurrentChannelReportAgain() {
+    void forgettingLetsTheBoundOutputReportAgain() {
         // What the proxy does on each config reload: a problem still there is reported again.
         var seen = new java.util.ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(seen::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(seen::add))) {
             Warnings.warn("tool 'x' has proxy configuration but is project-local");
             Warnings.warn("tool 'x' has proxy configuration but is project-local");
             Warnings.forgetReported();

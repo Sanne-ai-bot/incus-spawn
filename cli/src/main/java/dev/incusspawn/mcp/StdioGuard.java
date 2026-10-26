@@ -1,6 +1,8 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Headless;
+import dev.incusspawn.util.TerminalOutput;
 
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
@@ -16,7 +18,8 @@ import java.io.PrintStream;
  * proxy warnings). Under {@code isx mcp} stdout is the protocol channel, so one stray line would
  * corrupt it. Rather than teach every helper about MCP, {@code System.out} becomes stderr -- which
  * the MCP client logs -- and {@code System.in} becomes empty, so nothing but the transport can
- * consume the client's messages. {@link Headless} stops animations and prompts.
+ * consume the client's messages. isx's own messages are bound to stderr outright
+ * ({@link TerminalOutput#stderrOnly}), and {@link Headless} stops animations and prompts.
  */
 final class StdioGuard {
 
@@ -33,6 +36,8 @@ final class StdioGuard {
                 new FileOutputStream(FileDescriptor.out));
         System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.err), true));
         System.setIn(InputStream.nullInputStream());
+        // For the life of the process, so no message of isx's own depends on the swap above.
+        BuildOutput.bind(TerminalOutput.stderrOnly());
         Headless.enable();
         return guard;
     }

@@ -1,6 +1,7 @@
 package dev.incusspawn.config;
 
-import dev.incusspawn.Warnings;
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.incus.IncusClient.ReadyTimeouts;
 import org.junit.jupiter.api.Test;
 
@@ -102,7 +103,7 @@ class ReadyTimeoutsConfigTest {
     void proxySecondsUsesDefaultForUnreadableAndWarns() {
         var config = ReadyTimeoutsConfig.of(Map.of("proxy", "not-a-duration"));
         var warnings = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(warnings::add))) {
             assertEquals(30, config.proxySeconds(30));
         }
         assertEquals(1, warnings.size());
@@ -113,7 +114,7 @@ class ReadyTimeoutsConfigTest {
     void proxySecondsUsesDefaultForBareNumberAndWarns() {
         var config = ReadyTimeoutsConfig.of(Map.of("proxy", 15));
         var warnings = new ArrayList<String>();
-        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(warnings::add))) {
             assertEquals(30, config.proxySeconds(30));
         }
         assertEquals(1, warnings.size());

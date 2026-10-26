@@ -1,6 +1,9 @@
 ---
 paths:
   - "common/src/main/java/dev/incusspawn/util/BuildOutput.java"
+  - "common/src/main/java/dev/incusspawn/util/Output.java"
+  - "common/src/main/java/dev/incusspawn/util/TerminalOutput.java"
+  - "common/src/main/java/dev/incusspawn/util/CopyingOutput.java"
   - "common/src/main/java/dev/incusspawn/util/TerminalProgress.java"
   - "common/src/main/java/dev/incusspawn/tool/**"
   - "cli/src/main/java/dev/incusspawn/command/BuildProgress.java"
@@ -12,6 +15,8 @@ paths:
 All multi-step lifecycle commands use `BuildOutput` (`common/.../util/BuildOutput.java`) for terminal output formatting -- not just build/branch but also `vm` (start/stop/resize), `destroy`, `update-all`, `update-base`, `project`, and the shared `VmManager`.
 `isx init`'s interactive first-run flow is the one exception (its own style).
 This centralizes ANSI constants and step patterns -- individual commands should not define their own.
+`BuildOutput`'s printing methods delegate to the bound `Output` (#1703); the printing itself, with the indent depth and the live step, lives in `TerminalOutput`.
+A change to how a line looks goes there; a new kind of message is a method on `Output`, with a default for outputs that are not terminals.
 Key helpers: `section()` for a block of work at column 0, `header()` (bold bullet) / `buildHeader()` / `branchHeader()`, `group(title, detail)` (try-with-resources; `▸ Title  detail`, children one level deeper, a blank line on close -- used for Packages, Tools, Skills, Repositories) with `list()` for a wrapping comma-separated list, `step()` for complete lines, `ok()` for a `✓` result line, `stepStart()`/`stepDone()`/`stepDone(detail)`/`stepBreak()` for slow operations, `stepProgress(detail)` for the live phase, `stepNote()`/`stepWarn()` for detail one level under the step above, `note()`, `warn()` (both warnings end with a blank line, which a closing group does not repeat), `warnBanner()`, `success()`.
 
 **Clean off a terminal (#1037).**

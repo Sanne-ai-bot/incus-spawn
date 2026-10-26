@@ -4,30 +4,16 @@ import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Iterator;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
- * Shared terminal output helpers for build and branch operations.
+ * How isx reports: every message goes through these static methods to the bound {@link Output}
+ * (#1703), a {@link TerminalOutput} unless the owner of the terminal bound another
+ * ({@link #bind}). Code that reports never chooses where its lines go, so a warning raised while
+ * the TUI draws reaches its log instead of being drawn over.
  *
- * <p>Step output sits under a header at {@link #indent()}: {@link #STEP_INDENT} (4 spaces),
- * plus two more inside a {@link #group}. Slow operations use {@link #stepStart} /
- * {@link #stepDone}: on an ANSI terminal the step line animates a spinner until it is done
- * and then turns into a green ✓ (with the elapsed time once that is worth reading), so a
- * step that is still busy never looks finished. Without a terminal the line is printed
- * {@code "label... done."}, as a log would want it. {@link #step} prints a complete line.
- *
- * <p>While a step is live, anything else written to {@code System.out} or {@code System.err}
- * first freezes the step line and moves below it, so a warning or error printed mid-step is
- * never drawn over. Code that hands the terminal to a child process (inherited IO, or a
- * {@code sudo} that may prompt on the tty) calls {@link #releaseTerminal} first, since that
- * output bypasses the Java streams.
- *
- * <p>Colour is only written to an ANSI terminal without {@code NO_COLOR}
- * ({@link TerminalProgress#isAnsiTerminal}), and warnings and notes go to stderr, so piped
- * output holds no escapes and stdout holds no diagnostics.
+ * <p>The rest are the helpers every output shares: the colour gate ({@link #ansi},
+ * {@link #styled}), and making text that isx did not write safe to show ({@link #guestText}).
  */
 public final class BuildOutput {
 
@@ -114,24 +100,45 @@ public final class BuildOutput {
     }
 
     public static final String STEP_INDENT = "    ";
-    private static final String GROUP_INDENT = "  ";
 
-    /** Steps longer than this show their elapsed time on the ✓ line. */
-    private static final long SHOW_ELAPSED_MS = 2000;
+    private static final Output TERMINAL = new TerminalOutput();
+    private static volatile Output bound = TERMINAL;
 
-    private static volatile int depth;
-    /** Set when a closing {@link Group} printed a blank line, so the next block does not add a second. */
-    private static volatile boolean blankLineEnded;
+    /** The process's terminal output, which is bound unless something else is. */
+    public static Output terminal() {
+        return TERMINAL;
+    }
+
+    /** Where messages go now. */
+    public static Output current() {
+        return bound;
+    }
+
+    /** The handle of {@link #bind}: closing it puts the previous output back. */
+    @FunctionalInterface
+    public interface Binding extends AutoCloseable {
+        @Override
+        void close();
+    }
+
+    /**
+     * Send every message to {@code output} until the returned handle is closed. The owner of
+     * the terminal binds: the TUI while it draws and while it lends the terminal out, the pre-TUI
+     * window, {@code isx mcp}, the proxy. Nothing else does.
+     */
+    public static Binding bind(Output output) {
+        var previous = bound;
+        bound = output;
+        return () -> {
+            // Bindings nest: closing an outer one first would put back an output already gone.
+            if (bound != output) throw new IllegalStateException("output bindings closed out of order");
+            bound = previous;
+        };
+    }
 
     /** The indent for a step line at the current nesting: inside a {@link #group}, one level deeper. */
     public static String indent() {
-        return STEP_INDENT + GROUP_INDENT.repeat(depth);
-    }
-
-    /** Separate a new block with a blank line, unless a closing group just printed one. */
-    private static void blankLine() {
-        if (!blankLineEnded) System.out.println();
-        blankLineEnded = false;
+        return bound.indent();
     }
 
     /**
@@ -140,8 +147,7 @@ public final class BuildOutput {
      * that isn't a bold-bullet {@link #header} for a single named operation.
      */
     public static void section(String msg) {
-        blankLine();
-        System.out.println(msg);
+        bound.section(msg);
     }
 
     /**
@@ -150,44 +156,18 @@ public final class BuildOutput {
      * under it, and closing it leaves a blank line, so the next top-level step reads as
      * outside the group. Use with try-with-resources.
      */
-    public static Group group(String title, String detail) {
-        var sb = new StringBuilder(indent()).append(styled(CYAN, "▸ ")).append(styled(BOLD, title));
-        if (detail != null && !detail.isEmpty()) sb.append("  ").append(styled(DIM, detail));
-        blankLine();
-        System.out.println(sb);
-        var group = new Group(depth);
-        depth = depth + 1;
-        return group;
-    }
-
-    /** A {@link #group} being printed; closing it returns to the enclosing indent. */
-    public static final class Group implements AutoCloseable {
-        private final int previousDepth;
-        private boolean closed;
-
-        private Group(int previousDepth) { this.previousDepth = previousDepth; }
-
-        @Override
-        public void close() {
-            if (closed) return;
-            closed = true;
-            depth = previousDepth;
-            if (!blankLineEnded) System.out.println();
-            blankLineEnded = true;
-        }
+    public static Output.Group group(String title, String detail) {
+        return bound.group(title, detail);
     }
 
     /** Print a complete step line. */
     public static void step(String msg) {
-        blankLineEnded = false;
-        System.out.println(indent() + msg);
+        bound.step(msg);
     }
 
     /** Print a dim note about the step above, one level under it (e.g. the version it verified). */
     public static void stepNote(String msg) {
-        if (msg == null || msg.isBlank()) return;
-        blankLineEnded = false;
-        System.out.println(indent() + GROUP_INDENT + styled(DIM, safeLines(msg)));
+        bound.stepNote(msg);
     }
 
     /**
@@ -195,15 +175,12 @@ public final class BuildOutput {
      * separating it from the regular flow. Like every warning, to stderr.
      */
     public static void stepWarn(String msg) {
-        if (msg == null || msg.isBlank()) return;
-        System.err.println(indent() + GROUP_INDENT + styled(YELLOW, "⚠ " + safeLines(msg)));
-        endWithBlankLine();
+        bound.stepWarn(msg);
     }
 
     /** Print a finished step: {@code ✓ msg}. For a result known at once, without a live step. */
     public static void ok(String msg) {
-        blankLineEnded = false;
-        System.out.println(indent() + styled(GREEN, "✓") + " " + msg);
+        bound.ok(msg);
     }
 
     /**
@@ -211,80 +188,11 @@ public final class BuildOutput {
      * with the same indent. Pair it with a {@link #group} header to list what the group covers.
      */
     public static void list(Collection<String> items) {
-        var lineIndent = indent();
-        int width = TerminalProgress.terminalWidth();
-        var sb = new StringBuilder(lineIndent);
-        int col = lineIndent.length();
-        Iterator<String> it = items.iterator();
-        while (it.hasNext()) {
-            var item = it.next();
-            var suffix = it.hasNext() ? ", " : "";
-            var chunk = item + suffix;
-            if (col + chunk.length() > width && col > lineIndent.length()) {
-                System.out.println(sb);
-                sb.setLength(0);
-                sb.append(lineIndent);
-                col = lineIndent.length();
-            }
-            sb.append(chunk);
-            col += chunk.length();
-        }
-        if (col > lineIndent.length()) {
-            System.out.println(sb);
-        }
+        bound.list(items);
     }
 
-    // ---- Live steps ----
-
-    private static final Object LOCK = new Object();
-    /** The step between {@link #stepStart} and its end; guarded by {@link #LOCK}. */
-    private static LiveStep live;
-    private static java.util.concurrent.ScheduledExecutorService ticker;
     /** Tests set this to exercise the animated rendering without a console; null means detect. */
     static volatile Boolean forceAnsi;
-
-    private static final class LiveStep {
-        final String msg;
-        final String label;
-        final String indent;
-        final long startNanos = System.nanoTime();
-        final boolean ansi;
-        final PrintStream raw;
-        final PrintStream previousOut;
-        final PrintStream previousErr;
-        PrintStream guardedOut;
-        PrintStream guardedErr;
-        java.util.concurrent.ScheduledFuture<?> animation;
-        volatile String detail;
-        /** Terminal width, measured by the spinner thread on its first frame; -1 until then. */
-        int width = -1;
-        /** Whether the terminal cursor still sits on this step's line. */
-        boolean onLine = true;
-        int frame;
-
-        LiveStep(String msg, boolean ansi, PrintStream out, PrintStream err) {
-            this.msg = msg;
-            this.label = trimEllipsis(msg);
-            this.indent = indent();
-            this.ansi = ansi;
-            this.raw = out;
-            this.previousOut = out;
-            this.previousErr = err;
-        }
-
-        String runningLine(int width) {
-            var sb = new StringBuilder(indent)
-                    .append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
-                    .append(' ').append(label);
-            var d = detail;
-            if (d != null && !d.isEmpty()) sb.append("  ").append(DIM).append(d).append(RESET);
-            return TerminalProgress.truncateToWidth(sb.toString(), width);
-        }
-
-        long elapsedMillis() {
-            return (System.nanoTime() - startNanos) / 1_000_000;
-        }
-    }
 
     /** {@code "Installing foo..."} reads as a pending action in a log line; on a ✓ line it is noise. */
     static String trimEllipsis(String msg) {
@@ -294,14 +202,6 @@ public final class BuildOutput {
         return s;
     }
 
-    /** Re-measured once per step (on the spinner thread, never the caller's), so a terminal
-     *  narrowed between steps does not make the spinner line wrap and leave stale rows. */
-    private static int width(LiveStep step) {
-        if (forceAnsi != null) return 200;
-        if (step.width < 0) step.width = TerminalProgress.terminalWidth();
-        return step.width;
-    }
-
     /**
      * Start a slow step. On an ANSI terminal the line animates until {@link #stepDone} (or
      * {@link #stepBreak} on failure); otherwise it is printed without a newline for
@@ -309,28 +209,7 @@ public final class BuildOutput {
      * animated line.
      */
     public static void stepStart(String msg) {
-        msg = safeLines(msg);
-        synchronized (LOCK) {
-            if (live != null) endLocked(live, null);
-            blankLineEnded = false;
-            var ansi = ansi();
-            var step = new LiveStep(msg, ansi, System.out, System.err);
-            if (!ansi) {
-                step.raw.print(step.indent + msg);
-                step.raw.flush();
-            }
-            // An animated line is first drawn by the spinner thread: finding the terminal width
-            // runs `stty`, which must not delay a branch's own steps.
-            step.guardedOut = guard(step.previousOut);
-            step.guardedErr = guard(step.previousErr);
-            System.setOut(step.guardedOut);
-            System.setErr(step.guardedErr);
-            if (ansi) {
-                step.animation = scheduler().scheduleAtFixedRate(() -> redraw(step), 0, 80,
-                        java.util.concurrent.TimeUnit.MILLISECONDS);
-            }
-            live = step;
-        }
+        bound.stepStart(msg);
     }
 
     /**
@@ -338,14 +217,12 @@ public final class BuildOutput {
      * Ignored without a terminal or when no step is live.
      */
     public static void stepProgress(String detail) {
-        synchronized (LOCK) {
-            if (live != null) live.detail = detail;
-        }
+        bound.stepProgress(detail);
     }
 
     /** Complete the step started by {@link #stepStart}. */
     public static void stepDone() {
-        finish(null, true);
+        bound.stepDone(null);
     }
 
     /**
@@ -353,7 +230,7 @@ public final class BuildOutput {
      * inline instead of on a second line — e.g. {@code ✓ Extracting root disk (4.0G)}.
      */
     public static void stepDone(String detail) {
-        finish(detail, true);
+        bound.stepDone(detail);
     }
 
     /**
@@ -361,7 +238,7 @@ public final class BuildOutput {
      * animated line turns into {@code ✗ label}, a plain one is terminated.
      */
     public static void stepBreak() {
-        finish(null, false);
+        bound.stepBreak();
     }
 
     /** The last {@code n} lines of a command's output, without surrounding blank space. */
@@ -376,8 +253,7 @@ public final class BuildOutput {
      * stderr output" contract so callers don't each have to remember it.
      */
     public static void stepFail(String msg) {
-        stepBreak();
-        System.err.println(safeLines(msg));
+        bound.stepFail(msg);
     }
 
     /**
@@ -386,9 +262,7 @@ public final class BuildOutput {
      * cannot see. The step keeps running: its {@link #stepDone} prints the ✓ on a new line.
      */
     public static void releaseTerminal() {
-        synchronized (LOCK) {
-            if (live != null) freezeLocked(live);
-        }
+        bound.releaseTerminal();
     }
 
     /**
@@ -397,76 +271,7 @@ public final class BuildOutput {
      * streams are no longer guarded. A no-op when no step is live.
      */
     public static void abandonStep() {
-        synchronized (LOCK) {
-            if (live != null) endLocked(live, null);
-        }
-    }
-
-    private static void finish(String detail, boolean success) {
-        synchronized (LOCK) {
-            var step = live;
-            if (step == null) {
-                // No live step (its start was never printed): still close the line the caller expects.
-                if (success) System.out.println(detail == null ? " done." : " done (" + detail + ").");
-                else System.out.println();
-                return;
-            }
-            endLocked(step, success ? new Outcome(detail) : null);
-        }
-    }
-
-    private record Outcome(String detail) {}
-
-    /** Stop animating {@code step}, restore the streams and print its final line;
-     *  {@code outcome} null means failed (or superseded by another step). */
-    private static void endLocked(LiveStep step, Outcome outcome) {
-        if (step.animation != null) step.animation.cancel(false);
-        if (System.out == step.guardedOut) System.setOut(step.previousOut);
-        if (System.err == step.guardedErr) System.setErr(step.previousErr);
-        live = null;
-        var out = step.raw;
-        if (step.ansi) {
-            String text;
-            if (outcome != null) {
-                var sb = new StringBuilder(step.indent).append(CHECK).append(' ').append(step.label);
-                if (outcome.detail() != null) sb.append(' ').append(DIM).append('(').append(outcome.detail()).append(')').append(RESET);
-                var ms = step.elapsedMillis();
-                if (ms >= SHOW_ELAPSED_MS) sb.append("  ").append(DIM).append(formatElapsed(ms)).append(RESET);
-                text = sb.toString();
-            } else {
-                text = step.indent + CROSS + " " + step.label;
-            }
-            out.print((step.onLine ? "\r\033[2K" : "") + text + "\n");
-        } else if (outcome != null) {
-            var done = outcome.detail() == null ? " done." : " done (" + outcome.detail() + ").";
-            out.println(step.onLine ? done : step.indent + step.msg + done);
-        } else if (step.onLine) {
-            out.println();
-        }
-        out.flush();
-    }
-
-    /** Leave the step's line as it is and move below it, so other output can be written. */
-    private static void freezeLocked(LiveStep step) {
-        if (!step.onLine) return;
-        step.onLine = false;
-        if (step.animation != null) step.animation.cancel(false);
-        if (step.ansi) {
-            step.raw.print("\r\033[2K" + step.indent + DIM + "… " + step.label + RESET + "\n");
-        } else {
-            step.raw.println();
-        }
-        step.raw.flush();
-    }
-
-    private static void redraw(LiveStep step) {
-        int width = width(step); // outside the lock: measuring runs `stty`
-        synchronized (LOCK) {
-            if (live != step || !step.onLine) return;
-            step.raw.print("\r\033[2K" + step.runningLine(width));
-            step.raw.flush();
-            step.frame++;
-        }
+        bound.abandonStep();
     }
 
     public static String formatElapsed(long ms) {
@@ -474,22 +279,6 @@ public final class BuildOutput {
         long s = Math.round(ms / 1000.0);
         if (s < 60) return s + "s";
         return (s / 60) + "m" + String.format(java.util.Locale.ROOT, "%02d", s % 60) + "s";
-    }
-
-    private static java.util.concurrent.ScheduledExecutorService scheduler() {
-        if (ticker == null) {
-            ticker = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                var t = new Thread(r, "step-spinner");
-                t.setDaemon(true);
-                return t;
-            });
-        }
-        return ticker;
-    }
-
-    /** A stream that freezes the live step line before letting anything else reach the terminal. */
-    private static PrintStream guard(PrintStream target) {
-        return onWrite(target, BuildOutput::releaseTerminal);
     }
 
     /** A stream that passes everything on to {@code target}, running {@code beforeWrite} first. */
@@ -517,9 +306,7 @@ public final class BuildOutput {
      * build/branch-specific {@link #buildHeader}/{@link #branchHeader} build on the same style.
      */
     public static void header(String msg) {
-        depth = 0;
-        blankLine();
-        System.out.println("  " + styled(BOLD, "● " + msg));
+        bound.header(msg, null);
     }
 
     /**
@@ -528,9 +315,7 @@ public final class BuildOutput {
      * header's secondary part reads the same.
      */
     public static void header(String msg, String detail) {
-        depth = 0;
-        blankLine();
-        System.out.println("  " + styled(BOLD, "● " + msg) + " " + styled(DIM, detail));
+        bound.header(msg, detail);
     }
 
     /**
@@ -539,44 +324,12 @@ public final class BuildOutput {
      * ({@link OutputFormat#oneLine}, #1228).
      */
     public static void buildHeader(String name, int index, int total) {
-        name = OutputFormat.oneLine(name);
-        depth = 0;
-        if (total > 1) {
-            blankLine();
-            var counter = "[" + index + "/" + total + "]";
-            var label = "Building " + name;
-            int gap = Math.max(2, 62 - 4 - label.length() - counter.length());
-            System.out.println("  " + styled(BOLD, "● " + label)
-                    + " ".repeat(gap) + styled(DIM, counter));
-        } else {
-            header("Building " + name);
-        }
+        bound.buildHeader(name, index, total);
     }
 
     /** Print a bold bullet header for a branch: {@code  ● my-instance  ← tpl-dev} */
     public static void branchHeader(String name, String source) {
-        depth = 0;
-        blankLine();
-        System.out.println("  " + styled(BOLD, "● " + name) + " " + styled(DIM, "← " + source));
-    }
-
-    /** The handle of {@link #copyWarningsTo}: closing it stops the copying. */
-    @FunctionalInterface
-    public interface WarningCopy extends AutoCloseable {
-        @Override
-        void close();
-    }
-
-    private static volatile Consumer<String> warningListener;
-
-    /**
-     * Also hand every {@link #warn} to {@code listener}, until the returned handle is closed: for
-     * the TUI, which runs a build on the released terminal and then redraws over what it printed.
-     */
-    public static WarningCopy copyWarningsTo(Consumer<String> listener) {
-        var previous = warningListener;
-        warningListener = listener;
-        return () -> warningListener = previous;
+        bound.branchHeader(name, source);
     }
 
     /**
@@ -587,38 +340,26 @@ public final class BuildOutput {
      * the ⚠, as the TUI's log drops it.
      */
     public static void warn(String msg, String... details) {
-        if (msg == null || msg.isBlank()) return;
-        msg = msg.strip().replaceFirst("^Warning:\\s*", "");
-        var listener = warningListener;
-        if (listener != null) {
-            // Each line made safe: messages can quote template text, and the TUI's log renders it
-            listener.accept(String.join("\n", Stream.concat(Stream.of(msg), Arrays.stream(details))
-                    .map(OutputFormat::oneLine).toList()));
-        }
-        System.err.println(indent() + styled(YELLOW, "⚠ " + safeLines(msg)));
-        for (var detail : details) {
-            System.err.println(indent() + GROUP_INDENT + styled(DIM, safeLines(detail)));
-        }
-        endWithBlankLine();
+        bound.warn(msg, details);
+    }
+
+    private static final java.util.regex.Pattern WARNING_MARKER = java.util.regex.Pattern.compile("^Warning:\\s*");
+
+    /**
+     * A warning's text without its own {@code "Warning:"} marker (a sink that prints as it comes may
+     * mark its own, and a ⚠ or the TUI's log says so already); null when it is blank.
+     */
+    static String warningText(String msg) {
+        if (msg == null || msg.isBlank()) return null;
+        return WARNING_MARKER.matcher(msg.strip()).replaceFirst("");
     }
 
     /**
      * {@code text} with each line made safe ({@link OutputFormat#oneLine}): a warning keeps the
      * line breaks of the advice isx writes into it, but what it quotes cannot drive the terminal.
      */
-    private static String safeLines(String text) {
+    static String safeLines(String text) {
         return Arrays.stream(String.valueOf(text).split("\n", -1)).map(OutputFormat::oneLine).collect(Collectors.joining("\n"));
-    }
-
-    /**
-     * Close a warning with a blank line, which a following group or section does not repeat.
-     * The blank line goes to stdout: it separates the warning from the regular flow there, and
-     * keeps that flow's layout whether or not stderr is redirected (on a terminal, one stream
-     * each would print two).
-     */
-    private static void endWithBlankLine() {
-        System.out.println();
-        blankLineEnded = true;
     }
 
     /**
@@ -629,17 +370,12 @@ public final class BuildOutput {
      * own or drive the terminal (#1235).
      */
     public static void note(String msg) {
-        if (msg == null) return;
-        var line = OutputFormat.oneLine(msg);
-        if (line.isBlank()) return;
-        blankLineEnded = false;
-        System.err.println(indent() + styled(DIM, line));
+        bound.note(msg);
     }
 
     /** Print a green checkmark success line. */
     public static void success(String msg) {
-        blankLine();
-        System.out.println(STEP_INDENT + styled(GREEN, "✓") + " " + msg);
+        bound.success(msg);
     }
 
     /**
@@ -647,12 +383,6 @@ public final class BuildOutput {
      * Use for diagnostic warnings that need to stand out (subnet conflicts, CA mismatches, etc.).
      */
     public static void warnBanner(String title, String... lines) {
-        var sep = styled(YELLOW, "─".repeat(60));
-        System.err.println(sep);
-        System.err.println(styled(BOLD + YELLOW, title));
-        for (var line : lines) {
-            System.err.println(line);
-        }
-        System.err.println(sep);
+        bound.warnBanner(title, lines);
     }
 }

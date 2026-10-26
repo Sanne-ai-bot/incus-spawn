@@ -49,7 +49,7 @@
 1 0 cli/src/main/java/dev/incusspawn/mcp/ToolContext.java
 9 0 cli/src/main/java/dev/incusspawn/tui/PreTuiOutput.java
 7 0 cli/src/main/java/dev/incusspawn/tui/ShellLaunch.java
-6 0 cli/src/main/java/dev/incusspawn/tui/Tui.java
+5 0 cli/src/main/java/dev/incusspawn/tui/Tui.java
 1 0 common/src/main/java/dev/incusspawn/Platform.java
 8 1 common/src/main/java/dev/incusspawn/config/HostResourceSetup.java
 1 0 common/src/main/java/dev/incusspawn/git/AutoRemoteService.java

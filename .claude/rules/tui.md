@@ -19,16 +19,18 @@ Open runners through `Tui.openRunner`, never `TuiRunner.create`; `TuiScreenClear
 **`TuiTheme` holds no RGB colours**, only named ANSI colours and `Color.indexed` entries (#1681); `TuiThemeTest` fails on one.
 
 **Warnings go to the `WarningLog`, not the status line** (#872).
-`runTuiSessions()` redirects `Warnings` (`common`) to its own `warningChannel` around each `reloadData()` and the runner, but **not** while the terminal is released (`pendingAction`: a build, a template edit, a shell), so those print their own warnings -- even ones the TUI has already logged, since each channel remembers what it reported separately.
+`runTuiSessions()` binds its own `drawing` output (`Output.diagnosticsTo(warningLog::add)`, #1703) around each `reloadData()` and the runner, so every warning goes to the log and progress nowhere.
+Around every `pendingAction` it lends the terminal to (a build, a branch, a shell, a template edit) it binds `Output.copying(BuildOutput.terminal(), drawing)` instead, so those print their own warnings and keep them in the log.
+The terminal prints a `Warnings` message the TUI has already logged, while the log, the same `drawing` destination, does not take it twice.
 And TUI code passes `warningLog::add` as the warn sink of shared code (`InstanceLifecycle.startForUse`, `StaticIpAllocator.Output`, the host-firewall advisory `FirewallDetector.warnIfNotRunning(banner)` that `isx shell` prints as a banner, #1458), or the `InstancePrep.Notices` that carry them.
 The log keeps every warning, from any thread, deduplicated (a repeat moves to the end with a new time) and capped at 100.
 `render()` announces what arrived since the last frame on the status line, but only when the line is empty or holds an older announcement (`canAnnounceWarnings()`).
 An action's result such as "Build failed" is never replaced, the warnings wait for the next key (`WarningLog.statusLine`: the latest, led by the count when several arrived, since a long line is cut off at the terminal width), the header shows "⚠ N warnings (w)" while any are unread, ahead of the running badge, and `w` opens `WarningsModal` (extracted and snapshot-tested like `HelpChatModal`): every warning, newest first, in full with its lines kept.
-`c` clears the log and calls `warningChannel.forgetReported()`, so any that are still true come back on the next reload.
-`reloadData()` sends definition warnings through `Warnings.warn` rather than straight to the log, so the reloads that run on every background-task completion do not re-announce them; `r` calls `warningChannel.forgetReported()` first, so an explicit reload does.
+`c` clears the log and calls `Warnings.forgetReported(drawing)`, so any that are still true come back on the next reload.
+`reloadData()` sends definition warnings through `Warnings.warn` rather than straight to the log, so the reloads that run on every background-task completion do not re-announce them; `r` calls `Warnings.forgetReported(drawing)` first, so an explicit reload does.
 Warnings still unread when the TUI exits are printed to stderr once the terminal is released.
 **Before the TUI opens** (#1154), bare `isx` runs inside a `PreTuiOutput` window (`IncusSpawn.launchTui()` opens it, `doExecute()` hands it over first thing, before the first reload, so a pause leaves no stale listing).
-`Warnings` raised meanwhile (the macOS VM's stale-appliance notice, `VmManager.warnOfSkew`) go into the `WarningLog` through `warningChannel`, so the TUI does not announce them a second time.
+`Warnings` raised meanwhile (the macOS VM's stale-appliance notice, `VmManager.warnOfSkew`) are held by `Output.holding`, then go into the `WarningLog` through `Warnings.warn(drawing, ...)`, so the TUI does not announce them a second time; a `BuildOutput.warn` still prints under its step.
 Anything printed to stdout/stderr still shows, and makes isx print the held warnings too and wait for Enter (`PreTuiOutput.waitForEnter`, only at a terminal, discarding an Enter typed while it got ready) before the TUI covers it.
 A notice meant for the TUI belongs on `Warnings`, so it costs no keypress.
 `TuiLaunchHandOverTest` drives `IncusSpawn.launchTui(ready, tui)` with a `StandInTui` (test scope, overriding `runTuiLoop`/`waitForUser`, reading `warningMessages()`) and fails if either end of the window is unwired.

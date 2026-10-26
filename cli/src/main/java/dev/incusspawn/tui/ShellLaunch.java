@@ -85,9 +85,8 @@ final class ShellLaunch {
         RuntimeSetup.RuntimeConfig prefetched;
         // Held through the branch's start, so a rebuild cannot swap the template away meanwhile (#1212).
         // Plain stdout: the TUI has released the terminal for the branch and the shell after it.
-        // The shell draws over what the branch printed, so its warnings are kept in the log too.
-        try (var held = TemplateLock.reading(source, System.out::println);
-             var warnings = BuildOutput.copyWarningsTo(tui.warningLog::add)) {
+        // The shell draws over what the branch printed; the TUI's binding keeps its warnings in the log.
+        try (var held = TemplateLock.reading(source, System.out::println)) {
             preflight = BranchFlow.preflight(tui.incus, request, tui.imageDefs);
             prefetched = BranchFlow.create(tui.incus, preflight);
         }
@@ -141,12 +140,9 @@ final class ShellLaunch {
             return;
         }
         // Runs after the TUI has released the terminal, so the reconcile prints its own warnings,
-        // and the log keeps a copy: a failed one would otherwise scroll away under the shell.
-        // (The start's warnings come with its progress through say, and are only printed.)
-        InstancePrep.readyForUse(tui.incus, name, instance, machineType, System.out::println, warning -> {
-            BuildOutput.warn(warning);
-            tui.warningLog.add(warning);
-        });
+        // and the TUI's binding keeps a copy in the log: a failed one would otherwise scroll away
+        // under the shell. (The start's warnings come with its progress through say, and are only printed.)
+        InstancePrep.readyForUse(tui.incus, name, instance, machineType, System.out::println, BuildOutput::warn);
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
         var titleMonitor = startAuthTitleMonitor(name);
