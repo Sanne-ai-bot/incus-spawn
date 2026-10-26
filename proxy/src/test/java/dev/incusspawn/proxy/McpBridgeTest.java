@@ -1,7 +1,7 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import io.vertx.core.Context;
@@ -37,7 +37,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class McpBridgeTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
     private static final String SECRET = "a".repeat(64);
     private static final String CALLER = "coord";
 
@@ -137,14 +136,8 @@ class McpBridgeTest {
 
     record Reply(int status, MultiMap headers, String body) {
         /** The JSON-RPC messages of a {@code text/event-stream} body. */
-        List<JsonNode> messages() {
-            return body.lines().filter(l -> l.startsWith("data: ")).map(l -> {
-                try {
-                    return JSON.readTree(l.substring(6));
-                } catch (Exception e) {
-                    throw new AssertionError(e);
-                }
-            }).toList();
+        List<JqValue> messages() {
+            return body.lines().filter(l -> l.startsWith("data: ")).map(l -> JqValues.parseStrict(l.substring(6))).toList();
         }
     }
 
@@ -226,7 +219,7 @@ class McpBridgeTest {
             proxy.proofIdentifies = (remote, local) -> true;
             var session = initialize();
             var reply = post(session, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
-            assertEquals(CALLER, reply.messages().getFirst().get("result").get("instance").asText());
+            assertEquals(CALLER, reply.messages().getFirst().path("result").path("instance").asText());
 
             var started = startedProcesses();
             var wrong = send(HttpMethod.POST, McpBridge.PATH, "b".repeat(64), null,
@@ -247,7 +240,7 @@ class McpBridgeTest {
         assertTrue(reply.headers().get("Content-Type").startsWith("text/event-stream"));
         var messages = reply.messages();
         assertEquals(1, messages.size(), reply.body());
-        assertEquals(2, messages.getFirst().path("id").asInt());
+        assertEquals(2, messages.getFirst().path("id").asInt(0));
         assertEquals("tools/list", messages.getFirst().path("result").path("method").asText());
         // The instance comes from the proxy's identification, never from anything it sent.
         assertEquals(CALLER, messages.getFirst().path("result").path("instance").asText());
@@ -266,8 +259,8 @@ class McpBridgeTest {
         });
         Thread.sleep(200);
         var fast = post(session, "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/list\"}");
-        assertEquals(8, fast.messages().getFirst().path("id").asInt());
-        assertEquals(7, slow.get(10, TimeUnit.SECONDS).messages().getFirst().path("id").asInt());
+        assertEquals(8, fast.messages().getFirst().path("id").asInt(0));
+        assertEquals(7, slow.get(10, TimeUnit.SECONDS).messages().getFirst().path("id").asInt(0));
     }
 
     @Test
@@ -298,7 +291,7 @@ class McpBridgeTest {
                 })));
         Thread.sleep(300);
         var reply = post(session, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"notify\"}");
-        assertEquals(3, reply.messages().getFirst().path("id").asInt(), "the answer goes to its POST");
+        assertEquals(3, reply.messages().getFirst().path("id").asInt(0), "the answer goes to its POST");
         assertFalse(reply.body().contains("task_changed"), "and the notification does not");
         assertTrue(received.get(10, TimeUnit.SECONDS).contains("\"task_id\":\"t1\""));
     }

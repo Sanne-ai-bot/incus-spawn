@@ -43,7 +43,7 @@ class InstanceSecretRebootTest {
     }
 
     private static io.hyperfoil.tools.jjq.value.JqValue instance(FakeIncusDaemon daemon) {
-        return dev.incusspawn.incus.JacksonTrees.fromJsonNode(daemon.instance(NAME));
+        return daemon.instance(NAME);
     }
 
     /** The secrets handed to the guest, in order. */

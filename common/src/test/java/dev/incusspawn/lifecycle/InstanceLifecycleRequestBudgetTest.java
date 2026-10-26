@@ -1,12 +1,11 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.Platform;
 
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.incus.FakeIncusDaemon;
-import dev.incusspawn.incus.JacksonTrees;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -119,7 +118,7 @@ class InstanceLifecycleRequestBudgetTest {
         // The shell path already read the instance to see it is stopped: the start's device
         // repairs and its mcp-caller grant (#1182) take that read
         var daemon = new FakeIncusDaemon().container(NAME, stableProofConfig()).ipFiltering(NAME, "true");
-        var instance = JacksonTrees.fromJsonNode(daemon.instance(NAME));
+        var instance = daemon.instance(NAME);
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(daemon.clientWithShortReadyWait(),
                 NAME, instance, dev.incusspawn.incus.MachineType.CONTAINER, msg -> {}));
         var requests = daemon.requests();
@@ -149,7 +148,7 @@ class InstanceLifecycleRequestBudgetTest {
     @Test
     void aTuiRestartReusesItsListingWithoutAnotherMetadataReadBeforeRestart() {
         var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", stableProofConfig());
-        var listed = JacksonTrees.fromJsonNode(daemon.instance(NAME));
+        var listed = daemon.instance(NAME);
         var incus = spy(daemon.client());
         doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
         InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false, listed);
@@ -288,7 +287,7 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.accountIdentityKey("github"), gh.bakedAccountIdentity(config, "me"),
                 Metadata.ACCOUNT_IDENTITY_VERIFIED, "true"));
-        var instance = JacksonTrees.fromJsonNode(daemon.instance(NAME));
+        var instance = daemon.instance(NAME);
 
         InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME, instance, config, null,
                 msg -> { }, msg -> { });
@@ -632,7 +631,7 @@ class InstanceLifecycleRequestBudgetTest {
 
     /** Every network device Incus would attach at start, whatever it comes from, by name. */
     private static List<String> attachedNics(FakeIncusDaemon daemon) {
-        var expanded = JacksonTrees.fromJsonNode(daemon.instance(NAME)).getField("expanded_devices");
+        var expanded = daemon.instance(NAME).getField("expanded_devices");
         var nics = new java.util.ArrayList<String>();
         if (expanded instanceof io.hyperfoil.tools.jjq.value.JqObject devices) {
             devices.forEach((name, device) -> {
@@ -689,7 +688,7 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     /** The devices airgap stamped as its own masks, sorted. */
-    private static String sortedStamp(JsonNode instance) {
+    private static String sortedStamp(JqValue instance) {
         return String.join(",", Arrays.stream(
                 instance.path("config").path(Metadata.AIRGAP_MASKED).asText().split(",")).sorted().toList());
     }

@@ -87,7 +87,7 @@
             <version>1.5.6</version>
             <scope>test</scope>
         </dependency>
-        <!-- Test doubles (FakeIncusDaemon) and fixtures still speak Jackson. -->
+        <!-- StructuredResults hands the 1.x schema validator Jackson trees. -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>

@@ -1,10 +1,9 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
-import dev.incusspawn.incus.JacksonTrees;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
@@ -54,11 +53,11 @@ class ProxyOnlyAclTest {
         }
     }
 
-    private static JsonNode nic(FakeIncusDaemon daemon, String name) {
+    private static JqValue nic(FakeIncusDaemon daemon, String name) {
         return daemon.instance(name).path("expanded_devices").path("eth0");
     }
 
-    private static void assertRestricted(JsonNode nic) {
+    private static void assertRestricted(JqValue nic) {
         assertEquals(ProxyOnlyAcl.NAME, nic.path("security.acls").asText(), nic::toString);
         assertEquals("drop", nic.path("security.acls.default.egress.action").asText(), nic::toString);
         assertEquals("allow", nic.path("security.acls.default.ingress.action").asText(), nic::toString);
@@ -70,7 +69,7 @@ class ProxyOnlyAclTest {
         assertTrue(acl != null, "no ACL was written");
         assertEquals(0, acl.path("ingress").size(), acl::toString);
         var rules = new ArrayList<String>();
-        for (var rule : acl.path("egress")) {
+        for (var rule : acl.path("egress").asList()) {
             assertEquals("allow", rule.path("action").asText(), rule::toString);
             assertEquals("enabled", rule.path("state").asText(), rule::toString);
             rules.add(rule.path("protocol").asText() + " " + rule.path("destination").asText() + " "
@@ -133,7 +132,7 @@ class ProxyOnlyAclTest {
 
         // FakeIncusDaemon serves no exec, so the readiness wait after the start can only time out
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(daemon.clientWithShortReadyWait(), "box",
-                JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, said::add));
+                daemon.instance("box"), MachineType.CONTAINER, said::add));
 
         assertRestricted(nic(daemon, "box"));
         assertEquals(4, allowed(daemon).size());
@@ -150,7 +149,7 @@ class ProxyOnlyAclTest {
                 Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name(), Metadata.PROXY_GATEWAY, "10.99.0.1"))
                 .ipFiltering("box", "true");
 
-        InstanceLifecycle.ensureReady(daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")),
+        InstanceLifecycle.ensureReady(daemon.client(), "box", daemon.instance("box"),
                 MachineType.CONTAINER, s -> {});
 
         // Shared by every proxy-only instance: a stale record must not take the proxy from the others
@@ -164,7 +163,7 @@ class ProxyOnlyAclTest {
         daemon.device("box", "eth0", Map.of("type", "nic", "network", "lanbr0", "name", "eth0"));
 
         assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, s -> {}));
         assertEquals(List.of(), daemon.stateActions());
     }
 
@@ -175,14 +174,14 @@ class ProxyOnlyAclTest {
         daemon.device("box", "eth0", Map.of("type", "none"));
 
         InstanceLifecycle.prepareForStart(daemon.client(), "box",
-                JacksonTrees.fromJsonNode(daemon.instance("box")), w -> fail(w));
+                daemon.instance("box"), w -> fail(w));
     }
 
     @Test
     void aRunningOneIsRestrictedBeforeAShellOpensInIt() {
         var daemon = unenforced("Running");
 
-        InstanceLifecycle.ensureReady(daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")),
+        InstanceLifecycle.ensureReady(daemon.client(), "box", daemon.instance("box"),
                 MachineType.CONTAINER, s -> {});
 
         assertRestricted(nic(daemon, "box"));
@@ -194,7 +193,7 @@ class ProxyOnlyAclTest {
         var daemon = unenforced("Stopped").firewall("xtables");
 
         var e = assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, s -> {}));
 
         assertTrue(e.getMessage().contains("nftables"), e.getMessage());
         assertEquals(List.of(), daemon.stateActions());
@@ -208,7 +207,7 @@ class ProxyOnlyAclTest {
         daemon.firewall("xtables");
 
         var e = assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "dev-2", JacksonTrees.fromJsonNode(daemon.instance("dev-2")), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "dev-2", daemon.instance("dev-2"), MachineType.CONTAINER, s -> {}));
 
         assertTrue(e.getMessage().contains("cannot be enforced on the host"), e.getMessage());
         assertTrue(e.getMessage().contains("uses xtables"), e.getMessage());
@@ -223,7 +222,7 @@ class ProxyOnlyAclTest {
         int before = daemon.requests().size();
 
         InstanceLifecycle.prepareForStart(daemon.client(), "dev-2",
-                JacksonTrees.fromJsonNode(daemon.instance("dev-2")), w -> fail(w));
+                daemon.instance("dev-2"), w -> fail(w));
 
         assertEquals(List.of(), daemon.requests().subList(before, daemon.requests().size()));
     }
@@ -233,7 +232,7 @@ class ProxyOnlyAclTest {
         var daemon = new FakeIncusDaemon().container("box", new HashMap<>()).ipFiltering("box", "true");
 
         InstanceLifecycle.prepareForStart(daemon.client(), "box",
-                JacksonTrees.fromJsonNode(daemon.instance("box")), w -> fail(w));
+                daemon.instance("box"), w -> fail(w));
 
         assertFalse(nic(daemon, "box").has("security.acls"));
         assertNull(daemon.networkAcl(ProxyOnlyAcl.NAME));
@@ -284,7 +283,7 @@ class ProxyOnlyAclTest {
         daemon.device("box", "eth1", Map.of("type", "nic", "network", "incusbr0", "name", "eth1"));
 
         var e = assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, s -> {}));
         assertTrue(e.getMessage().contains("eth1"), e::getMessage);
         assertEquals(List.of(), daemon.stateActions());
     }
@@ -364,7 +363,7 @@ class ProxyOnlyAclTest {
         daemon.device("box", "ib0", Map.of("type", "infiniband", "nictype", "physical", "parent", "ibp1s0"));
 
         var e = assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, s -> {}));
         assertTrue(e.getMessage().contains("a network device that is not on incusbr0 (ib0)"), e::getMessage);
         assertEquals(List.of(), daemon.stateActions());
     }
@@ -414,7 +413,7 @@ class ProxyOnlyAclTest {
         daemon.device("box", "dongle", Map.of("type", "usb", "vendorid", "0bda", "productid", "8153"));
 
         var e = assertThrows(ProxyOnlyAcl.NotEnforceableException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, s -> {}));
         assertTrue(e.getMessage().contains("dongle"), e::getMessage);
         assertEquals(List.of(), daemon.stateActions());
     }

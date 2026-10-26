@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,7 +18,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class CodexCallTimeTokenTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
     private static final String PROOF = "sk-isx_0123456789abcdef0123456789abcdef";
 
     @TempDir
@@ -29,14 +29,14 @@ class CodexCallTimeTokenTest {
 
         login(Map.of("OPENAI_API_KEY", PROOF));
 
-        var root = JSON.readTree(auth.toFile());
+        var root = read(auth);
         assertEquals("apikey", root.path("auth_mode").asText());
         assertEquals(PROOF, root.path("OPENAI_API_KEY").asText());
 
         // and the next start's in its turn
         login(Map.of("OPENAI_API_KEY", "sk-isx_fedcba9876543210fedcba9876543210"));
         assertEquals("sk-isx_fedcba9876543210fedcba9876543210",
-                JSON.readTree(auth.toFile()).path("OPENAI_API_KEY").asText());
+                read(auth).path("OPENAI_API_KEY").asText());
     }
 
     @Test
@@ -64,19 +64,19 @@ class CodexCallTimeTokenTest {
 
         login(Map.of("OPENAI_API_KEY", PROOF));
 
-        assertEquals(PROOF, JSON.readTree(auth.toFile()).path("OPENAI_API_KEY").asText());
+        assertEquals(PROOF, read(auth).path("OPENAI_API_KEY").asText());
     }
 
     @Test
     void loginNeverReplacesACredentialIsxDidNotWrite() throws Exception {
         var ownKey = writeAuth("apikey", "sk-proj-somebodysOwnKey");
         login(Map.of("OPENAI_API_KEY", PROOF));
-        assertEquals("sk-proj-somebodysOwnKey", JSON.readTree(ownKey.toFile()).path("OPENAI_API_KEY").asText());
+        assertEquals("sk-proj-somebodysOwnKey", read(ownKey).path("OPENAI_API_KEY").asText());
 
         var chatgpt = writeAuth("chatgpt", "sk-placeholder");
         login(Map.of("OPENAI_API_KEY", PROOF));
-        assertEquals("chatgpt", JSON.readTree(chatgpt.toFile()).path("auth_mode").asText());
-        assertEquals("sk-placeholder", JSON.readTree(chatgpt.toFile()).path("OPENAI_API_KEY").asText());
+        assertEquals("chatgpt", read(chatgpt).path("auth_mode").asText());
+        assertEquals("sk-placeholder", read(chatgpt).path("OPENAI_API_KEY").asText());
     }
 
     /** What {@link CodexSetup} writes at build time. */
@@ -95,5 +95,9 @@ class CodexCallTimeTokenTest {
     private void login(Map<String, String> env) throws Exception {
         assertEquals("", GuestShell.login(home, CodexSetup.LOGIN_AUTH_SCRIPT, env, "true"),
                 "a login script says nothing");
+    }
+
+    private static JqValue read(Path file) throws java.io.IOException {
+        return JqValues.parseStrict(Files.readAllBytes(file));
     }
 }

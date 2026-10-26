@@ -1,5 +1,6 @@
 package dev.incusspawn.util;
 
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -109,6 +110,6 @@ class OutputFormatTest {
                 text.replace("\r\n", "\n"));
         assertTrue(text.codePoints().noneMatch(c -> c >= 0x202A && c <= 0x202E || c >= 0x2066 && c <= 0x2069),
                 "no raw bidi control: " + text);
-        assertEquals(value, new com.fasterxml.jackson.databind.ObjectMapper().readTree(text).get("v").asText());
+        assertEquals(value, JqValues.parseStrict(text).path("v").asText());
     }
 }

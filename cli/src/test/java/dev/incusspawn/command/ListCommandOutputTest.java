@@ -1,7 +1,7 @@
 package dev.incusspawn.command;
 
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.tui.InstanceDetailView;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
@@ -208,7 +208,7 @@ class ListCommandOutputTest {
 
     @Test
     void aListingAnswerWithoutAnArrayFailsEveryFormat() {
-        var broken = new FakeIncusDaemon().listingAnswers(new ObjectMapper().createObjectNode().put("oops", 1));
+        var broken = new FakeIncusDaemon().listingAnswers(JqObject.of("oops", 1L));
         for (var cmd : List.of(cmd(null), cmd("plain"), cmd("json"), quiet())) {
             var e = assertThrows(IncusException.class, () -> list(cmd, broken));
             assertTrue(e.getMessage().startsWith("Cannot read the instance listing"), e.getMessage());

@@ -1,7 +1,11 @@
 package dev.incusspawn.tool;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.incus.IncusClient;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqString;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -21,7 +25,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ClaudeCallTimeTokenTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
     private static final String PROOF = "sk-ant-isx_0123456789abcdef0123456789abcdef";
     private static final String NEXT_PROOF = "sk-ant-isx_fedcba9876543210fedcba9876543210";
 
@@ -133,17 +136,15 @@ class ClaudeCallTimeTokenTest {
 
         login(Map.of("ANTHROPIC_API_KEY", PROOF), "true");
 
-        var root = JSON.readTree(claudeJson.toFile());
-        assertEquals(List.of(PROOF.substring(PROOF.length() - 20)),
-                JSON.convertValue(root.at("/customApiKeyResponses/approved"), List.class),
+        var root = readClaudeJson(claudeJson);
+        assertEquals(List.of(PROOF.substring(PROOF.length() - 20)), approved(root),
                 "Claude Code approves a key by its last 20 characters, and asks again for any other");
-        assertTrue(root.at("/projects/~1home~1agentuser/hasTrustDialogAccepted").asBoolean(),
+        assertTrue(root.path("projects").path("/home/agentuser").path("hasTrustDialogAccepted").asBoolean(false),
                 "the rest of the file is kept");
 
         // The next start brings a new proof, approved in its turn
         login(Map.of("ANTHROPIC_API_KEY", NEXT_PROOF), "true");
-        assertEquals(List.of(NEXT_PROOF.substring(NEXT_PROOF.length() - 20)),
-                JSON.convertValue(JSON.readTree(claudeJson.toFile()).at("/customApiKeyResponses/approved"), List.class));
+        assertEquals(List.of(NEXT_PROOF.substring(NEXT_PROOF.length() - 20)), approved(readClaudeJson(claudeJson)));
     }
 
     @Test
@@ -152,8 +153,7 @@ class ClaudeCallTimeTokenTest {
 
         login(Map.of("ANTHROPIC_API_KEY", "sk-ant-short"), "true");
 
-        assertEquals(List.of("sk-ant-short"), JSON.convertValue(
-                JSON.readTree(claudeJson.toFile()).at("/customApiKeyResponses/approved"), List.class));
+        assertEquals(List.of("sk-ant-short"), approved(readClaudeJson(claudeJson)));
     }
 
     @Test
@@ -167,11 +167,11 @@ class ClaudeCallTimeTokenTest {
         assertTrue(Files.readString(claudeJson).contains(PROOF.substring(PROOF.length() - 20)),
                 "the login script recognises a file isx merged");
 
-        var child = JSON.readTree(ClaudeSetup.mergeClaudeJson(
+        var child = JqValues.parseStrict(ClaudeSetup.mergeClaudeJson(
                 new IncusClient.ExecResult(0, Files.readString(claudeJson), ""), FRESH_CLAUDE_JSON));
 
-        assertEquals("http", child.at("/mcpServers/intellij-index/type").asText());
-        assertEquals(List.of("sk-ant-placeholder"), JSON.convertValue(child.at("/customApiKeyResponses/approved"), List.class));
+        assertEquals("http", child.path("mcpServers").path("intellij-index").path("type").asText(""));
+        assertEquals(List.of("sk-ant-placeholder"), approved(child));
     }
 
     private static final String FRESH_CLAUDE_JSON = """
@@ -217,15 +217,37 @@ class ClaudeCallTimeTokenTest {
 
     /** What Claude Code itself writes: {@code JSON.stringify(config, null, 2)}. */
     private Path writeClaudeJson(String approved) throws IOException {
-        var config = JSON.createObjectNode();
-        config.put("hasCompletedOnboarding", true);
-        var responses = config.putObject("customApiKeyResponses");
-        responses.putArray("approved").add(approved);
-        responses.putArray("rejected");
-        config.putObject("projects").putObject("/home/agentuser").put("hasTrustDialogAccepted", true);
+        var config = JqObject.ofEntries("hasCompletedOnboarding", true,
+                "customApiKeyResponses", JqObject.ofEntries("approved", JqArray.of(JqString.of(approved)), "rejected", JqArray.EMPTY),
+                "projects", JqObject.of("/home/agentuser", JqObject.ofEntries("hasTrustDialogAccepted", true)));
         var path = home.resolve(".claude.json");
-        Files.writeString(path, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(config));
+        Files.writeString(path, JqValues.toPrettyJsonString(config));
         return path;
+    }
+
+    /**
+     * The file as Claude Code's {@code JSON.parse} reads it, where the approval the script appends
+     * on the last line replaces the earlier field. Both parts are read strictly: the rest through
+     * {@link ClaudeSetup#parseClaudeJson}, so isx's own reader recognises the line the script wrote.
+     */
+    private static JqValue readClaudeJson(Path path) throws IOException {
+        var text = Files.readString(path).strip();
+        var rest = (JqObject) ClaudeSetup.parseClaudeJson(text);
+        var last = text.substring(text.lastIndexOf('\n') + 1);
+        if (!last.startsWith(",\"customApiKeyResponses\":")) return rest;
+        var approval = JqValues.parseStrict("{" + last.substring(1)).path("customApiKeyResponses");
+        assertFalse(approval.isMissingNode(), "not one appended field: " + last);
+        return rest.with("customApiKeyResponses", approval);
+    }
+
+    /** The keys {@code .claude.json} lists as approved, each a string as Claude Code compares them. */
+    private static List<String> approved(JqValue root) {
+        var approved = root.path("customApiKeyResponses").path("approved");
+        assertTrue(approved.isArray(), root::toJsonString);
+        return approved.asList().stream().map(v -> {
+            assertTrue(v.isString(), root::toJsonString);
+            return v.asText();
+        }).toList();
     }
 
     private String login(Map<String, String> env, String then) throws Exception {

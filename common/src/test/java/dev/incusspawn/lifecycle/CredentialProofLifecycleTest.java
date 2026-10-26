@@ -1,7 +1,6 @@
 package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.incus.FakeIncusDaemon;
-import dev.incusspawn.incus.JacksonTrees;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CredentialProof;
 import dev.incusspawn.proxy.InstanceSecret;
@@ -67,9 +66,9 @@ class CredentialProofLifecycleTest {
         InstanceSecret.stampInto(config);
         config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
         var daemon = new FakeIncusDaemon().container("box", config);
-        var beforeReset = JacksonTrees.fromJsonNode(daemon.instance("box"));
+        var beforeReset = daemon.instance("box");
         CredentialProofReset.reset(daemon.client(), "box", (name, generation, hash) -> true);
-        var after = daemon.instance("box").path("config").deepCopy();
+        var after = daemon.instance("box").path("config");
         var delivered = InstanceLifecycle.rotateInstanceSecret(daemon.client(), "box", beforeReset, Map.of(), ProofToken.declared());
         var current = daemon.instance("box").path("config");
         assertEquals(after.path(Metadata.INSTANCE_PROOF_ID), current.path(Metadata.INSTANCE_PROOF_ID));
@@ -144,7 +143,7 @@ class CredentialProofLifecycleTest {
 
     @Test void migrationAndChangedDeclarationsRereadBeforeWritingProofState() {
         var daemon = new FakeIncusDaemon().container("box", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
-        var beforeMigration = JacksonTrees.fromJsonNode(daemon.instance("box"));
+        var beforeMigration = daemon.instance("box");
         var first = InstanceLifecycle.rotateInstanceSecret(daemon.client(), "box");
         CredentialProofReset.reset(daemon.client(), "box", (name, generation, hash) -> true);
         var currentId = daemon.instance("box").path("config").path(Metadata.INSTANCE_PROOF_ID).asText();
@@ -152,7 +151,7 @@ class CredentialProofLifecycleTest {
         assertEquals(currentId, started.proofGeneration());
         assertNotEquals(first.proofSecret(), started.proofSecret());
 
-        var instance = JacksonTrees.fromJsonNode(daemon.instance("box"));
+        var instance = daemon.instance("box");
         var changed = java.util.List.of(new ProofToken.Placeholder("NEW_TOKEN", "new_", "new"));
         var updated = InstanceLifecycle.rotateInstanceSecret(daemon.client(), "box", instance, Map.of(), changed);
         assertEquals(started.proofSecret(), updated.proofSecret());
