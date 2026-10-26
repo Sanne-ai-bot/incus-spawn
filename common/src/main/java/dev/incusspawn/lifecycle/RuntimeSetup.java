@@ -158,21 +158,20 @@ public final class RuntimeSetup {
     static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson,
                                    NetworkMode networkMode, List<String> sshKeys, boolean deliverSecret) {
         var sb = new StringBuilder();
-        if (!sshKeys.isEmpty()) {
-            // Same result as the file push this replaces: agentuser (uid 1000) owns it, 0600.
-            sb.append("install -d -m 700 -o 1000 -g 1000 /home/agentuser/.ssh\n")
-              .append(Container.heredoc("(umask 077 && cat > /home/agentuser/.ssh/authorized_keys)",
-                      String.join("\n", sshKeys)))
-              .append("\nchown 1000:1000 /home/agentuser/.ssh/authorized_keys"
-                      + " && chmod 600 /home/agentuser/.ssh/authorized_keys\n");
-        }
         if (prefetched != null && prefetched.terminfo() != null) {
             sb.append(Container.heredoc("tic -x - 2>/dev/null", prefetched.terminfo())).append('\n');
         }
         if (deliverSecret) sb.append(InstanceSecret.GUEST_SCRIPT).append('\n');
-        // Best-effort like the steps above: only the readiness checks below decide whether
+        // Best-effort like the other steps: only the readiness checks below decide whether
         // the script succeeded, which is what pollUntilReady retries on.
         sb.append("chown agentuser:agentuser /home/agentuser || true");
+        if (!sshKeys.isEmpty()) {
+            // As agentuser, so after the home is theirs: a branch of an instance copies the ~/.ssh
+            // agentuser owns, so a symlink there must not steer a root write (#1698). The closing
+            // true takes the next step's separator, which may not follow a heredoc's end.
+            sb.append('\n').append(Container.heredoc(asAgentuser(WRITE_KEYS), String.join("\n", sshKeys)))
+              .append("\ntrue");
+        }
         // The static .network config is pushed into the stopped container before start
         // (see configureBranch), so the interface comes up immediately at boot — no DHCP
         // wait. Here we only ensure the service is running and confirm the address is up.
@@ -278,15 +277,40 @@ public final class RuntimeSetup {
      */
     private static final String KEY_BLOB = "b=${k#* }; b=${b%% *};";
 
+    /** Shell, run as agentuser with its home as {@code $1}, that sets {@code f} and makes a 0700 {@code ~/.ssh}. */
+    private static final String KEYS_DIR = "d=\"$1/.ssh\"; f=\"$d/authorized_keys\"; umask 077;"
+            + " mkdir -p \"$d\" && chmod 700 \"$d\"";
+
+    /**
+     * Shell, run as agentuser with its home as {@code $1}, that makes {@code authorized_keys} hold
+     * exactly the keys on its stdin, 0600: a branch's keys replace what its source held. A file
+     * agentuser does not own, which root's write used to repair, is removed first, as agentuser
+     * may in its own {@code ~/.ssh}.
+     */
+    static final String WRITE_KEYS = KEYS_DIR + " && { [ ! -e \"$f\" ] || [ -O \"$f\" ] || rm -f \"$f\"; }"
+            + " && cat > \"$f\" && chmod 600 \"$f\"";
+
     /**
      * Shell, run as agentuser with its home as {@code $1}, that adds each key on its stdin which
      * {@code authorized_keys} lacks, keeping what it already accepts: unlike a branch, whose file
-     * is new, a started instance may hold keys its user added.
+     * {@link #WRITE_KEYS} writes whole, a started instance may hold keys its user added.
      */
-    static final String APPEND_KEYS = "d=$1/.ssh; f=$d/authorized_keys; umask 077; mkdir -p $d && chmod 700 $d;"
+    static final String APPEND_KEYS = KEYS_DIR + ";"
             + " [ -s $f ] && [ -n \"$(tail -c1 $f)\" ] && echo >> $f;"
             + " while IFS= read -r k; do " + KEY_BLOB + " [ -n \"$b\" ] && ! " + activeLinesHold("$f")
             + " && printf \"%s\\n\" \"$k\" >> $f; done; chmod 600 $f";
+
+    /**
+     * Shell running {@code script} on its stdin as agentuser, never as root, with its home as
+     * {@code $1}. Bounded, since agentuser controls the file the script writes and may make it a
+     * FIFO. Its environment is cleared, since agentuser can read it while it runs: nothing the exec
+     * carries reaches agentuser, whatever a later step adds or forgets to unset. Best-effort and
+     * quiet, like the steps around it.
+     */
+    private static String asAgentuser(String script) {
+        return "(cd /home/agentuser && timeout 10 runuser -u agentuser -- env -i HOME=/home/agentuser"
+                + " PATH=/usr/bin:/bin sh -c '" + script + "' isx-keys /home/agentuser) >/dev/null 2>&1";
+    }
 
     /**
      * Shell, run as root on the keys on its stdin, that succeeds only when {@code file} holds every
@@ -320,8 +344,7 @@ public final class RuntimeSetup {
         return "{ [ -d /home/agentuser ] && { " + Container.heredoc("keys=$(cat", String.join("\n", keys)) + "\n);"
                 + " { [ ! -L " + d + " ] && [ ! -L " + f + " ] && [ -f " + f + " ]"
                 + " && printf '%s\\n' \"$keys\" | " + keysPresentCheck(f) + "; }"
-                + " || printf '%s\\n' \"$keys\" | timeout 10 runuser -u agentuser -- sh -c '" + APPEND_KEYS
-                + "' isx-keys /home/agentuser; }; } >/dev/null 2>&1; true";
+                + " || printf '%s\\n' \"$keys\" | " + asAgentuser(APPEND_KEYS) + "; }; } >/dev/null 2>&1; true";
     }
 
     /**

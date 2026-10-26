@@ -106,7 +106,8 @@ class SshOnStartTest {
     void theKeysAreWrittenAsAgentuserNeverAsRoot() {
         // agentuser owns ~/.ssh: a symlink there must not steer a root write
         var script = RuntimeSetup.authorizeKeysScript(List.of(KEY));
-        assertTrue(script.contains("runuser -u agentuser -- sh -c '" + RuntimeSetup.APPEND_KEYS + "'"), script);
+        assertTrue(script.contains("runuser -u agentuser -- env -i HOME=/home/agentuser PATH=/usr/bin:/bin sh -c '"
+                + RuntimeSetup.APPEND_KEYS + "'"), script);
         assertFalse(RuntimeSetup.APPEND_KEYS.contains("'"), "it is quoted whole");
     }
 

@@ -1100,6 +1100,11 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 1. **`isx init`** generates the ed25519 key pair (via `ssh-keygen`) and prepends an `Include ~/.config/incus-spawn/ssh/config` directive to `~/.ssh/config` (idempotent, resolves symlinks for dotfile managers).
    The key pair is also created lazily at first branch for users upgrading from older versions.
 2. **`isx branch`** (via `RuntimeSetup.injectSshKeyIfAvailable`): injects the managed public key and the user's first default key (`~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`) into the container's `authorized_keys`.
+   The setup script writes that file whole as agentuser through `runuser` (`RuntimeSetup.WRITE_KEYS`), never as root (#1698).
+   A branch of an instance copies the `~/.ssh` agentuser owns, so a symlink planted there must not steer a root write in the copy.
+   It runs after the home's chown and under `env -i`, since agentuser can read the environment of its own processes.
+   The secret delivery before it already unsets what it delivered, so `env -i` keeps out whatever else the exec carries.
+   A file agentuser does not own, which the root write used to repair, is removed first, as agentuser may in its own `~/.ssh`; a root-owned `~/.ssh` itself is not repaired.
    Then, once the instance has an address (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `StrictHostKeyChecking no` and `UserKnownHostsFile /dev/null`.
    After this, `ssh <instance-name>` just works.
 3. **Every later start for use** (`InstanceLifecycle.startForUse`, behind `isx shell`, `isx run` and the TUI) does the same for an instance with SSH, so a `--no-start` branch is reachable after its first start (#1640).

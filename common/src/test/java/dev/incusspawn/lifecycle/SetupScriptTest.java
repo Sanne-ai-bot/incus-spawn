@@ -8,8 +8,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -27,6 +29,8 @@ class SetupScriptTest {
             \tbel=^G, cr=\\r, sgr0=\\E(B\\E[m, setaf=\\E[38;5;%p1%dm,
             INCUS_EOF
             \tuse=$HOME,""";
+
+    private static final String KEY = "ssh-ed25519 AAAAC3Nza managed@isx";
 
     private static RuntimeSetup.RuntimeConfig prefetched(String terminfo) {
         return new RuntimeSetup.RuntimeConfig(null, true, null, null, null, terminfo, "10.0.0.2", null, null);
@@ -50,6 +54,54 @@ class SetupScriptTest {
         // A terminfo line equal to the default delimiter must not end the heredoc early.
         assertTrue(script.contains("<< 'INCUS_EOF_'"));
         assertFalse(script.contains("/tmp/.isx-terminfo.src"), "nothing is pushed any more");
+    }
+
+    @Test
+    void aBranchWritesTheKeysAsAgentuserNeverAsRoot() {
+        // agentuser owns ~/.ssh, and a branch of an instance copies whatever is there: a symlink
+        // in it must not steer a root write in the copy (#1698)
+        var script = RuntimeSetup.buildSetupScript(prefetched(null), null, NetworkMode.FULL, List.of(KEY), true);
+        var asAgentuser = "runuser -u agentuser -- env -i HOME=/home/agentuser PATH=/usr/bin:/bin sh -c '"
+                + RuntimeSetup.WRITE_KEYS + "'";
+        assertTrue(script.contains(asAgentuser), script);
+        assertFalse(RuntimeSetup.WRITE_KEYS.contains("'"), "it is quoted whole");
+        assertFalse(script.replace(asAgentuser, "").contains(".ssh"), "root never touches ~/.ssh: " + script);
+        assertTrue(script.indexOf("chown agentuser:agentuser /home/agentuser") < script.indexOf(asAgentuser),
+                "the home is agentuser's before agentuser writes in it");
+    }
+
+    @Test
+    void theKeysStepStaysValidShellBeforeEveryNextStep() throws Exception {
+        // An airgap branch's next step is a tool's readiness wait, which starts with "; "
+        var withReadyCheck = "{\"tools\":{\"sshd\":{\"ready\":\"systemctl is-active sshd\"}}}";
+        for (var mode : NetworkMode.values()) {
+            for (var buildSource : new String[] {null, withReadyCheck}) {
+                var script = RuntimeSetup.buildSetupScript(prefetched(null), buildSource, mode, List.of(KEY), true);
+                assertEquals(0, syntaxCheck(script), script);
+                if (buildSource != null) assertTrue(script.contains("systemctl is-active sshd"), script);
+            }
+        }
+    }
+
+    @Test
+    void aBranchsKeysReplaceWhatTheSourceHeld(@TempDir Path tmp) throws Exception {
+        // A branch's file holds exactly its keys, as the root write did: mode 0600 in a 0700 ~/.ssh
+        var home = tmp.resolve("a home");
+        var file = home.resolve(".ssh/authorized_keys");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, "ssh-ed25519 AAAAsourceKey source@box\n");
+
+        var sh = new ProcessBuilder("sh", "-c", RuntimeSetup.WRITE_KEYS, "isx-keys", home.toString())
+                .redirectErrorStream(true).start();
+        try (var in = sh.getOutputStream()) {
+            in.write((KEY + "\n").getBytes());
+        }
+        assertTrue(sh.waitFor(10, TimeUnit.SECONDS));
+        assertEquals("", new String(sh.getInputStream().readAllBytes()));
+
+        assertEquals(List.of(KEY), Files.readAllLines(file));
+        assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file.getParent())));
     }
 
     @Test
