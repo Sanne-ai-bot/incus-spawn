@@ -6,8 +6,6 @@ import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -766,9 +764,7 @@ class ToolDefLoaderTest {
                   - export DOCKER_HOST=unix:///var/run/docker.sock
                 """);
         var reported = new ArrayList<String>();
-        var stderr = new ByteArrayOutputStream();
-        var originalErr = System.err;
-        System.setErr(new PrintStream(stderr, true));
+        // That none reaches the terminal is the binding's, pinned by OutputBindingTest
         try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
             var loader = new ToolDefLoader();
             loader.setProjectToolsDir(tempDir);
@@ -783,10 +779,7 @@ class ToolDefLoaderTest {
             again.setProjectToolsDir(tempDir);
             assertEquals(List.of(warning), again.warnings());
             assertEquals(List.of(warning), reported);
-        } finally {
-            System.setErr(originalErr);
         }
-        assertEquals("", stderr.toString());
     }
 
     @Test

@@ -16,17 +16,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Where each kind of message goes under each binding the owner of the terminal makes (#1703). */
 class OutputBindingTest {
 
-    /** What a terminal was asked to print, by kind. */
-    private static final class Recorder implements Output {
-        final List<String> events = new ArrayList<>();
-
-        @Override public void warn(String msg, String... details) { events.add("warn " + msg); }
-        @Override public void warnAside(String msg) { events.add("warnAside " + msg); }
-        @Override public void stepWarn(String msg) { events.add("stepWarn " + msg); }
-        @Override public void warnBanner(String title, String... lines) { events.add("warnBanner " + title); }
-        @Override public void stepFail(String msg) { events.add("stepFail " + msg); }
-        @Override public void note(String msg) { events.add("note " + msg); }
-        @Override public void step(String msg) { events.add("step " + msg); }
+    /** What a terminal was asked to print, as "kind message": {@code warnBanner CA mismatch}. */
+    private static List<String> kinds(RecordingOutput terminal) {
+        return terminal.events().stream().map(e -> {
+            var words = e.kind().name().toLowerCase(java.util.Locale.ROOT).split("_");
+            var kind = new StringBuilder(words[0]);
+            for (int i = 1; i < words.length; i++) kind.append(Character.toUpperCase(words[i].charAt(0))).append(words[i].substring(1));
+            return kind + " " + e.msg();
+        }).toList();
     }
 
     private static void reportEveryKind() {
@@ -46,7 +43,7 @@ class OutputBindingTest {
      */
     @Test
     void aReleasedTerminalPrintsEveryDiagnosticAndLogsIt() {
-        var terminal = new Recorder();
+        var terminal = new RecordingOutput();
         var log = new ArrayList<String>();
         try (var ignored = BuildOutput.bind(Output.copying(terminal, Output.diagnosticsTo(log::add)))) {
             reportEveryKind();
@@ -56,7 +53,7 @@ class OutputBindingTest {
                 "a definition's warning"), log);
         assertEquals(List.of("step Copying", "warn a warning", "stepWarn a step's warning",
                 "warnBanner CA mismatch", "stepFail a failed step", "note a note",
-                "warnAside a definition's warning"), terminal.events);
+                "warnAside a definition's warning"), kinds(terminal));
     }
 
     /** While the TUI draws, a line on the terminal is drawn over: every warning goes to its log, the rest nowhere. */
@@ -92,7 +89,7 @@ class OutputBindingTest {
      */
     @Test
     void beforeTheTuiOpensNoticesAreHeldAndStepsPrinted() {
-        var terminal = new Recorder();
+        var terminal = new RecordingOutput();
         var held = new ArrayList<String>();
         try (var ignored = BuildOutput.bind(Output.holding(terminal, Output.diagnosticsTo(held::add)))) {
             reportEveryKind();
@@ -100,11 +97,11 @@ class OutputBindingTest {
 
         assertEquals(List.of("a definition's warning"), held);
         assertEquals(List.of("step Copying", "warn a warning", "stepWarn a step's warning",
-                "warnBanner CA mismatch", "stepFail a failed step", "note a note"), terminal.events);
+                "warnBanner CA mismatch", "stepFail a failed step", "note a note"), kinds(terminal));
 
         Output.holding(terminal, Output.diagnosticsTo(held::add)).warnAside("asked directly");
         assertEquals("asked directly", held.getLast());
-        assertEquals("note a note", terminal.events.getLast());
+        assertEquals("note a note", kinds(terminal).getLast());
     }
 
     /**
@@ -113,7 +110,7 @@ class OutputBindingTest {
      */
     @Test
     void aCopyRemembersWhatItsLogAlreadyReported() {
-        var terminal = new Recorder();
+        var terminal = new RecordingOutput();
         var log = new ArrayList<String>();
         var drawing = Output.diagnosticsTo(log::add);
         Warnings.warn(drawing, "broken tool file");
@@ -123,7 +120,7 @@ class OutputBindingTest {
         }
 
         assertEquals(List.of("broken tool file"), log);
-        assertEquals(List.of("warnAside broken tool file"), terminal.events);
+        assertEquals(List.of("warnAside broken tool file"), kinds(terminal));
     }
 
     /** A method {@code Output} gains is forwarded, or the TUI's lent terminal and the CLI's bound output would silently lose it. */
@@ -147,6 +144,35 @@ class OutputBindingTest {
             var declared = RecordingOutput.class.getMethod(method.getName(), method.getParameterTypes());
             assertEquals(RecordingOutput.class, declared.getDeclaringClass(), method.toString());
         }
+    }
+
+    /**
+     * The recorder skips what a terminal skips, and only that: a blank warning, but not a blank
+     * failed step, which still ends the live step, nor a banner with no title, which still prints.
+     */
+    @Test
+    void theRecorderSkipsOnlyWhatATerminalSkips() {
+        var out = new RecordingOutput();
+        out.warn(" ");
+        out.warnAside(null);
+        out.stepWarn("");
+        out.stepFail(null);
+        out.warnBanner("", "rebuild the template");
+
+        assertEquals(List.of(RecordingOutput.Kind.STEP_FAIL, RecordingOutput.Kind.WARN_BANNER),
+                out.events().stream().map(RecordingOutput.Event::kind).toList());
+    }
+
+    /** A header reads as one line, as a terminal draws it; a warning's advice goes under it. */
+    @Test
+    void theRecordersLinesReadAsATerminalShowsThem() {
+        var out = new RecordingOutput();
+        out.header("Restarting vm1", "VM agent not responding");
+        out.buildHeader("tpl-b", 1, 3);
+        out.warn("a warning", "what to do");
+
+        assertEquals(List.of("Restarting vm1 VM agent not responding", "tpl-b [1/3]", "a warning\nwhat to do"),
+                out.lines());
     }
 
     @Test

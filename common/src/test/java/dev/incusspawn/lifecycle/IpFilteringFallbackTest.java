@@ -1,11 +1,9 @@
 package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.util.RecordingOutput;
-import dev.incusspawn.util.Output;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -85,22 +83,18 @@ class IpFilteringFallbackTest {
     }
 
     /**
-     * Through the bound output, which a branch's start uses and the TUI's log copies (#1646), one
-     * warning with no marker and no indent run into it.
+     * The overload without an output, which build-time starts use, reports to the bound one: what
+     * the TUI copies into its log for a build it runs (#1646).
      */
     @Test
-    void theLossOfProtectionReadsAsOneWarningThroughBuildOutput() {
+    void withoutAnOutputTheLossOfProtectionGoesToTheBoundOne() {
         var incus = withFilteringOn();
         doThrow(new IncusException(NFT_BRIDGE_FAILURE)).doNothing().when(incus).start(NAME);
-        var copied = new ArrayList<String>();
 
-        try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(copied::add)))) {
-            // The default output, which build-time starts use, is the bound one
-            InstanceLifecycle.startInstance(incus, NAME);
-        }
+        var bound = RecordingOutput.during(() -> InstanceLifecycle.startInstance(incus, NAME));
 
         assertEquals(List.of("this host cannot enforce IP spoofing protection, so it has been disabled"
-                + " on box: instances on this host can impersonate each other's credential accounts."), copied);
+                + " on box: instances on this host can impersonate each other's credential accounts."), bound.warnings());
     }
 
     /** To the caller's output, the loss of protection is one typed warning, never a progress line (#1703). */

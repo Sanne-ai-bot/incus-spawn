@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -205,20 +206,13 @@ class ProjectCommandTest {
 
     /** Created on the built-in tpl-java, deprecated by #1195: it still works, and says so. */
     @Test
-    void createOnADeprecatedParentWarns() {
+    void createOnADeprecatedParentWarns() throws Exception {
         var incus = parentWhoseGuestAnswers(OK);
         var config = config(null);
         config.setParent("tpl-java");
-        var originalErr = System.err;
-        var err = new java.io.ByteArrayOutputStream();
-        System.setErr(new java.io.PrintStream(err, true, java.nio.charset.StandardCharsets.UTF_8));
-        try {
-            assertEquals(0, create(incus, config));
-        } finally {
-            System.setErr(originalErr);
-        }
-        var printed = err.toString(java.nio.charset.StandardCharsets.UTF_8);
-        assertTrue(printed.contains(NAME + " derives from tpl-java, which is deprecated"), printed);
+        var out = RecordingOutput.during(() -> assertEquals(0, create(incus, config)));
+        assertTrue(out.warnings().stream().anyMatch(w -> w.contains(NAME + " derives from tpl-java, which is deprecated")),
+                out.warnings()::toString);
     }
 
     @Test
@@ -281,10 +275,12 @@ class ProjectCommandTest {
 
     @Test
     void aFailedStepShowsWhatItPrintedOnStdout() throws Exception {
-        var output = InitStepOutputTest.capture(() -> assertFalse(GuestUpdate.finish(
+        var out = RecordingOutput.during(() -> assertFalse(GuestUpdate.finish(
                 new IncusClient.ExecResult(1, "[ERROR] COMPILATION ERROR\n", ""), "pre-build")));
 
-        assertTrue(output.err().contains("[ERROR] COMPILATION ERROR"), output.err());
+        var failed = out.events(RecordingOutput.Kind.STEP_FAIL);
+        assertEquals(1, failed.size(), out.events()::toString);
+        assertTrue(failed.getFirst().msg().contains("[ERROR] COMPILATION ERROR"), failed.getFirst()::msg);
     }
 
     /**

@@ -238,6 +238,8 @@ Only its gate classes may write the raw streams: the `EXEMPT` map and the build-
 Code that predates it is counted per file in `raw-output-baseline.txt`, whose counts only shrink.
 Route new output through `BuildOutput` or a caller's sink; never add a baseline line or raise a count.
 A moved or renamed file takes its line along.
+Tests read what code reported from `RecordingOutput` (common test-jar), never from a swapped `System.out`/`System.err`: bind it (`BuildOutput.bind`, `RecordingOutput.during`) or hand it to code that takes an `Output`, and assert on its typed events.
+`StreamSwapGateTest` (`cli`) lets only the test classes in its `MAY_SWAP` map swap a stream, each with why, and that list only shrinks too.
 
 **Output a script reads is a contract.**
 `--format=plain|json` (on `isx list` and every other query command, and `isx branch`) goes through `OutputFormat` (`common/util`): one ordered map per record feeds both formats.
