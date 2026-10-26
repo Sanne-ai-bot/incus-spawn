@@ -80,22 +80,12 @@
             <scope>test</scope>
         </dependency>
         <!-- Validates isx mcp's output schemas and results as a client would: the validator the
-             official MCP Java SDK uses. Not managed by the Quarkus BOM, so pinned here. -->
+             official MCP Java SDK uses. Not managed by the Quarkus BOM, so pinned here.
+             It brings Jackson 3 (tools.jackson) into the tests. -->
         <dependency>
             <groupId>com.networknt</groupId>
             <artifactId>json-schema-validator</artifactId>
-            <version>1.5.6</version>
-            <scope>test</scope>
-        </dependency>
-        <!-- StructuredResults hands the 1.x schema validator Jackson trees. -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.dataformat</groupId>
-            <artifactId>jackson-dataformat-yaml</artifactId>
+            <version>3.0.8</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
