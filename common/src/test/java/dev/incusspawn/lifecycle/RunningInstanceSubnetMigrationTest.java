@@ -1,9 +1,9 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.Output;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.incus.StaticIpAllocator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -63,7 +63,7 @@ class RunningInstanceSubnetMigrationTest {
     private static void assertMigratedWithARestart(String type) {
         var daemon = running(type);
         var warnings = new ArrayList<String>();
-        var output = new StaticIpAllocator.Output(msg -> {}, warnings::add);
+        var output = Output.diagnosticsTo(warnings::add);
 
         assertEquals(1, InstanceNetwork.migrateAllInstancesToNewSubnet(answering(daemon), output));
 
@@ -81,7 +81,7 @@ class RunningInstanceSubnetMigrationTest {
         var warnings = new ArrayList<String>();
 
         assertEquals(0, InstanceNetwork.migrateAllInstancesToNewSubnet(answering(daemon),
-                new StaticIpAllocator.Output(msg -> {}, warnings::add)));
+                Output.diagnosticsTo(warnings::add)));
 
         var box = daemon.instance("box");
         assertEquals("Running", box.path("status").asText(), "never forced");
@@ -96,7 +96,7 @@ class RunningInstanceSubnetMigrationTest {
         var warnings = new ArrayList<String>();
 
         assertEquals(1, InstanceNetwork.migrateAllInstancesToNewSubnet(daemon.client(),
-                new StaticIpAllocator.Output(msg -> {}, warnings::add)));
+                Output.diagnosticsTo(warnings::add)));
 
         assertEquals(List.of(), daemon.stateActions());
         assertEquals(List.of(), warnings);
@@ -109,7 +109,7 @@ class RunningInstanceSubnetMigrationTest {
         var warnings = new ArrayList<String>();
 
         assertEquals(0, InstanceNetwork.migrateAllInstancesToNewSubnet(daemon.client(),
-                new StaticIpAllocator.Output(msg -> {}, warnings::add)));
+                Output.diagnosticsTo(warnings::add)));
 
         assertEquals(List.of(), daemon.stateActions());
         assertEquals(OLD_IP, daemon.instance("box").path("config").path(Metadata.STATIC_IP).asText());

@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.SpawnConfig;
@@ -56,7 +57,7 @@ class ChangeAccountsTest {
     private static Map<String, String> change(FakeIncusDaemon daemon, Map<String, String> changes) throws Exception {
         var config = Jjq.spawnConfig(CONFIG);
         return InstanceLifecycle.changeAccounts(daemon.client(), NAME, config,
-                dev.incusspawn.config.AccountSelection.namespaceSetups(config), changes, msg -> { }, msg -> { });
+                dev.incusspawn.config.AccountSelection.namespaceSetups(config), changes, RecordingOutput.QUIET);
     }
 
     @Test

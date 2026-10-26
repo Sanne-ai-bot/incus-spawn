@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,9 +21,9 @@ class TemplateLockTest {
     void theSwapWaitsForACopyUnderWay() throws Exception {
         var incus = mock(IncusClient.class);
         try (var pool = Executors.newSingleThreadExecutor()) {
-            var reading = TemplateLock.reading("tpl", s -> {});
+            var reading = TemplateLock.reading("tpl", RecordingOutput.QUIET);
             try {
-                var swap = pool.submit(() -> TemplateLock.replace(incus, "tpl-rebuilding", "tpl", s -> {}));
+                var swap = pool.submit(() -> TemplateLock.replace(incus, "tpl-rebuilding", "tpl", RecordingOutput.QUIET));
                 Thread.sleep(200);
                 assertFalse(swap.isDone(), "the template was swapped while it was being copied");
                 verifyNoInteractions(incus);
@@ -50,10 +51,10 @@ class TemplateLockTest {
         }).when(incus).deleteIfExists("tpl");
         try (var pool = Executors.newFixedThreadPool(2)) {
             try {
-                var swap = pool.submit(() -> TemplateLock.replace(incus, "tpl-rebuilding", "tpl", s -> {}));
+                var swap = pool.submit(() -> TemplateLock.replace(incus, "tpl-rebuilding", "tpl", RecordingOutput.QUIET));
                 assertTrue(deleted.await(10, TimeUnit.SECONDS));
                 var copy = pool.submit(() -> {
-                    try (var reading = TemplateLock.reading("tpl", s -> {})) {
+                    try (var reading = TemplateLock.reading("tpl", RecordingOutput.QUIET)) {
                         // What a copy would find: renamed into place
                         verify(incus).rename("tpl-rebuilding", "tpl");
                         return true;
@@ -73,7 +74,7 @@ class TemplateLockTest {
     @Test
     void aNameNoInstanceCanHaveGetsNoLockFile() {
         // An untrusted name (a project-local name:, an agent's argument) must not become a path
-        try (var held = TemplateLock.reading("../../escaped", s -> {})) {
+        try (var held = TemplateLock.reading("../../escaped", RecordingOutput.QUIET)) {
             assertFalse(java.nio.file.Files.exists(dev.incusspawn.Environment.lockDir().resolve("escaped.lock")));
             assertFalse(java.nio.file.Files.exists(dev.incusspawn.Environment.lockDir().resolve("templates")));
         }

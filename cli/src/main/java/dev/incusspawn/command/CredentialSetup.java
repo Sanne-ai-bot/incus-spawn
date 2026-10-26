@@ -1389,7 +1389,7 @@ class CredentialSetup {
         for (var instance : instances) {
             try {
                 InstanceLifecycle.changeAccounts(incus, instance, config, setups, Map.of(namespace, account),
-                        msg -> { }, msg -> System.out.println("  Warning: " + msg));
+                        (msg, details) -> System.out.println("  Warning: " + msg));
             } catch (RuntimeException e) {
                 failures.add("Could not pin " + instance + " (" + e.getMessage() + "); it will switch.");
             }
@@ -1401,9 +1401,17 @@ class CredentialSetup {
     void refreshIdentities(List<String> instances) {
         var incus = RuntimeServices.incus();
         for (var instance : instances) {
-            InstanceLifecycle.reconcileAccountIdentities(incus, instance,
-                    msg -> System.out.println("  " + instance + ": " + msg),
-                    msg -> System.out.println("  Warning: " + msg));
+            InstanceLifecycle.reconcileAccountIdentities(incus, instance, new dev.incusspawn.util.Output() {
+                @Override
+                public void step(String msg) {
+                    System.out.println("  " + instance + ": " + msg);
+                }
+
+                @Override
+                public void warn(String msg, String... details) {
+                    System.out.println("  Warning: " + msg);
+                }
+            });
         }
     }
 

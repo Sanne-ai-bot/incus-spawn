@@ -109,6 +109,14 @@ public final class BuildOutput {
         return TERMINAL;
     }
 
+    /**
+     * Whatever is bound when each message is reported: what a CLI command hands shared code
+     * that takes an {@link Output}, so whoever owns the terminal decides, as for these methods.
+     */
+    public static Output bound() {
+        return BoundOutput.INSTANCE;
+    }
+
     /** Where messages go now. */
     public static Output current() {
         return bound;

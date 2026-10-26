@@ -102,7 +102,7 @@ public class ProjectCommand extends BaseCommand {
             var buildName = imageName + BuildCommand.REBUILDING_SUFFIX;
             // Held from the lookup until the copy is made, so a rebuild of the parent cannot swap it
             // away meanwhile (#1212)
-            try (var parentHeld = TemplateLock.reading(parent, BuildOutput::note)) {
+            try (var parentHeld = TemplateLock.reading(parent, BuildOutput.bound())) {
                 if (!incus.exists(parent)) {
                     System.err.println("Error: parent image '" + parent + "' does not exist. Run 'incus-spawn build " + parent + "' first.");
                     return 1;
@@ -150,7 +150,7 @@ public class ProjectCommand extends BaseCommand {
                 return 1;
             }
             // Not deleted if this fails: by then it may be the only build there is
-            TemplateLock.replace(incus, buildName, imageName, BuildOutput::note);
+            TemplateLock.replace(incus, buildName, imageName, BuildOutput.bound());
             BuildOutput.success("Project template " + imageName + " created.");
             return 0;
         }

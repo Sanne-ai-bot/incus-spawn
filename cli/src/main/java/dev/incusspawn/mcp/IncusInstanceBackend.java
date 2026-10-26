@@ -106,8 +106,7 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public TemplateLock.Held holdTemplate(String template) {
         try {
-            // stderr: stdout is the protocol
-            return TemplateLock.reading(template, System.err::println);
+            return TemplateLock.reading(template, dev.incusspawn.util.BuildOutput.bound());
         } catch (HostLock.HostLockException e) {
             throw new ToolError(ToolError.Code.BUSY, "template '" + template + "' is being rebuilt; try again. " + e.getMessage());
         }
@@ -268,8 +267,7 @@ final class IncusInstanceBackend implements InstanceBackend {
         var lock = locks.tryAcquire(name, "starting");
         if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process; try again.");
         try (var held = lock.get()) {
-            // Stdout is the protocol channel, but StdioGuard has sent System.out to stderr.
-            InstancePrep.prepare(incus, name, System.err::println);
+            InstancePrep.prepare(incus, name, dev.incusspawn.util.BuildOutput.bound());
         } catch (InstancePrep.Refused | IncusException e) {
             throw new ToolError(ToolError.Code.UNAVAILABLE, "could not start '" + name + "': " + e.getMessage());
         }

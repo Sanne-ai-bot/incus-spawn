@@ -3,6 +3,7 @@ package dev.incusspawn.lifecycle;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.ProxyService;
 
@@ -70,7 +71,7 @@ public final class InstanceDestroyer {
     private static void deleteMarked(IncusClient incus, String name) {
         try {
             incus.delete(name, true);
-            InstanceLifecycle.removeHostIntegration(name);
+            InstanceLifecycle.removeHostIntegration(name, BuildOutput.bound());
         } catch (RuntimeException e) {
             incus.clearPendingOperation(name);
             throw e;

@@ -148,7 +148,7 @@ public class BranchCommand extends BaseCommand {
         var named = source != null ? source : detectSource();
         if (named == null) return null;
         // From the lookup through the branch's start, so a rebuild cannot swap the template away meanwhile (#1212)
-        try (var held = TemplateLock.reading(named, System.err::println)) {
+        try (var held = TemplateLock.reading(named, BuildOutput.bound())) {
             return create(named);
         } catch (HostLock.HostLockException e) {
             System.err.println("Error: " + e.getMessage());

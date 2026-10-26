@@ -3,11 +3,11 @@ package dev.incusspawn.command;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
-import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
@@ -18,7 +18,6 @@ import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 /**
  * Shared instance preparation logic for shell and run commands.
@@ -37,7 +36,7 @@ public class InstancePrep {
     public static String prepareInstance(IncusClient incus, String name) {
         String templateName;
         try {
-            templateName = prepare(incus, name, System.out::println);
+            templateName = prepare(incus, name, BuildOutput.bound());
         } catch (Refused e) {
             if (!e.reported()) e.getMessage().lines().forEach(l -> System.err.println(l));
             return null;
@@ -63,12 +62,13 @@ public class InstancePrep {
     /**
      * {@link #prepareInstance} without the GUI check, for a caller with no terminal ({@code isx
      * mcp}'s {@code start_instance}): refuses by throwing {@link Refused} rather than printing and
-     * returning null. {@code say} gets {@link InstanceLifecycle#ensureReady}'s progress; the repairs
-     * before it (which may start the instance to fix its CA) print as {@code isx shell} does.
+     * returning null. {@code out} gets the repairs' (which may start the instance to fix its CA),
+     * {@link InstanceLifecycle#ensureReady}'s and the reconcile's progress and warnings; a repair
+     * made is a banner, as {@code isx shell} prints it.
      *
      * @return the leaf template the instance descends from
      */
-    public static String prepare(IncusClient incus, String name, java.util.function.Consumer<String> say) {
+    public static String prepare(IncusClient incus, String name, Output out) {
         if (!incus.exists(name)) {
             throw new Refused("Error: no instance named '" + name + "' found.\n"
                     + "Run 'isx list' to see available instances.", false);
@@ -95,12 +95,12 @@ public class InstancePrep {
             }
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
-            repairBeforeUse(incus, name, machineType, Notices.TERMINAL);
+            repairBeforeUse(incus, name, machineType, new Notices(out, BuildOutput::warnBanner));
         }
 
         // Read after the repair above, so a VM it just reassigned is seen to owe its file
         var instance = incus.instanceMetadata(name);
-        readyForUse(incus, name, instance, machineType, say, BuildOutput::warn);
+        readyForUse(incus, name, instance, machineType, out);
         return templateName;
     }
 
@@ -115,27 +115,21 @@ public class InstancePrep {
      * skip it, and then pushed as the new account and committed as the old one (#907).
      *
      * @param instance the instance as read after the repairs before it
-     * @param say      progress, from the start and the reconcile
-     * @param warn     the reconcile's warnings
+     * @param out      the start's and the reconcile's progress and warnings
      */
     public static void readyForUse(IncusClient incus, String name, JqValue instance, MachineType machineType,
-                                   Consumer<String> say, Consumer<String> warn) {
-        InstanceLifecycle.ensureReady(incus, name, instance, machineType, say);
+                                   Output out) {
+        InstanceLifecycle.ensureReady(incus, name, instance, machineType, out);
         // From the same read: what ensureReady writes is none of what the reconcile looks at
-        InstanceLifecycle.reconcileAccountIdentities(incus, name, instance, say, warn);
+        InstanceLifecycle.reconcileAccountIdentities(incus, name, instance, out);
         ZmxSocketForward.ensureSymlink(name);
     }
 
-    /** Where {@link #repairBeforeUse} reports, so each front end can keep its own output. */
-    public record Notices(StaticIpAllocator.Output output, Consumer<String> startWarn,
-                          BiConsumer<String, String> repaired) {
-        /**
-         * {@code isx shell}'s and {@code isx run}'s: the terminal. The start's warnings carry their
-         * own prefix and indent, so they are printed as they come.
-         */
-        public static final Notices TERMINAL = new Notices(StaticIpAllocator.Output.TERMINAL,
-                System.err::println, BuildOutput::warnBanner);
-    }
+    /**
+     * Where {@link #repairBeforeUse} reports, so each front end can keep its own output: the
+     * repairs' and the start's progress and warnings, and each repair made.
+     */
+    public record Notices(Output output, BiConsumer<String, String> repaired) {}
 
     /**
      * The repairs an instance may owe before it is used, as {@code isx shell} and the TUI's shell
@@ -158,7 +152,7 @@ public class InstancePrep {
                 out.repaired().accept("Static IP mismatch", "Reassigned to current bridge subnet.");
             }
         } catch (Exception e) {
-            out.output().warn().accept("could not repair static IP for " + name + ": " + e.getMessage());
+            out.output().warn("could not repair static IP for " + name + ": " + e.getMessage());
         }
     }
 
@@ -176,11 +170,11 @@ public class InstancePrep {
         // Ensure the container is running so we can push the cert
         JqValue started = null;
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
-            started = InstanceLifecycle.startForUse(incus, container, machineType, out.startWarn());
+            started = InstanceLifecycle.startForUse(incus, container, machineType, out.output());
         }
 
         // The start's own read of the instance, when there was one: no need to read it again
-        if (CertificateAuthority.fixContainerCaIfNeeded(incus, container, started, out.output().warn())) {
+        if (CertificateAuthority.fixContainerCaIfNeeded(incus, container, started, out.output()::warn)) {
             out.repaired().accept("CA certificate mismatch", "Updated automatically.");
         }
     }

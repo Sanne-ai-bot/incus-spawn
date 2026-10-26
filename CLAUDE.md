@@ -217,8 +217,9 @@ See `.claude/rules/commands.md` and DESIGN.md "Testing".
 
 **Never print straight to stdout/stderr from code the TUI can reach.**
 While the TUI renders it owns the terminal: a `System.out`/`System.err` line is drawn over and lost, and scrambles the screen.
-Shared code (`common`, especially `lifecycle/` and `incus/`) that reports progress or warnings takes a sink instead -- a `Consumer<String>` (`InstanceLifecycle.startForUse(..., warn)`, `ensureReady(..., say)`) or `StaticIpAllocator.Output`.
-Each caller routes it: the CLI to `System.out::println`, the TUI to its warning log.
+Shared code (`common`, especially `lifecycle/` and `incus/`) that reports progress or warnings takes an `Output` (`common/util`) from its caller instead (`InstanceLifecycle.startForUse(..., out)`, `ensureReady(..., out)`, `StaticIpAllocator.claim`): a step is a `step`, a warning a `warn` with its advice as details, never a `Warning:`-prefixed line.
+Each caller routes it: the CLI passes `BuildOutput.bound()` (whoever owns the terminal), the TUI its `drawing` log from code it runs while it draws, background threads included.
+`lifecycle/` takes no `Consumer<String>` to report through.
 Pass plain stdout from the TUI only where it has provably released the terminal (e.g. `ShellLaunch.shellInto`, after the runner closes), and say so in a comment.
 **`BuildOutput` is the one output seam** (#1703): its static methods hand every message to the bound `Output` (`common/util`), a `TerminalOutput` unless the owner of the terminal bound another with `BuildOutput.bind`.
 Only owners bind: the TUI binds `Output.diagnosticsTo(warningLog::add)` while it draws or reloads, and `Output.copying(terminal, drawing)` around every action it lends the terminal to.

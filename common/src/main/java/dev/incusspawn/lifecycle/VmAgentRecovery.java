@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.Output;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -10,7 +11,6 @@ import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProofToken;
 
 import java.util.HashMap;
-import java.util.function.Consumer;
 
 /**
  * What {@code isx shell}, {@code isx run} and the TUI do about a running VM whose incus-agent
@@ -40,9 +40,9 @@ public final class VmAgentRecovery {
     /**
      * Bring VM {@code name}'s unresponsive agent back, restarting the VM if that can help, and
      * wait until it answers; or throw saying why a restart would not help. Progress and warnings
-     * go to {@code say}.
+     * go to {@code out}.
      */
-    public static void restartForAgent(IncusClient incus, String name, Consumer<String> say) {
+    public static void restartForAgent(IncusClient incus, String name, Output out) {
         if (!incus.agentFailureLines(name).isEmpty()) {
             // systemd may still be restarting the agent: waitForReady gives it that grace,
             // then reports the failure it logged.
@@ -64,7 +64,7 @@ public final class VmAgentRecovery {
                     + VmAgentFailure.pointer("Its boot log may say why: ", VmAgentFailure.save(name, incus.consoleLog(name))));
         }
 
-        say.accept("VM agent not responding, restarting " + name + "...");
+        out.step("VM agent not responding, restarting " + name + "...");
         var placeholders = ProofToken.declaredInBackground();
         try {
             incus.stop(name, GRACEFUL_STOP_SECONDS);
@@ -72,8 +72,8 @@ public final class VmAgentRecovery {
             incus.forceStop(name);
         }
         ProxyOnlyAcl.explaining(incus, name, instance, () -> {
-            InstanceLifecycle.prepareForStart(incus, name, instance, say);
-            InstanceLifecycle.startInstance(incus, name, say);
+            InstanceLifecycle.prepareForStart(incus, name, instance, out);
+            InstanceLifecycle.startInstance(incus, name, out);
             return null;
         });
         // Stamped before the wait, so a boot whose agent never comes up is still recorded

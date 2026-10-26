@@ -12,6 +12,7 @@ import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -165,7 +166,7 @@ public final class InstanceNetwork {
      *
      * @param alsoTaken         addresses to skip besides those NICs declare, see
      *                          {@link StaticIpAllocator#claim(IncusClient, BridgeAddress, Set,
-     *                          StaticIpAllocator.Output, java.util.function.Consumer)}
+     *                          Output, java.util.function.Consumer)}
      * @param pushNetworkConfig whether to push a static {@code .network} file into a container,
      *                          so it boots without asking DHCP; a branch does, a build does not
      */
@@ -174,7 +175,7 @@ public final class InstanceNetwork {
                                         Set<String> alsoTaken, boolean pushNetworkConfig) {
         var vm = IncusClient.machineType(read.metadata()) == MachineType.VM;
         var filteringRefused = new AtomicBoolean();
-        var output = StaticIpAllocator.Output.TERMINAL;
+        var output = BuildOutput.bound();
         var assigned = StaticIpAllocator.claim(incus, bridge, alsoTaken, output, ip -> {
             // A static IP, so no DHCP lease is ever acquired: leases expire across host
             // sleep/wake. See pushStaticNetworkConfig for the guest side.
@@ -186,7 +187,7 @@ public final class InstanceNetwork {
             // starts".
             if (!vm && pushNetworkConfig) {
                 pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, ip, bridge.gateway(),
-                        bridge.prefixLen(), output.warn());
+                        bridge.prefixLen(), output);
             }
             try {
                 incus.update(name, read, update);
@@ -205,7 +206,7 @@ public final class InstanceNetwork {
             }
         });
         // After the claim: the address is written, so no one need wait on this write
-        if (filteringRefused.get()) applyIpFiltering(incus, name, nicDevice, output.warn());
+        if (filteringRefused.get()) applyIpFiltering(incus, name, nicDevice, output);
         return assigned;
     }
 
@@ -332,14 +333,14 @@ public final class InstanceNetwork {
      * <p>Incus enforces this with nftables/ebtables rules and requires the pinned
      * {@code ipv4.address} set with it. A host whose kernel or firewall backend cannot do
      * it warns rather than failing the branch: the instance still works, it is only the
-     * separation between instances that is not enforced, in one warning to {@code warn}.
+     * separation between instances that is not enforced, in one warning to {@code out}.
      */
     private static void applyIpFiltering(IncusClient incus, String name, String nicDevice,
-                                         Consumer<String> warn) {
+                                         Output out) {
         try {
             incus.deviceConfigSet(name, nicDevice, "security.ipv4_filtering", "true");
         } catch (RuntimeException e) {
-            warn.accept("could not enable IP spoofing protection on " + name + ": " + e.getMessage()
+            out.warn("could not enable IP spoofing protection on " + name + ": " + e.getMessage()
                     + "; instances on this host can impersonate each other's credential accounts.");
         }
     }
@@ -371,7 +372,7 @@ public final class InstanceNetwork {
         return false;
     }
 
-    static boolean disableIpFiltering(IncusClient incus, String name, Consumer<String> warn) {
+    static boolean disableIpFiltering(IncusClient incus, String name, Output out) {
         try {
             var nic = incus.findNic(name, BridgeAddress.BRIDGE);
             if (nic == null || !"true".equals(nic.config().get("security.ipv4_filtering"))) {
@@ -381,9 +382,7 @@ public final class InstanceNetwork {
             // and that instance must not start without it: its failure stands (#1137)
             if (ProxyOnlyAcl.anyKey(nic.config())) return false;
             incus.deviceConfigSet(name, nic.name(), "security.ipv4_filtering", "false");
-            // One line, marked as a warning: some sinks print it as it comes (isx shell's, a start's
-            // progress sink), while BuildOutput.warn and the TUI's log drop the marker for their own
-            warn.accept("Warning: this host cannot enforce IP spoofing protection, so it has been disabled on "
+            out.warn("this host cannot enforce IP spoofing protection, so it has been disabled on "
                     + name + ": instances on this host can impersonate each other's credential accounts.");
             return true;
         } catch (RuntimeException ignored) {
@@ -397,7 +396,7 @@ public final class InstanceNetwork {
 
     static void pushStaticNetworkConfig(IncusClient incus, String name,
                                         String ip, String gateway, int prefixLen) {
-        pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, ip, gateway, prefixLen, BuildOutput::warn);
+        pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, ip, gateway, prefixLen, BuildOutput.bound());
     }
 
     static final String NETWORK_FILE = "/etc/systemd/network/10-eth0.network";
@@ -422,7 +421,7 @@ public final class InstanceNetwork {
      * @return whether the file was pushed
      */
     static boolean pushStaticNetworkConfig(IncusClient incus, String name, String match, String ip,
-                                        String gateway, int prefixLen, Consumer<String> warn) {
+                                        String gateway, int prefixLen, Output out) {
         var content = "[Match]\n" + match + "\n\n[Network]\n"
                 + "Address=" + ip + "/" + prefixLen + "\n"
                 + "Gateway=" + gateway + "\n"
@@ -431,7 +430,7 @@ public final class InstanceNetwork {
             incus.filePushContent(content, name, NETWORK_FILE, "0", "0", "0644");
             return true;
         } catch (IOException | RuntimeException e) {
-            warn.accept("failed to push static network config: " + e.getMessage());
+            out.warn("failed to push static network config: " + e.getMessage());
             return false;
         }
     }
@@ -447,7 +446,7 @@ public final class InstanceNetwork {
     public static JqValue pushDeferredVmFiles(IncusClient incus, String name, NetworkMode networkMode) {
         if (networkMode == NetworkMode.AIRGAP) return null;
         var instance = incus.instanceMetadata(name);
-        pushVmNetworkConfig(incus, name, instance, bridgePrefixLen(incus), BuildOutput::warn);
+        pushVmNetworkConfig(incus, name, instance, bridgePrefixLen(incus), BuildOutput.bound());
         return instance.isMissingNode() ? null : instance;
     }
 
@@ -464,7 +463,7 @@ public final class InstanceNetwork {
      * @param instance the instance as read; none of what is used here changes across a start
      */
     private static VmPush pushVmNetworkConfig(IncusClient incus, String name, JqValue instance,
-                                              int prefixLen, Consumer<String> warn) {
+                                              int prefixLen, Output out) {
         var config = instance.path("config");
         var ip = config.path(Metadata.STATIC_IP).asText("");
         var gateway = config.path(Metadata.STATIC_GATEWAY).asText("");
@@ -476,12 +475,12 @@ public final class InstanceNetwork {
         if (!MAC.matcher(mac).matches()) {
             // A file matching no link is inert, and one matching every link would put the
             // address on a nested bridge too: leave the VM on DHCP, which gives it the same one.
-            warn.accept("could not find the MAC address of " + name
+            out.warn("could not find the MAC address of " + name
                     + "'s NIC; it keeps the address DHCP gives it");
             return VmPush.NOTHING_TO_PUSH;
         }
         return pushStaticNetworkConfig(incus, name, "PermanentMACAddress=" + mac, ip, gateway,
-                prefixLen, warn) ? VmPush.PUSHED : VmPush.FAILED;
+                prefixLen, out) ? VmPush.PUSHED : VmPush.FAILED;
     }
 
     private enum VmPush { PUSHED, NOTHING_TO_PUSH, FAILED }
@@ -500,17 +499,17 @@ public final class InstanceNetwork {
      * @return true if a fix was applied
      */
     public static boolean fixStaticIpIfNeeded(IncusClient incus, String name) {
-        return fixStaticIpIfNeeded(incus, name, StaticIpAllocator.Output.TERMINAL);
+        return fixStaticIpIfNeeded(incus, name, BuildOutput.bound());
     }
 
     /** @param output where the reassignment, and any wait for the allocation lock, is reported */
     public static boolean fixStaticIpIfNeeded(IncusClient incus, String name,
-                                              StaticIpAllocator.Output output) {
+                                              Output output) {
         return fixStaticIpIfNeeded(incus, name, output, null);
     }
 
     public static boolean fixStaticIpIfNeeded(IncusClient incus, String name,
-                                              StaticIpAllocator.Output output,
+                                              Output output,
                                               MachineType machineType) {
         var storedIp = incus.configGet(name, Metadata.STATIC_IP);
         if (storedIp.isEmpty()) return false;
@@ -519,7 +518,7 @@ public final class InstanceNetwork {
     }
 
     private static boolean fixStaticIp(IncusClient incus, String name, String storedIp,
-                                       BridgeAddress bridge, StaticIpAllocator.Output output,
+                                       BridgeAddress bridge, Output output,
                                        MachineType machineType) {
         if (storedIp.isEmpty() || CidrUtils.isInSubnet(storedIp, bridge.subnet())) return false;
 
@@ -527,10 +526,10 @@ public final class InstanceNetwork {
         var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
 
         var newIp = StaticIpAllocator.claim(incus, bridge, output, ip -> {
-            output.step().accept("Reassigning " + name + ": " + storedIp + " → " + ip);
+            output.step("Reassigning " + name + ": " + storedIp + " → " + ip);
             incus.deviceConfigSet(name, nicDevice, "ipv4.address", ip);
         });
-        applyIpFiltering(incus, name, nicDevice, output.warn());
+        applyIpFiltering(incus, name, nicDevice, output);
 
         var updates = new HashMap<String, String>();
         updates.put(Metadata.STATIC_IP, newIp);
@@ -543,7 +542,7 @@ public final class InstanceNetwork {
             try {
                 ProxyOnlyAcl.write(incus, newGateway);
             } catch (RuntimeException e) {
-                output.warn().accept("the proxy-only ACL could not be moved to " + newGateway + " (" + e.getMessage()
+                output.warn("the proxy-only ACL could not be moved to " + newGateway + " (" + e.getMessage()
                         + "): proxy-only instances reach nothing until the next proxy-only branch rewrites it");
             }
         }
@@ -554,7 +553,7 @@ public final class InstanceNetwork {
 
         if (resolvedType == MachineType.CONTAINER) {
             pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, newIp, newGateway,
-                    bridge.prefixLen(), output.warn());
+                    bridge.prefixLen(), output);
         }
         return true;
     }
@@ -567,11 +566,11 @@ public final class InstanceNetwork {
      * @return count of instances that were migrated
      */
     public static int migrateAllInstancesToNewSubnet(IncusClient incus) {
-        return migrateAllInstancesToNewSubnet(incus, StaticIpAllocator.Output.TERMINAL);
+        return migrateAllInstancesToNewSubnet(incus, BuildOutput.bound());
     }
 
     /** @param output where each reassignment, and each warning, is reported */
-    static int migrateAllInstancesToNewSubnet(IncusClient incus, StaticIpAllocator.Output output) {
+    static int migrateAllInstancesToNewSubnet(IncusClient incus, Output output) {
         int fixed = 0;
         try {
             // One bridge read and one listing for every instance, not requests per instance
@@ -589,19 +588,19 @@ public final class InstanceNetwork {
                     var status = listed.pathText("status", "");
                     if ("Frozen".equalsIgnoreCase(status)) {
                         // Paused on purpose, and a stop would wait on a guest that cannot answer
-                        output.warn().accept(name + " is frozen and was not moved: resume it, then repair it again");
+                        output.warn(name + " is frozen and was not moved: resume it, then repair it again");
                         continue;
                     }
                     var running = "Running".equalsIgnoreCase(status);
                     if (running) {
-                        output.warn().accept("Stopping " + name + " to move it onto the bridge's new subnet;"
+                        output.warn("Stopping " + name + " to move it onto the bridge's new subnet;"
                                 + " it is started again once moved");
                         try {
                             incus.stop(name);
                         } catch (RuntimeException e) {
                             // Never forced: a guest that ignores the shutdown is left running, and one
                             // that stops later is moved by its next shell
-                            output.warn().accept(name + " did not stop in time and was not moved (" + e.getMessage()
+                            output.warn(name + " did not stop in time and was not moved (" + e.getMessage()
                                     + "): once it is stopped, repair it again");
                             continue;
                         }
@@ -612,14 +611,14 @@ public final class InstanceNetwork {
                         if (moved) fixed++;
                     } finally {
                         // Moved or not, it is left running, as it was found
-                        if (running) startAgain(incus, name, type, moved, bridge.get().prefixLen(), output.warn());
+                        if (running) startAgain(incus, name, type, moved, bridge.get().prefixLen(), output);
                     }
                 } catch (Exception e) {
-                    output.warn().accept("failed to migrate " + stale.getKey() + ": " + e.getMessage());
+                    output.warn("failed to migrate " + stale.getKey() + ": " + e.getMessage());
                 }
             }
         } catch (Exception e) {
-            output.warn().accept("could not list instances for migration: " + e.getMessage());
+            output.warn("could not list instances for migration: " + e.getMessage());
         }
         return fixed;
     }
@@ -631,15 +630,15 @@ public final class InstanceNetwork {
      * {@link InstanceLifecycle#ensureReady}, without its bridge read: the caller already has the prefix length.
      */
     private static void startAgain(IncusClient incus, String name, MachineType type, boolean moved,
-                                   int prefixLen, Consumer<String> warn) {
+                                   int prefixLen, Output out) {
         try {
-            InstanceLifecycle.startForUse(incus, name, type, warn);
+            InstanceLifecycle.startForUse(incus, name, type, out);
             // Read after the fix, which wrote the address the file needs
             if (moved && type == MachineType.VM) {
-                pushDeferredNetworkConfig(incus, name, incus.instanceMetadata(name), prefixLen, warn);
+                pushDeferredNetworkConfig(incus, name, incus.instanceMetadata(name), prefixLen, out);
             }
         } catch (Exception e) {
-            warn.accept("could not start " + name + " again: " + e.getMessage()
+            out.warn("could not start " + name + " again: " + e.getMessage()
                     + "; 'isx shell " + name + "' finishes the repair");
         }
     }
@@ -652,8 +651,8 @@ public final class InstanceNetwork {
      * @param instance the instance as read after its address was reassigned
      */
     static void pushDeferredNetworkConfig(IncusClient incus, String name, JqValue instance,
-                                          int prefixLen, Consumer<String> warn) {
-        var settled = switch (pushVmNetworkConfig(incus, name, instance, prefixLen, warn)) {
+                                          int prefixLen, Output out) {
+        var settled = switch (pushVmNetworkConfig(incus, name, instance, prefixLen, out)) {
             case FAILED -> false;
             // Nothing to push leaves the VM on DHCP, which gives it its address: done too
             case NOTHING_TO_PUSH -> true;
@@ -663,7 +662,7 @@ public final class InstanceNetwork {
             case PUSHED -> {
                 if (execSucceeds(incus, name, "networkctl", "reload")) yield true;
                 // Still pending: its old address is dropped until a reboot applies the file
-                warn.accept("could not apply the new network config in " + name
+                out.warn("could not apply the new network config in " + name
                         + "; restart it, or the next shell tries again");
                 yield false;
             }
@@ -714,13 +713,12 @@ public final class InstanceNetwork {
      * instance are not reliably applied. Reads the instance the other repairs already read, so
      * an instance that has it (every one branched since) costs no request at all.
      */
-    static void rearmIpFiltering(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
+    static void rearmIpFiltering(IncusClient incus, String name, JqValue instance, Output out) {
         // Airgapped: a bridge NIC it gained is about to be masked (AirgapGuard), not filtered
         if (NetworkMode.isAirgapped(instance)) return;
         var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
         // No bridge NIC: airgap, or a hand-made instance -- nothing to filter.
         if (nic == null || "true".equals(nic.config().get("security.ipv4_filtering"))) return;
-        applyIpFiltering(incus, name, nic.name(),
-                msg -> warn.accept(BuildOutput.STEP_INDENT + "Warning: " + msg));
+        applyIpFiltering(incus, name, nic.name(), out);
     }
 }

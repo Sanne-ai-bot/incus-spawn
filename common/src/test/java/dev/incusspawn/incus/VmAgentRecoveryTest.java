@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.TempHome;
@@ -41,7 +42,7 @@ class VmAgentRecoveryTest {
     void consoleShowingTheAgentFailingIsReportedWithoutARestart() {
         daemon.instance("vm1", "virtual-machine", "Running", Map.of())
                 .consoleLog("vm1", "booting\n" + FAILED + "\n");
-        var e = assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(client(), "vm1", said::add));
+        var e = assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(client(), "vm1", RecordingOutput.into(said)));
 
         var msg = e.getMessage();
         assertTrue(msg.startsWith("The incus-agent in VM vm1 failed to start"), msg);
@@ -65,7 +66,7 @@ class VmAgentRecoveryTest {
         // probe throws rather than failing, and must still count as "not responding".
         daemon.instance("vm1", "virtual-machine", "Running", Map.of());
 
-        assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(client(), "vm1", daemon.instance("vm1"), MachineType.VM, said::add));
+        assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(client(), "vm1", daemon.instance("vm1"), MachineType.VM, RecordingOutput.into(said)));
         assertEquals(List.of("vm1 stop", "vm1 start"), daemon.stateActions());
         assertEquals(List.of("VM agent not responding, restarting vm1..."), said);
     }
@@ -75,7 +76,7 @@ class VmAgentRecoveryTest {
         daemon.instance("vm1", "virtual-machine", "Running", Map.of())
                 .consoleLog("vm1", FAILED + "\n" + STARTED + "\n");
 
-        assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(client(), "vm1", said::add));
+        assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(client(), "vm1", RecordingOutput.into(said)));
         assertEquals(List.of("vm1 stop", "vm1 start"), daemon.stateActions());
     }
 
@@ -85,7 +86,7 @@ class VmAgentRecoveryTest {
         daemon.instance("vm1", "virtual-machine", "Running", Map.of()).consoleLog("vm1", log);
         var incus = client();
 
-        var first = assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(incus, "vm1", said::add));
+        var first = assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(incus, "vm1", RecordingOutput.into(said)));
         assertTrue(first.getMessage().startsWith("VM vm1 is running, but its incus-agent did not come up"),
                 first.getMessage());
         assertEquals(List.of("vm1 stop", "vm1 start"), daemon.stateActions(),
@@ -94,7 +95,7 @@ class VmAgentRecoveryTest {
                 daemon.instance("vm1").path("config").path(Metadata.AGENT_RESTART_BOOT).asText());
 
         daemon.clearStateActions();
-        var second = assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(incus, "vm1", said::add));
+        var second = assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(incus, "vm1", RecordingOutput.into(said)));
         var msg = second.getMessage();
         assertTrue(msg.contains("already restarted vm1 once"), msg);
         WaitForReadyTest.assertPointsAtSavedBootLog(msg, log);
@@ -108,7 +109,7 @@ class VmAgentRecoveryTest {
         var incus = client();
         assertNotEquals(1L, incus.pid("vm1"));
 
-        assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(incus, "vm1", said::add));
+        assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(incus, "vm1", RecordingOutput.into(said)));
         assertEquals(List.of("vm1 stop", "vm1 start"), daemon.stateActions());
     }
 
@@ -116,7 +117,7 @@ class VmAgentRecoveryTest {
     void guestIgnoringTheShutdownIsPoweredOff() {
         daemon.instance("vm1", "virtual-machine", "Running", Map.of()).ignoreShutdown("vm1");
 
-        assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(client(), "vm1", said::add));
+        assertThrows(IncusException.class, () -> VmAgentRecovery.restartForAgent(client(), "vm1", RecordingOutput.into(said)));
         assertEquals(List.of("vm1 stop", "vm1 stop force", "vm1 start"), daemon.stateActions());
     }
 }

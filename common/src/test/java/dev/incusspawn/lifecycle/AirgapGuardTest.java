@@ -1,5 +1,7 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
+import dev.incusspawn.Platform;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
@@ -7,7 +9,9 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
@@ -112,7 +117,7 @@ class AirgapGuardTest {
 
         // FakeIncusDaemon serves no exec, so the readiness wait after the start can only time out
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(daemon.clientWithShortReadyWait(), "box",
-                daemon.instance("box"), MachineType.CONTAINER, said::add));
+                daemon.instance("box"), MachineType.CONTAINER, RecordingOutput.into(said)));
 
         assertEquals("none", expandedType(daemon, "ib1"));
         assertEquals("eth0,ib1", daemon.instance("box").path("config").path(Metadata.AIRGAP_MASKED).asText());
@@ -128,7 +133,7 @@ class AirgapGuardTest {
         var daemon = airgappedWithAProxy("Running");
 
         InstanceLifecycle.ensureReady(daemon.client(), "box", daemon.instance("box"),
-                MachineType.CONTAINER, s -> {});
+                MachineType.CONTAINER, RecordingOutput.QUIET);
 
         assertEquals("none", expandedType(daemon, "fwd"));
         assertEquals(List.of(), daemon.stateActions());
@@ -140,7 +145,7 @@ class AirgapGuardTest {
         daemon.device("box", "dongle", Map.of("type", "usb", "vendorid", "0bda", "productid", "8153"));
 
         var e = assertThrows(AirgapGuard.NotIsolatedException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, RecordingOutput.QUIET));
 
         assertTrue(e.getMessage().contains("dongle"), e::getMessage);
         assertEquals(List.of(), daemon.stateActions());
@@ -153,7 +158,7 @@ class AirgapGuardTest {
         int before = daemon.requests().size();
 
         InstanceLifecycle.prepareForStart(daemon.client(), "box",
-                daemon.instance("box"), w -> fail(w));
+                daemon.instance("box"), RecordingOutput.FAIL_ON_WARN);
 
         assertEquals(List.of(), daemon.requests().subList(before, daemon.requests().size()));
     }
@@ -164,13 +169,15 @@ class AirgapGuardTest {
                 "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0"),
                 "eth1", Map.of("type", "nic", "network", "incusbr0", "name", "eth1"),
                 "root", Map.of("type", "disk", "path", "/", "pool", "default"))), "Stopped");
-        var said = new ArrayList<String>();
+        var out = new RecordingOutput();
 
-        InstanceLifecycle.prepareForStart(daemon.client(), "box", daemon.instance("box"), said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), "box", daemon.instance("box"), out);
 
         assertEquals("none", expandedType(daemon, "eth1"));
-        assertEquals(1, said.size(), said::toString);
-        assertTrue(said.get(0).contains("Masked eth1"), said::toString);
+        // A warning, which the TUI's log keeps: a step would go unsaid there
+        assertEquals(out.lines(), out.warnings(), "nothing but the warning");
+        assertEquals(1, out.warnings().size(), out.warnings()::toString);
+        assertTrue(out.warnings().getFirst().contains("Masked eth1"), out.warnings()::toString);
     }
 
     private static FakeIncusDaemon airgappedWithAProxy(String status) {
@@ -183,7 +190,7 @@ class AirgapGuardTest {
         var daemon = airgappedWithAProxy("Running").refuseWritesContaining(Metadata.AIRGAP_MASKED);
 
         var e = assertThrows(AirgapGuard.NotIsolatedException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, RecordingOutput.QUIET));
 
         assertTrue(e.getMessage().contains("stop it"), e::getMessage);
     }
@@ -193,11 +200,33 @@ class AirgapGuardTest {
         var daemon = airgappedWithAProxy("Stopped").refuseWritesContaining(Metadata.AIRGAP_MASKED);
 
         var e = assertThrows(IncusException.class, () -> InstanceLifecycle.prepareForStart(daemon.client(), "box",
-                daemon.instance("box"), w -> {}));
+                daemon.instance("box"), RecordingOutput.QUIET));
 
         assertFalse(e instanceof AirgapGuard.NotIsolatedException, e::getMessage);
         assertFalse(e.getMessage().contains("stop it"), e::getMessage);
         assertEquals(List.of(), daemon.stateActions());
+    }
+
+    /**
+     * A restart from the TUI, on a background thread while it draws, reports what its start drops
+     * to the output the TUI hands it (#1703): its log. It used to pass the start nothing to report
+     * to, so a missing inbox was dropped without a word.
+     */
+    @Test
+    void aTuiRestartReportsADroppedInboxToTheOutputItIsGiven(@TempDir Path tmp) {
+        assumeFalse(Platform.isMacOS(), "on macOS the device source is the appliance VM's /host view of the path");
+        var daemon = airgapped("Running").device("box", InstanceLifecycle.INBOX_DEVICE, Map.of("type", "disk",
+                "source", tmp.resolve("deleted").toString(), "path", InstanceLifecycle.INBOX_PATH, "readonly", "true"));
+        var listed = daemon.instance("box");
+        var incus = spy(daemon.client());
+        doNothing().when(incus).waitForReady(eq("box"), any(), any(), anyMap());
+        var out = new RecordingOutput();
+
+        InstanceLifecycle.restartForUse(incus, "box", MachineType.CONTAINER, false, listed, out);
+
+        assertEquals(1, out.warnings().size(), out.lines().toString());
+        assertTrue(out.warnings().getFirst().startsWith("inbox directory not found: " + tmp.resolve("deleted")),
+                out.warnings().getFirst());
     }
 
     @Test
@@ -210,7 +239,7 @@ class AirgapGuardTest {
         var incus = spy(daemon.client());
         doNothing().when(incus).waitForReady(eq("box"), any(), any(), anyMap());
 
-        InstanceLifecycle.restartForUse(incus, "box", MachineType.CONTAINER, false, listed);
+        InstanceLifecycle.restartForUse(incus, "box", MachineType.CONTAINER, false, listed, RecordingOutput.QUIET);
 
         assertEquals(List.of("box stop", "box start"), daemon.stateActions());
         assertEquals("none", expandedType(daemon, "fwd"));

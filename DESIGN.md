@@ -713,7 +713,7 @@ The lock is per user, since it lives under `$HOME`.
 Where it cannot be taken at all -- a home on NFS without lockd -- the claim warns once and goes on with only the in-process lock (`HostLock.acquireOrDegrade`) rather than failing every branch.
 Incus's check below turns a collision into a failed branch, not a shared address, which is what `main` did before the lock existed.
 A holder that never lets go still times out; only an unusable file degrades.
-The claim and the stale-subnet repair report through a `StaticIpAllocator.Output` (step, warn), so the TUI -- which runs that repair on its own screen before a shell -- captures them into its warning log instead of printing over itself (see "Warnings while the TUI owns the terminal").
+The claim and the stale-subnet repair report through the `Output` their caller hands them, so the TUI -- which runs that repair on its own screen before a shell -- captures them into its warning log instead of printing over itself (see "Warnings while the TUI owns the terminal").
 Writers it cannot see -- `sudo isx`, another host user's isx on the same daemon, a manual `incus config device set` -- are mostly caught by Incus itself, which refuses a second NIC with the same `ipv4.address` on the bridge (409) and so fails the branch rather than sharing an address.
 Mostly, because Incus validates before it commits and two concurrent writes can both pass; only the lock closes that window.
 Nor does that check cover copies.
@@ -4843,7 +4843,8 @@ So code on the branch path warns through `BuildOutput.warn` or a sink the caller
 A bare `System.err` line reaches the terminal only.
 The sites on the branch path that still print one (GUI and KVM passthrough's explanations, the CA mismatch note) are tracked in #1690.
 Progress stays on the terminal, where it is read while the branch runs.
-A start's warning that may reach a sink printing it as it comes (isx shell's, a progress sink) marks itself `Warning:` on one line, and `BuildOutput.warn` drops that marker for its own ⚠, as the `WarningLog` does.
+A start's warning is a typed `warn` on the `Output` its caller hands it, its advice as details, so no message in `lifecycle/` marks itself `Warning:` for a sink that would print it as it comes.
+Code outside it (`HostResourceSetup.removeStaleDevices`, `AutoRemoteService`) still does, until its own step, and `BuildOutput.warningText` drops the marker meanwhile.
 
 `Warnings` reports a distinct message once per output.
 The same files are loaded many times in one command (every fresh loader re-reads them), and before this `isx branch` could print one broken tool file's warning several times.
@@ -4865,7 +4866,14 @@ Bindings nest; one closed out of order throws, since it would put back an output
 Every call site kept compiling, and the binding is one volatile read per message, so the branch/start/shell path costs nothing more.
 **Alternative:** a tee of `System.err` into the TUI's log.
 **Why not:** it splits multi-line messages, captures notes as warnings and hides the raw prints the fence (`RawOutputGateTest`) exists to expose.
-The `Consumer<String>` sinks in `lifecycle/` remain, to become typed outputs in a later step.
+**`lifecycle/` takes an `Output`, not `Consumer<String>` sinks.**
+Its sinks lost the kind of each message: a progress sink also carried warnings, marked `Warning:` and indented by hand so a sink that printed as it came would show them, and a multi-line explanation had nowhere typed to go.
+Some callers had no sink to pass at all: the TUI's restart started an airgapped instance with `msg -> {}`, so a dropped inbox went unsaid.
+Now every reporting method there takes one `Output`, where a step is a `step` and a warning a `warn` with its details, and `StaticIpAllocator.Output` is gone for the same type.
+The CLI passes `BuildOutput.bound()`, which forwards each message to whatever is bound when it is reported, and the TUI its drawing log, from its background threads too.
+**Alternative:** let `lifecycle/` call `BuildOutput`'s static methods and rely on the binding.
+**Why not:** the binding is process-wide, and the TUI runs lifecycle code on background threads while it draws (a restart, an account switch, a destroy); an explicit output keeps those messages with the TUI's log whatever is bound meanwhile.
+Paths only the CLI or a lent terminal reaches (a branch, a build's starts) take `BuildOutput.bound()` from their caller, or default to it.
 
 **One status line cannot hold several warnings.**
 The TUI used to put each warning on its status line, which shows one message until the next key.

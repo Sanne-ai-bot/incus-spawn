@@ -1,5 +1,7 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.RecordingOutput;
+import dev.incusspawn.util.Output;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -19,8 +21,6 @@ import static org.mockito.Mockito.when;
 /** #815: nothing may be handed an address between another claim's listing and its write. */
 class StaticIpClaimTest {
 
-    private static final StaticIpAllocator.Output QUIET =
-            new StaticIpAllocator.Output(s -> {}, s -> {});
     private static final BridgeAddress BRIDGE = BridgeAddress.parse("10.166.11.1/24").orElseThrow();
 
     @TempDir
@@ -31,7 +31,7 @@ class StaticIpClaimTest {
     }
 
     private static String claimFor(IncusClient incus, Path lock, String name, Runnable beforeWrite) {
-        return StaticIpAllocator.claim(incus, BRIDGE, lock, QUIET, ip -> {
+        return StaticIpAllocator.claim(incus, BRIDGE, lock, RecordingOutput.QUIET, ip -> {
             beforeWrite.run();
             incus.deviceConfigSet(name, "eth0", "ipv4.address", ip);
         });
@@ -59,7 +59,7 @@ class StaticIpClaimTest {
     void aNestedClaimIsRefused() {
         // The outer address is not written yet, so the inner claim would be handed the same one
         var incus = new FakeIncusDaemon().container("a", Map.of()).container("b", Map.of()).client();
-        assertThrows(IllegalStateException.class, () -> StaticIpAllocator.claim(incus, BRIDGE, lock(), QUIET,
+        assertThrows(IllegalStateException.class, () -> StaticIpAllocator.claim(incus, BRIDGE, lock(), RecordingOutput.QUIET,
                 outer -> claimFor(incus, lock(), "b", () -> {})));
     }
 
@@ -68,7 +68,7 @@ class StaticIpClaimTest {
         var incus = mock(IncusClient.class);
         when(incus.listJsonConfig()).thenThrow(new IncusException("Failed to list instances"));
         assertThrows(IncusException.class,
-                () -> StaticIpAllocator.claim(incus, BRIDGE, lock(), QUIET, ip -> {}));
+                () -> StaticIpAllocator.claim(incus, BRIDGE, lock(), RecordingOutput.QUIET, ip -> {}));
     }
 
     private static void sleep(long ms) {

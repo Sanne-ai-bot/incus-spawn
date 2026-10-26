@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.Output;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.incus.IncusClient;
@@ -8,7 +9,6 @@ import dev.incusspawn.util.HostLock;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.function.Consumer;
 
 /**
  * Replacing a template while other isx processes copy from it (#1212). A rebuild is made under a
@@ -50,22 +50,22 @@ public final class TemplateLock {
      * looking the template up, and keep it until the copy from it is made. A name no instance can
      * have is held by nothing: the lookup will find nothing to copy.
      *
-     * @param log where to say that a swap is in progress and this waits for it
+     * @param out where to note that a swap is in progress and this waits for it
      * @throws HostLock.HostLockException if a swap holds it past {@link HostLock#TIMEOUT}
      */
-    public static Held reading(String template, Consumer<String> log) {
+    public static Held reading(String template, Output out) {
         if (!InstanceNames.isValid(template)) return () -> {};
-        return HostLock.acquireShared(lockFile(template), "replacing template '" + template + "'", log, Warnings::warn)::close;
+        return HostLock.acquireShared(lockFile(template), "replacing template '" + template + "'", out::note, Warnings::warn)::close;
     }
 
     /**
      * Put {@code built} in place as {@code template}, replacing the one there, once no isx process
      * is copying from it. A lock file that cannot be used at all degrades to the swap without it.
      *
-     * @param log where to say that this waits for copies under way
+     * @param out where to note that this waits for copies under way
      */
-    public static void replace(IncusClient incus, String built, String template, Consumer<String> log) {
-        replace(incus, built, template, log, () -> {});
+    public static void replace(IncusClient incus, String built, String template, Output out) {
+        replace(incus, built, template, out, () -> {});
     }
 
     /**
@@ -74,10 +74,10 @@ public final class TemplateLock {
      * It must not throw: the swap is done by then, and a caller would take an exception for a
      * failed swap.
      */
-    public static void replace(IncusClient incus, String built, String template, Consumer<String> log,
+    public static void replace(IncusClient incus, String built, String template, Output out,
                                Runnable afterSwap) {
         try (var lock = HostLock.acquireOrDegrade(lockFile(template), "copying from template '" + template + "'",
-                log, Warnings::warn, SWAP_TIMEOUT)) {
+                out::note, Warnings::warn, SWAP_TIMEOUT)) {
             incus.deleteIfExists(template);
             incus.rename(built, template);
             afterSwap.run();

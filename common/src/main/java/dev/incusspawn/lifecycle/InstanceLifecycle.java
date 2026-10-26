@@ -20,6 +20,7 @@ import dev.incusspawn.proxy.CredentialProof;
 import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,7 +28,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Consumer;
 
 /**
  * Shared helpers for instance/template creation lifecycle.
@@ -261,13 +261,13 @@ public final class InstanceLifecycle {
      * configured asks the guest once, re-derives what is missing and sets the marker -- one
      * exec and one write for such an instance, none for one whose template this isx built.
      *
-     * <p>It reports through the caller's sinks, never the terminal: the TUI's, where a line
+     * <p>It reports through the caller's output, never the terminal: the TUI's, where a line
      * printed from a background thread would be drawn over and lost, or a branch's, which the
      * TUI keeps in its warning log (#1646).
      */
     public static void reconcileAccountIdentities(IncusClient incus, String name,
-                                                  Consumer<String> progress, Consumer<String> warnings) {
-        reconcileAccountIdentities(incus, name, null, SpawnConfig.load(), null, progress, warnings);
+                                                  Output out) {
+        reconcileAccountIdentities(incus, name, null, SpawnConfig.load(), null, out);
     }
 
     /**
@@ -275,14 +275,14 @@ public final class InstanceLifecycle {
      * otherwise read it again. Its account pins, stamps and network mode are all this looks at.
      */
     public static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance,
-                                                  Consumer<String> progress, Consumer<String> warnings) {
-        reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, progress, warnings);
+                                                  Output out) {
+        reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, out);
     }
 
     static void reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,
                                            Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
-                                           Consumer<String> progress, Consumer<String> warnings) {
-        reconcileAccountIdentities(incus, name, null, config, knownSetups, progress, warnings);
+                                           Output out) {
+        reconcileAccountIdentities(incus, name, null, config, knownSetups, out);
     }
 
     /**
@@ -293,7 +293,7 @@ public final class InstanceLifecycle {
      */
     static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance, SpawnConfig config,
                                            Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
-                                           Consumer<String> progress, Consumer<String> warnings) {
+                                           Output out) {
         try {
             var plan = instance != null
                     ? AccountSelection.identityReconcile(config, instance, knownSetups)
@@ -333,7 +333,7 @@ public final class InstanceLifecycle {
             stale.forEach((namespace, account) -> {
                 var setup = setups.get(namespace);
                 if (setup == null) return;
-                progress.accept("Updating " + namespace + " identity for account '"
+                out.step("Updating " + namespace + " identity for account '"
                         + account + "'...");
                 setup.rebakeForAccount(container, account);
                 updates.put(Metadata.accountIdentityKey(namespace), setup.bakedAccountIdentity(config, account));
@@ -342,7 +342,7 @@ public final class InstanceLifecycle {
         } catch (Exception e) {
             // Best effort: a stale identity is a wrong commit author, not a broken instance,
             // and the next use tries again because the stamp is only updated on success.
-            warnings.accept("could not update credential identity for " + name
+            out.warn("could not update credential identity for " + name
                     + ": " + e.getMessage());
         }
     }
@@ -414,7 +414,7 @@ public final class InstanceLifecycle {
     public static Map<String, String> changeAccounts(IncusClient incus, String instance, SpawnConfig config,
                                                      Map<String, dev.incusspawn.tool.ToolSetup> setups,
                                                      Map<String, String> changes,
-                                                     Consumer<String> progress, Consumer<String> warnings) {
+                                                     Output out) {
         var current = AccountSelection.read(incus, instance);
         var merged = checkAccountChange(incus, instance, config, setups, changes, current);
 
@@ -435,7 +435,7 @@ public final class InstanceLifecycle {
         // git identity -- would still be the old one, so the instance would push with one
         // account and commit as another.
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(instance))) {
-            reconcileAccountIdentities(incus, instance, config, setups, progress, warnings);
+            reconcileAccountIdentities(incus, instance, config, setups, out);
         }
         return merged;
     }
@@ -451,40 +451,40 @@ public final class InstanceLifecycle {
      * (plain {@code incus start}, autostart after a host reboot) boots its old file, and only this
      * push brings it back onto the network.
      *
-     * <p>Progress and warnings go to {@code say}, never straight to stdout or stderr, so a caller
+     * <p>Progress and warnings go to {@code out}, never straight to stdout or stderr, so a caller
      * that owns the terminal (the TUI) can route them.
      *
      * @param instance the instance as read, for its status and the pending mark
      */
     public static void ensureReady(IncusClient incus, String name, JqValue instance,
-                                   MachineType machineType, Consumer<String> say) {
+                                   MachineType machineType, Output out) {
         var stopped = "Stopped".equalsIgnoreCase(instance.path("status").asText(""));
         // A running instance too: one branched before #1137 and restarted outside isx runs unrestricted
-        if (!stopped) enforceNetworkMode(incus, name, instance, say);
+        if (!stopped) enforceNetworkMode(incus, name, instance, out);
         if (stopped) {
-            say.accept("Starting " + name + "...");
-            startForUse(incus, name, instance, machineType, say);
+            out.step("Starting " + name + "...");
+            startForUse(incus, name, instance, machineType, out);
         } else if (machineType == MachineType.VM) {
             // QEMU may reboot a VM in place, which changes nothing the host can see: only the
             // guest can tell, so the agent probe asks it on the way, for no request of its own
             var probe = probeAgent(incus, name, instance.path("config").pathText(Metadata.INSTANCE_PROOF_ID, ""));
             if (probe == null) {
-                VmAgentRecovery.restartForAgent(incus, name, say);
+                VmAgentRecovery.restartForAgent(incus, name, out);
             } else if (InstanceSecret.missingIn(probe)) {
-                giveSecretToThisBoot(incus, name, instance, null, Metadata.isMcpCaller(instance), say);
+                giveSecretToThisBoot(incus, name, instance, null, Metadata.isMcpCaller(instance), out);
             }
         } else {
             // Every container reboot is a start: the instance already read says which boot it is
             var bootedAt = bootOf(instance);
             if (!bootedAt.isEmpty()
                     && !secretBootStamp(bootedAt, instance.path("config").pathText(Metadata.INSTANCE_PROOF_ID, "")).equals(instance.path("config").path(Metadata.INSTANCE_SECRET_BOOT).asText(""))) {
-                giveSecretToThisBoot(incus, name, instance, bootedAt, Metadata.isMcpCaller(instance), say);
+                giveSecretToThisBoot(incus, name, instance, bootedAt, Metadata.isMcpCaller(instance), out);
             }
         }
         // Only a VM is ever marked
         if (instance.path("config").has(Metadata.NETWORK_PUSH_PENDING)) {
             InstanceNetwork.pushDeferredNetworkConfig(incus, name, instance, InstanceNetwork.bridgePrefixLen(incus),
-                    msg -> say.accept(BuildOutput.STEP_INDENT + "Warning: " + msg));
+                    out);
         }
     }
 
@@ -501,22 +501,22 @@ public final class InstanceLifecycle {
      *         to reuse rather than read again; null when there is none
      */
     public static JqValue startForUse(IncusClient incus, String name, MachineType machineType,
-                                       Consumer<String> warn) {
-        return startForUse(incus, name, incus.instanceMetadata(name), machineType, warn);
+                                       Output out) {
+        return startForUse(incus, name, incus.instanceMetadata(name), machineType, out);
     }
 
-    /** {@link #startForUse(IncusClient, String, MachineType, Consumer)}, with the stopped instance already read. */
+    /** {@link #startForUse(IncusClient, String, MachineType, Output)}, with the stopped instance already read. */
     static JqValue startForUse(IncusClient incus, String name, JqValue instance, MachineType machineType,
-                                Consumer<String> warn) {
+                                Output out) {
         var placeholders = ProofToken.declaredInBackground();
         var secret = ProxyOnlyAcl.explaining(incus, name, instance, () -> {
-            prepareForStart(incus, name, instance, warn);
+            prepareForStart(incus, name, instance, out);
             // A VM branched or built before #1238 still has Secure Boot on: it goes in the write the
             // secret makes anyway
             var delivery = rotateInstanceSecret(incus, name, instance, machineType == MachineType.VM
                     && !"false".equals(instance.path("config").path(SECURE_BOOT).asText())
                     ? Map.of(SECURE_BOOT, "false") : Map.of(), placeholders.join());
-            startInstance(incus, name, warn);
+            startInstance(incus, name, out);
             return delivery;
         });
         // The SSH keys ride in the same probe, and the Host entry is a local file (#1640): a
@@ -533,7 +533,7 @@ public final class InstanceLifecycle {
                 RuntimeSetup.ensureSshHostEntry(name, instance);
             } catch (RuntimeException e) {
                 // A convenience: the instance is up, and isx shell still reaches it
-                warn.accept(BuildOutput.STEP_INDENT + "Warning: failed to configure SSH host entry: " + e.getMessage());
+                out.warn("failed to configure SSH host entry: " + e.getMessage());
             }
         }
         return started;
@@ -550,12 +550,12 @@ public final class InstanceLifecycle {
      * @param instance the template as read ({@link IncusClient#instanceMetadataOrThrow}); anything
      *                 else is refused, since an instance starts through {@link #startForUse}
      */
-    public static void startTemplate(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
+    public static void startTemplate(IncusClient incus, String name, JqValue instance, Output out) {
         var type = instance == null ? "" : instance.path("config").path(Metadata.TYPE).asText("");
         if (!Metadata.TYPE_BASE.equals(type) && !Metadata.TYPE_PROJECT.equals(type)) {
             throw new IllegalArgumentException("'" + name + "' is not a template, or no longer exists");
         }
-        startInstance(incus, name, warn);
+        startInstance(incus, name, out);
     }
 
     /**
@@ -566,13 +566,13 @@ public final class InstanceLifecycle {
      *                  listing says ({@link InstanceSecret#guestEnv})
      */
     public static void restartForUse(IncusClient incus, String name, MachineType machineType,
-                                     boolean mcpCaller) {
-        restartForUse(incus, name, machineType, mcpCaller, incus.instanceMetadataOrThrow(name));
+                                     boolean mcpCaller, Output out) {
+        restartForUse(incus, name, machineType, mcpCaller, incus.instanceMetadataOrThrow(name), out);
     }
 
     /** Reuses the TUI's listing, including its proof generation and verifiers. */
     public static void restartForUse(IncusClient incus, String name, MachineType machineType,
-                                     boolean mcpCaller, JqValue instance) {
+                                     boolean mcpCaller, JqValue instance, Output out) {
         if (NetworkMode.isAirgapped(instance)) {
             // Stopped and started as any start for use, from a read after the stop rather than the
             // listing: a network device a profile gained is masked while the instance is down, which
@@ -580,16 +580,16 @@ public final class InstanceLifecycle {
             // one restart buys little here.
             AirgapGuard.refusePassthrough(name, instance);
             incus.stop(name);
-            startForUse(incus, name, incus.instanceMetadata(name), machineType, msg -> {});
+            startForUse(incus, name, incus.instanceMetadata(name), machineType, out);
             return;
         }
         // Before, not after: once the restart returns the guest is booting, when Incus API calls
         // contend with it. A restart that then fails leaves a guest whose secret no longer
         // matches, which is refused -- the safe way for it to go wrong.
         var placeholders = ProofToken.declaredInBackground();
-        // Quietly: the TUI owns the terminal here, and a refusal throws, which it reports
+        // To the caller's output: the TUI's log, since it owns the terminal here; a refusal throws, which it reports
         var secret = ProxyOnlyAcl.explaining(incus, name, instance, () -> {
-            enforceNetworkMode(incus, name, instance, msg -> {});
+            enforceNetworkMode(incus, name, instance, out);
             var delivery = rotateInstanceSecret(incus, name, instance, Map.of(), placeholders.join());
             incus.restart(name);
             return delivery;
@@ -726,7 +726,7 @@ public final class InstanceLifecycle {
      * delivery: a box left without its secret is refused, and the shell must still open.
      */
     private static void giveSecretToThisBoot(IncusClient incus, String name, JqValue instance, String bootedAt,
-                                             boolean mcpCaller, Consumer<String> say) {
+                                             boolean mcpCaller, Output out) {
         String failure;
         try {
             var placeholders = ProofToken.declaredInBackground();
@@ -758,8 +758,7 @@ public final class InstanceLifecycle {
                 // Then the box stays without a secret until isx starts it: refused, which is safe
             }
         }
-        say.accept(BuildOutput.STEP_INDENT + "Warning: could not give " + name
-                + " a new instance secret after its reboot: " + failure);
+        out.warn("could not give " + name + " a new instance secret after its reboot: " + failure);
     }
 
     /**
@@ -796,18 +795,18 @@ public final class InstanceLifecycle {
      * {@code BuildAccounts.start}) start an instance just created, which has it set already.
      */
     static void startInstance(IncusClient incus, String name) {
-        startInstance(incus, name, BuildOutput::warn);
+        startInstance(incus, name, BuildOutput.bound());
     }
 
     /**
-     * As above, reporting the loss of protection to {@code warn} rather than stderr: the sink its
+     * As above, reporting the loss of protection to {@code out} rather than stderr: the output its
      * caller was given, which is the TUI's warning log when the TUI starts while it owns the terminal.
      */
-    static void startInstance(IncusClient incus, String name, Consumer<String> warn) {
+    static void startInstance(IncusClient incus, String name, Output out) {
         try {
             incus.start(name);
         } catch (RuntimeException e) {
-            if (!InstanceNetwork.looksLikeIpFilteringFailure(e) || !InstanceNetwork.disableIpFiltering(incus, name, warn)) throw e;
+            if (!InstanceNetwork.looksLikeIpFilteringFailure(e) || !InstanceNetwork.disableIpFiltering(incus, name, out)) throw e;
             incus.start(name);
         }
     }
@@ -820,10 +819,15 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Remove host-side integration for a destroyed or renamed instance.
+     * Remove host-side integration for a destroyed or renamed instance, reporting to {@code out}
+     * a git remote it could not clean up. {@code AutoRemoteService} still marks its own warnings,
+     * so they are told from its progress here, at the edge of {@code lifecycle/}; the progress
+     * (each remote removed) stays unsaid, as it always was, under the caller's live step.
      */
-    public static void removeHostIntegration(String name) {
-        AutoRemoteService.removeRemotes(name, msg -> {});
+    public static void removeHostIntegration(String name, Output out) {
+        AutoRemoteService.removeRemotes(name, msg -> {
+            if (msg.strip().regionMatches(true, 0, "Warning:", 0, "Warning:".length())) out.warn(msg);
+        });
         SshKeyManager.cleanupInstance(name);
         ZmxSocketForward.cleanup(name);
     }
@@ -846,29 +850,28 @@ public final class InstanceLifecycle {
      * </ul>
      */
     static void prepareForStart(IncusClient incus, String name) {
-        prepareForStart(incus, name, System.err::println);
+        prepareForStart(incus, name, BuildOutput.bound());
     }
 
     /**
-     * As above, reporting each device it removes to {@code warn}. The TUI starts instances while it
-     * owns the terminal, where stderr would be drawn over and lost, so it passes a sink that puts
-     * the warning on its status line instead.
+     * As above, reporting each device it removes to {@code out}. The TUI starts instances while it
+     * owns the terminal, where stderr would be drawn over and lost, so it passes its warning log.
      */
-    static void prepareForStart(IncusClient incus, String name, Consumer<String> warn) {
+    static void prepareForStart(IncusClient incus, String name, Output out) {
         // All repairs read the same instance, so fetch it once: start has to
         // stay as cheap as it was before the repairs existed.
-        prepareForStart(incus, name, incus.instanceMetadata(name), warn);
+        prepareForStart(incus, name, incus.instanceMetadata(name), out);
     }
 
-    /** {@link #prepareForStart(IncusClient, String, Consumer)} with the instance already read. */
+    /** {@link #prepareForStart(IncusClient, String, Output)} with the instance already read. */
     static void prepareForStart(IncusClient incus, String name, JqValue instance,
-                                                  Consumer<String> warn) {
-        HostResourceSetup.removeStaleDevices(incus, name, instance, warn);
-        removeStaleInbox(incus, name, instance, warn);
-        restoreInbox(incus, name, instance, warn);
+                                                  Output out) {
+        HostResourceSetup.removeStaleDevices(incus, name, instance, out::warn);
+        removeStaleInbox(incus, name, instance, out);
+        restoreInbox(incus, name, instance, out);
         ZmxSocketForward.ensureHostDirForStart(incus, name, instance);
-        InstanceNetwork.rearmIpFiltering(incus, name, instance, warn);
-        enforceNetworkMode(incus, name, instance, warn);
+        InstanceNetwork.rearmIpFiltering(incus, name, instance, out);
+        enforceNetworkMode(incus, name, instance, out);
     }
 
     /**
@@ -876,9 +879,9 @@ public final class InstanceLifecycle {
      * ({@link ProxyOnlyAcl#enforce}) or the airgap masks ({@link AirgapGuard#enforce}). Every path
      * that starts or uses an instance calls this, never one of them alone.
      */
-    private static void enforceNetworkMode(IncusClient incus, String name, JqValue instance, Consumer<String> say) {
-        ProxyOnlyAcl.enforce(incus, name, instance, say);
-        AirgapGuard.enforce(incus, name, instance, say);
+    private static void enforceNetworkMode(IncusClient incus, String name, JqValue instance, Output out) {
+        ProxyOnlyAcl.enforce(incus, name, instance, out);
+        AirgapGuard.enforce(incus, name, instance, out);
     }
 
     /**
@@ -889,31 +892,31 @@ public final class InstanceLifecycle {
      * announced; the first start that finds the directory back mounts it again. isx does that
      * step itself: the macOS host has no {@code incus} CLI to re-add a device with (#1139).
      */
-    static void removeStaleInbox(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
+    static void removeStaleInbox(IncusClient incus, String name, JqValue instance, Output out) {
         var source = IncusClient.deviceSource(instance, INBOX_DEVICE);
         if (source.isEmpty()) return;
         var hostPath = HostResourceSetup.hostPathOfDeviceSource(source);
         if (hostPath == null || Files.isDirectory(hostPath)) return;
         incus.updateFresh(name, new InstanceUpdate().removeDevice(INBOX_DEVICE).config(Metadata.INBOX_SOURCE, source));
-        warn.accept(BuildOutput.STEP_INDENT + "Warning: inbox directory not found: " + hostPath
-                + " (device removed, starting without ~/inbox).\n" + BuildOutput.STEP_INDENT
-                + "  To mount it again, recreate it; the next start of " + name + " does.");
+        out.warn("inbox directory not found: " + hostPath + " (device removed, starting without ~/inbox).",
+                "To mount it again, recreate it; the next start of " + name + " does.");
     }
 
     /**
      * Mount the inbox {@link #removeStaleInbox} removed, once its directory is back. Given the
      * same instance read, it skips one that still has the device, so also one removed by this start.
-     * It says so on the same sink: the remembered path may name a different directory by now, and
+     * It says so on the same output: the remembered path may name a different directory by now, and
      * a mount into the guest is never silent.
      */
-    static void restoreInbox(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
+    static void restoreInbox(IncusClient incus, String name, JqValue instance, Output out) {
         var source = instance.path("config").path(Metadata.INBOX_SOURCE).asText("");
         if (source.isEmpty() || !IncusClient.deviceSource(instance, INBOX_DEVICE).isEmpty()) return;
         var hostPath = HostResourceSetup.hostPathOfDeviceSource(source);
         if (hostPath == null || !Files.isDirectory(hostPath)) return;
         incus.updateFresh(name, new InstanceUpdate().unset(Metadata.INBOX_SOURCE)
                 .replaceDevice(INBOX_DEVICE, Map.of("type", "disk", "source", source, "path", INBOX_PATH, "readonly", "true")));
-        warn.accept(BuildOutput.STEP_INDENT + "Inbox mounted again: " + hostPath + " (read-only, ~/inbox).");
+        // A warning, not a note: a note is not kept off a terminal, and a mount is never silent
+        out.warn("Inbox mounted again: " + hostPath + " (read-only, ~/inbox).");
     }
 
     /**

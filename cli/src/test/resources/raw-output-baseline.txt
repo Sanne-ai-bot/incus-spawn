@@ -3,10 +3,10 @@
 # or deleted, so this list only shrinks. Never add a line or raise a count: route the output instead.
 # A file that is moved or renamed takes its line along, with the same counts or lower.
 9 0 cli/src/main/java/dev/incusspawn/IncusSpawn.java
-25 0 cli/src/main/java/dev/incusspawn/command/AccountCommand.java
+24 0 cli/src/main/java/dev/incusspawn/command/AccountCommand.java
 24 5 cli/src/main/java/dev/incusspawn/command/AskCommand.java
 13 0 cli/src/main/java/dev/incusspawn/command/BaseCommand.java
-12 0 cli/src/main/java/dev/incusspawn/command/BranchCommand.java
+11 0 cli/src/main/java/dev/incusspawn/command/BranchCommand.java
 42 1 cli/src/main/java/dev/incusspawn/command/BuildCommand.java
 1 0 cli/src/main/java/dev/incusspawn/command/BuildInterrupt.java
 6 0 cli/src/main/java/dev/incusspawn/command/BuildProgress.java
@@ -20,7 +20,7 @@
 4 0 cli/src/main/java/dev/incusspawn/command/GuestProvisioning.java
 157 137 cli/src/main/java/dev/incusspawn/command/HostSetup.java
 141 89 cli/src/main/java/dev/incusspawn/command/InitCommand.java
-3 0 cli/src/main/java/dev/incusspawn/command/InstancePrep.java
+1 0 cli/src/main/java/dev/incusspawn/command/InstancePrep.java
 1 0 cli/src/main/java/dev/incusspawn/command/InstancesCommand.java
 2 0 cli/src/main/java/dev/incusspawn/command/ListCommand.java
 1 0 cli/src/main/java/dev/incusspawn/command/NpmUpdate.java
@@ -38,7 +38,7 @@
 2 0 cli/src/main/java/dev/incusspawn/command/UpdateAllCommand.java
 18 4 cli/src/main/java/dev/incusspawn/command/UpdateBaseCommand.java
 36 5 cli/src/main/java/dev/incusspawn/command/VmCommand.java
-3 0 cli/src/main/java/dev/incusspawn/mcp/IncusInstanceBackend.java
+1 0 cli/src/main/java/dev/incusspawn/mcp/IncusInstanceBackend.java
 1 0 cli/src/main/java/dev/incusspawn/mcp/McpAuditLog.java
 10 0 cli/src/main/java/dev/incusspawn/mcp/McpMain.java
 3 0 cli/src/main/java/dev/incusspawn/mcp/McpServer.java
@@ -48,7 +48,7 @@
 1 0 cli/src/main/java/dev/incusspawn/mcp/TaskWatcher.java
 1 0 cli/src/main/java/dev/incusspawn/mcp/ToolContext.java
 9 0 cli/src/main/java/dev/incusspawn/tui/PreTuiOutput.java
-7 0 cli/src/main/java/dev/incusspawn/tui/ShellLaunch.java
+5 0 cli/src/main/java/dev/incusspawn/tui/ShellLaunch.java
 5 0 cli/src/main/java/dev/incusspawn/tui/Tui.java
 1 0 common/src/main/java/dev/incusspawn/Platform.java
 8 1 common/src/main/java/dev/incusspawn/config/HostResourceSetup.java
@@ -60,7 +60,6 @@
 6 0 common/src/main/java/dev/incusspawn/incus/InteractiveShell.java
 1 0 common/src/main/java/dev/incusspawn/lifecycle/BranchFlow.java
 8 0 common/src/main/java/dev/incusspawn/lifecycle/GuiPassthrough.java
-1 0 common/src/main/java/dev/incusspawn/lifecycle/InstanceLifecycle.java
 5 0 common/src/main/java/dev/incusspawn/lifecycle/KvmPassthrough.java
 1 0 common/src/main/java/dev/incusspawn/lifecycle/ZmxSocketForward.java
 2 0 common/src/main/java/dev/incusspawn/proxy/ApiTrafficLog.java

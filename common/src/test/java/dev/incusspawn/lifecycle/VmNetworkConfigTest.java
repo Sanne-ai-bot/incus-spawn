@@ -1,5 +1,7 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqObject;
@@ -7,7 +9,6 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.incus.StaticIpAllocator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -106,10 +107,10 @@ class VmNetworkConfigTest {
         // The next isx shell finds nothing left to reassign -- so no "Reassigned" banner --
         // but ensureReady still owes the guest its file (see aRunningVmStillGetsAPendingFile)
         assertFalse(InstanceNetwork.fixStaticIpIfNeeded(incus, "vm",
-                StaticIpAllocator.Output.TERMINAL,
+                BuildOutput.bound(),
                 MachineType.VM));
         var warnings = new ArrayList<String>();
-        InstanceNetwork.pushDeferredNetworkConfig(incus, "vm", daemon.instance("vm"), 24, warnings::add);
+        InstanceNetwork.pushDeferredNetworkConfig(incus, "vm", daemon.instance("vm"), 24, RecordingOutput.into(warnings));
         var content = daemon.pushedContent("vm", FILE);
         assertTrue(content.contains("Address=10.166.11.2/24\n"), content);
 
@@ -130,7 +131,7 @@ class VmNetworkConfigTest {
     @Test
     void aRunningVmStillGetsAPendingFile() throws Exception {
         var incus = agentAnsweringVm(Map.of("volatile.eth0.hwaddr", MAC, Metadata.NETWORK_PUSH_PENDING, "true"));
-        InstanceLifecycle.ensureReady(incus, "vm", incus.instanceMetadata("vm"), MachineType.VM, msg -> {});
+        InstanceLifecycle.ensureReady(incus, "vm", incus.instanceMetadata("vm"), MachineType.VM, RecordingOutput.QUIET);
 
         verify(incus).filePushContent(anyString(), eq("vm"), eq(FILE), eq("0"), eq("0"), eq("0644"));
         verify(incus).shellExec("vm", "networkctl", "reload");
@@ -143,7 +144,7 @@ class VmNetworkConfigTest {
     void aPendingVmWithoutAMacIsNotRetriedForever() throws Exception {
         var incus = agentAnsweringVm(Map.of(Metadata.NETWORK_PUSH_PENDING, "true"));
         var warnings = new ArrayList<String>();
-        InstanceLifecycle.ensureReady(incus, "vm", incus.instanceMetadata("vm"), MachineType.VM, warnings::add);
+        InstanceLifecycle.ensureReady(incus, "vm", incus.instanceMetadata("vm"), MachineType.VM, RecordingOutput.into(warnings));
 
         verify(incus, never()).filePushContent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
         verify(incus).configUnset("vm", Metadata.NETWORK_PUSH_PENDING);
@@ -200,7 +201,7 @@ class VmNetworkConfigTest {
     @Test
     void aVmOwingNothingIsNotTouched() throws Exception {
         var incus = agentAnsweringVm(Map.of("volatile.eth0.hwaddr", MAC));
-        InstanceLifecycle.ensureReady(incus, "vm", incus.instanceMetadata("vm"), MachineType.VM, msg -> {});
+        InstanceLifecycle.ensureReady(incus, "vm", incus.instanceMetadata("vm"), MachineType.VM, RecordingOutput.QUIET);
 
         verify(incus, never()).filePushContent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString());
         verify(incus, never()).configUnset(anyString(), anyString());

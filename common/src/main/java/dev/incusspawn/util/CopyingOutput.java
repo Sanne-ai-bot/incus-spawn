@@ -1,15 +1,14 @@
 package dev.incusspawn.util;
 
-import java.util.Collection;
 import java.util.List;
 
 /**
  * A terminal that prints everything, and whose warnings also go to a log: all of them
  * ({@link Output#copying}), or only those raised through {@code Warnings} ({@link Output#holding}),
  * which reach the log instead of the terminal. A failed step stays on the terminal, where it ends
- * the live step and whose caller reports the failure itself.
+ * the live step and whose caller reports the failure itself; progress and notes stay there too.
  */
-final class CopyingOutput implements Output {
+final class CopyingOutput extends ForwardingOutput {
 
     private final Output terminal;
     private final Output log;
@@ -20,6 +19,11 @@ final class CopyingOutput implements Output {
         this.terminal = terminal;
         this.log = log;
         this.copyAll = copyAll;
+    }
+
+    @Override
+    Output delegate() {
+        return terminal;
     }
 
     @Override
@@ -51,25 +55,4 @@ final class CopyingOutput implements Output {
         if (copyAll) log.warnBanner(title, lines);
         terminal.warnBanner(title, lines);
     }
-
-    @Override public void stepFail(String msg) { terminal.stepFail(msg); }
-
-    @Override public void note(String msg) { terminal.note(msg); }
-    @Override public void header(String msg, String detail) { terminal.header(msg, detail); }
-    @Override public void buildHeader(String name, int index, int total) { terminal.buildHeader(name, index, total); }
-    @Override public void branchHeader(String name, String source) { terminal.branchHeader(name, source); }
-    @Override public void section(String msg) { terminal.section(msg); }
-    @Override public Group group(String title, String detail) { return terminal.group(title, detail); }
-    @Override public String indent() { return terminal.indent(); }
-    @Override public void step(String msg) { terminal.step(msg); }
-    @Override public void stepNote(String msg) { terminal.stepNote(msg); }
-    @Override public void ok(String msg) { terminal.ok(msg); }
-    @Override public void success(String msg) { terminal.success(msg); }
-    @Override public void list(Collection<String> items) { terminal.list(items); }
-    @Override public void stepStart(String msg) { terminal.stepStart(msg); }
-    @Override public void stepProgress(String detail) { terminal.stepProgress(detail); }
-    @Override public void stepDone(String detail) { terminal.stepDone(detail); }
-    @Override public void stepBreak() { terminal.stepBreak(); }
-    @Override public void releaseTerminal() { terminal.releaseTerminal(); }
-    @Override public void abandonStep() { terminal.abandonStep(); }
 }

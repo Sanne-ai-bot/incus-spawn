@@ -621,8 +621,6 @@ public class AccountCommand extends BaseCommand {
     private static void change(IncusClient incus, String instance, SpawnConfig config,
                                Map<String, String> changes) {
         InstanceLifecycle.changeAccounts(incus, instance, config,
-                AccountSelection.namespaceSetups(config), changes,
-                dev.incusspawn.util.BuildOutput::step,
-                msg -> System.err.println("Warning: " + msg));
+                AccountSelection.namespaceSetups(config), changes, dev.incusspawn.util.BuildOutput.bound());
     }
 }

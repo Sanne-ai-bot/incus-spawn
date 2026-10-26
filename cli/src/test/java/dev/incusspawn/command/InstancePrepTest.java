@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
@@ -14,7 +16,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -60,7 +61,7 @@ class InstancePrepTest {
         var warnings = new ArrayList<String>();
 
         InstancePrep.readyForUse(daemon.client(), NAME, daemon.instance(NAME),
-                MachineType.CONTAINER, msg -> { }, warnings::add);
+                MachineType.CONTAINER, Output.diagnosticsTo(warnings::add));
 
         assertEquals(List.of(), warnings);
         assertEquals("true", daemon.instance(NAME).path("config").path(Metadata.ACCOUNT_IDENTITY_VERIFIED).asText(),
@@ -80,7 +81,7 @@ class InstancePrepTest {
         // FakeIncusDaemon serves no exec, so the readiness wait after the start can only time
         // out; what matters here is what reached Incus before it.
         assertThrows(IncusException.class, () -> InstancePrep.repairBeforeUse(daemon.clientWithShortReadyWait(),
-                NAME, MachineType.CONTAINER, notices(w -> fail(w))));
+                NAME, MachineType.CONTAINER, notices(RecordingOutput.FAIL_ON_WARN)));
 
         assertEquals("true", filtering(daemon));
         var requests = daemon.requests();
@@ -99,7 +100,7 @@ class InstancePrepTest {
         var warnings = new ArrayList<String>();
 
         assertThrows(IncusException.class, () -> InstancePrep.repairBeforeUse(daemon.clientWithShortReadyWait(),
-                NAME, MachineType.CONTAINER, notices(warnings::add)));
+                NAME, MachineType.CONTAINER, notices(RecordingOutput.into(warnings))));
 
         assertEquals("false", filtering(daemon));
         assertTrue(String.join("\n", warnings).contains("impersonate each other's credential accounts"),
@@ -122,9 +123,9 @@ class InstancePrepTest {
                 .ipFiltering(NAME, "true");
         var incus = daemon.client();
 
-        InstancePrep.repairBeforeUse(incus, NAME, MachineType.CONTAINER, notices(w -> fail(w)));
+        InstancePrep.repairBeforeUse(incus, NAME, MachineType.CONTAINER, notices(RecordingOutput.FAIL_ON_WARN));
         InstancePrep.readyForUse(incus, NAME, daemon.instance(NAME),
-                MachineType.CONTAINER, msg -> { }, w -> fail(w));
+                MachineType.CONTAINER, RecordingOutput.FAIL_ON_WARN);
 
         var requests = daemon.requests();
         // Four reads of the instance, then resolv.conf's bridge lookup and exec; the reconcile
@@ -135,9 +136,8 @@ class InstancePrepTest {
                 () -> String.join("\n", requests));
     }
 
-    private static InstancePrep.Notices notices(Consumer<String> startWarn) {
-        return new InstancePrep.Notices(
-                new dev.incusspawn.incus.StaticIpAllocator.Output(msg -> { }, w -> fail(w)), startWarn, (title, detail) -> { });
+    private static InstancePrep.Notices notices(Output out) {
+        return new InstancePrep.Notices(out, (title, detail) -> { });
     }
 
     private static String filtering(FakeIncusDaemon daemon) {

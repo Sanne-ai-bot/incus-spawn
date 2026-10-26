@@ -14,13 +14,13 @@ import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 
 /**
  * Post-start setup of a new instance: the config prefetched before its start, the setup script,
@@ -42,9 +42,9 @@ public final class RuntimeSetup {
     public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, MachineType machineType) {
         var prefetched = prefetchRuntimeConfig(incus, name);
         BuildOutput.stepStart(machineType == MachineType.VM ? "Starting VM..." : "Starting container...");
-        // BuildOutput.warn, like the rest of BranchFlow's warnings: the TUI branches on the released
-        // terminal and copies them into its warning log, since the shell after it draws over them.
-        InstanceLifecycle.startInstance(incus, name, BuildOutput::warn);
+        // The bound output, like the rest of BranchFlow's: the TUI branches on the released terminal
+        // and copies its warnings into its log, since the shell after it draws over them.
+        InstanceLifecycle.startInstance(incus, name, BuildOutput.bound());
         BuildOutput.stepDone();
         return prefetched;
     }
@@ -111,29 +111,30 @@ public final class RuntimeSetup {
      * @param mcpCaller  whether the instance holds the {@code mcp-caller} grant, which the same
      *                   exec reconciles its Claude Code registration with (#1182)
      * @param placeholders the variables to give the secret's proof tokens in (#1106)
-     * @param warn       where a setup that may be incomplete or an SSH entry that failed is
-     *                   reported, rather than bare stderr: the TUI keeps a branch's in its log (#1646)
+     * @param out        where the wait is shown, and a setup that may be incomplete or an SSH entry
+     *                   that failed is reported, rather than bare stderr: the TUI keeps a branch's
+     *                   in its log (#1646)
      */
     public static void setupRuntime(IncusClient incus, String name,
                                    NetworkMode networkMode, RuntimeConfig prefetched, InstanceSecret.Delivery secret,
                                    boolean mcpCaller, List<ProofToken.Placeholder> placeholders,
-                                   Consumer<String> warn) {
+                                   Output out) {
         // Build a single setup script that handles readiness polling, home
         // ownership, terminfo, and tool readiness — all in one exec call.
         // Each additional exec round trip blocks for seconds due to
         // seccomp_notify lock contention during container startup.
         var sshKeys = prefetched.hasSshKeys() ? sshKeysToInject() : List.<String>of();
         var setupScript = buildSetupScript(prefetched, prefetched.buildSourceJson(), networkMode, sshKeys, secret != null);
-        BuildOutput.stepStart("Waiting for container...");
+        out.stepStart("Waiting for container...");
         var env = secret != null ? InstanceSecret.guestEnv(secret, mcpCaller, placeholders) : Map.<String, String>of();
         if (!incus.pollUntilReady(name, 30, env, "sh", "-c", setupScript)) {
-            BuildOutput.stepBreak();
-            warn.accept("Container setup may not be complete.");
+            out.stepBreak();
+            out.warn("Container setup may not be complete.");
         } else {
-            BuildOutput.stepDone();
+            out.stepDone(null);
         }
 
-        configureSshHostEntry(incus, name, prefetched.hasSshKeys(), warn);
+        configureSshHostEntry(incus, name, prefetched.hasSshKeys(), out);
     }
 
     /**
@@ -364,7 +365,7 @@ public final class RuntimeSetup {
      * Configure the SSH host entry with Hostname directive. Must be called after
      * the container is started so the IPv4 address is available.
      */
-    static void configureSshHostEntry(IncusClient incus, String name, boolean hasSsh, Consumer<String> warn) {
+    static void configureSshHostEntry(IncusClient incus, String name, boolean hasSsh, Output out) {
         if (!SshKeyManager.exists()) return;
         if (!hasSsh) return;
 
@@ -374,7 +375,7 @@ public final class RuntimeSetup {
             var ipv4 = incus.getContainerIpv4(name);
             hostConfigured = SshKeyManager.addHostEntry(name, ipv4);
         } catch (Exception e) {
-            warn.accept("Failed to configure SSH host entry: " + e.getMessage());
+            out.warn("Failed to configure SSH host entry: " + e.getMessage());
         }
 
         if (hostConfigured && includeConfigured) {
