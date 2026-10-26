@@ -53,7 +53,12 @@ public final class GitRemoteUtils {
 
     private GitRemoteUtils() {}
 
-    public static IsxUrl parseIsxUrl(String url) {
+    /**
+     * Only tests call this: git hands an {@code isx://} URL to the {@code git-remote-isx} shim, which
+     * splits it and passes the path to {@code isx git-remote-helper}, which decodes it with
+     * {@link #containerPath}.
+     */
+    static IsxUrl parseIsxUrl(String url) {
         if (url == null || !url.startsWith("isx://")) return null;
         var rest = url.substring("isx://".length());
         var slashIdx = rest.indexOf('/');
@@ -61,16 +66,20 @@ public final class GitRemoteUtils {
         var instance = rest.substring(0, slashIdx);
         var path = rest.substring(slashIdx);
         if (instance.isEmpty() || path.isEmpty()) return null;
-        // isx:// URLs encode absolute paths with a double slash (isx://inst//abs/path),
-        // where the first slash separates the instance name and the second is the path's own
-        // leading slash.  Old-style URLs used a single slash even for absolute paths
-        // (isx://inst/abs/path); both forms converge here to a normal "/abs/path".
-        if (path.startsWith("//")) path = path.substring(1);
-        path = expandContainerTilde(path);
-        return new IsxUrl(instance, path);
+        return new IsxUrl(instance, containerPath(path));
     }
 
-    public static String expandContainerTilde(String path) {
+    /**
+     * The in-instance path an {@code isx://} URL's path names, starting with the slash after the
+     * instance name.
+     * An absolute path follows a double slash ({@code isx://inst//abs/path}): the separator, then the
+     * path's own leading slash.
+     * The current shim strips one, but a shim from before the double slash, which {@code isx init}
+     * never replaces, passes {@code //abs/path} or {@code //~/repo} on, so both forms converge here.
+     * Old-style URLs used a single slash even for absolute paths ({@code isx://inst/abs/path}).
+     */
+    public static String containerPath(String path) {
+        if (path.startsWith("//")) path = path.substring(1);
         if (path.startsWith("/~/")) return CONTAINER_HOME + path.substring(2);
         if (path.equals("/~")) return CONTAINER_HOME;
         return path;
