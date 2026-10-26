@@ -462,7 +462,8 @@ public final class InstanceLifecycle {
         // A running instance too: one branched before #1137 and restarted outside isx runs unrestricted
         if (!stopped) enforceNetworkMode(incus, name, instance, out);
         if (stopped) {
-            out.step("Starting " + name + "...");
+            // A header, as every multi-step operation has: the start's own steps go under it
+            out.header("Starting " + name, null);
             startForUse(incus, name, instance, machineType, out);
         } else if (machineType == MachineType.VM) {
             // QEMU may reboot a VM in place, which changes nothing the host can see: only the
