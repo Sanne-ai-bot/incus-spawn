@@ -444,7 +444,7 @@ public final class BranchFlow {
         // The grant is the request's own: a copy never carries its source's (configureBranch)
         var booted = InstanceLifecycle.withCurrentProofs(incus, name, secret, current -> {
             RuntimeSetup.setupRuntime(incus, name, networkMode, prefetched, current,
-                    Metadata.isMcpCaller(req.extraConfig()), placeholders.join(), BuildOutput::warn);
+                    Metadata.isMcpCaller(req.extraConfig()), placeholders.join(), BuildOutput.bound());
             // Or the first shell would take this boot for one isx did not start.
             return InstanceLifecycle.recordSecretBoot(incus, name, machineType, current.proofGeneration());
         });
@@ -460,8 +460,7 @@ public final class BranchFlow {
             // InstancePrep, so an instance used via incus exec, SSH or an IDE is right too.
             // Needs the CA and resolv.conf above -- re-deriving goes through the proxy. From the
             // read before the start: nothing since has written a pin or a stamp.
-            InstanceLifecycle.reconcileAccountIdentities(incus, name, prefetched.instance(),
-                    BuildOutput::step, BuildOutput::warn);
+            InstanceLifecycle.reconcileAccountIdentities(incus, name, prefetched.instance(), BuildOutput.bound());
         }
         return prefetched;
     }

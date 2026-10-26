@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CredentialProof;
@@ -99,7 +100,7 @@ class CredentialProofLifecycleTest {
                     InstanceSecret.sha256(env.get(InstanceSecret.DELIVERY_ENV)));
             return null;
         }).when(incus).waitForReady(eq("box"), eq(MachineType.CONTAINER), anyString(), anyMap());
-        InstanceLifecycle.startForUse(incus, "box", MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.startForUse(incus, "box", MachineType.CONTAINER, RecordingOutput.QUIET);
         var current = daemon.instance("box");
         assertEquals(InstanceLifecycle.secretBootStamp(current.path("last_used_at").asText(),
                 current.path("config").path(Metadata.INSTANCE_PROOF_ID).asText()),

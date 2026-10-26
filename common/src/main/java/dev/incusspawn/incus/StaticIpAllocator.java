@@ -6,6 +6,7 @@ import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.Environment;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.util.HostLock;
 
 import java.nio.file.Path;
@@ -40,16 +41,7 @@ public final class StaticIpAllocator {
      * @return the address written
      */
     public static String claim(IncusClient incus, BridgeAddress bridge, Consumer<String> write) {
-        return claim(incus, bridge, Output.TERMINAL, write);
-    }
-
-    /**
-     * Where a claim, and the flows around it, report progress (waiting for another process)
-     * and warnings (a lock it cannot take). The TUI passes its own: printing would draw over
-     * its screen.
-     */
-    public record Output(Consumer<String> step, Consumer<String> warn) {
-        public static final Output TERMINAL = new Output(BuildOutput::step, BuildOutput::warn);
+        return claim(incus, bridge, BuildOutput.bound(), write);
     }
 
     public static String claim(IncusClient incus, BridgeAddress bridge, Output output,
@@ -77,7 +69,7 @@ public final class StaticIpAllocator {
         // Nesting would hand the inner claim the outer's still unwritten address: HostLock
         // refuses it
         try (var lock = HostLock.acquireOrDegrade(lockFile, "assigning a static IP",
-                output.step(), output.warn())) {
+                output::step, output::warn)) {
             var claimed = getClaimedIps(incus);
             claimed.add(CidrUtils.ipToLong(bridge.gateway()));
             alsoTaken.forEach(ip -> claimed.add(CidrUtils.ipToLong(ip)));

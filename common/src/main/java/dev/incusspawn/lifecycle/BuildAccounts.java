@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.Output;
 import dev.incusspawn.config.AccountOrigin;
 import dev.incusspawn.config.AccountSelection;
 import io.hyperfoil.tools.jjq.value.JqObject;
@@ -268,8 +269,7 @@ public final class BuildAccounts {
                                                        Map<String, String> selection,
                                                        java.util.Collection<String> rederivable,
                                                        Map<String, String> inherited,
-                                                       java.util.function.Consumer<String> progress,
-                                                       java.util.function.Consumer<String> warnings) {
+                                                       Output out) {
         // Every namespace gets a say, not just the ones this template selected: the build baked
         // *some* auth mode either way, and a later swap has to be checked against it. A null
         // account means "this template made no choice", which resolves to the namespace's
@@ -285,13 +285,13 @@ public final class BuildAccounts {
         var rederived = toRederive(wanted, inherited, lacking, setups);
         rederived.forEach(namespace -> {
             var account = accountFor.apply(namespace);
-            progress.accept("Updating " + namespace + " identity for account '" + account + "'...");
+            out.step("Updating " + namespace + " identity for account '" + account + "'...");
             setups.get(namespace).rebakeForAccount(container, account);
         });
         lacking.removeAll(rederived);
         for (var namespace : lacking) {
             var warning = setups.get(namespace).unbakedIdentityWarning(accountFor.apply(namespace));
-            if (warning != null) warnings.accept(warning);
+            if (warning != null) out.warn(warning);
         }
         var stamps = identityStamps(wanted, inherited, lacking);
         stamps.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");

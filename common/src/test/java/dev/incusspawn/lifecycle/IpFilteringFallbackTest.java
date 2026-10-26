@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.util.Output;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -75,7 +76,7 @@ class IpFilteringFallbackTest {
         var warnings = new ArrayList<String>();
 
         // The TUI's warning log: stderr would be drawn over while the TUI owns the terminal.
-        InstanceLifecycle.startInstance(incus, NAME, warnings::add);
+        InstanceLifecycle.startInstance(incus, NAME, RecordingOutput.into(warnings));
 
         assertEquals(1, warnings.size(), warnings.toString());
         assertTrue(warnings.get(0).contains("cannot enforce IP spoofing protection, so it has been disabled on box"),
@@ -84,9 +85,8 @@ class IpFilteringFallbackTest {
     }
 
     /**
-     * One line, marked as a warning for the sinks that print it as it comes (isx shell's), and
-     * through {@link BuildOutput#warn}, which a branch's start uses and the TUI's log copies
-     * (#1646), one warning with no second marker and no indent run into it.
+     * Through the bound output, which a branch's start uses and the TUI's log copies (#1646), one
+     * warning with no marker and no indent run into it.
      */
     @Test
     void theLossOfProtectionReadsAsOneWarningThroughBuildOutput() {
@@ -95,7 +95,7 @@ class IpFilteringFallbackTest {
         var copied = new ArrayList<String>();
 
         try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(copied::add)))) {
-            // The default sink, which build-time starts use, is BuildOutput's too
+            // The default output, which build-time starts use, is the bound one
             InstanceLifecycle.startInstance(incus, NAME);
         }
 
@@ -103,17 +103,20 @@ class IpFilteringFallbackTest {
                 + " on box: instances on this host can impersonate each other's credential accounts."), copied);
     }
 
+    /** To the caller's output, the loss of protection is one typed warning, never a progress line (#1703). */
     @Test
-    void theLossOfProtectionMarksItselfForASinkThatPrintsAsItComes() {
+    void theLossOfProtectionIsOneWarningOnTheCallersOutput() {
         var incus = withFilteringOn();
         doThrow(new IncusException(NFT_BRIDGE_FAILURE)).doNothing().when(incus).start(NAME);
-        var printed = new ArrayList<String>();
+        var out = new RecordingOutput();
 
-        InstanceLifecycle.startInstance(incus, NAME, printed::add);
+        InstanceLifecycle.startInstance(incus, NAME, out);
 
-        assertEquals(1, printed.size(), printed.toString());
-        assertTrue(printed.get(0).startsWith("Warning: this host cannot enforce IP spoofing protection"), printed.get(0));
-        assertFalse(printed.get(0).contains("\n"), printed.get(0));
+        assertEquals(out.lines(), out.warnings(), "nothing but the warning");
+        assertEquals(1, out.warnings().size(), out.warnings().toString());
+        assertTrue(out.warnings().getFirst().startsWith("this host cannot enforce IP spoofing protection"),
+                out.warnings().getFirst());
+        assertFalse(out.warnings().getFirst().contains("\n"), out.warnings().getFirst());
     }
 
     /**
@@ -161,7 +164,7 @@ class IpFilteringFallbackTest {
                         .put(Metadata.TYPE, Metadata.TYPE_CLONE).build()).build();
 
         assertThrows(IllegalArgumentException.class,
-                () -> InstanceLifecycle.startTemplate(incus, NAME, instance, msg -> {}));
+                () -> InstanceLifecycle.startTemplate(incus, NAME, instance, RecordingOutput.QUIET));
         verify(incus, never()).start(any());
     }
 

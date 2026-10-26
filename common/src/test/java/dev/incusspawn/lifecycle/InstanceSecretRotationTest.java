@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
@@ -45,7 +46,7 @@ class InstanceSecretRotationTest {
         // FakeIncusDaemon serves no exec, so the wait can only time out; what matters is what
         // was asked of Incus on the way
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {}));
+                daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME), MachineType.CONTAINER, RecordingOutput.QUIET));
 
         var recorded = recordedHash(daemon, NAME);
         assertNotEquals(previous, recorded, "a start must retire the previous start's secret");
@@ -114,7 +115,7 @@ class InstanceSecretRotationTest {
         var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Running",
                 Map.of(Metadata.INSTANCE_SECRET_SHA256, previous));
         assertThrows(IncusException.class,
-                () -> VmAgentRecovery.restartForAgent(daemon.clientWithShortReadyWait(), NAME, msg -> {}));
+                () -> VmAgentRecovery.restartForAgent(daemon.clientWithShortReadyWait(), NAME, RecordingOutput.QUIET));
 
         var recorded = recordedHash(daemon, NAME);
         assertNotEquals(previous, recorded);
@@ -132,7 +133,7 @@ class InstanceSecretRotationTest {
         var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running",
                 Map.of(Metadata.INSTANCE_SECRET_SHA256, previous));
         assertThrows(IncusException.class, () -> InstanceLifecycle.restartForUse(
-                daemon.clientWithShortReadyWait(), NAME, MachineType.CONTAINER, false));
+                daemon.clientWithShortReadyWait(), NAME, MachineType.CONTAINER, false, RecordingOutput.QUIET));
 
         var recorded = recordedHash(daemon, NAME);
         assertNotEquals(previous, recorded);
@@ -148,7 +149,7 @@ class InstanceSecretRotationTest {
     void aStartsProbeCarriesTheProofOfEveryDeclaredPlaceholder() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {}));
+                daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME), MachineType.CONTAINER, RecordingOutput.QUIET));
 
         var declared = ProofToken.declared();
         assertTrue(declared.stream().map(ProofToken.Placeholder::namespace).collect(java.util.stream.Collectors.toSet())

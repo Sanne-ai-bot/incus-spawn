@@ -339,7 +339,7 @@ public class VmCommand extends BaseCommand {
             var gone = lost == null ? List.<String>of() : lost.all();
             for (var name : gone) {
                 try {
-                    InstanceLifecycle.removeHostIntegration(name);
+                    InstanceLifecycle.removeHostIntegration(name, BuildOutput.bound());
                 } catch (Exception e) {
                     System.err.println("Note: could not remove host integration for " + name + ": " + e.getMessage());
                 }

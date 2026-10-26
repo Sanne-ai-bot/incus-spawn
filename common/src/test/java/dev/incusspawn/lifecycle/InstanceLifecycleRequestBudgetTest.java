@@ -1,5 +1,7 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.RecordingOutput;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.Platform;
 
@@ -86,7 +88,7 @@ class InstanceLifecycleRequestBudgetTest {
         // rides in the readiness probe, which costs nothing it did not cost before.
         var daemon = new FakeIncusDaemon().container(NAME, stableProofConfig()).ipFiltering(NAME, "true");
         assertThrows(IncusException.class, () -> InstanceLifecycle.startForUse(
-                daemon.clientWithShortReadyWait(), NAME, dev.incusspawn.incus.MachineType.CONTAINER, msg -> {}));
+                daemon.clientWithShortReadyWait(), NAME, dev.incusspawn.incus.MachineType.CONTAINER, RecordingOutput.QUIET));
         var requests = daemon.requests();
         var beforeProbe = requests.subList(0, requests.indexOf("POST /1.0/instances/" + NAME + "/exec"));
         assertEquals(List.of("GET /1.0/instances/" + NAME, "PATCH /1.0/instances/" + NAME,
@@ -105,7 +107,7 @@ class InstanceLifecycleRequestBudgetTest {
                 Map.of("security.secureboot", "false"));
         for (var daemon : List.of(before, after)) {
             assertThrows(IncusException.class, () -> InstanceLifecycle.startForUse(
-                    daemon.clientWithShortReadyWait(), NAME, dev.incusspawn.incus.MachineType.VM, msg -> {}));
+                    daemon.clientWithShortReadyWait(), NAME, dev.incusspawn.incus.MachineType.VM, RecordingOutput.QUIET));
         }
         var probe = "POST /1.0/instances/" + NAME + "/exec";
         var beforeRequests = before.requests().subList(0, before.requests().indexOf(probe));
@@ -120,7 +122,7 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, stableProofConfig()).ipFiltering(NAME, "true");
         var instance = daemon.instance(NAME);
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(daemon.clientWithShortReadyWait(),
-                NAME, instance, dev.incusspawn.incus.MachineType.CONTAINER, msg -> {}));
+                NAME, instance, dev.incusspawn.incus.MachineType.CONTAINER, RecordingOutput.QUIET));
         var requests = daemon.requests();
         var beforeProbe = requests.subList(0, requests.indexOf("POST /1.0/instances/" + NAME + "/exec"));
         assertEquals(List.of("PATCH /1.0/instances/" + NAME, "PUT /1.0/instances/" + NAME + "/state"),
@@ -136,7 +138,7 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, stableProofConfig()).ipFiltering(NAME, "true");
         var incus = spy(daemon.client());
         doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
-        var started = InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});
+        var started = InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, RecordingOutput.QUIET);
         CertificateAuthority.fixContainerCaIfNeeded(incus, NAME, started, msg -> {});
         var requests = daemon.requests();
         assertEquals(List.of("GET /1.0/instances/" + NAME, "PATCH /1.0/instances/" + NAME),
@@ -158,7 +160,7 @@ class InstanceLifecycleRequestBudgetTest {
             var daemon = new FakeIncusDaemon().container(NAME, config).ipFiltering(NAME, "true");
             var incus = spy(daemon.client());
             doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
-            InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});
+            InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, RecordingOutput.QUIET);
             requests.add(daemon.requests());
         }
         assertEquals(requests.get(0), requests.get(1));
@@ -171,7 +173,7 @@ class InstanceLifecycleRequestBudgetTest {
         var listed = daemon.instance(NAME);
         var incus = spy(daemon.client());
         doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
-        InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false, listed);
+        InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false, listed, RecordingOutput.QUIET);
         assertEquals("PATCH /1.0/instances/" + NAME, daemon.requests().getFirst());
         assertBudget(5, daemon, "TUI restart with its listing and guest answering");
     }
@@ -292,7 +294,7 @@ class InstanceLifecycleRequestBudgetTest {
         var warnings = new java.util.ArrayList<String>();
 
         InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME, config, setups,
-                msg -> { }, warnings::add);
+                Output.diagnosticsTo(warnings::add));
 
         assertBudget(1, daemon, "reconcileAccountIdentities, nothing stale");
         assertEquals(List.of(), warnings);
@@ -310,7 +312,7 @@ class InstanceLifecycleRequestBudgetTest {
         var instance = daemon.instance(NAME);
 
         InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME, instance, config, null,
-                msg -> { }, msg -> { });
+                RecordingOutput.QUIET);
 
         assertBudget(0, daemon, "reconcileAccountIdentities from the caller's read");
     }
@@ -320,7 +322,7 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
         InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME,
                 new dev.incusspawn.config.SpawnConfig(),
-                Map.of("github", new dev.incusspawn.tool.GhSetup()), msg -> { }, msg -> { });
+                Map.of("github", new dev.incusspawn.tool.GhSetup()), RecordingOutput.QUIET);
         assertBudget(1, daemon, "reconcileAccountIdentities, no stamps");
         assertTrue(daemon.execs().isEmpty());
     }
@@ -340,7 +342,7 @@ class InstanceLifecycleRequestBudgetTest {
         var warnings = new java.util.ArrayList<String>();
 
         InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME, config,
-                Map.of("github", gh), msg -> { }, warnings::add);
+                Map.of("github", gh), Output.diagnosticsTo(warnings::add));
 
         assertBudget(1, daemon, "reconcileAccountIdentities, verified and current");
         assertEquals(List.of(), warnings);

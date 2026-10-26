@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
@@ -50,7 +51,7 @@ class IpFilteringRearmTest {
         // out; what matters here is what reached Incus before it.
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(
                 daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME),
-                MachineType.CONTAINER, said::add));
+                MachineType.CONTAINER, RecordingOutput.into(said)));
 
         assertEquals("true", filtering(daemon));
         var requests = daemon.requests();
@@ -66,7 +67,7 @@ class IpFilteringRearmTest {
         // No override at all: only the profile's NIC, as an instance from before isx set it.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
 
-        InstanceLifecycle.prepareForStart(daemon.client(), NAME, w -> fail(w));
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.FAIL_ON_WARN);
 
         assertEquals("true", filtering(daemon));
     }
@@ -75,7 +76,7 @@ class IpFilteringRearmTest {
     void anArmedInstanceCostsNoRequestBeyondTheReadTheRepairsShare() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
 
-        InstanceLifecycle.prepareForStart(daemon.client(), NAME, w -> fail(w));
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.FAIL_ON_WARN);
 
         assertEquals(List.of("GET /1.0/instances/" + NAME), daemon.requests());
     }
@@ -86,7 +87,7 @@ class IpFilteringRearmTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of())
                 .device(NAME, "eth0", Map.of("type", "none"));
 
-        InstanceLifecycle.prepareForStart(daemon.client(), NAME, w -> fail(w));
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.FAIL_ON_WARN);
 
         assertEquals(List.of("GET /1.0/instances/" + NAME), daemon.requests());
     }
@@ -98,7 +99,7 @@ class IpFilteringRearmTest {
         var warnings = new ArrayList<String>();
 
         // The TUI passes its warning log: stderr would be drawn over while it owns the terminal.
-        InstanceLifecycle.prepareForStart(daemon.client(), NAME, warnings::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.into(warnings));
 
         assertEquals("false", filtering(daemon));
         assertFalse(warnings.isEmpty());

@@ -126,14 +126,17 @@ class OutputBindingTest {
         assertEquals(List.of("warnAside broken tool file"), terminal.events);
     }
 
-    /** A method {@code Output} gains is forwarded, or the TUI's lent terminal would silently lose it. */
+    /** A method {@code Output} gains is forwarded, or the TUI's lent terminal and the CLI's bound output would silently lose it. */
     @Test
-    void aCopyForwardsEveryMethodOfOutput() throws Exception {
+    void everyDecoratorForwardsEveryMethodOfOutput() throws Exception {
         for (var method : Output.class.getMethods()) {
             if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) continue;
-            var declared = CopyingOutput.class.getMethod(method.getName(), method.getParameterTypes());
-            assertEquals(CopyingOutput.class, declared.getDeclaringClass(), method.toString());
+            var declared = ForwardingOutput.class.getMethod(method.getName(), method.getParameterTypes());
+            assertEquals(ForwardingOutput.class, declared.getDeclaringClass(), method.toString());
         }
+        // The copying and holding terminals, and BuildOutput.bound(), forward through it
+        assertTrue(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(m -> {})) instanceof ForwardingOutput);
+        assertTrue(BuildOutput.bound() instanceof ForwardingOutput);
     }
 
     @Test

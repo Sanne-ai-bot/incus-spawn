@@ -3,7 +3,6 @@ package dev.incusspawn.tui;
 import dev.incusspawn.command.InstancePrep;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
-import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.RuntimeSetup;
@@ -84,9 +83,9 @@ final class ShellLaunch {
         BranchFlow.Preflight preflight;
         RuntimeSetup.RuntimeConfig prefetched;
         // Held through the branch's start, so a rebuild cannot swap the template away meanwhile (#1212).
-        // Plain stdout: the TUI has released the terminal for the branch and the shell after it.
+        // The bound output: the TUI has released the terminal for the branch and the shell after it.
         // The shell draws over what the branch printed; the TUI's binding keeps its warnings in the log.
-        try (var held = TemplateLock.reading(source, System.out::println)) {
+        try (var held = TemplateLock.reading(source, BuildOutput.bound())) {
             preflight = BranchFlow.preflight(tui.incus, request, tui.imageDefs);
             prefetched = BranchFlow.create(tui.incus, preflight);
         }
@@ -111,8 +110,7 @@ final class ShellLaunch {
      * this returns.
      */
     void repairBeforeUse(String name, MachineType machineType) {
-        InstancePrep.repairBeforeUse(tui.incus, name, machineType, new InstancePrep.Notices(
-                new StaticIpAllocator.Output(msg -> { }, tui.warningLog::add), tui.warningLog::add,
+        InstancePrep.repairBeforeUse(tui.incus, name, machineType, new InstancePrep.Notices(tui.drawing,
                 (title, detail) -> tui.statusMessage = title + ": " + detail));
     }
 
@@ -141,8 +139,8 @@ final class ShellLaunch {
         }
         // Runs after the TUI has released the terminal, so the reconcile prints its own warnings,
         // and the TUI's binding keeps a copy in the log: a failed one would otherwise scroll away
-        // under the shell. (The start's warnings come with its progress through say, and are only printed.)
-        InstancePrep.readyForUse(tui.incus, name, instance, machineType, System.out::println, BuildOutput::warn);
+        // under the shell.
+        InstancePrep.readyForUse(tui.incus, name, instance, machineType, BuildOutput.bound());
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
         var titleMonitor = startAuthTitleMonitor(name);

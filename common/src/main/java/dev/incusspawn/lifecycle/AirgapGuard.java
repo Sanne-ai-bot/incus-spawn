@@ -4,12 +4,11 @@ import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.InstanceUpdate;
-import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 
 /**
  * What keeps an airgapped instance airgapped after its branch (#1518). Airgap masks every network
@@ -37,11 +36,11 @@ public final class AirgapGuard {
      * @throws NotIsolatedException when it passes hardware through, or a device could not be masked
      *         while it runs
      */
-    static void enforce(IncusClient incus, String name, JqValue instance, Consumer<String> say) {
+    static void enforce(IncusClient incus, String name, JqValue instance, Output out) {
         refusePassthrough(name, instance);
         if (NetworkMode.isAirgapped(instance)
                 && !InstanceNetwork.expandedDevices(instance, IncusClient::isNetworkDevice).isEmpty()) {
-            maskGained(incus, name, say);
+            maskGained(incus, name, out);
         }
     }
 
@@ -58,7 +57,7 @@ public final class AirgapGuard {
      * Mask the network devices the instance has, from a read of its own, and say which. One that
      * is no longer airgapped, or has nothing left to mask, is left alone.
      */
-    private static void maskGained(IncusClient incus, String name, Consumer<String> say) {
+    private static void maskGained(IncusClient incus, String name, Output out) {
         var gained = new AtomicReference<List<String>>(List.of());
         IncusClient.retryWhileChanged(() -> {
             var read = incus.readInstance(name);
@@ -84,7 +83,8 @@ public final class AirgapGuard {
             gained.set(found);
         });
         if (gained.get().isEmpty()) return;
-        say.accept(BuildOutput.STEP_INDENT + "Masked " + String.join(", ", gained.get()) + " on " + name
+        // A warning, not a step: the TUI's log keeps it, and isolation never changes unsaid
+        out.warn("Masked " + String.join(", ", gained.get()) + " on " + name
                 + ", which it gained after it was airgapped.");
     }
 }

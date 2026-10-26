@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
@@ -55,7 +56,7 @@ class McpClientRegistrationStartTest {
         var daemon = new FakeIncusDaemon().container(NAME, config(grant)).ipFiltering(NAME, "true");
         // FakeIncusDaemon serves no exec, so the wait times out; the probes are what matters
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {}));
+                daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME), MachineType.CONTAINER, RecordingOutput.QUIET));
         var told = grantsTold(daemon);
         assertFalse(told.isEmpty(), "the readiness probe delivered the secret");
         return told;
@@ -125,7 +126,7 @@ class McpClientRegistrationStartTest {
         var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", config)
                 .lastUsedAt(NAME, "2026-10-05T07:30:00Z");
 
-        InstanceLifecycle.ensureReady(daemon.client(), NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(daemon.client(), NAME, daemon.instance(NAME), MachineType.CONTAINER, RecordingOutput.QUIET);
 
         assertEquals(List.of(told), grantsTold(daemon));
     }
@@ -140,7 +141,7 @@ class McpClientRegistrationStartTest {
                 .when(incus).shellExec(eq(NAME), eq("sh"), eq("-c"),
                         eq(InstanceSecret.GUEST_CHECK + "\n" + InstanceSecret.generationCheck("")));
 
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.VM, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.VM, RecordingOutput.QUIET);
 
         assertEquals(List.of(told), grantsTold(daemon));
     }
@@ -150,7 +151,7 @@ class McpClientRegistrationStartTest {
     void aVmRestartedForItsAgentTellsTheStampedValue(String what, String grant, String told) {
         var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Running", config(grant));
         assertThrows(IncusException.class,
-                () -> VmAgentRecovery.restartForAgent(daemon.clientWithShortReadyWait(), NAME, msg -> {}));
+                () -> VmAgentRecovery.restartForAgent(daemon.clientWithShortReadyWait(), NAME, RecordingOutput.QUIET));
         var probes = grantsTold(daemon);
         assertFalse(probes.isEmpty());
         assertTrue(probes.stream().allMatch(told::equals), probes.toString());
@@ -166,7 +167,7 @@ class McpClientRegistrationStartTest {
         ArgumentCaptor<Map<String, String>> env = ArgumentCaptor.forClass(Map.class);
         doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), any(), env.capture());
 
-        InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, mcpCaller);
+        InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, mcpCaller, RecordingOutput.QUIET);
 
         assertEquals(mcpCaller ? "1" : "0", env.getValue().get(McpClientRegistration.ENV));
     }

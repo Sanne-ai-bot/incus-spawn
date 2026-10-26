@@ -105,7 +105,7 @@ public class Tui {
      * what {@link Warnings} reported is remembered across sessions, while a build run on the
      * released terminal still prints the same warning.
      */
-    private final Output drawing = Output.diagnosticsTo(warningLog::add);
+    final Output drawing = Output.diagnosticsTo(warningLog::add);
     private final WarningsModal warningsModal = new WarningsModal(modal, theme, warningLog,
             () -> Warnings.forgetReported(drawing));
     /** The status line last set by a warning announcement, which a newer one may replace. */
@@ -1116,8 +1116,9 @@ public class Tui {
                 instance.name(),
                 "Restarted " + instance.name(),
                 Metadata.OP_RESTARTING,
+                // Its warnings (a dropped inbox, spoofing protection the host refused) to the log
                 () -> InstanceLifecycle.restartForUse(incus, instance.name(), instance.machineType(),
-                        instance.mcpCaller(), instance.metadata()));
+                        instance.mcpCaller(), instance.metadata(), drawing));
     }
 
     /** Keys that act on the selected instance (as opposed to navigating or viewing it). */
@@ -1303,7 +1304,7 @@ public class Tui {
         try {
             var instance = incus.rename(renameSourceName, newName);
             try {
-                InstanceLifecycle.removeHostIntegration(renameSourceName);
+                InstanceLifecycle.removeHostIntegration(renameSourceName, drawing);
                 var config = instance.path("config");
                 var buildSource = config.pathText(Metadata.BUILD_SOURCE, "");
                 // First, so a failure below cannot leave the instance without the block
@@ -1353,7 +1354,7 @@ public class Tui {
                         Metadata.OP_DELETING,
                         () -> {
                             incus.delete(target, true);
-                            InstanceLifecycle.removeHostIntegration(target);
+                            InstanceLifecycle.removeHostIntegration(target, drawing);
                             InstanceDestroyer.refreshProxy();
                         });
             }
@@ -1397,7 +1398,7 @@ public class Tui {
                         refreshDataAfterBackground();
                         try {
                             incus.delete(name, true);
-                            InstanceLifecycle.removeHostIntegration(name);
+                            InstanceLifecycle.removeHostIntegration(name, drawing);
                             destroyed++;
                         } catch (Exception e) {
                             setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
@@ -2110,7 +2111,7 @@ public class Tui {
                 instance, () -> {
                     try {
                         InstanceLifecycle.changeAccounts(incus, instance, config, setups, changes,
-                                msg -> { }, warningLog::add);
+                                drawing);
                         setStatusMessage(instance + ": " + described);
                     } catch (RuntimeException e) {
                         setStatusMessage("Couldn't change accounts of " + instance + ": " + e.getMessage());

@@ -729,7 +729,7 @@ public class BuildCommand extends BaseCommand {
     }
 
     private boolean existsHeld(String name) {
-        try (var held = TemplateLock.reading(name, BuildOutput::note)) {
+        try (var held = TemplateLock.reading(name, BuildOutput.bound())) {
             return incus.exists(name);
         }
     }
@@ -741,8 +741,8 @@ public class BuildCommand extends BaseCommand {
      * reads it, and one caught missing would make the parent look current.
      */
     boolean parentNeedsBuild(String parentName, ImageDef parentDef) {
-        try (var parentHeld = TemplateLock.reading(parentName, BuildOutput::note);
-             var grandparentHeld = TemplateLock.reading(parentDef.getParent(), BuildOutput::note)) {
+        try (var parentHeld = TemplateLock.reading(parentName, BuildOutput.bound());
+             var grandparentHeld = TemplateLock.reading(parentDef.getParent(), BuildOutput.bound())) {
             if (!incus.exists(parentName)) {
                 BuildOutput.note("Parent '" + parentName + "' not found, building first.");
                 return true;
@@ -817,7 +817,7 @@ public class BuildCommand extends BaseCommand {
             // must go through the same report-and-promote path as any other failure.
             // Trusted inside the swap's lock: a branch or an isx mcp delegate waiting on this rebuild
             // copies the template only after, and would otherwise keep its taint for good
-            TemplateLock.replace(incus, tempName, canonicalName, BuildOutput::note, () -> trustBuilt(canonicalName));
+            TemplateLock.replace(incus, tempName, canonicalName, BuildOutput.bound(), () -> trustBuilt(canonicalName));
             activeBuild = null;
             buildDone(canonicalName);
         } catch (Exception e) {
@@ -1327,7 +1327,7 @@ public class BuildCommand extends BaseCommand {
         var machineType = activeBuild.machineType();
 
         // Another isx may be rebuilding the parent: hold it in place from the read to the copy
-        try (var parentHeld = TemplateLock.reading(parentSource, BuildOutput::note)) {
+        try (var parentHeld = TemplateLock.reading(parentSource, BuildOutput.bound())) {
             var copyPlan = incus.planCopy(parentSource);
             if (!copyPlan.cow()) {
                 BuildOutput.warn("Deriving will be a full copy, not a CoW clone: "
@@ -1560,7 +1560,7 @@ public class BuildCommand extends BaseCommand {
             incus.stop(buildName);
             incus.deviceAdd(buildName, "tun", "unix-char",
                     "source=/dev/net/tun", "path=/dev/net/tun", "mode=0666");
-            InstanceLifecycle.startForUse(incus, buildName, machineType, BuildOutput::warn);
+            InstanceLifecycle.startForUse(incus, buildName, machineType, BuildOutput.bound());
             incus.waitForSystemd(buildName);
             BuildOutput.stepDone();
             waitForIpv4(container);
@@ -2205,7 +2205,7 @@ public class BuildCommand extends BaseCommand {
         var setups = AccountSelection.namespaceSetups(config, toolDefLoader);
         return BuildAccounts.settleIdentities(container, config, setups, ImageDef.resolveAccounts(imageDef, defs),
                 AccountSelection.rederivableNamespaces(imageDef, defs, toolDefLoader.allToolSetups(), setups),
-                inherited, BuildOutput::step, BuildOutput::warn);
+                inherited, BuildOutput.bound());
     }
 
     /** Containers only: their NIC is eth0, a VM's is not (see RuntimeSetup.addressUpCheck). */

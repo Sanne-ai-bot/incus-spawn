@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
@@ -64,11 +65,11 @@ class StaleInboxTest {
         var inbox = tmp.resolve("inbox");
         var daemon = withInbox(inbox);
         var said = new java.util.ArrayList<String>();
-        InstanceLifecycle.prepareForStart(daemon.client(), NAME, said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.into(said));
 
         Files.createDirectories(inbox);
         said.clear();
-        InstanceLifecycle.prepareForStart(daemon.client(), NAME, said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.into(said));
 
         var device = daemon.instance(NAME).path("devices").path(InstanceLifecycle.INBOX_DEVICE);
         assertEquals("disk", device.path("type").asText(), device.toString());
@@ -85,10 +86,10 @@ class StaleInboxTest {
     void inboxStillMissingStaysRememberedAndQuiet(@TempDir Path tmp) {
         var daemon = withInbox(tmp.resolve("deleted"));
         var said = new java.util.ArrayList<String>();
-        InstanceLifecycle.prepareForStart(daemon.client(), NAME, said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.into(said));
         said.clear();
 
-        InstanceLifecycle.prepareForStart(daemon.client(), NAME, said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.into(said));
 
         assertEquals(java.util.List.of(), said, "the warning was given once, at the removal");
         assertTrue(daemon.instance(NAME).path("devices").path(InstanceLifecycle.INBOX_DEVICE).isMissingNode());
@@ -104,8 +105,8 @@ class StaleInboxTest {
         var original = System.err;
         System.setErr(new java.io.PrintStream(err, true));
         try {
-            // The TUI's sink: stderr there would be drawn over by the TUI and lost.
-            InstanceLifecycle.prepareForStart(daemon.client(), NAME, warnings::add);
+            // The TUI's output: stderr there would be drawn over by the TUI and lost.
+            InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.into(warnings));
         } finally {
             System.setErr(original);
         }

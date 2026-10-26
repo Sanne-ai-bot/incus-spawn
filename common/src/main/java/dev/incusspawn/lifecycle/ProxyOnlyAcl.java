@@ -5,14 +5,13 @@ import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.proxy.ProxyConfig;
-import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -157,7 +156,7 @@ public final class ProxyOnlyAcl {
      * @throws NotEnforceableException when the host cannot enforce it: the instance must not be
      *         started, or used, as if it were restricted
      */
-    static void enforce(IncusClient incus, String name, JqValue instance, Consumer<String> say) {
+    static void enforce(IncusClient incus, String name, JqValue instance, Output out) {
         if (!NetworkMode.isProxyOnly(instance)) return;
         var passthrough = InstanceNetwork.passthroughRefusal(name, "proxy-only", instance);
         if (passthrough != null) throw new NotEnforceableException(passthrough);
@@ -188,7 +187,8 @@ public final class ProxyOnlyAcl {
         } catch (RuntimeException e) {
             throw notEnforceable(name, e.getMessage());
         }
-        say.accept(BuildOutput.STEP_INDENT + "The proxy-only restriction of " + name + " is now enforced on the host.");
+        // A warning, not a step: the TUI's log keeps it, and isolation never changes unsaid
+        out.warn("The proxy-only restriction of " + name + " is now enforced on the host.");
     }
 
     /**

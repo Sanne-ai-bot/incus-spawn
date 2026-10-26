@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.MachineType;
@@ -43,7 +44,7 @@ class SshOnStartTest {
         var incus = spy(daemon.client());
         var script = ArgumentCaptor.forClass(String.class);
         doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), script.capture(), anyMap());
-        InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, RecordingOutput.QUIET);
         return script.getValue();
     }
 
@@ -75,7 +76,7 @@ class SshOnStartTest {
         doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), script.capture(), anyMap());
 
         InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false,
-                daemon.instance(NAME));
+                daemon.instance(NAME), RecordingOutput.QUIET);
 
         assertTrue(script.getValue().contains(KEY), script.getValue());
     }

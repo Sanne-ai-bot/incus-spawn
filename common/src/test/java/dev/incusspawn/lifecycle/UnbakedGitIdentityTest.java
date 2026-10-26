@@ -1,5 +1,7 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
@@ -65,7 +67,7 @@ class UnbakedGitIdentityTest {
                                              boolean lacks, List<String> warnings) {
         gh.lacks = lacks;
         return BuildAccounts.settleIdentities(null, config, Map.of("github", gh), Map.of(), List.of("github"),
-                inherited, msg -> { }, warnings::add);
+                inherited, Output.diagnosticsTo(warnings::add));
     }
 
     private static Map<String, String> verified(String identity) {
@@ -390,7 +392,7 @@ class UnbakedGitIdentityTest {
         var warnings = new ArrayList<String>();
 
         InstanceLifecycle.reconcileAccountIdentities(incus, NAME, withToken(), Map.of("github", gh),
-                msg -> { }, warnings::add);
+                Output.diagnosticsTo(warnings::add));
 
         assertEquals(List.of(), warnings);
         assertEquals("true", daemon.instance(NAME).path("config").path(Metadata.ACCOUNT_IDENTITY_VERIFIED).asText());
@@ -415,7 +417,7 @@ class UnbakedGitIdentityTest {
             var warnings = new ArrayList<String>();
 
             InstanceLifecycle.reconcileAccountIdentities(incus, NAME, withToken(), Map.of("github", gh),
-                    msg -> { }, warnings::add);
+                    Output.diagnosticsTo(warnings::add));
 
             assertEquals(List.of(), warnings, stamps.toString());
             assertEquals(0, gh.checks, stamps.toString());
@@ -427,7 +429,7 @@ class UnbakedGitIdentityTest {
     private static void reconcile(FakeIncusDaemon daemon, RecordingGh gh) throws Exception {
         var warnings = new ArrayList<String>();
         InstanceLifecycle.reconcileAccountIdentities(readyClient(daemon), NAME, withToken(), Map.of("github", gh),
-                msg -> { }, warnings::add);
+                Output.diagnosticsTo(warnings::add));
         assertEquals(List.of(), warnings);
     }
 
@@ -440,7 +442,7 @@ class UnbakedGitIdentityTest {
         var warnings = new ArrayList<String>();
 
         InstanceLifecycle.reconcileAccountIdentities(incus, NAME, withToken(), Map.of("github", gh),
-                msg -> { }, warnings::add);
+                Output.diagnosticsTo(warnings::add));
 
         assertEquals(List.of("me"), gh.rebaked);
         assertEquals(List.of(), warnings);
@@ -449,7 +451,7 @@ class UnbakedGitIdentityTest {
                 "the stamp now says what was derived, so the next start does not do it again");
 
         InstanceLifecycle.reconcileAccountIdentities(incus, NAME, withToken(), Map.of("github", gh),
-                msg -> { }, warnings::add);
+                Output.diagnosticsTo(warnings::add));
         assertEquals(List.of("me"), gh.rebaked, "repaired once");
     }
 
@@ -463,7 +465,7 @@ class UnbakedGitIdentityTest {
         var warnings = new ArrayList<String>();
 
         InstanceLifecycle.reconcileAccountIdentities(readyClient(daemon), NAME, withToken(),
-                Map.of("github", gh), msg -> { }, warnings::add);
+                Map.of("github", gh), Output.diagnosticsTo(warnings::add));
 
         assertEquals(1, warnings.size(), warnings.toString());
         assertTrue(warnings.get(0).contains("could not update credential identity"), warnings.get(0));
