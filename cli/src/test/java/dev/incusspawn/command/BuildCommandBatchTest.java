@@ -1,6 +1,6 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
@@ -289,7 +289,7 @@ class BuildCommandBatchTest {
     @Test
     void outOfSyncFailsWhenTheInstancesCannotBeListed() {
         builtAt(Map.of("tpl-base", "2026-10-01T09:00:00"));
-        daemon.listingAnswers(JsonNodeFactory.instance.objectNode());
+        daemon.listingAnswers(JqObject.EMPTY);
 
         assertThrows(IncusException.class, () -> build("--out-of-sync"));
 

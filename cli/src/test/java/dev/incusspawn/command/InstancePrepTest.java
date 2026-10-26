@@ -2,7 +2,6 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
-import dev.incusspawn.incus.JacksonTrees;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
@@ -60,7 +59,7 @@ class InstancePrepTest {
         var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", Map.of()).servesExecs();
         var warnings = new ArrayList<String>();
 
-        InstancePrep.readyForUse(daemon.client(), NAME, JacksonTrees.fromJsonNode(daemon.instance(NAME)),
+        InstancePrep.readyForUse(daemon.client(), NAME, daemon.instance(NAME),
                 MachineType.CONTAINER, msg -> { }, warnings::add);
 
         assertEquals(List.of(), warnings);
@@ -124,7 +123,7 @@ class InstancePrepTest {
         var incus = daemon.client();
 
         InstancePrep.repairBeforeUse(incus, NAME, MachineType.CONTAINER, notices(w -> fail(w)));
-        InstancePrep.readyForUse(incus, NAME, JacksonTrees.fromJsonNode(daemon.instance(NAME)),
+        InstancePrep.readyForUse(incus, NAME, daemon.instance(NAME),
                 MachineType.CONTAINER, msg -> { }, w -> fail(w));
 
         var requests = daemon.requests();

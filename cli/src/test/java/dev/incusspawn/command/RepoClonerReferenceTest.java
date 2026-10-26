@@ -108,7 +108,7 @@ class RepoClonerReferenceTest {
             if (script.contains("echo primed")) {
                 primes.incrementAndGet();
                 var devices = daemon.instance(VM).path("devices");
-                devices.fieldNames().forEachRemaining(d -> {
+                devices.asMap().keySet().forEach(d -> {
                     if (d.startsWith("ref-")) primesWhileAttached.incrementAndGet();
                 });
             }
@@ -166,7 +166,7 @@ class RepoClonerReferenceTest {
 
     private static List<String> referenceDevices(Build build) {
         var names = new ArrayList<String>();
-        build.daemon().instance(VM).path("devices").fieldNames().forEachRemaining(d -> {
+        build.daemon().instance(VM).path("devices").asMap().keySet().forEach(d -> {
             if (d.startsWith("ref-")) names.add(d);
         });
         return names;

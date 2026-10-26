@@ -1,8 +1,12 @@
 package dev.incusspawn.incus;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqNull;
+import io.hyperfoil.tools.jjq.value.JqNumber;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqString;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -31,20 +35,18 @@ import java.util.Map;
  */
 public final class FakeIncusDaemon implements IncusTransport {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
-    private final Map<String, ObjectNode> instances = new LinkedHashMap<>();
+    private final Map<String, JqObject> instances = new LinkedHashMap<>();
     /**
      * Profiles by name. {@code expanded_devices} is always an instance's profiles' devices with
      * its own on top, as Incus computes it: removing an instance device that shadows a profile
      * device brings the profile's back.
      */
-    private final Map<String, ObjectNode> profiles = new LinkedHashMap<>();
-    private final Map<String, ObjectNode> networks = new LinkedHashMap<>();
-    private final Map<String, ObjectNode> networkAcls = new LinkedHashMap<>();
+    private final Map<String, JqObject> profiles = new LinkedHashMap<>();
+    private final Map<String, JqObject> networks = new LinkedHashMap<>();
+    private final Map<String, JqObject> networkAcls = new LinkedHashMap<>();
     /** The firewall driver {@code GET /1.0} reports; Incus accepts NIC ACLs only from nftables. */
     private String firewall = "nftables";
-    private final List<ObjectNode> extraVolumes = new ArrayList<>();
+    private final List<JqObject> extraVolumes = new ArrayList<>();
     private final List<String> requests = new ArrayList<>();
     private final List<Exec> execs = new ArrayList<>();
     /** An exec asked for: its command, and the environment it asked for on top of the defaults. */
@@ -66,7 +68,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, String> dhcpAnswers = new LinkedHashMap<>();
     private final Map<String, String> guestInterfaces = new LinkedHashMap<>();
     /** What an instance listing answers in place of the instances, when set. */
-    private JsonNode listingOverride;
+    private JqValue listingOverride;
     /** Storage pools by name, with their driver; empty means one btrfs pool, {@code default}. */
     private final Map<String, String> pools = new LinkedHashMap<>();
     /** Each pool's config, as the listing and a pool PATCH see it. */
@@ -114,45 +116,31 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     public FakeIncusDaemon() {
         network("incusbr0", Map.of("ipv4.address", "10.166.11.1/24"));
-        var profile = JSON.createObjectNode();
-        profile.put("name", "default");
-        var devices = profile.putObject("devices");
-        var nic = devices.putObject("eth0");
-        nic.put("type", "nic");
-        nic.put("network", "incusbr0");
-        nic.put("name", "eth0");
-        var root = devices.putObject("root");
-        root.put("type", "disk");
-        root.put("path", "/");
-        root.put("pool", "default");
-        profiles.put("default", profile);
+        profiles.put("default", JqObject.ofEntries("name", "default", "devices", JqObject.ofEntries(
+                "eth0", JqObject.ofEntries("type", "nic", "network", "incusbr0", "name", "eth0"),
+                "root", JqObject.ofEntries("type", "disk", "path", "/", "pool", "default"))));
     }
 
     /** Define (or replace) a profile with exactly these devices. */
     public synchronized FakeIncusDaemon profile(String name, Map<String, Map<String, String>> devices) {
-        var profile = JSON.createObjectNode();
-        profile.put("name", name);
-        var node = profile.putObject("devices");
-        devices.forEach((device, config) -> node.set(device, JSON.valueToTree(config)));
-        profiles.put(name, profile);
+        profiles.put(name, JqObject.ofEntries("name", name, "devices", tree(devices)));
         return this;
     }
 
     /** A profile's devices as they are now, device name to config. */
     public synchronized Map<String, Map<String, String>> profileDevices(String name) {
-        return JSON.convertValue(profiles.get(name).get("devices"),
-                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Map<String, String>>>() {});
+        return deviceMaps(profiles.get(name).path("devices"));
     }
 
     /** An instance's own devices as they are now, device name to config. */
     public synchronized Map<String, Map<String, String>> instanceDevices(String name) {
-        return JSON.convertValue(instances.get(name).get("devices"),
-                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Map<String, String>>>() {});
+        return deviceMaps(instances.get(name).path("devices"));
     }
 
     /** Add a device to an existing instance, as if it had been configured or copied over. */
     public synchronized FakeIncusDaemon device(String instanceName, String deviceName, Map<String, String> config) {
-        ((ObjectNode) instances.get(instanceName).get("devices")).set(deviceName, JSON.valueToTree(config));
+        var instance = instances.get(instanceName);
+        instances.put(instanceName, instance.with("devices", object(instance.path("devices")).with(deviceName, tree(config))));
         expand(instanceName);
         return this;
     }
@@ -179,15 +167,9 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     public synchronized FakeIncusDaemon instance(String name, String type, String status, Map<String, String> config) {
-        var node = JSON.createObjectNode();
-        node.put("name", name);
-        node.put("type", type);
-        node.put("status", status);
-        node.put("architecture", "x86_64");
-        node.set("config", JSON.valueToTree(config));
-        node.putArray("profiles").add("default");
-        node.putObject("devices");
-        instances.put(name, node);
+        instances.put(name, JqObject.ofEntries("name", name, "type", type, "status", status,
+                "architecture", "x86_64", "config", tree(config), "profiles", JqArray.of(JqString.of("default")),
+                "devices", JqObject.EMPTY));
         if (holdsLiveState(status)) pids.put(name, nextPid++);
         expand(name);
         return this;
@@ -269,7 +251,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** Answer instance listings with this metadata instead, as a broken or foreign server might. */
-    public synchronized FakeIncusDaemon listingAnswers(JsonNode metadata) {
+    public synchronized FakeIncusDaemon listingAnswers(JqValue metadata) {
         listingOverride = metadata;
         return this;
     }
@@ -315,10 +297,9 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     private void expand(String instanceName) {
         var instance = instances.get(instanceName);
-        var expanded = JSON.createObjectNode();
-        instance.path("profiles").forEach(p -> expanded.setAll((ObjectNode) profiles.get(p.asText()).get("devices")));
-        instance.path("devices").properties().forEach(e -> expanded.set(e.getKey(), e.getValue()));
-        instance.set("expanded_devices", expanded);
+        var expanded = JqObject.EMPTY;
+        for (var p : instance.path("profiles").asList()) expanded = expanded.merge(object(profiles.get(p.asText()).path("devices")));
+        instances.put(instanceName, instance.with("expanded_devices", expanded.merge(object(instance.path("devices")))));
     }
 
     /**
@@ -335,11 +316,7 @@ public final class FakeIncusDaemon implements IncusTransport {
      * Incus project's instance has.
      */
     public synchronized FakeIncusDaemon volume(String project, String name, String type) {
-        var vol = JSON.createObjectNode();
-        vol.put("name", name);
-        vol.put("type", type);
-        vol.put("project", project);
-        extraVolumes.add(vol);
+        extraVolumes.add(JqObject.ofEntries("name", name, "type", type, "project", project));
         return this;
     }
 
@@ -396,21 +373,18 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** The instance as a GET would return it. */
-    public synchronized JsonNode instance(String name) {
-        return instances.get(name).deepCopy();
+    public synchronized JqObject instance(String name) {
+        return instances.get(name);
     }
 
     /** Set when {@code instanceName} last started, which Incus records on every start. */
     public synchronized FakeIncusDaemon lastUsedAt(String instanceName, String at) {
-        instances.get(instanceName).put("last_used_at", at);
+        set(instanceName, "last_used_at", at);
         return this;
     }
 
     public synchronized FakeIncusDaemon network(String name, Map<String, String> config) {
-        var node = JSON.createObjectNode();
-        node.put("name", name);
-        node.set("config", JSON.valueToTree(config));
-        networks.put(name, node);
+        networks.put(name, JqObject.ofEntries("name", name, "config", tree(config)));
         return this;
     }
 
@@ -509,12 +483,10 @@ public final class FakeIncusDaemon implements IncusTransport {
                                Map<String, String> extraHeaders, byte[] body) throws IOException {
         requests.add(method + " " + path);
         if (method.equals("POST") && path.endsWith("/exec") && body != null) {
-            var exec = JSON.readTree(body);
+            var exec = parse(body);
             var command = new ArrayList<String>();
-            exec.path("command").forEach(arg -> command.add(arg.asText()));
-            var environment = new LinkedHashMap<String, String>();
-            exec.path("environment").properties().forEach(e -> environment.put(e.getKey(), e.getValue().asText()));
-            execs.add(new Exec(command, environment));
+            exec.path("command").asList().forEach(arg -> command.add(arg.asText()));
+            execs.add(new Exec(command, strings(exec.path("environment"))));
             if (servesExecs) return startExec(String.join(" ", command));
         }
         return handle(method, path, extraHeaders, body);
@@ -534,7 +506,7 @@ public final class FakeIncusDaemon implements IncusTransport {
         } catch (IOException e) {
             throw new java.io.UncheckedIOException(e);
         }
-        return sync(JSON.createObjectNode());
+        return sync(JqObject.EMPTY);
     }
 
     @Override
@@ -560,12 +532,10 @@ public final class FakeIncusDaemon implements IncusTransport {
         var id = "exec-" + nextExec++;
         var stdout = execOutputs.entrySet().stream().filter(e -> commandLine.contains(e.getKey()))
                 .map(Map.Entry::getValue).findFirst().orElse("");
-        var metadata = JSON.createObjectNode().put("id", id);
-        var fds = metadata.putObject("metadata").putObject("fds");
-        for (var fd : List.of("0", "1", "2", "control")) fds.put(fd, id + "-" + fd);
+        var fds = JqObject.ofEntries("0", id + "-0", "1", id + "-1", "2", id + "-2", "control", id + "-control");
         execStdout.put(id + "-1", stdout.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        execStdinSecrets.add(fds.get("0").asText());
-        return async(id, metadata);
+        execStdinSecrets.add(id + "-0");
+        return async(id, JqObject.ofEntries("id", id, "metadata", JqObject.of("fds", fds)));
     }
 
     /** One fd of a served exec: its bytes, if any, then end of stream. */
@@ -611,9 +581,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** A network ACL as it is now, or null. */
-    public synchronized JsonNode networkAcl(String name) {
-        var acl = networkAcls.get(name);
-        return acl == null ? null : acl.deepCopy();
+    public synchronized JqObject networkAcl(String name) {
+        return networkAcls.get(name);
     }
 
     /** Advertise these in {@code GET /1.0}'s {@code api_extensions}. */
@@ -629,17 +598,15 @@ public final class FakeIncusDaemon implements IncusTransport {
             return error(failReadsWith, "refused by FakeIncusDaemon");
         }
         if (path.equals("/1.0") && method.equals("GET")) {
-            var server = JSON.createObjectNode();
-            server.set("api_extensions", JSON.valueToTree(apiExtensions));
-            server.putObject("environment").put("firewall", firewall);
-            return sync(server);
+            var extensions = JqArray.of(apiExtensions.stream().<JqValue>map(JqString::of).toList());
+            return sync(JqObject.ofEntries("api_extensions", extensions, "environment", JqObject.of("firewall", firewall)));
         }
         if (path.equals("/1.0/network-acls") && method.equals("POST")) {
-            var acl = (ObjectNode) JSON.readTree(body);
-            var aclName = acl.path("name").asText();
+            var acl = object(parse(body));
+            var aclName = acl.path("name").asText("");
             if (networkAcls.containsKey(aclName)) return error(409, "The network ACL already exists");
             networkAcls.put(aclName, acl);
-            return sync(JSON.createObjectNode());
+            return sync(JqObject.EMPTY);
         }
         if (path.startsWith("/1.0/network-acls/")) {
             var aclName = path.substring("/1.0/network-acls/".length());
@@ -649,66 +616,57 @@ public final class FakeIncusDaemon implements IncusTransport {
             if (method.equals("DELETE")) {
                 // Incus refuses to delete an ACL a NIC uses
                 for (var i : instances.values()) {
-                    for (var device : i.path("expanded_devices")) {
+                    for (var device : i.path("expanded_devices").asMap().values()) {
                         if (device.path("security.acls").asText("").contains(aclName)) return badRequest("Cannot delete an ACL that is in use");
                     }
                 }
                 networkAcls.remove(aclName);
-                return sync(JSON.createObjectNode());
+                return sync(JqObject.EMPTY);
             }
             if (method.equals("PUT")) {
-                var replacement = (ObjectNode) JSON.readTree(body);
-                replacement.put("name", aclName);
-                networkAcls.put(aclName, replacement);
-                return sync(JSON.createObjectNode());
+                networkAcls.put(aclName, object(parse(body)).with("name", JqString.of(aclName)));
+                return sync(JqObject.EMPTY);
             }
         }
         if (path.startsWith("/1.0/operations/") && method.equals("GET")) {
-            var metadata = JSON.createObjectNode();
             var status = operationStatuses.poll();
-            metadata.put("status", status != null ? status : "Success");
-            return sync(metadata);
+            return sync(JqObject.of("status", status != null ? status : "Success"));
         }
         if (path.startsWith("/1.0/instances?") && method.equals("GET")) {
             if (listingOverride != null) return sync(listingOverride);
-            var list = JSON.createArrayNode();
-            instances.values().forEach(list::add);
-            return sync(list);
+            return sync(JqArray.of(List.<JqValue>copyOf(instances.values())));
         }
         if (path.startsWith("/1.0/storage-pools/") && path.contains("/volumes/custom/")
                 && (method.equals("GET") || method.equals("DELETE"))) {
             if (customVolumeFailure != null) return customVolumeFailure;
             var key = path.substring("/1.0/storage-pools/".length()).replace("/volumes/custom/", "/");
             if (method.equals("GET")) {
-                return customVolumes.contains(key) ? sync(JSON.createObjectNode().put("name", key)) : notFound();
+                return customVolumes.contains(key) ? sync(JqObject.of("name", key)) : notFound();
             }
-            return customVolumes.remove(key) ? sync(JSON.createObjectNode()) : notFound();
+            return customVolumes.remove(key) ? sync(JqObject.EMPTY) : notFound();
         }
         if (path.startsWith("/1.0/storage-pools/") && path.endsWith("/volumes") && method.equals("POST")) {
             var pool = path.substring("/1.0/storage-pools/".length(), path.length() - "/volumes".length());
-            customVolumes.add(pool + "/" + JSON.readTree(body).path("name").asText());
-            return sync(JSON.createObjectNode());
+            customVolumes.add(pool + "/" + parse(body).path("name").asText(""));
+            return sync(JqObject.EMPTY);
         }
         if (path.startsWith("/1.0/storage-pools?") && method.equals("GET")) {
             if (poolListingFails) return error(500, "pool listing failed");
-            var list = JSON.createArrayNode();
-            (pools.isEmpty() ? Map.of("default", "btrfs") : pools).forEach((name, driver) -> {
-                var pool = list.addObject().put("name", name).put("driver", driver);
-                var config = pool.putObject("config");
-                poolConfigs.getOrDefault(name, Map.of()).forEach(config::put);
-            });
-            return sync(list);
+            var list = new ArrayList<JqValue>();
+            (pools.isEmpty() ? Map.of("default", "btrfs") : pools).forEach((name, driver) -> list.add(JqObject.ofEntries(
+                    "name", name, "driver", driver, "config", tree(poolConfigs.getOrDefault(name, Map.of())))));
+            return sync(JqArray.of(list));
         }
         if (path.startsWith("/1.0/storage-pools/") && !path.substring("/1.0/storage-pools/".length()).contains("/")
                 && method.equals("PATCH")) {
             // Incus merges a PATCH's config keys into the pool's
             var config = poolConfigs.computeIfAbsent(path.substring("/1.0/storage-pools/".length()), k -> new LinkedHashMap<>());
-            JSON.readTree(body).path("config").properties().forEach(e -> config.put(e.getKey(), e.getValue().asText()));
-            return sync(JSON.createObjectNode());
+            config.putAll(strings(parse(body).path("config")));
+            return sync(JqObject.EMPTY);
         }
         if (path.equals("/1.0/instances") && method.equals("POST")) {
-            var request = JSON.readTree(body);
-            return "image".equals(request.path("source").path("type").asText())
+            var request = parse(body);
+            return "image".equals(request.path("source").path("type").asText(""))
                     ? createFromImage(request) : copy(request);
         }
         if (path.startsWith("/1.0/images/") && !path.startsWith("/1.0/images/aliases") && method.equals("DELETE")) {
@@ -718,35 +676,32 @@ public final class FakeIncusDaemon implements IncusTransport {
         }
         if (path.startsWith("/1.0/profiles/") && method.equals("GET")) {
             var profile = profiles.get(path.substring("/1.0/profiles/".length()));
-            return profile == null ? notFound() : sync(profile.deepCopy());
+            return profile == null ? notFound() : sync(profile);
         }
         if (path.startsWith("/1.0/profiles/") && method.equals("PATCH")) {
-            var profile = profiles.get(path.substring("/1.0/profiles/".length()));
+            var profileName = path.substring("/1.0/profiles/".length());
+            var profile = profiles.get(profileName);
             if (profile == null) return notFound();
-            patchDevices(profile, JSON.readTree(body));
-            instances.keySet().forEach(this::expand);
-            return sync(JSON.createObjectNode());
+            profiles.put(profileName, patchDevices(profile, parse(body)));
+            List.copyOf(instances.keySet()).forEach(this::expand);
+            return sync(JqObject.EMPTY);
         }
         if (path.startsWith("/1.0/storage-pools/default/volumes?") && method.equals("GET")) {
             // Incus keeps a volume per instance, named after it, on the instance's pool.
-            var list = JSON.createArrayNode();
-            instances.values().forEach(i -> {
-                var vol = list.addObject();
-                vol.put("name", i.path("name").asText());
-                vol.put("type", i.path("type").asText());
-                vol.put("project", "default");
-            });
+            var list = new ArrayList<JqValue>();
+            instances.values().forEach(i -> list.add(JqObject.ofEntries(
+                    "name", i.path("name").asText(""), "type", i.path("type").asText(""), "project", "default")));
             list.addAll(extraVolumes);
-            return sync(list);
+            return sync(JqArray.of(list));
         }
         if (path.startsWith("/1.0/networks/") && path.endsWith("/leases") && method.equals("GET")) {
-            var list = JSON.createArrayNode();
-            leases.forEach(address -> list.addObject().put("address", address).put("type", "dynamic"));
+            var list = new ArrayList<JqValue>();
+            leases.forEach(address -> list.add(JqObject.ofEntries("address", address, "type", "dynamic")));
             instances.values().forEach(i -> {
                 var reserved = bridgeNicAddress(i);
-                if (!reserved.isEmpty()) list.addObject().put("address", reserved).put("type", "static");
+                if (!reserved.isEmpty()) list.add(JqObject.ofEntries("address", reserved, "type", "static"));
             });
-            return sync(list);
+            return sync(JqArray.of(list));
         }
         if (path.startsWith("/1.0/networks/") && method.equals("GET")) {
             var network = networks.get(path.substring("/1.0/networks/".length()));
@@ -754,13 +709,14 @@ public final class FakeIncusDaemon implements IncusTransport {
         }
         if (path.startsWith("/1.0/networks/") && method.equals("PATCH")) {
             // Incus merges a PATCH's config keys into the network's
-            var network = networks.get(path.substring("/1.0/networks/".length()));
+            var networkName = path.substring("/1.0/networks/".length());
+            var network = networks.get(networkName);
             if (network == null) return notFound();
             var refusal = networkWriteErrors.poll();
             if (refusal != null) return error(500, refusal);
-            var config = (ObjectNode) network.get("config");
-            JSON.readTree(body).path("config").properties().forEach(e -> config.set(e.getKey(), e.getValue()));
-            return sync(JSON.createObjectNode());
+            var config = object(network.path("config")).merge(object(parse(body).path("config")));
+            networks.put(networkName, network.with("config", config));
+            return sync(JqObject.EMPTY);
         }
         var name = instanceName(path);
         var instance = name == null ? null : instances.get(name);
@@ -774,22 +730,20 @@ public final class FakeIncusDaemon implements IncusTransport {
             if (write != null) write.run();
             return read;
         }
-        if (rest.isEmpty() && method.equals("POST") && JSON.readTree(body).has("pool")) {
+        var post = rest.isEmpty() && method.equals("POST") ? parse(body) : null;
+        if (post != null && post.has("pool")) {
             // A pool move: the name stays, and the root disk becomes a local device on the new pool.
-            var pool = JSON.readTree(body).path("pool").asText();
+            var pool = post.path("pool").asText("");
             if (!pools.isEmpty() && !pools.containsKey(pool)) return notFound();
-            var root = JSON.createObjectNode();
-            root.setAll((ObjectNode) instance.path("expanded_devices").path("root"));
-            root.put("pool", pool);
-            ((ObjectNode) instance.get("devices")).set("root", root);
+            var root = object(instance.path("expanded_devices").path("root")).with("pool", JqString.of(pool));
+            instances.put(name, instance.with("devices", object(instance.path("devices")).with("root", root)));
             expand(name);
             return async();
         }
-        if (rest.isEmpty() && method.equals("POST")) {
-            var newName = JSON.readTree(body).path("name").asText();
+        if (post != null) {
+            var newName = post.path("name").asText("");
             instances.remove(name);
-            instance.put("name", newName);
-            instances.put(newName, instance);
+            instances.put(newName, instance.with("name", JqString.of(newName)));
             return async();
         }
         if (rest.isEmpty() && method.equals("DELETE")) {
@@ -809,22 +763,22 @@ public final class FakeIncusDaemon implements IncusTransport {
         }
         if (rest.isEmpty() && method.equals("PUT")) {
             // A full replacement: how Incus removes devices (PATCH cannot).
-            var replacement = JSON.readTree(body);
+            var replacement = parse(body);
             var stale = staleRunningNic(instance, replacement);
             if (stale != null) return badRequest(stale);
             var aclRefusal = aclRefusal(replacement);
             if (aclRefusal != null) return badRequest(aclRefusal);
             var refused = hotplug(name, instance, replacement);
             if (refused != null) return refused;
-            instance.set("config", replacement.path("config").deepCopy());
-            instance.set("devices", replacement.path("devices").deepCopy());
+            var devices = object(replacement.path("devices"));
+            instances.put(name, instance.with("config", object(replacement.path("config"))).with("devices", devices));
             var plugged = hotplugged.get(name);
-            if (plugged != null) plugged.retainAll(names(instance.get("devices")));
+            if (plugged != null) plugged.retainAll(devices.keys());
             expand(name);
-            return sync(JSON.createObjectNode());
+            return sync(JqObject.EMPTY);
         }
         if (rest.isEmpty() && method.equals("PATCH")) {
-            var patch = JSON.readTree(body);
+            var patch = parse(body);
             var stale = staleRunningNic(instance, patch);
             if (stale != null) return badRequest(stale);
             var aclRefusal = aclRefusal(patch);
@@ -832,14 +786,13 @@ public final class FakeIncusDaemon implements IncusTransport {
             if (aclRefusal != null) return badRequest(aclRefusal);
             var refused = hotplug(name, instance, patch);
             if (refused != null) return refused;
-            applyPatch(instance, patch);
+            instances.put(name, applyPatch(instance, patch));
             expand(name);
-            return sync(JSON.createObjectNode());
+            return sync(JqObject.EMPTY);
         }
         if (rest.equals("/logs") && method.equals("GET")) {
-            var list = JSON.createArrayNode();
-            if (lxcLogs.containsKey(name)) list.add("/1.0/instances/" + name + "/logs/lxc.log");
-            return sync(list);
+            return sync(lxcLogs.containsKey(name)
+                    ? JqArray.of(JqString.of("/1.0/instances/" + name + "/logs/lxc.log")) : JqArray.EMPTY);
         }
         if (rest.equals("/logs/lxc.log") && method.equals("GET")) {
             var log = lxcLogs.get(name);
@@ -850,46 +803,46 @@ public final class FakeIncusDaemon implements IncusTransport {
             return new RawResponse(200, log.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
         if (rest.equals("/state") && method.equals("GET")) {
-            var state = JSON.createObjectNode();
-            state.put("status", instance.path("status").asText());
-            state.put("pid", pids.getOrDefault(name, 0L));
+            var state = JqObject.ofEntries("status", instance.path("status").asText(""), "pid", pids.getOrDefault(name, 0L));
             var processes = agentProcesses.get(name);
             if (processes != null) {
-                state.put("processes", processes.size() > 1 ? processes.poll() : processes.peek());
+                var read = processes.size() > 1 ? processes.poll() : processes.peek();
+                state = state.with("processes", read == null ? JqNull.NULL : JqNumber.of(read));
             }
             // A running guest holds what DHCP gave it: its reservation, unless told otherwise
             var held = dhcpAnswers.getOrDefault(name, bridgeNicAddress(instance));
-            if (holdsLiveState(instance.path("status").asText())) {
-                var network = state.putObject("network");
-                if (guestInterfaces.containsKey(name)) addInet(network, "docker0", guestInterfaces.get(name));
-                if (!held.isEmpty()) addInet(network, "eth0", held);
+            if (holdsLiveState(instance.path("status").asText(""))) {
+                var network = JqObject.EMPTY;
+                if (guestInterfaces.containsKey(name)) network = network.with("docker0", inet(guestInterfaces.get(name)));
+                if (!held.isEmpty()) network = network.with("eth0", inet(held));
+                state = state.with("network", network);
             }
             return sync(state);
         }
         if (rest.equals("/state") && method.equals("PUT")) {
-            var request = JSON.readTree(body);
-            var action = request.path("action").asText();
+            var request = parse(body);
+            var action = request.path("action").asText("");
             boolean force = request.path("force").asBoolean(false);
             stateActions.add(name + " " + action + (force ? " force" : ""));
             if (action.equals("stop") && !force && shutdownIgnored.contains(name)) return badRequest();
             if (action.equals("start") || action.equals("restart")) {
-                var aclRefusal = keptAclRefusal(instance, JSON.createObjectNode(), "Failed start validation");
+                var aclRefusal = keptAclRefusal(instance, JqObject.EMPTY, "Failed start validation");
                 if (aclRefusal != null) return badRequest(aclRefusal);
             }
-            if (action.equals("start") && brokenInit.contains(instance.path("config").path("volatile.base_image").asText())) {
-                instance.put("status", "Error");
+            if (action.equals("start") && brokenInit.contains(instance.path("config").path("volatile.base_image").asText(""))) {
+                set(name, "status", "Error");
                 lxcLogs.put(name, "lxc " + name + " 20261006133238.740 ERROR    start - ../src/lxc/start.c:start:2208"
                         + " - Exec format error - Failed to exec \"/sbin/init\"\n");
                 return badRequest();
             }
             hotplugged.remove(name);
             if (action.equals("start") || action.equals("restart")) {
-                instance.put("status", "Running");
+                set(name, "status", "Running");
                 pids.put(name, nextPid++);
                 // What Incus sets on every start, a reboot included
-                instance.put("last_used_at", java.time.Instant.now().plusNanos(nextPid).toString());
+                set(name, "last_used_at", java.time.Instant.now().plusNanos(nextPid).toString());
             } else {
-                instance.put("status", "Stopped");
+                set(name, "status", "Stopped");
                 pids.remove(name);
             }
             return async();
@@ -901,22 +854,19 @@ public final class FakeIncusDaemon implements IncusTransport {
      * Create an instance as a copy, as Incus does: the source's config and own devices, where
      * a device in the request replaces the source's whole and an empty config value unsets.
      */
-    private RawResponse copy(JsonNode request) {
+    private RawResponse copy(JqValue request) {
         var source = request.path("source");
-        var original = instances.get(source.path("source").asText());
-        if (!"copy".equals(source.path("type").asText()) || original == null) return notFound();
-        var name = request.path("name").asText();
-        var copy = original.deepCopy();
-        copy.put("name", name);
-        copy.put("status", "Stopped");
-        var config = (ObjectNode) copy.get("config");
-        request.path("config").properties().forEach(e -> {
-            if (e.getValue().asText().isEmpty()) config.remove(e.getKey());
-            else config.set(e.getKey(), e.getValue());
-        });
-        var devices = (ObjectNode) copy.get("devices");
-        request.path("devices").properties().forEach(e -> devices.set(e.getKey(), e.getValue()));
-        instances.put(name, copy);
+        var original = instances.get(source.path("source").asText(""));
+        if (!"copy".equals(source.path("type").asText("")) || original == null) return notFound();
+        var name = request.path("name").asText("");
+        var config = object(original.path("config"));
+        for (var e : request.path("config").asMap().entrySet()) {
+            config = e.getValue().isString() && e.getValue().asText().isEmpty()
+                    ? config.without(e.getKey()) : config.with(e.getKey(), e.getValue());
+        }
+        var devices = object(original.path("devices")).merge(object(request.path("devices")));
+        instances.put(name, original.with("name", JqString.of(name)).with("status", JqString.of("Stopped"))
+                .with("config", config).with("devices", devices));
         expand(name);
         return async();
     }
@@ -926,9 +876,9 @@ public final class FakeIncusDaemon implements IncusTransport {
      * Incus does. A remote alias is fetched once and then served from the cache, until that
      * cached image is deleted.
      */
-    private RawResponse createFromImage(JsonNode request) {
+    private RawResponse createFromImage(JqValue request) {
         var source = request.path("source");
-        var alias = source.path("alias").asText();
+        var alias = source.path("alias").asText("");
         String fingerprint;
         if (source.has("server")) {
             fingerprint = fetched.get(alias);
@@ -939,28 +889,26 @@ public final class FakeIncusDaemon implements IncusTransport {
                 if (brokenFetches.remove(alias)) brokenInit.add(fingerprint);
             }
         } else if (source.has("fingerprint")) {
-            fingerprint = source.path("fingerprint").asText();
+            fingerprint = source.path("fingerprint").asText("");
             if (!images.contains(fingerprint)) return notFound();
         } else {
             fingerprint = aliases.get(alias);
             if (fingerprint == null || !images.contains(fingerprint)) return notFound();
         }
-        var name = request.path("name").asText();
+        var name = request.path("name").asText("");
         // Config given in the create request is set on the instance, as Incus does
-        var config = new java.util.LinkedHashMap<String, String>();
-        request.path("config").properties().forEach(e -> config.put(e.getKey(), e.getValue().asText()));
+        var config = strings(request.path("config"));
         config.put("volatile.base_image", fingerprint);
         instance(name, "container", "Stopped", config);
         return async();
     }
 
-    private static void applyPatch(ObjectNode instance, JsonNode patch) {
-        var config = (ObjectNode) instance.get("config");
-        patch.path("config").properties().forEach(e -> {
-            if (e.getValue().isNull()) config.remove(e.getKey());
-            else config.set(e.getKey(), e.getValue());
-        });
-        patchDevices(instance, patch);
+    private static JqObject applyPatch(JqObject instance, JqValue patch) {
+        var config = object(instance.path("config"));
+        for (var e : patch.path("config").asMap().entrySet()) {
+            config = e.getValue().isNull() ? config.without(e.getKey()) : config.with(e.getKey(), e.getValue());
+        }
+        return patchDevices(instance.with("config", config), patch);
     }
 
     /**
@@ -968,20 +916,20 @@ public final class FakeIncusDaemon implements IncusTransport {
      * the write touches with the address the NIC holds now, which a bridge subnet change has left
      * off the network's subnet (#1009). A stopped instance is not checked.
      */
-    private String staleRunningNic(ObjectNode instance, JsonNode patch) {
-        if (!holdsLiveState(instance.path("status").asText())) return null;
-        for (var e : patch.path("devices").properties()) {
+    private String staleRunningNic(JqObject instance, JqValue patch) {
+        if (!holdsLiveState(instance.path("status").asText(""))) return null;
+        for (var e : patch.path("devices").asMap().entrySet()) {
             var current = instance.path("expanded_devices").path(e.getKey());
             // Incus validates what the write changes, so a PUT carrying the NIC as it is passes
-            if (!"nic".equals(current.path("type").asText()) || e.getValue().equals(current)) continue;
-            var network = networks.get(current.path("network").asText());
+            if (!"nic".equals(current.path("type").asText("")) || e.getValue().equals(current)) continue;
+            var network = networks.get(current.path("network").asText(""));
             var address = current.path("ipv4.address").asText("");
             var bridge = network == null ? "" : network.path("config").path("ipv4.address").asText("");
             if (bridge.isEmpty() || address.isEmpty()) continue;
             if (!CidrUtils.isInSubnet(address, CidrUtils.parseCidr(bridge))) {
                 return "Invalid devices: Device validation failed for \"" + e.getKey()
                         + "\": Device IP address \"" + address + "\" not within network \""
-                        + network.path("name").asText() + "\" subnet";
+                        + network.path("name").asText("") + "\" subnet";
             }
         }
         return null;
@@ -994,8 +942,8 @@ public final class FakeIncusDaemon implements IncusTransport {
      * Why Incus refuses the NIC ACLs this write sets, or null: it validates them against its
      * firewall driver and the ACLs that exist.
      */
-    private String aclRefusal(JsonNode patch) {
-        for (var e : patch.path("devices").properties()) {
+    private String aclRefusal(JqValue patch) {
+        for (var e : patch.path("devices").asMap().entrySet()) {
             var acls = e.getValue().path("security.acls").asText("");
             if (acls.isEmpty()) continue;
             var prefix = "Invalid devices: Device validation failed for \"" + e.getKey() + "\": ";
@@ -1012,9 +960,9 @@ public final class FakeIncusDaemon implements IncusTransport {
      * write leaves in place, or null: it validates every device each time, so once its firewall
      * driver is not nftables nothing about such an instance can change, nor can it start.
      */
-    private String keptAclRefusal(ObjectNode instance, JsonNode patch, String prefix) {
+    private String keptAclRefusal(JqObject instance, JqValue patch, String prefix) {
         if (firewall.equals("nftables")) return null;
-        for (var e : instance.path("expanded_devices").properties()) {
+        for (var e : instance.path("expanded_devices").asMap().entrySet()) {
             if (patch.path("devices").has(e.getKey()) || e.getValue().path("security.acls").asText("").isEmpty()) continue;
             return prefix + " for device \"" + e.getKey() + "\": " + NO_ACLS;
         }
@@ -1022,9 +970,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** Each device in a PATCH replaces the instance's or profile's device of that name whole. */
-    private static void patchDevices(ObjectNode target, JsonNode patch) {
-        var devices = (ObjectNode) target.get("devices");
-        patch.path("devices").properties().forEach(e -> devices.set(e.getKey(), e.getValue()));
+    private static JqObject patchDevices(JqObject target, JqValue patch) {
+        return target.with("devices", object(target.path("devices")).merge(object(patch.path("devices"))));
     }
 
     /**
@@ -1033,13 +980,13 @@ public final class FakeIncusDaemon implements IncusTransport {
      * too long to mount. Incus accepts that one, but the guest never mounts it (#1513), so refusing it
      * here makes a long name fail a test instead of silently costing a VM its share.
      */
-    private RawResponse hotplug(String name, ObjectNode instance, JsonNode patch) {
-        if (!"virtual-machine".equals(instance.path("type").asText())
-                || !holdsLiveState(instance.path("status").asText())) return null;
+    private RawResponse hotplug(String name, JqObject instance, JqValue patch) {
+        if (!"virtual-machine".equals(instance.path("type").asText(""))
+                || !holdsLiveState(instance.path("status").asText(""))) return null;
         var plugged = hotplugged.computeIfAbsent(name, n -> new java.util.LinkedHashSet<>());
         var adding = new ArrayList<String>();
-        for (var e : patch.path("devices").properties()) {
-            if ("disk".equals(e.getValue().path("type").asText()) && !instance.get("devices").has(e.getKey())) {
+        for (var e : patch.path("devices").asMap().entrySet()) {
+            if ("disk".equals(e.getValue().path("type").asText("")) && !instance.path("devices").has(e.getKey())) {
                 if (e.getKey().length() > DeviceNames.VM_HOTPLUG_MAX_LENGTH) {
                     return badRequest("Disk device \"" + e.getKey() + "\" is longer than "
                             + DeviceNames.VM_HOTPLUG_MAX_LENGTH + " characters: a running VM would never mount it");
@@ -1053,12 +1000,6 @@ public final class FakeIncusDaemon implements IncusTransport {
         return null;
     }
 
-    private static java.util.Set<String> names(JsonNode devices) {
-        var names = new java.util.HashSet<String>();
-        devices.fieldNames().forEachRemaining(names::add);
-        return names;
-    }
-
     /** What Incus answers when a running VM has no PCI hotplug slot left for a device. */
     private static RawResponse noHotplugSlot(String device) {
         return badRequest("Failed to start device \"" + device + "\": Failed to call monitor hook for block device:"
@@ -1070,17 +1011,14 @@ public final class FakeIncusDaemon implements IncusTransport {
         return status.equals("Running") || status.equals("Frozen");
     }
 
-    private static void addInet(ObjectNode network, String iface, String address) {
-        var entry = network.putObject(iface).putArray("addresses").addObject();
-        entry.put("family", "inet");
-        entry.put("scope", "global");
-        entry.put("address", address);
+    private static JqObject inet(String address) {
+        return JqObject.of("addresses", JqArray.of(JqObject.ofEntries("family", "inet", "scope", "global", "address", address)));
     }
 
     /** The {@code ipv4.address} of the instance's bridge NIC, or empty. */
-    private static String bridgeNicAddress(JsonNode instance) {
-        for (var device : instance.path("expanded_devices")) {
-            if ("nic".equals(device.path("type").asText()) && "incusbr0".equals(device.path("network").asText())) {
+    private static String bridgeNicAddress(JqValue instance) {
+        for (var device : instance.path("expanded_devices").asMap().values()) {
+            if ("nic".equals(device.path("type").asText("")) && "incusbr0".equals(device.path("network").asText(""))) {
                 return device.path("ipv4.address").asText("");
             }
         }
@@ -1100,40 +1038,30 @@ public final class FakeIncusDaemon implements IncusTransport {
         return rest.substring(0, end);
     }
 
-    private static RawResponse sync(JsonNode metadata) {
+    private static RawResponse sync(JqValue metadata) {
         return sync(metadata, null);
     }
 
-    private static RawResponse sync(JsonNode metadata, String etag) {
-        var body = JSON.createObjectNode();
-        body.put("type", "sync");
-        body.put("status_code", 200);
-        body.set("metadata", metadata);
-        return new RawResponse(200, bytes(body), etag);
+    private static RawResponse sync(JqValue metadata, String etag) {
+        var body = JqObject.ofEntries("type", "sync", "status_code", 200, "metadata", metadata);
+        return new RawResponse(200, JqValues.serializeToBytes(body), etag);
     }
 
     /** The instance's writable state, hashed as Incus derives its ETag; quoted as Incus sends it. */
-    private static String etag(ObjectNode instance) {
-        var state = JSON.createObjectNode();
-        state.set("architecture", instance.path("architecture"));
-        state.set("config", instance.path("config"));
-        state.set("devices", instance.path("devices"));
-        state.set("ephemeral", instance.path("ephemeral"));
-        state.set("profiles", instance.path("profiles"));
-        return "\"" + Integer.toHexString(java.util.Arrays.hashCode(bytes(state))) + "\"";
+    private static String etag(JqObject instance) {
+        var state = JqObject.ofEntries("architecture", instance.get("architecture"), "config", instance.get("config"),
+                "devices", instance.get("devices"), "ephemeral", instance.get("ephemeral"), "profiles", instance.get("profiles"));
+        return "\"" + Integer.toHexString(java.util.Arrays.hashCode(JqValues.serializeToBytes(state))) + "\"";
     }
 
     private RawResponse async() {
         return async("op-" + nextOperation++, null);
     }
 
-    private static RawResponse async(String id, JsonNode metadata) {
-        var body = JSON.createObjectNode();
-        body.put("type", "async");
-        body.put("status_code", 100);
-        body.put("operation", "/1.0/operations/" + id);
-        if (metadata != null) body.set("metadata", metadata);
-        return new RawResponse(202, bytes(body));
+    private static RawResponse async(String id, JqValue metadata) {
+        var body = JqObject.ofEntries("type", "async", "status_code", 100, "operation", "/1.0/operations/" + id);
+        if (metadata != null) body = body.with("metadata", metadata);
+        return new RawResponse(202, JqValues.serializeToBytes(body));
     }
 
     private static RawResponse badRequest() {
@@ -1149,19 +1077,42 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     private static RawResponse error(int status, String error) {
-        var body = JSON.createObjectNode();
-        body.put("type", "error");
-        body.put("error", error);
-        body.put("error_code", status);
-        body.putNull("metadata"); // as Incus sends it, which reads as a NullNode, not a missing one
-        return new RawResponse(status, bytes(body));
+        // metadata is null, as Incus sends it, which reads as a null, not a missing value
+        var body = JqObject.ofEntries("type", "error", "error", error, "error_code", status, "metadata", JqNull.NULL);
+        return new RawResponse(status, JqValues.serializeToBytes(body));
     }
 
-    private static byte[] bytes(JsonNode node) {
-        try {
-            return JSON.writeValueAsBytes(node);
-        } catch (IOException e) {
-            throw new IllegalStateException(e);
-        }
+    private void set(String instanceName, String key, String value) {
+        instances.put(instanceName, instances.get(instanceName).with(key, JqString.of(value)));
+    }
+
+    /**
+     * A request body, as strictly as production parses JSON; an empty one reads as an empty
+     * object, so a request missing it gets an Incus-like answer rather than a fake's NPE.
+     */
+    private static JqValue parse(byte[] body) {
+        return body == null || body.length == 0 ? JqObject.EMPTY : JqValues.parseStrict(body);
+    }
+
+    /** {@code value} if it is an object, else an empty one, as a missing member reads. */
+    private static JqObject object(JqValue value) {
+        return value instanceof JqObject o ? o : JqObject.EMPTY;
+    }
+
+    private static JqValue tree(Map<String, ?> map) {
+        return JqValues.fromJavaObject(map);
+    }
+
+    /** An object's members as text, in order. */
+    private static Map<String, String> strings(JqValue object) {
+        var map = new LinkedHashMap<String, String>();
+        object.asMap().forEach((k, v) -> map.put(k, v.asText()));
+        return map;
+    }
+
+    private static Map<String, Map<String, String>> deviceMaps(JqValue devices) {
+        var map = new LinkedHashMap<String, Map<String, String>>();
+        devices.asMap().forEach((k, v) -> map.put(k, strings(v)));
+        return map;
     }
 }

@@ -4,7 +4,6 @@ import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.FakeIncusDaemon;
-import dev.incusspawn.incus.JacksonTrees;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
@@ -110,7 +109,7 @@ class VmNetworkConfigTest {
                 StaticIpAllocator.Output.TERMINAL,
                 MachineType.VM));
         var warnings = new ArrayList<String>();
-        InstanceNetwork.pushDeferredNetworkConfig(incus, "vm", JacksonTrees.fromJsonNode(daemon.instance("vm")), 24, warnings::add);
+        InstanceNetwork.pushDeferredNetworkConfig(incus, "vm", daemon.instance("vm"), 24, warnings::add);
         var content = daemon.pushedContent("vm", FILE);
         assertTrue(content.contains("Address=10.166.11.2/24\n"), content);
 

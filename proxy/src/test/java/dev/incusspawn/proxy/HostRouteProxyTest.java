@@ -350,10 +350,10 @@ class HostRouteProxyTest {
             var after = ApiActivityProxyTest.activity(proxy.healthPort());
 
             var counted = after.path("instances").path(name);
-            assertEquals(1, counted.path("traffic").path("requests").asLong(), after.toString());
-            assertTrue(counted.path("identified_by_proof").asBoolean(), after.toString());
-            assertEquals(before.path("unattributed").path("requests").asLong(),
-                    after.path("unattributed").path("requests").asLong(), after.toString());
+            assertEquals(1, counted.path("traffic").path("requests").asLong(0), after.toString());
+            assertTrue(counted.path("identified_by_proof").asBoolean(false), after.toString());
+            assertEquals(before.path("unattributed").path("requests").asLong(0),
+                    after.path("unattributed").path("requests").asLong(0), after.toString());
         } finally {
             proxy.proofIdentifies = (remote, local) -> false;
         }

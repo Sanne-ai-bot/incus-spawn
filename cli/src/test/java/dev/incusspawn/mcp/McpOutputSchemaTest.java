@@ -1,6 +1,5 @@
 package dev.incusspawn.mcp;
 
-import dev.incusspawn.incus.JacksonTrees;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
@@ -105,9 +104,9 @@ class McpOutputSchemaTest {
             Files.writeString(GOLDEN, text);
         }
         var golden = Files.exists(GOLDEN)
-                ? JacksonTrees.toJsonNode(JqValues.parse(Files.readString(GOLDEN)))
-                : JacksonTrees.toJsonNode(JqObject.builder().build());
-        assertEquals(golden, JacksonTrees.toJsonNode(actual.build()), "an output schema changed: programs driving isx mcp read these. If the change is "
+                ? JqValues.parseStrict(Files.readString(GOLDEN))
+                : JqObject.EMPTY;
+        assertEquals(golden, actual.build(), "an output schema changed: programs driving isx mcp read these. If the change is "
                 + "meant, run this test with -Dmcp.output-schemas.update=true and commit " + GOLDEN);
     }
 }

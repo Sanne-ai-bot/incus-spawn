@@ -1,7 +1,7 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.incus.IncusClient;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -40,7 +40,6 @@ class ApiActivityProxyTest {
 
     private static final String ANTHROPIC = "api.anthropic.com";
     private static final String WORKER = "mcp-isx-870-impl-k3x9q";
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     @TempDir
     static Path tempHome;
@@ -171,15 +170,15 @@ class ApiActivityProxyTest {
                 .compose(resp -> resp.body().map(b -> resp.statusCode()));
     }
 
-    static JsonNode activity() throws Exception {
+    static JqValue activity() throws Exception {
         return activity(healthPort);
     }
 
     /** {@code /activity} as the host reads it from the proxy whose health endpoint is on {@code port}. */
-    static JsonNode activity(int port) throws Exception {
+    static JqValue activity(int port) throws Exception {
         var resp = health(port, "GET", "/activity");
         assertEquals(200, resp.statusCode(), resp.body());
-        return JSON.readTree(resp.body());
+        return JqValues.parseStrict(resp.body());
     }
 
     static HttpResponse<String> health(String method, String path) throws Exception {
@@ -202,17 +201,17 @@ class ApiActivityProxyTest {
         assertEquals(200, post("/v1/messages"));
         var after = activity().path("instances").path(WORKER);
 
-        assertEquals(1, after.path("requests").asLong() - before.path("requests").asLong(), after.toString());
+        assertEquals(1, after.path("requests").asLong(0) - before.path("requests").asLong(0), after.toString());
         var traffic = after.path("traffic");
         var anthropic = traffic.path("domains").path(ANTHROPIC);
-        assertEquals(2, traffic.path("requests").asLong() - before.path("traffic").path("requests").asLong(), traffic.toString());
-        assertEquals(2, anthropic.path("requests").asLong()
-                - before.path("traffic").path("domains").path(ANTHROPIC).path("requests").asLong());
-        assertEquals(0, traffic.path("in_flight").asLong());
-        assertTrue(traffic.path("request_bytes").asLong() - before.path("traffic").path("request_bytes").asLong() >= 4,
+        assertEquals(2, traffic.path("requests").asLong(0) - before.path("traffic").path("requests").asLong(0), traffic.toString());
+        assertEquals(2, anthropic.path("requests").asLong(0)
+                - before.path("traffic").path("domains").path(ANTHROPIC).path("requests").asLong(0));
+        assertEquals(0, traffic.path("in_flight").asLong(0));
+        assertTrue(traffic.path("request_bytes").asLong(0) - before.path("traffic").path("request_bytes").asLong(0) >= 4,
                 "the two bodies of {}: " + traffic);
-        assertTrue(traffic.path("response_bytes").asLong() > before.path("traffic").path("response_bytes").asLong());
-        assertTrue(anthropic.path("last_activity_at").asLong() >= after.path("last_response_at").asLong());
+        assertTrue(traffic.path("response_bytes").asLong(0) > before.path("traffic").path("response_bytes").asLong(0));
+        assertTrue(anthropic.path("last_activity_at").asLong(0) >= after.path("last_response_at").asLong(0));
     }
 
     @Test
@@ -221,11 +220,11 @@ class ApiActivityProxyTest {
         var answered = postAsync("/stall");
         var held = stalled.get(10, TimeUnit.SECONDS);
 
-        assertEquals(1, activity().path("instances").path(WORKER).path("traffic").path("in_flight").asLong());
+        assertEquals(1, activity().path("instances").path(WORKER).path("traffic").path("in_flight").asLong(0));
         held.end("{}");
         assertEquals(200, answered.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
         // The client has its answer once the proxy wrote it, and the flow ends as it is written
-        assertEquals(0, activity().path("instances").path(WORKER).path("traffic").path("in_flight").asLong());
+        assertEquals(0, activity().path("instances").path(WORKER).path("traffic").path("in_flight").asLong(0));
     }
 
     @Test
@@ -239,10 +238,10 @@ class ApiActivityProxyTest {
             assertEquals(200, post("/v1/messages"));
             var after = activity();
 
-            assertEquals(1, after.path("unattributed").path("requests").asLong() - before.path("requests").asLong(),
+            assertEquals(1, after.path("unattributed").path("requests").asLong(0) - before.path("requests").asLong(0),
                     after.toString());
-            assertEquals(0, after.path("instances").path("elsewhere").path("traffic").path("requests").asLong());
-            assertTrue(after.path("unattributed").path("counting_since").asLong() > 0);
+            assertEquals(0, after.path("instances").path("elsewhere").path("traffic").path("requests").asLong(0));
+            assertTrue(after.path("unattributed").path("counting_since").asLong(0) > 0);
         } finally {
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
             registry.refresh();
@@ -272,12 +271,12 @@ class ApiActivityProxyTest {
             var after = activity();
 
             var counted = after.path("instances").path("behind-nat");
-            assertEquals(1, counted.path("requests").asLong(), after.toString());
-            assertTrue(counted.path("identified_by_proof").asBoolean(), after.toString());
-            assertEquals(1, counted.path("traffic").path("requests").asLong(), after.toString());
-            assertEquals(0, counted.path("traffic").path("in_flight").asLong());
-            assertEquals(before.path("unattributed").path("requests").asLong(),
-                    after.path("unattributed").path("requests").asLong(), after.toString());
+            assertEquals(1, counted.path("requests").asLong(0), after.toString());
+            assertTrue(counted.path("identified_by_proof").asBoolean(false), after.toString());
+            assertEquals(1, counted.path("traffic").path("requests").asLong(0), after.toString());
+            assertEquals(0, counted.path("traffic").path("in_flight").asLong(0));
+            assertEquals(before.path("unattributed").path("requests").asLong(0),
+                    after.path("unattributed").path("requests").asLong(0), after.toString());
         } finally {
             proxy.proofIdentifies = (remote, local) -> false;
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
@@ -322,11 +321,11 @@ class ApiActivityProxyTest {
             var after = activity();
 
             var counted = after.path("instances").path(name).path("traffic");
-            assertEquals(1, counted.path("requests").asLong(), after.toString());
-            assertTrue(after.path("instances").path(name).path("identified_by_proof").asBoolean(), after.toString());
-            assertEquals(0, counted.path("in_flight").asLong());
-            assertEquals(before.path("unattributed").path("requests").asLong(),
-                    after.path("unattributed").path("requests").asLong(), after.toString());
+            assertEquals(1, counted.path("requests").asLong(0), after.toString());
+            assertTrue(after.path("instances").path(name).path("identified_by_proof").asBoolean(false), after.toString());
+            assertEquals(0, counted.path("in_flight").asLong(0));
+            assertEquals(before.path("unattributed").path("requests").asLong(0),
+                    after.path("unattributed").path("requests").asLong(0), after.toString());
         } finally {
             proxy.proofIdentifies = (remote, local) -> false;
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
@@ -339,7 +338,7 @@ class ApiActivityProxyTest {
         assertEquals(200, post("/v1/messages"));
         var worker = activity().path("instances").path(WORKER);
         assertTrue(worker.has("identified_by_proof"), worker.toString());
-        assertFalse(worker.path("identified_by_proof").asBoolean(), worker.toString());
+        assertFalse(worker.path("identified_by_proof").asBoolean(false), worker.toString());
     }
 
     @Test
@@ -354,9 +353,9 @@ class ApiActivityProxyTest {
             assertEquals(200, postWithKey("sk-ant-isx_" + ProofToken.derive("42".repeat(32), "claude")));
             var after = activity();
 
-            assertEquals(1, after.path("refused_address_misses").asLong() - before.path("refused_address_misses").asLong(),
+            assertEquals(1, after.path("refused_address_misses").asLong(0) - before.path("refused_address_misses").asLong(0),
                     after.toString());
-            assertEquals(before.path("refused_proofs").asLong(), after.path("refused_proofs").asLong(), after.toString());
+            assertEquals(before.path("refused_proofs").asLong(0), after.path("refused_proofs").asLong(0), after.toString());
         } finally {
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
             registry.refresh();
@@ -369,8 +368,8 @@ class ApiActivityProxyTest {
         assertEquals(200, postWithKey("sk-ant-isx_" + ProofToken.derive("42".repeat(32), "claude")));
         var after = activity();
 
-        assertEquals(1, after.path("refused_proofs").asLong() - before.path("refused_proofs").asLong(), after.toString());
-        assertEquals(before.path("refused_address_misses").asLong(), after.path("refused_address_misses").asLong(),
+        assertEquals(1, after.path("refused_proofs").asLong(0) - before.path("refused_proofs").asLong(0), after.toString());
+        assertEquals(before.path("refused_address_misses").asLong(0), after.path("refused_address_misses").asLong(0),
                 after.toString());
     }
 
@@ -380,8 +379,8 @@ class ApiActivityProxyTest {
         assertEquals(200, postWithKey("sk-ant-api03-the-hosts-own"));
         var after = activity();
 
-        assertEquals(before.path("refused_proofs").asLong(), after.path("refused_proofs").asLong(), after.toString());
-        assertEquals(before.path("refused_address_misses").asLong(), after.path("refused_address_misses").asLong(),
+        assertEquals(before.path("refused_proofs").asLong(0), after.path("refused_proofs").asLong(0), after.toString());
+        assertEquals(before.path("refused_address_misses").asLong(0), after.path("refused_address_misses").asLong(0),
                 after.toString());
     }
 
@@ -406,15 +405,15 @@ class ApiActivityProxyTest {
     @Test
     void aFailedListingShowsAsAStaleRegistryUntilOneSucceeds() throws Exception {
         try {
-            assertFalse(activity().path("registry_stale").asBoolean());
+            assertFalse(activity().path("registry_stale").asBoolean(false));
             listingFails = true;
             registry.refresh();
-            assertTrue(activity().path("registry_stale").asBoolean());
+            assertTrue(activity().path("registry_stale").asBoolean(false));
         } finally {
             listingFails = false;
             registry.refresh();
         }
-        assertFalse(activity().path("registry_stale").asBoolean());
+        assertFalse(activity().path("registry_stale").asBoolean(false));
     }
 
     @Test
@@ -429,9 +428,9 @@ class ApiActivityProxyTest {
         }
         var after = activity();
 
-        assertEquals(before.path("refused_injections").asLong() + 1, after.path("refused_injections").asLong(), after.toString());
-        assertEquals(before.path("refused_proofs").asLong(), after.path("refused_proofs").asLong(), after.toString());
-        assertEquals(before.path("refused_address_misses").asLong(), after.path("refused_address_misses").asLong(),
+        assertEquals(before.path("refused_injections").asLong(0) + 1, after.path("refused_injections").asLong(0), after.toString());
+        assertEquals(before.path("refused_proofs").asLong(0), after.path("refused_proofs").asLong(0), after.toString());
+        assertEquals(before.path("refused_address_misses").asLong(0), after.path("refused_address_misses").asLong(0),
                 after.toString());
     }
 
@@ -445,17 +444,17 @@ class ApiActivityProxyTest {
             stalled.start();
             assertEquals(200, postWithKey("sk-ant-isx_" + ProofToken.derive("42".repeat(32), "claude")));
             // A hung listing throws nothing: how long it has run is what says the proxy cannot vouch for proofs
-            assertTrue(activity().path("registry_stale").asBoolean(), "while the listing hangs");
+            assertTrue(activity().path("registry_stale").asBoolean(false), "while the listing hangs");
         } finally {
             listingHeld.countDown();
             stalled.join(10_000);
         }
         var after = activity();
-        assertFalse(after.path("registry_stale").asBoolean(), "once the hung listing lands: " + after);
+        assertFalse(after.path("registry_stale").asBoolean(false), "once the hung listing lands: " + after);
 
-        assertEquals(before.path("refused_injections").asLong() + 1, after.path("refused_injections").asLong(), after.toString());
-        assertEquals(before.path("refused_proofs").asLong(), after.path("refused_proofs").asLong(), after.toString());
-        assertEquals(before.path("refused_address_misses").asLong(), after.path("refused_address_misses").asLong(),
+        assertEquals(before.path("refused_injections").asLong(0) + 1, after.path("refused_injections").asLong(0), after.toString());
+        assertEquals(before.path("refused_proofs").asLong(0), after.path("refused_proofs").asLong(0), after.toString());
+        assertEquals(before.path("refused_address_misses").asLong(0), after.path("refused_address_misses").asLong(0),
                 after.toString());
     }
 
@@ -468,7 +467,7 @@ class ApiActivityProxyTest {
             registry.refresh();
             var sent = System.currentTimeMillis();
             assertEquals(200, postWithKey("sk-ant-isx_" + ProofToken.derive("42".repeat(32), "claude")));
-            var last = activity().path("last_address_miss_at").asLong();
+            var last = activity().path("last_address_miss_at").asLong(0);
             assertTrue(last >= sent && last <= System.currentTimeMillis(), String.valueOf(last));
         } finally {
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
@@ -521,16 +520,16 @@ class ApiActivityProxyTest {
             assertEquals(200, post("/api/oauth/profile"));
 
             var worker = activity().path("instances").path(WORKER);
-            assertEquals(3, worker.path("requests").asLong(), worker.toString());
-            assertTrue(worker.path("counting_since").asLong() >= before, "from its first call");
-            assertEquals(0, worker.path("in_flight").asLong());
-            assertTrue(worker.path("last_request_at").asLong() >= before);
-            assertTrue(worker.path("last_response_at").asLong() >= worker.path("last_request_at").asLong());
+            assertEquals(3, worker.path("requests").asLong(0), worker.toString());
+            assertTrue(worker.path("counting_since").asLong(0) >= before, "from its first call");
+            assertEquals(0, worker.path("in_flight").asLong(0));
+            assertTrue(worker.path("last_request_at").asLong(0) >= before);
+            assertTrue(worker.path("last_response_at").asLong(0) >= worker.path("last_request_at").asLong(0));
             // The stream's message_delta counts are cumulative: 30, not 1 + 12 + 30; a failed call reports none
-            assertEquals(107, worker.path("input_tokens").asLong());
-            assertEquals(33, worker.path("output_tokens").asLong());
-            assertEquals(4000, worker.path("cache_read_input_tokens").asLong());
-            assertEquals(50, worker.path("cache_creation_input_tokens").asLong());
+            assertEquals(107, worker.path("input_tokens").asLong(0));
+            assertEquals(33, worker.path("output_tokens").asLong(0));
+            assertEquals(4000, worker.path("cache_read_input_tokens").asLong(0));
+            assertEquals(50, worker.path("cache_creation_input_tokens").asLong(0));
 
             // Asked uncompressed, or the usage could not be read; other requests are left as sent
             assertEquals("identity", acceptEncodings.get("/v1/messages"));
@@ -557,9 +556,9 @@ class ApiActivityProxyTest {
             assertEquals(200, post("/v1/messages"));
             var second = activity().path("instances").path("box");
 
-            assertEquals(1, second.path("requests").asLong(), "the old instance's call is not its: " + second);
-            assertEquals(3, second.path("output_tokens").asLong(), second.toString());
-            assertTrue(second.path("counting_since").asLong() >= reborn,
+            assertEquals(1, second.path("requests").asLong(0), "the old instance's call is not its: " + second);
+            assertEquals(3, second.path("output_tokens").asLong(0), second.toString());
+            assertTrue(second.path("counting_since").asLong(0) >= reborn,
                     "a later start, so a client subtracting across the two does not: " + first + " / " + second);
         } finally {
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
@@ -581,8 +580,8 @@ class ApiActivityProxyTest {
             assertEquals(200, post("/v1/messages"));
             var w = activity().path("instances").path("w");
 
-            assertEquals(1, w.path("requests").asLong(), "its own call, not the destroyed one's: " + w);
-            assertTrue(w.path("counting_since").asLong() >= renamed, w.toString());
+            assertEquals(1, w.path("requests").asLong(0), "its own call, not the destroyed one's: " + w);
+            assertTrue(w.path("counting_since").asLong(0) >= renamed, w.toString());
         } finally {
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
             registry.refresh();

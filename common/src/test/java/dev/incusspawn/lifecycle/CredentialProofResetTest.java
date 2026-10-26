@@ -26,7 +26,7 @@ class CredentialProofResetTest {
 
     @Test void resetWaitsForThePersistedGenerationBeforeDeliveringAndKeepsTheMcpSecret() {
         var daemon = instance("Running");
-        var old = daemon.instance("box").path("config").deepCopy();
+        var old = daemon.instance("box").path("config");
         var incus = spy(daemon.client());
         var confirmed = new java.util.concurrent.atomic.AtomicBoolean();
         doAnswer(call -> {

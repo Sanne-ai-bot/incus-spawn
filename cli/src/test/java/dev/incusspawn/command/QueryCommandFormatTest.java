@@ -1,6 +1,6 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.baseimage.BaseImageReleases.Release;
 import dev.incusspawn.config.AccountOrigin;
@@ -66,14 +66,10 @@ class QueryCommandFormatTest {
     }
 
     private static List<List<String>> keysOf(String jsonArray) throws Exception {
-        var nodes = new ObjectMapper().readTree(jsonArray);
+        var nodes = JqValues.parseStrict(jsonArray);
         assertTrue(nodes.isArray(), jsonArray);
         var keys = new java.util.ArrayList<List<String>>();
-        nodes.forEach(n -> {
-            var names = new java.util.ArrayList<String>();
-            n.fieldNames().forEachRemaining(names::add);
-            keys.add(names);
-        });
+        nodes.asList().forEach(n -> keys.add(List.copyOf(n.asMap().keySet())));
         return keys;
     }
 

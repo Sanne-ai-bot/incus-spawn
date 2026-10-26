@@ -3,7 +3,6 @@ package dev.incusspawn.lifecycle;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
-import dev.incusspawn.incus.JacksonTrees;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
@@ -113,7 +112,7 @@ class AirgapGuardTest {
 
         // FakeIncusDaemon serves no exec, so the readiness wait after the start can only time out
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(daemon.clientWithShortReadyWait(), "box",
-                JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, said::add));
+                daemon.instance("box"), MachineType.CONTAINER, said::add));
 
         assertEquals("none", expandedType(daemon, "ib1"));
         assertEquals("eth0,ib1", daemon.instance("box").path("config").path(Metadata.AIRGAP_MASKED).asText());
@@ -128,7 +127,7 @@ class AirgapGuardTest {
     void aRunningAirgappedInstanceThatGainedAProxyIsMaskedBeforeAShellOpensInIt() {
         var daemon = airgappedWithAProxy("Running");
 
-        InstanceLifecycle.ensureReady(daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")),
+        InstanceLifecycle.ensureReady(daemon.client(), "box", daemon.instance("box"),
                 MachineType.CONTAINER, s -> {});
 
         assertEquals("none", expandedType(daemon, "fwd"));
@@ -141,7 +140,7 @@ class AirgapGuardTest {
         daemon.device("box", "dongle", Map.of("type", "usb", "vendorid", "0bda", "productid", "8153"));
 
         var e = assertThrows(AirgapGuard.NotIsolatedException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, s -> {}));
 
         assertTrue(e.getMessage().contains("dongle"), e::getMessage);
         assertEquals(List.of(), daemon.stateActions());
@@ -154,7 +153,7 @@ class AirgapGuardTest {
         int before = daemon.requests().size();
 
         InstanceLifecycle.prepareForStart(daemon.client(), "box",
-                JacksonTrees.fromJsonNode(daemon.instance("box")), w -> fail(w));
+                daemon.instance("box"), w -> fail(w));
 
         assertEquals(List.of(), daemon.requests().subList(before, daemon.requests().size()));
     }
@@ -167,7 +166,7 @@ class AirgapGuardTest {
                 "root", Map.of("type", "disk", "path", "/", "pool", "default"))), "Stopped");
         var said = new ArrayList<String>();
 
-        InstanceLifecycle.prepareForStart(daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), said::add);
+        InstanceLifecycle.prepareForStart(daemon.client(), "box", daemon.instance("box"), said::add);
 
         assertEquals("none", expandedType(daemon, "eth1"));
         assertEquals(1, said.size(), said::toString);
@@ -184,7 +183,7 @@ class AirgapGuardTest {
         var daemon = airgappedWithAProxy("Running").refuseWritesContaining(Metadata.AIRGAP_MASKED);
 
         var e = assertThrows(AirgapGuard.NotIsolatedException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.client(), "box", JacksonTrees.fromJsonNode(daemon.instance("box")), MachineType.CONTAINER, s -> {}));
+                daemon.client(), "box", daemon.instance("box"), MachineType.CONTAINER, s -> {}));
 
         assertTrue(e.getMessage().contains("stop it"), e::getMessage);
     }
@@ -194,7 +193,7 @@ class AirgapGuardTest {
         var daemon = airgappedWithAProxy("Stopped").refuseWritesContaining(Metadata.AIRGAP_MASKED);
 
         var e = assertThrows(IncusException.class, () -> InstanceLifecycle.prepareForStart(daemon.client(), "box",
-                JacksonTrees.fromJsonNode(daemon.instance("box")), w -> {}));
+                daemon.instance("box"), w -> {}));
 
         assertFalse(e instanceof AirgapGuard.NotIsolatedException, e::getMessage);
         assertFalse(e.getMessage().contains("stop it"), e::getMessage);
@@ -205,7 +204,7 @@ class AirgapGuardTest {
     void aTuiRestartMasksADeviceGainedSinceItsListingWhileTheInstanceIsStopped() {
         // The listing predates the device: only a read after the stop sees it
         var daemon = airgapped("Running");
-        var listed = JacksonTrees.fromJsonNode(daemon.instance("box"));
+        var listed = daemon.instance("box");
         daemon.device("box", "fwd", Map.of("type", "proxy", "bind", "instance",
                 "listen", "tcp:127.0.0.1:8080", "connect", "tcp:192.0.2.1:80"));
         var incus = spy(daemon.client());
