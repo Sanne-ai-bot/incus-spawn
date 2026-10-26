@@ -229,7 +229,7 @@ Bindings nest, and closing one out of order throws.
 Code with no caller to take a sink from -- e.g. a definition loader built several layers down, as `ToolProxyResolver` builds `ToolDefLoader`s -- reports through `Warnings.warn()` (`common`): to the bound output, on stderr alone on a terminal (`Output.warnAside`, so a query's stdout holds only results), each distinct message once per destination, so a TUI build does not re-log what the log holds (a long-running process that re-reads definitions calls `Warnings.forgetReported()`, as the proxy does on each reload).
 In the TUI, a warning sink is `warningLog::add`, never the status line directly: the status line holds one message until the next key, so warnings from several operations would overwrite each other.
 A TUI branch runs on the released terminal, and the shell after it draws over that, so the TUI's copying binding keeps every warning in the log, as for a build (a failed step is not copied; the status line reports it): branch-path code warns through `BuildOutput` or a sink, never a bare `System.err` (#1646).
-The branch-path sites that still print bare stderr are tracked in #1690.
+`common/lifecycle` and `common/config` print nothing raw (#1690): GUI and KVM passthrough return why they could not (`Unavailable`), and the branch warns of it once, the cause with its advice and what it does instead.
 The same holds before the TUI opens.
 Bare `isx` holds `Warnings` raised while it gets ready (VM start, init) for the TUI's log, and waits for Enter before opening the TUI if anything else was printed (`PreTuiOutput`, #1154).
 So a pre-TUI notice is a `Warnings.warn`, not a bare print.

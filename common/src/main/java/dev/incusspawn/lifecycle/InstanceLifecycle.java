@@ -867,10 +867,10 @@ public final class InstanceLifecycle {
     /** {@link #prepareForStart(IncusClient, String, Output)} with the instance already read. */
     static void prepareForStart(IncusClient incus, String name, JqValue instance,
                                                   Output out) {
-        HostResourceSetup.removeStaleDevices(incus, name, instance, out::warn);
+        HostResourceSetup.removeStaleDevices(incus, name, instance, out);
         removeStaleInbox(incus, name, instance, out);
         restoreInbox(incus, name, instance, out);
-        ZmxSocketForward.ensureHostDirForStart(incus, name, instance);
+        ZmxSocketForward.ensureHostDirForStart(incus, name, instance, out);
         InstanceNetwork.rearmIpFiltering(incus, name, instance, out);
         enforceNetworkMode(incus, name, instance, out);
     }
@@ -938,7 +938,7 @@ public final class InstanceLifecycle {
 
             var buildSourceJson = instance.path("config").path(Metadata.BUILD_SOURCE).asText("");
             if (ZmxSocketForward.isZmxInstalled(buildSourceJson)) {
-                ZmxSocketForward.configure(incus, name);
+                ZmxSocketForward.configure(incus, name, BuildOutput.bound());
             }
         }
     }

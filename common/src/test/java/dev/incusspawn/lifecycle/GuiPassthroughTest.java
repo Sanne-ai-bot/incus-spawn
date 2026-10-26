@@ -1,6 +1,10 @@
 package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.RecordingOutput;
+import dev.incusspawn.util.RecordingOutput.Event;
+import dev.incusspawn.util.RecordingOutput.Kind;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
@@ -164,5 +168,17 @@ class GuiPassthroughTest {
         assertEquals("/mnt/host-xdg/pipewire-0", config.path("environment.PIPEWIRE_REMOTE").asText());
         assertFalse(config.has("environment.PULSE_SERVER"), "a variable for an unmounted socket was kept");
         assertFalse(profileScript(xdg).contains("PULSE_SERVER"));
+    }
+
+    /** A shell into a GUI box outside a Wayland session warns once, with its advice, to the caller's output. */
+    @Test
+    void aShellOutsideAWaylandSessionIsWarnedOfWithItsAdvice() {
+        var daemon = new FakeIncusDaemon().container("box", Map.of(Metadata.GUI_ENABLED, "true"));
+        var out = new RecordingOutput();
+
+        GuiPassthrough.checkGuiHealth(daemon.client(), "box", Map.of(), out);
+
+        assertEquals(List.of(new Event(Kind.WARN, "GUI passthrough is enabled but no Wayland session detected.",
+                "GUI applications will not work in this session.")), out.events());
     }
 }

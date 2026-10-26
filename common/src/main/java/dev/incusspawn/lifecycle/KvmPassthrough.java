@@ -10,6 +10,7 @@ import dev.incusspawn.util.BuildOutput;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Predicate;
 
 public final class KvmPassthrough {
 
@@ -17,31 +18,42 @@ public final class KvmPassthrough {
 
     private KvmPassthrough() {}
 
-    public static boolean configureKvm(IncusClient incus, String name) {
-        if (!Files.exists(Path.of("/dev/kvm"))) {
-            System.err.println("Error: /dev/kvm not found on the host.");
-            if (Files.exists(Path.of("/sys/hypervisor")) || Files.exists(Path.of("/proc/xen"))) {
-                System.err.println("This host appears to be a VM. Enable nested virtualization on the hypervisor,");
-                System.err.println("then verify /dev/kvm is present before using --kvm.");
-            } else {
-                System.err.println("Ensure your CPU supports hardware virtualization (VT-x/AMD-V) and that");
-                System.err.println("the kvm kernel module is loaded: sudo modprobe kvm_intel  (or kvm_amd)");
-            }
-            return false;
-        }
+    /**
+     * Pass the host's KVM through to {@code name}.
+     *
+     * @return why it could not, for the caller to warn of as one warning with what it does
+     *         instead (#1690); null when it could
+     */
+    public static Unavailable configureKvm(IncusClient incus, String name, Predicate<String> exists) {
+        var problem = kvmProblem(exists);
+        if (problem != null) return problem;
 
         BuildOutput.step("Enabling KVM passthrough.");
         incus.devicesRemoveAll(name, DEVICES);
         incus.deviceAdd(name, "kvm", "unix-char",
                 "source=/dev/kvm",
                 "path=/dev/kvm");
-        if (Files.exists(Path.of("/dev/vhost-vsock"))) {
+        if (exists.test("/dev/vhost-vsock")) {
             incus.deviceAdd(name, "vhost-vsock", "unix-char",
                     "source=/dev/vhost-vsock",
                     "path=/dev/vhost-vsock");
         }
         incus.configSet(name, Metadata.KVM_ENABLED, "true");
-        return true;
+        return null;
+    }
+
+    /** Why KVM cannot be passed through on a host where {@code exists} says which paths exist, or null when it can. */
+    static Unavailable kvmProblem(Predicate<String> exists) {
+        if (exists.test("/dev/kvm")) return null;
+        var onAVm = exists.test("/sys/hypervisor") || exists.test("/proc/xen");
+        // Two lines each, short enough for a terminal, the command on its own
+        return onAVm
+                ? new Unavailable("/dev/kvm not found on the host.",
+                        "This host appears to be a VM: enable nested virtualization on the hypervisor,",
+                        "then verify /dev/kvm is present before using --kvm.")
+                : new Unavailable("/dev/kvm not found on the host.",
+                        "Ensure your CPU supports hardware virtualization (VT-x/AMD-V) and load the kvm module:",
+                        "sudo modprobe kvm_intel  (or kvm_amd)");
     }
 
     /**

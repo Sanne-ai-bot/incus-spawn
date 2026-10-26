@@ -10,6 +10,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.Platform;
 
@@ -21,7 +22,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Consumer;
 
 public final class HostResourceSetup {
 
@@ -365,7 +365,7 @@ public final class HostResourceSetup {
                     applyOverlay(container, hr);
                     overlayEntries.add(hr);
                 }
-                default -> System.err.println("Warning: unknown host-resource mode '" + shown(hr.getMode())
+                default -> BuildOutput.warn("unknown host-resource mode '" + shown(hr.getMode())
                         + "' for " + shown(hr.getSource()) + ", skipping.");
             }
         }
@@ -375,34 +375,26 @@ public final class HostResourceSetup {
     }
 
     /**
-     * Removes disk devices whose host source path no longer exists.
-     */
-    public static void removeStaleDevices(IncusClient incus, String container) {
-        removeStaleDevices(incus, container, incus.instanceMetadata(container), System.err::println);
-    }
-
-    /**
-     * As above, reading the host-resource list from an already-fetched instance and reporting each
-     * removed device to {@code warn}.
+     * Removes disk devices whose host source path no longer exists, reading the host-resource list
+     * from an already-fetched instance and reporting each removed device to {@code out}.
      */
     public static void removeStaleDevices(IncusClient incus, String container,
-                                          JqValue instanceMetadata, Consumer<String> warn) {
+                                          JqValue instanceMetadata, Output out) {
         var hrJson = instanceMetadata.getField("config").pathText(Metadata.HOST_RESOURCES, "");
-        var resources = deserialize(hrJson);
+        var resources = deserialize(hrJson, out);
         for (var hr : resources) {
             if ("copy".equals(hr.getMode())) continue;
             try {
                 verifyConfined(hr);
             } catch (HostPathOutsideProjectException e) {
                 removeExistingDevice(incus, container, deviceNameForMode(hr));
-                warn.accept("Warning: " + e.getMessage() + " (device removed)");
+                out.warn(e.getMessage() + " (device removed)");
                 continue;
             }
             var expandedSource = expandHostTilde(hr.getSource());
             if (!Files.exists(Path.of(expandedSource))) {
                 removeExistingDevice(incus, container, deviceNameForMode(hr));
-                warn.accept("Warning: host-resource source not found: "
-                        + shown(hr.getSource()) + " (device removed)");
+                out.warn("host-resource source not found: " + shown(hr.getSource()) + " (device removed)");
             }
         }
     }
@@ -437,7 +429,7 @@ public final class HostResourceSetup {
                     verifyConfined(hr);
                 } catch (HostPathOutsideProjectException e) {
                     removeExistingDevice(incus, container, deviceNameForMode(hr));
-                    System.err.println("Warning: " + e.getMessage() + " (skipping)");
+                    BuildOutput.warn(e.getMessage() + " (skipping)");
                     continue;
                 }
             }
@@ -473,7 +465,7 @@ public final class HostResourceSetup {
                 }
                 incus.deviceRemove(container, deviceNameForMode(hr));
             } catch (Exception e) {
-                System.err.println("Warning: failed to remove build device: " + shown(e.getMessage()));
+                BuildOutput.warn("failed to remove build device: " + shown(e.getMessage()));
             }
         }
     }
@@ -488,6 +480,11 @@ public final class HostResourceSetup {
     }
 
     public static List<ImageDef.HostResource> deserialize(String json) {
+        return deserialize(json, BuildOutput.bound());
+    }
+
+    /** As above, reporting a list it cannot parse to {@code out}. */
+    static List<ImageDef.HostResource> deserialize(String json, Output out) {
         if (json == null || json.isBlank()) return List.of();
         try {
             var mapper = Jjq.mapper();
@@ -497,7 +494,7 @@ public final class HostResourceSetup {
             }
             return result;
         } catch (RuntimeException e) {
-            System.err.println("Warning: could not parse host-resources metadata: " + shown(e.getMessage()));
+            out.warn("could not parse host-resources metadata: " + shown(e.getMessage()));
             return List.of();
         }
     }
@@ -533,7 +530,7 @@ public final class HostResourceSetup {
     /** Warns and returns true when the resource's host source is gone, so the caller skips it. */
     private static boolean warnIfMissing(ImageDef.HostResource hr) {
         if (sourceExists(hr)) return false;
-        System.err.println("Warning: host-resource source not found: " + shown(hr.getSource()) + " (skipping)");
+        BuildOutput.warn("host-resource source not found: " + shown(hr.getSource()) + " (skipping)");
         return true;
     }
 
@@ -565,7 +562,7 @@ public final class HostResourceSetup {
                 chownHomeParents(container, containerPath);
                 BuildOutput.note("Copied " + shown(hr.getSource()) + " -> " + shown(containerPath));
             } catch (IOException e) {
-                System.err.println("Warning: failed to download " + shown(hr.getSource()) + ": " + shown(e.getMessage()));
+                BuildOutput.warn("failed to download " + shown(hr.getSource()) + ": " + shown(e.getMessage()));
             }
         } else {
             if (warnIfMissing(hr)) return;
@@ -631,7 +628,7 @@ public final class HostResourceSetup {
                 + "mount -t overlay overlay -o \"lowerdir=$1,upperdir=$2,workdir=$3,metacopy=off\" \"$4\"",
                 "sh", lowerDir, upperDir, workDir, containerPath);
         if (!mountResult.success()) {
-            System.err.println("  Warning: overlay mount failed for " + shown(hr.getSource())
+            BuildOutput.warn("overlay mount failed for " + shown(hr.getSource())
                     + ": " + shown(mountResult.stderr().strip()));
             return;
         }

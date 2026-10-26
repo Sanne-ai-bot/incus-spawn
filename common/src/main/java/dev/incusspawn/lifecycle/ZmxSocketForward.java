@@ -6,6 +6,7 @@ import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.Platform;
+import dev.incusspawn.util.Output;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -60,18 +61,18 @@ public final class ZmxSocketForward {
      * <p>Idempotent — safe to call on every shell-in to repair a symlink
      * that zmx may have cleaned up.</p>
      */
-    public static void configure(IncusClient incus, String name) {
-        configure(incus, name, hostZmxDir());
+    public static void configure(IncusClient incus, String name, Output out) {
+        configure(incus, name, hostZmxDir(), out);
     }
 
-    static void configure(IncusClient incus, String name, Path zmxDir) {
+    static void configure(IncusClient incus, String name, Path zmxDir, Output out) {
         if (Platform.isMacOS()) return;
 
         var containerDir = zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name);
         try {
             Files.createDirectories(containerDir);
         } catch (IOException e) {
-            System.err.println("Warning: could not create zmx directory: " + e.getMessage());
+            out.warn("could not create zmx directory: " + e.getMessage());
             return;
         }
 
@@ -106,12 +107,12 @@ public final class ZmxSocketForward {
      *        pre-start repairs so a start pays for only one round-trip
      */
     public static void ensureHostDirForStart(IncusClient incus, String name,
-                                             JqValue instanceMetadata) {
-        ensureHostDirForStart(incus, name, hostZmxDir(), instanceMetadata);
+                                             JqValue instanceMetadata, Output out) {
+        ensureHostDirForStart(incus, name, hostZmxDir(), instanceMetadata, out);
     }
 
     static void ensureHostDirForStart(IncusClient incus, String name, Path zmxDir,
-                                      JqValue instanceMetadata) {
+                                      JqValue instanceMetadata, Output out) {
         if (Platform.isMacOS()) return;
 
         var device = instanceMetadata.path("devices").path(DEVICE_NAME);
@@ -128,7 +129,7 @@ public final class ZmxSocketForward {
         var optional = "false".equals(device.path("required").asText(""));
         if (optional && source.equals(containerDir.toString()) && Files.isDirectory(containerDir)) return;
 
-        configure(incus, name, zmxDir);
+        configure(incus, name, zmxDir, out);
     }
 
     /**

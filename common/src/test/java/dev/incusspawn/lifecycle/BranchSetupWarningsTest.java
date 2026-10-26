@@ -6,6 +6,7 @@ import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,7 @@ import static org.mockito.Mockito.spy;
  * (a copying terminal, here a quiet one): what it keeps in its log, since the shell that follows
  * draws over the terminal. A failed step it does not copy, so one would fail these tests.
  */
-@ExtendWith(TempHome.class)
+@ExtendWith({TempHome.class, LinuxBranching.class})
 class BranchSetupWarningsTest {
 
     private static List<String> branchWarnings(IncusClient incus) {
@@ -41,7 +42,11 @@ class BranchSetupWarningsTest {
     }
 
     private static List<String> branchWarnings(IncusClient incus, Path inbox) {
-        var request = new BranchFlow.Request("tpl-dev", "dev-1", false, false, NetworkMode.AIRGAP,
+        return branchWarnings(incus, inbox, false, false);
+    }
+
+    private static List<String> branchWarnings(IncusClient incus, Path inbox, boolean gui, boolean kvm) {
+        var request = new BranchFlow.Request("tpl-dev", "dev-1", gui, kvm, NetworkMode.AIRGAP,
                 inbox, null, null, null, List.of(), true, Map.of());
         var warnings = new ArrayList<String>();
         try (var ignored = BuildOutput.bind(Output.copying(RecordingOutput.QUIET, Output.diagnosticsTo(warnings::add)))) {
@@ -112,5 +117,73 @@ class BranchSetupWarningsTest {
         assertTrue(warnings.get(0).startsWith("could not enable IP spoofing protection on dev-1: "), warnings.get(0));
         assertTrue(warnings.get(0).endsWith("; instances on this host can impersonate each other's credential accounts."),
                 warnings.get(0));
+    }
+
+    /**
+     * A branch that asks for GUI outside a Wayland session warns once, in the log: the cause, its
+     * advice, and that it goes on without (#1690). The log used to keep only the last of the three.
+     */
+    @Test
+    void guiOutsideAWaylandSessionIsOneWarningWithItsCauseInTheLog() {
+        var daemon = new FakeIncusDaemon().container("tpl-dev",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
+        var original = BranchFlow.environment;
+        BranchFlow.environment = Map::of;
+        try {
+            var warnings = branchWarnings(settingUp(daemon, true), null, true, false);
+
+            assertEquals(List.of("GUI passthrough requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR.\n"
+                    + "Make sure you are running isx from a Wayland graphical session.\n"
+                    + "Continuing without GUI passthrough."), warnings);
+        } finally {
+            BranchFlow.environment = original;
+        }
+    }
+
+    /** A branch that asks for KVM on a host without /dev/kvm warns once, in the log, with why and what to do (#1690). */
+    @Test
+    void kvmWithoutDevKvmIsOneWarningWithItsCauseInTheLog() {
+        var daemon = new FakeIncusDaemon().container("tpl-dev",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
+        var original = BranchFlow.hostPathExists;
+        BranchFlow.hostPathExists = path -> false;
+        try {
+            var warnings = branchWarnings(settingUp(daemon, true), null, false, true);
+
+            assertEquals(List.of("/dev/kvm not found on the host.\n"
+                    + "Ensure your CPU supports hardware virtualization (VT-x/AMD-V) and load the kvm module:\n"
+                    + "sudo modprobe kvm_intel  (or kvm_amd)\n"
+                    + "Continuing without KVM — VMs inside this branch will not work."), warnings);
+        } finally {
+            BranchFlow.hostPathExists = original;
+        }
+    }
+
+    /**
+     * A source still carrying the CA this host superseded is let through, and said so as a warning
+     * the log keeps, not a note it drops (#1690): a rebuild is still worth doing.
+     */
+    @Test
+    void aSourceOnTheSupersededCaIsWarnedOfInTheLog() {
+        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.PROFILE, "tpl-dev", Metadata.CA_FINGERPRINT, "superseded"));
+        var request = new BranchFlow.Request("tpl-dev", "dev-1", false, false, NetworkMode.FULL,
+                null, null, null, null, List.of(), true, Map.of());
+        var originalProxy = BranchFlow.proxyHealthCheck;
+        var originalTrust = BranchFlow.caTrust;
+        var warnings = new ArrayList<String>();
+        try (var ignored = BuildOutput.bind(Output.copying(RecordingOutput.QUIET, Output.diagnosticsTo(warnings::add)))) {
+            BranchFlow.proxyHealthCheck = incus -> true;
+            BranchFlow.caTrust = () -> new CertificateAuthority.CaTrust("current", "superseded");
+            BranchFlow.preflight(daemon.client(), request, Map.of());
+        } finally {
+            BranchFlow.proxyHealthCheck = originalProxy;
+            BranchFlow.caTrust = originalTrust;
+        }
+
+        // One about the CA (the host's bridge and firewall checks may add their own)
+        assertEquals(List.of("'tpl-dev' still carries the pre-upgrade MITM CA certificate.\n"
+                + "The new one is installed into the instance on first use. Rebuild when convenient: isx build tpl-dev"),
+                warnings.stream().filter(w -> w.contains("CA")).toList(), warnings::toString);
     }
 }

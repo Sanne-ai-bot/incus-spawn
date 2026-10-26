@@ -22,14 +22,17 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith({TempHome.class, LinuxBranching.class})
 class BranchDefaultsTest {
 
+    private java.util.function.BooleanSupplier sessionCheck;
+
     @BeforeEach
     void inAWaylandSession() {
+        sessionCheck = BranchFlow.waylandSession;
         BranchFlow.waylandSession = () -> true;
     }
 
     @AfterEach
     void restoreSessionCheck() {
-        BranchFlow.waylandSession = GuiPassthrough::inWaylandSession;
+        BranchFlow.waylandSession = sessionCheck;
     }
 
     private static Map<String, ImageDef> template(String type, boolean gui) {
