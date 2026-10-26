@@ -11,6 +11,11 @@ import java.util.List;
  */
 public record Unavailable(String cause, List<String> advice) {
 
+    /** A copy of the advice, so a caller's list changed later cannot change what is warned. */
+    public Unavailable {
+        advice = List.copyOf(advice);
+    }
+
     public Unavailable(String cause, String... advice) {
         this(cause, List.of(advice));
     }
