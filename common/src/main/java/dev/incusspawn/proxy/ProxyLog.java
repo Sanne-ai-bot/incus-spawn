@@ -44,6 +44,16 @@ public final class ProxyLog {
         logToFile("DEBUG", message);
     }
 
+    /**
+     * A line for stderr alone, never the lifecycle log: what a person watching the proxy may want,
+     * such as a request's debug line, which a lifecycle log of starts and reloads does not keep.
+     */
+    public static void trace(String message) {
+        if (stderrSuppressed) return;
+        // No level of its own: such a line names its kind, as "[debug] ..." does
+        System.err.println(LocalDateTime.now().format(FMT) + " " + message);
+    }
+
     public static void info(String message) {
         log("INFO", message);
     }

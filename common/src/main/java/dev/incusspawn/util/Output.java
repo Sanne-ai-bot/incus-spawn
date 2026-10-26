@@ -27,6 +27,14 @@ public interface Output {
     void warn(String msg, String... details);
 
     /**
+     * Why a command failed, with any lines of advice under it: a terminal prints it as an error,
+     * on stderr. Off a terminal it is a diagnostic like any warning.
+     */
+    default void error(String msg, String... details) {
+        warn(msg, details);
+    }
+
+    /**
      * A warning raised beside a command's flow rather than in it, by code with no caller to hand
      * it a sink ({@code Warnings}): a terminal prints it on stderr alone, so a query command's
      * stdout still holds only its results.
@@ -111,6 +119,16 @@ public interface Output {
     }
 
     /**
+     * A daemon's log: progress to {@code info}, notes to {@code notes}, diagnostics to
+     * {@code warn}, one line each, safe to keep. For the proxy, whose shared code reports its
+     * progress as any command does; a note (a request's debug line) is kept apart from progress,
+     * which a lifecycle log keeps.
+     */
+    static Output logTo(Consumer<String> info, Consumer<String> notes, Consumer<String> warn) {
+        return new LogOutput(info, notes, warn);
+    }
+
+    /**
      * An output that is not a terminal: each diagnostic reaches {@code sink} as one message, its
      * lines made safe ({@link OutputFormat#oneLine}) since they can quote template text, and
      * everything else is dropped. For the TUI while it draws, a pre-TUI hold, a daemon's log.
@@ -141,11 +159,13 @@ public interface Output {
     }
 
     /** {@code msg} and its {@code details} as one message, each line made safe; null when {@code msg} is blank. */
-    private static String message(String msg, String... details) {
+    static String message(String msg, String... details) {
         var text = BuildOutput.warningText(msg);
         if (text == null) return null;
         return Stream.concat(Stream.of(text), Arrays.stream(details))
                 .map(BuildOutput::safeLines)
+                // A blank line spaces a terminal's banner; a log keeps the text alone
+                .filter(line -> !line.isBlank())
                 .collect(Collectors.joining("\n"));
     }
 }

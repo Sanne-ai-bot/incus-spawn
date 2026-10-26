@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.io.IOException;
@@ -132,10 +133,9 @@ public class ApiTrafficLog {
             appendBody(sb, responseBody);
 
             Files.writeString(logDir.resolve(filename), sb.toString());
-            System.err.println("[debug] " + method + " " + (parts.length > 1 ? parts[1] : "") +
-                    " -> " + filename);
+            BuildOutput.note("[debug] " + method + " " + (parts.length > 1 ? parts[1] : "") + " -> " + filename);
         } catch (IOException e) {
-            System.err.println("Warning: failed to write debug log: " + e.getMessage());
+            BuildOutput.warn("failed to write debug log: " + e.getMessage());
         }
     }
 

@@ -4844,6 +4844,11 @@ A bare `System.err` line reaches the terminal only.
 The sites on the branch path that printed one (GUI and KVM passthrough's explanations, the CA mismatch note, #1690) now warn through `BuildOutput`.
 GUI and KVM passthrough return why they could not, the cause and then what to do about it, and the branch makes it one warning with what it does instead (`Unavailable.warn`), since the log used to keep only "Continuing without GUI passthrough." with no cause.
 The pre-upgrade CA note is a warning rather than a note, so the TUI's copying binding keeps it.
+`common/vm` and `common/proxy`, `ProxyService` apart, report through `BuildOutput` too: the VM's start before the TUI opens is the same header, start and wait as `isx vm start`, and a proxy refusal is one banner the TUI's log keeps (`ProxyHealthCheck.refusal`).
+The proxy daemon runs some of that code (the bridge DNS, certificates, the API traffic log), so it binds `Output.logTo`, which keeps progress as info lines instead of dropping them, as a log-only output would.
+Why a command failed is an `error`, a kind of its own (red `Error:` on stderr, no closing blank line), since a warning would say it went on; off a terminal it is a diagnostic, and the TUI's copying binding keeps it.
+Notes go to their own sink, which the proxy prints on stderr alone (`ProxyLog.trace`): the API traffic log writes one per request, which the lifecycle log of starts and reloads should not keep.
+A proxy refusal's lines are plain text, since the TUI's log keeps them as given; `tryAutoRestart` and `waitForDns` report their progress as notes and why they failed as warnings, so the log says why a restart did not help.
 Progress stays on the terminal, where it is read while the branch runs.
 A start's warning is a typed `warn` on the `Output` its caller hands it, its advice as details, so no message in `lifecycle/` marks itself `Warning:` for a sink that would print it as it comes.
 Code outside it (`AutoRemoteService`) still does, until its own step, and `BuildOutput.warningText` drops the marker meanwhile.

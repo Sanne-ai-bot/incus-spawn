@@ -121,12 +121,12 @@ public final class VmManager {
             try {
                 int val = Integer.parseInt(env);
                 if (val < 1) {
-                    System.err.println("Warning: ISX_VM_CPUS=" + env + " is invalid, using 1");
+                    BuildOutput.warn("ISX_VM_CPUS=" + env + " is invalid, using 1");
                     return 1;
                 }
                 return val;
             } catch (NumberFormatException e) {
-                System.err.println("Warning: ISX_VM_CPUS=" + env + " is not a number, ignoring");
+                BuildOutput.warn("ISX_VM_CPUS=" + env + " is not a number, ignoring");
             }
         }
         if (Platform.isMacOS()) {
@@ -142,12 +142,12 @@ public final class VmManager {
             try {
                 int val = Integer.parseInt(env);
                 if (val < 2048) {
-                    System.err.println("Warning: ISX_VM_MEMORY=" + env + " is below minimum, using 2048 MiB");
+                    BuildOutput.warn("ISX_VM_MEMORY=" + env + " is below minimum, using 2048 MiB");
                     return 2048;
                 }
                 return val;
             } catch (NumberFormatException e) {
-                System.err.println("Warning: ISX_VM_MEMORY=" + env + " is not a number, ignoring");
+                BuildOutput.warn("ISX_VM_MEMORY=" + env + " is not a number, ignoring");
             }
         }
         long totalBytes = ResourceLimits.totalMemoryBytes();
@@ -204,7 +204,7 @@ public final class VmManager {
             if (latest != null) {
                 result = latest;
             } else {
-                System.err.println("Warning: could not query latest release from GitHub, "
+                BuildOutput.warn("could not query latest release from GitHub, "
                         + "using fallback version " + LATEST_KNOWN_RELEASE);
                 result = LATEST_KNOWN_RELEASE;
             }
@@ -255,7 +255,7 @@ public final class VmManager {
     private static HostLock acquireVmLock() {
         try {
             return HostLock.acquire(Environment.vmStateDir().resolve("vm.lock"),
-                    "managing the VM", System.err::println);
+                    "managing the VM", BuildOutput::note);
         } catch (HostLock.HostLockException e) {
             throw new VmException(e.getMessage());
         }
@@ -300,7 +300,7 @@ public final class VmManager {
             if (result == StartResult.ALREADY_RUNNING) return true;
             return awaitReady();
         } catch (VmException e) {
-            System.err.println("Error: " + e.getMessage());
+            BuildOutput.error(e.getMessage());
             return false;
         }
     }
@@ -318,7 +318,7 @@ public final class VmManager {
             ensureDataDisk();
             ensureSwap();
         } catch (VmException e) {
-            System.err.println("Error: " + e.getMessage());
+            BuildOutput.error(e.getMessage());
             return StartResult.FAILED;
         }
 
@@ -327,7 +327,6 @@ public final class VmManager {
         int memoryMiB = detectMemoryMiB();
 
         if (backend == Backend.VFKIT && !Files.exists(Environment.vmLogFile())) {
-            System.out.println();
             BuildOutput.note("macOS may show permission dialogs for home folder access and");
             BuildOutput.note("local network connectivity. These are safe to approve:");
             BuildOutput.note("  - Your home directory is mounted read-only (nothing is modified)");
@@ -356,8 +355,7 @@ public final class VmManager {
             BuildOutput.stepDone();
             return true;
         }
-        BuildOutput.stepFail("Incus daemon did not become reachable within 60s.");
-        System.err.println("Check 'isx vm console' for boot logs.");
+        BuildOutput.stepFail("Incus daemon did not become reachable within 60s.\nCheck 'isx vm console' for boot logs.");
         return false;
     }
 
@@ -374,7 +372,7 @@ public final class VmManager {
             if (startLocked() != StartResult.LAUNCHED) return false;
             return awaitReady();
         } catch (VmException e) {
-            System.err.println("Error: " + e.getMessage());
+            BuildOutput.error(e.getMessage());
             return false;
         }
     }
@@ -400,7 +398,7 @@ public final class VmManager {
         try (var ignored = acquireVmLock()) {
             return stopLocked(disksKept);
         } catch (VmException e) {
-            System.err.println("Error: " + e.getMessage());
+            BuildOutput.error(e.getMessage());
             return StopResult.FAILED;
         }
     }
@@ -674,17 +672,17 @@ public final class VmManager {
         // Determine which layer is wedged before attempting the wrong remedy.
         var layer = detectLayer.get();
         if (layer.isPresent() && layer.get() == LeakLayer.VFKIT) {
-            System.err.println("The host-side tunnel (vfkit) is wedged — a forwarder restart cannot fix this.");
-            System.err.println("Run 'isx vm restart' to restore connectivity.");
+            BuildOutput.warn("The host-side tunnel (vfkit) is wedged — a forwarder restart cannot fix this.",
+                    "Run 'isx vm restart' to restore connectivity.");
             return false;
         }
 
         // Forwarder-layer issue or unknown layer: restart the wedged forwarder in place.
         if (restartForwarder.getAsBoolean()) {
-            System.err.println("Restarted the vsock forwarder; waiting for Incus...");
+            BuildOutput.step("Restarted the vsock forwarder; waiting for Incus...");
             if (waitUntilReady.test(FORWARDER_RECOVERY_WAIT_SECONDS)) return true;
         } else {
-            System.err.println("The control agent did not confirm a forwarder restart.");
+            BuildOutput.warn("The control agent did not confirm a forwarder restart.");
         }
 
         // Bounded final probe; if this fails, ensureRunning() returns false and the caller surfaces
@@ -701,7 +699,7 @@ public final class VmManager {
         try (var ignored = acquireVmLock()) {
             return ensureRunningLocked();
         } catch (VmException e) {
-            System.err.println("Error: " + e.getMessage());
+            BuildOutput.error(e.getMessage());
             return false;
         }
     }
@@ -712,33 +710,27 @@ public final class VmManager {
                 warnIfApplianceStale();
                 return true;
             }
-            System.err.println("VM is running but Incus is not reachable; attempting recovery...");
+            // A step: a blip usually clears within the grace period, and the failures after it warn
+            BuildOutput.step("VM is running but Incus is not reachable; attempting recovery...");
             return recoverReachability();
         }
 
+        // The same start and wait as 'isx vm start', under a header of its own, a download first
+        BuildOutput.header("Starting incus-spawn VM", null);
         if (!Files.exists(Environment.applianceKernel())
                 || (!Files.exists(Environment.applianceDiskImage())
                     && !Files.exists(Environment.vmDiskImage()))) {
-            System.err.println("Downloading VM appliance artifacts...");
+            BuildOutput.step("Downloading VM appliance artifacts...");
             try {
                 downloadArtifacts();
             } catch (IOException e) {
-                System.err.println("Failed to download appliance artifacts: " + e.getMessage());
+                BuildOutput.error("Failed to download appliance artifacts: " + e.getMessage());
                 return false;
             }
         }
 
-        System.err.print("Starting incus-spawn VM... ");
         if (startLocked() == StartResult.FAILED) return false;
-
-        System.err.println("Waiting for Incus daemon...");
-        if (waitUntilReady(60)) {
-            System.err.println("VM is ready.");
-            return true;
-        }
-        System.err.println("Warning: VM started but Incus daemon did not become reachable within 60s.");
-        System.err.println("Check 'isx vm console' for boot logs.");
-        return false;
+        return awaitReady();
     }
 
     private static final long SKEW_WARN_INTERVAL_MS = 60_000;
@@ -1124,7 +1116,7 @@ public final class VmManager {
             try {
                 downloadArtifacts();
             } catch (IOException e) {
-                System.err.println("Warning: could not re-download appliance artifacts: "
+                BuildOutput.warn("could not re-download appliance artifacts: "
                         + e.getMessage());
             }
         }
@@ -1233,7 +1225,7 @@ public final class VmManager {
             createDataDisk(size);
             return startLocked() == StartResult.LAUNCHED && awaitReady() ? ResetResult.READY : ResetResult.VM_DOWN;
         } catch (VmException e) {
-            System.err.println("Error: " + e.getMessage());
+            BuildOutput.error(e.getMessage());
             return wiped ? ResetResult.VM_DOWN : ResetResult.NOT_RESET;
         }
     }

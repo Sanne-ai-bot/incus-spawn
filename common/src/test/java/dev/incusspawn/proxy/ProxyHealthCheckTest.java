@@ -1,5 +1,8 @@
 package dev.incusspawn.proxy;
 
+import java.util.List;
+import dev.incusspawn.util.RecordingOutput;
+import dev.incusspawn.util.BuildOutput;
 import com.sun.net.httpserver.HttpServer;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.incus.IncusClient;
@@ -184,33 +187,38 @@ class ProxyHealthCheckTest {
         assertEquals(ProxyHealthCheck.ProxyStatus.STALE_DNS, ProxyHealthCheck.check(incus));
     }
 
+    private static String refusal(ProxyHealthCheck.ProxyStatus status) {
+        return String.join("\n", ProxyHealthCheck.refusal(status));
+    }
+
     @Test
-    void formatErrorContainsActionableCommand() {
-        var notRunning = ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.NOT_RUNNING);
+    void aRefusalContainsAnActionableCommand() {
+        var notRunning = refusal(ProxyHealthCheck.ProxyStatus.NOT_RUNNING);
         assertTrue(notRunning.contains("isx proxy"));
         assertTrue(notRunning.contains("not running"));
 
-        var staleDns = ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.STALE_DNS);
+        var staleDns = refusal(ProxyHealthCheck.ProxyStatus.STALE_DNS);
         assertTrue(staleDns.contains("isx proxy"));
         assertTrue(staleDns.contains("DNS overrides"));
 
-        var staleGateway = ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.STALE_GATEWAY);
+        var staleGateway = refusal(ProxyHealthCheck.ProxyStatus.STALE_GATEWAY);
         assertTrue(staleGateway.contains("isx proxy stop && isx proxy start"));
         assertFalse(staleGateway.contains("not running"));
     }
 
+    /** Plain text in any session: the banner styles its title, and the TUI's log keeps the lines as given. */
     @Test
-    void formatErrorIsPlainOffATerminal() {
-        // Tests run without a console, as a piped isx does.
+    void aRefusalIsPlainText() {
         for (var status : ProxyHealthCheck.ProxyStatus.values()) {
-            var text = ProxyHealthCheck.formatError(status);
-            assertEquals(dev.incusspawn.util.BuildOutput.stripAnsi(text), text, status.name());
+            var text = refusal(status);
+            assertEquals(BuildOutput.stripAnsi(text), text, status.name());
+            assertTrue(text.chars().noneMatch(c -> c == 0x1b), status.name());
         }
     }
 
     @Test
-    void formatErrorReturnsEmptyForRunning() {
-        assertEquals("", ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.RUNNING));
+    void aRunningProxyRefusesNothing() {
+        assertEquals(List.of(), ProxyHealthCheck.refusal(ProxyHealthCheck.ProxyStatus.RUNNING));
     }
 
     @Test
@@ -400,5 +408,16 @@ class ProxyHealthCheckTest {
         assertTrue(report.isEmpty());
         assertFalse(report.restartHelps());
         assertTrue(ProxyHealthCheck.assessDrift(null, () -> TRIED).isEmpty());
+    }
+
+    /** A refusal is a banner of the bound output, which the TUI's copying binding keeps in its log of a branch (#1703). */
+    @Test
+    void aRefusalIsABannerOfTheBoundOutput() {
+        var out = RecordingOutput.during(() -> ProxyHealthCheck.warnRefusal(ProxyHealthCheck.ProxyStatus.NOT_RUNNING));
+
+        var banners = out.events(RecordingOutput.Kind.WARN_BANNER);
+        assertEquals(1, banners.size(), out.events()::toString);
+        assertEquals("The MITM proxy is not running.", banners.getFirst().msg());
+        assertTrue(banners.getFirst().details().contains("Then re-run this command."), banners.getFirst().details()::toString);
     }
 }

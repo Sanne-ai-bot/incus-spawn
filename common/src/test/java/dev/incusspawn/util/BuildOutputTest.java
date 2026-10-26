@@ -262,6 +262,22 @@ class BuildOutputTest {
         assertFalse(text().contains("Warning:"), text());
     }
 
+    /** Why a command failed is an error on stderr, red on a terminal, with no blank line on stdout after it. */
+    @Test
+    void anErrorGoesToStderrAloneAndSaysSo() {
+        var out = new ByteArrayOutputStream();
+        var err = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(out, true));
+        System.setErr(new PrintStream(err, true));
+        BuildOutput.forceAnsi = false;
+        BuildOutput.error("no appliance kernel", "Run 'isx vm start' again once it is downloaded.");
+        assertEquals("", out.toString());
+        assertEquals("""
+                    Error: no appliance kernel
+                      Run 'isx vm start' again once it is downloaded.
+                """, err.toString());
+    }
+
     @Test
     void warningsAndNotesGoToStderr() {
         var out = new ByteArrayOutputStream();

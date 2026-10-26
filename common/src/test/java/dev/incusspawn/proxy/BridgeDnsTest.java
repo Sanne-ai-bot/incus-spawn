@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
 
@@ -159,5 +160,20 @@ class BridgeDnsTest {
         // Only clearBridgeDns removes the block; an empty set is a caller that forgot the domains (#1354)
         assertThrows(IllegalArgumentException.class, () -> ProxyConfig.writeBridgeDns(incus, Set.of(), "10.0.0.1"));
         verify(incus, never()).networkConfigSet(any(), any(), any());
+    }
+
+    /**
+     * The overrides written are a note of whoever runs them (#1703): {@code isx init} on its
+     * terminal, the proxy on its stderr, never raw stdout under the TUI.
+     */
+    @Test
+    void configuringTheOverridesIsANoteOfTheBoundOutput() {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn(GITHUB_BLOCK);
+
+        var out = RecordingOutput.during(
+                () -> ProxyConfig.configureBridgeDns(incus, Set.of("github.com"), "10.0.0.1"));
+
+        assertEquals(List.of("DNS overrides: 1 domains -> 10.0.0.1 (via bridge dnsmasq)"), out.lines());
     }
 }

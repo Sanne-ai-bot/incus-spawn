@@ -38,6 +38,12 @@ final class CopyingOutput extends ForwardingOutput {
     }
 
     @Override
+    public void error(String msg, String... details) {
+        if (copyAll) log.error(msg, details);
+        terminal.error(msg, details);
+    }
+
+    @Override
     public void warnAside(String msg) {
         // What Warnings reports: always kept in the log, and printed only when copying, not holding.
         log.warnAside(msg);

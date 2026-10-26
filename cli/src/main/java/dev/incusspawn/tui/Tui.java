@@ -2909,7 +2909,8 @@ public class Tui {
                     : "Proxy not running, restarting service...");
             var thread = new Thread(() -> {
                 try {
-                    if (ProxyHealthCheck.tryAutoRestart(incus, msg -> {})) {
+                    // Why a restart failed to the log; the status line says that it did
+                    if (ProxyHealthCheck.tryAutoRestart(incus, drawing)) {
                         setStatusMessage("Proxy restarted, waiting for DNS...");
                     } else if (!Environment.hasBeenInitialized()) {
                         // The restart was refused, not failed: it would only start a proxy that refuses to (#1048).

@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.FakeIncusDaemon;
@@ -136,7 +137,7 @@ class ProxyServiceInitGateTest {
         // A loopback gateway nothing listens on: the proxy reads as unhealthy at once.
         var incus = new FakeIncusDaemon().network("incusbr0", Map.of("ipv4.address", "127.0.0.2/8")).client();
 
-        assertFalse(ProxyHealthCheck.tryAutoRestart(incus, log::add));
+        assertFalse(ProxyHealthCheck.tryAutoRestart(incus, RecordingOutput.into(log)));
         assertRefusedWithoutTouchingTheService(String.join("\n", log));
         assertEquals("", err.toString(), "nothing printed past the sink");
     }
