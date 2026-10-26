@@ -252,6 +252,7 @@ git fetch fix-auth
 git diff main..fix-auth/main
 ```
 
+An absolute path inside the instance follows a double slash, as in `isx://fix-auth//home/agentuser/quarkus`.
 The instance must be running for git operations to work.
 
 #### Automatic remotes
