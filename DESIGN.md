@@ -209,7 +209,7 @@ tpl-minimal   (Base OS only — no tools)
 
 `tpl-dev` and `tpl-java` are deprecated and will be removed; their maintained copies, under the same names, live in `incus-spawn-templates`.
 `isx project create`, whose default parent is still `tpl-java`, warns the same way.
-A definition sets `deprecated: true` or `deprecated: <what to use instead>` (#1195): it still builds, so nobody's build breaks, but `BuildCommand` warns for each template it builds that is deprecated or names a deprecated `parent`, in one line naming both when both are, once per template per run (not for deprecated templates further up the chain, #1353: the template naming the deprecated one is where it gets replaced, and a warning per ancestor per descendant buried which one that was), and the TUI keeps that warning in its warning log (the build prints it on the released terminal, which the TUI redraws over, so the TUI copies every `BuildOutput.warn` of a build it runs there with `BuildOutput.copyWarningsTo`) and shows it in the template's details before anyone builds.
+A definition sets `deprecated: true` or `deprecated: <what to use instead>` (#1195): it still builds, so nobody's build breaks, but `BuildCommand` warns for each template it builds that is deprecated or names a deprecated `parent`, in one line naming both when both are, once per template per run (not for deprecated templates further up the chain, #1353: the template naming the deprecated one is where it gets replaced, and a warning per ancestor per descendant buried which one that was), and the TUI keeps that warning in its warning log (the build prints it on the released terminal, which the TUI redraws over, so the TUI copies every warning of a build it runs there with `Output.copying`) and shows it in the template's details before anyone builds.
 `deprecated` is left out of the content fingerprint, so marking a template deprecated, or switching to a copy that is not, rebuilds nothing.
 Removing a template outright was the alternative: every template derived from it would stop building on upgrade, with no warning beforehand.
 
@@ -4828,8 +4828,8 @@ Two things were still wrong after that rule was written (#872).
 **Some code has no caller to take a sink from.**
 `ToolDefLoader` printed tool-definition problems to stderr, and loaders are built far from any command: `ToolProxyResolver.proxyToolSetups(config)` builds one for account validation, which the TUI reaches through `AccountSelection`.
 Threading a `Consumer<String>` through every such path would change a dozen signatures for a warning none of them care about.
-`Warnings` (`common`) is the process-wide default sink for this case: `warn(message)` goes to stderr, or to whichever `Warnings.Channel` the terminal's owner redirected it to (`Warnings.redirect`).
-The TUI redirects around its reloads and while its runner draws -- not while it has released the terminal to a build or a shell, which must print their own errors.
+`Warnings` (`common`) is the entry point for this case: `warn(message)` goes to the bound output like every other warning (see "One output seam" below).
+The TUI binds its log around its reloads and while its runner draws; while it has released the terminal to a build or a shell, which must print their own errors, it binds a terminal that also copies warnings into the log.
 A TUI-launched build that refuses an unparsable file says "see the error above", so the error has to be above it.
 Taking a sink from the caller stays the first choice; `Warnings` is for code where there is none.
 The loaders also keep what they found (`ToolDefLoader.warnings()`, like `conflicts()` and `parseFailures()`), so tests and callers that want to act on it need not listen.
@@ -4838,18 +4838,34 @@ The default sinks of `ImageDef.loadAll()`/`loadAllWithConflicts()` go through it
 **A branch made from the TUI keeps its warnings in the log** (#1646).
 The TUI branches on the released terminal, so `BranchFlow` prints there as `isx branch` does.
 But the shell that follows draws over it, and the TUI redraws over that, so a warning printed then was gone before anyone read it.
-`ShellLaunch.createBranchFromModal` copies every `BuildOutput.warn` of the branch into the `WarningLog` (`BuildOutput.copyWarningsTo`), as a TUI-launched build does.
+The TUI binds `Output.copying` around every action it lends the terminal to, the branch included, which copies every warning of the branch into the `WarningLog`, as for a build.
 So code on the branch path warns through `BuildOutput.warn` or a sink the caller gives it, which `RuntimeSetup.setupRuntime` takes for an incomplete setup and a failed SSH host entry.
 A bare `System.err` line reaches the terminal only.
 The sites on the branch path that still print one (GUI and KVM passthrough's explanations, the CA mismatch note) are tracked in #1690.
 Progress stays on the terminal, where it is read while the branch runs.
 A start's warning that may reach a sink printing it as it comes (isx shell's, a progress sink) marks itself `Warning:` on one line, and `BuildOutput.warn` drops that marker for its own ⚠, as the `WarningLog` does.
 
-Each channel reports a distinct message once.
+`Warnings` reports a distinct message once per output.
 The same files are loaded many times in one command (every fresh loader re-reads them), and before this `isx branch` could print one broken tool file's warning several times.
-The memory is per channel, not per process.
-The TUI's channel lives for the whole TUI session, so returning from a shell does not re-announce the same definition problems, while stderr's channel is separate, so that build still prints a warning the TUI already logged.
-`forgetReported()` clears a channel's memory for the one case that wants repeats: the user asking for a reload.
+The memory is per output, not per process.
+The TUI's drawing output lives for the whole TUI session, so returning from a shell does not re-announce the same definition problems, while the terminal is another destination, so a build still prints a warning the TUI already logged.
+`forgetReported()` clears an output's memory for the one case that wants repeats: the user asking for a reload.
+
+**One output seam** (#1703).
+Before it, three mechanisms reported with no boundary between them: `BuildOutput`'s static printer, `Warnings` with its own redirect, and `Consumer<String>` sinks.
+The TUI had to redirect one and copy the other, and the copy caught `BuildOutput.warn` alone, so a `stepWarn` or a banner on the branch path was drawn over and lost.
+Progress printed while the TUI drew scrambled its screen, since only `Warnings` were redirected.
+Now `BuildOutput`'s static methods hand every message to one bound `Output`, and only the owner of the terminal binds it: the CLI keeps the `TerminalOutput` default, the TUI binds its log while it draws and a copying terminal while it lends it out, `PreTuiOutput` a terminal that holds what `Warnings` reports, `isx mcp` a terminal on stderr, the proxy its log.
+A failed step is printed, not copied: whoever called it reports the failure, as the TUI's status line does.
+An output that is not a terminal ignores progress and notes by default, while every diagnostic defaults to `warn`, so a new binding cannot lose a warning by forgetting a method.
+The TUI binds its copying terminal around every action it lends the terminal to, not per action, so the next action added cannot forget it.
+`Warnings` remembers what it reported per destination (`Output.destinations()`), so a copy of the TUI's log does not add a warning that log already holds.
+It reports through `Output.warnAside`, which a terminal prints on stderr alone: a command's own warning ends with a blank line on stdout, which would add an empty record to a query's results.
+Bindings nest; one closed out of order throws, since it would put back an output already gone.
+Every call site kept compiling, and the binding is one volatile read per message, so the branch/start/shell path costs nothing more.
+**Alternative:** a tee of `System.err` into the TUI's log.
+**Why not:** it splits multi-line messages, captures notes as warnings and hides the raw prints the fence (`RawOutputGateTest`) exists to expose.
+The `Consumer<String>` sinks in `lifecycle/` remain, to become typed outputs in a later step.
 
 **One status line cannot hold several warnings.**
 The TUI used to put each warning on its status line, which shows one message until the next key.

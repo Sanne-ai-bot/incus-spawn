@@ -80,7 +80,7 @@ class PreTuiOutputTest {
             System.err.println("Starting incus-spawn VM...");
             Warnings.warn("held (#1154 test)");
             preTui.handOver(w -> events.add("log: " + w), () -> {
-                events.add("wait, shown: " + terminal().contains("Warning: held (#1154 test)"));
+                events.add("wait, shown: " + terminal().contains("⚠ held (#1154 test)"));
             });
         }
         assertEquals(List.of("wait, shown: true", "log: held (#1154 test)"), events,
@@ -106,7 +106,7 @@ class PreTuiOutputTest {
             Warnings.warn("raised after the hand-over (#1154 test)");
         }
         assertTrue(log.isEmpty(), "after the hand-over, warnings go where the TUI sends them");
-        assertTrue(terminal().contains("Warning: raised after the hand-over (#1154 test)"));
+        assertTrue(terminal().contains("⚠ raised after the hand-over (#1154 test)"), terminal());
     }
 
     @Test
@@ -114,6 +114,6 @@ class PreTuiOutputTest {
         try (var ignored = PreTuiOutput.begin()) {
             Warnings.warn("raised before init failed (#1154 test)");
         }
-        assertTrue(terminal().contains("Warning: raised before init failed (#1154 test)"));
+        assertTrue(terminal().contains("⚠ raised before init failed (#1154 test)"));
     }
 }

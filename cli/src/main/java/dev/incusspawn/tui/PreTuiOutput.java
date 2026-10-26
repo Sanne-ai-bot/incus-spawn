@@ -1,8 +1,8 @@
 package dev.incusspawn.tui;
 
-import dev.incusspawn.Warnings;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,8 +18,9 @@ import java.util.function.Consumer;
  * {@code isx init} running, a stale-appliance notice) would be lost under it, read only after
  * quitting.
  * <p>
- * From {@link #begin()} to {@link #handOver}, warnings raised through {@link Warnings} are held
- * and handed to the TUI's warning log, which announces them on the status line. Everything else
+ * From {@link #begin()} to {@link #handOver}, warnings raised through {@link dev.incusspawn.Warnings}
+ * are held ({@link Output#holding}) and handed to the TUI's warning log, which announces them on
+ * the status line. Everything else
  * still reaches the terminal as it is written, and is remembered: if anything was printed, the
  * hand-over waits for the user before the TUI opens. Closing without a hand-over (the TUI never
  * opened) prints the held warnings, so none is dropped.
@@ -32,7 +33,7 @@ public final class PreTuiOutput implements AutoCloseable {
     private final PrintStream notingErr;
     private final List<String> warnings = new CopyOnWriteArrayList<>();
     private final AtomicBoolean printed = new AtomicBoolean();
-    private final Warnings.Redirect redirect;
+    private final BuildOutput.Binding holding;
     private boolean closed;
 
     private PreTuiOutput() {
@@ -43,7 +44,7 @@ public final class PreTuiOutput implements AutoCloseable {
         notingErr = BuildOutput.onWrite(err, () -> flag.set(true));
         System.setOut(notingOut);
         System.setErr(notingErr);
-        redirect = Warnings.redirect(new Warnings.Channel(warnings::add));
+        holding = BuildOutput.bind(Output.holding(BuildOutput.terminal(), Output.diagnosticsTo(warnings::add)));
     }
 
     /** Start holding warnings and noting output, until {@link #handOver} or {@link #close}. */
@@ -93,12 +94,16 @@ public final class PreTuiOutput implements AutoCloseable {
     private void finish(Runnable deliver) {
         if (closed) return;
         closed = true;
-        restore();
-        deliver.run();
+        try {
+            restore();
+        } finally {
+            // A restore that failed (a binding left open meanwhile) must not drop what was held.
+            deliver.run();
+        }
     }
 
     private void printHeld() {
-        warnings.forEach(w -> err.println("Warning: " + w));
+        warnings.forEach(BuildOutput.terminal()::warnAside);
     }
 
     private void restore() {
@@ -107,6 +112,6 @@ public final class PreTuiOutput implements AutoCloseable {
         // Only our own: whatever replaced them meanwhile restores its own.
         if (System.out == notingOut) System.setOut(out);
         if (System.err == notingErr) System.setErr(err);
-        redirect.close();
+        holding.close();
     }
 }

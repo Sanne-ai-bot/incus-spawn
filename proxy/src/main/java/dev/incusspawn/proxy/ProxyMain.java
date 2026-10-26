@@ -6,6 +6,8 @@ import dev.incusspawn.Platform;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.vm.VmNetwork;
 import io.quarkus.arc.Arc;
 import io.quarkus.runtime.QuarkusApplication;
@@ -64,6 +66,9 @@ public class ProxyMain implements QuarkusApplication {
         }
 
         installLogTee();
+        // The daemon's warnings are its log lines: what shared code reports, the proxy logs, a
+        // line of advice under a warning its own timestamped line.
+        BuildOutput.bind(Output.diagnosticsTo(warning -> warning.lines().forEach(ProxyLog::warn)));
 
         ExitWith.watchIfAsked(args);
 

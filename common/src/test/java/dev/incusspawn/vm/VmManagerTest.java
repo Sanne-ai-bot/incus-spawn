@@ -1,8 +1,9 @@
 package dev.incusspawn.vm;
 
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
-import dev.incusspawn.Warnings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -419,7 +420,7 @@ class VmManagerTest {
         var seen = new ArrayList<String>();
         var marker = tempHome.resolve("vm/.appliance-skew-warned");
         var skew = new VmManager.ApplianceSkew("0.3.9", "0.3.10");
-        try (var ignored = Warnings.redirect(new Warnings.Channel(seen::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(seen::add))) {
             VmManager.warnOfSkew(skew, marker);
             VmManager.warnOfSkew(skew, marker);
         }

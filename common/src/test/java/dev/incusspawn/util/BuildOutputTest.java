@@ -257,7 +257,7 @@ class BuildOutputTest {
     @Test
     void warningsAreCopiedToAListenerUntilItIsClosed() {
         var copied = new java.util.ArrayList<String>();
-        try (var ignored = BuildOutput.copyWarningsTo(copied::add)) {
+        try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(copied::add)))) {
             BuildOutput.warn("tpl-a derives from tpl-old, which is deprecated", "use tpl-new");
         }
         BuildOutput.warn("after the build");
@@ -269,7 +269,7 @@ class BuildOutputTest {
     @Test
     void aWarningThatMarksItselfIsMarkedOnce() {
         var copied = new java.util.ArrayList<String>();
-        try (var ignored = BuildOutput.copyWarningsTo(copied::add)) {
+        try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(copied::add)))) {
             BuildOutput.warn("Warning: filtering disabled on box");
         }
         assertEquals(List.of("filtering disabled on box"), copied);

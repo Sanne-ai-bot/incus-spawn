@@ -1,6 +1,7 @@
 package dev.incusspawn.ssh;
 
-import dev.incusspawn.Warnings;
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -303,7 +304,7 @@ class SshKeyManagerTest {
         Files.writeString(tempDir.resolve(".config/incus-spawn/ssh"), "");
         var warnings = new ArrayList<String>();
 
-        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(warnings::add))) {
             assertFalse(SshKeyManager.addHostEntry("test-instance"));
         }
 
@@ -317,7 +318,7 @@ class SshKeyManagerTest {
         Files.writeString(tempDir.resolve(".ssh"), "");
         var warnings = new ArrayList<String>();
 
-        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(warnings::add))) {
             assertFalse(SshKeyManager.ensureSshConfigInclude());
         }
 

@@ -6,6 +6,7 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -42,7 +43,7 @@ class BranchSetupWarningsTest {
         var request = new BranchFlow.Request("tpl-dev", "dev-1", false, false, NetworkMode.AIRGAP,
                 inbox, null, null, null, List.of(), true, Map.of());
         var warnings = new ArrayList<String>();
-        try (var ignored = BuildOutput.copyWarningsTo(warnings::add)) {
+        try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(warnings::add)))) {
             BranchFlow.create(incus, BranchFlow.preflight(incus, request, Map.of()));
         }
         return warnings;
@@ -100,7 +101,7 @@ class BranchSetupWarningsTest {
                 .refuseWritesContaining("security.ipv4_filtering");
         var warnings = new ArrayList<String>();
 
-        try (var ignored = BuildOutput.copyWarningsTo(warnings::add)) {
+        try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(warnings::add)))) {
             InstanceLifecycle.configureBranch(daemon.client(), "dev-1", new InstanceLifecycle.BranchSettings(
                     null, "8GiB", "20GiB", NetworkMode.FULL, "tpl-dev", Map.of(), false));
         }

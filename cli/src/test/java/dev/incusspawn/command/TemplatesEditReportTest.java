@@ -1,7 +1,8 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Environment;
-import dev.incusspawn.Warnings;
 import dev.incusspawn.config.ImageDef;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,7 +41,7 @@ class TemplatesEditReportTest {
         var out = new ByteArrayOutputStream();
         var err = new ByteArrayOutputStream();
 
-        try (var ignored = Warnings.redirect(new Warnings.Channel(passedOn::add))) {
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(passedOn::add))) {
             TemplatesCommand.validateAndReport(file, defs, loadWarnings,
                     new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(err, true, StandardCharsets.UTF_8));
         }
