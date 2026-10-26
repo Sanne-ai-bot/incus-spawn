@@ -1,13 +1,12 @@
 package dev.incusspawn.mcp;
 
-import dev.incusspawn.incus.JacksonTrees;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SchemaId;
+import com.networknt.schema.InputFormat;
+import com.networknt.schema.Schema;
 import com.networknt.schema.SchemaLocation;
-import com.networknt.schema.SpecVersion;
+import com.networknt.schema.SchemaRegistry;
+import com.networknt.schema.SpecificationVersion;
 
 import java.util.List;
 import java.util.Map;
@@ -29,13 +28,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 final class StructuredResults {
 
-    private static final JsonSchemaFactory FACTORY = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012);
-    private static final JsonSchema METASCHEMA = FACTORY.getSchema(SchemaLocation.of(SchemaId.V202012));
+    private static final String DIALECT = SpecificationVersion.DRAFT_2020_12.getDialectId();
+    private static final SchemaRegistry REGISTRY = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
+    private static final Schema METASCHEMA = REGISTRY.getSchema(SchemaLocation.of(DIALECT));
     static final Set<String> CODES = java.util.Arrays.stream(ToolError.Code.values())
             .map(ToolError.Code::wire).collect(Collectors.toUnmodifiableSet());
 
     private final Map<String, McpTool> tools;
-    private final Map<String, JsonSchema> compiled = new ConcurrentHashMap<>();
+    private final Map<String, Schema> compiled = new ConcurrentHashMap<>();
     final Set<String> succeeded = ConcurrentHashMap.newKeySet();
 
     StructuredResults(List<McpTool> tools) {
@@ -63,7 +63,7 @@ final class StructuredResults {
             var schema = tools.get(t);
             assertNotNull(schema, "no tool " + t);
             return compile(t, schema.outputSchema());
-        }).validate(JacksonTrees.toJsonNode(structured));
+        }).validate(structured.toJsonString(), InputFormat.JSON);
         assertTrue(errors.isEmpty(), tool + ": structuredContent does not match its outputSchema: " + errors
                 + "\n" + structured.toJsonString());
         succeeded.add(tool);
@@ -75,14 +75,14 @@ final class StructuredResults {
      * and default to 2020-12), and valid against the 2020-12 metaschema -- a schema a client cannot
      * compile fails every call of its tool, not just a bad one.
      */
-    static JsonSchema compile(String tool, JqValue schemaValue) {
-        var schema = JacksonTrees.toJsonNode(schemaValue);
+    static Schema compile(String tool, JqValue schema) {
         var dialect = schema.path("$schema");
-        assertTrue(dialect.isMissingNode() || dialect.asText().equals(SchemaId.V202012),
+        assertTrue(dialect.isMissingNode() || dialect.asText().equals(DIALECT),
                 tool + ": declares the dialect " + dialect);
-        var invalid = METASCHEMA.validate(schema);
+        var text = schema.toJsonString();
+        var invalid = METASCHEMA.validate(text, InputFormat.JSON);
         assertTrue(invalid.isEmpty(), tool + ": not a valid 2020-12 schema: " + invalid);
         assertEquals("object", schema.path("type").asText(), tool + ": an outputSchema must describe an object");
-        return FACTORY.getSchema(schema);
+        return REGISTRY.getSchema(text, InputFormat.JSON);
     }
 }
