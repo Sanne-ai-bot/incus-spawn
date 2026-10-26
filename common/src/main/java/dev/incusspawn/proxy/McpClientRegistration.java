@@ -3,6 +3,7 @@ package dev.incusspawn.proxy;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.ToolDef;
 
 /**
@@ -36,7 +37,7 @@ public final class McpClientRegistration {
     static final String MARKER = MARKER_DIR + "/mcp-client-registered";
     private static final String AGENT_HOME = "/home/agentuser";
     /** Claude Code's user-scope config, where the entry lives. */
-    static final String CLAUDE_CONFIG = AGENT_HOME + "/.claude.json";
+    static final String CLAUDE_CONFIG = ClaudeSetup.CLAUDE_JSON_PATH;
     /** How long root may spend reading {@link #CLAUDE_CONFIG}, and how much of it. */
     static final int CONFIG_READ_SECONDS = 2;
     static final int CONFIG_READ_BYTES = 16 << 20;
