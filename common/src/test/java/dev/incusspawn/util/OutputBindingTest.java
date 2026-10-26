@@ -139,6 +139,16 @@ class OutputBindingTest {
         assertTrue(BuildOutput.bound() instanceof ForwardingOutput);
     }
 
+    /** The recording binding records every kind, or a test could not see a message move to another. */
+    @Test
+    void theRecorderRecordsEveryMethodOfOutput() throws Exception {
+        for (var method : Output.class.getMethods()) {
+            if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) continue;
+            var declared = RecordingOutput.class.getMethod(method.getName(), method.getParameterTypes());
+            assertEquals(RecordingOutput.class, declared.getDeclaringClass(), method.toString());
+        }
+    }
+
     @Test
     void bindingsClosedOutOfOrderAreRefused() {
         var outer = BuildOutput.bind(Output.diagnosticsTo(m -> {}));
