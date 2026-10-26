@@ -51,17 +51,12 @@
 5 0 cli/src/main/java/dev/incusspawn/tui/ShellLaunch.java
 5 0 cli/src/main/java/dev/incusspawn/tui/Tui.java
 1 0 common/src/main/java/dev/incusspawn/Platform.java
-8 1 common/src/main/java/dev/incusspawn/config/HostResourceSetup.java
 1 0 common/src/main/java/dev/incusspawn/git/AutoRemoteService.java
 7 0 common/src/main/java/dev/incusspawn/git/HostRepoRefresh.java
 4 0 common/src/main/java/dev/incusspawn/incus/Container.java
 4 0 common/src/main/java/dev/incusspawn/incus/IncusApi.java
 6 0 common/src/main/java/dev/incusspawn/incus/IncusClient.java
 6 0 common/src/main/java/dev/incusspawn/incus/InteractiveShell.java
-1 0 common/src/main/java/dev/incusspawn/lifecycle/BranchFlow.java
-8 0 common/src/main/java/dev/incusspawn/lifecycle/GuiPassthrough.java
-5 0 common/src/main/java/dev/incusspawn/lifecycle/KvmPassthrough.java
-1 0 common/src/main/java/dev/incusspawn/lifecycle/ZmxSocketForward.java
 2 0 common/src/main/java/dev/incusspawn/proxy/ApiTrafficLog.java
 1 0 common/src/main/java/dev/incusspawn/proxy/CertStore.java
 3 2 common/src/main/java/dev/incusspawn/proxy/CertificateAuthority.java

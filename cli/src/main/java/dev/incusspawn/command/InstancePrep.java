@@ -41,7 +41,7 @@ public class InstancePrep {
             if (!e.reported()) e.getMessage().lines().forEach(l -> System.err.println(l));
             return null;
         }
-        GuiPassthrough.checkGuiHealth(incus, name);
+        GuiPassthrough.checkGuiHealth(incus, name, BuildOutput.bound());
         return templateName;
     }
 

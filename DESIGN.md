@@ -4841,10 +4841,12 @@ But the shell that follows draws over it, and the TUI redraws over that, so a wa
 The TUI binds `Output.copying` around every action it lends the terminal to, the branch included, which copies every warning of the branch into the `WarningLog`, as for a build.
 So code on the branch path warns through `BuildOutput.warn` or a sink the caller gives it, which `RuntimeSetup.setupRuntime` takes for an incomplete setup and a failed SSH host entry.
 A bare `System.err` line reaches the terminal only.
-The sites on the branch path that still print one (GUI and KVM passthrough's explanations, the CA mismatch note) are tracked in #1690.
+The sites on the branch path that printed one (GUI and KVM passthrough's explanations, the CA mismatch note, #1690) now warn through `BuildOutput`.
+GUI and KVM passthrough return why they could not, the cause and then what to do about it, and the branch makes it one warning with what it does instead (`Unavailable.warn`), since the log used to keep only "Continuing without GUI passthrough." with no cause.
+The pre-upgrade CA note is a warning rather than a note, so the TUI's copying binding keeps it.
 Progress stays on the terminal, where it is read while the branch runs.
 A start's warning is a typed `warn` on the `Output` its caller hands it, its advice as details, so no message in `lifecycle/` marks itself `Warning:` for a sink that would print it as it comes.
-Code outside it (`HostResourceSetup.removeStaleDevices`, `AutoRemoteService`) still does, until its own step, and `BuildOutput.warningText` drops the marker meanwhile.
+Code outside it (`AutoRemoteService`) still does, until its own step, and `BuildOutput.warningText` drops the marker meanwhile.
 
 `Warnings` reports a distinct message once per output.
 The same files are loaded many times in one command (every fresh loader re-reads them), and before this `isx branch` could print one broken tool file's warning several times.

@@ -155,6 +155,7 @@ final class ShellLaunch {
     }
 
     private void checkGuiHealth(String name) {
-        GuiPassthrough.checkGuiHealth(tui.incus, name);
+        // The released terminal: the TUI's binding keeps the warning in its log
+        GuiPassthrough.checkGuiHealth(tui.incus, name, BuildOutput.bound());
     }
 }

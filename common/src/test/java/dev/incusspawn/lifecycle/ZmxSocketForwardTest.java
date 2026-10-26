@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.Platform;
@@ -70,7 +71,7 @@ class ZmxSocketForwardTest {
         Files.createDirectories(containerDir());
 
         ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
-                instanceWithZmxDevice(containerDir().toAbsolutePath().toString()));
+                instanceWithZmxDevice(containerDir().toAbsolutePath().toString()), RecordingOutput.FAIL_ON_WARN);
 
         // The healthy path must cost a single stat and no Incus call at all,
         // or every start pays for the repair.
@@ -87,7 +88,7 @@ class ZmxSocketForwardTest {
         Files.createDirectories(containerDir());
 
         ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
-                legacyInstanceWithZmxDevice(containerDir().toAbsolutePath().toString()));
+                legacyInstanceWithZmxDevice(containerDir().toAbsolutePath().toString()), RecordingOutput.FAIL_ON_WARN);
 
         verify(incus).devicesRemoveAll(NAME, List.of(DEVICE));
         assertTrue(deviceAddArgs().contains("required=false"));
@@ -95,7 +96,7 @@ class ZmxSocketForwardTest {
 
     @Test
     void ensureHostDirForStart_noZmxDevice_createsNothing() {
-        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir, JqObject.builder(0).build());
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir, JqObject.builder(0).build(), RecordingOutput.FAIL_ON_WARN);
 
         assertFalse(Files.exists(containerDir()),
                 "instances without the device must not get a stray directory");
@@ -106,7 +107,7 @@ class ZmxSocketForwardTest {
     @Test
     void ensureHostDirForStart_wipedTmpfs_recreatesDirectoryAndSymlink() throws IOException {
         ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
-                instanceWithZmxDevice(containerDir().toAbsolutePath().toString()));
+                instanceWithZmxDevice(containerDir().toAbsolutePath().toString()), RecordingOutput.FAIL_ON_WARN);
 
         assertTrue(Files.isDirectory(containerDir()));
         assertTrue(Files.isSymbolicLink(symlink()));
@@ -119,7 +120,7 @@ class ZmxSocketForwardTest {
         var oldDir = zmxDir.resolve("containers").resolve("previous-name");
 
         ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
-                instanceWithZmxDevice(oldDir.toString()));
+                instanceWithZmxDevice(oldDir.toString()), RecordingOutput.FAIL_ON_WARN);
 
         assertTrue(Files.isDirectory(containerDir()));
         verify(incus).devicesRemoveAll(NAME, List.of(DEVICE));
@@ -137,7 +138,7 @@ class ZmxSocketForwardTest {
         var oldDir = zmxDir.resolve("containers").resolve("previous-name");
 
         ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
-                instanceWithZmxDevice(oldDir.toString()));
+                instanceWithZmxDevice(oldDir.toString()), RecordingOutput.FAIL_ON_WARN);
 
         assertEquals("source=" + containerDir().toAbsolutePath(), deviceAddArgs().get(0));
     }
@@ -153,7 +154,7 @@ class ZmxSocketForwardTest {
         Files.createDirectories(oldDir);
 
         ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
-                instanceWithZmxDevice(oldDir.toString()));
+                instanceWithZmxDevice(oldDir.toString()), RecordingOutput.FAIL_ON_WARN);
 
         assertTrue(Files.isDirectory(containerDir()));
         assertEquals("source=" + containerDir().toAbsolutePath(), deviceAddArgs().get(0));
@@ -161,7 +162,7 @@ class ZmxSocketForwardTest {
 
     @Test
     void configure_addsDiskDeviceForContainerZmxDir() throws IOException {
-        ZmxSocketForward.configure(incus, NAME, zmxDir);
+        ZmxSocketForward.configure(incus, NAME, zmxDir, RecordingOutput.FAIL_ON_WARN);
 
         assertTrue(Files.isDirectory(containerDir()));
         assertEquals(Path.of("containers", NAME, "isx"), Files.readSymbolicLink(symlink()));

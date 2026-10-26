@@ -13,12 +13,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.MockedStatic;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -88,11 +85,11 @@ class HostResourceNotesTest {
     @Test
     void missingSourceWarningQuotesTheSourceOnOneLine() {
         for (var mode : List.of("readonly", "copy", "overlay")) {
-            assertQuoted(stderrOf(() -> HostResourceSetup.applyForBuild(incus, build,
-                    List.of(collect(mode)), MachineType.CONTAINER)), "Warning: host-resource source not found: ");
+            assertQuoted(warningsOf(() -> HostResourceSetup.applyForBuild(incus, build,
+                    List.of(collect(mode)), MachineType.CONTAINER)), "host-resource source not found: ");
         }
-        assertQuoted(stderrOf(() -> HostResourceSetup.applyForInstance(incus, "i", List.of(collect("readonly")),
-                MachineType.CONTAINER)), "Warning: host-resource source not found: ");
+        assertQuoted(warningsOf(() -> HostResourceSetup.applyForInstance(incus, "i", List.of(collect("readonly")),
+                MachineType.CONTAINER)), "host-resource source not found: ");
     }
 
     @Test
@@ -101,9 +98,9 @@ class HostResourceNotesTest {
         var metadata = io.hyperfoil.tools.jjq.value.JqObject.builder(1)
                 .put("config", io.hyperfoil.tools.jjq.value.JqObject.builder(1).put(Metadata.HOST_RESOURCES, json).build())
                 .build();
-        var warnings = new ArrayList<String>();
-        HostResourceSetup.removeStaleDevices(incus, "i", metadata, warnings::add);
-        assertQuoted(String.join("\n", warnings) + "\n", "Warning: host-resource source not found: ");
+        var out = new RecordingOutput();
+        HostResourceSetup.removeStaleDevices(incus, "i", metadata, out);
+        assertQuoted(String.join("\n", out.warnings()), "host-resource source not found: ");
     }
 
     @Test
@@ -133,17 +130,10 @@ class HostResourceNotesTest {
                 .map(RecordingOutput.Event::msg).toList());
     }
 
-    /** The missing source's warning is still printed raw to stderr (#1703's step for common/config). */
-    private static String stderrOf(Runnable action) {
-        var err = new ByteArrayOutputStream();
-        var original = System.err;
-        System.setErr(new PrintStream(err, true));
-        try {
-            action.run();
-        } finally {
-            System.setErr(original);
-        }
-        return err.toString();
+    /** The warnings {@code action} reported, through the bound output (#1703), one per line. */
+    private static String warningsOf(Runnable action) {
+        return String.join("\n", RecordingOutput.during(action::run).events(RecordingOutput.Kind.WARN).stream()
+                .map(RecordingOutput.Event::msg).toList());
     }
 
     private ImageDef.HostResource collect(String mode) {

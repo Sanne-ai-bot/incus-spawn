@@ -53,11 +53,25 @@ public final class BranchFlow {
 
     private BranchFlow() {}
 
-    /** Whether isx runs in a Wayland session; replaced by tests, so they do not depend on where they run. */
-    static java.util.function.BooleanSupplier waylandSession = GuiPassthrough::inWaylandSession;
 
     /** Whether the proxy is up, warning if not; replaced by tests, which have no proxy. */
     static java.util.function.Predicate<IncusClient> proxyHealthCheck = ProxyHealthCheck::checkOrWarn;
+
+    /** The session's environment, which GUI passthrough reads; replaced by tests, so a branch can lack one anywhere. */
+    static java.util.function.Supplier<Map<String, String>> environment = System::getenv;
+
+    /** Whether a host path exists, which KVM passthrough asks; replaced by tests, so a host can lack /dev/kvm anywhere. */
+    static java.util.function.Predicate<String> hostPathExists = path -> java.nio.file.Files.exists(Path.of(path));
+
+    /**
+     * Whether isx runs in a Wayland session, from the two hooks above; replaced by tests, so they do
+     * not depend on where they run.
+     */
+    static java.util.function.BooleanSupplier waylandSession =
+            () -> GuiPassthrough.waylandProblem(environment.get(), hostPathExists) == null;
+
+    /** The CA fingerprints a template is checked against; replaced by tests, which hold no CA. */
+    static java.util.function.Supplier<CertificateAuthority.CaTrust> caTrust = CertificateAuthority.CaTrust::snapshot;
 
     /** Whether isx runs on macOS; replaced by tests, so the macOS refusals are tested anywhere. */
     static java.util.function.BooleanSupplier macOS = dev.incusspawn.Platform::isMacOS;
@@ -391,11 +405,13 @@ public final class BranchFlow {
         // it may push files: any push lands well before the start (see prefetchAndStart).
         if (req.gui() == null && defaults.guiNote() != null) BuildOutput.warn(defaults.guiNote());
         if (gui(req, defaults)) {
-            if (GuiPassthrough.configureGui(incus, name)) {
+            var whyNot = GuiPassthrough.configureGui(incus, name, environment.get(), hostPathExists);
+            if (whyNot == null) {
                 incus.configSet(name, Metadata.GUI_ENABLED, "true");
             } else {
                 GuiPassthrough.removeGui(incus, name);
-                BuildOutput.warn("Continuing without GUI passthrough.");
+                // One warning, its cause and advice with it, which the TUI keeps in its log (#1690)
+                whyNot.warn(BuildOutput.bound(), "Continuing without GUI passthrough.");
             }
         } else {
             // Clean up inherited GUI devices/env from incus copy
@@ -419,8 +435,9 @@ public final class BranchFlow {
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE, machineType);
 
         // Inherited KVM passthrough was already dropped by configureBranch when not enabled.
-        if (enableKvm && !KvmPassthrough.configureKvm(incus, name)) {
-            BuildOutput.warn("Continuing without KVM — VMs inside this branch will not work.");
+        if (enableKvm) {
+            var whyNot = KvmPassthrough.configureKvm(incus, name, hostPathExists);
+            if (whyNot != null) whyNot.warn(BuildOutput.bound(), "Continuing without KVM — VMs inside this branch will not work.");
         }
 
         // Before the --no-start return: the inbox is plain device config, so it is there
@@ -616,7 +633,7 @@ public final class BranchFlow {
     }
 
     private static void checkCaMismatch(IncusClient incus, String source) {
-        var status = CertificateAuthority.CaTrust.snapshot()
+        var status = caTrust.get()
                 .classify(incus.configGet(source, Metadata.CA_FINGERPRINT));
         if (status != CaStatus.FOREIGN && status != CaStatus.REPAIRABLE) return;
         var profile = incus.configGet(source, Metadata.PROFILE);
@@ -626,9 +643,10 @@ public final class BranchFlow {
         // either way. But a CA this host never issued usually means a deleted config dir or
         // a ~/.config copied from another machine, which is worth stopping for.
         if (status == CaStatus.REPAIRABLE) {
-            System.err.println("Note: '" + source + "' still carries the pre-upgrade MITM CA "
-                    + "certificate. The new one is installed into the instance on first use."
-                    + (profile.isEmpty() ? "" : " Rebuild when convenient: isx build " + profile));
+            // A warning, which the TUI keeps in its log of the branch, not a note it drops (#1690)
+            BuildOutput.warn("'" + source + "' still carries the pre-upgrade MITM CA certificate.",
+                    "The new one is installed into the instance on first use."
+                            + (profile.isEmpty() ? "" : " Rebuild when convenient: isx build " + profile));
             return;
         }
 

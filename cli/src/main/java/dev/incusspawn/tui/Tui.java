@@ -1319,7 +1319,7 @@ public class Tui {
                 // The zmx device still points at the old name's directory,
                 // which removeHostIntegration just deleted — re-point it.
                 if (ZmxSocketForward.isZmxInstalled(buildSource)) {
-                    ZmxSocketForward.configure(incus, newName);
+                    ZmxSocketForward.configure(incus, newName, drawing);
                 }
             } catch (Exception ignore) {
                 // best-effort: instance is renamed, host integration may partially fail

@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -106,42 +107,41 @@ public final class GuiPassthrough {
         return List.copyOf(keys);
     }
 
-    /** Whether isx runs in a Wayland session it could pass through. */
-    public static boolean inWaylandSession() {
-        return waylandProblem() == null;
-    }
-
-    /** Why GUI passthrough cannot work from this session, one line per element, or null when it can. */
-    private static String waylandProblem() {
-        var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
-        var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
+    /**
+     * Why GUI passthrough cannot work from a session with {@code env}, on a host where {@code exists}
+     * says which paths exist, or null when it can.
+     */
+    static Unavailable waylandProblem(Map<String, String> env, java.util.function.Predicate<String> exists) {
+        var xdgRuntimeDir = env.get("XDG_RUNTIME_DIR");
+        var waylandDisplay = env.get("WAYLAND_DISPLAY");
         if (xdgRuntimeDir == null || waylandDisplay == null) {
-            return "Error: GUI passthrough requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR.\n"
-                    + "Make sure you are running isx from a Wayland graphical session.";
+            return new Unavailable("GUI passthrough requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR.", IN_A_WAYLAND_SESSION);
         }
         if (!WAYLAND_DISPLAY_PATTERN.matcher(waylandDisplay).matches()) {
-            return "Error: WAYLAND_DISPLAY contains invalid characters: " + waylandDisplay;
+            return new Unavailable("WAYLAND_DISPLAY contains invalid characters: " + waylandDisplay);
         }
         var hostSocket = xdgRuntimeDir + "/" + waylandDisplay;
-        if (!java.nio.file.Files.exists(java.nio.file.Path.of(hostSocket))) {
-            return "Error: Wayland socket not found at " + hostSocket + "\n"
-                    + "Make sure you are running isx from a Wayland graphical session.";
+        if (!exists.test(hostSocket)) {
+            return new Unavailable("Wayland socket not found at " + hostSocket, IN_A_WAYLAND_SESSION);
         }
         return null;
     }
 
+    private static final String IN_A_WAYLAND_SESSION = "Make sure you are running isx from a Wayland graphical session.";
+
     /**
      * Configure GUI passthrough on a (stopped) container: GPU device, Wayland
      * socket mount, environment variables, and tmpfiles.d for XDG_RUNTIME_DIR.
+     *
+     * @return why it could not, for the caller to warn of as one warning with what it does
+     *         instead (#1690); null when it could
      */
-    public static boolean configureGui(IncusClient incus, String name) {
-        var problem = waylandProblem();
-        if (problem != null) {
-            System.err.println(problem);
-            return false;
-        }
-        var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
-        var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
+    public static Unavailable configureGui(IncusClient incus, String name, Map<String, String> env,
+                                           java.util.function.Predicate<String> exists) {
+        var problem = waylandProblem(env, exists);
+        if (problem != null) return problem;
+        var xdgRuntimeDir = env.get("XDG_RUNTIME_DIR");
+        var waylandDisplay = env.get("WAYLAND_DISPLAY");
 
         BuildOutput.step("Enabling GUI passthrough.");
         var uid = InstanceLifecycle.getUid();
@@ -149,12 +149,10 @@ public final class GuiPassthrough {
         var audio = presentAudioSockets(xdgRuntimeDir);
         incus.updateFresh(name, guiUpdate(xdgRuntimeDir, waylandDisplay, uid, audio));
 
-        if (!pushWaylandFiles(incus, name, profileScript(guiEnv(waylandDisplay, uid, audio)), uid)) {
-            System.err.println("Warning: GUI devices configured but profile.d scripts failed to install.");
-            System.err.println("GUI may not work in login shells.");
-            return false;
-        }
-        return true;
+        var pushFailure = pushWaylandFiles(incus, name, profileScript(guiEnv(waylandDisplay, uid, audio)), uid);
+        // A cause alone: the branch then removes the devices, so there is no GUI left to advise on
+        if (pushFailure != null) return new Unavailable("could not install the GUI profile.d scripts: " + pushFailure);
+        return null;
     }
 
     /**
@@ -267,20 +265,25 @@ public final class GuiPassthrough {
      * Warn at shell entry if a GUI-enabled container can't reach the host
      * Wayland compositor.
      */
-    public static void checkGuiHealth(IncusClient incus, String name) {
+    public static void checkGuiHealth(IncusClient incus, String name, Output out) {
+        checkGuiHealth(incus, name, System.getenv(), out);
+    }
+
+    /** As above, from a session with {@code env}: a warning with its advice, to {@code out}. */
+    static void checkGuiHealth(IncusClient incus, String name, Map<String, String> env, Output out) {
         var guiEnabled = incus.configGet(name, Metadata.GUI_ENABLED);
         if (!"true".equals(guiEnabled)) return;
-        var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
-        var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
+        var waylandDisplay = env.get("WAYLAND_DISPLAY");
+        var xdgRuntimeDir = env.get("XDG_RUNTIME_DIR");
         if (waylandDisplay == null || xdgRuntimeDir == null) {
-            System.err.println(BuildOutput.styled(BuildOutput.YELLOW, "Warning: GUI passthrough is enabled but no Wayland session detected."));
-            System.err.println("GUI applications will not work in this session.");
+            out.warn("GUI passthrough is enabled but no Wayland session detected.",
+                    "GUI applications will not work in this session.");
             return;
         }
         var socket = xdgRuntimeDir + "/" + waylandDisplay;
-        if (!java.nio.file.Files.exists(java.nio.file.Path.of(socket))) {
-            System.err.println(BuildOutput.styled(BuildOutput.YELLOW, "Warning: GUI passthrough is enabled but Wayland socket not found."));
-            System.err.println("GUI applications may not work. Try re-branching with --gui.");
+        if (!Files.exists(Path.of(socket))) {
+            out.warn("GUI passthrough is enabled but Wayland socket not found.",
+                    "GUI applications may not work. Try re-branching with --gui.");
         }
     }
 
@@ -294,7 +297,8 @@ public final class GuiPassthrough {
         return profile.toString();
     }
 
-    private static boolean pushWaylandFiles(IncusClient incus, String container, String profile, String uid) {
+    /** Why the files could not be pushed, or null when they were. */
+    private static String pushWaylandFiles(IncusClient incus, String container, String profile, String uid) {
         try {
             pushTempFile(incus, container, profile, "/etc/profile.d/wayland.sh");
 
@@ -302,10 +306,9 @@ public final class GuiPassthrough {
             // ensure it exists at boot so XDG_RUNTIME_DIR is usable.
             var tmpfiles = "d /run/user/" + uid + " 0700 " + uid + " " + uid + " -\n";
             pushTempFile(incus, container, tmpfiles, "/etc/tmpfiles.d/wayland-runtime.conf");
-            return true;
+            return null;
         } catch (IOException | RuntimeException e) {
-            System.err.println("Warning: failed to push wayland config: " + e.getMessage());
-            return false;
+            return e.getMessage() != null ? e.getMessage() : e.toString();
         }
     }
 
