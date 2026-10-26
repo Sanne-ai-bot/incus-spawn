@@ -1,5 +1,7 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.util.RecordingOutput;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
@@ -63,23 +65,23 @@ class HostResourceNotesTest {
     void mountedNoteQuotesTheSourceOnOneLine() throws IOException {
         Files.createDirectories(project.resolve(HOSTILE));
         var hr = collect("readonly");
-        assertQuoted(stderrOf(() -> HostResourceSetup.applyForBuild(incus, build,
+        assertQuoted(notesOf(() -> HostResourceSetup.applyForBuild(incus, build,
                 List.of(hr), MachineType.CONTAINER)), "Mounted ");
-        assertQuoted(stderrOf(() -> HostResourceSetup.applyForInstance(incus, "i", List.of(hr),
+        assertQuoted(notesOf(() -> HostResourceSetup.applyForInstance(incus, "i", List.of(hr),
                 MachineType.CONTAINER)), "Mounted ");
     }
 
     @Test
     void copiedNoteQuotesTheSourceOnOneLine() throws IOException {
         Files.createDirectories(project.resolve(HOSTILE));
-        assertQuoted(stderrOf(() -> HostResourceSetup.applyForBuild(incus, build,
+        assertQuoted(notesOf(() -> HostResourceSetup.applyForBuild(incus, build,
                 List.of(collect("copy")), MachineType.CONTAINER)), "Copied ");
     }
 
     @Test
     void overlayNoteQuotesTheSourceOnOneLine() throws IOException {
         Files.createDirectories(project.resolve(HOSTILE));
-        assertQuoted(stderrOf(() -> HostResourceSetup.applyForBuild(incus, build,
+        assertQuoted(notesOf(() -> HostResourceSetup.applyForBuild(incus, build,
                 List.of(collect("overlay")), MachineType.CONTAINER)), "Mounted ");
     }
 
@@ -122,6 +124,16 @@ class HostResourceNotesTest {
                 && l.contains("data Template is valid. [2J")), out);
     }
 
+    /**
+     * The notes {@code action} reported, one per line: what the code under test says, without
+     * swapping a stream. A note is cleaned at its source ({@code shown}), which is what is checked.
+     */
+    private static String notesOf(Runnable action) {
+        return String.join("\n", RecordingOutput.during(action::run).events(RecordingOutput.Kind.NOTE).stream()
+                .map(RecordingOutput.Event::msg).toList());
+    }
+
+    /** The missing source's warning is still printed raw to stderr (#1703's step for common/config). */
     private static String stderrOf(Runnable action) {
         var err = new ByteArrayOutputStream();
         var original = System.err;

@@ -1,5 +1,6 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.AfterEach;
@@ -9,10 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -188,16 +186,10 @@ class AutoRemoteServiceTest {
 
         var output = new ArrayList<String>();
         var warnings = new ArrayList<String>();
-        var stderr = new ByteArrayOutputStream();
-        var originalErr = System.err;
-        try {
-            System.setErr(new PrintStream(stderr, true, StandardCharsets.UTF_8));
-            AutoRemoteService.addRemotes(incus, "work", output::add, warnings::add);
-        } finally {
-            System.setErr(originalErr);
-        }
+        // Only there: nothing reaches the bound output, the terminal under the TUI
+        var bound = RecordingOutput.during(() -> AutoRemoteService.addRemotes(incus, "work", output::add, warnings::add));
 
-        assertThat(stderr.toString(StandardCharsets.UTF_8)).isEmpty();
+        assertThat(bound.events()).isEmpty();
         assertThat(output).isEmpty();
         assertThat(warnings).containsExactly("remote 'work' already exists in " + repoDir
                 + "; to add it manually: git -C " + repoDir + " remote add <name> isx://work//home/agentuser/app");

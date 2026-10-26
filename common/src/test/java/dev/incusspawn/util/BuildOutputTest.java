@@ -250,21 +250,6 @@ class BuildOutputTest {
         assertTrue(text().contains("Mount of /p/ [2Jx refused.\nFix the definition."), text());
     }
 
-    /**
-     * A build the TUI runs prints on the released terminal, which the TUI then redraws over: its
-     * warnings are also handed to the TUI's log, but only while the TUI listens (#1195).
-     */
-    @Test
-    void warningsAreCopiedToAListenerUntilItIsClosed() {
-        var copied = new java.util.ArrayList<String>();
-        try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(copied::add)))) {
-            BuildOutput.warn("tpl-a derives from tpl-old, which is deprecated", "use tpl-new");
-        }
-        BuildOutput.warn("after the build");
-        assertEquals(List.of("tpl-a derives from tpl-old, which is deprecated\nuse tpl-new"), copied);
-        assertTrue(text().contains("⚠ after the build"), "still printed: " + text());
-    }
-
     /** A message marked for a sink that prints it as it comes gets the ⚠ alone, here and in the copy. */
     @Test
     void aWarningThatMarksItselfIsMarkedOnce() {

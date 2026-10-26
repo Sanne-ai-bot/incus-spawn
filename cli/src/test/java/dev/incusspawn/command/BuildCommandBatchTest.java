@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.RecordingOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.config.BuildSource;
@@ -57,8 +59,9 @@ class BuildCommandBatchTest {
     private final FakeIncusDaemon daemon = new FakeIncusDaemon();
     private final List<String> built = new ArrayList<>();
     private String stderr = "";
-    /** What stderr held when the first build began. */
-    private String stderrBeforeBuild;
+    /** What BuildOutput warned, before the first build and in all. */
+    private List<String> warningsBeforeBuild;
+    private List<String> warnings = List.of();
 
     /** Every template of {@link #tree()} built, current, at {@code created}. */
     private void builtAt(Map<String, String> created) {
@@ -99,8 +102,9 @@ class BuildCommandBatchTest {
         }
         cmd.names = names.isEmpty() ? null : names;
         var err = new ByteArrayOutputStream();
+        var recorder = new RecordingOutput();
         doAnswer(i -> {
-            if (stderrBeforeBuild == null) stderrBeforeBuild = err.toString(StandardCharsets.UTF_8);
+            if (warningsBeforeBuild == null) warningsBeforeBuild = recorder.warnings();
             var name = i.<ImageDef>getArgument(0).getName();
             built.add(name);
             if (failing.contains(name)) throw new BuildCommand.BuildFailedException();
@@ -111,15 +115,18 @@ class BuildCommandBatchTest {
             return null;
         }).when(cmd).buildSingleImage(any(), any());
 
+        // The swap is for what BuildCommand still prints raw (#1703's step for cli/command); what
+        // goes through BuildOutput is recorded
         var originalErr = System.err;
         System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
-        try {
+        try (var bound = BuildOutput.bind(recorder)) {
             var defs = tree();
             defs.putAll(extraDefs);
             return cmd.dispatch(defs).getResultValue();
         } finally {
             System.setErr(originalErr);
             stderr = err.toString(StandardCharsets.UTF_8);
+            warnings = recorder.warnings();
         }
     }
 
@@ -436,9 +443,11 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-agent"));
 
         assertEquals(List.of("tpl-agent"), built);
-        assertTrue(stderrBeforeBuild.contains("Missing credential: GitHub personal access token. "
-                + "'isx branch' will refuse tpl-dev and tpl-agent until it is configured with 'isx account add github'."), stderr);
-        assertEquals(1, stderr.split("GitHub personal access token", -1).length - 1, stderr);
+        var missing = "Missing credential: GitHub personal access token. "
+                + "'isx branch' will refuse tpl-dev and tpl-agent until it is configured with 'isx account add github'.";
+        // Once, and before the build
+        assertEquals(List.of(missing), warnings.stream().filter(w -> w.contains("GitHub personal access token")).toList());
+        assertTrue(warningsBeforeBuild.contains(missing), warningsBeforeBuild::toString);
     }
 
     @Test
@@ -451,7 +460,7 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-dev"));
 
         assertEquals(List.of("tpl-dev"), built);
-        assertFalse(stderr.contains("Missing credential"), stderr);
+        assertTrue(warnings.stream().noneMatch(w -> w.contains("Missing credential")), warnings::toString);
     }
 
     private static Map<String, ToolSetup> builtInTools() {

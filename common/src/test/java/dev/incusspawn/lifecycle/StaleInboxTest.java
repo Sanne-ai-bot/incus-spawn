@@ -10,6 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -39,25 +40,20 @@ class StaleInboxTest {
     }
 
     @Test
-    void inboxWhoseDirectoryIsGoneIsRemovedBeforeStart(@TempDir Path tmp) {
+    void inboxWhoseDirectoryIsGoneIsRemovedBeforeStart(@TempDir Path tmp) throws Exception {
         var deleted = tmp.resolve("deleted");
         var daemon = withInbox(deleted);
 
-        var err = new java.io.ByteArrayOutputStream();
-        var original = System.err;
-        System.setErr(new java.io.PrintStream(err, true));
-        try {
-            InstanceLifecycle.prepareForStart(daemon.client(), NAME);
-        } finally {
-            System.setErr(original);
-        }
+        // The overload without an output reports to the bound one
+        var out = RecordingOutput.during(() -> InstanceLifecycle.prepareForStart(daemon.client(), NAME));
+        var said = String.join("\n", out.warnings());
 
         assertTrue(daemon.instance(NAME).path("devices").path(InstanceLifecycle.INBOX_DEVICE).isMissingNode(),
                 daemon.instance(NAME).path("devices").toString());
         assertEquals(deleted.toString(),
                 daemon.instance(NAME).path("config").path(Metadata.INBOX_SOURCE).asText());
-        assertTrue(err.toString().contains("recreate it; the next start of " + NAME + " does"), err.toString());
-        assertFalse(err.toString().contains("incus "), err.toString());
+        assertTrue(said.contains("recreate it; the next start of " + NAME + " does"), said);
+        assertFalse(said.contains("incus "), said);
     }
 
     @Test
@@ -96,24 +92,21 @@ class StaleInboxTest {
         assertFalse(daemon.instance(NAME).path("config").path(Metadata.INBOX_SOURCE).isMissingNode());
     }
 
+    /** One warning, its advice as a detail, on the output the caller hands it (the TUI's log). */
     @Test
-    void warningGoesToTheCallersSinkInsteadOfStderr(@TempDir Path tmp) {
+    void theWarningIsOneWarningWithItsAdviceOnTheCallersOutput(@TempDir Path tmp) {
         var daemon = withInbox(tmp.resolve("deleted"));
-        var warnings = new java.util.ArrayList<String>();
+        var out = new RecordingOutput();
 
-        var err = new java.io.ByteArrayOutputStream();
-        var original = System.err;
-        System.setErr(new java.io.PrintStream(err, true));
-        try {
-            // The TUI's output: stderr there would be drawn over by the TUI and lost.
-            InstanceLifecycle.prepareForStart(daemon.client(), NAME, RecordingOutput.into(warnings));
-        } finally {
-            System.setErr(original);
-        }
+        // Only there: the bound output, the terminal under the TUI, hears nothing
+        var bound = RecordingOutput.during(() -> InstanceLifecycle.prepareForStart(daemon.client(), NAME, out));
 
-        assertEquals(1, warnings.size(), warnings.toString());
-        assertTrue(warnings.get(0).contains("inbox directory not found"), warnings.get(0));
-        assertEquals("", err.toString());
+        assertEquals(List.of(), bound.events());
+        var warned = out.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warned.size(), out.events()::toString);
+        assertTrue(warned.getFirst().msg().startsWith("inbox directory not found: "), warned.getFirst()::msg);
+        assertEquals(List.of("To mount it again, recreate it; the next start of " + NAME + " does."),
+                warned.getFirst().details());
     }
 
     @Test

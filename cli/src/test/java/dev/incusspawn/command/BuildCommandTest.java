@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.util.Output;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.BuildInfo;
@@ -385,17 +386,17 @@ class BuildCommandTest {
             below.setParent("tpl-mine");
             var defs = Map.of("tpl-root", root, "tpl-old", old, "tpl-mine", mine, "tpl-below", below);
 
-            var out = bothStreams(() -> {
+            var said = RecordingOutput.during(() -> {
                 cmd.buildSingleImage(root, defs);
                 cmd.buildSingleImage(old, defs);
                 cmd.buildSingleImage(mine, defs);
                 cmd.buildSingleImage(mine, defs);
                 cmd.buildSingleImage(below, defs);
-            });
+            }).lines();
 
-            assertEquals(2, out.split("deprecated", -1).length - 1, out);
-            assertTrue(out.contains("tpl-old is deprecated: use tpl-new instead"), out);
-            assertTrue(out.contains("tpl-mine derives from tpl-old, which is deprecated: use tpl-new instead"), out);
+            assertEquals(List.of("tpl-old is deprecated: use tpl-new instead",
+                    "tpl-mine derives from tpl-old, which is deprecated: use tpl-new instead"),
+                    said.stream().filter(w -> w.contains("deprecated")).toList());
             verify(cmd.incus, times(2)).rename("tpl-mine-rebuilding", "tpl-mine");
             verify(cmd.incus).rename("tpl-below-rebuilding", "tpl-below");
         });
@@ -608,18 +609,11 @@ class BuildCommandTest {
             var cmd = chainCommand(incusBuildingInto(new java.util.HashSet<>()), ScriptedPrompts.lines());
             cmd.buildChain(defs.get("tpl-a"), defs);
 
-            var originalOut = System.out;
-            var out = new java.io.ByteArrayOutputStream();
-            System.setOut(new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8));
-            try {
-                cmd.buildChain(defs.get("tpl-b"), defs);
-            } finally {
-                System.setOut(originalOut);
-            }
+            var recorder = RecordingOutput.during(() -> cmd.buildChain(defs.get("tpl-b"), defs));
 
-            var text = out.toString(java.nio.charset.StandardCharsets.UTF_8);
-            assertTrue(text.contains("Building tpl-b"), text);
-            assertFalse(text.contains("/2]"), text);
+            // One build of one: how a counter is drawn is BuildOutputTest's
+            assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.BUILD_HEADER, "tpl-b", "1", "1")),
+                    recorder.events(RecordingOutput.Kind.BUILD_HEADER), recorder.events()::toString);
         });
     }
 

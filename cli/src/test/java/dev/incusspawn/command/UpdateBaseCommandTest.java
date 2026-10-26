@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.baseimage.BaseImageReleases.Checksums;
 import dev.incusspawn.config.BaseImagePin;
 import dev.incusspawn.config.ImageDef;
@@ -289,17 +290,10 @@ class UpdateBaseCommandTest {
     void trackingTheLatestOverTheUsersOwnPinSaysItStillPins(@TempDir Path home) {
         inHome(home, () -> {
             writeUserMinimal(userMinimal("pinned: true\nparent: ~\npackages: [htop]\n"));
-            var err = new java.io.ByteArrayOutputStream();
-            var original = System.err;
-            System.setErr(new java.io.PrintStream(err, true));
-            try {
-                new UpdateBaseCommand().trackLatest(RELEASE.tag());
-            } finally {
-                System.setErr(original);
-            }
+            var out = RecordingOutput.during(() -> new UpdateBaseCommand().trackLatest(RELEASE.tag()));
             assertTrue(Files.exists(BaseImagePin.legacyFile()));
             assertTrue(ImageDef.loadAll().get("tpl-minimal").isPinned());
-            assertTrue(err.toString().contains("sets 'pinned: true' itself"), err.toString());
+            assertTrue(out.warnings().stream().anyMatch(w -> w.contains("sets 'pinned: true' itself")), out.warnings()::toString);
         });
     }
 

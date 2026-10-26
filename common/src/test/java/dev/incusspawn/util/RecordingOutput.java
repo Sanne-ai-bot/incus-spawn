@@ -30,21 +30,31 @@ public final class RecordingOutput implements Output {
         WARN, WARN_ASIDE, STEP_WARN, WARN_BANNER, STEP_FAIL, NOTE,
         HEADER, BUILD_HEADER, BRANCH_HEADER, SECTION, GROUP, GROUP_END,
         STEP, STEP_NOTE, OK, SUCCESS, LIST,
-        STEP_START, STEP_PROGRESS, STEP_DONE, STEP_BREAK, RELEASE_TERMINAL, ABANDON_STEP;
-
-        /** The kinds {@link Output} treats as diagnostics: those that default to {@link Output#warn}. */
-        public static final Set<Kind> DIAGNOSTICS = EnumSet.of(WARN, WARN_ASIDE, STEP_WARN, WARN_BANNER, STEP_FAIL);
+        STEP_START, STEP_PROGRESS, STEP_DONE, STEP_BREAK, RELEASE_TERMINAL, ABANDON_STEP
     }
+
+    /** The kinds {@link Output} treats as diagnostics: those that default to {@link Output#warn}. */
+    private static final Set<Kind> DIAGNOSTICS =
+            EnumSet.of(Kind.WARN, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.WARN_BANNER, Kind.STEP_FAIL);
+    /** The kinds a terminal skips when blank ({@link TerminalOutput}). */
+    private static final Set<Kind> SKIPPED_WHEN_BLANK = EnumSet.of(Kind.WARN, Kind.WARN_ASIDE, Kind.STEP_WARN);
 
     /** One message: its kind, its text (null for a kind that has none) and the lines under it. */
     public record Event(Kind kind, String msg, List<String> details) {
-        Event(Kind kind, String msg, String... details) {
+        public Event(Kind kind, String msg, String... details) {
             this(kind, msg, List.of(details));
         }
 
-        /** The message and its details as one text, the way a log keeps a warning. */
+        /**
+         * The message and its details as one text: a diagnostic's advice on lines under it, as a log
+         * keeps a warning, and everything else on one line, as a terminal draws a header.
+         */
         public String text() {
-            return details.isEmpty() ? msg : msg + "\n" + String.join("\n", details);
+            // A list's message already reads its items
+            if (details.isEmpty() || kind == Kind.LIST) return msg;
+            if (DIAGNOSTICS.contains(kind)) return msg + "\n" + String.join("\n", details);
+            if (kind == Kind.BUILD_HEADER) return msg + " [" + details.get(0) + "/" + details.get(1) + "]";
+            return msg + " " + String.join(" ", details);
         }
     }
 
@@ -68,9 +78,33 @@ public final class RecordingOutput implements Output {
         return new RecordingOutput(lines);
     }
 
+    /** Work a test runs, which may throw. */
+    @FunctionalInterface
+    public interface Work {
+        void run() throws Exception;
+    }
+
+    /**
+     * What {@code work} reported through {@link BuildOutput} and {@code Warnings}, with a new
+     * recorder bound around it: the test's stand-in for capturing the streams. A checked exception
+     * from {@code work} fails the test, so a caller inside another lambda can use this as it is.
+     */
+    public static RecordingOutput during(Work work) {
+        var recorder = new RecordingOutput();
+        try (var bound = BuildOutput.bind(recorder)) {
+            work.run();
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        return recorder;
+    }
+
     private synchronized void record(Kind kind, String msg, String... details) {
-        // Blank warnings are skipped by every output, so none is recorded either
-        if (Kind.DIAGNOSTICS.contains(kind) && (msg == null || msg.isBlank())) return;
+        // A blank warning is skipped by every output, so none is recorded either; a blank failed step
+        // still ends the live step, and a banner with no title still prints its lines
+        if (SKIPPED_WHEN_BLANK.contains(kind) && (msg == null || msg.isBlank())) return;
         var event = new Event(kind, msg, details);
         events.add(event);
         if (mirror != null && isLine(event)) mirror.add(event.text());
@@ -82,16 +116,14 @@ public final class RecordingOutput implements Output {
     @Override public void warnBanner(String title, String... lines) { record(Kind.WARN_BANNER, title, lines); }
     @Override public void stepFail(String msg) { record(Kind.STEP_FAIL, msg); }
     @Override public void note(String msg) { record(Kind.NOTE, msg); }
-    @Override public void header(String msg, String detail) {
-        record(Kind.HEADER, msg, detail == null ? new String[0] : new String[] {detail});
-    }
+    @Override public void header(String msg, String detail) { record(Kind.HEADER, msg, optional(detail)); }
     @Override public void buildHeader(String name, int index, int total) {
-        record(Kind.BUILD_HEADER, name, index + "/" + total);
+        record(Kind.BUILD_HEADER, name, String.valueOf(index), String.valueOf(total));
     }
     @Override public void branchHeader(String name, String source) { record(Kind.BRANCH_HEADER, name, source); }
     @Override public void section(String msg) { record(Kind.SECTION, msg); }
     @Override public Group group(String title, String detail) {
-        record(Kind.GROUP, title, detail == null ? new String[0] : new String[] {detail});
+        record(Kind.GROUP, title, optional(detail));
         return () -> record(Kind.GROUP_END, null);
     }
     @Override public String indent() { return ""; }
@@ -99,7 +131,10 @@ public final class RecordingOutput implements Output {
     @Override public void stepNote(String msg) { record(Kind.STEP_NOTE, msg); }
     @Override public void ok(String msg) { record(Kind.OK, msg); }
     @Override public void success(String msg) { record(Kind.SUCCESS, msg); }
-    @Override public void list(Collection<String> items) { record(Kind.LIST, String.join(", ", items)); }
+    /** Its items as the details, each its own; the message is them as a line reads them. */
+    @Override public void list(Collection<String> items) {
+        record(Kind.LIST, String.join(", ", items), items.toArray(String[]::new));
+    }
     @Override public void stepStart(String msg) { record(Kind.STEP_START, msg); }
     @Override public void stepProgress(String detail) { record(Kind.STEP_PROGRESS, detail); }
     @Override public void stepDone(String detail) { record(Kind.STEP_DONE, detail); }
@@ -126,15 +161,13 @@ public final class RecordingOutput implements Output {
         return events.stream().filter(RecordingOutput::isLine).map(Event::text).toList();
     }
 
-    /** The diagnostics ({@link Kind#DIAGNOSTICS}), each with its details on lines under it. */
+    /** The diagnostics (the kinds that default to {@link Output#warn}), each with its details under it. */
     public synchronized List<String> warnings() {
-        return events.stream().filter(e -> Kind.DIAGNOSTICS.contains(e.kind())).map(Event::text).toList();
+        return events.stream().filter(e -> DIAGNOSTICS.contains(e.kind())).map(Event::text).toList();
     }
 
-    /** The steps, live steps' starts included. */
-    public synchronized List<String> steps() {
-        return events.stream().filter(e -> e.kind() == Kind.STEP || e.kind() == Kind.STEP_START)
-                .map(Event::msg).toList();
+    private static String[] optional(String detail) {
+        return detail == null ? new String[0] : new String[] {detail};
     }
 
     private static boolean isLine(Event event) {

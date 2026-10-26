@@ -4875,6 +4875,15 @@ The CLI passes `BuildOutput.bound()`, which forwards each message to whatever is
 **Why not:** the binding is process-wide, and the TUI runs lifecycle code on background threads while it draws (a restart, an account switch, a destroy); an explicit output keeps those messages with the TUI's log whatever is bound meanwhile.
 Paths only the CLI or a lent terminal reaches (a branch, a build's starts) take `BuildOutput.bound()` from their caller, or default to it.
 
+**Tests record, they do not capture** (#1703).
+Tests used to swap `System.out` and `System.err` and search the bytes, which asserted on how a terminal draws a message rather than on what was said or of which kind.
+A binding is process-wide too, so recording does not make tests safe to run in parallel; it makes them assert on meaning.
+`RecordingOutput` (common test-jar) is the recording binding: every method of `Output` records a typed event (kind, message, details), and `OutputBindingTest` holds it to every method, so no kind falls through unrecorded.
+A test binds it, or hands it to code that takes an `Output`; how an event is drawn is `BuildOutputTest`'s alone.
+Checks whose only point was that nothing reached stderr, or that a copy reached a listener, were dropped, since the raw-output gate and the binding tests prove there is no other path; tests of which warnings a flow raises stay, reading the recorder or the log binding.
+What still prints raw (the init flow, much of `cli/command`, `ProxyService`, the proxy's log) cannot be recorded yet, so its tests keep their swap until its step moves it to the seam; `StreamSwapGateTest` lists them, each with why, and the list only shrinks.
+A class that calls another's swapping helper counts as swapping; it lists classes, not swaps, so a listed class's own helper can take a new caller, which review has to catch until the class is dropped.
+
 **One status line cannot hold several warnings.**
 The TUI used to put each warning on its status line, which shows one message until the next key.
 Two operations warning close together -- a reload that finds a broken tool file, then a start that drops a missing inbox -- overwrote each other.

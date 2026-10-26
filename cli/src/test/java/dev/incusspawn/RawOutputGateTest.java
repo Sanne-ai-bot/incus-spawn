@@ -130,25 +130,38 @@ class RawOutputGateTest {
      * path; a static import of a stream, in any file, goes straight to {@code failures}.
      */
     private static Map<String, Found> scan(StringBuilder failures) throws IOException {
-        var repo = repo();
         var scanned = new TreeMap<String, Found>();
+        for (var source : sources("src/main/java").entrySet()) {
+            var path = source.getKey();
+            var code = blank(source.getValue());
+            var imports = lines(STATIC_IMPORT, code);
+            if (!imports.isEmpty()) {
+                failures.append(path).append(": static import of a System stream at lines ")
+                        .append(imports).append('\n');
+            }
+            if (exempt(path)) continue;
+            var found = find(code);
+            if (!found.count().equals(Count.NONE)) scanned.put(path, found);
+        }
+        return scanned;
+    }
+
+    /**
+     * Every Java source under {@code dir} ({@code src/main/java}, {@code src/test/java}) of the
+     * three modules, by repository path: the one walk every source gate makes, so a module added
+     * is seen by all of them.
+     */
+    static Map<String, String> sources(String dir) throws IOException {
+        var repo = repo();
+        var sources = new TreeMap<String, String>();
         for (var module : List.of("cli", "common", "proxy")) {
-            try (Stream<Path> files = Files.walk(repo.resolve(module).resolve("src/main/java"))) {
-                for (var file : files.filter(f -> f.toString().endsWith(".java")).sorted().toList()) {
-                    var path = repo.relativize(file).toString().replace('\\', '/');
-                    var code = blank(Files.readString(file));
-                    var imports = lines(STATIC_IMPORT, code);
-                    if (!imports.isEmpty()) {
-                        failures.append(path).append(": static import of a System stream at lines ")
-                                .append(imports).append('\n');
-                    }
-                    if (exempt(path)) continue;
-                    var found = find(code);
-                    if (!found.count().equals(Count.NONE)) scanned.put(path, found);
+            try (Stream<Path> files = Files.walk(repo.resolve(module).resolve(dir))) {
+                for (var file : files.filter(f -> f.toString().endsWith(".java")).toList()) {
+                    sources.put(repo.relativize(file).toString().replace('\\', '/'), Files.readString(file));
                 }
             }
         }
-        return scanned;
+        return sources;
     }
 
     /** {@code code} is already {@link #blank blanked}. */
@@ -228,7 +241,7 @@ class RawOutputGateTest {
      * a stream.
      * Quotes and newlines stay, so offsets still map to the same lines.
      */
-    private static String blank(String source) {
+    static String blank(String source) {
         var out = new StringBuilder(source.length());
         int i = 0;
         int n = source.length();

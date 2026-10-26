@@ -40,6 +40,7 @@ So the live line, the plain failure line on stdout, the printed log and the save
 `AnsiEscapeGateTest` fails on any raw CSI/OSC literal (`\033[`, `\033]`) whose line lacks a `// raw ANSI: <why>` comment, apart from the gates, `TerminalProgress` and `ShellStatusBar` (#1082).
 `RawOutputGateTest` fails on raw stream use or replacement (`System.setOut`/`setErr`), console or `printStackTrace()` use and on a print literal that starts with spaces, outside the gate classes (#1703).
 Older offenders are counted per file in `cli/src/test/resources/raw-output-baseline.txt`: a file may not exceed its count, and a count it no longer reaches must be lowered.
+Tests assert on `RecordingOutput`'s typed events (common test-jar) instead of swapping streams; `StreamSwapGateTest` allows a swap only in the test classes its `MAY_SWAP` map lists, for output still printed raw or for the streams themselves (`BuildOutputTest`, `OutputBindingTest`, the pre-TUI hold).
 Escapes follow stdout: `System.console()` never looks at stderr, so `2>log` alone keeps colour (documented, not fixable without native code).
 A warning's closing blank line goes to stdout, so stdout's flow keeps its layout when stderr is redirected.
 A styled string is never a `static final` (it would be decided when the native image is built): `InitCommand`'s borders are methods for that reason.

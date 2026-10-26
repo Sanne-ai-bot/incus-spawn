@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
@@ -28,9 +29,9 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
 
 /**
- * The warnings of a branch's post-start setup go where the rest of the branch's do (#1646): the
- * TUI branches on the released terminal and keeps what {@link BuildOutput#warn} said in its
- * warning log, since the shell that follows the branch draws over the terminal.
+ * Which warnings a branch's setup raises (#1646), under the binding the TUI makes for a branch
+ * (a copying terminal, here a quiet one): what it keeps in its log, since the shell that follows
+ * draws over the terminal. A failed step it does not copy, so one would fail these tests.
  */
 @ExtendWith(TempHome.class)
 class BranchSetupWarningsTest {
@@ -43,7 +44,7 @@ class BranchSetupWarningsTest {
         var request = new BranchFlow.Request("tpl-dev", "dev-1", false, false, NetworkMode.AIRGAP,
                 inbox, null, null, null, List.of(), true, Map.of());
         var warnings = new ArrayList<String>();
-        try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(warnings::add)))) {
+        try (var ignored = BuildOutput.bind(Output.copying(RecordingOutput.QUIET, Output.diagnosticsTo(warnings::add)))) {
             BranchFlow.create(incus, BranchFlow.preflight(incus, request, Map.of()));
         }
         return warnings;
@@ -101,7 +102,7 @@ class BranchSetupWarningsTest {
                 .refuseWritesContaining("security.ipv4_filtering");
         var warnings = new ArrayList<String>();
 
-        try (var ignored = BuildOutput.bind(Output.copying(BuildOutput.terminal(), Output.diagnosticsTo(warnings::add)))) {
+        try (var ignored = BuildOutput.bind(Output.copying(RecordingOutput.QUIET, Output.diagnosticsTo(warnings::add)))) {
             InstanceLifecycle.configureBranch(daemon.client(), "dev-1", new InstanceLifecycle.BranchSettings(
                     null, "8GiB", "20GiB", NetworkMode.FULL, "tpl-dev", Map.of(), false));
         }
