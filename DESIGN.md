@@ -978,6 +978,12 @@ A status command's report is its result whatever it says.
 Every other styled line (`isx init`, the proxy banners, build failure reports) goes through the same `BuildOutput.styled()` (#1082); only what is drawn on a terminal alone (live steps, `TerminalProgress` formatters, window titles behind `hasTerminal()`) writes escapes directly.
 `AnsiEscapeGateTest` fails on any raw CSI or OSC literal unless its line carries a `// raw ANSI: <why>` comment (on that line, so a marker never covers another).
 Only the two gates, `TerminalProgress` and the shell status bar are exempt as whole files, so a new escape on an ordinary path in `BuildCommand` still fails.
+`RawOutputGateTest` does the same for the raw streams (#1703): `System.out`, `System.err`, `System.setOut`/`setErr`, `System.console()`, `FileDescriptor.out`/`err` and `printStackTrace()`, and a print literal indented by hand.
+The rule against printing from code the TUI can reach was prose for five rounds of fixes, and nothing failed when the next site was added.
+Over 1,300 such uses predate the gate, so it ratchets: `raw-output-baseline.txt` counts them per file, a file may not exceed its count, and a count it no longer reaches fails until it is lowered.
+A static import of a stream is refused outright, since it would hide every bare `out.println` after it, and an exemption whose file no longer writes fails as well.
+The counts are totals, so a new print in a baselined file still needs a reviewer's eye when an old one goes in the same change.
+It is a source scan rather than forbiddenapis, which reads Java 25 class files as of 3.9 but keeps no per-file counts and cannot see an indentation literal.
 A styled string is never a `static final`: it would be decided when the native image is built.
 `BuildOutputTest` and `StatusCommandOutputTest` pin these.
 

@@ -227,6 +227,11 @@ The branch-path sites that still print bare stderr are tracked in #1690.
 The same holds before the TUI opens.
 Bare `isx` holds `Warnings` raised while it gets ready (VM start, init) for the TUI's log, and waits for Enter before opening the TUI if anything else was printed (`PreTuiOutput`, #1154).
 So a pre-TUI notice is a `Warnings.warn`, not a bare print.
+`RawOutputGateTest` (`cli`) enforces this, and bans indenting a print literal by hand (#1703).
+Only its gate classes may write the raw streams: the `EXEMPT` map and the build-time `graal/*Feature` classes.
+Code that predates it is counted per file in `raw-output-baseline.txt`, whose counts only shrink.
+Route new output through `BuildOutput` or a caller's sink; never add a baseline line or raise a count.
+A moved or renamed file takes its line along.
 
 **Output a script reads is a contract.**
 `--format=plain|json` (on `isx list` and every other query command, and `isx branch`) goes through `OutputFormat` (`common/util`): one ordered map per record feeds both formats.
