@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
@@ -251,6 +252,44 @@ class ProxyServiceTest {
                     stopped.events());
         } finally {
             ProxyService.replaceCommandRunner(saved);
+        }
+    }
+
+    /**
+     * `isx proxy uninstall` fails when the service files stay behind, and succeeds when there is
+     * no service to remove.
+     */
+    @Test
+    void uninstallFailsOnlyWhenTheServiceFilesStay() throws Exception {
+        assumeTrue(Platform.isLinux(), "the systemd unit is the service here");
+        var originalHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        var saved = ProxyService.replaceCommandRunner(command -> true);
+        try {
+            var absent = RecordingOutput.during(() -> assertTrue(ProxyService.uninstall(() -> false)));
+            assertEquals(List.of(), absent.events(RecordingOutput.Kind.ERROR));
+
+            // A directory where the unit file goes: deleting it fails
+            var unit = Environment.proxyServiceFile();
+            Files.createDirectories(unit.resolve("stuck"));
+            var stuck = RecordingOutput.during(() -> assertFalse(ProxyService.uninstall(() -> false)));
+            assertEquals(1, stuck.events(RecordingOutput.Kind.ERROR).size(), stuck.events()::toString);
+            assertTrue(Files.exists(unit));
+
+            // A unit still running after its stop keeps its files
+            Files.delete(unit.resolve("stuck"));
+            var running = RecordingOutput.during(() -> assertFalse(ProxyService.uninstall(() -> true)));
+            assertEquals(List.of("Could not stop the proxy service; its files stay."),
+                    running.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList());
+            assertTrue(Files.exists(unit), "not removed from under a running unit");
+
+            // A stop systemctl refuses for a unit that is not running still removes its files
+            ProxyService.replaceCommandRunner(command -> false);
+            assertTrue(ProxyService.uninstall(() -> false));
+            assertFalse(Files.exists(unit));
+        } finally {
+            ProxyService.replaceCommandRunner(saved);
+            System.setProperty("user.home", originalHome);
         }
     }
 

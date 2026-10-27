@@ -345,31 +345,45 @@ public final class ProxyService {
         }
     }
 
-    private static boolean uninstall() {
+    /** Removes the service; false when it is installed and its files could not be removed. */
+    static boolean uninstall() {
+        return uninstall(ProxyService::isActive);
+    }
+
+    /** {@link #uninstall()} with the unit's state after its stop replaceable, for tests. */
+    static boolean uninstall(BooleanSupplier active) {
         try (var ignored = acquireProxyLock()) {
-            return uninstallLocked();
+            return uninstallLocked(active);
         }
     }
 
+    /**
+     * Removes the service, then what routes instances to it; false when either stays. A service
+     * still running keeps its DNS overrides and redirect rules, which it needs.
+     */
     public static boolean uninstall(IncusClient incus) {
-        var serviceRemoved = uninstall();
+        if (!uninstall()) return false;
         ProxyConfig.clearBridgeDns(incus);
-        ProxyConfig.clearRedirectRules();
-        return serviceRemoved;
+        return ProxyConfig.clearRedirectRules();
     }
 
-    private static boolean uninstallLocked() {
-        if (Platform.isMacOS()) {
-            uninstallMacOs();
-            return true;
-        }
+    private static boolean uninstallLocked(BooleanSupplier active) {
+        if (Platform.isMacOS()) return uninstallMacOs();
         if (!isInstalled()) {
+            // Nothing to remove is what uninstalling asks for
             BuildOutput.step("Proxy service is not installed.");
-            return false;
+            return true;
         }
 
         BuildOutput.step("Stopping and disabling proxy service...");
+        // A stop systemctl refuses for a unit that is not running (no user manager, a unit never
+        // loaded) still lets its files go; a unit still running keeps them.
         runQuiet("systemctl", "--user", "stop", SERVICE_NAME);
+        if (active.getAsBoolean()) {
+            BuildOutput.error("Could not stop the proxy service; its files stay.",
+                    "Check it with: systemctl --user status " + SERVICE_NAME);
+            return false;
+        }
         runQuiet("systemctl", "--user", "disable", SERVICE_NAME);
 
         try {
@@ -1445,13 +1459,22 @@ public final class ProxyService {
         }
     }
 
-    public static void uninstallMacOs() {
+    /** Removes both launch agents; false when a plist stays, which launchd loads again at the next login. */
+    private static boolean uninstallMacOs() {
         var uid = getUid();
         runQuiet("launchctl", "bootout", "gui/" + uid, proxyPlistFile().toString());
         runQuiet("launchctl", "bootout", "gui/" + uid, vmPlistFile().toString());
-        try { Files.deleteIfExists(proxyPlistFile()); } catch (IOException ignored) {}
-        try { Files.deleteIfExists(vmPlistFile()); } catch (IOException ignored) {}
-        BuildOutput.step("macOS services uninstalled.");
+        var removed = true;
+        for (var plist : List.of(proxyPlistFile(), vmPlistFile())) {
+            try {
+                Files.deleteIfExists(plist);
+            } catch (IOException e) {
+                BuildOutput.error("Failed to remove the launch agent " + plist + ": " + e.getMessage());
+                removed = false;
+            }
+        }
+        if (removed) BuildOutput.step("macOS services uninstalled.");
+        return removed;
     }
 
     private static LaunchdJob proxyJob() {
