@@ -433,19 +433,7 @@ public class VmCommand extends BaseCommand {
                 BuildOutput.error("No VM log file found at " + logFile, "Start the VM first: isx vm start");
                 return CommandResult.valueOf(1);
             }
-            try {
-                // tail inherits the terminal: only the CLI runs this, and nothing else prints meanwhile
-                var pb = new ProcessBuilder("tail", "-f", logFile.toString());
-                pb.inheritIO();
-                return CommandResult.valueOf(ProxyCommand.Logs.followed(pb.start().waitFor()));
-            } catch (InterruptedException e) {
-                // Nothing interrupts this thread; were it, the console was shown until then
-                Thread.currentThread().interrupt();
-                return CommandResult.SUCCESS;
-            } catch (IOException e) {
-                BuildOutput.error("Failed to tail log file: " + e.getMessage());
-                return CommandResult.valueOf(1);
-            }
+            return LogFollower.follow(List.of("tail", "-f", logFile.toString()), "Failed to tail log file");
         }
     }
 

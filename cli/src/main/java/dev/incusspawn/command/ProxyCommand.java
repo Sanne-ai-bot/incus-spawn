@@ -610,29 +610,7 @@ public class ProxyCommand extends BaseCommand {
             out.printf(row, "Runtime:", build.runtime());
             out.println();
 
-            // tail inherits the terminal: only the CLI runs this, and nothing else prints meanwhile
-            try {
-                var pb = new ProcessBuilder("tail", "-f", logFile().toString());
-                pb.inheritIO();
-                return CommandResult.valueOf(followed(pb.start().waitFor()));
-            } catch (InterruptedException e) {
-                // Nothing interrupts this thread; were it, the logs were shown until then
-                Thread.currentThread().interrupt();
-                return CommandResult.SUCCESS;
-            } catch (IOException e) {
-                BuildOutput.error("Failed to tail log file: " + e.getMessage());
-                return CommandResult.valueOf(1);
-            }
-        }
-
-        /**
-         * The exit code of following a log with {@code tail -f} or {@code journalctl -f}, from
-         * theirs: a follower ended by a signal (above 128) was stopped by whoever read it, as
-         * {@code isx proxy logs | head} sends {@code tail} SIGPIPE, so that is a success; one that
-         * exited by itself could not read the log, and has said why.
-         */
-        static int followed(int exitCode) {
-            return exitCode == 0 || exitCode > 128 ? 0 : 1;
+            return LogFollower.follow(List.of("tail", "-f", logFile().toString()), "Failed to tail log file");
         }
 
         /**
@@ -641,32 +619,22 @@ public class ProxyCommand extends BaseCommand {
          */
         private CommandResult showFallbackLogs() {
             String header;
-            java.util.List<String> command;
+            List<String> command;
             if (Platform.isMacOS()) {
                 var serviceLog = Environment.proxyServiceLogFile();
                 if (!Files.exists(serviceLog)) return null;
                 header = "Showing launchd service log instead (" + serviceLog + "):";
-                command = java.util.List.of("tail", "-f", serviceLog.toString());
+                command = List.of("tail", "-f", serviceLog.toString());
             } else if (ProxyService.isInstalled()) {
                 header = "Showing systemd journal instead:";
-                command = java.util.List.of("journalctl", "--user", "-u",
+                command = List.of("journalctl", "--user", "-u",
                         Environment.PROXY_SERVICE_NAME, "--no-pager", "-n", "50", "-f");
             } else {
                 return null;
             }
             BuildOutput.note("No proxy log file at " + logFile());
             BuildOutput.note(header);
-            try {
-                var pb = new ProcessBuilder(command);
-                pb.inheritIO();
-                return CommandResult.valueOf(followed(pb.start().waitFor()));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return CommandResult.SUCCESS;
-            } catch (IOException e) {
-                BuildOutput.error("Failed to read service logs: " + e.getMessage());
-                return CommandResult.valueOf(1);
-            }
+            return LogFollower.follow(command, "Failed to read service logs");
         }
     }
 
