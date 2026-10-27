@@ -125,6 +125,21 @@ public final class InstanceNetwork {
         IncusClient.retryWhileChanged(() -> releaseBuildAddressOnce(incus, name));
     }
 
+    /**
+     * {@link #releaseBuildAddress}, after a build or an {@code isx update-all}, warning to
+     * {@code out} rather than failing: the template is built, and an address it keeps costs one
+     * of the bridge's addresses, not correctness -- its copies never carry it, and it is freed
+     * when the template is next updated, rebuilt or removed. Never throws.
+     */
+    public static void releaseBuildAddressOrWarn(IncusClient incus, String name, Output out) {
+        try {
+            releaseBuildAddress(incus, name);
+        } catch (RuntimeException e) {
+            out.warn("Could not release " + name + "'s static IP: " + e.getMessage()
+                    + ". The template keeps it until it is next updated, rebuilt or removed.");
+        }
+    }
+
     private static void releaseBuildAddressOnce(IncusClient incus, String name) {
         var read = incus.readInstance(name);
         var instance = read.metadata();

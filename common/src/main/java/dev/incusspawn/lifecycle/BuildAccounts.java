@@ -65,10 +65,15 @@ public final class BuildAccounts {
                 dev.incusspawn.proxy.InstanceSecret.guestEnv(secret, false, placeholders));
     }
 
+    /** The stamps that let the proxy accept an instance's secret and proofs, which {@link #revoke} empties. */
+    static final java.util.List<String> PROOF_KEYS = java.util.List.of(Metadata.INSTANCE_SECRET_SHA256,
+            Metadata.INSTANCE_PROOF_SHA256, Metadata.INSTANCE_PROOF_ID, Metadata.INSTANCE_SECRET_BOOT);
+
     /** Revoke before publication or inspection. A later isx start delivers fresh proofs. */
     public static void revoke(IncusClient incus, String name) {
-        incus.configSetAll(name, Map.of(Metadata.INSTANCE_SECRET_SHA256, "",
-                Metadata.INSTANCE_PROOF_SHA256, "", Metadata.INSTANCE_PROOF_ID, "", Metadata.INSTANCE_SECRET_BOOT, ""));
+        var updates = new LinkedHashMap<String, String>();
+        PROOF_KEYS.forEach(key -> updates.put(key, ""));
+        incus.configSetAll(name, updates);
     }
 
     /**

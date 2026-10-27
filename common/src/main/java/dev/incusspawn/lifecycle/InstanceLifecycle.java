@@ -18,6 +18,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.CredentialProof;
 import dev.incusspawn.proxy.ProofToken;
+import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
@@ -546,17 +547,47 @@ public final class InstanceLifecycle {
      * None of {@link #prepareForStart}'s repairs applies to a template: its build removes the
      * host-resource devices (the recorded list is for its branches), it never has an inbox or a
      * zmx device, and each branch sets its own filtering ({@link #configureBranch}). Nor is it given
-     * a secret: it is never used as a box.
+     * a secret or proofs: it is never used as a box, and the proxy serves it no credentials.
      *
-     * @param instance the template as read ({@link IncusClient#instanceMetadataOrThrow}); anything
-     *                 else is refused, since an instance starts through {@link #startForUse}
+     * <p>It runs its prime commands as a build does, so it is pinned to an address as a build is
+     * ({@link InstanceNetwork#assignBuildAddress}, #1743): unpinned and unfiltered, code in it
+     * could take a stopped branch's address and be attributed that branch's traffic. The caller
+     * checks the address once the guest answers ({@link InstanceNetwork#requireBuildAddress}) and,
+     * however the update ends, gives it back once the template is stopped
+     * ({@link InstanceNetwork#releaseBuildAddressOrWarn}).
+     *
+     * @param read the template as read; anything else is refused, since an instance starts
+     *             through {@link #startForUse}
+     * @return the address assigned
      */
-    public static void startTemplate(IncusClient incus, String name, JqValue instance, Output out) {
-        var type = instance == null ? "" : instance.path("config").path(Metadata.TYPE).asText("");
+    public static String startTemplate(IncusClient incus, String name, IncusClient.InstanceRead read, Output out) {
+        requireStoppedTemplate(name, read);
+        // No proof or grant a build may have left, so the proxy serves the template nothing
+        var updates = new LinkedHashMap<String, String>();
+        updates.put(Metadata.MCP_CALLER, null);
+        BuildAccounts.PROOF_KEYS.forEach(key -> updates.put(key, null));
+        var address = InstanceNetwork.assignBuildAddress(incus, name, read, updates);
+        // As a build does: the proxy knows the address before anything inside asks
+        ProxyService.signalAccountRefresh();
+        startInstance(incus, name, out);
+        return address;
+    }
+
+    /**
+     * Refuse what {@link #startTemplate} must not start: anything but a template, and a template
+     * that is not stopped, whose NIC the pinning would change under a running guest.
+     */
+    public static void requireStoppedTemplate(String name, IncusClient.InstanceRead read) {
+        var instance = read.metadata();
+        if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
+        var type = instance.path("config").path(Metadata.TYPE).asText("");
         if (!Metadata.TYPE_BASE.equals(type) && !Metadata.TYPE_PROJECT.equals(type)) {
             throw new IllegalArgumentException("'" + name + "' is not a template, or no longer exists");
         }
-        startInstance(incus, name, out);
+        if (!"Stopped".equalsIgnoreCase(instance.pathText("status", ""))) {
+            throw new IllegalStateException("Template " + name + " must be stopped before it is updated; it is "
+                    + instance.pathText("status", "in an unknown state") + ". Stop it with 'incus stop " + name + "'.");
+        }
     }
 
     /**
