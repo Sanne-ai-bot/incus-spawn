@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import dev.incusspawn.tui.Tui;
+import dev.incusspawn.util.BuildOutput;
 
 @QuarkusMain
 public class IncusSpawn implements QuarkusApplication {
@@ -54,7 +55,9 @@ public class IncusSpawn implements QuarkusApplication {
                     .execute();
             return result != null ? result.getResultValue() : 1;
         } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
+            // A step the exception cut short must not keep drawing around the error
+            BuildOutput.abandonStep();
+            BuildOutput.error(BaseCommand.failure(e));
             return 1;
         }
     }
