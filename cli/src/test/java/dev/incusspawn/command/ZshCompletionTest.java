@@ -78,8 +78,10 @@ class ZshCompletionTest {
         var p = pb.start();
         if (!p.waitFor(30, TimeUnit.SECONDS)) {
             p.destroyForcibly();
-            fail("zsh completion did not finish in 30s");
+            fail("zsh completion did not finish in 30s: " + readQuietly(log));
         }
+        // The driver exits 77 when zsh has zpty but cannot run it here (no usable pty).
+        Assumptions.assumeFalse(p.exitValue() == 77, () -> "zpty cannot run here: " + readQuietly(log));
         assertEquals(0, p.exitValue(), () -> "driver failed: " + readQuietly(log));
         return Files.readString(out).strip();
     }
