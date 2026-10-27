@@ -1,5 +1,6 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 
@@ -65,7 +66,7 @@ final class StreamJsonEvents {
             if (line.isBlank() || line.charAt(0) != '{') continue;
             JqValue event;
             try {
-                event = JsonRpc.parse(line);
+                event = Jjq.parseForeign(line, "Claude Code's stream-json event");
             } catch (Exception e) {
                 continue; // cut off by the tail, or still being written
             }

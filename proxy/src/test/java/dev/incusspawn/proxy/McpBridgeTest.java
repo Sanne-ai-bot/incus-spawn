@@ -271,6 +271,15 @@ class McpBridgeTest {
     }
 
     @Test
+    void aMalformedRequestIsRefusedSayingWhatAndWhere() throws Exception {
+        var session = initialize();
+        var refused = post(session, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"\\q\"}");
+        assertEquals(400, refused.status());
+        assertTrue(refused.body().contains("the MCP request is not valid JSON: Invalid escape '\\q' at line 1, column 36"),
+                refused.body());
+    }
+
+    @Test
     void aBatchIsRefused() throws Exception {
         var session = initialize();
         assertEquals(400, post(session, "[{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}]").status());

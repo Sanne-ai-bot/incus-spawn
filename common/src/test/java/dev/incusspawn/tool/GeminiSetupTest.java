@@ -132,4 +132,12 @@ class GeminiSetupTest {
         assertThrows(IncusException.class, () -> new GeminiSetup().install(new Container(incus, INSTANCE), Map.of()));
         verify(incus, never()).shellExec(eq(INSTANCE), eq("sh"), eq("-c"), anyString());
     }
+
+    @Test
+    void settingsWithALoneSurrogateEscapeAreReadAndBrokenOnesExplained() {
+        var after = JqValues.parseStrict(GeminiSetup.selectApiKeyAuth("{\"model\":{\"name\":\"cut \\ud83d\"}}"));
+        assertEquals("cut \ufffd", after.path("model").path("name").asText());
+        var e = assertThrows(IllegalArgumentException.class, () -> GeminiSetup.selectApiKeyAuth("{\"model\":\"\\q\"}"));
+        assertEquals(GeminiSetup.CONFIG_PATH + " is not valid JSON: Invalid escape '\\q' at line 1, column 12", e.getMessage());
+    }
 }

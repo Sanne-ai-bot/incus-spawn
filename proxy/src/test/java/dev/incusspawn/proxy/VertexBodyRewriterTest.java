@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
@@ -347,7 +348,7 @@ class VertexBodyRewriterTest {
             // Since jjq 0.2.4 the tree refuses a lone surrogate escape (Hyperfoil/jjq#146), where it re-encoded
             // one: it reads the body as 0.2.3 did, and the rewriter still refuses one in a name it reads
             var loneSurrogate = refusedWith(first, "Unpaired surrogate");
-            var expected = loneSurrogate ? legacy(loneSurrogateEscapesReplaced(body.toString())) : first;
+            var expected = loneSurrogate ? legacy(Jjq.replaceLoneSurrogateEscapes(body.toString()).getBytes(StandardCharsets.UTF_8)) : first;
             // Duplicate keys are the one deliberate departure: tested on their own below
             if (refusedWith(expected, "Duplicate key")) continue;
             var got = rewrite(bytes);
@@ -364,43 +365,8 @@ class VertexBodyRewriterTest {
         assertTrue(comparedLoneSurrogates > 0, "compared no body with a lone surrogate escape");
     }
 
-    @Test
-    void loneSurrogateEscapesAreReplacedAndPairsAndEscapedBackslashesKept() {
-        var body = "{\"a\":\"\\ud83d \\ude00 \\\\ud800 \\ud83d\\ude00 \\ud83d\\ud83d\"}";
-        assertEquals("{\"a\":\"\\ufffd \\ufffd \\\\ud800 \\ud83d\\ude00 \\ufffd\\ufffd\"}",
-                new String(loneSurrogateEscapesReplaced(body), StandardCharsets.UTF_8));
-    }
-
     static boolean refusedWith(Outcome outcome, String message) {
         return outcome.refusal() != null && String.valueOf(outcome.refusal().getMessage()).contains(message);
-    }
-
-    /** {@code body} with each {@code \\u} escape of an unpaired surrogate written as {@code \\ufffd}. */
-    static byte[] loneSurrogateEscapesReplaced(String body) {
-        var out = new StringBuilder(body.length());
-        for (int i = 0; i < body.length(); i++) {
-            int unit = surrogateEscape(body, i);
-            if (unit < 0) {
-                out.append(body.charAt(i));
-                if (body.charAt(i) == '\\' && i + 1 < body.length()) out.append(body.charAt(++i));
-            } else if (Character.isHighSurrogate((char) unit) && Character.isLowSurrogate((char) Math.max(surrogateEscape(body, i + 6), 0))) {
-                out.append(body, i, i + 12);
-                i += 11;
-            } else {
-                out.append("\\ufffd");
-                i += 5;
-            }
-        }
-        return out.toString().getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static int surrogateEscape(String body, int at) {
-        if (at + 6 > body.length() || body.charAt(at) != '\\' || body.charAt(at + 1) != 'u') return -1;
-        for (int k = at + 2; k < at + 6; k++) {
-            if (!java.util.HexFormat.isHexDigit(body.charAt(k))) return -1;
-        }
-        int unit = java.util.HexFormat.fromHexDigits(body, at + 2, at + 6);
-        return Character.isSurrogate((char) unit) ? unit : -1;
     }
 
     // --- Where it parts from the tree translation, as #1315 decided ---

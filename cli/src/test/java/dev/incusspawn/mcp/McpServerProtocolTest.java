@@ -280,4 +280,22 @@ class McpServerProtocolTest {
         new McpServer(transport, tools, "1", null, null).run();
         assertEquals(0, cancelled.getCount());
     }
+
+    @Test
+    void aMalformedMessageIsAParseErrorSayingWhatAndWhere() {
+        server().handle("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"x\\q\"}");
+        var error = out.sent.getLast().path("error");
+        assertEquals(JsonRpc.PARSE_ERROR, error.path("code").asInt(0));
+        assertEquals("Parse error: the MCP message is not valid JSON: Invalid escape '\\q' at line 1, column 37",
+                error.path("message").asText());
+    }
+
+    /** An MCP client may be a Node program, whose JSON.stringify writes a lone surrogate escape. */
+    @Test
+    void aLoneSurrogateEscapeInAMessageIsReadAsAReplacementCharacter() {
+        server().handle("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
+                + "\"clientInfo\":{\"name\":\"cut \\ud83d\"}}}");
+        assertTrue(out.byId(1).path("result").isObject(), out.sent.toString());
+        assertEquals("cut \ufffd", clientInfo[0].path("name").asText());
+    }
 }

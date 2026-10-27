@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqValues;
 
@@ -179,7 +180,7 @@ public class ApiTrafficLog {
 
     private String formatBody(byte[] body) {
         try {
-            return JqValues.toPrettyJsonString(JqValues.parseStrict(body));
+            return JqValues.toPrettyJsonString(Jjq.parseForeign(body, "the logged body"));
         } catch (Exception e) {
             return new String(body, 0, Math.min(body.length, DISPLAYED_RAW_BYTES));
         }

@@ -4,11 +4,16 @@ import dev.incusspawn.tool.ToolDef;
 import io.hyperfoil.tools.jjq.mapper.JqMapper;
 import io.hyperfoil.tools.jjq.value.JqNumber;
 import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import io.hyperfoil.tools.jjq.yaml.YamlMapper;
 import io.hyperfoil.tools.jjq.yaml.YamlOptions;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.HexFormat;
+import java.util.function.Supplier;
+
+import static java.nio.charset.StandardCharsets.ISO_8859_1;
 
 /**
  * Shared jjq entry points for YAML definitions (Phase 1 of
@@ -132,6 +137,103 @@ public final class Jjq {
         var quoted = first.indexOf(" (while parsing '");
         if (quoted >= 0) first = first.substring(0, quoted);
         return first.length() > 200 ? first.substring(0, 200) + "..." : first;
+    }
+
+    // ---- JSON another program wrote ----
+
+    /**
+     * JSON another program wrote -- a tool's own file, a peer's message, an API's answer -- read as
+     * strictly as {@link JqValues#parseStrict} but on one point. A lone surrogate escape
+     * ({@code "\\ud83d"}), which RFC 8259 allows and JavaScript's {@code JSON.stringify} writes
+     * for a string cut inside a pair, reads as U+FFFD. Since jjq 0.2.4 the strict parse refuses
+     * the whole document for one (Hyperfoil/jjq#146), and a user cannot fix a file another tool
+     * keeps rewriting. isx's own files and state stay strict: they go through parseStrict.
+     * <p>
+     * Costs nothing on a clean document: the escapes are replaced, length for length, and the
+     * text parsed again only when the strict parse refused one, so positions in a later error hold.
+     *
+     * @param source what the JSON is, for the message: {@code "~/.claude.json"}
+     * @throws IllegalArgumentException for anything else malformed, as
+     *     {@code <source> is not valid JSON: <why> at line L, column C}
+     */
+    public static JqValue parseForeign(String json, String source) {
+        return parseForeign(() -> JqValues.parseStrict(json),
+                () -> JqValues.parseStrict(replaceLoneSurrogateEscapes(json)), source);
+    }
+
+    /** {@link #parseForeign(String, String)} of UTF-8 bytes, which are checked as strictly. */
+    public static JqValue parseForeign(byte[] json, String source) {
+        // Every byte of a multi-byte UTF-8 character is 0x80 or above, never a quote, a backslash
+        // or a hex digit: the escapes can be rewritten on the bytes, read one char per byte.
+        return parseForeign(() -> JqValues.parseStrict(json), () -> JqValues.parseStrict(
+                replaceLoneSurrogateEscapes(new String(json, ISO_8859_1)).getBytes(ISO_8859_1)), source);
+    }
+
+    private static JqValue parseForeign(Supplier<JqValue> strict, Supplier<JqValue> repaired, String source) {
+        try {
+            return strict.get();
+        } catch (IllegalArgumentException refused) {
+            if (!isLoneSurrogate(refused)) throw notJson(source, refused);
+        }
+        try {
+            return repaired.get();
+        } catch (IllegalArgumentException refused) {
+            throw notJson(source, refused);
+        }
+    }
+
+    /** jjq's refusal of a lone surrogate escape; JjqForeignJsonTest fails if its wording changes. */
+    private static boolean isLoneSurrogate(IllegalArgumentException refused) {
+        return String.valueOf(refused.getMessage()).startsWith("Unpaired surrogate escape");
+    }
+
+    private static IllegalArgumentException notJson(String source, IllegalArgumentException refused) {
+        return new IllegalArgumentException(source + " is not valid JSON: " + brief(refused), refused);
+    }
+
+    /**
+     * {@code json} with every {@code \\u} escape of an unpaired surrogate inside a string written
+     * as {@code \\ufffd}, the same length; pairs, other escapes and everything outside strings are
+     * left for the parser to judge.
+     */
+    public static String replaceLoneSurrogateEscapes(String json) {
+        StringBuilder out = null;
+        int copied = 0;
+        boolean inString = false;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (!inString) {
+                inString = c == '"';
+                continue;
+            }
+            if (c == '"') {
+                inString = false;
+            } else if (c == '\\' && i + 1 < json.length()) {
+                int unit = surrogateEscape(json, i);
+                if (unit < 0) {
+                    i++; // an escape that is not a surrogate's: skip what it escapes
+                } else if (Character.isHighSurrogate((char) unit)
+                        && Character.isLowSurrogate((char) Math.max(surrogateEscape(json, i + 6), 0))) {
+                    i += 11; // a pair, kept as written
+                } else {
+                    if (out == null) out = new StringBuilder(json.length());
+                    out.append(json, copied, i).append("\\ufffd");
+                    copied = i + 6;
+                    i += 5;
+                }
+            }
+        }
+        return out == null ? json : out.append(json, copied, json.length()).toString();
+    }
+
+    /** The surrogate a {@code \\uXXXX} escape at {@code at} writes, or -1 for anything else. */
+    private static int surrogateEscape(String json, int at) {
+        if (at + 6 > json.length() || json.charAt(at) != '\\' || json.charAt(at + 1) != 'u') return -1;
+        for (int k = at + 2; k < at + 6; k++) {
+            if (!HexFormat.isHexDigit(json.charAt(k))) return -1; // ASCII only, unlike Character.digit
+        }
+        int unit = HexFormat.fromHexDigits(json, at + 2, at + 6);
+        return Character.isSurrogate((char) unit) ? unit : -1;
     }
 
     // ---- JSON reads (Incus API responses) ----

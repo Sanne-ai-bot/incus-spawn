@@ -1,8 +1,8 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
-import io.hyperfoil.tools.jjq.value.JqValues;
 import java.util.ArrayList;
 
 /** Bounded JSONL tails, plus the durable terminal record appended by TaskScripts.status. */
@@ -13,8 +13,8 @@ final class CodexEvents {
         JqValue result = null;
         for (var line : tail.split("\n")) {
             try {
-                // Strict: a partial line is skipped, as Jackson's readTree threw on it
-                var e = JqValues.parseStrict(line);
+                // A partial line is skipped, as Jackson's readTree threw on it
+                var e = Jjq.parseForeign(line, "Codex's event");
                 if (!(e instanceof JqObject)) continue;
                 var type = JsonRpc.text(e, "type", "");
                 if (type.equals("isx.codex.result")) {

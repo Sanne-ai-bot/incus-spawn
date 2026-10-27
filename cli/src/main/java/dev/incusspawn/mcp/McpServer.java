@@ -99,7 +99,7 @@ final class McpServer {
     void handle(String line) {
         JqValue msg;
         try {
-            msg = JsonRpc.parse(line);
+            msg = Jjq.parseForeign(line, "the MCP message");
         } catch (RuntimeException e) {
             var detail = Jjq.brief(e);
             send(JsonRpc.error(null, JsonRpc.PARSE_ERROR, "Parse error: " + detail));

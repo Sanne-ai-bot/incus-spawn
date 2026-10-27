@@ -43,7 +43,6 @@ import java.util.regex.Pattern;
 
 import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqValue;
-import io.hyperfoil.tools.jjq.value.JqValues;
 
 import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.DIM;
@@ -608,7 +607,7 @@ class CredentialSetup {
             return "";
         }
         try {
-            var message = JqValues.parseStrict(body).getField("error").getField("message");
+            var message = Jjq.parseForeign(body, "the API's error").getField("error").getField("message");
             if (!message.isString()) {
                 return "";
             }
@@ -1574,7 +1573,7 @@ class CredentialSetup {
                 return null;
             }
 
-            var json = JqValues.parseStrict(response.body());
+            var json = Jjq.parseForeign(response.body(), "GitHub's user");
             var login = json.pathText("login", null);
             var email = json.pathText("email", null);
             if (email == null) {
@@ -1653,7 +1652,7 @@ class CredentialSetup {
 
     static EmailParseResult parseGitHubEmails(String json) {
         try {
-            var emails = JqValues.parseStrict(json);
+            var emails = Jjq.parseForeign(json, "GitHub's email list");
             var verifiedEmails = new ArrayList<String>();
             String primaryEmail = null;
             String noreplyEmail = null;

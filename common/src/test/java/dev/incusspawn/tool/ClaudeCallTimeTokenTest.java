@@ -276,4 +276,12 @@ class ClaudeCallTimeTokenTest {
     private String run(Map<String, String> env, String... command) throws Exception {
         return GuestShell.run(home, env, command);
     }
+
+    @Test
+    void aMergeThatCannotReadTheFileSaysWhy() {
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> ClaudeSetup.mergeClaudeJson(
+                new IncusClient.ExecResult(0, "{\"mcpServers\": {\"a\": \"\\q\"}}", ""), FRESH_CLAUDE_JSON));
+        assertEquals(List.of(ClaudeSetup.CLAUDE_JSON_PATH + " is not valid JSON: Invalid escape '\\q' at line 1, column 24;"
+                + " rewriting it drops what earlier layers put there"), recorded.warnings());
+    }
 }

@@ -1,6 +1,6 @@
 package dev.incusspawn.command;
 
-import io.hyperfoil.tools.jjq.value.JqValues;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.Environment;
 import dev.incusspawn.command.BuildCommand.BuildFailedException;
 import dev.incusspawn.command.BuildTools.ResolvedTool;
@@ -155,7 +155,7 @@ final class SkillInstaller {
             var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) continue;
 
-            var tree = JqValues.parseStrict(response.body()).getField("tree");
+            var tree = Jjq.parseForeign(response.body(), "GitHub's tree of " + ownerRepo).getField("tree");
             var skills = new ArrayList<SkillFile>();
             for (var node : tree.asList()) {
                 var path = node.pathText("path", "");

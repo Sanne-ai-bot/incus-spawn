@@ -2,9 +2,8 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.util.HttpValidator;
-
-import io.hyperfoil.tools.jjq.value.JqValues;
 
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -1113,7 +1112,7 @@ class ArtifactCacheHandler {
     static String npmDigest(byte[] body) {
         if (body == null) return null;
         try {
-            var dist = JqValues.parseStrict(body).getField("dist");
+            var dist = Jjq.parseForeign(body, "the npm registry's metadata").getField("dist");
             var integrity = dist.getField("integrity");
             if (!integrity.isNull()) {
                 if (!integrity.isString()) return null;

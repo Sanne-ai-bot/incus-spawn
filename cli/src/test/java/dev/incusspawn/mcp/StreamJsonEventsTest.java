@@ -51,4 +51,13 @@ class StreamJsonEventsTest {
         assertFalse(said.contains("\n"));
         assertTrue(said.endsWith("..."));
     }
+
+    /** Claude Code's JSON.stringify writes a lone surrogate escape for a report cut inside a pair. */
+    @Test
+    void aResultWithALoneSurrogateEscapeStillFinishes() {
+        var s = StreamJsonEvents.summarize(
+                "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done \\ud83d\"}\n", 5);
+        assertTrue(s.finished());
+        assertFalse(s.isError());
+    }
 }
