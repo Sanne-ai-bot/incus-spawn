@@ -12,6 +12,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /** Where each kind of message goes under each binding the owner of the terminal makes (#1703). */
 class OutputBindingTest {
@@ -179,6 +180,31 @@ class OutputBindingTest {
 
         assertEquals(List.of("Restarting vm1 VM agent not responding", "tpl-b [1/3]", "a warning\nwhat to do"),
                 out.lines());
+    }
+
+    /**
+     * A command's answer goes to the terminal's stdout, and to the terminal the TUI lends, but
+     * nowhere while the TUI draws, where a line would be drawn over.
+     */
+    @Test
+    void resultsReachOnlyATerminal() {
+        var terminal = new RecordingOutput();
+        try (var ignored = BuildOutput.bind(Output.copying(terminal, Output.diagnosticsTo(m -> fail(m))))) {
+            BuildOutput.results().println("Proxy is running.");
+            BuildOutput.results().println();
+        }
+        assertEquals(List.of("Proxy is running.", ""), terminal.resultLines());
+
+        var out = new ByteArrayOutputStream();
+        var previousOut = System.out;
+        System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(m -> fail(m)))) {
+            BuildOutput.results().println("drawn over");
+        } finally {
+            System.setOut(previousOut);
+        }
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals(Output.DISCARD, Output.logTo(m -> {}, m -> {}, m -> {}).results());
     }
 
     /** The proxy's log keeps what shared code reports: progress as info, notes apart, warnings as warnings, one line each. */

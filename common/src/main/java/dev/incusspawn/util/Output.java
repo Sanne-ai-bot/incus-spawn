@@ -1,5 +1,7 @@
 package dev.incusspawn.util;
 
+import java.io.OutputStream;
+import java.io.PrintStream;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -89,6 +91,17 @@ public interface Output {
 
     default void list(Collection<String> items) {}
 
+    /**
+     * Where the command's answer goes: a status report, a table, a script's records
+     * ({@link OutputFormat}), each line as given. A terminal's is its stdout, which holds results
+     * alone; an output that is not a terminal has none, so by default what is written is dropped.
+     * Ask for it where the answer is written: a terminal's is the stream it holds at that moment,
+     * guarded by a live step only when the step started first.
+     */
+    default PrintStream results() {
+        return DISCARD;
+    }
+
     default void stepStart(String msg) {}
 
     default void stepProgress(String detail) {}
@@ -110,6 +123,9 @@ public interface Output {
     default List<Output> destinations() {
         return List.of(this);
     }
+
+    /** What {@link #results()} is off a terminal. */
+    PrintStream DISCARD = new PrintStream(OutputStream.nullOutputStream());
 
     /** A {@link #group} being printed; closing it returns to the enclosing indent. */
     @FunctionalInterface

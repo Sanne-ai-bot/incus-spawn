@@ -60,6 +60,21 @@ class BuildOutputTest {
                 """, text());
     }
 
+    /** A result is printed as given, at column 0, and one written mid-step moves below the step's line. */
+    @Test
+    void resultsArePrintedAsGivenBelowALiveStep() {
+        BuildOutput.results().println("Proxy is running.");
+        BuildOutput.stepStart("Checking...");
+        BuildOutput.results().println("Version: 1.0");
+        BuildOutput.stepDone();
+        assertEquals("""
+                Proxy is running.
+                    Checking...
+                Version: 1.0
+                    Checking... done.
+                """, text());
+    }
+
     @Test
     void streamsAreRestoredWhenTheStepEnds() {
         var out = System.out;

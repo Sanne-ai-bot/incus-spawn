@@ -133,6 +133,12 @@ public final class TerminalOutput implements Output {
         out.get().println(indent() + styled(GREEN, "✓") + " " + msg);
     }
 
+    /** Its stdout, as it is now: a live step's guard included, so a result first freezes the step's line. */
+    @Override
+    public PrintStream results() {
+        return out.get();
+    }
+
     @Override
     public void list(Collection<String> items) {
         var lineIndent = indent();
