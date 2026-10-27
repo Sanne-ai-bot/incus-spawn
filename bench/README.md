@@ -258,16 +258,18 @@ instrumented binary does is timed or saved as a result: its numbers mean nothing
 The same code built by two different GraalVM releases, on one host:
 
 ```shell
-bench/run.sh --builder-image=incus-spawn-graalvm-builder:25i3-ol10 --label=25.3
+bench/run.sh --builder-image=bench-graalvm-builder:25i3-ol10 --label=25.3
 bench/run.sh --builder-image=incus-spawn-graalvm-builder:25i4-ol10 --label=25.4
 ```
 
-`install.sh --native` prepares the builder of the release's GraalVM; prepare another the same way:
+`install.sh --native` prepares the builder of the release's GraalVM; prepare another the same way, under a name of your own:
 
 ```shell
 printf 'FROM container-registry.oracle.com/graalvm/native-image:25i3-ol10\nWORKDIR /project\n' \
-    | podman build -t incus-spawn-graalvm-builder:25i3-ol10 -
+    | podman build -t bench-graalvm-builder:25i3-ol10 -
 ```
+
+Not as `incus-spawn-graalvm-builder:*`: when `install.sh` refreshes its builder it removes every other image of that name.
 
 Use `--graalvm=DIR` instead to point at an unpacked GraalVM (the only option on macOS).
 Either way the binaries self-report the toolchain that produced them (`org.graalvm.version`

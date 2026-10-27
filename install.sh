@@ -183,17 +183,27 @@ if $NATIVE; then
             echo "Error: cannot pull $GRAALVM_BASE to build the native image."
             exit 1
         fi
+        OLD_IMAGES=""
         if [ -n "$BASE_ID" ] && [ "$BUILT_FROM" != "$BASE_ID" ]; then
             echo "Preparing GraalVM builder image..."
             OLD_BUILDER=$($CTR image inspect --format '{{.Id}}' "$BUILDER_TAG" 2>/dev/null || true)
             printf 'FROM %s\nWORKDIR /project\nLABEL dev.incusspawn.graalvm-base=%s\n' "$GRAALVM_BASE" "$BASE_ID" \
                 | $CTR build -q -t "$BUILDER_TAG" - >/dev/null
-            # What this one replaces, about 1 GB each, is no longer used: the previous builder and
-            # its base, and the builder of older install.sh, which was named after the version.
-            for OLD in $OLD_BUILDER $BUILT_FROM incus-spawn-graalvm-builder:25.4; do
-                $CTR rmi "$OLD" >/dev/null 2>&1 || true
-            done
+            # The builder this one replaces and its base, about 1 GB each, are no longer used.
+            OLD_IMAGES="$OLD_BUILDER $BUILT_FROM"
         fi
+        # Nor is any other incus-spawn builder (a GraalVM bump changes the tag) with its base,
+        # or :latest, which older install.sh built FROM. Never the base just built from.
+        for OLD in $($CTR images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+                | grep -E '^(localhost/)?incus-spawn-graalvm-builder:' \
+                | grep -vxF -e "$BUILDER_TAG" -e "localhost/$BUILDER_TAG" || true); do
+            OLD_BASE=$($CTR image inspect --format '{{index .Config.Labels "dev.incusspawn.graalvm-base"}}' "$OLD" 2>/dev/null || true)
+            [ "$OLD_BASE" = "<no value>" ] || [ "$OLD_BASE" = "$BASE_ID" ] && OLD_BASE=""
+            OLD_IMAGES="$OLD_IMAGES $OLD $OLD_BASE"
+        done
+        for OLD in $OLD_IMAGES container-registry.oracle.com/graalvm/native-image:latest; do
+            $CTR rmi "$OLD" >/dev/null 2>&1 || true
+        done
         NATIVE_ARGS="$NATIVE_ARGS -Dquarkus.native.container-build=true -Dquarkus.native.container-runtime=$CTR -Dquarkus.native.builder-image=$BUILDER_TAG -Dquarkus.native.builder-image.pull=never"
     elif [ "$(uname -s)" = "Darwin" ]; then
         if [ -z "$GRAALVM_HOME" ] || [ ! -x "$GRAALVM_HOME/bin/native-image" ]; then

@@ -95,7 +95,7 @@ while [ $# -gt 0 ]; do
             echo "                  Linux, since it reproduces the release toolchain exactly."
             echo ""
             echo "                  Either flag lets you A/B two toolchains on one host:"
-            echo "                    bench/run.sh --builder-image=incus-spawn-graalvm-builder:25i3-ol10 --label=25.3"
+            echo "                    bench/run.sh --builder-image=bench-graalvm-builder:25i3-ol10 --label=25.3"
             echo "                    bench/run.sh --builder-image=incus-spawn-graalvm-builder:25i4-ol10 --label=25.4"
             echo ""
             echo "  --hyperfoil=DIR Run Hyperfoil from this unpacked distribution, with the java on"
