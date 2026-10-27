@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * reach is drawn over and lost (#872, #1154, #1646, #1689), and a line indented by hand drifts
  * from the group it sits in, so main source of all three modules may not use or replace the raw
  * streams, use the console or {@code printStackTrace()}, nor print a string literal that starts
- * with spaces.
+ * with spaces, through a stream or the proxy's {@code ProxyLog.stdout} alike.
  *
  * <p>The code that predates the gate is held by {@value #BASELINE}: per file, how many of each
  * it still has. A file not listed may have none, a listed one may not grow, and a listed count
@@ -40,7 +40,7 @@ class RawOutputGateTest {
                     + "|\\bFileDescriptor\\s*\\.\\s*(?:out|err)\\b"
                     + "|\\.\\s*printStackTrace\\s*\\(\\s*\\)");
     private static final Pattern INDENTED_PRINT = Pattern.compile(
-            "\\b(?:print|println|printf)\\s*\\(\\s*\"(?:\\\\n|%n)*(?: |\\\\t)");
+            "\\b(?:print|println|printf|stdout)\\s*\\(\\s*\"(?:\\\\n|%n)*(?: |\\\\t)");
     /** The pieces of a string literal's start that {@link #blank} keeps, so {@link #INDENTED_PRINT} can see them. */
     private static final Set<String> LEADING_INDENT = Set.of(" ", "\\n", "\\t", "%", "n");
     /** Never needed, so never baselined: it would hide every bare {@code out.println} that follows it. */

@@ -435,13 +435,13 @@ class Upstream {
                 // Nothing of the request has left: let the connection go back to the pool
                 upReq.reset();
                 if (prepared.failed() && !watchdog.gone()) {
-                    System.err.println("Relay error (" + domain + "): " + prepared.cause().getMessage());
+                    ProxyLog.trace("Relay error (" + domain + "): " + prepared.cause().getMessage());
                     sendError(clientReq.response(), 502, "Proxy error");
                 }
             });
         }).onFailure(err -> {
             if (watchdog.cut) return;
-            System.err.println("Relay connect error (" + domain + "): " + err.getMessage());
+            ProxyLog.trace("Relay connect error (" + domain + "): " + err.getMessage());
             sendError(clientReq.response(), 502, "Upstream connection failed");
         });
     }
@@ -463,7 +463,7 @@ class Upstream {
         }).onFailure(err -> {
             // A client that left mid-upload resets the request itself
             if (watchdog.gone()) return;
-            System.err.println("Relay upstream error (" + domain + "): " + err.getMessage());
+            ProxyLog.trace("Relay upstream error (" + domain + "): " + err.getMessage());
             sendError(clientReq.response(), 502, "Upstream error");
         });
         if (streaming) pipeRequest(clientReq, upReq, watchdog, hooks.requestTap());

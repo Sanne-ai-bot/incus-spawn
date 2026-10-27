@@ -233,6 +233,7 @@ In the TUI, a warning sink is `warningLog::add`, never the status line directly:
 A TUI branch runs on the released terminal, and the shell after it draws over that, so the TUI's copying binding keeps every warning in the log, as for a build (a failed step is not copied; the status line reports it): branch-path code warns through `BuildOutput` or a sink, never a bare `System.err` (#1646).
 `common/lifecycle`, `common/config`, `common/vm` and `common/proxy` print nothing raw (#1690): GUI and KVM passthrough return why they could not (`Unavailable`), and the branch warns of it once, the cause with its advice and what it does instead.
 Neither does `isx init`'s flow (`InitCommand`, `HostSetup`, `CredentialSetup`): it reports through `BuildOutput` and asks through `Prompts`.
+The proxy daemon's own lines go through `ProxyLog`, its one gate: `stdout` for its help, version and start banner, the levels (`info`, `warn`, `error`, with advice lines) for what its lifecycle log keeps, and `trace` for a request's line, on stderr alone.
 The same holds before the TUI opens.
 Bare `isx` holds `Warnings` raised while it gets ready (VM start, init) for the TUI's log, and waits for Enter before opening the TUI if anything else was printed (`PreTuiOutput`, #1154).
 So a pre-TUI notice is a `Warnings.warn`, not a bare print.

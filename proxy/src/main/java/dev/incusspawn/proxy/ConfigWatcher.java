@@ -138,7 +138,6 @@ public class ConfigWatcher {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
             if (running) {
-                System.err.println("Config watcher failed: " + e.getMessage());
                 ProxyLog.error("Config watcher failed: " + e.getMessage());
             }
         }
@@ -148,7 +147,6 @@ public class ConfigWatcher {
         try {
             onReload.run();
         } catch (Exception e) {
-            System.err.println("Config reload failed: " + e.getMessage());
             ProxyLog.error("Config reload failed: " + e.getMessage());
         }
     }
