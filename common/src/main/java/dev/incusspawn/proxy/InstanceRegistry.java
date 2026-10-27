@@ -431,10 +431,24 @@ public final class InstanceRegistry {
      * @return true if this call performed the refresh
      */
     public boolean refresh() {
-        // Claimed first, timed after: a time read before the claim may be long gone when it wins
-        if (!listingStartedAt.compareAndSet(0, CLAIMED)) return false;
-        var number = listingsStarted.incrementAndGet();
+        var number = claim();
+        return number != 0 && list(number);
+    }
+
+    /**
+     * Claim the next listing: its number, or 0 when one is already under way. Numbered before it
+     * lists, so a listing whose number a caller wanted lists after that caller read the count.
+     * Claimed without {@link #listed} it is unordered against a listing's end, which {@link #list}
+     * records under it; {@link #refreshAfterNow} claims under it for that reason.
+     */
+    private long claim() {
+        return listingStartedAt.compareAndSet(0, CLAIMED) ? listingsStarted.incrementAndGet() : 0;
+    }
+
+    /** Run the listing claimed as {@code number}, then release the claim. */
+    private boolean list(long number) {
         try {
+            // Timed after the claim: a time read before it may be long gone when it wins.
             // At least 1: 0 is idle and CLAIMED is below. Inside the try, so finally always releases the claim
             listingStartedAt.set(Math.max(1, clock.getAsLong()));
             snapshot = new Snapshot(parse(incus.listJsonConfig()), clock.getAsLong(), VIEWS.incrementAndGet(), false);
@@ -470,25 +484,28 @@ public final class InstanceRegistry {
         // every caller waiting for it, so a burst of refused callers costs one listing, not one each
         var wanted = listingsStarted.get() + 1;
         var deadline = System.nanoTime() + timeoutMillis * 1_000_000;
-        while (true) {
-            synchronized (listed) {
-                while (listedThrough < wanted && listingStartedAt.get() != 0) {
-                    var left = (deadline - System.nanoTime()) / 1_000_000;
-                    if (left <= 0) return;
-                    try {
-                        listed.wait(left);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
-                }
+        long number;
+        synchronized (listed) {
+            while (true) {
                 // A listing that failed was tried, and that is the answer too
-                if (listedThrough >= wanted || System.nanoTime() >= deadline) return;
+                if (listedThrough >= wanted) return;
+                var left = (deadline - System.nanoTime()) / 1_000_000;
+                if (left <= 0) return;
+                // Claimed under the lock a listing ends under: claimed after it, another waiter's
+                // listing could start and end in between, and this one would list a second time for
+                // the same burst (#1769). A claim lost here was taken after the check above saw none
+                // under way, so that listing is numbered wanted or later, and the loop waits for it
+                number = claim();
+                if (number != 0) break;
+                try {
+                    listed.wait(left);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             }
-            // Nothing under way: list now. Losing the race to another caller's listing is fine,
-            // since it started after this call and the loop waits for it
-            refresh();
         }
+        list(number);
     }
 
     /** Every instance's pinned accounts, keyed by instance name, in one request. */
