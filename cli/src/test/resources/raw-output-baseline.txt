@@ -12,7 +12,6 @@
 6 0 cli/src/main/java/dev/incusspawn/command/BuildProgress.java
 5 0 cli/src/main/java/dev/incusspawn/command/BuildTools.java
 34 4 cli/src/main/java/dev/incusspawn/command/CleanCommand.java
-2 0 cli/src/main/java/dev/incusspawn/command/CompletionCommand.java
 219 193 cli/src/main/java/dev/incusspawn/command/CredentialSetup.java
 9 1 cli/src/main/java/dev/incusspawn/command/DestroyCommand.java
 24 13 cli/src/main/java/dev/incusspawn/command/DoctorCommand.java
@@ -21,8 +20,6 @@
 157 137 cli/src/main/java/dev/incusspawn/command/HostSetup.java
 141 89 cli/src/main/java/dev/incusspawn/command/InitCommand.java
 1 0 cli/src/main/java/dev/incusspawn/command/InstancePrep.java
-1 0 cli/src/main/java/dev/incusspawn/command/InstancesCommand.java
-2 0 cli/src/main/java/dev/incusspawn/command/ListCommand.java
 1 0 cli/src/main/java/dev/incusspawn/command/NpmUpdate.java
 7 0 cli/src/main/java/dev/incusspawn/command/ProjectCommand.java
 6 0 cli/src/main/java/dev/incusspawn/command/RepoCloner.java
@@ -30,11 +27,9 @@
 8 3 cli/src/main/java/dev/incusspawn/command/ShellCommand.java
 3 0 cli/src/main/java/dev/incusspawn/command/SkillInstaller.java
 5 0 cli/src/main/java/dev/incusspawn/command/SshProxyCommand.java
-26 3 cli/src/main/java/dev/incusspawn/command/TemplatesCommand.java
-6 0 cli/src/main/java/dev/incusspawn/command/ToolsCommand.java
+1 0 cli/src/main/java/dev/incusspawn/command/TemplatesCommand.java
 2 0 cli/src/main/java/dev/incusspawn/command/UpdateAllCommand.java
 18 4 cli/src/main/java/dev/incusspawn/command/UpdateBaseCommand.java
-36 5 cli/src/main/java/dev/incusspawn/command/VmCommand.java
 1 0 cli/src/main/java/dev/incusspawn/mcp/IncusInstanceBackend.java
 1 0 cli/src/main/java/dev/incusspawn/mcp/McpAuditLog.java
 10 0 cli/src/main/java/dev/incusspawn/mcp/McpMain.java

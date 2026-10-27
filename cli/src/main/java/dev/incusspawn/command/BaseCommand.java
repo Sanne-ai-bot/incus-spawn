@@ -112,6 +112,14 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
         return true;
     }
 
+    /** {@code items}, each on its own line, in a group under {@code title}; nothing when there are none. */
+    protected static void groupOfSteps(String title, java.util.List<String> items) {
+        if (items.isEmpty()) return;
+        try (var group = BuildOutput.group(title, null)) {
+            items.forEach(BuildOutput::step);
+        }
+    }
+
     /**
      * {@link #confirm} for an action that deletes data. With no terminal to ask on, {@code confirm}
      * proceeds without reading stdin, so {@code echo n | isx ...} deletes anyway; this refuses

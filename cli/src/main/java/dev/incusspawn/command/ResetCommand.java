@@ -82,8 +82,8 @@ public class ResetCommand extends BaseCommand {
             BuildOutput.step("(Incus daemon unreachable — containers, templates, and pool will be skipped)");
         }
 
-        planned("Destroy " + clones.size() + " instance(s)", clones);
-        planned("Destroy " + builtTemplates.size() + " template(s)", builtTemplates);
+        groupOfSteps("Destroy " + clones.size() + " instance(s)", clones);
+        groupOfSteps("Destroy " + builtTemplates.size() + " template(s)", builtTemplates);
 
         if (hasPoolArtifacts) {
             BuildOutput.step("Clean storage pool artifacts (failed builds, unused and cached base images, DNF cache)");
@@ -110,7 +110,7 @@ public class ResetCommand extends BaseCommand {
                     + ") — the VM will need to be recreated from scratch");
         }
 
-        planned("Remove host data", hostDirInfos.stream()
+        groupOfSteps("Remove host data", hostDirInfos.stream()
                 .map(info -> String.format("%-50s %s", info.path(), CleanCommand.formatSize(info.size())))
                 .toList());
 
@@ -223,13 +223,5 @@ public class ResetCommand extends BaseCommand {
         }
 
         return failed ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
-    }
-
-    /** One item of the plan that covers several things, each on its own line under it; nothing when there are none. */
-    private static void planned(String title, List<String> items) {
-        if (items.isEmpty()) return;
-        try (var group = BuildOutput.group(title, null)) {
-            items.forEach(BuildOutput::step);
-        }
     }
 }

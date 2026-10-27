@@ -7,6 +7,8 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.TemplateValidator;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -76,14 +78,14 @@ public class TemplatesCommand extends BaseCommand {
                     built = InstanceListing.builtTemplates(RuntimeServices.incus().listJsonConfig());
                 } catch (IncusException e) {
                     // Only Incus failing to answer is "unknown"; anything else is a bug, reported as one.
-                    System.err.println("Could not read which templates are built: " + e.getMessage());
+                    Warnings.warn("Could not read which templates are built: " + e.getMessage());
                 }
-                outputFormat.print(System.out, records(defs, built,
+                outputFormat.print(BuildOutput.results(), records(defs, built,
                         () -> TemplateStaleness.toolFingerprints(defs.values(), RuntimeServices.toolDefLoader()),
                         BuildInfo.instance().version(), ZoneId.systemDefault()));
                 return CommandResult.SUCCESS;
             }
-            printTable(System.out, defs, verbose);
+            printTable(BuildOutput.results(), defs, verbose);
             return CommandResult.SUCCESS;
         }
 
@@ -157,8 +159,8 @@ public class TemplatesCommand extends BaseCommand {
             var defs = ImageDef.loadAll();
             var def = defs.get(name);
             if (def == null) {
-                System.err.println("Template '" + name + "' not found.");
-                System.err.println(cell("Available templates: " + String.join(", ", defs.keySet())));
+                BuildOutput.error("Template '" + cell(name) + "' not found.",
+                        cell("Available templates: " + String.join(", ", defs.keySet())));
                 return CommandResult.valueOf(1);
             }
 
@@ -170,18 +172,17 @@ public class TemplatesCommand extends BaseCommand {
                 editPath = ImageDef.userImagesDir().resolve(filename);
 
                 if (Files.exists(editPath)) {
-                    System.out.println("Editing existing user override: " + editPath);
+                    BuildOutput.step("Editing existing user override: " + editPath);
                 } else {
-                    System.out.println("Note: Built-in template '" + name
-                            + "' cannot be edited directly.");
-                    System.out.println("Creating user-level override at " + editPath);
-                    System.out.println("This override will take precedence over the built-in"
+                    BuildOutput.note("Built-in template '" + name + "' cannot be edited directly.");
+                    BuildOutput.step("Creating user-level override at " + editPath);
+                    BuildOutput.note("This override will take precedence over the built-in"
                             + " and will not auto-update with isx upgrades.");
                     try {
                         Files.createDirectories(editPath.getParent());
                         copyBuiltinResource(filename, editPath);
                     } catch (IOException e) {
-                        System.err.println("Failed to copy built-in template: " + e.getMessage());
+                        BuildOutput.error("Failed to copy built-in template: " + e.getMessage());
                         return CommandResult.valueOf(1);
                     }
                     isBuiltinCopy = true;
@@ -225,9 +226,9 @@ public class TemplatesCommand extends BaseCommand {
 
             var defs = ImageDef.loadAll();
             if (templateName != null && defs.containsKey(templateName)) {
-                System.err.println("Template '" + templateName + "' already exists (source: "
-                        + cell(defs.get(templateName).getSource()) + ").");
-                System.err.println("Use 'isx templates edit " + templateName + "' to modify it.");
+                BuildOutput.error("Template '" + cell(templateName) + "' already exists (source: "
+                        + cell(defs.get(templateName).getSource()) + ").",
+                        "Use 'isx templates edit " + templateName + "' to modify it.");
                 return CommandResult.valueOf(1);
             }
 
@@ -235,17 +236,17 @@ public class TemplatesCommand extends BaseCommand {
                 var dir = project ? ImageDef.projectImagesDir() : ImageDef.userImagesDir();
                 var targetPath = dir.resolve("new-template.yaml");
                 if (Files.exists(targetPath)) {
-                    System.err.println("File already exists: " + targetPath);
+                    BuildOutput.error("File already exists: " + targetPath);
                     return CommandResult.valueOf(1);
                 }
                 try {
                     Files.createDirectories(dir);
                     Files.writeString(targetPath, SKELETON);
                 } catch (IOException e) {
-                    System.err.println("Failed to create template file: " + e.getMessage());
+                    BuildOutput.error("Failed to create template file: " + e.getMessage());
                     return CommandResult.valueOf(1);
                 }
-                System.out.println("Created " + targetPath);
+                BuildOutput.step("Created " + targetPath);
                 editLoop(targetPath, null, false);
                 return CommandResult.SUCCESS;
             }
@@ -253,10 +254,10 @@ public class TemplatesCommand extends BaseCommand {
             try {
                 var dir = project ? ImageDef.projectImagesDir() : ImageDef.userImagesDir();
                 var targetPath = createTemplateFile(templateName, null, dir);
-                System.out.println("Created " + targetPath);
+                BuildOutput.step("Created " + targetPath);
                 editLoop(targetPath, templateName, false);
             } catch (IOException e) {
-                System.err.println("Failed to create template: " + e.getMessage());
+                BuildOutput.error("Failed to create template: " + e.getMessage());
                 return CommandResult.valueOf(1);
             }
             return CommandResult.SUCCESS;
@@ -304,7 +305,8 @@ public class TemplatesCommand extends BaseCommand {
      * The findings quote the file's name, parent, host-resource modes and sources, and tools, and
      * a project-local file is checked even when the user leaves it unchanged, so nothing in them
      * reaches the terminal raw (#1133). A warning is one line; an error keeps the line breaks of
-     * the advice isx writes into it, and each line is made safe.
+     * the advice isx writes into it, and each line is made safe. Each finding is its own error or
+     * warning on {@code out}, and a file with none is an {@code ok}.
      * <p>
      * {@code loadWarnings} are what loading {@code defs} reported. Those about this file that the
      * report states again, such as an ignored key, are left to the report, so a key added in this
@@ -312,8 +314,7 @@ public class TemplatesCommand extends BaseCommand {
      * text, on the {@code <file name>: } prefix {@code ImageDef} gives them: both sides take an
      * ignored key's warning from {@code ImageDef.unknownKeyWarnings()}.
      */
-    static boolean validateAndReport(Path file, Map<String, ImageDef> defs, List<String> loadWarnings,
-                                     PrintStream out, PrintStream err) {
+    static boolean validateAndReport(Path file, Map<String, ImageDef> defs, List<String> loadWarnings, Output out) {
         var result = TemplateValidator.validate(file, defs);
         var ownPrefix = OutputFormat.oneLine(file.getFileName().toString()) + ": ";
         for (var warning : loadWarnings) {
@@ -321,16 +322,11 @@ public class TemplatesCommand extends BaseCommand {
                     && result.warnings().contains(warning.substring(ownPrefix.length()));
             if (!reported) Warnings.warn(warning);
         }
-        if (result.hasErrors()) {
-            err.println("Validation errors:");
-            result.errors().forEach(e -> err.println("  ERROR: " + e.lines().map(OutputFormat::oneLine)
-                    .collect(Collectors.joining(System.lineSeparator()))));
-        }
-        if (result.hasWarnings()) {
-            result.warnings().forEach(w -> out.println("  WARNING: " + cell(w)));
-        }
+        result.errors().forEach(e -> out.error(e.lines().map(OutputFormat::oneLine)
+                .collect(Collectors.joining(System.lineSeparator()))));
+        result.warnings().forEach(w -> out.warn(cell(w)));
         if (!result.hasErrors() && !result.hasWarnings()) {
-            out.println("Template is valid.");
+            out.ok("Template is valid.");
         }
         return !result.hasErrors();
     }
@@ -340,12 +336,11 @@ public class TemplatesCommand extends BaseCommand {
             try {
                 int exitCode = launchEditor(file);
                 if (exitCode != 0) {
-                    System.err.println("Warning: editor exited with code " + exitCode);
+                    BuildOutput.warn("Editor exited with code " + exitCode);
                 }
             } catch (IOException e) {
-                System.err.println("Failed to launch editor '" + resolveEditor()
-                        + "': " + e.getMessage());
-                System.err.println("Set $EDITOR or $VISUAL to your preferred editor.");
+                BuildOutput.error("Failed to launch editor '" + resolveEditor() + "': " + e.getMessage(),
+                        "Set $EDITOR or $VISUAL to your preferred editor.");
                 if (isBuiltinCopy) {
                     cleanup(file);
                 }
@@ -357,7 +352,9 @@ public class TemplatesCommand extends BaseCommand {
 
             var loadWarnings = new ArrayList<String>();
             var defs = ImageDef.loadAll(loadWarnings::add);
-            boolean valid = validateAndReport(file, defs, loadWarnings, System.out, System.err);
+            // On the terminal alone: they are read at the re-edit prompt, and the TUI, which lends
+            // the terminal to this loop, would keep every pass's findings, fixed ones included
+            boolean valid = validateAndReport(file, defs, loadWarnings, BuildOutput.terminal());
 
             if (valid && originalName != null) {
                 checkNameChange(file, originalName, isBuiltinCopy);
@@ -380,12 +377,10 @@ public class TemplatesCommand extends BaseCommand {
         try {
             var def = ImageDef.parseFile(file);
             if (def.getName() != null && !def.getName().equals(originalName)) {
-                System.out.println("WARNING: Template name changed from '" + cell(originalName)
-                        + "' to '" + cell(def.getName()) + "'.");
-                if (isBuiltinCopy) {
-                    System.out.println("  This file will no longer override the built-in '"
-                            + cell(originalName) + "' template.");
-                }
+                var renamed = "Template name changed from '" + cell(originalName) + "' to '" + cell(def.getName()) + "'.";
+                BuildOutput.warn(renamed, isBuiltinCopy
+                        ? new String[] {"This file will no longer override the built-in '" + cell(originalName) + "' template."}
+                        : new String[0]);
             }
         } catch (IOException ignored) {
             // validation already reported the parse error
@@ -395,7 +390,7 @@ public class TemplatesCommand extends BaseCommand {
     private static void cleanup(Path file) {
         try {
             Files.deleteIfExists(file);
-            System.out.println("Aborted. Override file removed.");
+            BuildOutput.step("Aborted. Override file removed.");
         } catch (IOException ignored) {
         }
     }

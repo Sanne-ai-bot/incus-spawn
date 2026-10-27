@@ -4,6 +4,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -79,24 +80,25 @@ class DefinitionTextTableTest {
                   - "dup\\e[2J"
                   - "dup\\e[2J"
                 """);
-        var out = new ByteArrayOutputStream();
-        var err = new ByteArrayOutputStream();
-        TemplatesCommand.validateAndReport(file, Map.of(), List.of(), new PrintStream(out, true, StandardCharsets.UTF_8),
-                new PrintStream(err, true, StandardCharsets.UTF_8));
+        var report = new RecordingOutput();
+        assertFalse(TemplatesCommand.validateAndReport(file, Map.of(), List.of(), report));
 
-        // The host-resource mode and the duplicate tool.
-        var warnings = out.toString(StandardCharsets.UTF_8);
-        assertSafe(warnings, 2);
+        // The host-resource mode and the duplicate tool, a warning each.
+        var warnings = String.join("\n", report.events(RecordingOutput.Kind.WARN).stream().map(RecordingOutput.Event::msg).toList());
+        assertSafe(warnings + "\n", 2);
         assertTrue(warnings.contains("mode 'copy ]0;t '"), warnings);
         assertTrue(warnings.contains("tool 'dup [2J'"), warnings);
-        // The name and the parent no instance can have, and the forbidden mount target: its message
+        // The name and the parent no instance can have, and the forbidden mount target, an error each: its message
         // is isx's multi-line advice, each line made safe, and the quoted source and path add no line of their own.
-        var errors = err.toString(StandardCharsets.UTF_8);
-        assertSafe(errors, 7);
-        assertTrue(errors.contains("  ERROR: template name 'evil [2J' is not a valid Incus instance name"), errors);
-        assertTrue(errors.contains("  ERROR: parent 'tpl- 2J x' is not a valid Incus instance name"), errors);
-        assertTrue(errors.contains("  ERROR: Host-resource '/tmp/s [2J Template is valid.' would be mounted"
+        var errorEvents = report.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList();
+        assertEquals(3, errorEvents.size(), errorEvents::toString);
+        var errors = String.join("\n", errorEvents);
+        assertSafe(errors + "\n", 6);
+        assertTrue(errors.contains("template name 'evil [2J' is not a valid Incus instance name"), errors);
+        assertTrue(errors.contains("parent 'tpl- 2J x' is not a valid Incus instance name"), errors);
+        assertTrue(errors.contains("Host-resource '/tmp/s [2J Template is valid.' would be mounted"
                 + " (readonly) at /etc/evil ok, a system directory."), errors);
+        assertEquals(List.of(), report.events(RecordingOutput.Kind.OK), "not reported valid");
     }
 
     /**

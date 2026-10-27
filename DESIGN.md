@@ -4851,6 +4851,7 @@ The pre-upgrade CA note is a warning rather than a note, so the TUI's copying bi
 A command's answer has a kind of its own, `Output.results()`: a stream rather than a method per line, since the printers (`OutputFormat`, the tables) already take a `PrintStream`.
 A terminal's is its stdout, as it is at that moment, so a result written during a live step freezes the step's line first; an output that is not a terminal has none, so a result is never drawn over the TUI.
 A status report lays out its fields itself (`ProxyCommand.Status.field`): a result is content, and the fence on indented print literals is for progress and diagnostics, which groups indent.
+A template's validation findings are not a result: `isx templates edit` reports each one as an error or a warning, and a clean file as an `ok`, so they take the terminal's colours and the safe lines every diagnostic gets.
 A restart reached from a start (`tryAutoRestart`) reports to the `Output` its caller hands it, and so does `LaunchdJob`, whose refusals are warnings the TUI's log keeps.
 The proxy daemon runs some of that code (the bridge DNS, certificates, the API traffic log), so it binds `Output.logTo`, which keeps progress as info lines instead of dropping them, as a log-only output would.
 Why a command failed is an `error`, a kind of its own (red `Error:` on stderr, no closing blank line), since a warning would say it went on; off a terminal it is a diagnostic, and the TUI's copying binding keeps it.

@@ -7,6 +7,7 @@ import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
@@ -15,7 +16,6 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.io.IOException;
-import java.io.PrintStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -44,7 +44,7 @@ public class VmCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
-        System.out.println(commandInvocation.getHelpInfo());
+        BuildOutput.results().println(commandInvocation.getHelpInfo());
         return CommandResult.SUCCESS;
     }
 
@@ -100,14 +100,14 @@ public class VmCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (!VmManager.isRunning()) {
-                System.out.println("VM is not running. Use 'isx vm start' to start it.");
+                BuildOutput.step("VM is not running. Use 'isx vm start' to start it.");
                 return CommandResult.SUCCESS;
             }
             var skew = VmManager.applianceSkew();
             if (skew != null) {
-                System.out.println("Appliance update pending (" + skew.running() + " → " + skew.installed() + ").");
+                BuildOutput.step("Appliance update pending (" + skew.running() + " → " + skew.installed() + ").");
             }
-            System.out.println("Running containers will be stopped.");
+            BuildOutput.step("Running containers will be stopped.");
             if (!CleanCommand.confirm("Restart the VM?", yes)) {
                 return CommandResult.SUCCESS;
             }
@@ -133,24 +133,25 @@ public class VmCommand extends BaseCommand {
             if (outputFormat != OutputFormat.TABLE) {
                 var state = VmManager.state();
                 var connError = RuntimeServices.incus().checkConnectivity();
-                outputFormat.printOne(System.out, record(state, connError));
+                outputFormat.printOne(BuildOutput.results(), record(state, connError));
                 return CommandResult.valueOf(exitCode(connError));
             }
-            return CommandResult.valueOf(report(VmManager.status(), RuntimeServices.incus(), System.out, System.err));
+            return CommandResult.valueOf(report(VmManager.status(), RuntimeServices.incus(), BuildOutput.bound()));
         }
 
-        /** Print the VM's status and Incus's diagnostics; 1, with the reason on {@code err}, when Incus is unreachable. */
-        static int report(String vmStatus, IncusClient incus, PrintStream out, PrintStream err) {
+        /** Report the VM's status and Incus's diagnostics as results; 1, with the reason an error, when Incus is unreachable. */
+        static int report(String vmStatus, IncusClient incus, Output output) {
+            var out = output.results();
             out.println(vmStatus);
             var connError = incus.checkConnectivity();
             if (connError != null) {
-                err.println("\nIncus not reachable: " + connError);
+                output.error("Incus not reachable: " + connError);
                 return exitCode(connError);
             }
             var pool = incus.findCowPool();
             out.println();
             out.println(new IncusDiagnostics(incus).getSystemDiagnostics(pool));
-            out.println("  (full VM log at " + Environment.vmLogFile() + ")");
+            out.println("(full VM log at " + Environment.vmLogFile() + ")");
             return exitCode(connError);
         }
 
@@ -205,11 +206,11 @@ public class VmCommand extends BaseCommand {
             long target = VmManager.parseDiskSize(size);
             long current = VmManager.dataDiskSizeBytes();
             if (current < 0) {
-                System.err.println("No data disk found. Run 'isx vm start' once to create it before resizing.");
+                BuildOutput.error("No data disk found. Run 'isx vm start' once to create it before resizing.");
                 return CommandResult.valueOf(1);
             }
             if (target <= current) {
-                System.err.println("New size (" + VmManager.humanSize(target)
+                BuildOutput.error("New size (" + VmManager.humanSize(target)
                         + ") must be larger than the current size (" + VmManager.humanSize(current)
                         + "). Shrinking is not supported.");
                 return CommandResult.valueOf(1);
@@ -220,18 +221,17 @@ public class VmCommand extends BaseCommand {
             try {
                 long usable = Files.getFileStore(Environment.vmDataImage()).getUsableSpace();
                 if (target - current > usable) {
-                    System.out.println("Warning: growing by " + VmManager.humanSize(target - current)
-                            + " exceeds the " + VmManager.humanSize(usable)
-                            + " free on the host. The disk is thin-provisioned, but writes will fail");
-                    System.out.println("once the host runs out of space.");
+                    BuildOutput.warn("Growing by " + VmManager.humanSize(target - current)
+                            + " exceeds the " + VmManager.humanSize(usable) + " free on the host.",
+                            "The disk is thin-provisioned, but writes will fail once the host runs out of space.");
                 }
             } catch (IOException ignored) {}
 
             boolean wasRunning = VmManager.isRunning();
-            System.out.println("Grow the storage pool's data disk from " + VmManager.humanSize(current)
+            BuildOutput.step("Grow the storage pool's data disk from " + VmManager.humanSize(current)
                     + " to " + VmManager.humanSize(target) + "?");
             if (wasRunning) {
-                System.out.println("The VM will be restarted; running instances will be interrupted.");
+                BuildOutput.step("The VM will be restarted; running instances will be interrupted.");
             }
             if (!CleanCommand.confirm("Continue?", yes)) {
                 return CommandResult.SUCCESS;
@@ -254,7 +254,7 @@ public class VmCommand extends BaseCommand {
             // previously-stopped VM is restored even when start fails after launching (readiness timeout).
             try {
                 if (!VmManager.start()) {
-                    System.err.println("Failed to start VM after resize.");
+                    BuildOutput.error("Failed to start VM after resize.");
                     return CommandResult.valueOf(1);
                 }
                 // Verify the guest actually grew the pool to fill the larger device.
@@ -270,10 +270,9 @@ public class VmCommand extends BaseCommand {
                         BuildOutput.success("Storage pool is now " + VmManager.humanSize(usage.totalBytes())
                                 + " (" + usage.percent() + "% used).");
                     } else {
-                        System.out.println();
-                        BuildOutput.note("The data disk image was grown, but the storage pool did not expand.");
-                        BuildOutput.note("Your appliance may predate automatic data-disk expansion. Upgrade isx");
-                        BuildOutput.note("(so it re-downloads the appliance) to pick up the change.");
+                        BuildOutput.warn("The data disk image was grown, but the storage pool did not expand.",
+                                "Your appliance may predate automatic data-disk expansion.",
+                                "Upgrade isx (so it re-downloads the appliance) to pick up the change.");
                     }
                 }
                 return CommandResult.SUCCESS;
@@ -284,8 +283,8 @@ public class VmCommand extends BaseCommand {
                     try {
                         VmManager.stop();
                     } catch (Exception e) {
-                        System.err.println("Note: could not stop the VM again (" + e.getMessage()
-                                + "). The resize succeeded; stop it manually with 'isx vm stop'.");
+                        BuildOutput.warn("Could not stop the VM again (" + e.getMessage() + ").",
+                                "The resize succeeded; stop it manually with 'isx vm stop'.");
                     }
                 }
             }
@@ -314,16 +313,14 @@ public class VmCommand extends BaseCommand {
             }
             var lost = survey(incus);
 
-            System.out.println("This deletes the VM's data disk (" + Environment.vmDataImage() + "),");
-            System.out.println("which holds everything Incus knows: its database, the storage pool and all it contains.");
-            System.out.println("The appliance itself is kept, so nothing needs to be downloaded again.");
-            System.out.println();
+            BuildOutput.section("This deletes the VM's data disk (" + Environment.vmDataImage() + "),"
+                    + " which holds everything Incus knows: its database, the storage pool and all it contains.");
+            BuildOutput.note("The appliance itself is kept, so nothing needs to be downloaded again.");
             if (lost == null) {
-                System.out.println("Incus is not reachable, so what is on the disk cannot be listed.");
+                BuildOutput.warn("Incus is not reachable, so what is on the disk cannot be listed.");
             } else {
                 lost.print();
             }
-            System.out.println();
             if (!confirmDestructive("Wipe the data disk?", yes, "--yes")) {
                 return CommandResult.SUCCESS;
             }
@@ -331,7 +328,7 @@ public class VmCommand extends BaseCommand {
             BuildOutput.header("Resetting VM data disk");
             var result = VmManager.resetDataDisk();
             if (result == VmManager.ResetResult.NOT_RESET) {
-                System.err.println("The data disk was not reset; nothing was deleted.");
+                BuildOutput.error("The data disk was not reset; nothing was deleted.");
                 return CommandResult.valueOf(1);
             }
             // The instances are gone with the disk, whether or not the VM came back: drop what the
@@ -341,26 +338,26 @@ public class VmCommand extends BaseCommand {
                 try {
                     InstanceLifecycle.removeHostIntegration(name, BuildOutput.bound());
                 } catch (Exception e) {
-                    System.err.println("Note: could not remove host integration for " + name + ": " + e.getMessage());
+                    BuildOutput.warn("Could not remove host integration for " + name + ": " + e.getMessage());
                 }
             }
             if (!gone.isEmpty()) InstanceDestroyer.refreshProxy();
             if (lost == null) {
-                System.err.println("Note: the instances on the old disk could not be listed, so the host still"
-                        + " holds their SSH config entries and git remotes. Remove those by hand if they get in the way.");
+                BuildOutput.warn("The instances on the old disk could not be listed, so the host still"
+                        + " holds their SSH config entries and git remotes.", "Remove those by hand if they get in the way.");
             }
             if (result == VmManager.ResetResult.VM_DOWN) {
-                System.err.println("The data disk was reset, but the VM did not come back. Check 'isx vm console'.");
+                BuildOutput.error("The data disk was reset, but the VM did not come back.", "Check 'isx vm console'.");
                 return CommandResult.valueOf(1);
             }
 
             var problem = verifyEmpty(incus);
             if (problem != null) {
-                System.err.println("The VM restarted, but " + problem + ". Check 'isx vm status'.");
+                BuildOutput.error("The VM restarted, but " + problem + ".", "Check 'isx vm status'.");
                 return CommandResult.valueOf(1);
             }
             BuildOutput.success("Data disk reset: Incus is up and its storage pool is empty.");
-            System.out.println("Recreate your templates with: isx build --all");
+            BuildOutput.step("Recreate your templates with: isx build --all");
             return CommandResult.SUCCESS;
         }
 
@@ -373,18 +370,13 @@ public class VmCommand extends BaseCommand {
                 return all;
             }
 
+            /** What the reset deletes: each kind of instance a group of names, then the images and the pool. */
             void print() {
-                printGroup("instance(s), which cannot be rebuilt", instances);
-                printGroup("template(s), which 'isx build' can recreate", templates);
-                printGroup("other instance(s), such as failed builds", others);
-                System.out.println("  " + images + " cached image(s)");
-                if (poolUsage != null) System.out.println("  Storage pool: " + poolUsage);
-            }
-
-            private static void printGroup(String what, List<String> names) {
-                if (names.isEmpty()) return;
-                System.out.println("  " + names.size() + " " + what + ":");
-                names.forEach(n -> System.out.println("    " + n));
+                groupOfSteps(instances.size() + " instance(s), which cannot be rebuilt", instances);
+                groupOfSteps(templates.size() + " template(s), which 'isx build' can recreate", templates);
+                groupOfSteps(others.size() + " other instance(s), such as failed builds", others);
+                BuildOutput.step(images + " cached image(s)");
+                if (poolUsage != null) BuildOutput.step("Storage pool: " + poolUsage);
             }
         }
 
@@ -438,16 +430,16 @@ public class VmCommand extends BaseCommand {
         protected CommandResult doExecute() throws Exception {
             var logFile = Environment.vmLogFile();
             if (!Files.exists(logFile)) {
-                System.err.println("No VM log file found at " + logFile);
-                System.err.println("Start the VM first: isx vm start");
+                BuildOutput.error("No VM log file found at " + logFile, "Start the VM first: isx vm start");
                 return CommandResult.valueOf(1);
             }
             try {
+                // tail inherits the terminal: only the CLI runs this, and nothing else prints meanwhile
                 var pb = new ProcessBuilder("tail", "-f", logFile.toString());
                 pb.inheritIO();
                 pb.start().waitFor();
             } catch (IOException | InterruptedException e) {
-                System.err.println("Failed to tail log file: " + e.getMessage());
+                BuildOutput.error("Failed to tail log file: " + e.getMessage());
             }
             return CommandResult.SUCCESS;
         }
@@ -470,7 +462,8 @@ public class VmCommand extends BaseCommand {
             var version = running ? VmManager.runningApplianceVersion() : null;
             var skew = VmManager.applianceSkew(version);
             var line = line(quiet, running, version, skew);
-            if (line != null) System.out.println(line);
+            // install.sh reads it: the command's answer
+            if (line != null) BuildOutput.results().println(line);
             return CommandResult.SUCCESS;
         }
 
