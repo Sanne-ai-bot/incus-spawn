@@ -36,7 +36,7 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
     }
 
     /** What a failed command says: the exception's message, or the exception's class when it has none. */
-    static String failure(Exception e) {
+    public static String failure(Exception e) {
         var message = e.getMessage();
         return message == null || message.isBlank() ? e.getClass().getName() : message;
     }
