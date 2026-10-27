@@ -331,9 +331,21 @@ public class TemplatesCommand extends BaseCommand {
 
     /** Edits {@code file} until it is valid or the user stops; whether it ended valid. */
     public static boolean editLoop(Path file, String originalName, boolean isBuiltinCopy) {
+        return editLoop(file, originalName, isBuiltinCopy, TemplatesCommand::launchEditor, Prompts::terminal);
+    }
+
+    /** How a pass of {@link #editLoop} edits the file: the user's editor, or a test's. */
+    @FunctionalInterface
+    interface Editor {
+        int edit(Path file) throws IOException, InterruptedException;
+    }
+
+    /** {@link #editLoop} with its editor and where it asks to re-edit, which a test supplies. */
+    static boolean editLoop(Path file, String originalName, boolean isBuiltinCopy, Editor editor,
+                            java.util.function.Supplier<Prompts> reEdit) {
         while (true) {
             try {
-                int exitCode = launchEditor(file);
+                int exitCode = editor.edit(file);
                 if (exitCode != 0) {
                     BuildOutput.warn("Editor exited with code " + exitCode);
                 }
@@ -361,9 +373,9 @@ public class TemplatesCommand extends BaseCommand {
 
             if (valid) return true;
 
-            var console = System.console();
-            if (console == null) return false;
-            if (!askYesNo(Prompts.of(console), "Re-edit?", true, true)) {
+            // Only on a terminal: piped stdin is not an answer. Its end, like Ctrl-D, stops editing.
+            var prompts = reEdit.get();
+            if (prompts == null || !askYesNo(prompts, "Re-edit?", true, false)) {
                 if (isBuiltinCopy) {
                     cleanup(file);
                 }
