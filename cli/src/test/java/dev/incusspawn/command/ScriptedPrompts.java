@@ -45,14 +45,17 @@ final class ScriptedPrompts implements Prompts {
         return this;
     }
 
+    /** Recorded, and shown through the bound output as the terminal's prompts show it, so a recorder sees it in order. */
     @Override
     public void show(String question) {
         conversation.add("? " + question);
+        Prompts.super.show(question);
     }
 
     @Override
     public void say(String line) {
         conversation.add(line);
+        Prompts.super.say(line);
     }
 
     /** What the flow showed and said, in order: each question as {@code "? <question>"}. */

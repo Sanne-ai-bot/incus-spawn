@@ -36,11 +36,18 @@ public interface Prompts {
      */
     char[] readPassword();
 
-    /** Shows {@code question} where its answer is typed: at the step indent, with no line end. */
-    void show(String question);
+    /**
+     * Shows {@code question} where its answer is typed: through the bound output
+     * ({@code BuildOutput.prompt}), at the step indent, with no line end.
+     */
+    default void show(String question) {
+        BuildOutput.prompt(question);
+    }
 
-    /** A line said only because a question is asked, such as an option or a re-ask, at the step indent. */
-    void say(String line);
+    /** A line said only because a question is asked, such as an option or a re-ask: a step of the bound output. */
+    default void say(String line) {
+        BuildOutput.step(line);
+    }
 
     /** {@link #show}s the question and reads its answer: {@code null} at EOF. */
     default String ask(String question) {
@@ -48,6 +55,12 @@ public interface Prompts {
         return readLine();
     }
 
+
+    /** {@link #show}s the question and reads its answer without echoing it: {@code null} at EOF. */
+    default char[] askSecret(String question) {
+        show(question);
+        return readPassword();
+    }
 
     static Prompts of(Console console) {
         return new Prompts() {
@@ -61,15 +74,6 @@ public interface Prompts {
                 return console.readPassword();
             }
 
-            @Override
-            public void show(String question) {
-                BuildOutput.prompt(question);
-            }
-
-            @Override
-            public void say(String line) {
-                BuildOutput.step(line);
-            }
         };
     }
 

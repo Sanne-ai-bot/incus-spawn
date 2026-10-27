@@ -134,10 +134,8 @@ public final class TerminalOutput implements Output {
     }
 
     /**
-     * As given, its leading blank line included, also after a block that ended on a blank line:
-     * while {@code isx init}'s host and credential steps still print raw lines between its boxes,
-     * the record of a closing blank line cannot be trusted, and two blank lines read better than
-     * none. A trailing blank line ends the block, as a group's does.
+     * As given, its leading blank line included, also after a block that ended on a blank line.
+     * A trailing blank line ends the block, as a group's does.
      */
     @Override
     public void frame(String... lines) {

@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.config.NamespaceAccounts;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
@@ -133,28 +134,36 @@ class GitHubAuthFlowTest {
     @Test
     void anEnteredTokenIsAcknowledgedWithoutBeingShown() {
         var init = new FakeInit().acceptAgentPat();
-        var out = captureStdout(() -> run(init, declineBrowser().secret("  " + AGENT_PAT + " ").line(FINISHED)));
+        var out = reported(() -> run(init, declineBrowser().secret("  " + AGENT_PAT + " ").line(FINISHED)));
 
         assertTrue(out.contains("Received 27 characters (github_pat_...0000)"), out);
         assertFalse(out.contains(AGENT_PAT), "the token was printed:\n" + out);
     }
 
+    /**
+     * The token is asked for through the prompts that read it (#1703): the question and the
+     * receipt are the conversation a test sees, and the question is a secret's, never echoed.
+     */
+    @Test
+    void theTokenIsAskedForThroughThePromptsThatReadIt() {
+        var prompts = declineBrowser().secret(AGENT_PAT).line(FINISHED);
+        run(new FakeInit().acceptAgentPat(), prompts);
+
+        assertTrue(prompts.questions().contains("GitHub PAT for the agent (or press Enter to skip): "), prompts.questions()::toString);
+        assertTrue(prompts.conversation().stream().anyMatch(line -> line.contains("Received 27 characters")),
+                prompts.conversation()::toString);
+        assertTrue(prompts.conversation().stream().noneMatch(line -> line.contains(AGENT_PAT)), "the token was shown");
+    }
+
     @Test
     void aSkippedTokenIsNotAcknowledged() {
-        var out = captureStdout(() -> run(new FakeInit(), declineBrowser().secret("")));
+        var out = reported(() -> run(new FakeInit(), declineBrowser().secret("")));
         assertFalse(out.contains("Received"), out);
     }
 
-    private static String captureStdout(Runnable body) {
-        var original = System.out;
-        var buffer = new java.io.ByteArrayOutputStream();
-        System.setOut(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
-        try {
-            body.run();
-        } finally {
-            System.setOut(original);
-        }
-        return buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+    /** What the flow said and asked, in order, a line each: steps, warnings and questions alike. */
+    private static String reported(Runnable body) {
+        return String.join("\n", RecordingOutput.during(body::run).lines());
     }
 
     @Test
@@ -269,7 +278,7 @@ class GitHubAuthFlowTest {
         var init = new FakeInit()
                 .accept(AGENT_PAT, "agent-bot", null)
                 .accept("github_pat_with_email_000", "agent-bot", "bot@example.com");
-        var out = captureStdout(() -> run(init, declineBrowser().secret(AGENT_PAT)
+        var out = reported(() -> run(init, declineBrowser().secret(AGENT_PAT)
                 .secret("1github_pat_with_email_000").secret("github_pat_with_email_000").line(FINISHED)));
 
         assertTrue(out.contains("1 character comes before 'github_pat_'"), "the stray keystroke went unnamed:\n" + out);
@@ -351,7 +360,7 @@ class GitHubAuthFlowTest {
     /** Skipping an extra account must not claim GitHub setup was skipped: the first is saved. */
     @Test
     void skippingASecondAccountSaysOnlyThatOneWasSkipped() {
-        var out = captureStdout(() -> run(new FakeInit().acceptAgentPat(),
+        var out = reported(() -> run(new FakeInit().acceptAgentPat(),
                 declineBrowser().secret(AGENT_PAT).line("a", "work", NO_BROWSER).secret("")));
 
         assertTrue(out.contains("No token added for this account."), out);
@@ -361,7 +370,7 @@ class GitHubAuthFlowTest {
 
     @Test
     void skippingTheOnlyAccountSaysSetupWasSkipped() {
-        var out = captureStdout(() -> run(new FakeInit(), declineBrowser().secret("")));
+        var out = reported(() -> run(new FakeInit(), declineBrowser().secret("")));
 
         assertTrue(out.contains("Skipped GitHub setup"), out);
     }

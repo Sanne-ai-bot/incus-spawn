@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
@@ -177,16 +178,8 @@ class CredentialPromptsTest {
                   configuration:
                     key: { config-path: key, description: Solo key, secret: true }
                 """);
-        var out = System.out;
-        var buffer = new java.io.ByteArrayOutputStream();
-        System.setOut(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
-        try {
-            new CredentialSetup().setupGenericToolCredentials("solo", new ToolDefLoader().find("solo"),
-                    new SpawnConfig(), new ScriptedPrompts().secret(""));
-        } finally {
-            System.setOut(out);
-        }
-        var printed = buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+        var printed = reported(() -> new CredentialSetup().setupGenericToolCredentials("solo",
+                new ToolDefLoader().find("solo"), new SpawnConfig(), new ScriptedPrompts().secret("")));
         assertTrue(printed.contains("Skipped. Configure later with 'isx account add soloCloud'."), printed);
     }
 
@@ -359,7 +352,7 @@ class CredentialPromptsTest {
     @Test
     void definitionTextCannotDriveTheTerminal() {
         var tools = Map.of("evil", hostileTool());
-        var out = captureStdout(() -> {
+        var out = reported(() -> {
             var prompts = ScriptedPrompts.lines("1").secret("s3cret").line("").line("n").line("");
             var setup = new CredentialSetup();
             assertEquals(List.of("evil"), setup.selectCredentials(tools, new SpawnConfig(), prompts));
@@ -376,16 +369,9 @@ class CredentialPromptsTest {
                 () -> "U+%04X printed raw:%n%s".formatted(c, out)));
     }
 
-    private static String captureStdout(Runnable body) {
-        var original = System.out;
-        var buffer = new java.io.ByteArrayOutputStream();
-        System.setOut(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
-        try {
-            body.run();
-        } finally {
-            System.setOut(original);
-        }
-        return buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+    /** What the flow said and asked, in order, a line each: steps, warnings and questions alike. */
+    private static String reported(Runnable body) {
+        return String.join("\n", RecordingOutput.during(body::run).lines());
     }
 
     // ── where to clone the templates repo ────────────────────────────────────────
