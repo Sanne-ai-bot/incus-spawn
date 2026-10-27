@@ -14,7 +14,9 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 
 @CommandDefinition(
         name = "reset",
@@ -78,8 +80,15 @@ public class ResetCommand extends BaseCommand {
 
         BuildOutput.header("Reset plan");
 
-        if (!incusReachable) {
-            BuildOutput.step("(Incus daemon unreachable — containers, templates, and pool will be skipped)");
+        // On macOS whatever Incus holds, the overrides included, lives in the VM's state, on its
+        // data disk if anywhere, which the reset deletes
+        var overridesLiveInTheVm = Platform.isMacOS();
+        if (!incusReachable && overridesLiveInTheVm) {
+            BuildOutput.step("(Incus daemon unreachable — its containers, templates, pool and bridge DNS overrides"
+                    + " go with the VM's data disk, which the reset deletes)");
+        } else if (!incusReachable) {
+            BuildOutput.step("(Incus daemon unreachable — containers, templates, and pool will be skipped;"
+                    + " its bridge DNS overrides cannot be cleared, so the reset fails for them)");
         }
 
         groupOfSteps("Destroy " + clones.size() + " instance(s)", clones);
@@ -173,9 +182,11 @@ public class ResetCommand extends BaseCommand {
         }
         // Whatever became of the service: `isx proxy uninstall` keeps them for one that stays,
         // but reset goes on to delete the CA and config it runs on, and nothing later would
-        // remove them. An Incus that is not reachable cannot be asked, as before.
-        if (incusReachable && !ProxyConfig.clearBridgeDns(incus)) failed = true;
-        if (!ProxyConfig.clearRedirectRules()) failed = true;
+        // remove them.
+        if (!clearProxyRouting(incusReachable, overridesLiveInTheVm,
+                () -> ProxyConfig.clearBridgeDns(incus), ProxyConfig::clearRedirectRules)) {
+            failed = true;
+        }
         // The proxy-only ACL (#1137); Incus keeps it while an instance that was not reset uses it
         if (incusReachable && !incus.deleteNetworkAcl(ProxyOnlyAcl.NAME)) {
             BuildOutput.note("Network ACL " + ProxyOnlyAcl.NAME + " could not be removed;"
@@ -215,6 +226,12 @@ public class ResetCommand extends BaseCommand {
             }
         }
 
+        // Their disk deleted, the overrides an unreachable Incus could not clear are gone too
+        // A VM that would not stop already failed the reset, its state skipped with it
+        if (!incusReachable && overridesLiveInTheVm && !vmStillRunning && overridesStayOn(Environment.vmDataImage())) {
+            failed = true;
+        }
+
         if (failed) {
             BuildOutput.error("Reset did not remove everything.",
                     "See the warnings above: some items may not have been fully removed.");
@@ -224,4 +241,35 @@ public class ResetCommand extends BaseCommand {
 
         return failed ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
     }
+
+    /**
+     * Clears what routes instances to the proxy: the bridge DNS overrides and the 443 redirect,
+     * each tried whatever became of the other; false when either stays. An Incus that is not
+     * reachable cannot clear its overrides, so they may stay, and the reset fails for it as
+     * {@code isx proxy uninstall} does, saying so, rather than skipping them unseen; unless
+     * {@code overridesLiveInTheVm}: on macOS they can only be on the VM's data disk, which the
+     * reset deletes, so they count as cleared here and the caller asks {@link #overridesStayOn}
+     * once the disk should be gone.
+     */
+    static boolean clearProxyRouting(boolean incusReachable, boolean overridesLiveInTheVm,
+                                     BooleanSupplier bridgeDns, BooleanSupplier redirectRules) {
+        var dnsCleared = incusReachable ? bridgeDns.getAsBoolean() : overridesLiveInTheVm;
+        if (!incusReachable && !overridesLiveInTheVm) {
+            BuildOutput.warn("Could not clear the bridge DNS overrides: Incus is not reachable.", OVERRIDES_STAY);
+        }
+        return redirectRules.getAsBoolean() && dnsCleared;
+    }
+
+    /**
+     * Whether the VM's data disk, which holds the bridge DNS overrides an unreachable Incus could
+     * not clear, is still there after the reset deleted the VM's state; says so when it is.
+     */
+    static boolean overridesStayOn(Path dataDisk) {
+        if (!Files.exists(dataDisk)) return false;
+        BuildOutput.warn("Could not clear the bridge DNS overrides: Incus is not reachable, and the VM's data disk"
+                + " that holds them was not deleted (" + dataDisk + ").", OVERRIDES_STAY);
+        return true;
+    }
+
+    private static final String OVERRIDES_STAY = "They stay until a reset or 'isx proxy uninstall' runs with Incus up.";
 }
