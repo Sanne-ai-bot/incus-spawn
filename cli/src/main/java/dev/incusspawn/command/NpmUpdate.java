@@ -25,8 +25,8 @@ final class NpmUpdate {
         if (!update.success()) return GuestUpdate.finish(update, "npm update -g");
         var problems = NpmGlobalInstall.repairAfterUpdate(container);
         if (!problems.isEmpty()) {
-            BuildOutput.stepBreak();
-            problems.forEach(System.err::println);
+            // The step fails as a failed npm update -g does (GuestUpdate.finish), saying what is broken
+            BuildOutput.stepFail(String.join("\n", problems));
             return false;
         }
         BuildOutput.stepDone();

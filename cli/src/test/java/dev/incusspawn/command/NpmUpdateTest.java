@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.tool.NpmWaits;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -62,10 +63,15 @@ class NpmUpdateTest {
         stubCheck(incus, "@openai/codex", new IncusClient.ExecResult(3, "@openai/codex-linux-x64\n", ""));
 
         int retries;
+        RecordingOutput recorded;
         try (var waits = new NpmWaits()) {
-            assertFalse(NpmUpdate.run(incus, NAME));
+            recorded = RecordingOutput.during(() -> assertFalse(NpmUpdate.run(incus, NAME)));
             retries = waits.waited().size();
         }
+        // The step fails saying what is broken, which the TUI's log keeps, never a raw stderr line (#1703)
+        var failed = recorded.events(RecordingOutput.Kind.STEP_FAIL);
+        assertEquals(1, failed.size(), recorded.events().toString());
+        assertTrue(failed.getFirst().msg().contains("@openai/codex-linux-x64"), failed.getFirst().msg());
 
         verify(incus, times(1 + retries)).shellExec(eq(NAME), eq("npm"), eq("install"), eq("-g"),
                 eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@openai/codex"));
