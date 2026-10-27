@@ -42,8 +42,6 @@ public final class VmManager {
 
     private VmManager() {}
 
-    public enum Backend { VFKIT, QEMU }
-
     /** Where forwarder streams are leaking, inferred from host vs in-guest connection counts. */
     public enum LeakLayer {
         FORWARDER("forwarder is lingering children (link 3) — the in-VM forwarder-restart clears it"),
@@ -234,20 +232,23 @@ public final class VmManager {
         return null;
     }
 
-    // --- Backend detection ---
+    // --- Hypervisor ---
 
-    public static Backend detectBackend() {
-        if (Platform.isMacOS()) {
-            if (!commandExists("vfkit")) {
-                throw new VmException("vfkit not found. Install with: brew install vfkit");
-            }
-            return Backend.VFKIT;
+    /**
+     * The appliance runs under vfkit on macOS, and nowhere else: on Linux isx drives the host's
+     * own Incus. The QEMU backend this once had was unreachable from every released isx and was
+     * removed (#1695); DESIGN.md "A Linux appliance mode" says where to find it.
+     */
+    private static void requireMacOs() {
+        if (!Platform.isMacOS()) {
+            throw new VmException("The VM appliance runs only on macOS; on Linux isx uses the host's Incus.");
         }
-        var arch = normalizeArch();
-        if (!commandExists("qemu-system-" + arch)) {
-            throw new VmException("qemu-system-" + arch + " not found. Install QEMU.");
+    }
+
+    private static void requireVfkit() {
+        if (!commandExists("vfkit")) {
+            throw new VmException("vfkit not found. Install with: brew install vfkit");
         }
-        return Backend.QEMU;
     }
 
     // --- VM lifecycle lock ---
@@ -308,6 +309,7 @@ public final class VmManager {
     private enum StartResult { LAUNCHED, ALREADY_RUNNING, FAILED }
 
     private static StartResult startLocked() {
+        requireMacOs();
         if (isRunning()) {
             BuildOutput.note("VM already running (pid=" + readPid() + ").");
             return StartResult.ALREADY_RUNNING;
@@ -322,11 +324,11 @@ public final class VmManager {
             return StartResult.FAILED;
         }
 
-        var backend = detectBackend();
+        requireVfkit();
         int cpus = detectCpus();
         int memoryMiB = detectMemoryMiB();
 
-        if (backend == Backend.VFKIT && !Files.exists(Environment.vmLogFile())) {
+        if (!Files.exists(Environment.vmLogFile())) {
             BuildOutput.note("macOS may show permission dialogs for home folder access and");
             BuildOutput.note("local network connectivity. These are safe to approve:");
             BuildOutput.note("  - Your home directory is mounted read-only (nothing is modified)");
@@ -334,14 +336,10 @@ public final class VmManager {
             BuildOutput.note("  - Network access enables connectivity for the Linux containers");
         }
 
-        BuildOutput.stepStart("Launching VM (" + backend.name().toLowerCase()
-                + ", cpus=" + cpus + ", memory=" + memoryMiB + "M)...");
+        BuildOutput.stepStart("Launching VM (vfkit, cpus=" + cpus + ", memory=" + memoryMiB + "M)...");
         try {
             Files.createDirectories(Environment.vmStateDir());
-            switch (backend) {
-                case VFKIT -> startVfkit(cpus, memoryMiB);
-                case QEMU -> startQemu(cpus, memoryMiB);
-            }
+            startVfkit(cpus, memoryMiB);
             return StartResult.LAUNCHED;
         } catch (Exception e) {
             BuildOutput.stepFail("Failed to start VM: " + e.getMessage());
@@ -919,7 +917,7 @@ public final class VmManager {
                 "--memory", String.valueOf(memoryMiB),
                 "--kernel", Environment.applianceKernel().toString(),
                 "--initrd", Environment.vmDummyInitrd().toString(),
-                "--kernel-cmdline", kernelCmdline("hvc0"),
+                "--kernel-cmdline", kernelCmdline(),
                 "--device", "virtio-blk,path=" + Environment.vmDiskImage(),
                 "--device", "virtio-blk,path=" + Environment.vmSwapImage(),
                 "--device", "virtio-blk,path=" + Environment.vmDataImage(),
@@ -994,72 +992,6 @@ public final class VmManager {
             throw new IOException(program + " did not exec within 2s (still " + last.get() + ")");
         }
         // The command could not be read at all; a live process is the best answer there is.
-    }
-
-    // --- Internal: QEMU ---
-
-    private static void startQemu(int cpus, int memoryMiB) throws IOException {
-        var arch = normalizeArch();
-        var qemuBin = "qemu-system-" + arch;
-        String console;
-        var machineArgs = new ArrayList<String>();
-
-        switch (arch) {
-            case "x86_64" -> {
-                console = "ttyS0";
-                if (Files.exists(Path.of("/dev/kvm"))) {
-                    machineArgs.addAll(List.of("-machine", "pc", "-cpu", "host", "-enable-kvm"));
-                } else {
-                    machineArgs.addAll(List.of("-machine", "pc", "-cpu", "qemu64"));
-                }
-            }
-            case "aarch64" -> {
-                console = "ttyAMA0";
-                if (Files.exists(Path.of("/dev/kvm"))) {
-                    machineArgs.addAll(List.of("-machine", "virt", "-cpu", "host", "-enable-kvm"));
-                } else {
-                    machineArgs.addAll(List.of("-machine", "virt", "-cpu", "cortex-a57"));
-                }
-            }
-            default -> throw new VmException("Unsupported architecture: " + arch);
-        }
-
-        var cmd = new ArrayList<String>();
-        cmd.add(qemuBin);
-        cmd.addAll(machineArgs);
-        cmd.addAll(List.of(
-                "-m", String.valueOf(memoryMiB),
-                "-smp", String.valueOf(cpus),
-                "-nographic",
-                "-nodefaults",
-                "-serial", "stdio",
-                "-kernel", Environment.applianceKernel().toString()));
-        cmd.addAll(qemuDriveArgs());
-        cmd.addAll(List.of(
-                "-netdev", "user,id=net0",
-                "-device", "virtio-net-pci,netdev=net0",
-                "-append", kernelCmdline(console)
-        ));
-
-        // qemu's console is its own stdout, so the wrapper's errors can share its append-mode vm.log.
-        long pid = launchInOwnSession(cmd, "qemu", Environment.vmLogFile(), Environment.vmPidFile()).pid();
-        BuildOutput.stepDone("pid=" + pid + noSessionNote());
-    }
-
-    /**
-     * QEMU's {@code -drive} arguments for the appliance's root, swap and data images.
-     * <p>
-     * {@code discard=unmap} punches the guest's discards into the host file, as vfkit does (#1682
-     * measured it). QEMU's default is {@code discard=ignore}: virtio-blk still advertises discard,
-     * so btrfs's online trim and {@code fstrim} report success while the images only grow (#1683).
-     * Swap is discarded only when the guest's {@code swapon} asks for it.
-     */
-    static List<String> qemuDriveArgs() {
-        var options = ",format=raw,if=virtio,discard=unmap";
-        return List.of(
-                "-drive", "id=root,file=" + Environment.vmDiskImage() + options,
-                "-drive", "id=swap,file=" + Environment.vmSwapImage() + options,
-                "-drive", "id=data,file=" + Environment.vmDataImage() + options);
     }
 
     // --- Internal: disk management ---
@@ -1471,11 +1403,11 @@ public final class VmManager {
 
     // --- Internal: helpers ---
 
-    private static String kernelCmdline(String console) {
+    private static String kernelCmdline() {
         // mitigations=off is compiled in (CONFIG_CPU_MITIGATIONS=n), so it is
         // not repeated here. rootfstype=btrfs avoids the kernel probing fuseblk
         // (which rejects the 'commit' rootflag) before btrfs at root mount.
-        return "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=" + console
+        return "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0"
                 + " isx.gateway=" + gatewayIp()
                 + " isx.mitm_port=" + mitmPort()
                 + " isx.time=" + (System.currentTimeMillis() / 1000)

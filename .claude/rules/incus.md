@@ -46,7 +46,6 @@ The `incus` CLI binary is not required at runtime.
 As a plain child it stayed in the starting command's process group and on its terminal, and died with them.
 Closing the terminal hangs up everything on it, Ctrl+C reaches the foreground group, and launchd kills what is left in a job's process group when the job exits, which is how the login agent's `isx vm start` took its own VM down a few seconds after starting it.
 Anything else that has to outlive the command starting it, or must not get the terminal's Ctrl+C, needs the same: host processes a build waits on do (Git in `GitProcess`, tool setup's `tar`/`unzip`/`chmod`, #1425), through `OwnSession.start`, whose shutdown hook stops them when isx exits first.
-QEMU (the Linux/CI path) is started the same way (#993); its console is its own stdout to `vm.log`, so the wrapper's errors go there too.
 Without `setsid` or `/usr/bin/perl` the command is left as it is.
 vfkit's own stdout/stderr go to `Environment.vfkitLogFile()`, not `vm.log`: vfkit opens `vm.log` itself, non-append, for the VM's virtio-serial console, and a second append-mode writer on the same file corrupts both.
 

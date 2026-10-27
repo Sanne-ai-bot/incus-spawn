@@ -128,7 +128,7 @@ The instance's image is a static busybox the job builds and imports itself, not 
 
 Note that `isx init` is not run against the QEMU appliance VM: on Linux it provisions a *native* Incus, and the appliance has its own provisioning.
 The vsock-bridged boot in `integration-tests` exercises the client path to the appliance instead (`isx` over `vm.incus.sock`), which needs no `init`.
-`appliance/test-with-isx.sh` stays macOS-only because it has isx *boot* the VM, and isx's QEMU backend deliberately wires no vsock (Linux users run native Incus).
+`appliance/test-with-isx.sh` stays macOS-only because it has isx *boot* the VM, and isx boots it only under vfkit (Linux users run native Incus; DESIGN.md "A Linux appliance mode").
 The appliance also provisions Incus with its own shell script and never calls `isx init` -- the "ensure default profile has a root disk and NIC" invariant is implemented twice, in `incus-spawn-vm-init` (shell, in-VM) and `IncusClient.ensureDefaultProfileDevices` (Java, host).
 Keep the two in sync.
 

@@ -217,7 +217,7 @@ Disk images are sparse: a 60 GB image consumes ~540 MB actual disk space on APFS
 All three disks reach the Mac's SSD as writes to sparse raw files on APFS.
 Two questions matter: does space come back when the guest frees it, and how much does swap write.
 Measured on a 16 GB Mac with the VM at 6.4 GB, kernel 7.2.9 and vfkit, on 2026-10-25.
-It holds for vfkit only: the QEMU backend attaches the images without `discard=unmap`, and QEMU's default drops the guest's discards.
+It holds for vfkit and for `vm.sh`'s QEMU, which attaches with `discard=unmap`; `test-boot.sh` does not, so trim is lost there.
 
 - **Trim reaches the image already.**
   All three virtio-blk devices advertise discard (`discard_max_bytes` is the device size).
@@ -280,13 +280,9 @@ Adding them is not ruled out; it would take all four of these:
 
 ### QEMU (Linux / CI)
 
-Architecture-aware with KVM acceleration when available:
-
-- **x86_64**: `-machine pc`, `-cpu host -enable-kvm` when `/dev/kvm` exists
-- **aarch64**: `-machine virt`, `-cpu host -enable-kvm` when `/dev/kvm` exists
-- Console: `ttyS0` (x86_64) or `ttyAMA0` (aarch64)
-- Drives: every image is attached `discard=unmap` (`VmManager.qemuDriveArgs`), so the guest's discards punch holes in the host file and the sparse images shrink again (#1683).
-  QEMU's default is `discard=ignore`: virtio-blk still advertises discard, btrfs's online trim and `fstrim` report success, and the images only grow.
+isx boots the appliance only under vfkit.
+On Linux it runs under QEMU from `vm.sh`, `test-boot.sh` and CI, each with its own command line.
+`VmManager`'s QEMU backend was removed in #1695; see the root DESIGN.md "A Linux appliance mode".
 
 ## VM Management (`vm.sh`)
 
