@@ -3,7 +3,6 @@
 # or deleted, so this list only shrinks. Never add a line or raise a count: route the output instead.
 # A file that is moved or renamed takes its line along, with the same counts or lower.
 8 0 cli/src/main/java/dev/incusspawn/IncusSpawn.java
-24 0 cli/src/main/java/dev/incusspawn/command/AccountCommand.java
 24 5 cli/src/main/java/dev/incusspawn/command/AskCommand.java
 6 0 cli/src/main/java/dev/incusspawn/command/BaseCommand.java
 41 1 cli/src/main/java/dev/incusspawn/command/BuildCommand.java

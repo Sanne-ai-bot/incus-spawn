@@ -11,6 +11,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -54,8 +55,8 @@ public class AccountCommand extends BaseCommand {
 
         @Override protected CommandResult doExecute() {
             dev.incusspawn.lifecycle.CredentialProofReset.reset(RuntimeServices.incus(), instance);
-            System.out.println("Previous credential proofs for " + instance + " are revoked; the proxy confirmed the reset.");
-            System.out.println("Open a new login shell and restart tools and nested services with the new tokens. Existing requests and WebSockets continue.");
+            BuildOutput.step("Previous credential proofs for " + instance + " are revoked; the proxy confirmed the reset.");
+            BuildOutput.step("Open a new login shell and restart tools and nested services with the new tokens. Existing requests and WebSockets continue.");
             return CommandResult.SUCCESS;
         }
     }
@@ -92,7 +93,7 @@ public class AccountCommand extends BaseCommand {
             if (completion) {
                 // Names only, and no Incus: this runs on every TAB.
                 var config = SpawnConfig.load();
-                completionLines(config, AccountSelection.namespaceSetups(config)).forEach(System.out::println);
+                completionLines(config, AccountSelection.namespaceSetups(config)).forEach(BuildOutput.results()::println);
                 return CommandResult.SUCCESS;
             }
             var outputFormat = OutputFormat.parse(format);
@@ -109,8 +110,7 @@ public class AccountCommand extends BaseCommand {
             } catch (Exception e) {
                 states = Map.of();
                 pinsKnown = false;
-                pinsUnavailable = e.getMessage() == null || e.getMessage().isBlank()
-                        ? e.getClass().getSimpleName() : e.getMessage();
+                pinsUnavailable = failure(e);
             }
 
             var namespaces = new ArrayList<NamespaceListing>();
@@ -120,12 +120,12 @@ public class AccountCommand extends BaseCommand {
             if (outputFormat != OutputFormat.TABLE) {
                 // Unknown pins print as null, never as "pinned by nobody"; the reason goes to stderr.
                 if (!pinsKnown) {
-                    System.err.println("Could not read which instances use each account: " + pinsUnavailable);
+                    BuildOutput.bound().warnAside("Could not read which instances use each account: " + pinsUnavailable);
                 }
-                outputFormat.print(System.out, listRecords(namespaces, pinsKnown));
+                outputFormat.print(BuildOutput.results(), listRecords(namespaces, pinsKnown));
                 return CommandResult.SUCCESS;
             }
-            renderList(namespaces, pinsUnavailable).forEach(System.out::println);
+            renderList(namespaces, pinsUnavailable).forEach(BuildOutput.results()::println);
             return CommandResult.SUCCESS;
         }
     }
@@ -324,7 +324,7 @@ public class AccountCommand extends BaseCommand {
             var outputFormat = OutputFormat.parse(format);
             var incus = RuntimeServices.incus();
             if (!incus.exists(instance)) {
-                System.err.println("Error: no instance named '" + instance + "' found.");
+                BuildOutput.error("no instance named '" + instance + "' found.");
                 return CommandResult.valueOf(1);
             }
             var config = SpawnConfig.load();
@@ -338,11 +338,11 @@ public class AccountCommand extends BaseCommand {
                     subMap(metadata, Metadata.ACCOUNT_IDENTITY_PREFIX));
             var staleIdentities = pendingIdentityRefresh(config, incus, instance, uses);
             if (outputFormat != OutputFormat.TABLE) {
-                outputFormat.print(System.out, showRecords(template, uses, staleIdentities));
+                outputFormat.print(BuildOutput.results(), showRecords(template, uses, staleIdentities));
                 return CommandResult.SUCCESS;
             }
             renderShow(instance, template, uses, staleIdentities)
-                    .forEach(System.out::println);
+                    .forEach(BuildOutput.results()::println);
             return CommandResult.SUCCESS;
         }
     }
@@ -511,14 +511,15 @@ public class AccountCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (args == null || args.size() < 2) {
-                System.err.println("Usage: isx account set <instance> <namespace>=<account> ...");
-                System.err.println("Example: isx account set my-box claude=work");
+                BuildOutput.error("name an instance and at least one <namespace>=<account>.",
+                        "Usage: isx account set <instance> <namespace>=<account> ...",
+                        "Example: isx account set my-box claude=work");
                 return CommandResult.valueOf(1);
             }
             var incus = RuntimeServices.incus();
             var instance = args.get(0);
             if (!incus.exists(instance)) {
-                System.err.println("Error: no instance named '" + instance + "' found.");
+                BuildOutput.error("no instance named '" + instance + "' found.");
                 return CommandResult.valueOf(1);
             }
 
@@ -529,21 +530,21 @@ public class AccountCommand extends BaseCommand {
                 change(incus, instance, config, requested);
             } catch (AccountSelection.InvalidSelectionException
                      | AccountResolver.UnknownAccountException e) {
-                System.err.println("Error: " + e.getMessage());
+                BuildOutput.error(failure(e));
                 return CommandResult.valueOf(1);
             }
 
-            System.out.println(instance + " now uses " + AccountSelection.describe(requested) + ".");
+            BuildOutput.step(instance + " now uses " + AccountSelection.describe(requested) + ".");
             // Pinning the current default is a choice to stop following it, and looks exactly
             // like following it until the default changes -- so say which one this was.
             requested.forEach((namespace, account) -> {
                 if (account.equals(AccountResolver.effectiveAccount(config, namespace, null))) {
-                    System.out.println("'" + account + "' is also the " + namespace + " default; the"
+                    BuildOutput.step("'" + account + "' is also the " + namespace + " default; the"
                             + " instance now keeps it even if the default changes"
                             + " ('isx account unset " + instance + " " + namespace + "' follows the default instead).");
                 }
             });
-            System.out.println("Takes effect on the instance's next request;"
+            BuildOutput.step("Takes effect on the instance's next request;"
                     + " nothing inside it needs restarting.");
             return CommandResult.SUCCESS;
         }
@@ -562,14 +563,15 @@ public class AccountCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (args == null || args.size() < 2) {
-                System.err.println("Usage: isx account unset <instance> <namespace> ...");
-                System.err.println("Example: isx account unset my-box claude");
+                BuildOutput.error("name an instance and at least one namespace.",
+                        "Usage: isx account unset <instance> <namespace> ...",
+                        "Example: isx account unset my-box claude");
                 return CommandResult.valueOf(1);
             }
             var incus = RuntimeServices.incus();
             var instance = args.get(0);
             if (!incus.exists(instance)) {
-                System.err.println("Error: no instance named '" + instance + "' found.");
+                BuildOutput.error("no instance named '" + instance + "' found.");
                 return CommandResult.valueOf(1);
             }
             var namespaces = new LinkedHashSet<String>();
@@ -577,7 +579,7 @@ public class AccountCommand extends BaseCommand {
                 for (var ns : arg.split(",")) {
                     ns = ns.strip();
                     if (ns.contains("=")) {
-                        System.err.println("Error: '" + ns + "' names an account; 'unset' takes only the"
+                        BuildOutput.error("'" + ns + "' names an account; 'unset' takes only the"
                                 + " namespace, e.g. 'isx account unset " + instance + " "
                                 + ns.substring(0, ns.indexOf('=')).strip() + "'.");
                         return CommandResult.valueOf(1);
@@ -592,7 +594,7 @@ public class AccountCommand extends BaseCommand {
                 if (current.containsKey(ns)) {
                     changes.put(ns, null);
                 } else {
-                    System.out.println(instance + " does not pin a " + ns + " account;"
+                    BuildOutput.step(instance + " does not pin a " + ns + " account;"
                             + " it already follows the default.");
                 }
             }
@@ -603,16 +605,16 @@ public class AccountCommand extends BaseCommand {
                 change(incus, instance, config, changes);
             } catch (AccountSelection.InvalidSelectionException
                      | AccountResolver.UnknownAccountException e) {
-                System.err.println("Error: " + e.getMessage());
+                BuildOutput.error(failure(e));
                 return CommandResult.valueOf(1);
             }
 
             for (var ns : changes.keySet()) {
                 var account = AccountResolver.effectiveAccount(config, ns, null);
-                System.out.println(instance + " now follows the " + ns + " default"
+                BuildOutput.step(instance + " now follows the " + ns + " default"
                         + (account.isEmpty() ? " (none is configured)." : " (currently '" + account + "')."));
             }
-            System.out.println("Takes effect on the instance's next request;"
+            BuildOutput.step("Takes effect on the instance's next request;"
                     + " nothing inside it needs restarting.");
             return CommandResult.SUCCESS;
         }
