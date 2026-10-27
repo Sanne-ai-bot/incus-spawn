@@ -87,4 +87,56 @@ class AccountCompletionTest {
         // The skipped one is the default here, so no line carries the marker.
         assertEquals(java.util.List.of("github=", "github=good"), selections(config));
     }
+
+    /** account add takes a namespace or its tool, so both are offered, and only what it accepts (#1773). */
+    @Test
+    void addCandidatesAreTheNamespacesAndToolsAddAccepts() {
+        var tools = new dev.incusspawn.tool.ToolDefLoader().allToolSetups();
+        var lines = AccountCommand.addCompletionLines(tools);
+        assertTrue(lines.containsAll(java.util.List.of("claude", "gh", "github")), lines.toString());
+        assertEquals(lines.stream().sorted().distinct().toList(), lines, "sorted, once each");
+        for (var name : lines) {
+            assertNotNull(dev.incusspawn.config.CredentialCheck.credentialTool(name, tools), name);
+        }
+        assertFalse(lines.contains("maven-3"), "a tool without a proxy: " + lines);
+        assertFalse(lines.contains("copilot"), "a tool that borrows another's credential: " + lines);
+    }
+
+    /**
+     * A user tool with a credential step, named {@code name}, beside the built-in tools. A cloned
+     * repository's {@code .incus-spawn/tools} can name a tool the same way.
+     */
+    static java.util.Map<String, dev.incusspawn.tool.ToolSetup> toolsWithCredentialStep(String... names)
+            throws java.io.IOException {
+        var dir = java.nio.file.Files.createDirectories(dev.incusspawn.Environment.configDir().resolve("tools"));
+        for (int i = 0; i < names.length; i++) {
+            java.nio.file.Files.writeString(dir.resolve("tool" + i + ".yaml"), """
+                    name: "%s"
+                    description: "A tool with a credential step"
+                    proxy:
+                      config-namespace: ns%d
+                      configuration:
+                        api-key:
+                          config-path: apiKey
+                          description: "API key"
+                          secret: true
+                      auth:
+                        - domains:
+                            - api.example.com
+                          type: bearer
+                          token: "${api-key}"
+                    """.formatted(names[i], i));
+        }
+        return new dev.incusspawn.tool.ToolDefLoader().allToolSetups();
+    }
+
+    /** A name the shell would expand is never printed: bash's compgen -W would run it on TAB. */
+    @Test
+    void addCandidatesLeaveOutNamesTheShellWouldExpand() throws Exception {
+        var tools = toolsWithCredentialStep("good-tool", "$(touch pwned)");
+        assertTrue(tools.containsKey("$(touch pwned)"), "the hostile tool loads: " + tools.keySet());
+        var lines = AccountCommand.addCompletionLines(tools);
+        assertTrue(lines.contains("good-tool"), lines.toString());
+        assertFalse(lines.stream().anyMatch(l -> l.contains("touch")), lines.toString());
+    }
 }

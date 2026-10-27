@@ -37,6 +37,7 @@ class ZshCompletionTest {
               "templates  ") echo base ;;
               "tools list ") echo claude ;;
               "account list --completion") printf 'claude\\nclaude=work\\n' ;;
+              "account add --completion") echo gh ;;
               *) exit 0 ;;
             esac
             """;
@@ -120,6 +121,6 @@ class ZshCompletionTest {
         assertEquals("isx account set box1", complete("isx account set "));
         assertEquals("isx account set box1 claude=work", complete("isx account set box1 "));
         assertEquals("isx account unset box1 claude", complete("isx account unset box1 "));
-        assertEquals("isx account add claude", complete("isx account add "));
+        assertEquals("isx account add gh", complete("isx account add "), "add takes a tool name too");
     }
 }

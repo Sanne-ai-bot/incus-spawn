@@ -15,6 +15,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
 /**
  * Whether an instance about to be branched has the credentials its tools need, answered for the
@@ -87,6 +89,21 @@ public final class CredentialCheck {
         if (owner != null) return owner;
         var tool = allTools.get(name);
         return tool != null && hasCredentialStep(tool) ? name : null;
+    }
+
+    /**
+     * Every name {@link #credentialTool} resolves, sorted: each credential step's tool and the
+     * namespace it declares ({@code gh} and {@code github}).
+     */
+    public static SortedSet<String> acceptedNames(Map<String, ToolSetup> allTools) {
+        var names = new TreeSet<String>();
+        allTools.forEach((toolName, tool) -> {
+            if (!hasCredentialStep(tool)) return;
+            names.add(toolName);
+            var namespace = tool.proxy().getConfigNamespace();
+            if (!namespace.isBlank()) names.add(namespace);
+        });
+        return names;
     }
 
     /** The tool whose step owns {@code namespace}: the first with a step that declares it, or {@code null}. */

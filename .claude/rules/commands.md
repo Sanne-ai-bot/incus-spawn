@@ -20,8 +20,12 @@ When adding a *shared* command, add it to **both** command lists -- `IncusSpawnC
 When adding another macOS-only command, add it to `IncusSpawnCommand` only and extend the completion strip.
 
 Account values: `isx account list --completion` (names only, never credentials) prints every namespace on its own line for `account unset`, then `ns=` / `ns=account` lines for the usable accounts (default marked after a TAB) for `--account` and `account set`, in all three scripts.
-Names holding a control character are skipped.
-Keep it free of Incus and secrets: it runs on every TAB.
+It skips names holding a control character.
+`account add`'s positional completes from `isx account add --completion` instead (`CredentialCheck.acceptedNames`): each credential step's namespace and its tool's name, as `credentialTool` resolves them for `addCredential`, so `gh` is offered beside `github`.
+It prints only names `ToolDefValidator.isNamespace` accepts: a tool's name is unconstrained, and bash's `compgen -W` expands its word list, so a cloned repository's tool named `$(...)` would run on TAB.
+A tool whose name is not an identifier still works with `isx account add`, but is not offered.
+Keep both free of Incus and secrets: they run on every TAB.
+`BashAccountCompletionTest` and `FishAccountCompletionTest` run the generated script in a real shell with a fake `isx`, and skip without the shell.
 
 The zsh script dispatches through `_arguments -C`, which already removes the command from `words` and decrements `CURRENT`.
 A helper therefore sees its subcommand as the command and completes positional values from `words[2]`.

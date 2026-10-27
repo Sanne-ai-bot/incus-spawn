@@ -590,7 +590,8 @@ isx completion [<shell>]
 Supported shells: `bash` (the default), `zsh` and `fish`.
 
 The scripts also complete `<namespace>=<account>` for `isx branch --account` and `isx account set`, and the namespaces for `isx account unset`.
-They read account names from `isx account list --completion`, which prints names only, never credentials.
+For `isx account add` they offer each credential by namespace and by tool, such as `github` and `gh`.
+They read these from `isx account list --completion` and `isx account add --completion`, which print names only, never credentials.
 
 ## Scripting isx
 

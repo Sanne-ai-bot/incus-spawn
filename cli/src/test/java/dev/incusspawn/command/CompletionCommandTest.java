@@ -167,4 +167,15 @@ class CompletionCommandTest {
         assertTrue(linux(CompletionCommand.Shell.fish).contains("-l account"));
         assertTrue(linux(CompletionCommand.Shell.fish).contains("'(__isx_accounts)'"));
     }
+
+    /** account add takes a tool name too, so its positional reads add's own list, not the namespaces (#1773). */
+    @Test
+    void everyShellCompletesAccountAddFromItsOwnNames() {
+        for (var shell : CompletionCommand.Shell.values()) {
+            assertTrue(linux(shell).contains("isx account add --completion"), shell + " must call add's helper");
+        }
+        assertTrue(linux(CompletionCommand.Shell.zsh).contains("add) _arguments '1:credential:_isx_account_add_names' ;;"));
+        assertTrue(linux(CompletionCommand.Shell.bash).contains("$(_isx_list_account_add_names) --help"));
+        assertTrue(linux(CompletionCommand.Shell.fish).contains("'__isx_account_args add 0' -a '(__isx_account_add_names)'"));
+    }
 }
