@@ -198,35 +198,36 @@ public class UpdateBaseCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
-        var console = System.console();
-        if (console == null) {
-            System.err.println("No console available. Use --latest or specify a tag.");
+        var prompts = Prompts.terminal();
+        if (prompts == null) {
+            BuildOutput.error("no terminal to ask on.", "Use --latest or specify a tag.");
             return CommandResult.valueOf(1);
         }
+        return askWhatToDo(prompts, latest, available, unpinned);
+    }
 
-        System.out.println("\nWhat would you like to do?");
-        System.out.println("  1) Track latest (" + latest.tag() + ") — always installs the newest release on build");
-        System.out.println("  2) Pin a specific version");
-        System.out.println("  3) Cancel");
-        System.out.print("Choice [1-3]: ");
-
-        var choice = console.readLine();
+    /** Asks whether to track the latest release or pin one, through {@code prompts}, and does it. */
+    CommandResult askWhatToDo(Prompts prompts, Release latest, List<Release> available, ImageDef unpinned)
+            throws IOException {
+        prompts.say("What would you like to do?");
+        prompts.say("1) Track latest (" + latest.tag() + ") — always installs the newest release on build");
+        prompts.say("2) Pin a specific version");
+        prompts.say("3) Cancel");
+        var choice = prompts.ask("Choice [1-3]: ");
         if (choice == null) return CommandResult.SUCCESS;
-        choice = choice.strip();
 
-        return switch (choice) {
+        return switch (choice.strip()) {
             case "1" -> trackLatest(latest.tag());
             case "2" -> {
-                System.out.print("Enter version tag: ");
-                var tag = console.readLine();
+                var tag = prompts.ask("Enter version tag: ");
                 if (tag == null || tag.isBlank()) {
-                    System.out.println("Aborted.");
+                    BuildOutput.step("Aborted.");
                     yield CommandResult.SUCCESS;
                 }
                 yield pinToTag(tag.strip(), available, unpinned);
             }
             default -> {
-                System.out.println("Aborted.");
+                BuildOutput.step("Aborted.");
                 yield CommandResult.SUCCESS;
             }
         };
@@ -256,15 +257,16 @@ public class UpdateBaseCommand extends BaseCommand {
     }
 
     private void printReleaseList(List<Release> available, String currentTag) {
-        System.out.println("\nAvailable base images:");
+        var lines = new ArrayList<String>();
         for (int i = 0; i < available.size(); i++) {
             var r = available.get(i);
             var markers = new ArrayList<String>();
             if (i == 0) markers.add("latest");
             if (r.tag().equals(currentTag)) markers.add("current");
             var suffix = markers.isEmpty() ? "" : "  [" + String.join(", ", markers) + "]";
-            System.out.println("  " + r.tag() + "  " + r.date() + suffix);
+            lines.add(r.tag() + "  " + r.date() + suffix);
         }
+        groupOfSteps("Available base images", lines);
     }
 
     /**

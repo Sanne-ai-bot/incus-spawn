@@ -84,4 +84,13 @@ public interface Prompts {
         var console = System.console();
         return console == null ? null : of(console);
     }
+
+    /**
+     * {@link #console}, but only when stdin is the terminal: since JDK 22 a console exists with
+     * stdin redirected, and a question asked there would read the caller's input as its answer.
+     */
+    static Prompts terminal() {
+        var console = System.console();
+        return console == null || !console.isTerminal() ? null : console();
+    }
 }

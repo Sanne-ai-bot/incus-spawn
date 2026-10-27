@@ -6,7 +6,6 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.invocation.CommandInvocation;
 
 import java.io.Console;
-import java.io.PrintStream;
 import java.util.concurrent.Callable;
 
 public abstract class BaseCommand implements Command<CommandInvocation> {
@@ -58,43 +57,9 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
     }
 
     /**
-     * Reads a yes/no response, accepting an empty response as the supplied default.
-     * EOF declines by default; callers can opt into a different EOF result where needed.
-     * Callers decide how to handle an unavailable console.
-     */
-    protected static boolean askConfirmation(Console console, String prompt, boolean defaultValue) {
-        return askConfirmation(console, System.out, prompt, defaultValue, false);
-    }
-
-    protected static boolean askConfirmation(Console console, String prompt,
-                                             boolean defaultValue, boolean eofValue) {
-        return askConfirmation(console, System.out, prompt, defaultValue, eofValue);
-    }
-
-    protected static boolean askConfirmation(Console console, PrintStream output,
-                                             String prompt, boolean defaultValue) {
-        return askConfirmation(console, output, prompt, defaultValue, false);
-    }
-
-    protected static boolean askConfirmation(Console console, PrintStream output,
-                                             String prompt, boolean defaultValue, boolean eofValue) {
-        return askConfirmation(Prompts.of(console), output, prompt, defaultValue, eofValue);
-    }
-
-    protected static boolean askConfirmation(Prompts prompts, String prompt, boolean defaultValue) {
-        return askConfirmation(prompts, System.out, prompt, defaultValue, false);
-    }
-
-    protected static boolean askConfirmation(Prompts prompts, String prompt,
-                                             boolean defaultValue, boolean eofValue) {
-        return askConfirmation(prompts, System.out, prompt, defaultValue, eofValue);
-    }
-
-    /**
      * A yes/no question asked through {@code prompts}, which shows it at the step indent and
      * reads the answer: empty takes {@code defaultValue}, EOF {@code eofValue}, and anything else
-     * is asked again. The way every migrated flow asks (#1703); the {@code askConfirmation}
-     * overloads still print the question themselves for the flows that have not moved yet.
+     * is asked again (#1703). Callers decide how to handle an unavailable console.
      */
     protected static boolean askYesNo(Prompts prompts, String question, boolean defaultValue, boolean eofValue) {
         while (true) {
@@ -112,18 +77,6 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
         return askYesNo(prompts, question, defaultValue, false);
     }
 
-    protected static boolean askConfirmation(Prompts prompts, PrintStream output,
-                                             String prompt, boolean defaultValue, boolean eofValue) {
-        // The question as the caller wrote it, indent included, on the stream it chose
-        var asking = new Prompts() {
-            @Override public String readLine() { return prompts.readLine(); }
-            @Override public char[] readPassword() { return prompts.readPassword(); }
-            @Override public void show(String question) { output.print(question); }
-            @Override public void say(String line) { output.println(line); }
-        };
-        return askYesNo(asking, prompt, defaultValue, eofValue);
-    }
-
     /**
      * Ask before a disruptive but recoverable action (a restart, a resize). With no terminal it
      * proceeds; anything that deletes data uses {@link #confirmDestructive} instead.
@@ -132,8 +85,8 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
         if (skipConfirmation) return true;
         var console = System.console();
         if (console == null) return true;
-        if (!askConfirmation(console, prompt, false)) {
-            System.out.println("Aborted.");
+        if (!askYesNo(Prompts.of(console), prompt, false)) {
+            BuildOutput.step("Aborted.");
             return false;
         }
         return true;
@@ -164,8 +117,8 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
         if (skipConfirmation) return true;
         // Since JDK 22 System.console() can be non-null with stdin redirected; isTerminal() says which.
         if (console == null || !console.isTerminal()) throw new NoTerminalException(skipFlag);
-        if (!askConfirmation(console, prompt, false)) {
-            System.out.println("Aborted.");
+        if (!askYesNo(Prompts.of(console), prompt, false)) {
+            BuildOutput.step("Aborted.");
             return false;
         }
         return true;

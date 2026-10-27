@@ -121,12 +121,8 @@ public class RunCommand extends BaseCommand {
 
         // For YAML actions with auto_return: false, wait for keypress (only in interactive terminals)
         if (toolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
-            if (System.console() != null) {
-                System.out.println("\nPress any key to continue...");
-                try {
-                    System.in.read();
-                } catch (java.io.IOException ignored) {}
-            }
+            var prompts = Prompts.terminal();
+            if (prompts != null) prompts.ask("Press Enter to continue...");
         }
 
         return CommandResult.SUCCESS;

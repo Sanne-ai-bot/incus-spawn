@@ -363,7 +363,7 @@ public class TemplatesCommand extends BaseCommand {
 
             var console = System.console();
             if (console == null) return false;
-            if (!askConfirmation(console, "Re-edit?", true, true)) {
+            if (!askYesNo(Prompts.of(console), "Re-edit?", true, true)) {
                 if (isBuiltinCopy) {
                     cleanup(file);
                 }
