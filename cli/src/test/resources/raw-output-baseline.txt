@@ -9,7 +9,6 @@
 1 0 cli/src/main/java/dev/incusspawn/command/BuildInterrupt.java
 6 0 cli/src/main/java/dev/incusspawn/command/BuildProgress.java
 5 0 cli/src/main/java/dev/incusspawn/command/BuildTools.java
-34 4 cli/src/main/java/dev/incusspawn/command/CleanCommand.java
 21 10 cli/src/main/java/dev/incusspawn/command/DoctorCommand.java
 9 0 cli/src/main/java/dev/incusspawn/command/GitRemoteHelperCommand.java
 4 0 cli/src/main/java/dev/incusspawn/command/GuestProvisioning.java

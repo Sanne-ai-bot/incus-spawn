@@ -45,7 +45,6 @@ class StreamSwapGateTest {
             Map.entry("cli/src/test/java/dev/incusspawn/command/BuildCommandTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/BuildProgressTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/BuildToolsTest.java", CLI_COMMAND),
-            Map.entry("cli/src/test/java/dev/incusspawn/command/CleanCommandTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/GuestProvisioningTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/RepoClonerReferenceTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/RepoClonerTest.java", CLI_COMMAND),
