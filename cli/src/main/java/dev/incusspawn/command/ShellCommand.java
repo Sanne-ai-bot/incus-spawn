@@ -8,12 +8,13 @@ import dev.incusspawn.incus.NoTerminalForShellException;
 import dev.incusspawn.mcp.TaskJoin;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tool.ShellMenu;
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
-import java.io.PrintStream;
 import java.time.Instant;
 import java.util.List;
 
@@ -38,7 +39,7 @@ public class ShellCommand extends BaseCommand {
     @Override
     protected CommandResult doExecute() throws Exception {
         if (taskId != null && !task) {
-            System.err.println("A task id needs --task: isx shell " + name + " --task " + taskId);
+            BuildOutput.error("a task id needs --task.", "isx shell " + name + " --task " + taskId);
             return CommandResult.valueOf(1);
         }
         // Refuse before starting the instance: without a terminal there is no shell to open.
@@ -63,10 +64,10 @@ public class ShellCommand extends BaseCommand {
         } else if (config.containsKey(Metadata.MCP_OWNER)) {
             // Only an isx mcp instance can hold a delegated task: one guest read, for it alone.
             var hint = hint(incus);
-            if (hint != null) System.out.println(hint);
+            if (hint != null) BuildOutput.step(hint);
         }
 
-        System.out.println("Connecting to " + name + "...\n");
+        BuildOutput.step("Connecting to " + name + "...");
         var menu = ShellMenu.NONE;
         if (ShellMenu.enabled()) {
             menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
@@ -85,36 +86,42 @@ public class ShellCommand extends BaseCommand {
         try {
             entries = TaskJoin.read(incus, name);
         } catch (RuntimeException e) {
-            System.err.println(e.getMessage());
+            BuildOutput.error(failure(e));
             return null;
         }
         var outcome = TaskJoin.resolve(entries, taskId);
         if (outcome instanceof TaskJoin.Outcome.Join join) {
-            System.out.println("Joining " + join.entry().id() + " (" + join.entry().agent() + ") in " + name + ".");
+            BuildOutput.step("Joining " + join.entry().id() + " (" + join.entry().agent() + ") in " + name + ".");
             return join.entry();
         }
-        explain(outcome, name, Instant.now(), System.err);
-        if (outcome instanceof TaskJoin.Outcome.Busy busy && busy.entry().running()) {
-            var recent = TaskJoin.recent(incus, name, busy.entry(), 5);
-            if (!recent.isEmpty()) {
-                System.err.println("Lately it:");
-                recent.forEach(line -> System.err.println("  " + line));
-            }
-        }
+        var recent = outcome instanceof TaskJoin.Outcome.Busy busy && busy.entry().running()
+                ? recent(incus, busy.entry()) : List.<String>of();
+        explain(outcome, name, Instant.now(), recent, BuildOutput.bound());
         return null;
     }
 
-    /** Why {@code outcome} joins nothing, and what to run instead. */
-    static void explain(TaskJoin.Outcome outcome, String name, Instant now, PrintStream out) {
-        if (!(outcome instanceof TaskJoin.Outcome.Several several)) {
-            var why = TaskJoin.refusal(outcome, name);
-            if (why != null) out.println(why);
+    /**
+     * Why {@code outcome} joins nothing, and what to run instead, as an error: each task with the
+     * command that joins it, or what a busy one did {@code recent}ly.
+     */
+    static void explain(TaskJoin.Outcome outcome, String name, Instant now, List<String> recent, Output out) {
+        if (outcome instanceof TaskJoin.Outcome.Several several) {
+            out.error(several.entries().size() + " delegated tasks in " + name + "; join one:", several.entries().stream()
+                    .map(entry -> TaskJoin.describe(entry, now) + ": " + TaskJoin.hostCommand(name, entry.id()))
+                    .toArray(String[]::new));
             return;
         }
-        out.println(several.entries().size() + " delegated tasks in " + name + "; join one:");
-        for (var entry : several.entries()) {
-            out.println("  " + TaskJoin.describe(entry, now));
-            out.println("    " + TaskJoin.hostCommand(name, entry.id()));
+        var why = TaskJoin.refusal(outcome, name);
+        if (why == null) return;
+        out.error(recent.isEmpty() ? why : why + " Lately it:", recent.toArray(String[]::new));
+    }
+
+    /** What a busy task did lately, or nothing when the guest cannot say: never in the way of why it is busy. */
+    private List<String> recent(IncusClient incus, TaskJoin.Entry entry) {
+        try {
+            return TaskJoin.recent(incus, name, entry, 5);
+        } catch (RuntimeException e) {
+            return List.of();
         }
     }
 

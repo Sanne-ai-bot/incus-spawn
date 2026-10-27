@@ -1,14 +1,12 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.mcp.TaskJoin;
+import dev.incusspawn.util.RecordingOutput;
 import org.aesh.AeshRuntimeRunner;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 
@@ -70,18 +68,27 @@ class ShellCommandTaskTest {
     }
 
     @Test
-    void severalTasksArePrintedEachWithTheCommandThatJoinsIt() {
+    void severalTasksAreAnErrorEachWithTheCommandThatJoinsIt() {
         var entries = List.of(
                 new TaskJoin.Entry("t1-abcd", "claude", "finished", Instant.ofEpochSecond(0), "Fix the flaky test", "s1", "/a", null),
                 new TaskJoin.Entry("t2-abcd", "codex", "running", null, "", "s2", "/b", null));
-        var out = new ByteArrayOutputStream();
-        ShellCommand.explain(new TaskJoin.Outcome.Several(entries), "box", Instant.ofEpochSecond(7200), new PrintStream(out, true, StandardCharsets.UTF_8));
-        assertEquals("""
-                2 delegated tasks in box; join one:
-                  t1-abcd  claude  finished 2h ago  Fix the flaky test
-                    isx shell box --task t1-abcd
-                  t2-abcd  codex  running
-                    isx shell box --task t2-abcd
-                """, out.toString(StandardCharsets.UTF_8));
+        var out = new RecordingOutput();
+        ShellCommand.explain(new TaskJoin.Outcome.Several(entries), "box", Instant.ofEpochSecond(7200), List.of(), out);
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
+                "2 delegated tasks in box; join one:",
+                "t1-abcd  claude  finished 2h ago  Fix the flaky test: isx shell box --task t1-abcd",
+                "t2-abcd  codex  running: isx shell box --task t2-abcd")), out.events());
+    }
+
+    /** A busy task's refusal is one error, with what it did lately under it, never loose lines on stderr. */
+    @Test
+    void aBusyTaskIsAnErrorWithWhatItDidLately() {
+        var busy = new TaskJoin.Outcome.Busy(
+                new TaskJoin.Entry("t2-abcd", "codex", "running", null, "", "s2", "/b", null));
+        var out = new RecordingOutput();
+        ShellCommand.explain(busy, "box", Instant.ofEpochSecond(7200), List.of("ran mvn test", "edited Foo.java"), out);
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
+                TaskJoin.refusal(busy, "box") + " Lately it:",
+                "ran mvn test", "edited Foo.java")), out.events());
     }
 }

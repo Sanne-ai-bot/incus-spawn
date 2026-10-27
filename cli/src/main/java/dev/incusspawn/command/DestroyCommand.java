@@ -43,18 +43,18 @@ public class DestroyCommand extends BaseCommand {
     @Override
     protected CommandResult doExecute() throws Exception {
         if (allTemplates && allInstances) {
-            System.err.println("Error: specify --all-templates or --all-instances, not both.");
+            BuildOutput.error("specify --all-templates or --all-instances, not both.");
             return CommandResult.valueOf(1);
         }
         if ((allTemplates || allInstances) && name != null && !name.isBlank()) {
-            System.err.println("Error: cannot combine a named target with --all-templates / --all-instances.");
+            BuildOutput.error("cannot combine a named target with --all-templates / --all-instances.");
             return CommandResult.valueOf(1);
         }
         if (allTemplates) return destroyAllTemplates();
         if (allInstances) return destroyAllInstances();
 
         if (name == null || name.isBlank()) {
-            System.err.println("Error: specify a name, or use --all-templates / --all-instances.");
+            BuildOutput.error("specify a name, or use --all-templates / --all-instances.");
             return CommandResult.valueOf(1);
         }
         return destroySingle(name);
@@ -65,14 +65,14 @@ public class DestroyCommand extends BaseCommand {
         var lockManager = RuntimeServices.lockManager();
 
         if (!incus.exists(target)) {
-            System.err.println("Error: no instance named '" + target + "' found.");
+            BuildOutput.error("no instance named '" + target + "' found.");
             return CommandResult.valueOf(1);
         }
 
-        var lockOpt = tryAcquireLock(lockManager, target);
+        var lockOpt = tryAcquireLock(lockManager, target, true);
         if (lockOpt == null) return CommandResult.valueOf(1);
         if (lockOpt.isEmpty()) {
-            System.err.println("Error: '" + target + "' is locked by another process.");
+            BuildOutput.error("'" + target + "' is locked by another process.");
             return CommandResult.valueOf(1);
         }
 
@@ -110,14 +110,11 @@ public class DestroyCommand extends BaseCommand {
 
     private CommandResult destroyAll(List<String> names, String kind) throws Exception {
         if (names.isEmpty()) {
-            System.out.println("No " + kind + "s found.");
+            BuildOutput.step("No " + kind + "s found.");
             return CommandResult.SUCCESS;
         }
 
-        System.out.println("Will destroy " + names.size() + " " + kind + "(s):");
-        for (var n : names) {
-            System.out.println("  " + n);
-        }
+        groupOfSteps("Will destroy " + names.size() + " " + kind + "(s)", names);
 
         if (!confirmDestructive("Destroy all listed " + kind + "s?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
 
@@ -197,7 +194,7 @@ public class DestroyCommand extends BaseCommand {
         int skipped = 0;
         int failures = 0;
         for (var n : names) {
-            var lockOpt = tryAcquireLock(lockManager, n);
+            var lockOpt = tryAcquireLock(lockManager, n, false);
             if (lockOpt == null) {
                 failures++;
                 continue;
@@ -224,12 +221,18 @@ public class DestroyCommand extends BaseCommand {
         return new DestroyResult(destroyed, skipped, failures);
     }
 
+    /**
+     * The lock on {@code name}, empty when another process holds it, or null after reporting why
+     * it could not be taken: an error when that fails the command, else a warning.
+     */
     private static java.util.Optional<InstanceLockManager.LockHandle> tryAcquireLock(
-            InstanceLockManager lockManager, String name) {
+            InstanceLockManager lockManager, String name, boolean fails) {
         try {
             return lockManager.tryAcquire(name, Metadata.OP_DELETING);
         } catch (UncheckedIOException e) {
-            System.err.println("Warning: lock error for " + name + ": " + e.getCause().getMessage());
+            var why = "could not lock " + name + ": " + failure(e.getCause());
+            if (fails) BuildOutput.error(why);
+            else BuildOutput.warn(why);
             return null;
         }
     }

@@ -124,6 +124,8 @@ isx run <instance> [options]
 |--------|--------------|
 | `--action <ref>` | Action to run (`tool-name` or `tool-name:action-id`) |
 
+It exits 1 when no action matches or the action fails.
+
 ## `isx destroy`
 
 Destroy an instance, or every built template or every instance at once.

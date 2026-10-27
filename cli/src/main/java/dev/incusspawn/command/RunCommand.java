@@ -3,15 +3,18 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.tool.ActionResolver;
+import dev.incusspawn.tool.ActionResult;
 import dev.incusspawn.tool.ShellMenu;
 import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.YamlToolAction;
+import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 @CommandDefinition(
@@ -56,23 +59,23 @@ public class RunCommand extends BaseCommand {
             var ref = resolver.defaultActionRef(instance, parent);
             var noDefault = noDefaultAction(name, ref, allActions);
             if (noDefault != null) {
-                // Fall back to shell; a broken reference is a warning, so it goes to stderr
-                (ref == null ? System.out : System.err).println(noDefault + ", opening shell...\n");
+                // Fall back to shell; a broken reference is a warning
+                var fallback = noDefault + ", opening shell...";
+                if (ref == null) BuildOutput.step(fallback);
+                else BuildOutput.warn(fallback);
                 var prep = dev.incusspawn.incus.IncusClient.ShellPrep.fromInstance(incus, instance);
                 incus.interactiveShell(name, "agentuser", prep,
                         resolver.shellMenu(name, instance, parent, prep.workdir()));
                 return CommandResult.SUCCESS;
             }
             toolAction = ActionResolver.findActionByRef(ref, allActions).orElseThrow();
-            System.out.println("Running default action: " + toolAction.label());
+            BuildOutput.step("Running default action: " + toolAction.label());
         } else {
             // Execute named action
             var namedAction = ActionResolver.findActionByRef(action, allActions);
             if (namedAction.isEmpty()) {
-                System.err.println("Error: action '" + action + "' not found for instance '" + name + "'.");
-                System.err.println("Available actions:");
-
-                var actionsByTool = new java.util.LinkedHashMap<String, java.util.List<ToolAction>>();
+                var available = new ArrayList<String>();
+                var actionsByTool = new LinkedHashMap<String, List<ToolAction>>();
                 for (var a : allActions) {
                     actionsByTool.computeIfAbsent(a.toolName(), k -> new ArrayList<>()).add(a);
                 }
@@ -81,19 +84,21 @@ public class RunCommand extends BaseCommand {
                     var toolName = entry.getKey();
                     var actions = entry.getValue();
                     if (actions.size() == 1 && actions.get(0).id().isEmpty()) {
-                        System.err.println("  " + toolName + " - " + actions.get(0).label());
+                        available.add(toolName + " - " + actions.get(0).label());
                     } else {
                         for (var a : actions) {
                             var ref = a.id().map(id -> toolName + ":" + id).orElse(toolName);
-                            System.err.println("  " + ref + " - " + a.label());
+                            available.add(ref + " - " + a.label());
                         }
                     }
                 }
-
+                BuildOutput.error("action '" + action + "' not found for instance '" + name + "'."
+                        + (available.isEmpty() ? "" : " Available actions:"),
+                        available.toArray(String[]::new));
                 return CommandResult.valueOf(1);
             }
             toolAction = namedAction.get();
-            System.out.println("Running action: " + toolAction.label());
+            BuildOutput.step("Running action: " + toolAction.label());
         }
 
         var context = resolver.buildActionContext(name, instance, parent);
@@ -102,7 +107,7 @@ public class RunCommand extends BaseCommand {
         var cmd = toolAction.shellCommand(context);
         if (cmd.isPresent()) {
             // Action wants to run a shell command
-            System.out.println("Connecting to " + name + "...\n");
+            BuildOutput.step("Connecting to " + name + "...");
             var prep = dev.incusspawn.incus.IncusClient.ShellPrep.fromInstance(incus, instance);
             var shellCmd = cmd.get();
             var updatedPrep = new dev.incusspawn.incus.IncusClient.ShellPrep(
@@ -117,7 +122,7 @@ public class RunCommand extends BaseCommand {
 
         // Action executes directly (e.g., opens URL, copies to clipboard)
         var result = toolAction.execute(context);
-        System.out.println(result.message());
+        var succeeded = report(result);
 
         // For YAML actions with auto_return: false, wait for keypress (only in interactive terminals)
         if (toolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
@@ -125,7 +130,14 @@ public class RunCommand extends BaseCommand {
             if (prompts != null) prompts.ask("Press Enter to continue...");
         }
 
-        return CommandResult.SUCCESS;
+        return succeeded ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+    }
+
+    /** What an action that ran directly did: a step, or why it failed as an error. Returns whether it succeeded. */
+    static boolean report(ActionResult result) {
+        if (result.success()) BuildOutput.step(result.message());
+        else BuildOutput.error(result.message() == null || result.message().isBlank() ? "the action failed." : result.message());
+        return result.success();
     }
 
     /**
