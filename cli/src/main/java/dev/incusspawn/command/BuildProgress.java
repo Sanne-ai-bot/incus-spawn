@@ -32,24 +32,30 @@ final class BuildProgress {
      *  live verb shown while RUNNING (e.g. "Cloning", then "Priming"); {@code note}
      *  is a dim annotation shown on success; {@code detail} is a concise one-line
      *  error for the inline display; {@code log} is the full captured command output,
-     *  printed on failure so the diagnostic isn't reduced to the single inline line.
+     *  printed on failure so the diagnostic isn't reduced to the single inline line;
+     *  {@code step} names the step that failed for that output's heading, such as "prime",
+     *  when it is not the batch's own verb, and {@code command} is the command it ran.
      *  The detail and log quote what a guest command printed, such as a prime the cloned
      *  repository controls, so neither holds anything that could drive a terminal wherever
      *  it is shown or saved ({@link BuildOutput#guestText}, #1588). */
-    record StepProgress(StepState state, String activity, String note, boolean noteHighlight, String detail, String log) {
+    record StepProgress(StepState state, String activity, String note, boolean noteHighlight, String detail, String log,
+                        String step, String command) {
         StepProgress {
             activity = activity == null ? null : OutputFormat.oneLine(activity);
             note = note == null ? null : OutputFormat.oneLine(note);
             detail = detail == null ? null : OutputFormat.oneLine(BuildOutput.guestText(detail));
             log = log == null ? null : BuildOutput.guestText(log);
+            step = step == null ? null : OutputFormat.oneLine(step);
+            command = command == null ? null : BuildOutput.guestText(command);
         }
 
-        static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, false, null, null); }
-        static StepProgress running(String activity, String detail) { return new StepProgress(StepState.RUNNING, activity, null, false, detail, null); }
-        static StepProgress done(String note) { return new StepProgress(StepState.DONE, null, note, false, null, null); }
-        static StepProgress doneHighlight(String note) { return new StepProgress(StepState.DONE, null, note, true, null, null); }
-        static StepProgress failed(String detail, String log) {
-            return new StepProgress(StepState.FAILED, null, null, false, detail, log);
+        static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, false, null, null, null, null); }
+        static StepProgress running(String activity, String detail) { return new StepProgress(StepState.RUNNING, activity, null, false, detail, null, null, null); }
+        static StepProgress done(String note) { return new StepProgress(StepState.DONE, null, note, false, null, null, null, null); }
+        static StepProgress doneHighlight(String note) { return new StepProgress(StepState.DONE, null, note, true, null, null, null, null); }
+        static StepProgress failed(String detail, String log) { return failed(null, null, detail, log); }
+        static StepProgress failed(String step, String command, String detail, String log) {
+            return new StepProgress(StepState.FAILED, null, null, false, detail, log, step, command);
         }
     }
 

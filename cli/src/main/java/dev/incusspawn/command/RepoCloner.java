@@ -726,13 +726,42 @@ class RepoCloner {
             var run = runPrime(container, repo, () -> states.set(idx,
                     StepProgress.running("Binding new runtimes to the isx CA, priming again")));
             if (run.success()) return true;
-            states.set(idx, StepProgress.failed(run.label(), run.output()));
+            // Name the step and its command (#1742): the batch reports as "prepare", and
+            // a repo's prime is the one step whose command the template, not isx, wrote.
+            // The failure line shows a long or multi-line command shortened, so the reason
+            // after it survives the terminal's width; the output shows it whole.
+            var command = commandText(run.command());
+            var failed = "prime `" + shortCommand(command) + "` failed";
+            states.set(idx, StepProgress.failed("prime", command,
+                    run.label().isBlank() ? failed : failed + ": " + run.label(), run.output()));
             return false;
         } catch (Exception e) {
-            states.set(idx, StepProgress.failed(e.getMessage(), null));
+            var message = e.getMessage();
+            var why = message == null || message.isBlank() ? e.getClass().getName() : message.replace('\r', ' ');
+            states.set(idx, StepProgress.failed("prime", null, "prime failed: " + why, null));
             return false;
         }
     }
+
+    /**
+     * A prime command as text, its lines and tabs kept: a template wrote it, so a carriage return
+     * shows as a space rather than drawing over what the line names before it, and escapes go as
+     * they do from a guest's output.
+     */
+    static String commandText(String command) {
+        return BuildOutput.guestText(command.strip().replace('\r', ' '));
+    }
+
+    /** A prime command's first line, cut to {@value #SHORT_COMMAND} characters, whole ones. */
+    static String shortCommand(String command) {
+        var lines = command.strip().split("\n", 2);
+        var first = lines[0].strip();
+        return first.codePointCount(0, first.length()) > SHORT_COMMAND
+                ? first.substring(0, first.offsetByCodePoints(0, SHORT_COMMAND - 1)) + "…"
+                : lines.length > 1 ? first + " …" : first;
+    }
+
+    private static final int SHORT_COMMAND = 40;
 
     private static void assertNoStepFailures(List<ImageDef.RepoEntry> repos,
                                              AtomicReferenceArray<StepProgress> states, String verb) {
@@ -752,15 +781,20 @@ class RepoCloner {
             // Collect the full captured output for the failure report and print it
             // to stderr. Done here, after the animated batch, to avoid interleaving
             // multi-line logs with the live progress display.
-            if (progress != null && progress.log() != null && !progress.log().isBlank()) {
-                var header = "─── " + verb + " output: " + name + " ───";
-                var footer = "─── end " + verb + " output: " + name + " ───";
+            if (progress != null && (progress.command() != null || progress.log() != null && !progress.log().isBlank())) {
+                var step = progress.step() != null ? progress.step() : verb;
+                var header = "─── " + step + " output: " + name + " ───";
+                var footer = "─── end " + step + " output: " + name + " ───";
+                // The command leads the output, and the report keeps it however long that is.
+                // A shell's prompts: "$ " before the command, "> " before each line it continues on.
+                var command = progress.command() == null ? ""
+                        : "$ " + progress.command().strip().replace("\n", "\n> ") + "\n";
+                var log = progress.log() == null ? "" : progress.log();
                 System.err.println(styled(BOLD, header));
-                System.err.println(progress.log().strip());
+                System.err.println((command + log).strip());
                 System.err.println(styled(BOLD, footer));
-                var trimmed = BuildOutput.lastLines(progress.log(), 100);
                 output.append(header).append('\n');
-                output.append(trimmed).append('\n');
+                output.append((command + BuildOutput.lastLines(log, 100)).strip()).append('\n');
                 output.append(footer).append("\n\n");
             }
         }
