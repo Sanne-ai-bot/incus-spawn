@@ -656,7 +656,10 @@ class RepoClonerTest {
         var ex = assertThrows(IncusException.class,
                 () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
         assertEquals(2, calls.stream().filter(c -> c.endsWith("./fetch-deps")).count(), String.join("\n", calls));
-        assertTrue(ex.getMessage().contains("isx-trust <dir>"), ex.getMessage());
+        assertTrue(ex.getMessage().contains(RepoCloner.STILL_UNTRUSTED), ex.getMessage());
+        assertFalse(ex.getMessage().contains("gradlew --stop"), "the advice is in the output: " + ex.getMessage());
+        assertTrue(ex.stepOutput().contains("isx-trust <dir>"), ex.stepOutput());
+        assertTrue(ex.stepOutput().contains("./gradlew --stop"), ex.stepOutput());
         assertTrue(ex.stepOutput().contains("CERTIFICATE_VERIFY_FAILED"), ex.stepOutput());
         assertTrue(ex.stepOutput().contains("PKIX path building failed"), "and the first run's: " + ex.stepOutput());
     }
