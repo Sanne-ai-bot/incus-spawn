@@ -37,7 +37,7 @@ final class McpAuditLog {
             Files.writeString(path, line + System.lineSeparator(),
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException e) {
-            System.err.println("isx mcp: could not write the audit log: " + e.getMessage());
+            McpLog.log("could not write the audit log: " + e.getMessage());
         }
     }
 }

@@ -34,6 +34,8 @@ Messages are jjq `JqValue` trees, read with `Jjq.parseForeign` (a lone surrogate
 
 **Stdout is the protocol channel.**
 `StdioGuard.install()` runs first: the transport owns fd 0/1, `System.out` goes to stderr, `System.in` is empty, `Headless.enable()` turns off `TerminalProgress` animation and makes `Prompts.console()` return null.
+What the session logs for its client's log goes through `McpLog.log`, the one gate for it as `ProxyLog` is the proxy's (#1703).
+A message with its details is one block on stderr, written with one `println`, so another log line or another `System.err` write cannot land inside a stack trace; only its first line starts `isx mcp: `.
 Code reachable from a tool must never read the console, call `InitCommand.requireInit()`, `ProxyHealthCheck.requireProxy` or anything else that prompts or `System.exit`s -- turn the condition into a `ToolError` saying what to ask the user.
 A `ToolError` is an `isError` result for the model; JSON-RPC errors are for protocol faults only.
 

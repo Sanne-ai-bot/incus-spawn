@@ -200,21 +200,21 @@ final class Orphans {
                         && quiet(backend, name, other.config(), use.idleSeconds(), windows.dormantAfter(), now)) {
                     // As the destroy below: not if it was adopted meanwhile.
                     if (backend.stopIfHeldBy(name, holder, Map.of(Metadata.MCP_DORMANT, orphanedStamp(now, holder)))) {
-                        System.err.println("isx mcp: stopped orphaned instance " + name + ": a task it was given "
+                        McpLog.log("stopped orphaned instance " + name + ": a task it was given "
                                 + "has not finished, but nothing in it has moved for " + windows.dormantAfter().toHours() + " hours");
                         stopped.add(name);
                     }
                     return;
                 }
                 if (use.attended() || use.unfinished()) {
-                    System.err.println("isx mcp: keeping orphaned instance " + name
+                    McpLog.log("keeping orphaned instance " + name
                             + ": someone, or a task it was given, is still working in it");
                     return;
                 }
                 // Not if it was adopted while we looked, or is being adopted now.
                 if (backend.destroyIfHeldBy(name, holder, false)) destroyed.add(name);
             } catch (RuntimeException e) {
-                System.err.println("isx mcp: could not handle orphaned instance " + name + ": " + e.getMessage());
+                McpLog.log("could not handle orphaned instance " + name + ": " + e.getMessage());
             }
         });
         if (!destroyed.isEmpty()) backend.refreshProxy();

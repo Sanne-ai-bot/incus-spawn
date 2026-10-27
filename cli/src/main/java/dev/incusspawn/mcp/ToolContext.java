@@ -55,7 +55,7 @@ final class ToolContext {
             try {
                 action.run();
             } catch (RuntimeException e) {
-                System.err.println("isx mcp: cancelling: " + e.getMessage());
+                McpLog.log("cancelling: " + e.getMessage());
             }
         }
     }

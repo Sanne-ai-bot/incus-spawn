@@ -214,6 +214,7 @@ final class McpServer {
         workers.execute(() -> {
             try {
                 ToolResult result;
+                Throwable failed = null;
                 try {
                     result = tool.handler().call(args, ctx);
                 } catch (ToolError e) {
@@ -226,10 +227,25 @@ final class McpServer {
                     // Anything, an Error too (a failed assert, a stack overflow): unanswered, the call would hang.
                     result = ToolResult.error(ToolError.Code.INTERNAL, "isx failed running " + name + ": "
                             + java.util.Objects.requireNonNullElse(e.getMessage(), e.toString()), args.node());
-                    System.err.println("isx mcp: " + name + " failed:");
-                    e.printStackTrace();
+                    failed = e;
                 }
-                if (!ctx.cancelled()) send(JsonRpc.response(id, result.toJson()));
+                try {
+                    if (!ctx.cancelled()) send(JsonRpc.response(id, result.toJson()));
+                } catch (Throwable e) {
+                    // A result that cannot be written still answers the call, or the client waits for ever
+                    send(JsonRpc.error(id, JsonRpc.INTERNAL_ERROR, "isx could not answer " + name + ": " + e));
+                    McpLog.log("could not answer " + name + ":", McpLog.trace(e));
+                } finally {
+                    // Logged once answered, so a failure while logging, such as memory running out, cannot
+                    // hang the call; nor replace why the answer failed, which is already out
+                    if (failed != null) {
+                        try {
+                            McpLog.log(name + " failed:", McpLog.trace(failed));
+                        } catch (Throwable ignored) {
+                            // Nothing is left to tell it to: stderr is the log
+                        }
+                    }
+                }
             } finally {
                 // Only once answered, and whatever happened: a call is in flight until its response is out.
                 inFlight.remove(idKey);
@@ -268,7 +284,7 @@ final class McpServer {
         try {
             transport.send(JsonRpc.write(message));
         } catch (IOException e) {
-            System.err.println("isx mcp: could not send a message: " + e.getMessage());
+            McpLog.log("could not send a message: " + e.getMessage());
         }
     }
 }
