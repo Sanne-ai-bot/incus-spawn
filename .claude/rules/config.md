@@ -92,6 +92,6 @@ Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (DESIGN.md "
   `JjqGeneratedMappingTest` fails for a reachable DTO without a registered mapping, and for a reachable enum without the annotation (#1316).
 - A converter that reads scalars from the tree uses `Jjq.text`, so `0022` stays `0022`; `asText()` gives the resolved `18`.
 - An object is never iterated with `asList()` (empty for an object); use `JqObject.values()`/`forEach`.
-- An `Integer` field takes `@JqConverter(IntegerConverter.class)`: jjq binds `.inf` and `.nan` as 0 where a bad value must fail the file, refuses a blank string Jackson left unset, and names the field as a `$` path rather than as written.
+- An `Integer` field takes `@JqConverter(IntegerConverter.class)`: jjq bound `.inf` and `.nan` as 0 before 0.2.4 (and `Jjq.exactInt` still refuses them, now non-finite) where a bad value must fail the file, refuses a blank string Jackson left unset, and names the field as a `$` path rather than as written.
 - JSON is read with `JqValues.parseStrict`, and a parse failure is shown with `Jjq.brief`.
-  `~/.claude.json` is read with `ClaudeSetup.parseClaudeJson` instead, which first drops the approval line the login script appends (a repeated key).
+  `~/.claude.json` is read with `ClaudeSetup.parseClaudeJson` instead, which first drops the approval line the login script appends (a repeated key) and reads a lone surrogate escape as U+FFFD (refused by strict parsing since jjq 0.2.4).

@@ -2,6 +2,7 @@ package dev.incusspawn.config;
 
 import dev.incusspawn.tool.ToolDef;
 import io.hyperfoil.tools.jjq.mapper.JqMapper;
+import io.hyperfoil.tools.jjq.value.JqNumber;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.yaml.YamlMapper;
 import io.hyperfoil.tools.jjq.yaml.YamlOptions;
@@ -167,19 +168,22 @@ public final class Jjq {
     }
 
     /**
-     * The value of a number, or null when it is not a number or cannot be trusted: the YAML
-     * parser reads {@code .inf} and {@code .nan} as numbers whose value is 0, so a number whose
-     * source text is not a finite decimal equal to its value is refused. JSON numbers carry no
-     * source text and keep their exact value.
+     * The value of a number, or null when it is not a number or cannot be trusted. The YAML parser
+     * reads {@code .inf} and {@code .nan} as non-finite numbers, whose decimal value throws (and
+     * was 0 before jjq 0.2.4), so they are refused first. A number whose source text is not a
+     * decimal equal to its value ({@code 0x10}, {@code 1_000}) is refused too. JSON numbers carry
+     * no source text and keep their exact value.
      */
     private static java.math.BigDecimal literalNumber(JqValue value) {
         if (value == null || !value.isNumber()) return null;
+        var n = (JqNumber) value;
+        if (n.isNaN() || n.isInfinite()) return null;
         var number = value.decimalValue();
         var written = value.sourceText();
         if (written == null) return number;
         try {
             return new java.math.BigDecimal(written.strip()).compareTo(number) == 0 ? number : null;
-        } catch (NumberFormatException notFinite) {
+        } catch (NumberFormatException notDecimal) {
             return null;
         }
     }

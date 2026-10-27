@@ -221,8 +221,8 @@ class YamlSemanticsTest {
     }
 
     // An integer setting that is not an integer fails the file, as with Jackson, with the field as
-    // written. jjq 0.2.3 refuses most of these itself (Hyperfoil/jjq#133), but binds .inf and .nan
-    // as 0: a grace of 0 reaps orphans at once.
+    // written. jjq refuses most of these itself since 0.2.3 (Hyperfoil/jjq#133); before 0.2.4 it bound
+    // .inf and .nan as 0, and a grace of 0 reaps orphans at once.
 
     @Test
     void aWordForAnIntegerSettingFailsWithTheFieldAndLine() {
@@ -249,7 +249,7 @@ class YamlSemanticsTest {
         assertEquals(McpConfig.DEFAULT_MAX_INSTANCES, Jjq.mcpConfig("max-instances: \"\"\n").maxInstances());
     }
 
-    /** .inf and .nan read as 0 in jjq, and 1e400 is out of range: "never" must not be an immediate reap. */
+    /** .inf and .nan are not whole numbers (jjq bound them as 0 before 0.2.4), and 1e400 is out of range: "never" must not be an immediate reap. */
     @Test
     void anInfiniteNanOrHugeNumberFailsRatherThanBeingZero() {
         for (var text : java.util.List.of(".inf", "-.inf", ".nan", "1e400", "-1e400")) {
@@ -262,15 +262,15 @@ class YamlSemanticsTest {
     }
 
     /**
-     * Pins why Jjq.literalNumber checks the source text, so the day jjq fixes it this fails and the comments can
-     * say so; the check stays regardless, since it also refuses 0x10 and 1_000.
+     * Pins why Jjq.literalNumber checks for a non-finite number before taking its decimal value, which
+     * throws for one since jjq 0.2.4, where 0.2.3 gave them a decimal value of 0.
      */
     @Test
-    void jjqStillReadsInfinityAndNanAsZero() {
+    void jjqReadsInfinityAndNanAsNonFinite() {
         for (var text : java.util.List.of(".inf", "-.inf", ".nan")) {
-            var value = io.hyperfoil.tools.jjq.yaml.JqYaml.parse("a: " + text + "\n").getField("a");
-            assertTrue(value.isNumber(), text);
-            assertEquals(0, value.decimalValue().signum(), text);
+            var value = (io.hyperfoil.tools.jjq.value.JqNumber) io.hyperfoil.tools.jjq.yaml.JqYaml.parse("a: " + text + "\n").getField("a");
+            assertTrue(value.isInfinite() || value.isNaN(), text);
+            assertThrows(RuntimeException.class, value::decimalValue, text);
         }
     }
 
@@ -375,5 +375,22 @@ class YamlSemanticsTest {
     @Test
     void anEnvNameIsTakenAsWritten() throws Exception {
         assertEquals("on", image("env:\n  - name: on\n    value: x\n").getEnv().getFirst().getName());
+    }
+
+    // Fixed in jjq 0.2.4 (Hyperfoil/jjq#150, #1492): 0.2.3 took the `---` line as a document marker.
+    @Test
+    void aBlockScalarLineStartingWithThreeDashesIsText() throws Exception {
+        assertEquals("harmless\n--- README.md ---\nmore\n",
+                image("description: |\n  harmless\n  --- README.md ---\n  more\nworkdir: /w\n").getDescription());
+    }
+
+    // Fixed in jjq 0.2.4 (Hyperfoil/jjq#163, #1575): 0.2.3 wrote the control character raw in a plain scalar.
+    @Test
+    void aStringWithAControlCharacterIsWrittenQuotedAndReadBack() throws Exception {
+        var yaml = io.hyperfoil.tools.jjq.yaml.JqYaml.toYaml(io.hyperfoil.tools.jjq.value.JqObject.builder(1)
+                .put("description", io.hyperfoil.tools.jjq.value.JqString.of("Base \u0001 x")).build());
+        assertTrue(yaml.startsWith("description: \""), yaml);
+        assertTrue(yaml.chars().noneMatch(c -> c == 1), yaml);
+        assertEquals("Base \u0001 x", ImageDef.parseYaml(HEAD + yaml).getDescription());
     }
 }
