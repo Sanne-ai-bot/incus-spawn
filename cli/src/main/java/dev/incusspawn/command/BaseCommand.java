@@ -5,8 +5,8 @@ import org.aesh.command.Command;
 import org.aesh.command.CommandResult;
 import org.aesh.command.invocation.CommandInvocation;
 
-import java.io.Console;
 import java.util.concurrent.Callable;
+import java.util.function.Supplier;
 
 public abstract class BaseCommand implements Command<CommandInvocation> {
 
@@ -41,19 +41,9 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
         return message == null || message.isBlank() ? e.getClass().getName() : message;
     }
 
-    /**
-     * Run {@code work} with {@code System.out} pointed at stderr, for a command printing in a
-     * machine format (#1036): stdout holds only its results, so the progress and notes printed
-     * on the way there go to stderr.
-     */
+    /** Run {@code work} with {@code System.out} pointed at stderr: see {@link StdoutOnStderr}. */
     protected static <T> T withStdoutOnStderr(Callable<T> work) throws Exception {
-        var out = System.out;
-        System.setOut(System.err);
-        try {
-            return work.call();
-        } finally {
-            System.setOut(out);
-        }
+        return StdoutOnStderr.during(work);
     }
 
     /**
@@ -82,10 +72,18 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
      * proceeds; anything that deletes data uses {@link #confirmDestructive} instead.
      */
     protected static boolean confirm(String prompt, boolean skipConfirmation) {
+        return confirm(prompt, skipConfirmation, Prompts::terminal);
+    }
+
+    /**
+     * {@link #confirm} asking through the {@code terminal} it gets once no skip flag answered,
+     * null when there is none ({@link Prompts#terminal}).
+     */
+    static boolean confirm(String prompt, boolean skipConfirmation, Supplier<Prompts> terminal) {
         if (skipConfirmation) return true;
-        var console = System.console();
-        if (console == null) return true;
-        if (!askYesNo(Prompts.of(console), prompt, false)) {
+        var prompts = terminal.get();
+        if (prompts == null) return true;
+        if (!askYesNo(prompts, prompt, false)) {
             BuildOutput.step("Aborted.");
             return false;
         }
@@ -109,15 +107,16 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
      * @param skipFlag the option that skips the question, named in the refusal
      */
     protected static boolean confirmDestructive(String prompt, boolean skipConfirmation, String skipFlag) {
-        return confirmDestructive(prompt, skipConfirmation, skipFlag, System.console());
+        return confirmDestructive(prompt, skipConfirmation, skipFlag, Prompts::terminal);
     }
 
+    /** {@link #confirmDestructive} asking through the {@code terminal} it gets once no skip flag answered. */
     static boolean confirmDestructive(String prompt, boolean skipConfirmation, String skipFlag,
-                                      Console console) {
+                                      Supplier<Prompts> terminal) {
         if (skipConfirmation) return true;
-        // Since JDK 22 System.console() can be non-null with stdin redirected; isTerminal() says which.
-        if (console == null || !console.isTerminal()) throw new NoTerminalException(skipFlag);
-        if (!askYesNo(Prompts.of(console), prompt, false)) {
+        var prompts = terminal.get();
+        if (prompts == null) throw new NoTerminalException(skipFlag);
+        if (!askYesNo(prompts, prompt, false)) {
             BuildOutput.step("Aborted.");
             return false;
         }

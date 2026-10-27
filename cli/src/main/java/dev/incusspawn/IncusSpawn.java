@@ -33,10 +33,10 @@ public class IncusSpawn implements QuarkusApplication {
             if (looksLikeHelpQuestion(args)) {
                 var question = new java.util.ArrayList<>(java.util.List.of(args));
                 question.remove("--help");
-                System.err.println("Did you mean: isx ask " + String.join(" ", question));
-                System.err.println();
-                System.err.println("Use 'isx ask <question>' for AI-powered help (uses AI tokens).");
-                System.err.println("Use 'isx --help' for command usage.");
+                BuildOutput.error("--help takes no question.",
+                        "Did you mean: isx ask " + String.join(" ", question),
+                        "Use 'isx ask <question>' for AI-powered help (uses AI tokens).",
+                        "Use 'isx --help' for command usage.");
                 return 1;
             }
             var topCommand = Platform.isMacOS()
@@ -45,7 +45,7 @@ public class IncusSpawn implements QuarkusApplication {
             if (isTopLevelHelp(args)) {
                 var help = LazyHelp.render(topCommand, args);
                 if (help != null) {
-                    System.out.println(filterHiddenCommands(help));
+                    BuildOutput.results().println(filterHiddenCommands(help));
                     return 0;
                 }
             }
@@ -101,9 +101,10 @@ public class IncusSpawn implements QuarkusApplication {
     static CommandResult runTop(boolean versionRequested) {
         if (versionRequested) {
             var info = BuildInfo.instance();
-            System.out.println("incus-spawn " + info.version() + " (" + info.gitSha() + ")");
-            System.out.println("incus client " + info.incusClient() + ", server " + info.incusServer());
-            System.out.println(info.runtime());
+            var results = BuildOutput.results();
+            results.println("incus-spawn " + info.version() + " (" + info.gitSha() + ")");
+            results.println("incus client " + info.incusClient() + ", server " + info.incusServer());
+            results.println(info.runtime());
             return CommandResult.SUCCESS;
         }
         return launchTui() ? CommandResult.SUCCESS : CommandResult.valueOf(1);

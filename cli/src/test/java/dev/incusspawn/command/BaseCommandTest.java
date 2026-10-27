@@ -13,9 +13,9 @@ class BaseCommandTest {
     void destructiveConfirmationRefusesWithoutATerminal() {
         // Piped stdin, cron, a wrapper script: never a silent yes for something that wipes data.
         var e = assertThrows(BaseCommand.NoTerminalException.class,
-                () -> BaseCommand.confirmDestructive("Wipe?", false, "--yes", null));
+                () -> BaseCommand.confirmDestructive("Wipe?", false, "--yes", () -> null));
         assertTrue(e.getMessage().contains("--yes"), e.getMessage());
-        assertTrue(BaseCommand.confirmDestructive("Wipe?", true, "--yes", null), "the skip flag still skips the question");
+        assertTrue(BaseCommand.confirmDestructive("Wipe?", true, "--yes", () -> null), "the skip flag still skips the question");
     }
 
     /** A command that fails says why as an error, never "Error: null" for an exception without a message. */
@@ -32,6 +32,36 @@ class BaseCommandTest {
         assertEquals(java.util.List.of("java.lang.IllegalStateException"),
                 recorded.events(dev.incusspawn.util.RecordingOutput.Kind.ERROR).stream()
                         .map(dev.incusspawn.util.RecordingOutput.Event::msg).toList());
+    }
+
+    /** A test's stdin is a pipe from its runner, so there is no terminal to ask on. */
+    @Test
+    void pipedStdinIsNoTerminal() {
+        assertNull(Prompts.terminal());
+    }
+
+    /** With no terminal a recoverable action proceeds, as its javadoc says. */
+    @Test
+    void aConfirmationWithNoTerminalProceeds() {
+        assertTrue(BaseCommand.confirm("Restart the VM?", false, () -> null));
+    }
+
+    /** A skip flag answers before any terminal is looked up. */
+    @Test
+    void aSkipFlagAnswersWithoutLookingForATerminal() {
+        java.util.function.Supplier<Prompts> unused = () -> { throw new AssertionError("looked for a terminal"); };
+        assertTrue(BaseCommand.confirm("Restart the VM?", true, unused));
+        assertTrue(BaseCommand.confirmDestructive("Wipe?", true, "--yes", unused));
+    }
+
+    @Test
+    void aConfirmationAsksThroughTheTerminalsPrompts() {
+        var prompts = ScriptedPrompts.lines("n");
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() ->
+                assertEquals(false, BaseCommand.confirm("Restart the VM?", false, () -> prompts)));
+        assertEquals(java.util.List.of("? Restart the VM? (y/N): "), prompts.conversation());
+        assertTrue(recorded.events(dev.incusspawn.util.RecordingOutput.Kind.STEP).stream()
+                .anyMatch(e -> e.msg().equals("Aborted.")));
     }
 
     @Test

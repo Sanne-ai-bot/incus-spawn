@@ -86,11 +86,14 @@ public interface Prompts {
     }
 
     /**
-     * {@link #console}, but only when stdin is the terminal: since JDK 22 a console exists with
-     * stdin redirected, and a question asked there would read the caller's input as its answer.
+     * {@link #console}, but null unless stdin and stdout are a terminal ({@code Console.isTerminal}).
+     * On JDK 25 {@code System.console()} is already null when either is redirected; this guards
+     * against a console that exists anyway (JDK 22 to 24, or {@code -Djdk.console=jdk.internal.le}),
+     * where a question would read the caller's piped input as its answer.
      */
     static Prompts terminal() {
+        if (Headless.active()) return null;
         var console = System.console();
-        return console == null || !console.isTerminal() ? null : console();
+        return console == null || !console.isTerminal() ? null : of(console);
     }
 }
