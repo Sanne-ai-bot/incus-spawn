@@ -9,10 +9,10 @@ import io.hyperfoil.tools.jjq.value.JqValue;
 /**
  * An {@code Integer} setting as Jackson bound it: a whole number in the int range, or a string
  * holding one ({@code "24"}); absent or empty is null. Anything else fails the file, with the field
- * and line the mapper adds; a fraction fails too, where Jackson truncated it. jjq 0.2.3 refuses a
- * word, a boolean, a fraction and an out-of-range number itself (Hyperfoil/jjq#133), but binds
- * {@code .inf} and {@code .nan} as 0, which fails open (an orphan grace of 0 reaps at once), and
- * would refuse the blank string that this, like Jackson, binds as null.
+ * and line the mapper adds; a fraction fails too, where Jackson truncated it. jjq refuses a word,
+ * a boolean, a fraction and an out-of-range number itself since 0.2.3 (Hyperfoil/jjq#133), but
+ * bound {@code .inf} and {@code .nan} as 0 before 0.2.4, which fails open (an orphan grace of 0
+ * reaps at once), and would refuse the blank string that this, like Jackson, binds as null.
  */
 public class IntegerConverter implements ValueConverter<Integer> {
 

@@ -516,11 +516,57 @@ public class ClaudeSetup implements ToolSetup {
      * a strict parser refuses. Its readers run only at build, where the line can only approve the
      * build's own temporary proof, so dropping it is safe; a branch's first login approves its own.
      * ClaudeCallTimeTokenTest runs the script, so this cannot drift from what it writes.
+     * A lone surrogate escape, which JSON.stringify writes for a string cut inside a pair, is read
+     * as U+FFFD: the strict parser refuses one (since jjq 0.2.4), and a merge that could not read
+     * the file would drop what earlier layers put there.
      *
      * @throws IllegalArgumentException when the rest is not JSON
      */
     public static JqValue parseClaudeJson(String json) {
-        return JqValues.parseStrict(LOGIN_APPROVAL.matcher(json).replaceFirst("}"));
+        return JqValues.parseStrict(replaceLoneSurrogateEscapes(LOGIN_APPROVAL.matcher(json).replaceFirst("}")));
+    }
+
+    /** {@code json} with every {@code \\u} escape of an unpaired surrogate written as {@code \\ufffd}. */
+    static String replaceLoneSurrogateEscapes(String json) {
+        StringBuilder out = null;
+        int copied = 0;
+        boolean inString = false;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (!inString) {
+                inString = c == '"';
+                continue;
+            }
+            if (c == '"') {
+                inString = false;
+            } else if (c == '\\' && i + 1 < json.length()) {
+                int unit = surrogateEscape(json, i);
+                if (unit < 0) {
+                    i++; // an escape that is not a surrogate's: skip what it escapes
+                } else if (Character.isHighSurrogate((char) unit)
+                        && Character.isLowSurrogate((char) Math.max(surrogateEscape(json, i + 6), 0))) {
+                    i += 11; // a pair, kept as written
+                } else {
+                    if (out == null) out = new StringBuilder(json.length());
+                    out.append(json, copied, i).append("\\ufffd");
+                    copied = i + 6;
+                    i += 5;
+                }
+            }
+        }
+        return out == null ? json : out.append(json, copied, json.length()).toString();
+    }
+
+    /** The surrogate a {@code \\uXXXX} escape at {@code at} writes, or -1 for anything else. */
+    private static int surrogateEscape(String json, int at) {
+        if (at + 6 > json.length() || json.charAt(at) != '\\' || json.charAt(at + 1) != 'u') return -1;
+        int unit = 0;
+        for (int k = at + 2; k < at + 6; k++) {
+            int digit = Character.digit(json.charAt(k), 16);
+            if (digit < 0) return -1;
+            unit = unit * 16 + digit;
+        }
+        return Character.isSurrogate((char) unit) ? unit : -1;
     }
 
     /**

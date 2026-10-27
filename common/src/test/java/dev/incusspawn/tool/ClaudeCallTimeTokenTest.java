@@ -174,6 +174,19 @@ class ClaudeCallTimeTokenTest {
         assertEquals(List.of("sk-ant-placeholder"), approved(child));
     }
 
+    /** JSON.stringify writes a string cut inside a surrogate pair with a lone escape, which jjq 0.2.4 refuses. */
+    @Test
+    void aRebuildKeepsMcpServersInAFileWithALoneSurrogateEscape() {
+        var parent = "{\"mcpServers\": {\"intellij-index\": {\"type\": \"http\"}},"
+                + " \"lastPrompt\": \"cut \\ud83d\", \"tail\": \"\\ude00 \\\\ud800 \\ud83d\\ude00\"}";
+
+        var child = JqValues.parseStrict(ClaudeSetup.mergeClaudeJson(new IncusClient.ExecResult(0, parent, ""), FRESH_CLAUDE_JSON));
+
+        assertEquals("http", child.path("mcpServers").path("intellij-index").path("type").asText(""));
+        assertEquals("cut \ufffd", child.path("lastPrompt").asText(""));
+        assertEquals("\ufffd \\ud800 \ud83d\ude00", child.path("tail").asText(""), "an escaped backslash and a pair are kept");
+    }
+
     private static final String FRESH_CLAUDE_JSON = """
             {
               "hasCompletedOnboarding": true,

@@ -344,8 +344,12 @@ class VertexBodyRewriterTest {
             var bytes = body.toString().getBytes(StandardCharsets.UTF_8);
             var expected = legacy(bytes);
             // Duplicate keys are the one deliberate departure: tested on their own below
-            if (expected.refusal() != null && String.valueOf(expected.refusal().getMessage()).contains("Duplicate key")) continue;
+            var refused = expected.refusal() == null ? "" : String.valueOf(expected.refusal().getMessage());
+            if (refused.contains("Duplicate key")) continue;
             var got = rewrite(bytes);
+            // Since jjq 0.2.4 the tree refuses a lone surrogate escape (Hyperfoil/jjq#146), where it re-encoded
+            // one; the rewriter forwards one in a value as sent (tested below) and refuses one in a name it reads
+            if (refused.contains("Unpaired surrogate") && got.refusal() == null) continue;
             if (got.refusal() instanceof VertexBodyRewriter.RefusedBody) {
                 // A mutation that made the body name its model or stream twice, or a model with a slash
                 continue;

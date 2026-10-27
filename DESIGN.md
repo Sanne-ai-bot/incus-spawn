@@ -1437,7 +1437,7 @@ It parts from the tree translation where #1315 decided:
 - a duplicate key is forwarded as sent, for Vertex to judge, except a duplicate top-level `model` or `stream`, escaped spellings included, which is refused with a 400 (the tree translation refused every duplicate, with a 502);
 - a duplicate never carries a field past the rewrite: every occurrence of a dropped field, of the client's `anthropic_version` and of a `cache_control`'s `scope` is removed;
 - a name the rewriter compares (every key outside a dropped field and outside a copied `cache_control` value) must be well-formed: valid UTF-8 without overlong forms, no lone surrogate escapes; and `model`, which goes into the URL, must also hold no control or invisible (format) character, whitespace, `/`, `\`, `?`, `#` or `%`, and fit the URL ceiling, or the request is refused with a 400, since a lenient decoder upstream could read a name or a route the proxy did not;
-- values it keeps are forwarded as sent: malformed Unicode stays as it is (the tree re-encoded `\ud800` as `?`), and so does number spelling (`1.0e2`, not `100`);
+- values it keeps are forwarded as sent: malformed Unicode stays as it is (the tree re-encoded `\ud800` as `?`, and refuses it since jjq 0.2.4), and so does number spelling (`1.0e2`, not `100`);
 - whitespace before a body that is not an object is not forwarded.
 Each is a named case in `VertexBodyRewriterTest`, which also checks the rewriter against the tree translation (`LegacyVertexTranslation`, kept as the test's oracle) for a corpus and generated bodies, split into chunks every way, in both its modes.
 Everything else is dropped.
@@ -4353,8 +4353,10 @@ Jackson's semantics are the ones users' files were written against, so where jjq
 - A strict-parse failure quotes the whole document; messages show `Jjq.brief`.
 - A JSON document with a repeated key is refused, where Jackson kept the last value: a request body, an MCP message or `~/.claude.json` with one fails like malformed JSON rather than being read one way or the other.
   The one exception is the `customApiKeyResponses` approval the login script repeats on the last line of `~/.claude.json`: `ClaudeSetup.parseClaudeJson` drops that line before parsing (#1638).
-- An `Integer` field binds through `IntegerConverter`: jjq gives 0 for `.inf` and `.nan`, which for `orphan-grace-hours` in `mcp.yaml` or `max-instances` would fail open, and refuses `""`, which Jackson left unset (a word, a boolean, a fraction or an out-of-range number it refuses itself since 0.2.3).
-The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2), #131-#134 (fixed in 0.2.3) and #130 (open).
+  It also reads a lone surrogate escape, which `JSON.stringify` writes for a string cut inside a pair, as U+FFFD: since jjq 0.2.4 the strict parse refuses one, and a merge that cannot read the file drops what earlier layers put there.
+- An `Integer` field binds through `IntegerConverter`: jjq bound `.inf` and `.nan` as 0 before 0.2.4, which for `orphan-grace-hours` in `mcp.yaml` or `max-instances` would fail open, and refuses `""`, which Jackson left unset (a word, a boolean, a fraction or an out-of-range number it refuses itself since 0.2.3).
+  Since 0.2.4 taking their decimal value throws, so `Jjq.exactInt` refuses a non-finite number before it does.
+The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2), #131-#134 (fixed in 0.2.3), #150 and #163 (fixed in 0.2.4), #146 (a lone surrogate escape refused by strict parsing since 0.2.4) and #130 (open).
 
 ### DNS: static resolv.conf + bridge dnsmasq
 systemd-resolved (127.0.0.53) doesn't work reliably inside Incus containers because it expects to manage the network configuration.
