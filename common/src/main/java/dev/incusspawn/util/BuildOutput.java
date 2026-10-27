@@ -370,6 +370,14 @@ public final class BuildOutput {
         bound.warn(msg, details);
     }
 
+    /**
+     * A warning beside the command's flow: on stderr alone on a terminal, so a query's stdout
+     * holds only its results.
+     */
+    public static void warnAside(String msg) {
+        bound.warnAside(msg);
+    }
+
     /** Print why the command failed, in red on stderr, and any lines of advice under it. */
     public static void error(String msg, String... details) {
         bound.error(msg, details);

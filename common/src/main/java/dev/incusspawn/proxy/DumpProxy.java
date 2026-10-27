@@ -51,7 +51,7 @@ public class DumpProxy {
                 executor.submit(() -> handleConnection(client));
             } catch (IOException e) {
                 // Beside the flow, on stderr alone: a burst of them must not fill stdout with blank lines
-                BuildOutput.current().warnAside("Accept error: " + e.getMessage());
+                BuildOutput.warnAside("Accept error: " + e.getMessage());
             }
         }
     }
@@ -80,7 +80,7 @@ public class DumpProxy {
         } catch (IOException e) {
             // Connection closed
         } catch (Exception e) {
-            BuildOutput.current().warnAside("Dump proxy error: " + e.getMessage());
+            BuildOutput.warnAside("Dump proxy error: " + e.getMessage());
         }
     }
 
