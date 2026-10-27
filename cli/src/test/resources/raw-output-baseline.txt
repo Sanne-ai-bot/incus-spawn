@@ -50,8 +50,3 @@
 1 0 common/src/main/java/dev/incusspawn/tool/SkillsCache.java
 1 0 common/src/main/java/dev/incusspawn/tool/YamlToolAction.java
 2 0 common/src/main/java/dev/incusspawn/util/TerminalProgress.java
-36 0 proxy/src/main/java/dev/incusspawn/proxy/ArtifactCacheHandler.java
-2 0 proxy/src/main/java/dev/incusspawn/proxy/ConfigWatcher.java
-29 0 proxy/src/main/java/dev/incusspawn/proxy/MitmProxy.java
-65 24 proxy/src/main/java/dev/incusspawn/proxy/ProxyMain.java
-3 0 proxy/src/main/java/dev/incusspawn/proxy/Upstream.java

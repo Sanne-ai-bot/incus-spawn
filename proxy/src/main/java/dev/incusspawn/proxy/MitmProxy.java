@@ -818,7 +818,6 @@ public class MitmProxy {
      */
     public synchronized void reload() {
         ProxyLog.info("Reloading configuration and certificates");
-        System.out.println("Reloading configuration...");
         try {
             var loaded = ConfigFingerprint.load();
             // Warnings from re-reading the definitions (a project-local proxy tool, a broken
@@ -857,12 +856,9 @@ public class MitmProxy {
             // so /health reports drift and the next command restarts the proxy.
             configFingerprint = loaded.fingerprint();
             nestingReloadDue = false;
-            System.out.println("Configuration reloaded successfully.");
             ProxyLog.info("Configuration reloaded (CA fingerprint: " + caFingerprint + ")");
         } catch (Exception e) {
-            System.err.println("Configuration reload failed: " + e.getMessage());
-            e.printStackTrace(System.err);
-            ProxyLog.error("Configuration reload failed: " + e.getMessage());
+            ProxyLog.error("Configuration reload failed: " + e.getMessage(), e);
         }
     }
 
@@ -986,20 +982,20 @@ public class MitmProxy {
 
         ProxyLog.info("Listening on " + bindAddress + ":" + mitmPort());
         ProxyLog.info("Health endpoint on " + healthBindAddress + ":" + healthPort());
-        System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort());
-        System.out.println("Health endpoint on " + healthBindAddress + ":" + healthPort() + "/health");
-        System.out.println("Intercepted domains: " + configState.routing().allInterceptedDomains());
+        ProxyLog.stdout("MITM proxy listening on " + bindAddress + ":" + mitmPort());
+        ProxyLog.stdout("Health endpoint on " + healthBindAddress + ":" + healthPort() + "/health");
+        ProxyLog.stdout("Intercepted domains: " + configState.routing().allInterceptedDomains());
         artifactCache.start();
         var credentials = configState.credentials();
         if (credentials.useVertex()) {
-            System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
+            ProxyLog.stdout("Vertex AI mode: translating api.anthropic.com requests" +
                     " to " + vertexHost(credentials) +
                     " (region: " + credentials.vertexRegion() + ", project: " + credentials.vertexProjectId() + ")");
         } else if (!credentials.oauthToken().isBlank()) {
-            System.out.println("OAuth mode: injecting Bearer token for api.anthropic.com");
+            ProxyLog.stdout("OAuth mode: injecting Bearer token for api.anthropic.com");
         }
-        System.out.println();
-        System.out.println("Press Ctrl+C to stop.");
+        ProxyLog.stdout("");
+        ProxyLog.stdout("Press Ctrl+C to stop.");
 
         stopLatch.await();
     }
@@ -1086,8 +1082,8 @@ public class MitmProxy {
                         + "): something in an instance does not trust the isx CA");
                 return;
             }
-            System.err.println("MITM server error: " + err.getMessage());
-            err.printStackTrace(System.err);
+            // A connection's failure, on stderr alone: the event loop writes no file for it
+            ProxyLog.trace("MITM server error: " + err.getMessage(), err);
         });
         mitmServer.requestHandler(this::routeRequest);
         mitmServer.webSocketHandler(this::routeWebSocket);
@@ -1262,8 +1258,7 @@ public class MitmProxy {
         } catch (Exception e) {
             var domain = extractDomain(clientReq);
             var path = clientReq.path();
-            System.err.println("Unexpected error handling request to " + domain + path + ": " + e.getMessage());
-            e.printStackTrace(System.err);
+            ProxyLog.trace("Unexpected error handling request to " + domain + path + ": " + e.getMessage(), e);
             sendError(clientReq.response(), 502, "Internal proxy error");
         }
     }
@@ -1733,7 +1728,7 @@ public class MitmProxy {
                 vertx.cancelTimer(upstreamPingTimer);
                 vertx.cancelTimer(clientPingTimer);
                 if (!isBenignConnectionError(err)) {
-                    System.err.println("WebSocket client error (" + domain + "): " + err.getMessage());
+                    ProxyLog.trace("WebSocket client error (" + domain + "): " + err.getMessage());
                 }
                 if (!upstreamWs.isClosed()) upstreamWs.close();
             });
@@ -1741,14 +1736,14 @@ public class MitmProxy {
                 vertx.cancelTimer(upstreamPingTimer);
                 vertx.cancelTimer(clientPingTimer);
                 if (!isBenignConnectionError(err)) {
-                    System.err.println("WebSocket upstream error (" + domain + "): " + err.getMessage());
+                    ProxyLog.trace("WebSocket upstream error (" + domain + "): " + err.getMessage());
                 }
                 if (!clientWs.isClosed()) clientWs.close();
             });
 
             clientWs.resume();
         }).onFailure(err -> {
-            System.err.println("WebSocket upstream connect failed (" + domain + "): " + err.getMessage());
+            ProxyLog.trace("WebSocket upstream connect failed (" + domain + "): " + err.getMessage());
             if (!clientWs.isClosed()) clientWs.close((short) 1011, "Upstream connection failed");
         });
     }
@@ -1982,11 +1977,10 @@ public class MitmProxy {
      */
     private static void refuseTranslation(String path, Exception e, java.util.function.BiConsumer<Integer, String> answer) {
         if (e instanceof RuntimeException) {
-            System.err.println("Vertex request error (" + path + "): " + e);
-            e.printStackTrace(System.err);
+            ProxyLog.trace("Vertex request error (" + path + "): " + e, e);
             answer.accept(502, "Proxy error");
         } else if (e instanceof VertexBodyRewriter.InvalidBody) {
-            System.err.println("Failed to rewrite a request body for Vertex: " + e.getMessage());
+            ProxyLog.trace("Failed to rewrite a request body for Vertex: " + e.getMessage());
             answer.accept(502, "Proxy error");
         } else {
             ProxyLog.warn("Refusing a Vertex request (" + path + "): " + e.getMessage());
@@ -2044,9 +2038,9 @@ public class MitmProxy {
     private void logDroppedFields(List<String> dropped) {
         if (dropped.isEmpty() || loggedStrippedFields.size() >= MAX_LOGGED_DROPPED_FIELDS) return;
         var fresh = dropped.stream().filter(loggedStrippedFields::add).toList();
-        if (!fresh.isEmpty()) System.err.println("Vertex rewrite: stripped unsupported fields: " + fresh);
+        if (!fresh.isEmpty()) ProxyLog.trace("Vertex rewrite: stripped unsupported fields: " + fresh);
         if (loggedStrippedFields.size() >= MAX_LOGGED_DROPPED_FIELDS) {
-            System.err.println("Vertex rewrite: " + MAX_LOGGED_DROPPED_FIELDS + " field names logged; no more will be");
+            ProxyLog.trace("Vertex rewrite: " + MAX_LOGGED_DROPPED_FIELDS + " field names logged; no more will be");
         }
     }
 
@@ -2098,7 +2092,7 @@ public class MitmProxy {
             } catch (RuntimeException e) {
                 // A header Vert.x refuses: answer now, as the relay does, not at the idle timeout
                 upReq.reset();
-                System.err.println("Vertex request error (" + domain + "): " + e.getMessage());
+                ProxyLog.trace("Vertex request error (" + domain + "): " + e.getMessage());
                 sendError(clientResp, 502, "Proxy error");
                 return;
             }
@@ -2114,7 +2108,7 @@ public class MitmProxy {
                 upReq.response().onSuccess(upResp -> {
                     if (watchdog.cut) return;
                     if (!isRetry && upResp.statusCode() == 401) {
-                        System.err.println("Vertex 401: invalidating cached token and retrying");
+                        ProxyLog.trace("Vertex 401: invalidating cached token and retrying");
                         invalidateVertexToken();
                         spool.stopReplay();
                         upReq.reset();
@@ -2130,7 +2124,7 @@ public class MitmProxy {
                 }).onFailure(err -> {
                     // A cut resets the request itself
                     if (watchdog.gone()) return;
-                    System.err.println("Upstream send error (" + domain + "): " + err.getMessage());
+                    ProxyLog.trace("Upstream send error (" + domain + "): " + err.getMessage());
                     sendError(clientResp, 502, "Upstream error");
                 });
                 spool.replay(upReq).onComplete(sent -> {
@@ -2140,7 +2134,7 @@ public class MitmProxy {
             });
         }).onFailure(err -> {
             if (watchdog.cut) return;
-            System.err.println("Upstream connect error (" + domain + "): " + err.getMessage());
+            ProxyLog.trace("Upstream connect error (" + domain + "): " + err.getMessage());
             sendError(clientResp, 502, "Upstream connection failed");
         });
     }
@@ -2402,7 +2396,7 @@ public class MitmProxy {
         var detail = authDetail(msg, "Credential injection failed");
         synchronized (authLock) {
             if (authError == null) {
-                System.err.println(VERTEX_AUTH_HINT.equals(hint)
+                ProxyLog.trace(VERTEX_AUTH_HINT.equals(hint)
                         ? "Failed to get Vertex token: " + detail : detail);
             }
             authError = detail;
@@ -2438,7 +2432,7 @@ public class MitmProxy {
         var detail = authDetail(msg, "Vertex authentication check failed");
         synchronized (authLock) {
             if (authError == null) {
-                System.err.println("Failed to get Vertex token: " + detail);
+                ProxyLog.trace("Failed to get Vertex token: " + detail);
             }
             authError = detail;
             authErrorHint = VERTEX_AUTH_HINT;

@@ -14,10 +14,7 @@ import io.quarkus.runtime.QuarkusApplication;
 import io.quarkus.runtime.annotations.QuarkusMain;
 import io.vertx.core.Vertx;
 
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -38,23 +35,23 @@ public class ProxyMain implements QuarkusApplication {
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--help", "-h" -> {
-                    System.out.println("Usage: isx-proxy [OPTIONS]");
-                    System.out.println();
-                    System.out.println("MITM authentication proxy for incus-spawn containers.");
-                    System.out.println();
-                    System.out.println("Options:");
-                    System.out.println("  --port <port>         MITM listen port (default: " + ProxyConfig.DEFAULT_MITM_PORT + ")");
-                    System.out.println("  --health-port <port>  Health check port (default: " + ProxyConfig.DEFAULT_HEALTH_PORT + ")");
-                    System.out.println("  --gateway-ip <ip>     Bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)");
-                    System.out.println("  --debug               Enable API traffic debug logging");
-                    System.out.println("  --version, -V         Display version info");
-                    System.out.println("  --help, -h            Show this help");
+                    ProxyLog.stdout("Usage: isx-proxy [OPTIONS]");
+                    ProxyLog.stdout("");
+                    ProxyLog.stdout("MITM authentication proxy for incus-spawn containers.");
+                    ProxyLog.stdout("");
+                    ProxyLog.stdout("Options:");
+                    ProxyLog.option("--port <port>", "MITM listen port (default: " + ProxyConfig.DEFAULT_MITM_PORT + ")");
+                    ProxyLog.option("--health-port <port>", "Health check port (default: " + ProxyConfig.DEFAULT_HEALTH_PORT + ")");
+                    ProxyLog.option("--gateway-ip <ip>", "Bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)");
+                    ProxyLog.option("--debug", "Enable API traffic debug logging");
+                    ProxyLog.option("--version, -V", "Display version info");
+                    ProxyLog.option("--help, -h", "Show this help");
                     return 0;
                 }
                 case "--version", "-V" -> {
                     var info = BuildInfo.instance();
-                    System.out.println("isx-proxy " + info.version() + " (" + info.gitSha() + ")");
-                    System.out.println(info.runtime());
+                    ProxyLog.stdout("isx-proxy " + info.version() + " (" + info.gitSha() + ")");
+                    ProxyLog.stdout(info.runtime());
                     return 0;
                 }
                 case "--port" -> { if (i + 1 < args.length) port = Integer.parseInt(args[++i]); }
@@ -65,7 +62,7 @@ public class ProxyMain implements QuarkusApplication {
             }
         }
 
-        installLogTee();
+        ProxyLog.teeConsoleTo(Environment.proxyLogFile());
         // The daemon's messages are its log lines: what shared code reports, the proxy logs,
         // progress as info, notes (a request's debug line) on stderr alone and warnings as
         // warnings, each line its own timestamped line.
@@ -87,7 +84,7 @@ public class ProxyMain implements QuarkusApplication {
 
         if (claude.isUseVertex()) {
             if (claude.getCloudMlRegion().isBlank() || claude.getVertexProjectId().isBlank()) {
-                System.err.println("Error: Vertex AI enabled but region or project ID not configured. Run 'isx init' first.");
+                ProxyLog.error("Vertex AI enabled but region or project ID not configured. Run 'isx init' first.");
                 return ProxyService.EXIT_CONFIG;
             }
         }
@@ -105,39 +102,39 @@ public class ProxyMain implements QuarkusApplication {
 
         var build = BuildInfo.instance();
         ProxyLog.info("Starting proxy " + build.version() + " (" + build.gitSha() + ") " + build.runtime());
-        System.out.println("Starting MITM authentication proxy...");
-        System.out.println("  Version:       " + build.version() + " (" + build.gitSha() + ")");
-        System.out.println("  Runtime:       " + build.runtime());
+        ProxyLog.stdout("Starting MITM authentication proxy...");
+        ProxyLog.field("Version", build.version() + " (" + build.gitSha() + ")");
+        ProxyLog.field("Runtime", build.runtime());
         if (!Platform.isMacOS()) {
-            System.out.println("  Incus:         " + build.incusClient() + " (client) / " + build.incusServer() + " (server)");
+            ProxyLog.field("Incus", build.incusClient() + " (client) / " + build.incusServer() + " (server)");
         }
-        System.out.println("  Gateway IP:    " + gatewayIp);
-        System.out.println("  MITM port:     " + port);
-        System.out.println("  Health port:   " + healthPort);
+        ProxyLog.field("Gateway IP", gatewayIp);
+        ProxyLog.field("MITM port", port);
+        ProxyLog.field("Health port", healthPort);
         if (creds.useVertex()) {
-            System.out.println("  Vertex AI:     " + creds.vertexRegion() +
+            ProxyLog.field("Vertex AI", creds.vertexRegion() +
                     " (project: " + creds.vertexProjectId() + ")");
         } else if (!creds.oauthToken().isBlank()) {
-            System.out.println("  OAuth token:   configured");
+            ProxyLog.field("OAuth token", "configured");
         } else if (!creds.anthropicApiKey().isBlank()) {
-            System.out.println("  API key:       configured");
+            ProxyLog.field("API key", "configured");
         } else {
-            System.out.println("  Claude:        (not configured)");
+            ProxyLog.field("Claude", "(not configured)");
         }
         var toolProxyNames = creds.toolProxyNames();
         if (!toolProxyNames.isEmpty()) {
-            System.out.println("  Tool proxies:  " + String.join(", ", toolProxyNames));
+            ProxyLog.field("Tool proxies", String.join(", ", toolProxyNames));
         }
         var unresolved = ToolProxyResolver.findUnresolved(proxy.configTree(), proxy.toolSetups());
         if (!unresolved.isEmpty()) {
             var unresolvedNames = unresolved.stream()
                     .map(ToolProxyResolver.UnresolvedToolProxy::toolName)
                     .distinct().sorted().toList();
-            System.out.println("  Skipped (no credentials): " + String.join(", ", unresolvedNames));
-            System.out.println("  Run 'isx init' to configure, or add entries to config.yaml.");
+            ProxyLog.field("Skipped", String.join(", ", unresolvedNames)
+                    + " (no credentials: run 'isx init', or add entries to config.yaml)");
         }
-        System.out.println("  Log file:      " + Environment.proxyLogFile());
-        System.out.println();
+        ProxyLog.field("Log file", Environment.proxyLogFile());
+        ProxyLog.stdout("");
 
         proxy.setIncusClient(incus);
         var exitCode = new AtomicInteger();
@@ -161,9 +158,9 @@ public class ProxyMain implements QuarkusApplication {
             try {
                 var debugLog = new ApiTrafficLog(Environment.apiDebugDir().resolve("proxy"));
                 proxy.setDebugLog(debugLog);
-                System.out.println("  Debug logs:    " + debugLog.logDir());
+                ProxyLog.field("Debug logs", debugLog.logDir());
             } catch (IOException e) {
-                System.err.println("Warning: could not create debug log directory: " + e.getMessage());
+                ProxyLog.warn("Could not create debug log directory: " + e.getMessage());
             }
         }
 
@@ -174,7 +171,7 @@ public class ProxyMain implements QuarkusApplication {
 
         try {
             sun.misc.Signal.handle(new sun.misc.Signal("HUP"), signal -> {
-                System.out.println("Received SIGHUP, reloading configuration...");
+                // reload() logs that it reloads
                 proxy.reload();
             });
         } catch (Exception e) {
@@ -195,11 +192,11 @@ public class ProxyMain implements QuarkusApplication {
         }
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println("\nStopping proxy...");
+            ProxyLog.stdout("", "Stopping proxy...");
             configWatcher.stop();
             var forceExit = new Thread(() -> {
                 try { Thread.sleep(10000); } catch (InterruptedException e) { return; }
-                System.err.println("Proxy shutdown exceeded 10 seconds, forcing exit.");
+                ProxyLog.warn("Proxy shutdown exceeded 10 seconds, forcing exit.");
                 Runtime.getRuntime().halt(0);
             }, "force-exit");
             forceExit.setDaemon(true);
@@ -227,9 +224,9 @@ public class ProxyMain implements QuarkusApplication {
         try {
             proxy.start(dnsCallback);
         } catch (Exception e) {
-            ProxyLog.error("Failed to start: " + e.getMessage());
-            System.err.println("Is another proxy already running? Check ports " + port + " and " + healthPort + ".");
-            System.err.println("If the iptables redirect rule is missing, re-run 'isx init'.");
+            ProxyLog.error("Failed to start: " + e.getMessage(),
+                    "Is another proxy already running? Check ports " + port + " and " + healthPort + ".",
+                    "If the iptables redirect rule is missing, re-run 'isx init'.");
             return 1;
         }
         return exitCode.get();
@@ -344,8 +341,7 @@ public class ProxyMain implements QuarkusApplication {
             try {
                 gatewayIp = ProxyConfig.resolveGatewayIp(incus);
             } catch (Exception e) {
-                System.err.println("Error: could not determine Incus bridge gateway IP.");
-                System.err.println(ProxyConfig.gatewayUnavailableHint(false));
+                ProxyLog.error("Could not determine Incus bridge gateway IP.", ProxyConfig.gatewayUnavailableHint(false));
                 return null;
             }
         }
@@ -386,7 +382,7 @@ public class ProxyMain implements QuarkusApplication {
         try {
             return BridgeAddress.read(incus).map(BridgeAddress::gateway).orElse(null);
         } catch (RuntimeException unreadable) {
-            System.err.println("Could not read the Incus bridge address: " + unreadable.getMessage());
+            ProxyLog.warn("Could not read the Incus bridge address: " + unreadable.getMessage());
             return null;
         }
     }
@@ -407,46 +403,43 @@ public class ProxyMain implements QuarkusApplication {
         }
         var literal = bridgeGatewayLiteral(gatewayIpOption);
         if (literal == null) {
-            System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a bridge gateway address.");
-            System.err.println("Pass the Incus bridge's own IPv4 address, without the prefix length that");
-            System.err.println("'incus network get incusbr0 ipv4.address' shows (10.166.11.1, not 10.166.11.1/24).");
+            ProxyLog.error("--gateway-ip " + gatewayIpOption + " is not a bridge gateway address.",
+                    "Pass the Incus bridge's own IPv4 address, without the prefix length that "
+                            + "'incus network get incusbr0 ipv4.address' shows (10.166.11.1, not 10.166.11.1/24).");
             return ProxyService.EXIT_CONFIG;
         }
         var bridge = bridgeIp.get();
         if (bridge != null) return checkAgainstBridge(gatewayIpOption, false, bridge);
         var cached = cachedGateway.get();
         if (!cached.isEmpty() && !cached.equals(gatewayIpOption)) {
-            System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not the bridge gateway 'isx init' recorded ("
-                    + cached + "), where isx looks for the proxy while the bridge address cannot be read.");
-            System.err.println("Omit --gateway-ip to use " + cached + ".");
+            ProxyLog.error("--gateway-ip " + gatewayIpOption + " is not the bridge gateway 'isx init' recorded ("
+                    + cached + "), where isx looks for the proxy while the bridge address cannot be read.",
+                    "Omit --gateway-ip to use " + cached + ".");
             return ProxyService.EXIT_CONFIG;
         }
         if (literal.isSiteLocalAddress() || literal.isLoopbackAddress()) return 0;
         // Exit 1, as without an override: Incus not up yet is transient, not a config error.
-        System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a private address, and the");
-        System.err.println("Incus bridge address to compare it with could not be read.");
-        System.err.println(ProxyConfig.gatewayUnavailableHint(false));
+        ProxyLog.error("--gateway-ip " + gatewayIpOption + " is not a private address, and the Incus bridge"
+                + " address to compare it with could not be read.", ProxyConfig.gatewayUnavailableHint(false));
         return 1;
     }
 
     private static int checkAgainstBridge(String gatewayIpOption, boolean macOS, String bridgeIp) {
         if (bridgeIp.equals(gatewayIpOption)) return 0;
         if (macOS) {
-            System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not the VM-facing bridge address ("
-                    + bridgeIp + ").");
-            System.err.println("The proxy injects credentials, so on macOS it listens only where the VM reaches it.");
+            ProxyLog.error("--gateway-ip " + gatewayIpOption + " is not the VM-facing bridge address (" + bridgeIp + ").",
+                    "The proxy injects credentials, so on macOS it listens only where the VM reaches it.",
+                    "Omit --gateway-ip to use " + bridgeIp + ".");
         } else {
-            System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not the Incus bridge address ("
-                    + bridgeIp + ").");
-            System.err.println("isx looks for the proxy at the bridge's address, so the proxy serves only there.");
+            ProxyLog.error("--gateway-ip " + gatewayIpOption + " is not the Incus bridge address (" + bridgeIp + ").",
+                    "isx looks for the proxy at the bridge's address, so the proxy serves only there.",
+                    "Omit --gateway-ip to use " + bridgeIp + ".");
         }
-        System.err.println("Omit --gateway-ip to use " + bridgeIp + ".");
         return ProxyService.EXIT_CONFIG;
     }
 
     private static void reportNoVmBridge() {
-        System.err.println("Error: could not discover VM-facing bridge interface.");
-        System.err.println(ProxyConfig.gatewayUnavailableHint(true));
+        ProxyLog.error("Could not discover VM-facing bridge interface.", ProxyConfig.gatewayUnavailableHint(true));
     }
 
     /** {@code address} as a canonical unicast IPv4 literal dnsmasq can serve, or null. */
@@ -461,51 +454,6 @@ public class ProxyMain implements QuarkusApplication {
             return null;
         } catch (IllegalArgumentException notALiteral) {
             return null;
-        }
-    }
-
-    private static void installLogTee() {
-        var logFile = Environment.proxyLogFile();
-        try {
-            Files.createDirectories(logFile.getParent());
-            var fileOut = new FileOutputStream(logFile.toFile(), true);
-            System.setOut(new PrintStream(new TeeOutputStream(System.out, fileOut), true));
-            System.setErr(new PrintStream(new TeeOutputStream(System.err, fileOut), true));
-        } catch (IOException e) {
-            System.err.println("Warning: could not open log file " + logFile + ": " + e.getMessage());
-        }
-    }
-
-    static class TeeOutputStream extends OutputStream {
-        private final OutputStream console;
-        private final OutputStream file;
-
-        TeeOutputStream(OutputStream console, OutputStream file) {
-            this.console = console;
-            this.file = file;
-        }
-
-        @Override
-        public void write(int b) throws IOException {
-            console.write(b);
-            file.write(b);
-        }
-
-        @Override
-        public void write(byte[] b, int off, int len) throws IOException {
-            console.write(b, off, len);
-            file.write(b, off, len);
-        }
-
-        @Override
-        public void flush() throws IOException {
-            console.flush();
-            file.flush();
-        }
-
-        @Override
-        public void close() throws IOException {
-            file.close();
         }
     }
 
@@ -527,18 +475,18 @@ public class ProxyMain implements QuarkusApplication {
         for (var entry : spec.split(",")) {
             var m = BENCH_UPSTREAM_ENTRY.matcher(entry.strip());
             if (!m.matches()) {
-                System.err.println("Error: ISX_BENCH_UPSTREAM entry '" + entry + "' is not host=ip:port");
+                ProxyLog.error("ISX_BENCH_UPSTREAM entry '" + entry + "' is not host=ip:port");
                 return false;
             }
             entries.add(m);
         }
         for (var m : entries) {
             proxy.overrideUpstream(m.group(1), m.group(2), Integer.parseInt(m.group(3)));
-            System.out.println("  BENCHMARK:     upstream " + m.group(1) + " -> " + m.group(2) + ":" + m.group(3));
+            ProxyLog.field("BENCHMARK", "upstream " + m.group(1) + " -> " + m.group(2) + ":" + m.group(3));
         }
         if (!cert.isEmpty()) {
             proxy.trustUpstreamCertificate(cert);
-            System.out.println("  BENCHMARK:     trusting upstream certificate " + cert);
+            ProxyLog.field("BENCHMARK", "trusting upstream certificate " + cert);
         }
         ProxyLog.warn("Benchmark upstream override active (ISX_BENCH_UPSTREAM=" + spec + ")");
         return true;
@@ -557,11 +505,11 @@ public class ProxyMain implements QuarkusApplication {
         if (file.isEmpty()) return true;
         var path = Path.of(file).toAbsolutePath();
         if (!Files.isRegularFile(path)) {
-            System.err.println("Error: ISX_BENCH_CONFIG names no file: " + path);
+            ProxyLog.error("ISX_BENCH_CONFIG names no file: " + path);
             return false;
         }
         SpawnConfig.useBenchFile(path);
-        System.out.println("  BENCHMARK:     reading " + path + " instead of config.yaml");
+        ProxyLog.field("BENCHMARK", "reading " + path + " instead of config.yaml");
         ProxyLog.warn("Benchmark config override active (ISX_BENCH_CONFIG=" + path + ")");
         return true;
     }

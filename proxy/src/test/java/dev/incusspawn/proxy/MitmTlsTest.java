@@ -464,15 +464,18 @@ class MitmTlsTest {
         var out = new ByteArrayOutputStream();
         var originalOut = System.out;
         var originalErr = System.err;
-        System.setOut(new PrintStream(new ProxyMain.TeeOutputStream(originalOut, out), true));
-        System.setErr(new PrintStream(new ProxyMain.TeeOutputStream(originalErr, out), true));
+        System.setOut(new PrintStream(new ProxyLog.TeeOutputStream(originalOut, out), true));
+        System.setErr(new PrintStream(new ProxyLog.TeeOutputStream(originalErr, out), true));
+        // Its info line is what is read, whatever an earlier test left suppressed
+        var suppressed = ProxyLog.setSuppressStderr(false);
         try {
             proxy.reload();
         } finally {
+            ProxyLog.setSuppressStderr(suppressed);
             System.setOut(originalOut);
             System.setErr(originalErr);
         }
-        assertTrue(out.toString().contains("Configuration reloaded successfully."), "the reload failed:\n" + out);
+        assertTrue(out.toString().contains("Configuration reloaded (CA fingerprint"), "the reload failed:\n" + out);
     }
 
     private static Map<String, ContainerTls.Handshake> handshakeAll(int port, X509Certificate ca) throws Exception {

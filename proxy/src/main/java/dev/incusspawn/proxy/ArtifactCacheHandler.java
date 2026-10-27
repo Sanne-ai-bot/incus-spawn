@@ -116,17 +116,17 @@ class ArtifactCacheHandler {
 
     /** Says where each cache lives, and deletes the caches stored without verification. */
     void start() {
-        System.out.println("Registry cache: " + registryCacheDir() +
+        ProxyLog.stdout("Registry cache: " + registryCacheDir() +
                 " (domains: " + REGISTRY_DOMAINS + ")");
-        System.out.println("Maven cache: " + mavenCacheDir() +
+        ProxyLog.stdout("Maven cache: " + mavenCacheDir() +
                 " (domains: " + MAVEN_DOMAINS + ")");
-        System.out.println("Maven/Gradle/npm confirmations: " + artifactCacheTiers);
-        System.out.println("Maven .m2 fallback: " +
+        ProxyLog.stdout("Maven/Gradle/npm confirmations: " + artifactCacheTiers);
+        ProxyLog.stdout("Maven .m2 fallback: " +
                 (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
-        System.out.println("Gradle cache: " + gradleCacheDir() +
+        ProxyLog.stdout("Gradle cache: " + gradleCacheDir() +
                 " (domains: " + GRADLE_DOMAINS + ")");
         deleteUnverifiedLegacyCaches();
-        System.out.println("npm cache: " + npmCacheDir() +
+        ProxyLog.stdout("npm cache: " + npmCacheDir() +
                 " (domains: " + NPM_DOMAINS + ")");
     }
 
@@ -163,7 +163,7 @@ class ArtifactCacheHandler {
 
                 cachedFileSize(cacheFile).onSuccess(size -> {
                     if (size >= 0) {
-                        System.out.println("Registry cache hit: " + imageRef +
+                        ProxyLog.trace("Registry cache hit: " + imageRef +
                                 " " + digest.substring(0, 19) +
                                 "... (" + formatSize(size) + ")");
                         serveCachedFile(clientReq.response(), cacheFile, digest);
@@ -172,7 +172,7 @@ class ArtifactCacheHandler {
                                 Verification.ofDigest(digest));
                     }
                 }).onFailure(err -> {
-                    System.err.println("Cache check error: " + err.getMessage());
+                    ProxyLog.trace("Cache check error: " + err.getMessage());
                     upstream.relayRequest(clientReq, domain, started);
                 });
                 return;
@@ -198,7 +198,7 @@ class ArtifactCacheHandler {
             clientResp.putHeader("Docker-Content-Digest", digest);
         }
         clientResp.sendFile(cacheFile.toString()).onFailure(err -> {
-            System.err.println("Failed to serve cached file: " + err.getMessage());
+            ProxyLog.trace("Failed to serve cached file: " + err.getMessage());
             if (!clientResp.ended() && !clientResp.closed()) {
                 upstream.sendError(clientResp, 500, "Cache read error");
             }
@@ -262,14 +262,14 @@ class ArtifactCacheHandler {
                                 Path cacheFile, String ref,
                                 Verification verification, int depth, long started) {
         if (depth >= MAX_REDIRECTS) {
-            System.err.println("Too many redirects for " + ref);
+            ProxyLog.trace("Too many redirects for " + ref);
             upstream.sendError(clientReq.response(), 502, "Too many redirects");
             return;
         }
 
         var location = upResp.getHeader("Location");
         if (location == null) {
-            System.err.println("Redirect with no Location header for " + ref);
+            ProxyLog.trace("Redirect with no Location header for " + ref);
             upstream.sendError(clientReq.response(), 502, "Redirect with no Location");
             return;
         }
@@ -277,7 +277,7 @@ class ArtifactCacheHandler {
         var from = upResp.request();
         var redirectUri = redirectTarget(from.getHost(), from.getPort(), from.getURI(), location);
         if (redirectUri == null) {
-            System.err.println("Invalid redirect Location for " + ref + ": " + location);
+            ProxyLog.trace("Invalid redirect Location for " + ref + ": " + location);
             upstream.sendError(clientReq.response(), 502, "Invalid redirect Location");
             return;
         }
@@ -695,19 +695,19 @@ class ArtifactCacheHandler {
 
             var checksum = verification.checksum();
             if (expected == null) {
-                System.out.println("No usable " + checksum.extension + " for " + ref + ", not caching");
+                ProxyLog.trace("No usable " + checksum.extension + " for " + ref + ", not caching");
                 Files.deleteIfExists(tempFile);
             } else switch (VerifiedArtifactStore.verifyAndCommit(tempFile, cacheFile, checksum, expected,
                     verification.storeSidecar(), verification.alongside(), verification.lookedUp())) {
-                case COMMITTED -> System.out.println("Cached: " + ref + " (" + checksum.extension + " verified, " +
+                case COMMITTED -> ProxyLog.trace("Cached: " + ref + " (" + checksum.extension + " verified, " +
                         formatSize(Files.size(cacheFile)) + ")");
-                case SUPERSEDED -> System.out.println("Not caching " + ref
+                case SUPERSEDED -> ProxyLog.trace("Not caching " + ref
                         + ": upstream confirmed the cached copy after this download's lookup");
-                case REJECTED -> System.err.println("Cache: " + checksum.extension + " mismatch for " +
+                case REJECTED -> ProxyLog.trace("Cache: " + checksum.extension + " mismatch for " +
                         ref + ", not caching");
             }
         } catch (Exception e) {
-            System.err.println("Failed to finalize cache for " + ref + ": " + e.getMessage());
+            ProxyLog.trace("Failed to finalize cache for " + ref + ": " + e.getMessage());
             try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
         }
     }
@@ -813,7 +813,7 @@ class ArtifactCacheHandler {
             Files.createDirectories(etagFile.getParent());
             Files.writeString(etagFile, etag);
         } catch (IOException e) {
-            System.err.println("npm: failed to store ETag for " + packageName +
+            ProxyLog.trace("npm: failed to store ETag for " + packageName +
                     ": " + e.getMessage());
         }
     }
@@ -895,7 +895,7 @@ class ArtifactCacheHandler {
                 ProxyLog.warn("No npm digest for " + ref + "; relaying it uncached");
                 upstream.relayRequest(clientReq, domain, started);
             } else if (result.cacheHit()) {
-                System.out.println("npm cache hit: " + ref +
+                ProxyLog.trace("npm cache hit: " + ref +
                         " (" + formatSize(result.size()) + ")");
                 serveCachedFile(clientReq.response(), cacheFile, null);
                 if (result.confirmAgain()) {
@@ -906,7 +906,7 @@ class ArtifactCacheHandler {
                         Verification.ofNpmTarball(result.digest(), result.packageEtag(), result.lookedUp()));
             }
         }).onFailure(err -> {
-            System.err.println("npm integrity check error for " + ref +
+            ProxyLog.trace("npm integrity check error for " + ref +
                     ": " + err.getMessage());
             upstream.relayRequest(clientReq, domain, started);
         });
@@ -954,7 +954,7 @@ class ArtifactCacheHandler {
                             reconcileNpmCopy(cacheFile, ref, l.answer(), l.askedAt());
                             return null;
                         }))
-                        .onFailure(err -> System.err.println("npm background confirmation error for " + ref
+                        .onFailure(err -> ProxyLog.trace("npm background confirmation error for " + ref
                                 + ": " + err.getMessage())));
     }
 
@@ -980,7 +980,7 @@ class ArtifactCacheHandler {
             if (digest != null && digest.equals(stored)) {
                 VerifiedArtifactStore.renewConfirmation(cacheFile, storedDigest, lookedUp);
             } else if (digest != null || answer.gone()) {
-                System.out.println("npm cache: " + ref + (digest != null ? npmMismatch(stored, digest)
+                ProxyLog.trace("npm cache: " + ref + (digest != null ? npmMismatch(stored, digest)
                         : " is gone upstream (" + answer.status() + ")") + ", evicting");
                 evictNpmTarball(cacheFile);
             } else {
@@ -1016,12 +1016,12 @@ class ArtifactCacheHandler {
             if (digest == null) {
                 if (!cached) return null;
                 if (answer.unreachable()) {
-                    System.out.println("npm: serving " + ref + " unconfirmed, the registry "
+                    ProxyLog.trace("npm: serving " + ref + " unconfirmed, the registry "
                             + (answer.status() > 0 ? "answered " + answer.status() : "is unreachable"));
                     return NpmVerifyResult.hit(Files.size(cacheFile), false);
                 }
                 if (answer.gone()) {
-                    System.out.println("npm cache: " + ref + " is gone upstream (" + answer.status() + "), evicting");
+                    ProxyLog.trace("npm cache: " + ref + " is gone upstream (" + answer.status() + "), evicting");
                     evictNpmTarball(cacheFile);
                 }
                 return null;
@@ -1036,7 +1036,7 @@ class ArtifactCacheHandler {
                     }
                     return NpmVerifyResult.hit(Files.size(cacheFile), false);
                 }
-                System.out.println("npm cache: " + ref + npmMismatch(stored, digest) + ", evicting");
+                ProxyLog.trace("npm cache: " + ref + npmMismatch(stored, digest) + ", evicting");
                 evictNpmTarball(cacheFile);
             }
 
@@ -1372,7 +1372,7 @@ class ArtifactCacheHandler {
                 download(clientReq, started, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
-            System.err.println("Artifact cache check error for " + ref + ": " + err.getMessage());
+            ProxyLog.trace("Artifact cache check error for " + ref + ": " + err.getMessage());
             upstream.relayRequest(clientReq, domain, started);
         });
     }
@@ -1441,7 +1441,7 @@ class ArtifactCacheHandler {
         // Cleared first: a hit landing now schedules the next summary, whichever one counts it
         cacheStatsPending.set(false);
         var summary = cacheStats.drain();
-        if (summary != null) System.out.println(summary);
+        if (summary != null) ProxyLog.trace(summary);
     }
 
     // Artifacts with a background confirmation queued or in flight, so overlapping hits queue one; the
@@ -1470,7 +1470,7 @@ class ArtifactCacheHandler {
         var artifact = target.artifact();
         inBackground(artifact, () -> confirm(domain, path, revalidation, target).onComplete(ar -> {
             if (ar.failed()) {
-                System.err.println("Background confirmation error for " + ref + ": " + ar.cause().getMessage());
+                ProxyLog.trace("Background confirmation error for " + ref + ": " + ar.cause().getMessage());
             } else {
                 var outcome = ar.result().outcome();
                 logEviction(outcome, ref, target.checksum(), ar.result().answer());
@@ -1581,7 +1581,7 @@ class ArtifactCacheHandler {
                 download(clientReq, started, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
-            System.err.println("Artifact revalidation error for " + ref + ": " + err.getMessage());
+            ProxyLog.trace("Artifact revalidation error for " + ref + ": " + err.getMessage());
             upstream.relayRequest(clientReq, domain, started);
         });
     }
@@ -1624,10 +1624,10 @@ class ArtifactCacheHandler {
                         == VerifiedArtifactStore.Commit.COMMITTED) {
                     return new HostImport(answer, Files.size(target.artifact()));
                 }
-                System.out.println("Maven .m2 copy not imported (differs from upstream, or superseded): " + ref);
+                ProxyLog.trace("Maven .m2 copy not imported (differs from upstream, or superseded): " + ref);
                 return new HostImport(answer, -1);
             }, false);
-        }).onFailure(err -> System.err.println("Maven .m2 import error for " + ref + ": " + err.getMessage()));
+        }).onFailure(err -> ProxyLog.trace("Maven .m2 import error for " + ref + ": " + err.getMessage()));
     }
 
     private void importOrDownload(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
@@ -1719,7 +1719,7 @@ class ArtifactCacheHandler {
                                       Sidecar sidecar, ArtifactTarget target, byte[] stored) {
         var path = clientReq.path();
         sidecarSettles.join(domain + path, () -> settleSidecar(domain, path, revalidation, sidecar, target, false)
-                        .onFailure(err -> System.err.println("Sidecar check error for " + domain + path + ": " + err.getMessage())))
+                        .onFailure(err -> ProxyLog.trace("Sidecar check error for " + domain + path + ": " + err.getMessage())))
                 .otherwise(err -> SidecarReply.error(502, "Sidecar check failed"))
                 .onSuccess(reply -> {
                     var resp = clientReq.response();
@@ -1759,7 +1759,7 @@ class ArtifactCacheHandler {
                     : Future.succeededFuture(reconciled.outcome())
             ).transform(ar -> {
                 if (ar.failed()) {
-                    System.err.println("Sidecar check error for " + domain + path + ": " + ar.cause().getMessage());
+                    ProxyLog.trace("Sidecar check error for " + domain + path + ": " + ar.cause().getMessage());
                 } else if (ar.result() == VerifiedArtifactStore.Outcome.SUPERSEDED) {
                     // Upstream confirmed the copy after this lookup (#1542): the copy's own sidecar
                     // describes the bytes served, where the answer may describe others
@@ -1782,7 +1782,7 @@ class ArtifactCacheHandler {
         return vertx.executeBlocking(() -> VerifiedArtifactStore.cachedCopy(target.artifact(), target.checksum(), sidecar), false)
                 .transform(ar -> {
                     if (ar.failed()) {
-                        System.err.println("Stored sidecar read error for " + domain + path + ": "
+                        ProxyLog.trace("Stored sidecar read error for " + domain + path + ": "
                                 + ar.cause().getMessage());
                     }
                     var kept = ar.succeeded() && ar.result() != null ? ar.result().sidecar() : null;
@@ -1836,7 +1836,7 @@ class ArtifactCacheHandler {
     private static void logEviction(VerifiedArtifactStore.Outcome outcome, String ref,
                                     Sidecar sidecar, SidecarAnswer answer) {
         if (outcome != VerifiedArtifactStore.Outcome.EVICTED) return;
-        System.out.println("Evicted " + ref + ": upstream " + sidecar.extension +
+        ProxyLog.trace("Evicted " + ref + ": upstream " + sidecar.extension +
                 (answer.status() == 200 ? " no longer matches" : " is gone (HTTP " + answer.status() + ")"));
     }
 
@@ -1997,7 +1997,7 @@ class ArtifactCacheHandler {
         vertx.executeBlocking(() -> {
             for (var dir : Environment.unverifiedLegacyCacheDirs()) {
                 if (Files.isDirectory(dir)) {
-                    System.out.println("Deleting cache stored without verification: " + dir);
+                    ProxyLog.trace("Deleting cache stored without verification: " + dir);
                     FileTrees.delete(dir);
                 }
             }
