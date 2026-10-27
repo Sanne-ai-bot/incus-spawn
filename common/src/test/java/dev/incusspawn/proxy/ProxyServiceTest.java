@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -291,6 +292,25 @@ class ProxyServiceTest {
             ProxyService.replaceCommandRunner(saved);
             System.setProperty("user.home", originalHome);
         }
+    }
+
+    /**
+     * Uninstalling fails when the bridge DNS overrides or the redirect rules stay, each tried
+     * whatever became of the other; a service that stays keeps both, which it needs.
+     */
+    @Test
+    void uninstallFailsWhenWhatRoutesToTheProxyStays() {
+        var tried = new java.util.ArrayList<String>();
+        BooleanSupplier redirects = () -> tried.add("redirects");
+
+        assertFalse(ProxyService.uninstall(() -> true, () -> false, redirects));
+        assertEquals(List.of("redirects"), tried, "the redirect rules are cleared even when the DNS overrides stay");
+        assertFalse(ProxyService.uninstall(() -> true, () -> true, () -> false));
+        assertTrue(ProxyService.uninstall(() -> true, () -> true, () -> true));
+
+        tried.clear();
+        assertFalse(ProxyService.uninstall(() -> false, () -> tried.add("dns"), redirects));
+        assertEquals(List.of(), tried, "a service that stays keeps what routes to it");
     }
 
     /** A proxy left running is a failed `isx proxy stop`: an error, and false for its exit code. */

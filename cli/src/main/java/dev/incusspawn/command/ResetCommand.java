@@ -154,8 +154,8 @@ public class ResetCommand extends BaseCommand {
                     BuildOutput.step("Removed DNF cache volume");
                 if (!result.warnings().isEmpty()) {
                     BuildOutput.warn("Some storage pool artifacts were not removed:", result.warnings().toArray(String[]::new));
+                    failed = true;
                 }
-                if (!result.warnings().isEmpty()) failed = true;
             }
         }
 
