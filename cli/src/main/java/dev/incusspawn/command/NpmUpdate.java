@@ -14,14 +14,16 @@ final class NpmUpdate {
     /**
      * Updates the template's global npm packages, if it has npm. Returns false when the update
      * failed or left a CLI without its platform binary: npm exits 0 when it drops an optional
-     * dependency, so that is checked (and repaired once) separately (#808).
+     * dependency, so that is checked (and repaired) separately (#808). Both wait for a release
+     * still reaching the registry (#1757).
      */
     static boolean run(IncusClient incus, String name) {
         if (!incus.shellExec(name, "which", "npm").success()) return true;
         BuildOutput.stepStart("Updating npm packages...");
-        var update = incus.shellExec(name, "npm", "update", "-g");
+        var container = new Container(incus, name);
+        var update = NpmGlobalInstall.update(container);
         if (!update.success()) return GuestUpdate.finish(update, "npm update -g");
-        var problems = NpmGlobalInstall.repairAfterUpdate(new Container(incus, name));
+        var problems = NpmGlobalInstall.repairAfterUpdate(container);
         if (!problems.isEmpty()) {
             BuildOutput.stepBreak();
             problems.forEach(System.err::println);

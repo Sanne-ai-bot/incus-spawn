@@ -41,10 +41,12 @@ class CopilotSetupTest {
         when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg -> arg.contains("npm root -g"))))
                 .thenReturn(new IncusClient.ExecResult(3, "@github/copilot-linux-x64\n", ""));
 
-        var e = assertThrows(IncusException.class,
-                () -> new CopilotSetup().install(new Container(incus, CONTAINER), Map.of()));
-        assertTrue(e.getMessage().contains("@github/copilot-linux-x64"), e.getMessage());
-        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
-                argThat(arg -> arg.contains("/home/agentuser/.copilot/config.json")));
+        try (var ignored = new NpmWaits()) {
+            var e = assertThrows(IncusException.class,
+                    () -> new CopilotSetup().install(new Container(incus, CONTAINER), Map.of()));
+            assertTrue(e.getMessage().contains("@github/copilot-linux-x64"), e.getMessage());
+            verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
+                    argThat(arg -> arg.contains("/home/agentuser/.copilot/config.json")));
+        }
     }
 }

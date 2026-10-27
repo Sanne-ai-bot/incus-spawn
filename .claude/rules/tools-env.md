@@ -20,7 +20,8 @@ paths:
   Tools can declare a `feature()` to gate themselves behind an opt-in feature flag in `SpawnConfig.features` (no built-in tool does today -- `codex` graduated out of the `openai` flag).
 - npm CLIs install through `NpmGlobalInstall`.
   `CodexSetup` and `CopilotSetup` declare a `PlatformSplitCli`: their real binaries are optional platform packages, which npm silently skips on a failed download (exit 0, launcher only -- #808).
-  After install, and after `npm update -g` in `update-all`/`project update` (`NpmUpdate`), the platform package is resolved with node as root, reinstalled once if missing, then the step fails.
+  After install, and after `npm update -g` in `update-all`/`project update` (`NpmUpdate`), the platform package is resolved with node as root, reinstalled if missing, then the step fails.
+  Reinstalls after the first, and npm installs or updates that fail with E404 or ETARGET, wait out `REGISTRY_RETRY_DELAYS` (one budget per npm command or repair pass): a new release's platform builds land minutes after its launcher (#1757).
   Never verify by running the CLI: that writes caches into the template.
   A new CLI with this package shape adds itself to `PLATFORM_SPLIT_CLIS`.
   Codex's footer uses `tui.status_line = ["model-with-reasoning", "current-dir", "permissions"]` and a full-access named permission profile, plus `web_search = "live"`: a custom profile does not get the live search `danger-full-access` implies.
