@@ -437,11 +437,15 @@ public class VmCommand extends BaseCommand {
                 // tail inherits the terminal: only the CLI runs this, and nothing else prints meanwhile
                 var pb = new ProcessBuilder("tail", "-f", logFile.toString());
                 pb.inheritIO();
-                pb.start().waitFor();
-            } catch (IOException | InterruptedException e) {
+                return CommandResult.valueOf(ProxyCommand.Logs.followed(pb.start().waitFor()));
+            } catch (InterruptedException e) {
+                // Nothing interrupts this thread; were it, the console was shown until then
+                Thread.currentThread().interrupt();
+                return CommandResult.SUCCESS;
+            } catch (IOException e) {
                 BuildOutput.error("Failed to tail log file: " + e.getMessage());
+                return CommandResult.valueOf(1);
             }
-            return CommandResult.SUCCESS;
         }
     }
 
