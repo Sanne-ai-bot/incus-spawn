@@ -5,6 +5,8 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.BuildAccounts;
+import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.util.RecordingOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
@@ -44,7 +46,7 @@ class UpdateAllCommandTest {
     private IncusClient incus(String type) {
         daemon = new FakeIncusDaemon().instance(NAME, type, "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(anyString(), any());
+        doNothing().when(incus).waitForReady(anyString(), any(), any(), anyMap());
         doAnswer(inv -> {
             var args = inv.getArguments();
             // Matchers pass null while a stub is set up
@@ -53,7 +55,8 @@ class UpdateAllCommandTest {
         }).when(incus).shellExec(anyString(), any(String[].class));
         doReturn(new IncusClient.ExecResult(1, "", "")).when(incus).shellExec(NAME, "which", "npm");
         doAnswer(inv -> {
-            guestScripts.add(inv.getArgument(2));
+            // Not the cleanup of the update's proof caches, which every update ends with
+            if (!((String) inv.getArgument(2)).startsWith("export ANTHROPIC_API_KEY=")) guestScripts.add(inv.getArgument(2));
             return OK;
         }).when(incus).execInContainer(eq(NAME), eq("agentuser"), anyString());
         rootCommands.clear();
@@ -125,26 +128,112 @@ class UpdateAllCommandTest {
         assertEquals(0, after.path("devices").size(), "the NIC is the profile's again");
     }
 
-    /** A template that has been granted nothing is served nothing: no proof or grant goes with its address. */
+    private static final String PIN = Metadata.accountKey("github");
+
+    /** What {@link BuildAccounts#revoke} leaves: no secret or proof the proxy would accept. */
+    private void assertRevoked(String name) {
+        var config = daemon.instance(name).path("config");
+        for (var key : List.of(Metadata.INSTANCE_SECRET_SHA256, Metadata.INSTANCE_PROOF_SHA256, Metadata.INSTANCE_PROOF_ID)) {
+            assertEquals("", config.pathText(key, ""), key + " outlived the update");
+        }
+    }
+
+    /** The cleanup of the update's proof caches from the rootfs, as a build runs before it publishes. */
+    private static boolean clearsProofCaches(String script) {
+        return script.startsWith("export ANTHROPIC_API_KEY=");
+    }
+
+    /**
+     * A template's prime commands are served its own accounts, as a build's are (#1743): fresh
+     * proofs and a secret with its pinned address, delivered as the guest answers, never a grant it
+     * was left with. Once the update ends they are revoked, the guest's caches of them cleared, and
+     * the address given back.
+     */
     @Test
-    void aTemplateIsPinnedWithoutProofsOrGrants() {
+    void aTemplateIsGrantedItsOwnAccountsWhileItRunsAndRevokedAfter() {
         var incus = incus();
-        daemon.instance(NAME, "container", "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
-                Metadata.INSTANCE_PROOF_SHA256, "stale", Metadata.INSTANCE_SECRET_SHA256, "stale",
-                Metadata.MCP_CALLER, "true"));
+        daemon.instance(NAME, "container", "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, PIN, "bot",
+                Metadata.INSTANCE_SECRET_SHA256, "stale", Metadata.MCP_CALLER, "true"));
         var configDuringUpdate = new ArrayList<JqValue>();
+        var servedDuringUpdate = new ArrayList<dev.incusspawn.proxy.InstanceRegistry.InstanceAccounts>();
         doAnswer(inv -> {
-            configDuringUpdate.add(daemon.instance(NAME).path("config"));
+            var config = daemon.instance(NAME).path("config");
+            configDuringUpdate.add(config);
+            var registry = new dev.incusspawn.proxy.InstanceRegistry(incus);
+            registry.refresh();
+            servedDuringUpdate.add(registry.lookup(config.pathText(Metadata.STATIC_IP, "")));
             return OK;
         }).when(incus).shellExec(NAME, "dnf", "update", "-y");
+        var delivered = new ArrayList<Map<String, String>>();
+        doAnswer(inv -> {
+            delivered.add(inv.getArgument(3));
+            return null;
+        }).when(incus).waitForReady(eq(NAME), any(), eq(InstanceSecret.GUEST_SCRIPT), anyMap());
+        var cleared = new ArrayList<String>();
+        doAnswer(inv -> {
+            if (clearsProofCaches(inv.getArgument(2))) cleared.add(inv.getArgument(2));
+            return OK;
+        }).when(incus).execInContainer(eq(NAME), eq("agentuser"), anyString());
 
         assertEquals(0, update(incus));
 
         var config = configDuringUpdate.getFirst();
-        assertFalse(config.pathText(Metadata.STATIC_IP, "").isEmpty());
-        assertFalse(config.has(Metadata.INSTANCE_PROOF_SHA256));
-        assertFalse(config.has(Metadata.INSTANCE_SECRET_SHA256));
-        assertFalse(config.has(Metadata.MCP_CALLER));
+        var secretHash = config.pathText(Metadata.INSTANCE_SECRET_SHA256, "");
+        assertFalse(secretHash.isEmpty() || secretHash.equals("stale"), "a fresh secret, not the one it was left with");
+        assertFalse(config.pathText(Metadata.INSTANCE_PROOF_SHA256, "").isEmpty(), "proofs for its accounts");
+        assertFalse(config.has(Metadata.MCP_CALLER), "no MCP grant goes with them");
+        assertEquals(1, delivered.size(), "delivered as the guest answers");
+        assertEquals(secretHash, InstanceSecret.sha256(delivered.getFirst().get(InstanceSecret.DELIVERY_ENV)));
+        assertEquals(Map.of("github", "bot"), servedDuringUpdate.getFirst().accountsByNamespace(),
+                "the proxy serves the template its own pins");
+
+        assertRevoked(NAME);
+        assertEquals(1, cleared.size(), "the guest's caches of them are cleared before it stops");
+        var after = daemon.instance(NAME).path("config");
+        assertEquals("bot", after.pathText(PIN, ""), "the template's own pins stay");
+        assertFalse(after.has(Metadata.STATIC_IP));
+    }
+
+    /** A step that throws still revokes the grant and clears the guest's caches of it. */
+    @Test
+    void aFailedUpdateRevokesItsGrant() {
+        var incus = incus();
+        doThrow(new IncusException("exec failed")).when(incus).shellExec(NAME, "dnf", "update", "-y");
+        var cleared = new ArrayList<String>();
+        doAnswer(inv -> {
+            if (clearsProofCaches(inv.getArgument(2))) cleared.add(inv.getArgument(2));
+            return OK;
+        }).when(incus).execInContainer(eq(NAME), eq("agentuser"), anyString());
+
+        assertThrows(IncusException.class, () -> update(incus));
+
+        assertRevoked(NAME);
+        assertEquals(1, cleared.size());
+        assertEquals("Stopped", daemon.instance(NAME).pathText("status", ""));
+    }
+
+    /** A guest that never answered never received the proofs: they are revoked, with no exec into it. */
+    @Test
+    void aGuestThatNeverAnsweredIsRevokedWithoutAnExec() {
+        var incus = incus();
+        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
+
+        assertThrows(IncusException.class, () -> update(incus));
+
+        assertRevoked(NAME);
+        verify(incus, never()).execInContainer(eq(NAME), eq("agentuser"), anyString());
+    }
+
+    /** A revocation Incus refuses fails the update, saying so, and the template is still stopped. */
+    @Test
+    void aRevocationThatFailsFailsTheUpdate() {
+        var incus = incus();
+        doThrow(new IncusException("Failed to set config on " + NAME)).when(incus).configSetAll(eq(NAME), anyMap());
+
+        var said = RecordingOutput.during(() -> assertEquals(1, update(incus)));
+
+        assertTrue(warnings(said).contains("Could not revoke " + NAME + "'s update credentials"), warnings(said));
+        assertEquals("Stopped", daemon.instance(NAME).pathText("status", ""));
     }
 
     /** A template that would not start gives back the address it was pinned to. */
@@ -168,6 +257,7 @@ class UpdateAllCommandTest {
         var said = RecordingOutput.during(() -> assertEquals(1, update(incus)));
 
         assertTrue(failedSteps(said).contains(NAME + " must be stopped"), failedSteps(said));
+        assertFalse(daemon.instance(NAME).path("config").has(Metadata.INSTANCE_SECRET_SHA256), "nothing is granted");
         assertEquals("Running", daemon.instance(NAME).pathText("status", ""));
         assertEquals(0, daemon.instance(NAME).path("devices").size());
         verify(incus, never()).stop(NAME);
@@ -195,6 +285,7 @@ class UpdateAllCommandTest {
         var said = RecordingOutput.during(() -> assertEquals(1, updateBothWith(incus)));
 
         verify(incus).shellExec(NEXT, "dnf", "update", "-y");
+        assertRevoked(NEXT);
         assertFalse(warnings(said).contains("re-run"), "a re-run is refused the same way: " + warnings(said));
     }
 
@@ -209,6 +300,8 @@ class UpdateAllCommandTest {
 
         verify(incus, never()).shellExec(NAME, "dnf", "update", "-y");
         verify(incus).shellExec(NEXT, "dnf", "update", "-y");
+        assertRevoked(NAME);
+        assertRevoked(NEXT);
         assertTrue(failedSteps(said).contains("its DHCP client got"), failedSteps(said));
         assertTrue(warnings(said).contains("Some address checks failed"), warnings(said));
         assertEquals("Stopped", daemon.instance(NAME).pathText("status", ""));
@@ -224,7 +317,7 @@ class UpdateAllCommandTest {
     @Test
     void aTemplateIsStoppedWhenItsUpdateThrows() {
         var incus = incus();
-        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any());
+        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
 
         assertThrows(IncusException.class, () -> update(incus));
 
@@ -245,7 +338,7 @@ class UpdateAllCommandTest {
     @Test
     void aTemplateThatIgnoresTheStopIsForcedWithoutHidingWhyTheUpdateFailed() {
         var incus = incus();
-        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any());
+        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
         doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
 
         var e = assertThrows(IncusException.class, () -> update(incus));
@@ -259,7 +352,7 @@ class UpdateAllCommandTest {
     void aTemplateThatDiedIsNotForceStopped() {
         var incus = incus();
         doReturn(template("Stopped")).when(incus).instanceMetadataOrThrow(NAME);
-        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any());
+        doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
         doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
 
         var e = assertThrows(IncusException.class, () -> update(incus));
@@ -378,7 +471,7 @@ class UpdateAllCommandTest {
         var said = RecordingOutput.during(() -> assertEquals(1, update(incus)));
 
         verify(incus, never()).shellExec(NAME, "dnf", "update", "-y");
-        verify(incus, never()).execInContainer(eq(NAME), eq("agentuser"), anyString());
+        assertTrue(guestScripts.isEmpty(), "nothing but the proof cleanup ran as agentuser: " + guestScripts);
         verify(incus).stop(NAME);
         assertTrue(failedSteps(said).contains("cannot reach https://mirrors.fedoraproject.org"), failedSteps(said));
     }
