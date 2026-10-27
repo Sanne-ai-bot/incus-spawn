@@ -1166,7 +1166,7 @@ public class Tui {
         var refusal = BranchFlow.vmUnsupportedOnMacOs(sourceName, defaults.machineType());
         if (refusal != null) {
             mode = Mode.BROWSE;
-            statusMessage = refusal;
+            refuseAtLength(refusal);
             return;
         }
         branch = new BranchModal(modal, theme, sourceName, suggestedName, defaults,
@@ -1198,7 +1198,7 @@ public class Tui {
         // As preflight would, but before the terminal is handed back, like the credential check below
         var refusal = BranchFlow.kvmUnsupportedOnMacOs(branch.kvm());
         if (refusal != null) {
-            statusMessage = refusal;
+            refuseAtLength(refusal);
             mode = Mode.BROWSE;
             return true;
         }
@@ -1223,7 +1223,8 @@ public class Tui {
 
     /**
      * A refusal longer than the one-line status bar holds, such as a missing credential's remedy and
-     * tool note (#1759): its first sentence on the status bar, all of it in the warning log.
+     * tool note (#1759) or a branch macOS cannot make: its first sentence on the status bar, all of
+     * it in the warning log.
      */
     private void refuseAtLength(String message) {
         // Announced by this line, so not again, cut off, after the next key
