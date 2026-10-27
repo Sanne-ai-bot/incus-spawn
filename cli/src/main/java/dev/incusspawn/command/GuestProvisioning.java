@@ -499,7 +499,24 @@ public class GuestProvisioning {
         runTrustHelper(container);
     }
 
-    private static void runTrustHelper(Container container) {
+    /**
+     * How a runtime on its own root bundle fails to trust the isx CA: JSSE's alert and
+     * validator, and Python's ssl. The agent context names the same symptoms.
+     */
+    static final List<String> UNTRUSTED_CERTIFICATE = List.of(
+            "certificate_unknown", "PKIX path building failed", "CERTIFICATE_VERIFY_FAILED");
+
+    /** Whether {@code output} shows a TLS call that failed for want of a trusted root. */
+    static boolean untrustedCertificate(String output) {
+        return output != null && UNTRUSTED_CERTIFICATE.stream().anyMatch(output::contains);
+    }
+
+    /**
+     * Runs the installed helper on the landing directories, root's and then agentuser's. A
+     * prime that failed on {@link #untrustedCertificate} runs it before its second try, for a
+     * runtime it downloaded and used at once (#1746).
+     */
+    static void runTrustHelper(Container container) {
         var system = new ArrayList<>(List.of(TRUST_HELPER_PATH));
         system.addAll(TRUST_SYSTEM_DIRS);
         container.exec(system.toArray(String[]::new));

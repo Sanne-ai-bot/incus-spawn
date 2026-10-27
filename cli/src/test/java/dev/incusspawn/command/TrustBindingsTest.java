@@ -205,6 +205,16 @@ class TrustBindingsTest {
     }
 
     @Test
+    void aPrimeIsRetriedOnTheSymptomsTheAgentContextNames() {
+        // #1746: the build's retry and the agent's advice recognise the same failures.
+        var context = dev.incusspawn.config.AgentContextGenerator
+                .generate("tpl-x", List.of(), List.of(), List.of()).replaceAll("\\s+", " ");
+        for (var symptom : GuestProvisioning.UNTRUSTED_CERTIFICATE) {
+            assertTrue(context.contains("`" + symptom + "`"), symptom + "\n" + context);
+        }
+    }
+
+    @Test
     void helperWithoutArgumentsBindsAgentusersDirectoriesWhateverHomeIs(@TempDir Path tmp) throws Exception {
         // `sudo isx-trust` has HOME=/root; the table is agentuser's.
         var script = Files.readString(helper(tmp));
