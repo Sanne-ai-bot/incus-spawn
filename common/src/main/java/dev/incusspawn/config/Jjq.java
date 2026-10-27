@@ -176,8 +176,7 @@ public final class Jjq {
      */
     private static java.math.BigDecimal literalNumber(JqValue value) {
         if (value == null || !value.isNumber()) return null;
-        var n = (JqNumber) value;
-        if (n.isNaN() || n.isInfinite()) return null;
+        if (value instanceof JqNumber n && (n.isNaN() || n.isInfinite())) return null;
         var number = value.decimalValue();
         var written = value.sourceText();
         if (written == null) return number;
