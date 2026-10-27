@@ -408,7 +408,8 @@ public class CompletionCommand extends BaseCommand {
                 subcmd) _describe -t subcmds 'account subcommand' _account_subcmds ;;
                 args)
                   case $line[1] in
-                    show|reset-proofs) _isx_instances ;;
+                    list) _arguments '--format=[Output format]:format:(table plain json)' ;;
+                    show|reset-proofs) _arguments '1:instance:_isx_instances' ;;
                     set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts' ;;
                     unset) _arguments '1:instance:_isx_instances' '*:namespace:_isx_account_namespaces' ;;
                     add) _arguments '1:namespace:_isx_account_namespaces' ;;
