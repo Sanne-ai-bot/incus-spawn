@@ -239,6 +239,24 @@ In the instance, `git fetch --unshallow && git remote set-branches origin '*' &&
 
 isx pre-trusts declared repos in `.claude.json`, so Claude Code does not prompt for trust on first use.
 
+### Runtimes a prime downloads
+
+A prime's HTTPS calls go through the proxy, so its runtime must trust the isx CA.
+A JDK or Python's certifi ships its own root store, which isx binds to the system store.
+isx does this in the usual landing directories, such as `/opt` or mise's.
+The [Fedora page](FEDORA.md#file-bindings) lists them.
+
+A prime that downloads a JDK and uses it in the same command can run it before isx has bound it.
+`mise x -- ./gradlew dependencies` is such a prime.
+When a prime fails with `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`, isx binds what landed and runs the prime once more.
+
+A runtime unpacked anywhere else stays on its own roots, and the second run fails the same way.
+The build then asks you to bind it in the prime, before the command that uses it:
+
+```yaml
+prime: ./get-jdk.sh ~/tools/jdk && isx-trust ~/tools/jdk && ./gradlew dependencies
+```
+
 ## Host sources
 
 For a repository accessible only on the host, declare its source directly:

@@ -124,6 +124,10 @@ Each download must set `extract`, `destination_file`, or both.
 Setting both preserves the downloaded archive at `destination_file` and also exposes its extracted contents.
 Supported archive formats for `extract` are `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.zip`.
 
+A JDK ships its own root store, and its HTTPS calls fail until isx binds it to the system store.
+isx binds a runtime extracted under `/opt`, `/usr/local`, `/usr/lib/jvm` or one of the home directories that [File bindings](FEDORA.md#file-bindings) lists.
+Extract a JDK there; elsewhere, a template's prime or a shell in the instance binds it with `isx-trust <dir>`.
+
 #### Install order
 
 A tool installs in this order: packages → downloads → `run` → `run_as_user` → `files`.
