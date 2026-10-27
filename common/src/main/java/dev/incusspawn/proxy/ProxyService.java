@@ -345,12 +345,15 @@ public final class ProxyService {
         }
     }
 
-    /** Removes the service; false when it is installed and its files could not be removed. */
-    static boolean uninstall() {
+    /**
+     * Removes the service alone, not what routes instances to it; false when it is installed and
+     * stays. For {@code isx reset}, which clears the routing whatever became of the service.
+     */
+    public static boolean uninstallService() {
         return uninstall(ProxyService::isActive);
     }
 
-    /** {@link #uninstall()} with the unit's state after its stop replaceable, for tests. */
+    /** {@link #uninstallService()} with the unit's state after its stop replaceable, for tests. */
     static boolean uninstall(BooleanSupplier active) {
         try (var ignored = acquireProxyLock()) {
             return uninstallLocked(active);
@@ -362,9 +365,10 @@ public final class ProxyService {
      * still running keeps its DNS overrides and redirect rules, which it needs.
      */
     public static boolean uninstall(IncusClient incus) {
-        if (!uninstall()) return false;
-        ProxyConfig.clearBridgeDns(incus);
-        return ProxyConfig.clearRedirectRules();
+        if (!uninstallService()) return false;
+        // Both are tried: one that stays does not keep the other
+        var dnsCleared = ProxyConfig.clearBridgeDns(incus);
+        return ProxyConfig.clearRedirectRules() && dnsCleared;
     }
 
     private static boolean uninstallLocked(BooleanSupplier active) {

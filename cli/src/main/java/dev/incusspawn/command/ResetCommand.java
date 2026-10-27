@@ -174,18 +174,19 @@ public class ResetCommand extends BaseCommand {
         if (proxyInstalled) {
             BuildOutput.header("Uninstalling proxy service");
             try {
-                if (!ProxyService.uninstall(incus)) failed = true;
+                if (!ProxyService.uninstallService()) failed = true;
             } catch (Exception e) {
                 System.err.println("Warning: proxy uninstall failed: " + e.getMessage());
                 failed = true;
             }
         } else {
             BuildOutput.header("Clearing DNS overrides and redirect rules");
-            if (incusReachable) {
-                ProxyConfig.clearBridgeDns(incus);
-            }
-            if (!ProxyConfig.clearRedirectRules()) failed = true;
         }
+        // Whatever became of the service: `isx proxy uninstall` keeps them for one that stays,
+        // but reset goes on to delete the CA and config it runs on, and nothing later would
+        // remove them. An Incus that is not reachable cannot be asked, as before.
+        if (incusReachable && !ProxyConfig.clearBridgeDns(incus)) failed = true;
+        if (!ProxyConfig.clearRedirectRules()) failed = true;
         // The proxy-only ACL (#1137); Incus keeps it while an instance that was not reset uses it
         if (incusReachable && !incus.deleteNetworkAcl(ProxyOnlyAcl.NAME)) {
             System.err.println("  Note: network ACL " + ProxyOnlyAcl.NAME + " could not be removed;"

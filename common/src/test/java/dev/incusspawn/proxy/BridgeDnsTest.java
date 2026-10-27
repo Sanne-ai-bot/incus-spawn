@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -151,6 +152,19 @@ class BridgeDnsTest {
         when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn(GITHUB_BLOCK);
         ProxyConfig.writeBridgeDns(incus, Set.of("github.com"));
         verify(incus, never()).networkConfigSet(any(), any(), any());
+    }
+
+    /** An uninstall or a reset fails when the overrides stay, as when Incus refuses the write. */
+    @Test
+    void clearBridgeDnsSaysWhetherTheOverridesWentAway() {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn(GITHUB_BLOCK);
+        assertTrue(ProxyConfig.clearBridgeDns(incus));
+        verify(incus).networkConfigSet("incusbr0", "raw.dnsmasq", BridgeDns.withoutOverrides(GITHUB_BLOCK));
+
+        doThrow(new IncusException("refused")).when(incus).networkConfigSet(any(), any(), any());
+        var recorded = RecordingOutput.during(() -> assertFalse(ProxyConfig.clearBridgeDns(incus)));
+        assertEquals(1, recorded.warnings().size(), recorded.events()::toString);
     }
 
     @Test
