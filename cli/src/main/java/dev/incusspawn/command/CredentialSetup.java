@@ -47,10 +47,8 @@ import io.hyperfoil.tools.jjq.value.JqValues;
 
 import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.DIM;
-import static dev.incusspawn.util.BuildOutput.GREEN;
-import static dev.incusspawn.util.BuildOutput.YELLOW;
 import static dev.incusspawn.util.BuildOutput.styled;
-import static dev.incusspawn.command.BaseCommand.askConfirmation;
+import static dev.incusspawn.command.BaseCommand.askYesNo;
 import static dev.incusspawn.command.InitCommand.commandExists;
 import static dev.incusspawn.command.InitCommand.runHostCapturingExit;
 
@@ -103,7 +101,7 @@ class CredentialSetup {
     private static final String ADD_API_KEY_LATER = "No API key added. Add one later with 'isx account add "
             + SpawnConfig.ClaudeConfig.NAMESPACE + "'.";
 
-    private static final String CLAUDE_SKIPPED = "  Skipped Claude setup. Configure later with 'isx account add "
+    private static final String CLAUDE_SKIPPED = "Skipped Claude setup. Configure later with 'isx account add "
             + SpawnConfig.ClaudeConfig.NAMESPACE + "'.";
 
     private static final List<String> KNOWN_TOOL_ORDER = List.of("claude", "gh", "bob", "codex");
@@ -117,7 +115,7 @@ class CredentialSetup {
         }
 
         if (toolsWithProxy.isEmpty()) {
-            System.out.println("  No tools with proxy credentials found.");
+            BuildOutput.step("No tools with proxy credentials found.");
             return List.of();
         }
 
@@ -128,20 +126,18 @@ class CredentialSetup {
                         })
                 .thenComparing(Map.Entry::getKey));
 
-        System.out.println("  Which credentials do you want to configure?");
+        BuildOutput.step("Which credentials do you want to configure?");
         for (int i = 0; i < toolsWithProxy.size(); i++) {
             var entry = toolsWithProxy.get(i);
             var toolName = entry.getKey();
             var tool = entry.getValue();
             var desc = describeTool(toolName, tool);
             var tag = isToolConfigured(toolName, tool, config, configTree, allTools) ? " [configured]" : "";
-            System.out.println("    " + (i + 1) + ". " + desc + tag);
+            prompts.say((i + 1) + ". " + desc + tag);
         }
-        System.out.println();
-        System.out.print("  Enter numbers separated by commas, 'all', or press Enter to skip: ");
-        var input = readInput(prompts.readLine());
+        var input = readInput(prompts.ask("Enter numbers separated by commas, 'all', or press Enter to skip: "));
         if (input.isBlank()) {
-            System.out.println("  Skipped credential setup.");
+            BuildOutput.step("Skipped credential setup.");
             return List.of();
         }
 
@@ -212,63 +208,63 @@ class CredentialSetup {
         if ("1".equals(envVertex)) {
             var region = env("CLOUD_ML_REGION");
             var projectId = env("ANTHROPIC_VERTEX_PROJECT_ID");
-            System.out.println("  Detected Vertex AI configuration from environment:");
-            System.out.println("    Region:  " + (region.isBlank() ? "(not set)" : region));
-            System.out.println("    Project: " + (projectId.isBlank() ? "(not set)" : projectId));
+            BuildOutput.step("Detected Vertex AI configuration from environment:");
+            prompts.say("Region:  " + (region.isBlank() ? "(not set)" : region));
+            prompts.say("Project: " + (projectId.isBlank() ? "(not set)" : projectId));
 
             if (region.isBlank() || projectId.isBlank()) {
-                System.out.println("  CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID must both be set for verification.");
-                System.out.println("  Continuing with manual setup...");
+                BuildOutput.step("CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID must both be set for verification.");
+                BuildOutput.step("Continuing with manual setup...");
             } else {
-                System.out.println("  Verifying Vertex AI configuration...");
+                BuildOutput.step("Verifying Vertex AI configuration...");
                 var result = verifyVertexConfig(region, projectId);
                 if (result.verified()) {
-                    System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + result.message()));
-                    if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this configuration?"), true)) {
+                    BuildOutput.ok(result.message());
+                    if (askYesNo(prompts, envAccountPrompt(config, target, "Use this configuration?"), true)) {
                         saveVertexConfig(config, target, region, projectId);
-                        System.out.println("  Claude auth configuration saved.");
+                        BuildOutput.step("Claude auth configuration saved.");
                         return;
                     }
-                    System.out.println("  Skipping environment config. Continuing with manual setup...");
+                    BuildOutput.step("Skipping environment config. Continuing with manual setup...");
                 } else {
-                    System.out.println("  " + result.message());
-                    if (askConfirmation(prompts, "  Save anyway? Press Enter to configure manually.", false)) {
+                    BuildOutput.step(result.message());
+                    if (askYesNo(prompts, "Save anyway? Press Enter to configure manually.", false)) {
                         saveVertexConfig(config, target, region, projectId);
-                        System.out.println("  Claude auth configuration saved (unverified).");
+                        BuildOutput.step("Claude auth configuration saved (unverified).");
                         return;
                     }
                 }
             }
         } else if (!envOauthToken.isBlank()) {
-            System.out.println("  Detected CLAUDE_CODE_OAUTH_TOKEN from environment.");
-            System.out.println("  Verifying OAuth token...");
+            BuildOutput.step("Detected CLAUDE_CODE_OAUTH_TOKEN from environment.");
+            BuildOutput.step("Verifying OAuth token...");
             var oauthResult = verifyOauthToken(envOauthToken);
             if (oauthResult.verified()) {
-                System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + oauthResult.message()));
-                if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this token?"), true)) {
-                    saveOauthConfig(config, prompts, target, envOauthToken, "  Claude auth configuration saved.");
+                BuildOutput.ok(oauthResult.message());
+                if (askYesNo(prompts, envAccountPrompt(config, target, "Use this token?"), true)) {
+                    saveOauthConfig(config, prompts, target, envOauthToken, true);
                     return;
                 }
-                System.out.println("  Skipping environment token. Continuing with manual setup...");
+                BuildOutput.step("Skipping environment token. Continuing with manual setup...");
             } else {
-                System.out.println("  " + oauthResult.message());
-                System.out.println("  Continuing with manual setup...");
+                BuildOutput.step(oauthResult.message());
+                BuildOutput.step("Continuing with manual setup...");
             }
         } else if (!envApiKey.isBlank()) {
-            System.out.println("  Detected ANTHROPIC_API_KEY from environment.");
-            System.out.println("  Verifying API key...");
+            BuildOutput.step("Detected ANTHROPIC_API_KEY from environment.");
+            BuildOutput.step("Verifying API key...");
             var result = verifyAnthropicApiKey(envApiKey);
             if (result.verified()) {
-                System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + result.message()));
-                if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this key?"), true)) {
+                BuildOutput.ok(result.message());
+                if (askYesNo(prompts, envAccountPrompt(config, target, "Use this key?"), true)) {
                     saveDirectConfig(config, target, envApiKey);
-                    System.out.println("  Claude auth configuration saved.");
+                    BuildOutput.step("Claude auth configuration saved.");
                     return;
                 }
-                System.out.println("  Skipping environment key. Continuing with manual setup...");
+                BuildOutput.step("Skipping environment key. Continuing with manual setup...");
             } else {
-                System.out.println("  " + result.message());
-                System.out.println("  Continuing with manual setup...");
+                BuildOutput.step(result.message());
+                BuildOutput.step("Continuing with manual setup...");
             }
         }
 
@@ -281,46 +277,42 @@ class CredentialSetup {
             target = managed.get();
         }
 
-        System.out.println("  How do you authenticate with Claude?");
-        System.out.println("    1. Anthropic API key");
-        System.out.println("    2. Claude Pro, Max or Team subscription (OAuth token)");
-        System.out.println("    3. Google Cloud Vertex AI");
-        System.out.println();
-        System.out.print("  Choice (1/2/3, or Enter to skip): ");
-        var authChoice = readInput(prompts.readLine());
+        BuildOutput.step("How do you authenticate with Claude?");
+        prompts.say("1. Anthropic API key");
+        prompts.say("2. Claude Pro, Max or Team subscription (OAuth token)");
+        prompts.say("3. Google Cloud Vertex AI");
+        var authChoice = readInput(prompts.ask("Choice (1/2/3, or Enter to skip): "));
 
         if (authChoice.equals("3")) {
             while (true) {
-                System.out.print("  CLOUD_ML_REGION (or press Enter to skip): ");
-                var region = readInput(prompts.readLine());
+                var region = readInput(prompts.ask("CLOUD_ML_REGION (or press Enter to skip): "));
                 if (region.isBlank()) {
-                    System.out.println(CLAUDE_SKIPPED);
+                    BuildOutput.step(CLAUDE_SKIPPED);
                     return;
                 }
-                System.out.print("  ANTHROPIC_VERTEX_PROJECT_ID: ");
-                var projectId = readInput(prompts.readLine());
+                var projectId = readInput(prompts.ask("ANTHROPIC_VERTEX_PROJECT_ID: "));
                 if (projectId.isBlank()) {
-                    System.out.println(CLAUDE_SKIPPED);
+                    BuildOutput.step(CLAUDE_SKIPPED);
                     return;
                 }
 
-                System.out.println("  Verifying Vertex AI configuration...");
+                BuildOutput.step("Verifying Vertex AI configuration...");
                 var result = verifyVertexConfig(region, projectId);
                 if (result.verified()) {
-                    System.out.println("  " + styled(BOLD + GREEN, "✓ " + result.message()));
+                    BuildOutput.ok(result.message());
                     saveVertexConfig(config, target, region, projectId);
-                    System.out.println("  Claude auth configuration saved.");
+                    BuildOutput.step("Claude auth configuration saved.");
                     break;
                 } else {
-                    System.out.println("  " + result.message());
+                    BuildOutput.step(result.message());
                     switch (askVerificationFailureAction(prompts)) {
                         case SKIP -> {
-                            System.out.println(CLAUDE_SKIPPED);
+                            BuildOutput.step(CLAUDE_SKIPPED);
                             break;
                         }
                         case SAVE_UNVERIFIED -> {
                             saveVertexConfig(config, target, region, projectId);
-                            System.out.println("  Claude auth configuration saved (unverified).");
+                            BuildOutput.step("Claude auth configuration saved (unverified).");
                             break;
                         }
                         case RETRY -> {
@@ -333,35 +325,34 @@ class CredentialSetup {
         } else if (authChoice.equals("2")) {
             setupClaudeOauth(config, prompts, target);
         } else if (authChoice.equals("1")) {
-            if (!setupClaudeApiKey(config, prompts, target)) System.out.println(CLAUDE_SKIPPED);
+            if (!setupClaudeApiKey(config, prompts, target)) BuildOutput.step(CLAUDE_SKIPPED);
         } else {
-            System.out.println(CLAUDE_SKIPPED);
+            BuildOutput.step(CLAUDE_SKIPPED);
         }
     }
 
     /** Asks for an Anthropic API key until one verifies or is saved anyway: false when the user skips. */
     private boolean setupClaudeApiKey(SpawnConfig config, Prompts prompts, AccountTarget target) {
         while (true) {
-            System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
-            var key = askSecret(prompts);
+            var key = askSecret(prompts, "ANTHROPIC_API_KEY (or press Enter to skip): ");
             if (key.isBlank()) return false;
 
-            System.out.println("  Verifying API key...");
+            BuildOutput.step("Verifying API key...");
             var result = verifyAnthropicApiKey(key);
             if (result.verified()) {
-                System.out.println("  " + styled(BOLD + GREEN, "✓ " + result.message()));
+                BuildOutput.ok(result.message());
                 saveDirectConfig(config, target, key);
-                System.out.println("  Claude auth configuration saved.");
+                BuildOutput.step("Claude auth configuration saved.");
                 return true;
             }
-            System.out.println("  " + result.message());
+            BuildOutput.step(result.message());
             switch (askVerificationFailureAction(prompts)) {
                 case SKIP -> {
                     return false;
                 }
                 case SAVE_UNVERIFIED -> {
                     saveDirectConfig(config, target, key);
-                    System.out.println("  Claude auth configuration saved (unverified).");
+                    BuildOutput.step("Claude auth configuration saved (unverified).");
                     return true;
                 }
                 case RETRY -> {
@@ -387,7 +378,7 @@ class CredentialSetup {
             case VERTEX -> "";
         };
         var tag = isDefault ? "  [default]" : !account.isComplete() ? "  [incomplete]" : "";
-        return (isDefault ? "  * " : "    ") + name + "  —  " + account.describe() + secret + tag;
+        return (isDefault ? "* " : "  ") + name + "  —  " + account.describe() + secret + tag;
     }
 
     /**
@@ -401,25 +392,23 @@ class CredentialSetup {
             var claude = config.getClaude();
             var accounts = claude.allAccounts();
             var defaultName = claude.accountName();
-            System.out.println("  Claude accounts:");
+            BuildOutput.step("Claude accounts:");
             accounts.forEach((name, account) ->
-                    System.out.println(describeClaudeAccount(name, account, name.equals(defaultName))));
+                    prompts.say(describeClaudeAccount(name, account, name.equals(defaultName))));
             if (claude.accountFor(SpawnConfig.ClaudeAccount::servesDirectApi) == null) {
-                System.out.println("    (none of these can answer 'isx ask' — add an API key, which Max and Team plans include credits for, or Vertex)");
+                prompts.say("(none of these can answer 'isx ask' — add an API key, which Max and Team plans include credits for, or Vertex)");
             }
-            System.out.println();
             // 'd' and 'x' are reachable as raw keystrokes even when not listed, so the same
             // fact gates both the menu and the handlers -- state it once.
             var canManageMultiple = accounts.size() > 1;
-            System.out.println("    a. Add another account");
-            System.out.println("    r. Replace all with a single account");
+            prompts.say("a. Add another account");
+            prompts.say("r. Replace all with a single account");
             if (canManageMultiple) {
-                System.out.println("    d. Change which account is the default");
-                System.out.println("    x. Remove an account");
+                prompts.say("d. Change which account is the default");
+                prompts.say("x. Remove an account");
             }
-            System.out.println("    n. Rename an account");
-            System.out.print("  Choice (Enter to keep as-is): ");
-            var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
+            prompts.say("n. Rename an account");
+            var choice = readInput(prompts.ask("Choice (Enter to keep as-is): ")).toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> {
@@ -445,30 +434,28 @@ class CredentialSetup {
                 // listing, so a later abort (or Ctrl-C) must not leave that message a lie.
                 case "d" -> {
                     if (canManageMultiple) {
-                        System.out.print("  Name of the account to make default: ");
-                        var name = readInput(prompts.readLine());
+                        var name = readInput(prompts.ask("Name of the account to make default: "));
                         if (accounts.containsKey(name)) {
                             var account = accounts.get(name);
                             if (!account.isComplete()) {
-                                System.out.println("  Account '" + name + "' is incomplete — fix it before making it the default.");
+                                BuildOutput.step("Account '" + name + "' is incomplete — fix it before making it the default.");
                             } else {
                                 changeDefaultAccount(config, SpawnConfig.ClaudeConfig.NAMESPACE, name,
                                         () -> config.getClaude().setDefaultAccount(name), prompts);
                             }
                         } else if (!name.isEmpty()) {
-                            System.out.println("  No account named '" + name + "'.");
+                            prompts.say("No account named '" + name + "'.");
                         }
                         continue;
                     }
                 }
                 case "x" -> {
                     if (canManageMultiple) {
-                        System.out.print("  Name of the account to remove: ");
-                        var name = readInput(prompts.readLine());
+                        var name = readInput(prompts.ask("Name of the account to remove: "));
                         if (accounts.containsKey(name)) {
                             var account = accounts.get(name);
                             if (account.isComplete() && claude.effectiveAccounts().size() <= 1) {
-                                System.out.println("  Cannot remove '" + name + "' — it is the only working account.");
+                                BuildOutput.step("Cannot remove '" + name + "' — it is the only working account.");
                             } else if (confirmLosingAccounts(config, SpawnConfig.ClaudeConfig.NAMESPACE,
                                     List.of(name), prompts)) {
                                 var moving = runningFollowersIfDefault(config, SpawnConfig.ClaudeConfig.NAMESPACE, name);
@@ -477,41 +464,40 @@ class CredentialSetup {
                                     claude.setDefaultAccount(claude.accountName());
                                 }
                                 config.save();
-                                System.out.println("  Removed account '" + name + "'.");
+                                BuildOutput.step("Removed account '" + name + "'.");
                                 if (!moving.isEmpty()) refreshIdentities(moving);
                             }
                         } else if (!name.isEmpty()) {
-                            System.out.println("  No account named '" + name + "'.");
+                            prompts.say("No account named '" + name + "'.");
                         }
                         continue;
                     }
                 }
                 default -> { }
             }
-            System.out.println("  Please choose one of the listed options.");
+            prompts.say("Please choose one of the listed options.");
         }
     }
 
     /** Prompts for a new account name, rejecting duplicates and anything YAML-hostile. */
     private static String askAccountName(Prompts prompts, java.util.Set<String> taken) {
-        return askAccountName(prompts, taken, "  Name for this account (e.g. personal, work — Enter to cancel): ");
+        return askAccountName(prompts, taken, "Name for this account (e.g. personal, work — Enter to cancel): ");
     }
 
     private static String askAccountName(Prompts prompts, java.util.Set<String> taken, String prompt) {
         while (true) {
-            System.out.print(prompt);
-            var name = readInput(prompts.readLine());
+            var name = readInput(prompts.ask(prompt));
             if (name.isEmpty()) return "";
             if (taken.contains(name)) {
-                System.out.println("  There is already an account named '" + name + "'.");
+                prompts.say("There is already an account named '" + name + "'.");
                 continue;
             }
             if (!name.matches("[A-Za-z0-9._-]+")) {
-                System.out.println("  Use letters, digits, '.', '_' or '-' only.");
+                prompts.say("Use letters, digits, '.', '_' or '-' only.");
                 continue;
             }
             if (AccountResolver.INHERIT.equals(name)) {
-                System.out.println("  '" + name + "' is reserved: it takes the credential of the isx instance isx runs in.");
+                prompts.say("'" + name + "' is reserved: it takes the credential of the isx instance isx runs in.");
                 continue;
             }
             return name;
@@ -524,10 +510,9 @@ class CredentialSetup {
 
     private static VerificationFailureAction askVerificationFailureAction(Prompts prompts) {
         while (true) {
-            System.out.print("  Try again? (Y/n/s to save anyway): ");
-            var action = parseVerificationFailureAction(prompts.readLine());
+            var action = parseVerificationFailureAction(prompts.ask("Try again? (Y/n/s to save anyway): "));
             if (action != null) return action;
-            System.out.println("  Please answer y, n, or s.");
+            prompts.say("Please answer y, n, or s.");
         }
     }
 
@@ -551,7 +536,7 @@ class CredentialSetup {
     }
 
     /**
-     * Reads a secret and confirms what arrived. {@code readPassword()} echoes nothing, so
+     * Asks {@code question} for a secret, read unechoed, and confirms what arrived. {@code readPassword()} echoes nothing, so
      * without this a paste that never landed looks exactly like one that did, and a truncated
      * one only shows up as a rejection from the remote API. The line shows the length and the
      * same masked form init already prints for a configured credential -- never more.
@@ -559,10 +544,10 @@ class CredentialSetup {
      * <p>Dimmed and worded "received" rather than green: it says the input arrived, not that
      * the credential works; verification still speaks for that.
      */
-    static String askSecret(Prompts prompts) {
-        var secret = readSecret(prompts.readPassword());
+    static String askSecret(Prompts prompts, String question) {
+        var secret = readSecret(prompts.askSecret(question));
         if (!secret.isEmpty()) {
-            System.out.println("  " + styled(DIM, describeReceivedSecret(secret)));
+            prompts.say(styled(DIM, describeReceivedSecret(secret)));
         }
         return secret;
     }
@@ -585,7 +570,7 @@ class CredentialSetup {
      * still terminates.
      *
      * <p>Prompts that need a different answer at EOF keep choosing their own and do not use
-     * this: {@link BaseCommand#askConfirmation} takes an explicit {@code eofValue}, and
+     * this: {@link BaseCommand#askYesNo} takes an explicit {@code eofValue}, and
      * {@link #parseVerificationFailureAction} maps null to SKIP so it never re-prompts.
      */
     static String readInput(String line) {
@@ -689,11 +674,15 @@ class CredentialSetup {
         saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofApiKey(apiKey));
     }
 
-    /** Saves a subscription account, reports {@code saved}, then offers what AI Help needs. */
+    /** Saves the token's account; a verified one is reported as an ok, one saved anyway as a plain step. */
     private void saveOauthConfig(SpawnConfig config, Prompts prompts, AccountTarget target, String oauthToken,
-                                 String saved) {
+                                 boolean verified) {
         saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofOauth(oauthToken));
-        System.out.println(saved);
+        if (verified) {
+            BuildOutput.ok("Claude auth configuration saved.");
+        } else {
+            BuildOutput.step("Claude auth configuration saved (unverified).");
+        }
         offerApiKeyForAiHelp(config, prompts);
     }
 
@@ -722,12 +711,12 @@ class CredentialSetup {
         BuildOutput.step("Max and Team plans include monthly API credits for one (Pro does not): claim them");
         BuildOutput.step("on claude.ai under Settings > Billing, then create a key in the linked Claude Console.");
         BuildOutput.step(TerminalLink.link(AiHelpClient.API_CREDITS_URL));
-        if (!askConfirmation(prompts, "  Add an Anthropic API key account now?", false)) {
+        if (!askYesNo(prompts, "Add an Anthropic API key account now?", false)) {
             BuildOutput.step(ADD_API_KEY_LATER);
             return;
         }
         var name = askAccountName(prompts, config.getClaude().allAccounts().keySet(),
-                "  Name for the API key account (e.g. api — Enter to cancel): ");
+                "Name for the API key account (e.g. api — Enter to cancel): ");
         if (name.isEmpty()) {
             BuildOutput.step(ADD_API_KEY_LATER);
             return;
@@ -739,13 +728,13 @@ class CredentialSetup {
 
     AuthResult verifyAnthropicApiKey(String key) {
         if (!key.startsWith("sk-ant-")) {
-            System.out.println("  Note: key does not start with 'sk-ant-' (unexpected format).");
+            BuildOutput.warn("Key does not start with 'sk-ant-' (unexpected format).");
         }
         return verifyAnthropicCredential("x-api-key", key, "API key");
     }
 
     AuthResult verifyOauthToken(String token) {
-        oauthTokenShapeWarning(token).ifPresent(warning -> System.out.println("  " + warning));
+        oauthTokenShapeWarning(token).ifPresent(BuildOutput::warn);
         return verifyAnthropicCredential("Authorization", "Bearer " + token, "OAuth token");
     }
 
@@ -776,53 +765,48 @@ class CredentialSetup {
     }
 
     private void setupClaudeOauth(SpawnConfig config, Prompts prompts, AccountTarget target) {
-        System.out.println("  A subscription signs Claude Code in with a long-lived OAuth token (valid");
-        System.out.println("  about a year). Pro has no API key; Max and Team include API credits for one.");
-        System.out.println();
-        System.out.println("    1. Install Claude Code: " + TerminalLink.link("https://claude.com/claude-code"));
-        System.out.println("    2. Sign in with the subscription account: run " + styled(BOLD, "claude")
+        BuildOutput.step("A subscription signs Claude Code in with a long-lived OAuth token (valid");
+        BuildOutput.step("about a year). Pro has no API key; Max and Team include API credits for one.");
+        prompts.say("1. Install Claude Code: " + TerminalLink.link("https://claude.com/claude-code"));
+        prompts.say("2. Sign in with the subscription account: run " + styled(BOLD, "claude")
                 + ", then " + styled(BOLD, "/login"));
-        System.out.println("    3. Run " + styled(BOLD, "claude setup-token"));
-        System.out.println("    4. Copy the token it prints (it starts with '"
+        prompts.say("3. Run " + styled(BOLD, "claude setup-token"));
+        prompts.say("4. Copy the token it prints (it starts with '"
                 + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX + "')");
-        System.out.println();
-        System.out.println("  Run 'isx account add claude' to paste a fresh token once this one expires.");
-        System.out.println();
+        BuildOutput.step("Run 'isx account add claude' to paste a fresh token once this one expires.");
 
         if (hostHasCommand("claude")) {
-            System.out.println("  Found 'claude' CLI on this host — steps 1 and 2 are already done.");
-            if (askConfirmation(prompts, "  Run 'claude setup-token' now?", true)) {
+            BuildOutput.step("Found 'claude' CLI on this host — steps 1 and 2 are already done.");
+            if (askYesNo(prompts, "Run 'claude setup-token' now?", true)) {
                 runClaudeSetupToken();
             }
         } else {
-            System.out.println("  'claude' CLI not found on this host — follow the steps above on any");
-            System.out.println("  machine where it is installed, then paste the token here.");
+            BuildOutput.step("'claude' CLI not found on this host — follow the steps above on any");
+            BuildOutput.step("machine where it is installed, then paste the token here.");
         }
 
         while (true) {
-            System.out.print("  Paste your OAuth token (or press Enter to skip): ");
-            var token = askSecret(prompts);
+            var token = askSecret(prompts, "Paste your OAuth token (or press Enter to skip): ");
             if (token.isBlank()) {
-                System.out.println(CLAUDE_SKIPPED);
+                BuildOutput.step(CLAUDE_SKIPPED);
                 break;
             }
 
-            System.out.println("  Verifying OAuth token...");
+            BuildOutput.step("Verifying OAuth token...");
             var result = verifyOauthToken(token);
             if (result.verified()) {
-                System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + result.message()));
-                saveOauthConfig(config, prompts, target, token, "  Claude auth configuration saved.");
+                BuildOutput.ok(result.message());
+                saveOauthConfig(config, prompts, target, token, true);
                 break;
             } else {
-                System.out.println("  " + result.message());
+                BuildOutput.step(result.message());
                 switch (askVerificationFailureAction(prompts)) {
                     case SKIP -> {
-                        System.out.println(CLAUDE_SKIPPED);
+                        BuildOutput.step(CLAUDE_SKIPPED);
                         break;
                     }
                     case SAVE_UNVERIFIED -> {
-                        saveOauthConfig(config, prompts, target, token,
-                                "  Claude auth configuration saved (unverified).");
+                        saveOauthConfig(config, prompts, target, token, false);
                         break;
                     }
                     case RETRY -> {
@@ -842,22 +826,22 @@ class CredentialSetup {
             var process = pb.start();
             if (!process.waitFor(120, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                System.err.println("  'claude setup-token' timed out after 2 minutes.");
+                BuildOutput.warn("'claude setup-token' timed out after 2 minutes.");
             } else if (process.exitValue() != 0) {
-                System.err.println("  'claude setup-token' exited with code " + process.exitValue() + ".");
+                BuildOutput.warn("'claude setup-token' exited with code " + process.exitValue() + ".");
             } else {
-                System.out.println("  Token generation complete.");
+                BuildOutput.step("Token generation complete.");
             }
         } catch (Exception e) {
-            System.err.println("  Failed to run 'claude setup-token': " + e.getMessage());
+            BuildOutput.warn("Failed to run 'claude setup-token': " + e.getMessage());
         }
     }
 
     AuthResult verifyVertexConfig(String region, String projectId) {
         if (!commandExists("gcloud")) {
             return new AuthResult(false,
-                    "gcloud CLI not found. Install it from " + TerminalLink.link("https://cloud.google.com/sdk/docs/install") + "\n"
-                    + "  Then run: gcloud auth login");
+                    "gcloud CLI not found. Install it from " + TerminalLink.link("https://cloud.google.com/sdk/docs/install") + "."
+                    + " Then run: gcloud auth login");
         }
 
         String accessToken;
@@ -873,8 +857,8 @@ class CredentialSetup {
             if (process.exitValue() != 0 || stdout.isBlank()) {
                 var detail = !stderr.isBlank() ? stderr : stdout;
                 return new AuthResult(false,
-                        "gcloud auth failed" + (detail.isBlank() ? "" : ": " + detail)
-                        + "\n  Run: gcloud auth login");
+                        "gcloud auth failed" + (detail.isBlank() ? "" : " (" + OutputFormat.oneLine(detail) + ")")
+                        + ". Run: gcloud auth login");
             }
             accessToken = stdout;
         } catch (Exception e) {
@@ -902,8 +886,8 @@ class CredentialSetup {
                 case 401 -> new AuthResult(false,
                         "Vertex AI authentication failed (HTTP 401). Run: gcloud auth login");
                 case 403 -> new AuthResult(false,
-                        "Vertex AI access denied (HTTP 403). Check that the Vertex AI API is enabled\n"
-                        + "  for project '" + projectId + "' and your account has the required permissions.");
+                        "Vertex AI access denied (HTTP 403). Check that the Vertex AI API is enabled"
+                        + " for project '" + projectId + "' and your account has the required permissions.");
                 default -> new AuthResult(false,
                         "Unexpected Vertex AI response (HTTP " + response.statusCode() + ").");
             };
@@ -947,26 +931,26 @@ class CredentialSetup {
             return GhTokenOutcome.NOT_OFFERED;
         }
 
-        System.out.println("  An authenticated 'gh' CLI is available on this host.");
-        System.out.println("  " + styled(DIM, "Not recommended: that login is almost certainly your personal identity,"
+        BuildOutput.step("An authenticated 'gh' CLI is available on this host.");
+        BuildOutput.step(styled(DIM, "Not recommended: that login is almost certainly your personal identity,"
                 + " so the agent would act as you with whatever scopes 'gh' holds. Prefer a dedicated"
                 + " agent account and a fine-grained PAT (above)."));
-        if (!askConfirmation(prompts, "  Reuse your personal 'gh' token anyway?", false)) {
+        if (!askYesNo(prompts, "Reuse your personal 'gh' token anyway?", false)) {
             return GhTokenOutcome.NOT_OFFERED;
         }
 
         var token = readGhAuthToken();
         if (token == null || token.isBlank()) {
-            System.out.println("  Could not read a token from 'gh auth token' — continuing with manual setup.");
+            BuildOutput.warn("Could not read a token from 'gh auth token' — continuing with manual setup.");
             return GhTokenOutcome.FAILED;
         }
         var result = verifyGitHubToken(token, prompts);
         if (result == null) {
-            System.out.println("  The 'gh' token failed verification — continuing with manual setup.");
+            BuildOutput.step("The 'gh' token failed verification — continuing with manual setup.");
             return GhTokenOutcome.FAILED;
         }
         if (result.email == null) {
-            System.out.println("  " + styled(BOLD + YELLOW, "⚠ No email accessible — git commits will have no author email."));
+            BuildOutput.warn("No email accessible — git commits will have no author email.");
         }
         saveGitHubToken(config, account, token, result.email);
         return GhTokenOutcome.SAVED;
@@ -999,9 +983,12 @@ class CredentialSetup {
         saveAccount(config, GhSetup.NAMESPACE,
                 dev.incusspawn.config.AccountResolver.shapeOf(config, GhSetup.NAMESPACE), target, values);
         config.save();
-        System.out.println(email != null
-                ? "  GitHub configuration saved."
-                : "  GitHub configuration saved (without email).");
+        if (email != null) {
+            BuildOutput.ok("GitHub configuration saved.");
+        } else {
+            // Not a clean success: the warning above says commits will have no author email
+            BuildOutput.step("GitHub configuration saved (without email).");
+        }
     }
 
     /**
@@ -1063,32 +1050,26 @@ class CredentialSetup {
 
     /** Prints step-by-step instructions for creating a fine-grained PAT and offers to open the page. */
     private void printGitHubPatGuide(Prompts prompts) {
-        System.out.println("  To create a fine-grained PAT (ideally signed in as the agent's account,");
-        System.out.println("  not your personal one):");
-        System.out.println();
-        System.out.println("    1. Open the pre-filled token page:");
-        System.out.println("       " + styled(BOLD, TerminalLink.link(GH_PAT_NEW_URL)));
-        System.out.println("       It already grants what isx needs:");
-        System.out.println("         Contents, Issues, Pull requests  " + styled(DIM, "read and write"));
-        System.out.println("         Email addresses                  " + styled(DIM, "read (stamps your git commit identity)"));
-        System.out.println("    2. Check " + styled(BOLD, "Resource owner") + " is the agent's account, set an expiration, and");
-        System.out.println("       under " + styled(BOLD, "Repository access") + " choose the repos to grant.");
-        System.out.println("    3. Click " + styled(BOLD, "Generate token")
+        BuildOutput.step("To create a fine-grained PAT (ideally signed in as the agent's account, not your personal one):");
+        prompts.say("1. Open the pre-filled token page: " + styled(BOLD, TerminalLink.link(GH_PAT_NEW_URL)));
+        BuildOutput.stepNote("It already grants what isx needs:");
+        BuildOutput.stepNote("Contents, Issues, Pull requests  read and write");
+        BuildOutput.stepNote("Email addresses                  read (stamps your git commit identity)");
+        prompts.say("2. Check " + styled(BOLD, "Resource owner") + " is the agent's account, set an expiration,"
+                + " and under " + styled(BOLD, "Repository access") + " choose the repos to grant.");
+        prompts.say("3. Click " + styled(BOLD, "Generate token")
                 + " and copy the value (starts with 'github_pat_').");
-        System.out.println();
-        System.out.println("  " + styled(DIM, "Adding a permission by hand: under Permissions, click 'Add permissions' and"));
-        System.out.println("  " + styled(DIM, "search for it. Avoid admin, org, and delete permissions unless you need them."));
-        System.out.println();
+        BuildOutput.step(styled(DIM, "Adding a permission by hand: under Permissions, click 'Add permissions' and search for it."));
+        BuildOutput.step(styled(DIM, "Avoid admin, org, and delete permissions unless you need them."));
 
-        System.out.println("  Already have a token? Answer 'n' and paste it at the next prompt.");
-        if (askConfirmation(prompts, "  Open the pre-filled token page in your browser now?", true)) {
+        BuildOutput.step("Already have a token? Answer 'n' and paste it at the next prompt.");
+        if (askYesNo(prompts, "Open the pre-filled token page in your browser now?", true)) {
             if (openUrl(GH_PAT_NEW_URL)) {
-                System.out.println("  Opened your browser — finish there, then paste the token below.");
+                BuildOutput.step("Opened your browser — finish there, then paste the token below.");
             } else {
-                System.out.println("  Could not open a browser — visit the URL above manually.");
+                BuildOutput.warn("Could not open a browser — visit the URL above manually.");
             }
         }
-        System.out.println();
     }
 
     /**
@@ -1116,11 +1097,10 @@ class CredentialSetup {
             // be replaced -- whether it is a flat one from an older isx or accounts.default.
             if (accounts.size() == 1) {
                 var only = accounts.get(0);
-                System.out.println("  " + label + ": configured.");
-                System.out.println("    r. Replace it");
-                System.out.println("    a. Add a second account (keeps the current one)");
-                System.out.print("  Choice (Enter to keep as-is): ");
-                var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
+                BuildOutput.step(label + ": configured.");
+                prompts.say("r. Replace it");
+                prompts.say("a. Add a second account (keeps the current one)");
+                var choice = readInput(prompts.ask("Choice (Enter to keep as-is): ")).toLowerCase(java.util.Locale.ROOT);
                 switch (choice) {
                     case "" -> { return Optional.empty(); }
                     case "r" -> { return Optional.of(new AccountTarget(only, true)); }
@@ -1132,19 +1112,17 @@ class CredentialSetup {
                 }
             }
 
-            System.out.println("  " + label + " accounts:");
+            BuildOutput.step(label + " accounts:");
             for (var name : accounts) {
-                System.out.println("    - " + name + (name.equals(defaultName) ? "  (default)" : ""));
+                prompts.say("- " + name + (name.equals(defaultName) ? "  (default)" : ""));
             }
-            System.out.println();
-            System.out.println("    a. Add another account");
-            System.out.println("    e. Replace an existing account's credentials");
-            System.out.println("    r. Replace all with a single account");
-            System.out.println("    d. Change which account is the default");
-            System.out.println("    x. Remove an account");
-            System.out.println("    n. Rename an account");
-            System.out.print("  Choice (Enter to keep as-is): ");
-            var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
+            prompts.say("a. Add another account");
+            prompts.say("e. Replace an existing account's credentials");
+            prompts.say("r. Replace all with a single account");
+            prompts.say("d. Change which account is the default");
+            prompts.say("x. Remove an account");
+            prompts.say("n. Rename an account");
+            var choice = readInput(prompts.ask("Choice (Enter to keep as-is): ")).toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> { return Optional.empty(); }
@@ -1153,10 +1131,9 @@ class CredentialSetup {
                     return name.isEmpty() ? Optional.empty() : Optional.of(new AccountTarget(name, false));
                 }
                 case "e" -> {
-                    System.out.print("  Name of the account to replace: ");
-                    var name = readInput(prompts.readLine());
+                    var name = readInput(prompts.ask("Name of the account to replace: "));
                     if (accounts.contains(name)) return Optional.of(new AccountTarget(name, false));
-                    if (!name.isEmpty()) System.out.println("  No account named '" + name + "'.");
+                    if (!name.isEmpty()) prompts.say("No account named '" + name + "'.");
                 }
                 case "r" -> {
                     var going = new java.util.ArrayList<>(accounts);
@@ -1167,26 +1144,24 @@ class CredentialSetup {
                 // 'd' and 'x' save immediately and loop back to the listing, so an abort after
                 // this point cannot leave the confirmation they printed a lie.
                 case "d" -> {
-                    System.out.print("  Name of the account to make default: ");
-                    var name = readInput(prompts.readLine());
+                    var name = readInput(prompts.ask("Name of the account to make default: "));
                     if (accounts.contains(name)) {
                         changeDefaultAccount(config, namespace, name,
                                 () -> NamespaceAccounts.setDefault(config, namespace, name), prompts);
                     } else if (!name.isEmpty()) {
-                        System.out.println("  No account named '" + name + "'.");
+                        prompts.say("No account named '" + name + "'.");
                     }
                 }
                 case "x" -> {
-                    System.out.print("  Name of the account to remove: ");
-                    var name = readInput(prompts.readLine());
+                    var name = readInput(prompts.ask("Name of the account to remove: "));
                     if (accounts.contains(name) && confirmLosingAccounts(config, namespace, List.of(name), prompts)) {
                         var moving = runningFollowersIfDefault(config, namespace, name);
                         NamespaceAccounts.remove(config, namespace, name);
                         config.save();
-                        System.out.println("  Removed account '" + name + "'.");
+                        BuildOutput.step("Removed account '" + name + "'.");
                         if (!moving.isEmpty()) refreshIdentities(moving);
                     } else if (!name.isEmpty() && !accounts.contains(name)) {
-                        System.out.println("  No account named '" + name + "'.");
+                        prompts.say("No account named '" + name + "'.");
                     }
                 }
                 default -> { }
@@ -1222,23 +1197,23 @@ class CredentialSetup {
                 ? followersOf(states, namespace) : List.<String>of();
         if (instances.isEmpty() && templates.isEmpty() && followers.isEmpty()) return true;
         if (!followers.isEmpty()) {
-            System.out.println("  These instances follow the " + namespace + " default, which is going,"
+            BuildOutput.step("These instances follow the " + namespace + " default, which is going,"
                     + " and would switch to the new default:");
-            followers.forEach(i -> System.out.println("    - " + i));
+            followers.forEach(name -> prompts.say("- " + name));
         }
         if (!instances.isEmpty()) {
-            System.out.println("  These instances are pinned to " + (going.size() == 1 ? "it" : "those accounts")
+            BuildOutput.step("These instances are pinned to " + (going.size() == 1 ? "it" : "those accounts")
                     + " and would fail their requests:");
-            instances.forEach(i -> System.out.println("    - " + i));
-            System.out.println("  Re-point them first with 'isx account set', or 'isx account unset'"
+            instances.forEach(name -> prompts.say("- " + name));
+            BuildOutput.step("Re-point them first with 'isx account set', or 'isx account unset'"
                     + " to have them follow the default.");
         }
         if (!templates.isEmpty()) {
-            System.out.println("  These templates name " + (going.size() == 1 ? "it" : "them")
+            BuildOutput.step("These templates name " + (going.size() == 1 ? "it" : "them")
                     + " under accounts: and could no longer be branched:");
-            templates.forEach(t -> System.out.println("    - " + t));
+            templates.forEach(name -> prompts.say("- " + name));
         }
-        return askConfirmation(prompts, "  Remove anyway?", false);
+        return askYesNo(prompts, "Remove anyway?", false);
     }
 
     /**
@@ -1246,31 +1221,30 @@ class CredentialSetup {
      * pinned to it. Template YAML is the user's file and is only reported, never rewritten.
      */
     void renameAccount(SpawnConfig config, String namespace, java.util.Set<String> accounts, Prompts prompts) {
-        System.out.print("  Name of the account to rename: ");
-        var from = readInput(prompts.readLine());
+        var from = readInput(prompts.ask("Name of the account to rename: "));
         if (from.isEmpty()) return;
         if (!accounts.contains(from)) {
-            System.out.println("  No account named '" + from + "'.");
+            prompts.say("No account named '" + from + "'.");
             return;
         }
-        var to = askAccountName(prompts, accounts, "  New name for '" + from + "' (Enter to cancel): ");
+        var to = askAccountName(prompts, accounts, "New name for '" + from + "' (Enter to cancel): ");
         if (to.isEmpty()) return;
         NamespaceAccounts.rename(config, namespace, from, to);
         config.save();
-        System.out.println("  Renamed '" + from + "' to '" + to + "'.");
+        BuildOutput.step("Renamed '" + from + "' to '" + to + "'.");
         try {
             var repointed = renameInInstances(config, namespace, from, to);
             if (!repointed.isEmpty()) {
-                System.out.println("  Re-pointed " + String.join(", ", repointed) + " to '" + to + "'.");
+                BuildOutput.step("Re-pointed " + String.join(", ", repointed) + " to '" + to + "'.");
             }
         } catch (Exception e) {
-            System.out.println("  Could not update the instances pinned to '" + from + "' ("
+            BuildOutput.warn("Could not update the instances pinned to '" + from + "' ("
                     + e.getMessage() + "). Re-point them with 'isx account set <instance> "
                     + namespace + "=" + to + "'.");
         }
         var templates = templatesNaming(namespace, from);
         if (!templates.isEmpty()) {
-            System.out.println("  " + (templates.size() == 1 ? "Template " : "Templates ")
+            BuildOutput.step((templates.size() == 1 ? "Template " : "Templates ")
                     + String.join(", ", templates) + (templates.size() == 1 ? " still names '" : " still name '")
                     + from + "' under accounts: -- change it to '" + to + "' in the YAML, or"
                     + " branching from " + (templates.size() == 1 ? "it" : "them") + " fails.");
@@ -1329,7 +1303,7 @@ class CredentialSetup {
                                  Prompts prompts) {
         var from = currentDefault(config, namespace);
         if (to.equals(from)) {
-            System.out.println("  '" + to + "' is already the default.");
+            BuildOutput.step("'" + to + "' is already the default.");
             return false;
         }
         var states = instanceAccountStates();
@@ -1339,20 +1313,20 @@ class CredentialSetup {
         var decision = followers.isEmpty() ? DefaultChange.SWITCH
                 : askDefaultChange(config, namespace, from, to, followers, prompts);
         if (decision == DefaultChange.CANCEL) {
-            System.out.println("  Default left as '" + from + "'.");
+            BuildOutput.step("Default left as '" + from + "'.");
             return false;
         }
         if (decision == DefaultChange.KEEP) {
             // Pinned before the default moves, so none of them is ever served the new one.
             for (var failure : pinInstances(config, List.copyOf(followers.keySet()), namespace, from)) {
-                System.out.println("  " + failure);
+                BuildOutput.warn(failure);
             }
         }
         apply.run();
         config.save();
-        System.out.println("  Default account is now '" + to + "'.");
+        BuildOutput.step("Default account is now '" + to + "'.");
         if (decision == DefaultChange.KEEP) {
-            System.out.println("  " + String.join(", ", followers.keySet()) + " stay on '" + from
+            BuildOutput.step(String.join(", ", followers.keySet()) + " stay on '" + from
                     + "', now pinned to it.");
         } else if (!followers.isEmpty()) {
             var running = followers.entrySet().stream().filter(e -> e.getValue().running())
@@ -1364,34 +1338,33 @@ class CredentialSetup {
 
     private DefaultChange askDefaultChange(SpawnConfig config, String namespace, String from, String to,
                                            Map<String, InstanceRegistry.AccountState> followers, Prompts prompts) {
-        System.out.println("  These instances follow the " + namespace + " default and would switch from '"
+        BuildOutput.step("These instances follow the " + namespace + " default and would switch from '"
                 + from + "' to '" + to + "':");
         var setup = dev.incusspawn.config.AccountSelection.namespaceSetups(config).get(namespace);
         var refused = new java.util.ArrayList<String>();
         followers.forEach((name, state) -> {
-            System.out.println("    - " + name + (state.running() ? " (running)" : ""));
+            prompts.say("- " + name + (state.running() ? " (running)" : ""));
             if (!dev.incusspawn.config.AccountSelection.requiredRebuild(config, setup, namespace, to,
                     state.bakedIdentities()).isEmpty()) {
                 refused.add(name);
             }
         });
         if (!refused.isEmpty()) {
-            System.out.println("  " + String.join(", ", refused) + (refused.size() == 1 ? " was" : " were")
+            BuildOutput.step(String.join(", ", refused) + (refused.size() == 1 ? " was" : " were")
                     + " built for another auth mode than '" + to + "': " + (refused.size() == 1 ? "its " : "their ")
                     + namespace + " requests would be refused until pinned to an account " + (refused.size() == 1 ? "it" : "they")
                     + " can use. Keeping " + (followers.size() == 1 ? "it" : "them") + " on '" + from
                     + "' avoids that.");
         }
         while (true) {
-            System.out.print("  Enter to switch them, k to keep them on '" + from + "' (pins it for them),"
+            var line = prompts.ask("Enter to switch them, k to keep them on '" + from + "' (pins it for them),"
                     + " c to cancel: ");
-            var line = prompts.readLine();
             if (line == null) return DefaultChange.CANCEL;   // EOF: never change principals unasked
             switch (line.strip().toLowerCase(java.util.Locale.ROOT)) {
                 case "", "s" -> { return DefaultChange.SWITCH; }
                 case "k" -> { return DefaultChange.KEEP; }
                 case "c" -> { return DefaultChange.CANCEL; }
-                default -> System.out.println("  Please answer Enter, k or c.");
+                default -> prompts.say("Please answer Enter, k or c.");
             }
         }
     }
@@ -1408,7 +1381,8 @@ class CredentialSetup {
         for (var instance : instances) {
             try {
                 InstanceLifecycle.changeAccounts(incus, instance, config, setups, Map.of(namespace, account),
-                        (msg, details) -> System.out.println("  Warning: " + msg));
+                        // Its warnings alone, as before, each naming the instance
+                        (msg, details) -> BuildOutput.warn(instance + ": " + msg, details));
             } catch (RuntimeException e) {
                 failures.add("Could not pin " + instance + " (" + e.getMessage() + "); it will switch.");
             }
@@ -1423,12 +1397,12 @@ class CredentialSetup {
             InstanceLifecycle.reconcileAccountIdentities(incus, instance, new dev.incusspawn.util.Output() {
                 @Override
                 public void step(String msg) {
-                    System.out.println("  " + instance + ": " + msg);
+                    BuildOutput.step(instance + ": " + msg);
                 }
 
                 @Override
                 public void warn(String msg, String... details) {
-                    System.out.println("  Warning: " + msg);
+                    BuildOutput.warn(instance + ": " + msg, details);
                 }
             });
         }
@@ -1461,7 +1435,6 @@ class CredentialSetup {
         // Enter (or EOF) moves on.
         var account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
         while (account.isPresent() && collectGitHubToken(config, prompts, account.get())) {
-            System.out.println();
             account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
         }
     }
@@ -1472,8 +1445,7 @@ class CredentialSetup {
         printGitHubPatGuide(prompts);
 
         while (true) {
-            System.out.print("  GitHub PAT for the agent (or press Enter to skip): ");
-            var token = askSecret(prompts);
+            var token = askSecret(prompts, "GitHub PAT for the agent (or press Enter to skip): ");
             if (token.isBlank()) {
                 // Last resort only: reuse the host's personal 'gh' login. Discouraged — it makes the
                 // agent act as you — so it is offered here (default No), never as the primary path.
@@ -1491,7 +1463,7 @@ class CredentialSetup {
 
             var result = verifyPastedGitHubToken(token, prompts);
             if (result == null) {
-                if (!askConfirmation(prompts, "  Try again?", true)) {
+                if (!askYesNo(prompts, "Try again?", true)) {
                     reportGitHubSkipped(config);
                     return false;
                 }
@@ -1522,25 +1494,24 @@ class CredentialSetup {
      * @return the replacement, or null to keep the original token without an email
      */
     private VerifiedToken offerTokenWithEmail(String token, Prompts prompts) {
-        System.out.println("  " + styled(BOLD + YELLOW, "⚠ No email accessible — git commits will have no author email."));
-        System.out.println("  To fix this, either:");
-        System.out.println("    • Edit your PAT at " + TerminalLink.link(patSettingsUrl(token)) + ":");
-        System.out.println("      under Permissions, click 'Add permissions', search for 'Email addresses'");
-        System.out.println("      and set it to Read-only (for a classic token, add the 'user:email' scope)");
-        System.out.println("    • Or make your email public at " + TerminalLink.link("https://github.com/settings/profile"));
+        BuildOutput.warn("No email accessible — git commits will have no author email.");
+        BuildOutput.step("To fix this, either:");
+        prompts.say("• Edit your PAT at " + TerminalLink.link(patSettingsUrl(token)) + ":");
+        BuildOutput.stepNote("under Permissions, click 'Add permissions', search for 'Email addresses'"
+                + " and set it to Read-only (for a classic token, add the 'user:email' scope).");
+        prompts.say("• Or make your email public at " + TerminalLink.link("https://github.com/settings/profile"));
         while (true) {
-            System.out.print("  Enter new PAT with email permission, or press Enter to keep the one above"
+            var newToken = askSecret(prompts, "Enter new PAT with email permission, or press Enter to keep the one above"
                     + " (without email): ");
-            var newToken = askSecret(prompts);
             if (newToken.isBlank()) return null;
 
             var newResult = verifyPastedGitHubToken(newToken, prompts);
             if (newResult == null) {
-                System.out.println("  That token failed verification — try again, or press Enter to keep the one above.");
+                BuildOutput.step("That token failed verification — try again, or press Enter to keep the one above.");
                 continue;
             }
             if (newResult.email == null) {
-                System.out.println("  (still without email)");
+                BuildOutput.step("(still without email)");
             }
             return new VerifiedToken(newToken, newResult);
         }
@@ -1551,9 +1522,9 @@ class CredentialSetup {
      * are none -- not after adding a first account this run, nor on a re-run that has some.
      */
     private static void reportGitHubSkipped(SpawnConfig config) {
-        System.out.println(hasAccountsToPreserve(config, GhSetup.NAMESPACE)
-                ? "  No token added for this account."
-                : "  Skipped GitHub setup. You can configure it later with 'isx account add " + GhSetup.NAMESPACE + "'.");
+        BuildOutput.step(hasAccountsToPreserve(config, GhSetup.NAMESPACE)
+                ? "No token added for this account."
+                : "Skipped GitHub setup. You can configure it later with 'isx account add " + GhSetup.NAMESPACE + "'.");
     }
 
     /**
@@ -1561,7 +1532,7 @@ class CredentialSetup {
      * the flow rather than the seam, which tests replace, so the warning stays testable.
      */
     private GitHubVerifyResult verifyPastedGitHubToken(String token, Prompts prompts) {
-        githubTokenShapeWarning(token).ifPresent(warning -> System.out.println("  " + warning));
+        githubTokenShapeWarning(token).ifPresent(BuildOutput::warn);
         return verifyGitHubToken(token, prompts);
     }
 
@@ -1589,7 +1560,7 @@ class CredentialSetup {
 
     /** @param prompts picks between several verified emails, when the account has them */
     GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts) {
-        System.out.println("  Testing GitHub token...");
+        BuildOutput.step("Testing GitHub token...");
         try {
             var client = getHttpClient();
             var request = HttpRequest.newBuilder()
@@ -1599,7 +1570,7 @@ class CredentialSetup {
                     .GET().build();
             var response = client.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
-                System.out.println("  Authentication failed (HTTP " + response.statusCode() + ").");
+                BuildOutput.step("Authentication failed (HTTP " + response.statusCode() + ").");
                 return null;
             }
 
@@ -1612,17 +1583,17 @@ class CredentialSetup {
 
             if (login != null) {
                 if (email != null) {
-                    System.out.println("  " + styled(BOLD + GREEN, "\u2713 Token verified. Authenticated as: " + login + " <" + email + ">"));
+                    BuildOutput.ok("Token verified. Authenticated as: " + login + " <" + email + ">");
                 } else {
-                    System.out.println("  " + styled(BOLD + GREEN, "\u2713 Token verified. Authenticated as: " + login));
+                    BuildOutput.ok("Token verified. Authenticated as: " + login);
                 }
             } else {
-                System.out.println("  Token verified (could not determine username).");
+                BuildOutput.step("Token verified (could not determine username).");
             }
 
             return new GitHubVerifyResult(login, email);
         } catch (Exception e) {
-            System.out.println("  Could not test token: " + e.getMessage());
+            BuildOutput.warn("Could not test token: " + e.getMessage());
             return null;
         }
     }
@@ -1660,15 +1631,14 @@ class CredentialSetup {
             return parsed.verified.get(0);
         }
 
-        System.out.println("  Multiple verified emails found:");
+        BuildOutput.step("Multiple verified emails found:");
         for (int i = 0; i < parsed.verified.size(); i++) {
             var label = parsed.verified.get(i);
             if (label.endsWith("@users.noreply.github.com")) label += " (private, recommended)";
             else if (label.equals(parsed.primary)) label += " (primary)";
-            System.out.println("    " + (i + 1) + ". " + label);
+            prompts.say((i + 1) + ". " + label);
         }
-        System.out.print("  Select email for git commits [1]: ");
-        var choice = readInput(prompts.readLine());
+        var choice = readInput(prompts.ask("Select email for git commits [1]: "));
         if (choice.isEmpty()) {
             return parsed.verified.get(0);
         }
@@ -1721,7 +1691,6 @@ class CredentialSetup {
 
     void printCurrentPaths(java.util.List<String> paths) {
         if (paths.isEmpty()) return;
-        System.out.println("  Current paths:");
         printNumberedPaths(paths);
     }
 
@@ -1740,9 +1709,13 @@ class CredentialSetup {
         }
     }
 
+    /** The paths, numbered, in a group of their own: the same list, at the same indent, whenever it is shown. */
     private void printNumberedPaths(java.util.List<String> paths) {
-        for (int i = 0; i < paths.size(); i++) {
-            System.out.println("    " + (i + 1) + ". " + paths.get(i));
+        if (paths.isEmpty()) return;
+        try (var group = BuildOutput.group("Current paths", null)) {
+            for (int i = 0; i < paths.size(); i++) {
+                BuildOutput.step((i + 1) + ". " + paths.get(i));
+            }
         }
     }
 
@@ -1808,8 +1781,8 @@ class CredentialSetup {
             }
             boolean hasExisting = configDef.isConfirm() ? "true".equals(existing) : !existing.isBlank();
             if (hasExisting) {
-                System.out.println("  " + label + ": " + maskSecret(existing));
-                if (askConfirmation(prompts, "  Keep current?", true, true)) {
+                BuildOutput.step(label + ": " + maskSecret(existing));
+                if (askYesNo(prompts, "Keep current?", true, true)) {
                     // A kept value still has to travel with a "replace" into the new layout.
                     if (perAccount) accountValues.put(key, existing);
                     continue;
@@ -1817,21 +1790,21 @@ class CredentialSetup {
             }
 
             for (var helpLine : configDef.getHelp()) {
-                System.out.println("  " + OutputFormat.oneLine(helpLine));
+                BuildOutput.step(OutputFormat.oneLine(helpLine));
             }
             if (configDef.getHelp().isEmpty() && !description.isBlank()) {
-                System.out.println("  " + label);
+                BuildOutput.step(label);
             }
 
             String value;
             if (configDef.isConfirm()) {
-                value = askConfirmation(prompts, "  " + label + "?", false, true) ? "true" : "false";
+                value = askYesNo(prompts, label + "?", false, true) ? "true" : "false";
             } else {
-                System.out.print("  " + label + " (or press Enter to skip): ");
+                var question = label + " (or press Enter to skip): ";
                 if (configDef.isSecret()) {
-                    value = askSecret(prompts);
+                    value = askSecret(prompts, question);
                 } else {
-                    value = readInput(prompts.readLine());
+                    value = readInput(prompts.ask(question));
                 }
             }
             if (value.isBlank()) continue;
@@ -1845,7 +1818,7 @@ class CredentialSetup {
         boolean savedAny = false;
         if (target != null && !accountValues.isEmpty()) {
             savedAny = saveAccount(config, namespace, shape, target, accountValues);
-            if (!savedAny) System.out.println("  No credential entered, so no account was changed.");
+            if (!savedAny) BuildOutput.step("No credential entered, so no account was changed.");
         }
         for (var shared : sharedValues.entrySet()) {
             config.setConfigByPath(shared.getKey(), shared.getValue());
@@ -1854,9 +1827,9 @@ class CredentialSetup {
 
         if (savedAny) {
             config.save();
-            System.out.println("  " + desc + " credentials saved.");
+            BuildOutput.step(desc + " credentials saved.");
         } else {
-            System.out.println("  Skipped. Configure later with '"
+            BuildOutput.step("Skipped. Configure later with '"
                     + CredentialCheck.stepCommand(toolName, new dev.incusspawn.tool.ToolDefLoader().allToolSetups()) + "'.");
         }
     }
@@ -1871,14 +1844,13 @@ class CredentialSetup {
         var paths = new java.util.ArrayList<>(existing);
         while (true) {
             var hasEntries = !paths.isEmpty();
-            System.out.print(hasEntries
-                    ? "  Add a local directory, type an entry's number to remove it, or press Enter to finish: "
-                    : "  Add a local directory (or press Enter to skip): ");
-            var input = readInput(prompts.readLine());
+            var input = readInput(prompts.ask(hasEntries
+                    ? "Add a local directory, type an entry's number to remove it, or press Enter to finish: "
+                    : "Add a local directory (or press Enter to skip): "));
             if (input.isEmpty()) break;
 
             if (input.contains("://")) {
-                System.out.println("  That looks like a URL — this needs a local directory path (e.g. ~/my-templates).");
+                BuildOutput.step("That looks like a URL — this needs a local directory path (e.g. ~/my-templates).");
                 continue;
             }
 
@@ -1886,32 +1858,32 @@ class CredentialSetup {
             if (entryNumber != null) {
                 int index = entryNumber - 1;
                 if (index >= 0 && index < paths.size()) {
-                    System.out.println("  Removed: " + paths.remove(index));
+                    BuildOutput.step("Removed: " + paths.remove(index));
                     printNumberedPaths(paths);
                 } else if (paths.isEmpty()) {
-                    System.out.println("  There are no entries to remove.");
+                    BuildOutput.step("There are no entries to remove.");
                 } else {
-                    System.out.println("  No such entry — type a number from 1 to " + paths.size() + ".");
+                    BuildOutput.step("No such entry — type a number from 1 to " + paths.size() + ".");
                 }
                 continue;
             }
             if (input.startsWith("#")) {
-                System.out.println("  To remove an entry, type just its number (e.g. 1).");
+                BuildOutput.step("To remove an entry, type just its number (e.g. 1).");
                 continue;
             }
 
             var expanded = HostResourceSetup.expandHostTilde(input);
             var path = java.nio.file.Path.of(expanded);
             if (!java.nio.file.Files.isDirectory(path)
-                    && !askConfirmation(prompts, "  '" + input + "' is not an existing directory. Add it anyway?", false)) {
+                    && !askYesNo(prompts, "'" + input + "' is not an existing directory. Add it anyway?", false)) {
                 continue;
             }
             var resolved = path.toAbsolutePath().normalize().toString();
             if (paths.contains(resolved)) {
-                System.out.println("  Already in the list.");
+                BuildOutput.step("Already in the list.");
             } else {
                 paths.add(resolved);
-                System.out.println("  Added: " + resolved);
+                BuildOutput.step("Added: " + resolved);
                 printNumberedPaths(paths);
             }
         }
@@ -1919,11 +1891,11 @@ class CredentialSetup {
         if (!paths.equals(existing)) {
             setter.accept(config, paths);
             config.save();
-            System.out.println("  Paths saved.");
+            BuildOutput.step("Paths saved.");
         } else if (paths.isEmpty()) {
-            System.out.println(skipMessage);
+            BuildOutput.step(skipMessage);
         } else {
-            System.out.println("  Paths unchanged.");
+            BuildOutput.step("Paths unchanged.");
         }
     }
 }

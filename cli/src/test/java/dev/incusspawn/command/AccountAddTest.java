@@ -4,8 +4,6 @@ import dev.incusspawn.Environment;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.regex.Pattern;
@@ -40,23 +38,13 @@ class AccountAddTest {
 
     private record Run(int exit, String out, String err) {}
 
-    private static Run add(String credential, Prompts prompts) throws Exception {
-        var out = System.out;
-        var err = System.err;
-        var outBuffer = new ByteArrayOutputStream();
-        var errBuffer = new ByteArrayOutputStream();
-        System.setOut(new PrintStream(outBuffer, true, StandardCharsets.UTF_8));
-        System.setErr(new PrintStream(errBuffer, true, StandardCharsets.UTF_8));
-        try {
-            var init = new ScriptedInit();
-            init.prompts = prompts;
-            var exit = init.addCredential(credential);
-            return new Run(exit, stripAnsi(outBuffer.toString(StandardCharsets.UTF_8)),
-                    stripAnsi(errBuffer.toString(StandardCharsets.UTF_8)));
-        } finally {
-            System.setOut(out);
-            System.setErr(err);
-        }
+    /** The exit code, and what the flow reported, split as a terminal splits it. */
+    private static Run add(String credential, Prompts prompts) {
+        var init = new ScriptedInit();
+        init.prompts = prompts;
+        var exit = new int[1];
+        var reported = InitStepOutputTest.capture(() -> exit[0] = init.addCredential(credential));
+        return new Run(exit[0], stripAnsi(reported.out()), stripAnsi(reported.err()));
     }
 
     /** A user's own YAML tool, owning the namespace {@code acmeCloud}, as init would find it. */

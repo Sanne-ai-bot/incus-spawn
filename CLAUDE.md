@@ -232,6 +232,7 @@ Code with no caller to take a sink from -- e.g. a definition loader built severa
 In the TUI, a warning sink is `warningLog::add`, never the status line directly: the status line holds one message until the next key, so warnings from several operations would overwrite each other.
 A TUI branch runs on the released terminal, and the shell after it draws over that, so the TUI's copying binding keeps every warning in the log, as for a build (a failed step is not copied; the status line reports it): branch-path code warns through `BuildOutput` or a sink, never a bare `System.err` (#1646).
 `common/lifecycle`, `common/config`, `common/vm` and `common/proxy` print nothing raw (#1690): GUI and KVM passthrough return why they could not (`Unavailable`), and the branch warns of it once, the cause with its advice and what it does instead.
+Neither does `isx init`'s flow (`InitCommand`, `HostSetup`, `CredentialSetup`): it reports through `BuildOutput` and asks through `Prompts`.
 The same holds before the TUI opens.
 Bare `isx` holds `Warnings` raised while it gets ready (VM start, init) for the TUI's log, and waits for Enter before opening the TUI if anything else was printed (`PreTuiOutput`, #1154).
 So a pre-TUI notice is a `Warnings.warn`, not a bare print.

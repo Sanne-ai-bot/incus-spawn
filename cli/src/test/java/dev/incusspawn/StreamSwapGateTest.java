@@ -30,7 +30,6 @@ class StreamSwapGateTest {
             + "|\\bimport\\s+static\\s+java\\.lang\\.System\\.(?:setOut|setErr|\\*)\\s*;");
 
     private static final String CLI_COMMAND = "reads what cli/command prints raw (#1703, its step for cli/command)";
-    private static final String INIT_FLOW = "reads what the init flow prints raw (#1703, its step for the init flow)";
     private static final String PROXY_LOG = "reads the proxy's log lines (#1703, its ProxyLog step)";
 
     /** Repository-relative test sources that may swap, each with why. */
@@ -42,9 +41,6 @@ class StreamSwapGateTest {
             Map.entry("common/src/test/java/dev/incusspawn/util/BuildOutputTest.java", "the terminal output's own rendering"),
             Map.entry("common/src/test/java/dev/incusspawn/util/OutputBindingTest.java", "that a binding writes no raw stream is what it tests"),
             Map.entry("common/src/test/java/dev/incusspawn/incus/IncusClientSmokeTest.java", "a guest's own output, passed through to the terminal"),
-            Map.entry("cli/src/test/java/dev/incusspawn/command/AccountAddTest.java", INIT_FLOW),
-            Map.entry("cli/src/test/java/dev/incusspawn/command/CredentialPromptsTest.java", INIT_FLOW),
-            Map.entry("cli/src/test/java/dev/incusspawn/command/GitHubAuthFlowTest.java", INIT_FLOW),
             Map.entry("cli/src/test/java/dev/incusspawn/command/BuildCommandBatchTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/BuildCommandTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/BuildProgressTest.java", CLI_COMMAND),

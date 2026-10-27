@@ -935,7 +935,7 @@ public class InitCommand extends BaseCommand {
         setupPathList(
                 SpawnConfig::getSearchPaths,
                 SpawnConfig::setSearchPaths,
-                "  No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml");
+                "No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml");
     }
 
     static boolean hasExistingTemplatesSearchPath(java.util.List<String> searchPaths) {
@@ -1097,8 +1097,8 @@ public class InitCommand extends BaseCommand {
         setupPathList(
                 SpawnConfig::getHostPaths,
                 SpawnConfig::setHostPaths,
-                "  No host paths configured. Add them later by re-running 'isx init'\n" +
-                "  or editing ~/.config/incus-spawn/config.yaml");
+                "No host paths configured. Add them later by re-running 'isx init'"
+                        + " or editing ~/.config/incus-spawn/config.yaml");
     }
 
     /**
