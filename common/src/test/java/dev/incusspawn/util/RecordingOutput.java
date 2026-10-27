@@ -32,7 +32,7 @@ public final class RecordingOutput implements Output {
     public enum Kind {
         WARN, ERROR, WARN_ASIDE, STEP_WARN, WARN_BANNER, STEP_FAIL, NOTE,
         HEADER, BUILD_HEADER, BRANCH_HEADER, SECTION, GROUP, GROUP_END,
-        STEP, STEP_NOTE, OK, SUCCESS, LIST, RESULT,
+        STEP, STEP_NOTE, OK, SUCCESS, LIST, RESULT, FRAME, PROMPT,
         STEP_START, STEP_PROGRESS, STEP_DONE, STEP_BREAK, RELEASE_TERMINAL, ABANDON_STEP
     }
 
@@ -61,7 +61,7 @@ public final class RecordingOutput implements Output {
          */
         public String text() {
             // A list's message already reads its items
-            if (details.isEmpty() || kind == Kind.LIST) return msg;
+            if (details.isEmpty() || kind == Kind.LIST || kind == Kind.FRAME) return msg;
             if (DIAGNOSTICS.contains(kind)) return msg + "\n" + String.join("\n", details);
             if (kind == Kind.BUILD_HEADER) return msg + " [" + details.get(0) + "/" + details.get(1) + "]";
             return msg + " " + String.join(" ", details);
@@ -158,6 +158,9 @@ public final class RecordingOutput implements Output {
         record(Kind.LIST, String.join(", ", items), items.toArray(String[]::new));
     }
     @Override public PrintStream results() { return results; }
+    /** Its lines as the details; the message is them as one text. */
+    @Override public void frame(String... lines) { record(Kind.FRAME, String.join("\n", lines), lines); }
+    @Override public void prompt(String question) { record(Kind.PROMPT, question); }
     @Override public void stepStart(String msg) { record(Kind.STEP_START, msg); }
     @Override public void stepProgress(String detail) { record(Kind.STEP_PROGRESS, detail); }
     @Override public void stepDone(String detail) { record(Kind.STEP_DONE, detail); }
@@ -182,6 +185,11 @@ public final class RecordingOutput implements Output {
      */
     public synchronized List<String> lines() {
         return events.stream().filter(RecordingOutput::isLine).map(Event::text).toList();
+    }
+
+    /** The lines of every {@link Output#frame} drawn, in order. */
+    public synchronized List<String> frameLines() {
+        return events(Kind.FRAME).stream().flatMap(e -> e.details().stream()).toList();
     }
 
     /** What was written to {@link #results()}, a line each, blank ones included. */

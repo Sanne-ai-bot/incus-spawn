@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Headless;
 
 import java.io.Console;
@@ -15,6 +16,13 @@ import java.io.Console;
  *
  * <p>Both methods answer {@code null} at EOF, exactly as {@code Console} does, so every caller
  * keeps deciding for itself what running out of input means.
+ *
+ * <p>The question is shown here too ({@link #show}, {@link #ask}), with the lines said only
+ * because one is asked ({@link #say}: its options, a re-ask), so what a flow asks and what it
+ * reads live in one place, and a test sees both (#1703). The terminal's are shown through the
+ * bound output ({@code BuildOutput.prompt}, a {@code step} for a said line), at its step
+ * indent, so a question asked in a group sits in it. What a flow reports between questions is
+ * not the conversation: it goes through {@code BuildOutput}.
  */
 public interface Prompts {
 
@@ -28,6 +36,19 @@ public interface Prompts {
      */
     char[] readPassword();
 
+    /** Shows {@code question} where its answer is typed: at the step indent, with no line end. */
+    void show(String question);
+
+    /** A line said only because a question is asked, such as an option or a re-ask, at the step indent. */
+    void say(String line);
+
+    /** {@link #show}s the question and reads its answer: {@code null} at EOF. */
+    default String ask(String question) {
+        show(question);
+        return readLine();
+    }
+
+
     static Prompts of(Console console) {
         return new Prompts() {
             @Override
@@ -38,6 +59,16 @@ public interface Prompts {
             @Override
             public char[] readPassword() {
                 return console.readPassword();
+            }
+
+            @Override
+            public void show(String question) {
+                BuildOutput.prompt(question);
+            }
+
+            @Override
+            public void say(String line) {
+                BuildOutput.step(line);
             }
         };
     }

@@ -84,17 +84,38 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
         return askConfirmation(prompts, System.out, prompt, defaultValue, eofValue);
     }
 
-    protected static boolean askConfirmation(Prompts prompts, PrintStream output,
-                                             String prompt, boolean defaultValue, boolean eofValue) {
+    /**
+     * A yes/no question asked through {@code prompts}, which shows it at the step indent and
+     * reads the answer: empty takes {@code defaultValue}, EOF {@code eofValue}, and anything else
+     * is asked again. The way every migrated flow asks (#1703); the {@code askConfirmation}
+     * overloads still print the question themselves for the flows that have not moved yet.
+     */
+    protected static boolean askYesNo(Prompts prompts, String question, boolean defaultValue, boolean eofValue) {
         while (true) {
-            output.print(prompt + (defaultValue ? " (Y/n): " : " (y/N): "));
-            var answer = prompts.readLine();
+            var answer = prompts.ask(question + (defaultValue ? " (Y/n): " : " (y/N): "));
             if (answer == null) return eofValue;
 
             var parsed = parseConfirmation(answer, defaultValue);
             if (parsed != null) return parsed;
-            output.println("Please answer y or n.");
+            prompts.say("Please answer y or n.");
         }
+    }
+
+    /** {@link #askYesNo(Prompts, String, boolean, boolean)}, EOF declining. */
+    protected static boolean askYesNo(Prompts prompts, String question, boolean defaultValue) {
+        return askYesNo(prompts, question, defaultValue, false);
+    }
+
+    protected static boolean askConfirmation(Prompts prompts, PrintStream output,
+                                             String prompt, boolean defaultValue, boolean eofValue) {
+        // The question as the caller wrote it, indent included, on the stream it chose
+        var asking = new Prompts() {
+            @Override public String readLine() { return prompts.readLine(); }
+            @Override public char[] readPassword() { return prompts.readPassword(); }
+            @Override public void show(String question) { output.print(question); }
+            @Override public void say(String line) { output.println(line); }
+        };
+        return askYesNo(asking, prompt, defaultValue, eofValue);
     }
 
     /**

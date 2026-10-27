@@ -75,6 +75,39 @@ class BuildOutputTest {
                 """, text());
     }
 
+    /** A frame is drawn as laid out, at column 0; a question sits at the step indent, its answer typed after it. */
+    @Test
+    void aFrameIsDrawnAsGivenAndAQuestionAtTheStepIndent() {
+        BuildOutput.frame("╭──╮", "│ 1│", "╰──╯");
+        BuildOutput.prompt("Install services? (Y/n): ");
+        try (var group = BuildOutput.group("Approve", null)) {
+            BuildOutput.prompt("tpl-agent? (y/N): ");
+        }
+        assertEquals("╭──╮\n│ 1│\n╰──╯\n    Install services? (Y/n): \n    ▸ Approve\n      tpl-agent? (y/N): \n", text());
+    }
+
+    /** A frame that ends on a blank line ends its block, as a group does: the group after it adds no second one. */
+    @Test
+    void aFrameEndingOnABlankLineIsNotFollowedByAnother() {
+        BuildOutput.frame("", "╭──╮", "╰──╯", "");
+        try (var group = BuildOutput.group("Approve", null)) {
+            BuildOutput.step("tpl-agent");
+        }
+        assertEquals("\n╭──╮\n╰──╯\n\n    ▸ Approve\n      tpl-agent\n\n", text());
+    }
+
+    /**
+     * A frame keeps its leading blank line after a block that ended on one, since a raw line
+     * printed between them, past the output, cannot be seen: the frame after it stays apart.
+     */
+    @Test
+    void aFrameKeepsItsLeadingBlankLineAfterARawLine() {
+        BuildOutput.frame("", "╭──╮", "╰──╯", "");
+        System.out.println("  raw step line");
+        BuildOutput.frame("", "╭──╮", "╰──╯", "");
+        assertEquals("\n╭──╮\n╰──╯\n\n  raw step line\n\n╭──╮\n╰──╯\n\n", text());
+    }
+
     @Test
     void streamsAreRestoredWhenTheStepEnds() {
         var out = System.out;

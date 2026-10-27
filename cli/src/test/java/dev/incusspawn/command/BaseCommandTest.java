@@ -34,6 +34,19 @@ class BaseCommandTest {
         assertNull(BaseCommand.parseConfirmation(null, false));
     }
 
+    /** A yes/no question is shown through the prompts that read it, and asked again until it is answered. */
+    @Test
+    void askYesNoShowsItsQuestionAndAsksAgain() {
+        var prompts = ScriptedPrompts.lines("maybe", "y");
+        assertTrue(BaseCommand.askYesNo(prompts, "Install services?", false));
+        assertEquals(java.util.List.of("? Install services? (y/N): ", "Please answer y or n.", "? Install services? (y/N): "),
+                prompts.conversation());
+        prompts.assertFullyConsumed();
+
+        // End of input answers what the caller chose, not the default
+        assertTrue(BaseCommand.askYesNo(ScriptedPrompts.lines(), "Keep it?", false, true));
+    }
+
     @Test
     void parseConfirmationRejectsInvalidResponses() {
         assertNull(BaseCommand.parseConfirmation("maybe", true));
