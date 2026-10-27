@@ -88,7 +88,7 @@ final class TaskWatcher {
             } catch (InterruptedException e) {
                 return;
             } catch (RuntimeException e) {
-                System.err.println("isx mcp: watching tasks: " + e.getMessage());
+                McpLog.log("watching tasks: " + e.getMessage());
             }
         }
     }

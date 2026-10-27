@@ -1063,7 +1063,7 @@ final class McpTools {
                 try {
                     session.destroy(instance);
                 } catch (RuntimeException cleanup) {
-                    System.err.println("isx mcp: could not remove " + instance + ": " + cleanup.getMessage());
+                    McpLog.log("could not remove " + instance + ": " + cleanup.getMessage());
                 }
             }
             throw e;

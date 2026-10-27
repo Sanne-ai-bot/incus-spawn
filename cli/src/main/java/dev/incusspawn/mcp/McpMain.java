@@ -2,6 +2,7 @@ package dev.incusspawn.mcp;
 
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.command.BaseCommand;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Metadata;
@@ -58,14 +59,14 @@ public final class McpMain {
             // grant it carries is part of the session: a successor under the name is another.
             var metadata = backend.metadata(callerInstance);
             if (!Metadata.isMcpCaller(metadata)) {
-                System.err.println("isx mcp: instance '" + callerInstance + "' may not call isx mcp "
+                McpLog.log("instance '" + callerInstance + "' may not call isx mcp "
                         + "(it was not branched with --mcp-client)");
                 return 78;
             }
             try {
                 self = SessionId.ofInstance(callerInstance, metadata.get(Metadata.MCP_CALLER));
             } catch (IllegalArgumentException e) {
-                System.err.println("isx mcp: " + e.getMessage());
+                McpLog.log(BaseCommand.failure(e));
                 return 78;
             }
             // Its client is in the instance: no host process, no host directory to stamp.
@@ -90,7 +91,7 @@ public final class McpMain {
         Runnable release = () -> {
             if (!released.compareAndSet(false, true)) return;
             var names = session.release();
-            if (!names.isEmpty()) System.err.println("isx mcp: released " + String.join(", ", names));
+            if (!names.isEmpty()) McpLog.log("released " + String.join(", ", names));
         };
         // A client that is killed rather than closing stdin still gets its instances released
         // when it can deliver SIGTERM; after a SIGKILL, the next session notices the orphans.
@@ -129,9 +130,9 @@ public final class McpMain {
         try {
             McpConfig.load();
             var legacy = McpConfig.legacySectionNotice(SpawnConfig.load());
-            if (legacy != null) System.err.println("isx mcp: " + legacy);
+            if (legacy != null) McpLog.log(legacy);
         } catch (McpConfig.Invalid e) {
-            System.err.println("isx mcp: " + e.getMessage());
+            McpLog.log(BaseCommand.failure(e));
         }
     }
 
@@ -140,7 +141,7 @@ public final class McpMain {
         try {
             takeBack(session, tasks);
         } catch (ToolError e) {
-            System.err.println("isx mcp: not taking back the instances this session held yet: " + e.getMessage());
+            McpLog.log("not taking back the instances this session held yet: " + e.getMessage());
         }
     }
 
@@ -161,7 +162,7 @@ public final class McpMain {
                     + e.getMessage() + "); every call tries again until it can. If this persists, ask the user to look at it.");
         }
         if (resumed.isEmpty()) return;
-        System.err.println("isx mcp: holding again " + String.join(", ", resumed.keySet()));
+        McpLog.log("holding again " + String.join(", ", resumed.keySet()));
         // One exec each, independent of one another.
         resumed.forEach((name, metadata) -> {
             if (!InstanceBackend.running(metadata)) return;
@@ -169,7 +170,7 @@ public final class McpMain {
                 try {
                     tasks.adopt(name);
                 } catch (RuntimeException e) {
-                    System.err.println("isx mcp: could not read the tasks of " + name + ": " + e.getMessage());
+                    McpLog.log("could not read the tasks of " + name + ": " + e.getMessage());
                 }
             });
         });
@@ -182,7 +183,7 @@ public final class McpMain {
                     name -> Orphans.probe(backend, name));
             var names = swept.destroyed();
             if (!names.isEmpty()) {
-                System.err.println("isx mcp: destroyed orphaned instances past their grace period: "
+                McpLog.log("destroyed orphaned instances past their grace period: "
                         + String.join(", ", names));
                 McpAuditLog.record(self, "reap-orphans", null, String.join(",", names), 0, "destroyed");
             }
@@ -190,7 +191,7 @@ public final class McpMain {
                 McpAuditLog.record(self, "reap-orphans", null, String.join(",", swept.stopped()), 0, "stopped(dormant)");
             }
         } catch (RuntimeException e) {
-            System.err.println("isx mcp: could not check for orphaned instances: " + e.getMessage());
+            McpLog.log("could not check for orphaned instances: " + e.getMessage());
         }
     }
 

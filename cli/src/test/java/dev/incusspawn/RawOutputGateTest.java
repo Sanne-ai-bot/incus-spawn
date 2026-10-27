@@ -52,7 +52,8 @@ class RawOutputGateTest {
             "common/src/main/java/dev/incusspawn/util/TerminalOutput.java", "the terminal printer",
             "cli/src/main/java/dev/incusspawn/mcp/StdioGuard.java", "moves stdout off the MCP protocol stream",
             "cli/src/main/java/dev/incusspawn/command/Prompts.java", "owns the console",
-            "common/src/main/java/dev/incusspawn/proxy/ProxyLog.java", "the proxy's log, silent while the TUI draws");
+            "common/src/main/java/dev/incusspawn/proxy/ProxyLog.java", "the proxy's log, silent while the TUI draws",
+            "cli/src/main/java/dev/incusspawn/mcp/McpLog.java", "isx mcp's log on stderr, its client's log, beside the protocol on stdout");
 
     /** {@code graal/*Feature} classes run inside native-image at build time, so they print to its log. */
     private static final Pattern BUILD_TIME_FEATURE =

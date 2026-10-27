@@ -152,7 +152,7 @@ final class IncusInstanceBackend implements InstanceBackend {
                     refreshProxy();
                 }
             } catch (RuntimeException cleanup) {
-                System.err.println("isx mcp: could not remove the failed instance " + name
+                McpLog.log("could not remove the failed instance " + name
                         + ": " + cleanup.getMessage());
             }
             throw new ToolError(ToolError.Code.UNAVAILABLE, "creating " + name + " from " + template + " failed: " + e.getMessage());

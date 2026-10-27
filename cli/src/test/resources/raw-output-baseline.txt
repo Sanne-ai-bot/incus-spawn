@@ -18,15 +18,6 @@
 1 0 cli/src/main/java/dev/incusspawn/command/TemplatesCommand.java
 2 0 cli/src/main/java/dev/incusspawn/command/UpdateAllCommand.java
 6 0 cli/src/main/java/dev/incusspawn/command/UpdateBaseCommand.java
-1 0 cli/src/main/java/dev/incusspawn/mcp/IncusInstanceBackend.java
-1 0 cli/src/main/java/dev/incusspawn/mcp/McpAuditLog.java
-10 0 cli/src/main/java/dev/incusspawn/mcp/McpMain.java
-3 0 cli/src/main/java/dev/incusspawn/mcp/McpServer.java
-3 0 cli/src/main/java/dev/incusspawn/mcp/McpSession.java
-1 0 cli/src/main/java/dev/incusspawn/mcp/McpTools.java
-3 0 cli/src/main/java/dev/incusspawn/mcp/Orphans.java
-1 0 cli/src/main/java/dev/incusspawn/mcp/TaskWatcher.java
-1 0 cli/src/main/java/dev/incusspawn/mcp/ToolContext.java
 9 0 cli/src/main/java/dev/incusspawn/tui/PreTuiOutput.java
 5 0 cli/src/main/java/dev/incusspawn/tui/ShellLaunch.java
 5 0 cli/src/main/java/dev/incusspawn/tui/Tui.java

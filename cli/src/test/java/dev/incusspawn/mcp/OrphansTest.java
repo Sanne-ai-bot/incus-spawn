@@ -101,6 +101,19 @@ class OrphansTest {
                 "each asked through the bounded probe: an orphan whose profile hangs cannot hold the sweep");
     }
 
+    /** Why an orphan is kept is logged through McpLog, isx mcp's one gate to its client's log (#1703). */
+    @Test
+    void aSparedOrphanIsReportedAsIsxMcpsStep() {
+        var backend = new FakeBackend()
+                .instance("working", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
+        backend.responder = script -> "task t1-abc running\n";
+        try (var log = McpLog.capture()) {
+            Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW, name -> Orphans.probe(backend, name));
+            assertEquals(List.of("isx mcp: keeping orphaned instance working: someone, or a task it was given, is still working in it"),
+                    log.lines());
+        }
+    }
+
     @Test
     void anOrphanThatDoesNotAnswerInTimeIsInUse() {
         var backend = new FakeBackend().instance("hung", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));

@@ -3279,6 +3279,8 @@ Much of isx prints progress to `System.out`.
 Rather than teach every helper about MCP, `StdioGuard` hands the raw fd 0/1 to the transport, points `System.out` at stderr (which the client logs) and empties `System.in`.
 The `Headless` flag makes `TerminalProgress` stop animating and `Prompts.console()` return nothing, so no prompt can consume protocol bytes.
 The MCP path never calls `requireInit()` or anything that `System.exit`s: each becomes a tool error telling the agent what to ask the user.
+What the session logs itself goes through `McpLog`, its one gate to stderr as `ProxyLog` is the proxy's (#1703).
+It writes a message and its details as one block with one `println`, its first line prefixed `isx mcp: `, so another `System.err` write cannot land inside a stack trace.
 
 **Who is calling.**
 Over stdio there is no endpoint: the client spawned `isx mcp` and holds both pipes, so authentication is the OS user -- anyone who could reach the server could run `isx` anyway.

@@ -686,11 +686,11 @@ final class McpSession {
                 try {
                     backend.stamp(name, Map.of(Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.now(), id.toString())));
                 } catch (RuntimeException e) {
-                    System.err.println("isx mcp: could not release " + name + " (template '" + template
+                    McpLog.log("could not release " + name + " (template '" + template
                             + "' is no longer approved for agents): " + e.getMessage());
                     return;
                 }
-                System.err.println("isx mcp: released " + name + ": template '" + template
+                McpLog.log("released " + name + ": template '" + template
                         + "' is no longer approved for agents");
                 return;
             }
@@ -725,7 +725,7 @@ final class McpSession {
                     backend.stamp(o.name(), Map.of(Metadata.MCP_ORPHANED, now));
                     return o.name();
                 } catch (RuntimeException e) {
-                    System.err.println("isx mcp: could not release " + o.name() + ": " + e.getMessage());
+                    McpLog.log("could not release " + o.name() + ": " + e.getMessage());
                     return null;
                 }
             })).toList();
