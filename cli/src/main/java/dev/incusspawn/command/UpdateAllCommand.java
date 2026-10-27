@@ -7,7 +7,11 @@ import dev.incusspawn.git.HostRepoRefresh;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.Container;
+import dev.incusspawn.lifecycle.BuildAccounts;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.proxy.InstanceSecret;
+import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
@@ -142,13 +146,15 @@ public class UpdateAllCommand extends BaseCommand {
         var failedSteps = new LinkedHashSet<String>();
         boolean primesSkipped = false;
         boolean leftRunning;
+        boolean answered = false;
         try {
-            // Pinned and filtered as a build is, since it runs the same prime commands (#1743)
-            var address = InstanceLifecycle.startTemplate(incus, name, read, BuildOutput.bound());
-            incus.waitForReady(name, machineType);
+            // Pinned, filtered and granted its accounts as a build is, since it runs the same prime commands (#1743)
+            var started = InstanceLifecycle.startTemplate(incus, name, read, BuildOutput.bound());
+            incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, started.guestEnv());
+            answered = true;
 
             // Every step below needs the network: without one, each would only fail the same way
-            if (!holdsItsAddress(incus, name, address)) {
+            if (!holdsItsAddress(incus, name, started.address())) {
                 failedSteps.add("address checks");
             } else if (!GuestUpdate.network(incus, name, machineType)) {
                 failedSteps.add("network waits");
@@ -164,11 +170,42 @@ public class UpdateAllCommand extends BaseCommand {
             }
             GuestUpdate.emptyTmp(incus, name);
         } finally {
+            // Before the stop, and whether or not the grant reached Incus: its write may have
+            failedSteps.addAll(revokeGrant(incus, name, answered));
             leftRunning = !stop(incus, name);
             // Only once stopped, and even after a failed claim: its write may have reached Incus
             if (!leftRunning) InstanceNetwork.releaseBuildAddressOrWarn(incus, name, BuildOutput.bound());
         }
         return new UpdateResult(primesSkipped, failedSteps, leftRunning);
+    }
+
+    /**
+     * Revoke the proofs {@link InstanceLifecycle#startTemplate} granted, and clear what the guest
+     * cached of them from the rootfs its branches copy, as a build does before it publishes
+     * ({@link BuildAccounts#clearGuestProofs}): only once the guest answered, since it receives
+     * them in the readiness exec. Never throws, for the same reason as {@link #stop}.
+     *
+     * @return the failed steps, each warned about here
+     */
+    private static Set<String> revokeGrant(IncusClient incus, String name, boolean answered) {
+        var failed = new LinkedHashSet<String>();
+        try {
+            BuildAccounts.revoke(incus, name);
+            ProxyService.signalAccountRefresh();
+        } catch (RuntimeException e) {
+            BuildOutput.warn("Could not revoke " + name + "'s update credentials: " + e.getMessage(),
+                    "They stay valid while it runs; its next update or build replaces them.");
+            failed.add("credential revocations");
+        }
+        if (!answered) return failed;
+        try {
+            BuildAccounts.clearGuestProofs(new Container(incus, name));
+        } catch (RuntimeException e) {
+            BuildOutput.warn("Could not clear " + name + "'s update credentials from the guest: " + e.getMessage(),
+                    "Branches start with fresh proofs of their own; rebuild the template to remove the stale cache.");
+            failed.add("proof cache cleanups");
+        }
+        return failed;
     }
 
     /**

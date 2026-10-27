@@ -2056,16 +2056,23 @@ The proxy is another matter: until it re-reads, it would serve the deleted build
 So `isx clean`, `isx clean pool` and `isx doctor`'s remediation signal it after deleting failed builds (`CleanCommand.deleteFailedBuilds`/`deleteFailedBuild`), as `isx destroy` does.
 A build or branch signals it before its first start anyway, which leaves only a manual `incus delete` to the proxy's refresh backstop.
 
-**A template is pinned while `isx update-all` runs it (#1743).**
+**A template is started as a build is while `isx update-all` runs it (#1743).**
 An update runs a template's `prime` commands, npm updates and git fetches, as a build does.
 It used to run them on a DHCP address with no filtering, so code in the template could re-address `eth0` as a stopped branch's `STATIC_IP`.
 The proxy identifies callers by address, so it would attribute that traffic to the branch.
-`InstanceLifecycle.startTemplate` now claims an address as a build does (`InstanceNetwork.assignBuildAddress`), with `security.ipv4_filtering`, in one write before the start, and signals the proxy as a build does.
-The update then checks the guest took it (`requireBuildAddress`) and gives it back once the template has stopped, as a build does.
+`InstanceLifecycle.startTemplate` now claims an address as a build does (`InstanceNetwork.assignBuildAddress`), with `security.ipv4_filtering`, and signals the proxy as a build does.
+The same write grants the template temporary proofs and a per-start secret (`BuildAccounts.templateUpdate`, through the `grantInto` a build and `isx project update` use), and clears any `mcp-caller` stamp.
+So its steps are served the template's own accounts: the pins its build stamped on it, or the configured defaults, as for a build.
+The readiness exec delivers them, and the update checks the guest took its address (`requireBuildAddress`).
+However the update ends, it revokes the proofs (`BuildAccounts.revoke`) and signals the proxy before the stop, clears the guest's caches of them from the rootfs when the guest answered (`clearGuestProofs`), then gives the address back once the template has stopped.
+A revocation or cleanup that fails fails the update, saying so.
 A template that is running is refused before anything is written, and one whose guest did not take its address fails its update, naming `update-all` as what to retry; either fails that template alone, and `update-all` goes on to the next.
-Unlike a build, the template gets no proofs and no grant: the same write clears any proof verifier, secret or `mcp-caller` stamp, so the proxy serves it no credentials, as before.
-`isx project update` already pinned the address through `BuildAccounts.Project`, which also gives the project template temporary proofs; `update-all` does not, so the same project template is served its accounts by one and not the other.
 On a host that cannot enforce filtering the start drops it and warns, as for a build or a branch.
+
+A build container is refused host routes by its `untrusted-lineage` stamp, but a stamp on a template would refuse every branch of it too, since the registry asks each caller's ancestors.
+So the registry never trusts a base template as a caller itself (`InstanceRegistry.lineageOf`, at the caller only): a template runs only to be built or updated, and its branches keep their routes while it updates.
+A project template is refused already, as every project-local caller is.
+The accounts are the ones the template's build stamped, not its definition's current `accounts:`: its baked identities match those, and a definition that changed since makes it outdated for `isx build`.
 
 **This only works because the identity cannot be forged.**
 `security.ipv4_filtering` is set on the NIC alongside the pinned `ipv4.address`.

@@ -54,9 +54,7 @@ public final class BuildAccounts {
         var config = read.metadata().path("config");
         var placeholders = dev.incusspawn.proxy.ProofToken.declared();
         var updates = startConfig(config, selection, template);
-        updates.put(Metadata.MCP_CALLER, null);
-        updates.put(Metadata.INSTANCE_SECRET_BOOT, null);
-        var secret = dev.incusspawn.proxy.InstanceSecret.stampInto(updates, placeholders);
+        var secret = grantInto(updates, placeholders);
         // Defaults spend credentials too. Every build needs the same address-and-proof identity.
         var address = InstanceNetwork.assignBuildAddress(incus, buildName, read, updates);
         proxyRefresh.run();
@@ -71,9 +69,49 @@ public final class BuildAccounts {
 
     /** Revoke before publication or inspection. A later isx start delivers fresh proofs. */
     public static void revoke(IncusClient incus, String name) {
+        incus.configSetAll(name, revoked());
+    }
+
+    private static Map<String, String> revoked() {
         var updates = new LinkedHashMap<String, String>();
         PROOF_KEYS.forEach(key -> updates.put(key, ""));
-        incus.configSetAll(name, updates);
+        return updates;
+    }
+
+    /**
+     * Stamp fresh proofs and a per-start secret into {@code updates}, the write that starts a build
+     * container, a project template or a template {@code isx update-all} runs, clearing any MCP
+     * grant and boot stamp the instance was copied or left with. The proxy then serves the
+     * instance its own accounts, by its pins or the configured defaults, as for any instance.
+     *
+     * @return what the readiness exec delivers ({@link InstanceSecret#guestEnv})
+     */
+    static InstanceSecret.Delivery grantInto(Map<String, String> updates, java.util.List<ProofToken.Placeholder> placeholders) {
+        updates.put(Metadata.MCP_CALLER, null);
+        updates.put(Metadata.INSTANCE_SECRET_BOOT, null);
+        return InstanceSecret.stampInto(updates, placeholders);
+    }
+
+    /**
+     * What {@link #templateUpdate} writes with a template's address, and delivers once its guest
+     * answers.
+     */
+    public record TemplateGrant(Map<String, String> updates, Map<String, String> guestEnv) {}
+
+    /**
+     * Temporary proofs for a template {@code isx update-all} runs (#1743), as a build and
+     * {@code isx project update} have: its prime commands, npm updates and git fetches are served
+     * the template's own accounts, the pins its build stamped on it or the configured defaults.
+     * Revoked with {@link #revoke} however the update ends. Host routes refuse it while it holds
+     * them, as they refuse a build container: the registry never trusts a template as a caller
+     * ({@link dev.incusspawn.proxy.InstanceRegistry}), so no stamp is needed that its branches,
+     * which ask their ancestors, would also be refused by.
+     */
+    public static TemplateGrant templateUpdate() {
+        var placeholders = ProofToken.declared();
+        var updates = new LinkedHashMap<String, String>();
+        var secret = grantInto(updates, placeholders);
+        return new TemplateGrant(updates, InstanceSecret.guestEnv(secret, false, placeholders));
     }
 
     /**
@@ -124,9 +162,7 @@ public final class BuildAccounts {
             var placeholders = ProofToken.declared();
             var updates = new LinkedHashMap<String, String>();
             updates.put(Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_PROJECT);
-            updates.put(Metadata.MCP_CALLER, null);
-            updates.put(Metadata.INSTANCE_SECRET_BOOT, null);
-            var secret = InstanceSecret.stampInto(updates, placeholders);
+            var secret = grantInto(updates, placeholders);
             grantAttempted = true;
             address = InstanceNetwork.assignBuildAddress(incus, name, read, updates);
             ProxyService.signalAccountRefresh();

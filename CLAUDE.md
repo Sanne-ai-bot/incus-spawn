@@ -180,6 +180,7 @@ Missing or incorrect proofs preserve the incoming authentication and destination
 On macOS, where the VM NATs every container to its own address, a non-host caller at an unknown address is the instance its proofs name (#1582); Linux keeps the address check.
 Verifier hashes change on creation, explicit reset or declaration changes; credentialed builds receive and revoke their own temporary proofs.
 Project create and update also use temporary proofs, preserving inherited account pins, baked-identity checks and untrusted host-route lineage, with cleanup on success or failure.
+`isx update-all` grants a template the same temporary proofs for its own accounts and revokes them however the update ends (#1743); host routes never trust a template itself as a caller.
 Reset invalidates old prefetched generations before its metadata write, and guest proof delivery holds the same lock through its boot stamp.
 Normal starts derive the seed once; TUI restarts reuse the listing without another pre-restart metadata read.
 Every copy clears inherited proof state, and a symlinked config directory is accepted after checking its resolved target.

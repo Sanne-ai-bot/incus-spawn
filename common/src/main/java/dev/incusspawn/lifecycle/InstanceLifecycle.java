@@ -542,35 +542,38 @@ public final class InstanceLifecycle {
     }
 
     /**
+     * What {@link #startTemplate} gave the template: its pinned address, and what the readiness
+     * exec delivers ({@link InstanceSecret#GUEST_SCRIPT}).
+     */
+    public record StartedTemplate(String address, Map<String, String> guestEnv) {}
+
+    /**
      * Start a stopped template for {@code isx update-all} (#1457) the way isx starts an instance,
      * with {@link #startInstance}'s fallback where the host cannot enforce IP spoofing protection.
      * None of {@link #prepareForStart}'s repairs applies to a template: its build removes the
      * host-resource devices (the recorded list is for its branches), it never has an inbox or a
-     * zmx device, and each branch sets its own filtering ({@link #configureBranch}). Nor is it given
-     * a secret or proofs: it is never used as a box, and the proxy serves it no credentials.
+     * zmx device, and each branch sets its own filtering ({@link #configureBranch}).
      *
-     * <p>It runs its prime commands as a build does, so it is pinned to an address as a build is
-     * ({@link InstanceNetwork#assignBuildAddress}, #1743): unpinned and unfiltered, code in it
-     * could take a stopped branch's address and be attributed that branch's traffic. The caller
-     * checks the address once the guest answers ({@link InstanceNetwork#requireBuildAddress}) and,
-     * however the update ends, gives it back once the template is stopped
-     * ({@link InstanceNetwork#releaseBuildAddressOrWarn}).
+     * <p>It runs its prime commands as a build does, so it is started as a build is (#1743): pinned
+     * to a filtered address ({@link InstanceNetwork#assignBuildAddress}), since unpinned code in it
+     * could take a stopped branch's address, and granted temporary proofs for its own accounts
+     * ({@link BuildAccounts#templateUpdate}), in the one write before the start. The caller
+     * delivers the proofs as the guest answers, checks the address
+     * ({@link InstanceNetwork#requireBuildAddress}) and, however the update ends, revokes the
+     * proofs ({@link BuildAccounts#revoke}) and gives the address back once the template
+     * is stopped ({@link InstanceNetwork#releaseBuildAddressOrWarn}).
      *
      * @param read the template as read; anything else is refused, since an instance starts
      *             through {@link #startForUse}
-     * @return the address assigned
      */
-    public static String startTemplate(IncusClient incus, String name, IncusClient.InstanceRead read, Output out) {
+    public static StartedTemplate startTemplate(IncusClient incus, String name, IncusClient.InstanceRead read, Output out) {
         requireStoppedTemplate(name, read);
-        // No proof or grant a build may have left, so the proxy serves the template nothing
-        var updates = new LinkedHashMap<String, String>();
-        updates.put(Metadata.MCP_CALLER, null);
-        BuildAccounts.PROOF_KEYS.forEach(key -> updates.put(key, null));
-        var address = InstanceNetwork.assignBuildAddress(incus, name, read, updates);
-        // As a build does: the proxy knows the address before anything inside asks
+        var grant = BuildAccounts.templateUpdate();
+        var address = InstanceNetwork.assignBuildAddress(incus, name, read, grant.updates());
+        // As a build does: the proxy knows the address and its proofs before anything inside asks
         ProxyService.signalAccountRefresh();
         startInstance(incus, name, out);
-        return address;
+        return new StartedTemplate(address, grant.guestEnv());
     }
 
     /**
