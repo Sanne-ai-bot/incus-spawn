@@ -17,6 +17,7 @@ Some come from isx at build time, some from the `tpl-minimal` template, and some
 | About twenty units are masked | Time sync, TPM, boot and update units have no place in an instance | base image |
 | SELinux is off | The filesystem is unlabelled; an enforcing VM loses its agent | `/etc/selinux/config` |
 | No documentation files, English locale only | A smaller image | base image, build-time `dnf` |
+| dnf has no plugins until a template enables a COPR repo | A smaller image; `dnf copr` comes with the first COPR repo | base image, build-time `dnf` |
 | Every instance has its own machine ID | Branches are copies of one template | `/etc/machine-id` |
 | A VM's `dnf` refuses kernel packages | The VM boots the image's own kernel | `/etc/dnf/libdnf5.conf.d/isx-kernel.conf` |
 
@@ -166,6 +167,13 @@ The base image installs its packages without weak dependencies and without docum
 Packages a template installs during a build come without documentation too.
 A `dnf install` you run inside an instance installs them as on stock Fedora.
 Only the English locale is installed (`glibc-langpack-en`).
+
+## dnf plugins
+
+The base image ships dnf without its plugins, which stock Fedora includes.
+So `dnf copr` and the other plugin commands are missing at first.
+When a template enables a COPR repository, isx first installs dnf's copr plugin, from `dnf5-plugins`.
+Inside an instance, `sudo dnf install 'dnf5-command(copr)'` adds it by hand.
 
 ## Machine ID
 

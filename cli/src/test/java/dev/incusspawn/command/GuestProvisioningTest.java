@@ -78,6 +78,97 @@ class GuestProvisioningTest {
         assertNull(GuestProvisioning.parseGitHubOwnerRepo("git@github.com:owner/repo.git"));
     }
 
+    private static ImageDef coprImage(String name) {
+        var repo = new ImageDef.PackageRepo();
+        repo.setType("copr");
+        repo.setName(name);
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-mise");
+        imageDef.setPackageRepos(List.of(repo));
+        return imageDef;
+    }
+
+    /**
+     * The commands {@code enablePackageRepos} runs in a guest whose dnf is {@code dnf} (and
+     * {@code dnf5} too when {@code dnf5}), and whose rpm database provides {@code provides}.
+     * The copr plugin probe runs for real, under {@code sh} with stub commands on its path.
+     */
+    private static List<String> coprCommands(Path dir, boolean dnf5, String... provides) throws Exception {
+        var bin = Files.createDirectories(dir.resolve("bin"));
+        var rpm = new StringBuilder("#!/bin/sh\ncase \"$3\" in\n");
+        for (var provide : provides) rpm.append("  '").append(provide).append("') exit 0 ;;\n");
+        rpm.append("esac\nexit 1\n");
+        Files.writeString(bin.resolve("rpm"), rpm);
+        bin.resolve("rpm").toFile().setExecutable(true);
+        if (dnf5) {
+            Files.writeString(bin.resolve("dnf5"), "#!/bin/sh\n");
+            bin.resolve("dnf5").toFile().setExecutable(true);
+        }
+        var incus = mock(IncusClient.class);
+        var commands = new java.util.ArrayList<String>();
+        when(incus.shellExec(eq("test"), any(String[].class))).thenAnswer(call -> {
+            var args = List.of(call.getArguments()).subList(1, call.getArguments().length)
+                    .stream().map(String::valueOf).toList();
+            commands.add(String.join(" ", args));
+            if (!args.equals(List.of("sh", "-c", GuestProvisioning.MISSING_COPR_PLUGIN))) return OK;
+            var process = new ProcessBuilder("/bin/sh", "-c", args.get(2)).redirectErrorStream(true);
+            process.environment().put("PATH", bin.toString());
+            var started = process.start();
+            var out = new String(started.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            return new IncusClient.ExecResult(started.waitFor(), out, "");
+        });
+        when(incus.shellExecStreaming(eq("test"), any(), any(), any(String[].class))).thenAnswer(call -> {
+            commands.add(String.join(" ", List.of(call.getArguments()).subList(3, call.getArguments().length)
+                    .stream().map(String::valueOf).toList()));
+            return 0;
+        });
+        GuestProvisioning.enablePackageRepos(new Container(incus, "test"), coprImage("jdxcode/mise"),
+                List.of(), List.of(), Map.of());
+        assertEquals("sh -c " + GuestProvisioning.MISSING_COPR_PLUGIN, commands.get(0));
+        assertEquals("dnf copr enable -y jdxcode/mise", commands.get(commands.size() - 1));
+        return commands.subList(1, commands.size() - 1);
+    }
+
+    private static String install(String provide) {
+        return String.join(" ", BuildProgress.dnfCommand("install", "-y", provide));
+    }
+
+    @Test
+    void enablePackageReposInstallsTheCoprPluginFirstWhenMissing(@TempDir Path dir) throws Exception {
+        // isx's base image ships dnf5 without its plugins, so `dnf copr enable` fails
+        // with "try: dnf5 install 'dnf5-command(copr)'" unless the build installs it (#1736).
+        assertEquals(List.of(install("dnf5-command(copr)")), coprCommands(dir, true));
+    }
+
+    @Test
+    void enablePackageReposInstallsDnf5sPluginWhenOnlyDnf4sIsPresent(@TempDir Path dir) throws Exception {
+        // A package can pull dnf-plugins-core into a dnf5 guest; dnf5 does not use its copr
+        assertEquals(List.of(install("dnf5-command(copr)")), coprCommands(dir, true, "dnf-command(copr)"));
+    }
+
+    @Test
+    void enablePackageReposKeepsTheCoprPluginTheGuestHas(@TempDir Path dir) throws Exception {
+        assertEquals(List.of(), coprCommands(dir, true, "dnf5-command(copr)"));
+        assertEquals(List.of(), coprCommands(dir.resolve("dnf4"), false, "dnf-command(copr)"));
+    }
+
+    @Test
+    void enablePackageReposInstallsDnf4sPluginOnADnf4Guest(@TempDir Path dir) throws Exception {
+        assertEquals(List.of(install("dnf-command(copr)")), coprCommands(dir, false, "dnf5-command(copr)"));
+    }
+
+    @Test
+    void enablePackageReposSkipsThePluginInstallWhenPresent() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.shellExec(eq("test"), any(String[].class))).thenReturn(OK);
+
+        GuestProvisioning.enablePackageRepos(container, coprImage("jdxcode/mise"), List.of(), List.of(), Map.of());
+
+        verify(incus, never()).shellExecStreaming(any(), any(), any(), any(String[].class));
+        verify(incus).shellExec("test", "dnf", "copr", "enable", "-y", "jdxcode/mise");
+    }
+
     @Test
     void updateClaudeJsonTrustAddsProjectsAndGithubPaths() throws Exception {
         var incus = mock(IncusClient.class);
@@ -895,6 +986,8 @@ class GuestProvisioningTest {
         // A template, project-local included, names its package repositories (#1610 follow-up).
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(new IncusClient.ExecResult(1, "", "no"));
+        // The copr plugin is present, so the failure comes from enabling the COPR repo itself
+        when(incus.shellExec("test", "sh", "-c", GuestProvisioning.MISSING_COPR_PLUGIN)).thenReturn(OK);
         var imageDef = new ImageDef();
         imageDef.setName("tpl-app");
         imageDef.setPackageRepos(List.of(
@@ -916,6 +1009,7 @@ class GuestProvisioningTest {
         var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
         assertTrue(shown.contains("unknown package_repos type 'x ]0;pwned ' for 'a b'"), shown.replace("\033", "ESC"));
         assertEquals(dev.incusspawn.util.TerminalLink.plainText(shown), shown, shown.replace("\033", "ESC"));
+        assertTrue(ex.getMessage().startsWith("Failed to enable COPR repo "), ex.getMessage());
         assertFalse(ex.getMessage().contains("\n"), "a name cannot forge a line in the failure report: " + ex.getMessage());
     }
 }
