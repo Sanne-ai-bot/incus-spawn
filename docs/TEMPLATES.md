@@ -232,6 +232,7 @@ repos:
 
 A list runs its commands in turn, and the first that fails stops the rest and fails the build.
 Each command runs in its own shell, so a variable one exports is gone in the next.
+The build failure names the prime command that failed, and the failure report shows it above that command's output.
 
 `depth` is for repositories that store release binaries in their history.
 Omit it for development repositories, which get the full history.
