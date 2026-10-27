@@ -2,6 +2,7 @@ package dev.incusspawn.vm;
 
 import dev.incusspawn.util.Output;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import org.junit.jupiter.api.AfterEach;
@@ -19,6 +20,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class VmManagerTest {
 
@@ -57,19 +59,6 @@ class VmManagerTest {
         assertTrue(cmd.stream().noneMatch(arg -> arg.contains("tcp://")), cmd.toString());
     }
 
-    /**
-     * #1683: QEMU's default {@code discard=ignore} drops the guest's discards, so btrfs's online
-     * trim and {@code fstrim} never shrink the host's images. Each drive passes them through.
-     */
-    @Test
-    void qemuPassesTheGuestsDiscardsThroughToEveryImage() {
-        assertEquals(List.of(
-                "-drive", "id=root,file=" + Environment.vmDiskImage() + ",format=raw,if=virtio,discard=unmap",
-                "-drive", "id=swap,file=" + Environment.vmSwapImage() + ",format=raw,if=virtio,discard=unmap",
-                "-drive", "id=data,file=" + Environment.vmDataImage() + ",format=raw,if=virtio,discard=unmap"),
-                VmManager.qemuDriveArgs());
-    }
-
     @Test
     void detectCpusReturnsAtLeastOne() {
         assertTrue(VmManager.detectCpus() >= 1);
@@ -92,23 +81,21 @@ class VmManagerTest {
         assertFalse(VmManager.isRunning());
     }
 
+    /**
+     * #1695: the appliance runs only under vfkit on macOS. On Linux isx uses the host's Incus, and
+     * a start is refused before it creates a disk or launches anything.
+     */
     @Test
-    void detectBackendReturnsValueOnCurrentOs() {
-        if (Platform.isLinux()) {
-            try {
-                var backend = VmManager.detectBackend();
-                assertEquals(VmManager.Backend.QEMU, backend);
-            } catch (VmException e) {
-                assertTrue(e.getMessage().contains("qemu-system"));
-            }
-        } else if (Platform.isMacOS()) {
-            try {
-                var backend = VmManager.detectBackend();
-                assertEquals(VmManager.Backend.VFKIT, backend);
-            } catch (VmException e) {
-                assertTrue(e.getMessage().contains("vfkit"));
-            }
-        }
+    void theApplianceIsNeverStartedOnLinux() {
+        assumeTrue(Platform.isLinux());
+        var started = new boolean[1];
+        var out = RecordingOutput.during(() -> started[0] = VmManager.start());
+
+        assertFalse(started[0]);
+        assertTrue(out.events().stream().anyMatch(e -> e.kind() == RecordingOutput.Kind.ERROR
+                && e.msg().contains("only on macOS")), out.events().toString());
+        assertFalse(Files.exists(Environment.vmPidFile()));
+        assertFalse(Files.exists(Environment.vmDiskImage()));
     }
 
     @Test

@@ -4744,8 +4744,6 @@ Launching the app bundle through LaunchServices (`open`) would detach it too, bu
 If perl is ever gone from macOS the command is run as before, and this has to be solved again.
 The perl wrapper starts without the user's `PERL5OPT`, `PERL5LIB` and `PERLLIB`, which could stop it from loading, and puts them back before the exec: whatever it starts keeps them, a Git credential helper in perl among them.
 
-QEMU, the Linux path, is started the same way (#993): its exposure to a hangup or Ctrl+C is the same.
-Its console is qemu's own stdout, appended to `vm.log`, so the wrapper's diagnostics share that file without the double-writer problem below.
 A build's host Git is started the same way (#1425), but unlike the VM it must not outlive isx: see "A running build takes two Ctrl+C".
 
 vfkit's own stdout/stderr (perl's diagnostics if the exec above fails; otherwise whatever vfkit itself prints) go to `Environment.vfkitLogFile()`, never to `vm.log`: vfkit opens `vm.log` itself, non-append, for the VM's virtio-serial console.
@@ -5264,3 +5262,4 @@ Moving the CLI's HTTP clients off `java.net.http` onto Vert.x's `HttpClient` was
 It is deferred because the premise is gone: the proxy split removed Vert.x from the CLI, and Quarkus 4 does not bring it back to `cli` or `common`.
 Pulling vertx-core and Netty into the CLI would add more code than it removes, add startup cost to every command, and bring Vert.x's native-image workarounds with it.
 The only form worth revisiting is replacing `java.net.http` with `HttpsURLConnection`, and only with a fresh native build report showing the size win.
+

@@ -64,9 +64,9 @@ class VmOwnSessionTest {
         assertTrue(failure.getMessage().startsWith("vfkit could not be started"), failure.getMessage());
     }
 
-    /** qemu is exposed to the same hangup, Ctrl+C and job-exit as vfkit was, and starts the same way (#993). */
+    /** {@code launchInOwnSession}, which starts vfkit, leaves the hypervisor leading its own session (#993). */
     @Test
-    void qemuIsStartedInASessionOfItsOwn(@TempDir Path dir) throws Exception {
+    void theHypervisorIsStartedInASessionOfItsOwn(@TempDir Path dir) throws Exception {
         SessionProbe.assumeSession();
         var pidFile = dir.resolve("vm.pid");
         // By its real path, which is what the process reports: sleep may be a multicall binary's link.
@@ -77,7 +77,7 @@ class VmOwnSessionTest {
         var process = VmManager.launchInOwnSession(List.of(sleep.toString(), "30"), program, dir.resolve("vm.log"), pidFile);
         try {
             var seen = SessionProbe.look(process.pid());
-            assertTrue(seen.command().endsWith(program), "the recorded pid must be qemu's own: " + seen);
+            assertTrue(seen.command().endsWith(program), "the recorded pid must be the hypervisor's own: " + seen);
             assertEquals(String.valueOf(process.pid()), seen.processGroup(),
                     "still in the process group of whoever started it, which takes it down with them");
             assertEquals(String.valueOf(process.pid()), Files.readString(pidFile));
