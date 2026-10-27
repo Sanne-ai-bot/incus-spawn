@@ -99,4 +99,17 @@ class InitCredentialGapsTest {
         assertTrue(text.endsWith("Run 'isx account add openai', 'isx account add github' and 'isx account add"
                 + " a-namespace-whose-name-is-long-too' to configure them."), text);
     }
+
+    /** A tool's note follows the command, wrapped to the box, once however many templates need it (#1750). */
+    @Test
+    void aNoteFollowsTheCommandOnce() throws Exception {
+        var defs = defs("name: tpl-a\n", "name: tpl-b\n");
+        var note = "Pi needs a Claude account for its provider 'anthropic'.";
+        var missing = new LinkedHashMap<CredentialCheck.Missing, List<String>>();
+        missing.put(new CredentialCheck.Missing("Anthropic API key", "isx account add claude", List.of(note)),
+                List.of("tpl-a", "tpl-b"));
+        for (var line : InitCommand.credentialGapLines(missing, defs)) assertTrue(stripAnsi(line).length() <= 62, line);
+        var text = String.join(" ", lines(missing, defs));
+        assertTrue(text.endsWith("Run 'isx account add claude' to configure it. " + note), text);
+    }
 }

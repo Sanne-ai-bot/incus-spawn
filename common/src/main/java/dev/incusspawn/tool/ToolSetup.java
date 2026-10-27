@@ -115,6 +115,17 @@ public interface ToolSetup {
     }
 
     /**
+     * Why this tool, for a template that sets {@code resolvedParams}, needs the credential
+     * {@link #credentialProblem} names, and what would do instead; an empty list when that goes
+     * without saying (a blank sentence counts as none). Pi spends Claude's account only because of its provider, so it says so and
+     * offers another. Not shown when another tool needs that credential regardless. One sentence
+     * per element, so one shared by several templates' notes is said once.
+     */
+    default java.util.List<String> credentialNote(java.util.Map<String, String> resolvedParams) {
+        return java.util.List.of();
+    }
+
+    /**
      * A short, secret-free description of one of this tool's accounts -- what kind of
      * credential it is, or whose -- for listings such as {@code isx account list}; {@code ""}
      * when there is nothing to say beyond its name. Never include the credential itself.

@@ -171,7 +171,7 @@ class CredentialCheckTest {
 
     @Test
     void piNamesTheCredentialItsProviderSpends() throws Exception {
-        assertTrue(check("{}", template("[pi]")).endsWith("'isx account add claude' to configure it."));
+        assertTrue(check("{}", template("[pi]")).contains(" Run 'isx account add claude' to configure it. "));
         assertTrue(check("{}", piTemplate("openai")).endsWith("'isx account add openai' to configure it."));
     }
 
@@ -306,6 +306,87 @@ class CredentialCheckTest {
     void piDefaultProviderNeedsClaude() throws Exception {
         var result = check("{}", template("[pi]"));
         assertTrue(result.contains("Anthropic API key"), result);
+    }
+
+    // Branch checks the definitions a template was built from, so editing it alone changes nothing
+    private static final String PI_NOTE_TAIL = " To use another provider, set it in the template's tools,"
+            + " run 'isx build' on the template and branch from it:"
+            + " '- pi: {provider: openai}' spends an OpenAI API key,"
+            + " and a provider isx does not manage needs nothing from isx.";
+
+    /** Pi spends Claude's account on its behalf: the message says so, and what else would do (#1750). */
+    @Test
+    void piOnClaudesAccountNamesPiItsProviderAndAnotherProvider() throws Exception {
+        assertEquals("Missing credentials: Anthropic API key, OAuth token, or Vertex AI."
+                + " Run 'isx account add claude' to configure it."
+                + " Pi needs a Claude account for its provider 'anthropic'." + PI_NOTE_TAIL,
+                check("{}", template("[pi]")));
+        assertEquals("Missing credentials: Vertex AI configuration."
+                + " Run 'isx account add claude' to configure it."
+                + " Pi needs a Vertex AI Claude account for its provider 'google'." + PI_NOTE_TAIL,
+                check("{}", piTemplate("google")));
+    }
+
+    /** Claude Code needs the account whatever pi's provider, so pi's note is left out. */
+    @Test
+    void piBesideClaudeIsNotOfferedAnotherProvider() throws Exception {
+        assertEquals("Missing credentials: Anthropic API key, OAuth token, or Vertex AI."
+                + " Run 'isx account add claude' to configure it.", check("{}", template("[pi, claude]")));
+    }
+
+    /** Beside Claude Code, pi's stricter need still shows, so one fix does not reveal another. */
+    @Test
+    void piOnVertexBesideClaudeKeepsItsOwnNeed() throws Exception {
+        assertEquals("Missing credentials: Anthropic API key, OAuth token, or Vertex AI, Vertex AI configuration."
+                + " Run 'isx account add claude' to configure them.",
+                check("{}", "name: tpl\ntools:\n  - claude\n  - pi: {provider: vertex}\n"));
+    }
+
+    /** The note travels with what the build and init report. */
+    @Test
+    void missingByCredentialCarriesPisNote() throws Exception {
+        var all = tools();
+        var template = ImageDef.parseYaml(template("[pi]"));
+        var missing = CredentialCheck.missingByCredential(Jjq.spawnConfig("{}"), List.of("tpl"),
+                Map.of("tpl", template), all, all);
+        assertEquals(1, missing.size(), missing.toString());
+        assertTrue(missing.keySet().iterator().next().notes().getFirst().startsWith("Pi needs a Claude account"), missing.toString());
+    }
+
+    /** A blank note says nothing, so it cannot stop another tool's note being suppressed. */
+    @Test
+    void aBlankNoteIsNoNote() {
+        assertEquals(List.of(), new CredentialCheck.Missing("key", "isx init", List.of("", " ")).notes());
+    }
+
+    /** One credential is one entry across templates: pi's note does not split it from Claude Code's. */
+    @Test
+    void piAndClaudeTemplatesShareOneEntryForTheAccount() throws Exception {
+        var all = tools();
+        var defs = Map.of("tpl-pi", ImageDef.parseYaml("name: tpl-pi\ntools: [pi]\n"),
+                "tpl-claude", ImageDef.parseYaml("name: tpl-claude\ntools: [claude]\n"));
+        var missing = CredentialCheck.missingByCredential(Jjq.spawnConfig("{}"), List.of("tpl-pi", "tpl-claude"),
+                defs, all, all);
+        assertEquals(1, missing.size(), missing.toString());
+        var entry = missing.entrySet().iterator().next();
+        assertEquals(List.of("tpl-pi", "tpl-claude"), entry.getValue());
+        assertEquals(2, entry.getKey().notes().size(), entry.getKey().toString());
+    }
+
+    /** Notes that differ by provider are each kept, on the one entry, and what they share is said once. */
+    @Test
+    void piTemplatesOnDifferentProvidersShareOneEntry() throws Exception {
+        var all = tools();
+        var defs = Map.of("tpl-vertex", ImageDef.parseYaml(piTemplate("vertex").replace("tpl-pi", "tpl-vertex")),
+                "tpl-google", ImageDef.parseYaml(piTemplate("google").replace("tpl-pi", "tpl-google")));
+        var missing = CredentialCheck.missingByCredential(Jjq.spawnConfig("{}"), List.of("tpl-vertex", "tpl-google"),
+                defs, all, all);
+        assertEquals(1, missing.size(), missing.toString());
+        // Each provider's own sentence, and the advice they share once
+        var notes = missing.keySet().iterator().next().notes();
+        assertEquals(3, notes.size(), notes.toString());
+        assertTrue(notes.stream().anyMatch(n -> n.endsWith("'vertex'."))
+                && notes.stream().anyMatch(n -> n.endsWith("'google'.")), notes.toString());
     }
 
     @Test

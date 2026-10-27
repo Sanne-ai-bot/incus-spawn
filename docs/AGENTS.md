@@ -102,7 +102,9 @@ Use `/statusline` to customize the footer; the `permissions` item displays the i
 
 ## Pi Coding Agent
 
-Pi is a provider-agnostic CLI coding agent that uses the standard Anthropic API, and works with all three Anthropic auth modes: API key, Claude Pro/Max OAuth and Vertex AI.
+Pi is a provider-agnostic CLI coding agent.
+Its default provider is `anthropic`, so it spends your Claude account: an API key, Claude Pro/Max OAuth or Vertex AI.
+A template with Pi alone needs a Claude account unless it sets Pi's `provider` parameter, described below.
 Add it to any template with `tools: [pi]`:
 
 ```yaml
@@ -130,6 +132,8 @@ With `default-action: pi` instead, the instance opens Pi resuming your most rece
 | `model` | `claude-sonnet-4-6` | The model Pi uses |
 
 The `vertex` and `google` providers need a Vertex AI Claude account, whose project and region the build exports to Pi.
+The `openai` provider uses your OpenAI key, as shown below.
+A provider isx does not manage needs no credential from isx: Pi signs in to it itself.
 
 Pi can also run against OpenAI, using the same key as [Codex CLI](#codex-cli):
 
