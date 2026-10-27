@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# Drive one completion in a real interactive zsh and print the buffer it leaves behind.
+# Drive one completion in a real interactive zsh and write the buffer it leaves behind to <out-file>.
 #
 # Usage: zsh -f zsh-completion-driver.zsh <fake-bin-dir> <completion-script> <line> <out-file>
 #
@@ -52,4 +52,3 @@ zpty -n -w z "$line"$'\t\x18\x18'
 zpty -r -m z buf '*ISXDONE*' || { print -u2 -r -- "no buffer: ${(V)buf}"; exit 1 }
 
 [[ -s $out ]] || { print -u2 "empty buffer file"; exit 1 }
-cat -- $out

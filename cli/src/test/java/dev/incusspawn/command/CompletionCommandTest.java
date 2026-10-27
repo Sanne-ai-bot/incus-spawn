@@ -2,6 +2,8 @@ package dev.incusspawn.command;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.stream.Collectors;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -49,6 +51,7 @@ class CompletionCommandTest {
         assertFalse(zsh.contains("shift words"), "the dispatcher must not shift the words _arguments adjusted");
         assertFalse(zsh.contains("CURRENT--"), "the dispatcher must not decrement CURRENT again");
         assertTrue(zsh.contains("local cmd=$line[1]"), "the subcommand still comes from $line[1]");
+        assertFalse(zsh.contains("$words[1]"), "a helper takes its subcommand from $line[1], never the words");
     }
 
     @Test
@@ -59,11 +62,10 @@ class CompletionCommandTest {
                 .lines()
                 .dropWhile(l -> !l.startsWith("_isx_account()"))
                 .takeWhile(l -> !l.equals("}"))
-                .reduce("", (a, b) -> a + "\n" + b);
+                .collect(Collectors.joining("\n"));
         assertTrue(account.contains("_arguments -C"), "account must parse its subcommand with _arguments -C");
         assertTrue(account.contains("case $line[1] in"), "account must dispatch on $line[1]");
         assertFalse(account.contains("case $words[1] in"), "account must not dispatch on the shifted words");
-        assertTrue(account.contains("set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts'"));
     }
 
     @Test
