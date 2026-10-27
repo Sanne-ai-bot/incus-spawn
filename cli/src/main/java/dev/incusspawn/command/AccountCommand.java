@@ -120,7 +120,7 @@ public class AccountCommand extends BaseCommand {
             if (outputFormat != OutputFormat.TABLE) {
                 // Unknown pins print as null, never as "pinned by nobody"; the reason goes to stderr.
                 if (!pinsKnown) {
-                    BuildOutput.bound().warnAside("Could not read which instances use each account: " + pinsUnavailable);
+                    BuildOutput.warnAside("Could not read which instances use each account: " + pinsUnavailable);
                 }
                 outputFormat.print(BuildOutput.results(), listRecords(namespaces, pinsKnown));
                 return CommandResult.SUCCESS;
