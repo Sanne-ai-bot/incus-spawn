@@ -131,18 +131,19 @@ public class DoctorCommand extends BaseCommand {
             if (bundle) throw new IllegalArgumentException("--bundle writes an archive; it cannot be combined with --format");
             // Only the findings: no remediation is offered or applied, and the exit code is the same.
             var findings = withStdoutOnStderr(() -> Platform.isLinux() ? runLinuxChecks() : runMacChecks());
-            outputFormat.print(System.out, findingRecords(findings));
+            outputFormat.print(BuildOutput.results(), findingRecords(findings));
             return exitFor(findings);
         }
-        System.out.println("Running incus-spawn doctor...\n");
+        BuildOutput.step("Running incus-spawn doctor...");
 
         var findings = Platform.isLinux() ? runLinuxChecks() : runMacChecks();
 
-        System.out.print(formatFindings(findings).indent(2));
+        // The report is the command's answer, at the step indent of the lines around it
+        BuildOutput.results().println();
+        BuildOutput.results().print(formatFindings(findings).indent(BuildOutput.STEP_INDENT.length()));
 
         if (bundle) {
-            generateBundle(findings);
-            return exitFor(findings);
+            return generateBundle(findings) ? exitFor(findings) : CommandResult.valueOf(1);
         }
 
         var actionable = findings.stream()
@@ -151,15 +152,21 @@ public class DoctorCommand extends BaseCommand {
 
         if (actionable.isEmpty()) {
             boolean anyProblem = findings.stream().anyMatch(f -> f.status().isProblem());
-            System.out.println("\n" + (anyProblem ? "Some checks reported issues with no automatic fix."
-                    : "All checks passed."));
+            if (anyProblem) {
+                // The report went to the results stream, which the step's spacing does not see
+                BuildOutput.results().println();
+                BuildOutput.step("Some checks reported issues with no automatic fix.");
+            }
+            else BuildOutput.success("All checks passed.");
             return exitFor(findings);
         }
 
-        System.out.println("\n" + actionable.size() + " issue(s) can be addressed:\n");
-        for (var f : actionable) {
-            System.out.println("  " + f.status().symbol + " " + f.label());
-            applyOrSuggest(f.remediation());
+        var prompts = Prompts.terminal();
+        try (var group = BuildOutput.group(actionable.size() + " issue(s) can be addressed", null)) {
+            for (var f : actionable) {
+                BuildOutput.step(f.status().symbol + " " + f.label());
+                applyOrSuggest(f.remediation(), prompts);
+            }
         }
         return exitFor(findings);
     }
@@ -206,18 +213,17 @@ public class DoctorCommand extends BaseCommand {
     }
 
     /** Prompt to apply a remediation (TTY), or print the suggestion when non-interactive. */
-    private void applyOrSuggest(Remediation r) {
+    static void applyOrSuggest(Remediation r, Prompts prompts) {
         if (r.action() == null) {
-            System.out.println("     " + r.description());
+            BuildOutput.stepNote(r.description());
             return;
         }
-        var console = System.console();
-        if (console == null) {
-            System.out.println("     fix: " + r.description() + " (re-run in a terminal to apply)");
+        if (prompts == null) {
+            BuildOutput.stepNote("fix: " + r.description() + " (re-run in a terminal to apply)");
             return;
         }
         var warn = r.destructive() ? " This is disruptive." : "";
-        if (!askYesNo(Prompts.of(console), r.description() + "." + warn + " Apply now?", false)) {
+        if (!askYesNo(prompts, r.description() + "." + warn + " Apply now?", false)) {
             BuildOutput.stepNote("skipped.");
             return;
         }
@@ -225,7 +231,7 @@ public class DoctorCommand extends BaseCommand {
             r.action().run();
             BuildOutput.stepNote("done.");
         } catch (Exception e) {
-            BuildOutput.warn("Failed: " + e.getMessage());
+            BuildOutput.warn("Failed: " + failure(e));
         }
     }
 
@@ -716,8 +722,9 @@ public class DoctorCommand extends BaseCommand {
                     () -> {
                         var created = CowPoolBacking.create(CowPoolBacking::filesystemOf, skipTrim,
                                 CowPoolBacking::runCapturingStderr, DoctorCommand::makeDisksDir,
-                                (msg, details) -> System.err.println("  " + msg + details.stream()
-                                        .map(detail -> "\n    " + detail).collect(java.util.stream.Collectors.joining())));
+                                // The explanation can quote what the command printed: shown as text
+                                (msg, details) -> BuildOutput.warn(msg,
+                                        details.stream().map(BuildOutput::guestText).toArray(String[]::new)));
                         if (created.result().exitCode() != 0) {
                             var why = CowPoolBacking.failureExplanation(created.result().stderr());
                             throw new RuntimeException("Failed to create pool: " + (why.isEmpty()
@@ -855,7 +862,7 @@ public class DoctorCommand extends BaseCommand {
             }
             var reply = replyOpt.get();
             if ("deleted".equals(reply)) {
-                System.out.println("     deleted " + ref.path());
+                BuildOutput.stepNote("deleted " + ref.path());
             } else if ("error: unknown verb".equals(reply)) {
                 throw new IOException("this appliance does not support removing a single subvolume yet;"
                         + " wipe the pool instead with 'isx vm reset', or update the appliance");
@@ -1803,12 +1810,12 @@ public class DoctorCommand extends BaseCommand {
                                 var incusClient = incus();
                                 var migrated = InstanceNetwork.migrateAllInstancesToNewSubnet(
                                         incusClient);
-                                System.out.println("Migrated " + migrated + " instance"
+                                BuildOutput.stepNote("Migrated " + migrated + " instance"
                                         + (migrated == 1 ? "" : "s") + ".");
                                 var remaining = InstanceNetwork.findStaleSubnetInstances(
                                         incusClient);
                                 if (!remaining.isEmpty()) {
-                                    System.err.println("Warning: " + remaining.size()
+                                    BuildOutput.warn(remaining.size()
                                             + " instance(s) could not be migrated: "
                                             + String.join(", ", remaining));
                                 }
@@ -2120,26 +2127,30 @@ public class DoctorCommand extends BaseCommand {
 
     // ---- Bundle generation ----
 
-    private void generateBundle(List<Finding> findings) {
+    /** Writes the support archive and says what to do with it; false once its failure is reported. */
+    private boolean generateBundle(List<Finding> findings) {
         SupportBundle.Result result;
         try {
             result = SupportBundle.generate(formatFindings(findings), findingsToJson(findings));
         } catch (Exception e) {
-            System.err.println("Failed to generate bundle: " + e.getMessage());
-            return;
+            BuildOutput.error("could not generate the support archive: " + failure(e));
+            return false;
         }
 
-        System.out.println("\nSupport archive: " + result.archive());
-        System.out.println("  " + result.fileCount() + " files — findings, versions, logs, proxy and"
-                + " instance state, and a redacted config.");
-        System.out.println("  " + describeRedactions(result));
-        System.out.println("\nWhat to do with it:");
-        // tar does not create the -C target, so the mkdir is part of the instruction, and the
-        // archive path is quoted because a home directory may contain spaces.
-        System.out.println("  1. Review it first:  mkdir -p /tmp/isx-bundle && tar xzf '"
-                + result.archive() + "' -C /tmp/isx-bundle");
-        System.out.println("  2. Open an issue at " + SupportBundle.ISSUE_URL);
-        System.out.println("  3. Attach the archive. See REDACTIONS.txt inside for what was withheld.");
+        try (var group = BuildOutput.group("Support archive", result.archive().toString())) {
+            BuildOutput.step(result.fileCount() + " files — findings, versions, logs, proxy and"
+                    + " instance state, and a redacted config.");
+            BuildOutput.step(describeRedactions(result));
+        }
+        try (var group = BuildOutput.group("What to do with it", null)) {
+            // tar does not create the -C target, so the mkdir is part of the instruction, and the
+            // archive path is quoted because a home directory may contain spaces.
+            BuildOutput.step("1. Review it first:  mkdir -p /tmp/isx-bundle && tar xzf '"
+                    + result.archive() + "' -C /tmp/isx-bundle");
+            BuildOutput.step("2. Open an issue at " + SupportBundle.ISSUE_URL);
+            BuildOutput.step("3. Attach the archive. See REDACTIONS.txt inside for what was withheld.");
+        }
+        return true;
     }
 
     static String describeRedactions(SupportBundle.Result result) {
