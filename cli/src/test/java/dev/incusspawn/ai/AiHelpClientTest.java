@@ -77,6 +77,8 @@ class AiHelpClientTest {
         config.getClaude().setOauthToken(SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN);
         var message = AiHelpClient.noProviderMessage(config);
         assertTrue(message.contains("Claude Code"), message);
+        assertTrue(message.contains("Max and Team plans include monthly API credits"), message);
+        assertTrue(message.contains(AiHelpClient.API_CREDITS_URL), message);
         assertFalse(message.startsWith("No AI credentials"), message);
     }
 

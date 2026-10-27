@@ -2422,6 +2422,8 @@ An `oauth` account never satisfies it.
 A Claude Pro/Max token is only valid for Claude Code itself.
 The Messages API rejects it unless `system` is a block array whose *first* block is Claude Code's own identity string — rejecting it with an opaque HTTP 429 `rate_limit_error` whose message is the literal text `Error`, so the failure reads as a generic API error rather than an auth hint.
 Satisfying that check would mean isx presenting itself as Claude Code to spend the user's subscription, so a Pro/Max account simply keeps serving instances while an `api-key` or `vertex` account answers here.
+Max and Team plans include monthly API credits for a key, so that second account need not cost a subscriber extra (#1674).
+So when `isx init` saves an `oauth` account and nothing can answer here, `CredentialSetup.offerApiKeyForAiHelp` names the credits and offers to add an `api-key` account beside it, leaving the subscription the default.
 This is the one place isx calls a model API on its own behalf; everywhere else (`ProxyCredentials`, `ClaudeSetup`, `PiSetup`) credentials are only forwarded into instances.
 Because providers answer errors with varying usefulness, `describeError()` reports the HTTP status, the error `type` and the `request_id` alongside the message.
 `isx ask` always uses that first one.

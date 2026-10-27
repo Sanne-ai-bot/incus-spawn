@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -148,7 +150,7 @@ class ClaudeAuthFlowTest {
 
     @Test
     void aVerifiedOauthTokenIsSaved() {
-        run(new FakeInit().acceptOauth(OAUTH_TOKEN), new ScriptedPrompts().line("2").secret(OAUTH_TOKEN));
+        run(new FakeInit().acceptOauth(OAUTH_TOKEN), new ScriptedPrompts().line("2").secret(OAUTH_TOKEN).line(""));
 
         assertEquals(SpawnConfig.ClaudeAccountType.OAUTH, savedAccount().effectiveType());
         assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
@@ -157,10 +159,55 @@ class ClaudeAuthFlowTest {
     @Test
     void theOauthFlowOffersToRunSetupTokenWhenClaudeIsInstalled() {
         var init = new FakeInit().withClaudeCli().acceptOauth(OAUTH_TOKEN);
-        run(init, new ScriptedPrompts().line("2", "").secret(OAUTH_TOKEN));
+        run(init, new ScriptedPrompts().line("2", "").secret(OAUTH_TOKEN).line(""));
 
         assertEquals(1, init.setupTokenRuns);
         assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
+    }
+
+    /**
+     * A subscription token cannot answer AI Help, but a Max or Team plan includes API credit that
+     * can: saving one names the credits and adds an API-key account beside it on request (#1674).
+     */
+    @Test
+    void anOauthAccountIsOfferedAnApiKeyAccountForAiHelp() {
+        var out = RecordingOutput.during(() -> run(new FakeInit().acceptOauth(OAUTH_TOKEN).acceptKey(API_KEY),
+                new ScriptedPrompts().line("2").secret(OAUTH_TOKEN).line("y", "api").secret(API_KEY)));
+
+        var accounts = savedAccounts();
+        assertEquals(Set.of("default", "api"), accounts.keySet());
+        assertEquals(OAUTH_TOKEN, accounts.get("default").getOauthToken());
+        assertEquals(API_KEY, accounts.get("api").getApiKey());
+        assertEquals("default", savedClaude().accountName(), "the subscription keeps serving instances");
+        var said = out.events().stream().map(RecordingOutput.Event::text).toList();
+        assertTrue(said.stream().anyMatch(line -> line.contains("Max and Team plans include monthly API credits")), said::toString);
+        assertTrue(said.stream().anyMatch(line -> line.contains(AiHelpClient.API_CREDITS_URL)), said::toString);
+    }
+
+    @Test
+    void decliningTheApiKeyOfferSavesTheOauthAccountAlone() {
+        run(new FakeInit().acceptOauth(OAUTH_TOKEN), new ScriptedPrompts().line("2").secret(OAUTH_TOKEN).line("n"));
+
+        assertEquals(Set.of("default"), savedAccounts().keySet());
+        assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
+    }
+
+    /** A blank key at the offer keeps the subscription and does not call Claude setup skipped. */
+    @Test
+    void aBlankKeyAtTheOfferKeepsTheOauthAccount() {
+        run(new FakeInit().acceptOauth(OAUTH_TOKEN),
+                new ScriptedPrompts().line("2").secret(OAUTH_TOKEN).line("y", "api").secret(""));
+
+        assertEquals(Set.of("default"), savedAccounts().keySet());
+    }
+
+    /** An account that already answers AI Help makes the offer pointless, so it is not made. */
+    @Test
+    void noApiKeyOfferWhenAnAccountAlreadyServesAiHelp() throws Exception {
+        run(new FakeInit().acceptOauth(OAUTH_TOKEN), seed(ONE_LEGACY_KEY),
+                new ScriptedPrompts().line("a", "work", "2").secret(OAUTH_TOKEN));
+
+        assertEquals(Set.of("default", "work"), savedAccounts().keySet());
     }
 
     @Test
@@ -268,7 +315,7 @@ class ClaudeAuthFlowTest {
     @Test
     void aVerifiedEnvironmentOauthTokenIsSavedOnEnter() {
         run(new FakeInit().env("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN).acceptOauth(OAUTH_TOKEN),
-                ScriptedPrompts.lines(""));
+                ScriptedPrompts.lines("", ""));
         assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
     }
 
