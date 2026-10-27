@@ -5,7 +5,7 @@
 9 0 cli/src/main/java/dev/incusspawn/IncusSpawn.java
 24 0 cli/src/main/java/dev/incusspawn/command/AccountCommand.java
 24 5 cli/src/main/java/dev/incusspawn/command/AskCommand.java
-13 0 cli/src/main/java/dev/incusspawn/command/BaseCommand.java
+12 0 cli/src/main/java/dev/incusspawn/command/BaseCommand.java
 11 0 cli/src/main/java/dev/incusspawn/command/BranchCommand.java
 42 1 cli/src/main/java/dev/incusspawn/command/BuildCommand.java
 1 0 cli/src/main/java/dev/incusspawn/command/BuildInterrupt.java

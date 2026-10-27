@@ -235,7 +235,7 @@ public class InitCommand extends BaseCommand {
             return result.getResultValue() == 0 && hasBeenInitialized();
         } catch (Exception e) {
             // A missing or blank message would say nothing, and init would fail silently
-            BuildOutput.error(e.getMessage() != null && !e.getMessage().isBlank() ? e.getMessage() : e.toString());
+            BuildOutput.error(failure(e));
             return false;
         }
     }

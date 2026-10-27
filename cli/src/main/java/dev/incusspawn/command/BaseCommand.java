@@ -23,7 +23,7 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
             throw e;
         } catch (Exception e) {
             BuildOutput.abandonStep();
-            System.err.println("Error: " + e.getMessage());
+            BuildOutput.error(failure(e));
             return CommandResult.valueOf(1);
         } finally {
             // A step an exception cut short must not stay animated, nor keep the streams guarded
@@ -34,6 +34,12 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
 
     protected CommandResult doExecute() throws Exception {
         return CommandResult.SUCCESS;
+    }
+
+    /** What a failed command says: the exception's message, or the exception's class when it has none. */
+    static String failure(Exception e) {
+        var message = e.getMessage();
+        return message == null || message.isBlank() ? e.getClass().getName() : message;
     }
 
     /**
