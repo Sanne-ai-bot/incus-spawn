@@ -514,6 +514,90 @@ class RepoClonerTest {
                 "step output should contain the prime's captured stdout");
     }
 
+    private static final String PKIX = "Exception in thread \"main\" javax.net.ssl.SSLHandshakeException:"
+            + " (certificate_unknown) PKIX path building failed: unable to find valid certification path";
+
+    /** A container whose prime answers {@code primes} in turn; every other command succeeds. */
+    private static List<String> primeAnswers(IncusClient incus, IncusClient.ExecResult... primes) {
+        var calls = java.util.Collections.synchronizedList(new java.util.ArrayList<String>());
+        var next = new java.util.concurrent.atomic.AtomicInteger();
+        when(incus.shellExec(anyString(), any(String[].class))).thenAnswer(inv -> {
+            String[] command = java.util.Arrays.copyOfRange(inv.getArguments(), 1, inv.getArguments().length,
+                    String[].class);
+            calls.add("root: " + String.join(" ", command));
+            return OK;
+        });
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenAnswer(inv -> {
+            String script = inv.getArgument(2);
+            calls.add(inv.getArgument(1) + ": " + script);
+            return script.startsWith("cd ") ? primes[Math.min(next.getAndIncrement(), primes.length - 1)] : OK;
+        });
+        return calls;
+    }
+
+    @Test
+    void aPrimeThatDownloadsItsOwnJdkRunsAgainOnceThatJdkTrustsTheIsxCa() {
+        // #1746: `mise x -- ./gradlew dependencies` downloads a JDK and uses it at once, before the
+        // isx-trust path unit has bound it, so the Gradle wrapper's download fails PKIX.
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var calls = primeAnswers(incus, new IncusClient.ExecResult(1, PKIX, ""), OK);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("isx-jbang");
+        imageDef.setRepos(List.of(repo("https://github.com/jbangdev/jbang", "~/jbang",
+                "mise x -- ./gradlew dependencies")));
+
+        cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
+
+        var prime = "agentuser: cd '/home/agentuser/jbang' && mise x -- ./gradlew dependencies";
+        assertEquals(2, calls.stream().filter(prime::equals).count(), String.join("\n", calls));
+        int first = calls.indexOf(prime);
+        int second = calls.lastIndexOf(prime);
+        var between = String.join("\n", calls.subList(first, second));
+        assertTrue(between.contains("root: /usr/local/bin/isx-trust /usr/lib/jvm /opt /usr/local"), between);
+        assertTrue(between.contains("agentuser: /usr/local/bin/isx-trust '/home/agentuser/opt' "), between);
+        assertTrue(between.contains("'/home/agentuser/.local/share/mise/installs/java'"), between);
+        // The build installed the helper before the primes; another prime may be running it.
+        assertFalse(between.contains("cat > '/usr/local/bin/isx-trust'"), between);
+    }
+
+    @Test
+    void aPrimeThatFailsForAnotherReasonRunsOnce() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var calls = primeAnswers(incus, new IncusClient.ExecResult(1, "npm ERR! peer dep missing", ""), OK);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "npm install")));
+
+        assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertEquals(1, calls.stream().filter(c -> c.endsWith("npm install")).count(), String.join("\n", calls));
+        assertTrue(calls.stream().noneMatch(c -> c.contains("isx-trust")), String.join("\n", calls));
+    }
+
+    @Test
+    void aPrimeStillUntrustedAfterTheBindSaysToRunIsxTrustOnItsRuntime() {
+        // A runtime unpacked outside the landing directories is not bound by a bare isx-trust.
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var calls = primeAnswers(incus, new IncusClient.ExecResult(1, PKIX, ""),
+                new IncusClient.ExecResult(1, "", "ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED"));
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "./fetch-deps")));
+
+        var ex = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertEquals(2, calls.stream().filter(c -> c.endsWith("./fetch-deps")).count(), String.join("\n", calls));
+        assertTrue(ex.getMessage().contains("isx-trust <dir>"), ex.getMessage());
+        assertTrue(ex.stepOutput().contains("CERTIFICATE_VERIFY_FAILED"), ex.stepOutput());
+        assertTrue(ex.stepOutput().contains("PKIX path building failed"), "and the first run's: " + ex.stepOutput());
+    }
+
     @Test
     void failedPrimeOutputCannotDriveTheTerminal() {
         // A prime is code the repository controls: what it prints is shown as text (#1588).
