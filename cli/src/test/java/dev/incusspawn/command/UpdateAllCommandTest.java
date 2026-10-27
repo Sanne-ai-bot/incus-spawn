@@ -1,12 +1,15 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.RecordingOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
@@ -20,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+// The address a template is pinned to is claimed under a lock in the home directory
+@ExtendWith(IsolatedHome.class)
 class UpdateAllCommandTest {
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
@@ -29,32 +34,35 @@ class UpdateAllCommandTest {
     /** Each command run as root, joined with spaces, in order. */
     private final List<String> rootCommands = new ArrayList<>();
 
-    /** A template whose every step succeeds; each test fails one. Records what runs as agentuser. */
+    private FakeIncusDaemon daemon;
+
+    /** A stopped base template whose every step succeeds; each test fails one. Records what runs as agentuser. */
     private IncusClient incus() {
-        var incus = mock(IncusClient.class);
-        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"));
-        when(incus.shellExec(anyString(), any(String[].class))).thenAnswer(inv -> {
+        return incus("container");
+    }
+
+    private IncusClient incus(String type) {
+        daemon = new FakeIncusDaemon().instance(NAME, type, "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
+        var incus = spy(daemon.client());
+        doNothing().when(incus).waitForReady(anyString(), any());
+        doAnswer(inv -> {
             var args = inv.getArguments();
             // Matchers pass null while a stub is set up
             if (NAME.equals(args[0])) rootCommands.add(String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length, String[].class)));
             return OK;
-        });
-        when(incus.shellExec(NAME, "which", "npm")).thenReturn(new IncusClient.ExecResult(1, "", ""));
-        when(incus.execInContainer(eq(NAME), eq("agentuser"), anyString())).thenAnswer(inv -> {
+        }).when(incus).shellExec(anyString(), any(String[].class));
+        doReturn(new IncusClient.ExecResult(1, "", "")).when(incus).shellExec(NAME, "which", "npm");
+        doAnswer(inv -> {
             guestScripts.add(inv.getArgument(2));
             return OK;
-        });
+        }).when(incus).execInContainer(eq(NAME), eq("agentuser"), anyString());
         rootCommands.clear();
         return incus;
     }
 
     /** A base template as read, in {@code status}. */
     private static JqObject template(String status) {
-        return template(status, "container");
-    }
-
-    private static JqObject template(String status, String type) {
-        return JqObject.builder(3).put("status", status).put("type", type)
+        return JqObject.builder(3).put("status", status).put("type", "container")
                 .put("config", JqObject.builder(1).put(Metadata.TYPE, Metadata.TYPE_BASE).build()).build();
     }
 
@@ -71,16 +79,98 @@ class UpdateAllCommandTest {
     @Test
     void aTemplateStartsOnAHostThatCannotEnforceIpFiltering() {
         var incus = incus();
-        when(incus.findNic(eq(NAME), anyString()))
-                .thenReturn(new IncusClient.NicDevice("eth0", Map.of("security.ipv4_filtering", "true")));
         doThrow(new IncusException("Failed to start device \"eth0\": Failed to run: ebtables -t filter -A INPUT"
                 + " -i veth0 -j DROP: exit status 255 (The kernel doesn't support the ebtables 'filter' table.)"))
-                .doNothing().when(incus).start(NAME);
+                .doCallRealMethod().when(incus).start(NAME);
 
         assertEquals(0, update(incus));
 
         verify(incus).deviceConfigSet(NAME, "eth0", "security.ipv4_filtering", "false");
         verify(incus, times(2)).start(NAME);
+    }
+
+    /**
+     * A template runs its prime commands as a build does, so it is pinned to an address with IP
+     * spoofing protection as a build is (#1743): unfiltered, code in it could take a stopped
+     * branch's address and be served that branch's credentials. Once stopped it gives it back.
+     */
+    @Test
+    void aTemplateRunsItsPrimeCommandsOnAPinnedFilteredAddress() throws Exception {
+        var incus = incus();
+        var nicDuringPrime = new ArrayList<JqValue>();
+        var staticIpDuringPrime = new ArrayList<String>();
+        doAnswer(inv -> {
+            var instance = daemon.instance(NAME);
+            nicDuringPrime.add(instance.path("expanded_devices").path("eth0"));
+            staticIpDuringPrime.add(instance.path("config").pathText(Metadata.STATIC_IP, ""));
+            return OK;
+        }).when(incus).execInContainer(eq(NAME), eq("agentuser"), contains("./prime.sh"));
+        var resolved = new LinkedHashMap<String, ImageDef>();
+        resolved.put(NAME, ImageDef.parseYaml("name: " + NAME + "\nrepos:\n  - url: https://github.com/a/b.git\n"
+                + "    path: ~/b\n    prime: ./prime.sh\n"));
+        var command = new UpdateAllCommand();
+        command.prime = true;
+
+        assertEquals(0, command.updateTemplates(incus, resolved));
+
+        assertEquals(1, nicDuringPrime.size(), "the prime command ran");
+        var nic = nicDuringPrime.getFirst();
+        assertEquals("true", nic.pathText("security.ipv4_filtering", ""),
+                "without filtering the template can take any address on the bridge");
+        assertFalse(staticIpDuringPrime.getFirst().isEmpty(), "the template is known to the proxy by its own address");
+        assertEquals(staticIpDuringPrime.getFirst(), nic.pathText("ipv4.address", ""));
+        var after = daemon.instance(NAME);
+        assertEquals("Stopped", after.pathText("status", ""));
+        assertFalse(after.path("config").has(Metadata.STATIC_IP), "the stopped template gives its address back");
+        assertEquals(0, after.path("devices").size(), "the NIC is the profile's again");
+    }
+
+    /** A template that has been granted nothing is served nothing: no proof or grant goes with its address. */
+    @Test
+    void aTemplateIsPinnedWithoutProofsOrGrants() {
+        var incus = incus();
+        daemon.instance(NAME, "container", "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.INSTANCE_PROOF_SHA256, "stale", Metadata.INSTANCE_SECRET_SHA256, "stale",
+                Metadata.MCP_CALLER, "true"));
+        var configDuringUpdate = new ArrayList<JqValue>();
+        doAnswer(inv -> {
+            configDuringUpdate.add(daemon.instance(NAME).path("config"));
+            return OK;
+        }).when(incus).shellExec(NAME, "dnf", "update", "-y");
+
+        assertEquals(0, update(incus));
+
+        var config = configDuringUpdate.getFirst();
+        assertFalse(config.pathText(Metadata.STATIC_IP, "").isEmpty());
+        assertFalse(config.has(Metadata.INSTANCE_PROOF_SHA256));
+        assertFalse(config.has(Metadata.INSTANCE_SECRET_SHA256));
+        assertFalse(config.has(Metadata.MCP_CALLER));
+    }
+
+    /** A template that would not start gives back the address it was pinned to. */
+    @Test
+    void aTemplateThatFailsToStartGivesItsAddressBack() {
+        var incus = incus();
+        doThrow(new IncusException("Failed to start: disk full")).when(incus).start(NAME);
+
+        assertThrows(IncusException.class, () -> update(incus));
+
+        assertFalse(daemon.instance(NAME).path("config").has(Metadata.STATIC_IP));
+        assertEquals(0, daemon.instance(NAME).path("devices").size());
+    }
+
+    /** Pinning changes the NIC, which must not happen under a running guest: such a template is refused, and left as it is. */
+    @Test
+    void aRunningTemplateIsRefusedWithoutTouchingIt() {
+        var incus = incus();
+        daemon.instance(NAME, "container", "Running", Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
+
+        var e = assertThrows(IllegalStateException.class, () -> update(incus));
+
+        assertTrue(e.getMessage().contains("must be stopped"), e.getMessage());
+        assertEquals("Running", daemon.instance(NAME).pathText("status", ""));
+        assertEquals(0, daemon.instance(NAME).path("devices").size());
+        verify(incus, never()).stop(NAME);
     }
 
     /** A template the update leaves running fails the next update-all's start. */
@@ -97,7 +187,7 @@ class UpdateAllCommandTest {
     @Test
     void aTemplateIsStoppedWhenAGuestStepThrows() {
         var incus = incus();
-        when(incus.shellExec(NAME, "dnf", "update", "-y")).thenThrow(new IncusException("exec failed"));
+        doThrow(new IncusException("exec failed")).when(incus).shellExec(NAME, "dnf", "update", "-y");
 
         assertThrows(IncusException.class, () -> update(incus));
 
@@ -121,7 +211,7 @@ class UpdateAllCommandTest {
     @Test
     void aTemplateThatDiedIsNotForceStopped() {
         var incus = incus();
-        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"), template("Stopped"));
+        doReturn(template("Stopped")).when(incus).instanceMetadataOrThrow(NAME);
         doThrow(new IncusException("Timed out waiting for tpl-test")).when(incus).waitForReady(eq(NAME), any());
         doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
 
@@ -134,7 +224,7 @@ class UpdateAllCommandTest {
     @Test
     void aTemplateAlreadyStoppedAtTheEndDoesNotFailTheCommand() {
         var incus = incus();
-        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"), template("Stopped"));
+        doReturn(template("Stopped")).when(incus).instanceMetadataOrThrow(NAME);
         doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
 
         assertEquals(0, update(incus));
@@ -145,8 +235,7 @@ class UpdateAllCommandTest {
     @Test
     void aTemplateIsForceStoppedWhenItsStatusCannotBeRead() {
         var incus = incus();
-        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"))
-                .thenThrow(new IncusException("Failed to read instance 'tpl-test' (HTTP 500)"));
+        doThrow(new IncusException("Failed to read instance 'tpl-test' (HTTP 500)")).when(incus).instanceMetadataOrThrow(NAME);
         doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
 
         assertEquals(0, update(incus));
@@ -156,7 +245,7 @@ class UpdateAllCommandTest {
     @Test
     void aTemplateGoneByTheEndIsNotForceStopped() {
         var incus = incus();
-        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"), null);
+        doReturn(null).when(incus).instanceMetadataOrThrow(NAME);
         doThrow(new IncusException("Failed to stop tpl-test")).when(incus).stop(NAME);
 
         assertEquals(0, update(incus));
@@ -185,7 +274,7 @@ class UpdateAllCommandTest {
     @Test
     void aTmpThatCannotBeEmptiedDoesNotFailTheUpdate() {
         var incus = incus();
-        when(incus.shellExec(NAME, "sh", "-c", GuestUpdate.EMPTY_TMP_SCRIPT)).thenThrow(new IncusException("exec failed"));
+        doThrow(new IncusException("exec failed")).when(incus).shellExec(NAME, "sh", "-c", GuestUpdate.EMPTY_TMP_SCRIPT);
         assertEquals(0, update(incus));
         verify(incus).stop(NAME);
     }
@@ -198,8 +287,8 @@ class UpdateAllCommandTest {
     @Test
     void aFailedSystemUpdateFailsTheCommand() {
         var incus = incus();
-        when(incus.shellExec(NAME, "dnf", "update", "-y"))
-                .thenReturn(new IncusClient.ExecResult(1, "", "Failed to download metadata"));
+        doReturn(new IncusClient.ExecResult(1, "", "Failed to download metadata"))
+                .when(incus).shellExec(NAME, "dnf", "update", "-y");
 
         assertEquals(1, update(incus));
     }
@@ -221,8 +310,7 @@ class UpdateAllCommandTest {
     /** A VM's NIC is not eth0 (#997), and its guest may not run systemd-networkd. */
     @Test
     void aVmTemplateWaitsForItsNetworkWithoutNamingANic() {
-        var incus = incus();
-        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running", "virtual-machine"));
+        var incus = incus("virtual-machine");
 
         assertEquals(0, update(incus));
 
@@ -237,8 +325,8 @@ class UpdateAllCommandTest {
     @Test
     void aNetworkThatNeverComesUpFailsTheUpdateWithoutRunningDnf() {
         var incus = incus();
-        when(incus.shellExec(eq(NAME), eq("sh"), eq("-c"), contains("mirrors.fedoraproject.org")))
-                .thenReturn(new IncusClient.ExecResult(4, "", ""));
+        doReturn(new IncusClient.ExecResult(4, "", ""))
+                .when(incus).shellExec(eq(NAME), eq("sh"), eq("-c"), contains("mirrors.fedoraproject.org"));
 
         var said = RecordingOutput.during(() -> assertEquals(1, update(incus)));
 
@@ -252,10 +340,10 @@ class UpdateAllCommandTest {
     @Test
     void aTemplateWithoutAnAddressFailsWithTheGuestsNetworkState() {
         var incus = incus();
-        when(incus.shellExec(eq(NAME), eq("sh"), eq("-c"), contains("mirrors.fedoraproject.org")))
-                .thenReturn(new IncusClient.ExecResult(3, "", ""));
-        when(incus.shellExec(eq(NAME), eq("sh"), eq("-c"), contains("networkctl")))
-                .thenReturn(new IncusClient.ExecResult(0, "eth0: no carrier", ""));
+        doReturn(new IncusClient.ExecResult(3, "", ""))
+                .when(incus).shellExec(eq(NAME), eq("sh"), eq("-c"), contains("mirrors.fedoraproject.org"));
+        doReturn(new IncusClient.ExecResult(0, "eth0: no carrier", ""))
+                .when(incus).shellExec(eq(NAME), eq("sh"), eq("-c"), contains("networkctl"));
 
         var said = RecordingOutput.during(() -> assertEquals(1, update(incus)));
 
@@ -418,8 +506,8 @@ class UpdateAllCommandTest {
     @Test
     void aFailedGitFetchFailsTheCommand() {
         var incus = incus();
-        when(incus.execInContainer(eq(NAME), eq("agentuser"), anyString()))
-                .thenReturn(new IncusClient.ExecResult(1, "", "git fetch failed in /home/agentuser/repo/"));
+        doReturn(new IncusClient.ExecResult(1, "", "git fetch failed in /home/agentuser/repo/"))
+                .when(incus).execInContainer(eq(NAME), eq("agentuser"), anyString());
 
         assertEquals(1, update(incus));
     }

@@ -158,7 +158,7 @@ class IpFilteringFallbackTest {
                         .put(Metadata.TYPE, Metadata.TYPE_CLONE).build()).build();
 
         assertThrows(IllegalArgumentException.class,
-                () -> InstanceLifecycle.startTemplate(incus, NAME, instance, RecordingOutput.QUIET));
+                () -> InstanceLifecycle.startTemplate(incus, NAME, new IncusClient.InstanceRead(instance, null), RecordingOutput.QUIET));
         verify(incus, never()).start(any());
     }
 

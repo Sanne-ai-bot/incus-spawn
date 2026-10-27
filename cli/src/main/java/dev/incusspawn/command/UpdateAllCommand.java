@@ -8,6 +8,7 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -121,15 +122,20 @@ public class UpdateAllCommand extends BaseCommand {
     private record UpdateResult(boolean primesSkipped, Set<String> failedSteps, boolean leftRunning) {}
 
     private UpdateResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
-        var instance = incus.instanceMetadataOrThrow(name);
-        var machineType = IncusClient.machineType(instance);
-        InstanceLifecycle.startTemplate(incus, name, instance, BuildOutput.bound());
-        // Stopped however the update ends: a template left running fails the next update-all's start
+        var read = incus.readInstance(name);
+        var machineType = IncusClient.machineType(read.metadata());
+        // Before the try: a template refused here was not started, so is not this update's to stop
+        InstanceLifecycle.requireStoppedTemplate(name, read);
+        // Stopped however the update ends, even when its start failed: a template left running
+        // fails the next update-all's start
         var failedSteps = new LinkedHashSet<String>();
         boolean primesSkipped = false;
         boolean leftRunning;
         try {
+            // Pinned and filtered as a build is, since it runs the same prime commands (#1743)
+            var address = InstanceLifecycle.startTemplate(incus, name, read, BuildOutput.bound());
             incus.waitForReady(name, machineType);
+            InstanceNetwork.requireBuildAddress(incus, name, address);
 
             // Every step below needs the network: without one, each would only fail the same way
             if (!GuestUpdate.network(incus, name, machineType)) {
@@ -147,6 +153,8 @@ public class UpdateAllCommand extends BaseCommand {
             GuestUpdate.emptyTmp(incus, name);
         } finally {
             leftRunning = !stop(incus, name);
+            // Only once stopped, and even after a failed claim: its write may have reached Incus
+            if (!leftRunning) InstanceNetwork.releaseBuildAddressOrWarn(incus, name, BuildOutput.bound());
         }
         return new UpdateResult(primesSkipped, failedSteps, leftRunning);
     }

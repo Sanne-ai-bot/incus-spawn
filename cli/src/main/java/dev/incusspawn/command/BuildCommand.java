@@ -2340,21 +2340,7 @@ public class BuildCommand extends BaseCommand {
         BuildOutput.stepStart("Stopping image...");
         incus.stop(buildName);
         BuildOutput.stepDone();
-        if (started.address() != null) releaseBuildAddress(buildName);
-    }
-
-    /**
-     * Give back the finished template's address. Warns rather than fails: the template is
-     * built, and an address it keeps costs one of the bridge's addresses, not correctness --
-     * its copies never carry it, and it is freed when the template is next rebuilt or removed.
-     */
-    private void releaseBuildAddress(String buildName) {
-        try {
-            InstanceNetwork.releaseBuildAddress(incus, buildName);
-        } catch (RuntimeException e) {
-            BuildOutput.warn("Could not release the build's static IP: " + e.getMessage()
-                    + ". The template keeps it until it is rebuilt or removed.");
-        }
+        if (started.address() != null) InstanceNetwork.releaseBuildAddressOrWarn(incus, buildName, BuildOutput.bound());
     }
 
     /** Say which accounts the build is served, so a wrong one is not silent. */

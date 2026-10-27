@@ -2067,6 +2067,17 @@ The proxy is another matter: until it re-reads, it would serve the deleted build
 So `isx clean`, `isx clean pool` and `isx doctor`'s remediation signal it after deleting failed builds (`CleanCommand.deleteFailedBuilds`/`deleteFailedBuild`), as `isx destroy` does.
 A build or branch signals it before its first start anyway, which leaves only a manual `incus delete` to the proxy's refresh backstop.
 
+**A template is pinned while `isx update-all` runs it (#1743).**
+An update runs a template's `prime` commands, npm updates and git fetches, as a build does.
+It used to run them on a DHCP address with no filtering, so code in the template could re-address `eth0` as a stopped branch's `STATIC_IP`.
+The proxy identifies callers by address, so it would attribute that traffic to the branch.
+`InstanceLifecycle.startTemplate` now claims an address as a build does (`InstanceNetwork.assignBuildAddress`), with `security.ipv4_filtering`, in one write before the start, and signals the proxy as a build does.
+The update then checks the guest took it (`requireBuildAddress`) and gives it back once the template has stopped, as a build does.
+A template that is running is refused before anything is written, and one whose guest did not take its address fails its update, naming `update-all` as what to retry; either fails that template alone, and `update-all` goes on to the next.
+Unlike a build, the template gets no proofs and no grant: the same write clears any proof verifier, secret or `mcp-caller` stamp, so the proxy serves it no credentials, as before.
+`isx project update` already pinned the address through `BuildAccounts.Project`, which also gives the project template temporary proofs; `update-all` does not, so the same project template is served its accounts by one and not the other.
+On a host that cannot enforce filtering the start drops it and warns, as for a build or a branch.
+
 **This only works because the identity cannot be forged.**
 `security.ipv4_filtering` is set on the NIC alongside the pinned `ipv4.address`.
 Without it, root inside a container could re-address its interface as a neighbour and spend that neighbour's subscription — per-instance credentials would *look* like isolation while providing none, which is worse than not having them.
