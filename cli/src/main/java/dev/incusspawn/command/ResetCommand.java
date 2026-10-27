@@ -48,8 +48,8 @@ public class ResetCommand extends BaseCommand {
                             || !poolScan.baseImages().isEmpty() || poolScan.dnfCacheExists());
         } catch (Exception e) {
             incusReachable = false;
-            System.err.println("Warning: could not reach Incus daemon: " + e.getMessage());
-            System.err.println("Incus-managed resources (containers, templates, pool) will be skipped.");
+            BuildOutput.warn("Could not reach Incus daemon: " + e.getMessage(),
+                    "Incus-managed resources (containers, templates, pool) will be skipped.");
         }
 
         boolean proxyInstalled = ProxyService.isInstalled();
@@ -70,7 +70,7 @@ public class ResetCommand extends BaseCommand {
                 || !hostDirInfos.isEmpty();
 
         if (!hasAnything) {
-            System.out.println("Nothing to reset — no incus-spawn data found.");
+            BuildOutput.step("Nothing to reset — no incus-spawn data found.");
             return CommandResult.SUCCESS;
         }
 
@@ -79,31 +79,24 @@ public class ResetCommand extends BaseCommand {
         BuildOutput.header("Reset plan");
 
         if (!incusReachable) {
-            System.out.println("  (Incus daemon unreachable — containers, templates, and pool will be skipped)");
+            BuildOutput.step("(Incus daemon unreachable — containers, templates, and pool will be skipped)");
         }
 
-        if (!clones.isEmpty()) {
-            System.out.println("  Destroy " + clones.size() + " instance(s):");
-            for (var n : clones) System.out.println("    " + n);
-        }
-
-        if (!builtTemplates.isEmpty()) {
-            System.out.println("  Destroy " + builtTemplates.size() + " template(s):");
-            for (var n : builtTemplates) System.out.println("    " + n);
-        }
+        planned("Destroy " + clones.size() + " instance(s)", clones);
+        planned("Destroy " + builtTemplates.size() + " template(s)", builtTemplates);
 
         if (hasPoolArtifacts) {
-            System.out.println("  Clean storage pool artifacts (failed builds, unused and cached base images, DNF cache)");
+            BuildOutput.step("Clean storage pool artifacts (failed builds, unused and cached base images, DNF cache)");
         }
 
         if (proxyInstalled) {
-            System.out.println("  Uninstall proxy service, DNS overrides, and redirect rules");
+            BuildOutput.step("Uninstall proxy service, DNS overrides, and redirect rules");
         } else {
-            System.out.println("  Clear any remaining DNS overrides and redirect rules");
+            BuildOutput.step("Clear any remaining DNS overrides and redirect rules");
         }
 
         if (vmRunning) {
-            System.out.println("  Stop the running VM appliance");
+            BuildOutput.step("Stop the running VM appliance");
         }
         if (vmDisksExist) {
             long diskSize = 0;
@@ -113,21 +106,15 @@ public class ResetCommand extends BaseCommand {
                 if (Files.exists(Environment.vmDataImage()))
                     diskSize += Files.size(Environment.vmDataImage());
             } catch (Exception ignored) {}
-            System.out.println("  DELETE VM disk images (" + CleanCommand.formatSize(diskSize)
+            BuildOutput.step("DELETE VM disk images (" + CleanCommand.formatSize(diskSize)
                     + ") — the VM will need to be recreated from scratch");
         }
 
-        if (!hostDirInfos.isEmpty()) {
-            System.out.println("  Remove host data:");
-            for (var info : hostDirInfos) {
-                System.out.printf("    %-50s %s%n", info.path(), CleanCommand.formatSize(info.size()));
-            }
-        }
+        planned("Remove host data", hostDirInfos.stream()
+                .map(info -> String.format("%-50s %s", info.path(), CleanCommand.formatSize(info.size())))
+                .toList());
 
-        System.out.println();
-        System.out.println("This returns incus-spawn to a freshly-installed state.");
-        System.out.println("Run 'isx init' afterwards to set up again.");
-        System.out.println();
+        BuildOutput.section("This returns incus-spawn to a freshly-installed state. Run 'isx init' afterwards to set up again.");
 
         if (!confirmDestructive("This will destroy all containers, templates, and VM disk images listed above. Proceed?",
                 skipConfirmation, "--skip-confirmation")) {
@@ -158,14 +145,16 @@ public class ResetCommand extends BaseCommand {
             var result = CleanCommand.cleanPool(incus);
             if (result != null) {
                 if (result.failedBuildsDeleted() > 0)
-                    System.out.println("  Removed " + result.failedBuildsDeleted() + " failed build(s)");
+                    BuildOutput.step("Removed " + result.failedBuildsDeleted() + " failed build(s)");
                 if (result.unusedImagesDeleted() > 0)
-                    System.out.println("  Removed " + result.unusedImagesDeleted() + " unused image(s)");
+                    BuildOutput.step("Removed " + result.unusedImagesDeleted() + " unused image(s)");
                 if (result.baseImagesDeleted() > 0)
-                    System.out.println("  Removed " + result.baseImagesDeleted() + " cached base image(s)");
+                    BuildOutput.step("Removed " + result.baseImagesDeleted() + " cached base image(s)");
                 if (result.dnfCacheDeleted())
-                    System.out.println("  Removed DNF cache volume");
-                for (var w : result.warnings()) System.err.println("  Warning: " + w);
+                    BuildOutput.step("Removed DNF cache volume");
+                if (!result.warnings().isEmpty()) {
+                    BuildOutput.warn("Some storage pool artifacts were not removed:", result.warnings().toArray(String[]::new));
+                }
                 if (!result.warnings().isEmpty()) failed = true;
             }
         }
@@ -176,7 +165,7 @@ public class ResetCommand extends BaseCommand {
             try {
                 if (!ProxyService.uninstallService()) failed = true;
             } catch (Exception e) {
-                System.err.println("Warning: proxy uninstall failed: " + e.getMessage());
+                BuildOutput.warn("Proxy uninstall failed: " + e.getMessage());
                 failed = true;
             }
         } else {
@@ -189,7 +178,7 @@ public class ResetCommand extends BaseCommand {
         if (!ProxyConfig.clearRedirectRules()) failed = true;
         // The proxy-only ACL (#1137); Incus keeps it while an instance that was not reset uses it
         if (incusReachable && !incus.deleteNetworkAcl(ProxyOnlyAcl.NAME)) {
-            System.err.println("  Note: network ACL " + ProxyOnlyAcl.NAME + " could not be removed;"
+            BuildOutput.note("Network ACL " + ProxyOnlyAcl.NAME + " could not be removed;"
                     + " Incus keeps it while a proxy-only instance that was not reset uses it.");
         }
 
@@ -200,7 +189,7 @@ public class ResetCommand extends BaseCommand {
             BuildOutput.header("Stopping VM appliance");
             VmManager.stopToDelete();
             if (VmManager.isRunning()) {
-                System.err.println("Warning: VM is still running after stop attempt.");
+                BuildOutput.warn("VM is still running after stop attempt.");
                 vmStillRunning = true;
                 failed = true;
             }
@@ -211,7 +200,7 @@ public class ResetCommand extends BaseCommand {
             BuildOutput.header("Removing host data");
             for (var info : hostDirInfos) {
                 if (vmStillRunning && info.path().equals(Environment.vmStateDir())) {
-                    System.err.println("  Skipping " + info.path()
+                    BuildOutput.warn("Skipping " + info.path()
                             + " — VM is still running, disk images cannot be safely deleted.");
                     continue;
                 }
@@ -226,13 +215,21 @@ public class ResetCommand extends BaseCommand {
             }
         }
 
-        System.out.println();
         if (failed) {
-            System.err.println("Reset completed with warnings. Some items may not have been fully removed.");
+            BuildOutput.error("Reset did not remove everything.",
+                    "See the warnings above: some items may not have been fully removed.");
         } else {
             BuildOutput.success("Reset complete — incus-spawn is back to a freshly-installed state. Run 'isx init' to set up again.");
         }
 
         return failed ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
+    }
+
+    /** One item of the plan that covers several things, each on its own line under it; nothing when there are none. */
+    private static void planned(String title, List<String> items) {
+        if (items.isEmpty()) return;
+        try (var group = BuildOutput.group(title, null)) {
+            items.forEach(BuildOutput::step);
+        }
     }
 }

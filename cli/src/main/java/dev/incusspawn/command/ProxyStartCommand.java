@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.Environment;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -61,7 +62,7 @@ public class ProxyStartCommand extends BaseCommand {
             // A healthy answer may come from another proxy on the ports (#1570), which
             // restarting this service cannot end.
             if (!ProxyService.answeringIsTheService()) return CommandResult.FAILURE;
-            System.out.println("Proxy is already running (service-managed).");
+            BuildOutput.step("Proxy is already running (service-managed).");
             return CommandResult.SUCCESS;
         }
 
@@ -83,34 +84,31 @@ public class ProxyStartCommand extends BaseCommand {
             // to start" below follows the refusal. Already-healthy is answered above (#1048).
             if (!ProxyService.initComplete()) return CommandResult.FAILURE;
             if (serviceActive) {
-                System.err.println("Proxy service is registered but not responding. Restarting...");
+                BuildOutput.step("Proxy service is registered but not responding. Restarting...");
                 ProxyService.restart();
                 if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
                     return ProxyService.answeringIsTheService()
                             ? CommandResult.SUCCESS : CommandResult.FAILURE;
                 }
                 if (ProxyService.failedWithConfigError()) {
-                    System.err.println("Proxy failed due to a configuration problem (exit " + ProxyService.EXIT_CONFIG + ").");
+                    BuildOutput.error("Proxy failed due to a configuration problem (exit " + ProxyService.EXIT_CONFIG + ").",
+                            ProxyService.CHECK_LOGS);
                 } else {
-                    System.err.println("Proxy is still not responding after restart.");
-                    ProxyService.reportMacOsJob();
+                    BuildOutput.error("Proxy is still not responding after restart.", ProxyService.notResponding());
                 }
-                System.err.println("Check logs with: isx proxy logs");
                 return CommandResult.FAILURE;
             }
-            System.out.println("Starting proxy via service manager...");
+            BuildOutput.step("Starting proxy via service manager...");
             if (ProxyService.startService()) {
                 if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
                     if (!ProxyService.answeringIsTheService()) return CommandResult.FAILURE;
-                    System.out.println("Proxy service started.");
+                    BuildOutput.step("Proxy service started.");
                     return CommandResult.SUCCESS;
                 }
-                System.err.println("Proxy service started but is not responding.");
-                ProxyService.reportMacOsJob();
-                System.err.println("Check logs with: isx proxy logs");
+                BuildOutput.error("Proxy service started but is not responding.", ProxyService.notResponding());
                 return CommandResult.FAILURE;
             }
-            System.err.println("Proxy service failed to start. Check logs with: isx proxy logs");
+            BuildOutput.error("Proxy service failed to start.", ProxyService.CHECK_LOGS);
             return CommandResult.FAILURE;
         }
 
@@ -123,7 +121,7 @@ public class ProxyStartCommand extends BaseCommand {
         int code = proxy.run();
         // A proxy stopped because this process is exiting was asked to stop: nothing to diagnose.
         if (code != 0 && !proxy.stoppedOnShutdown()) {
-            explainAbnormalExit(code);
+            BuildOutput.warnBanner(ProxyService.describeExit(code), abnormalExitLines(code, Environment.proxyLogFile()));
         }
         return CommandResult.valueOf(code);
     }
@@ -207,46 +205,38 @@ public class ProxyStartCommand extends BaseCommand {
     private static final int LOG_TAIL_LINES = 10;
 
     /**
-     * When the foreground proxy exits non-zero, print a diagnosis. The exit status is the only
-     * signal we get — {@link ProxyService#describeExit} turns it into a cause — and a SIGKILL
+     * The lines of the banner that explains a foreground proxy's non-zero exit, under its cause:
+     * the log's last lines, then how to get a proxy that recovers. The exit status is the only
+     * signal we get — {@link ProxyService#describeExit} turns it into the cause — and a SIGKILL
      * bypasses the proxy's shutdown hook, so its log just stops mid-stream; that abrupt tail is
      * itself the clue, so we surface it inline.
      */
-    private void explainAbnormalExit(int code) {
-        var sep = BuildOutput.styled(BuildOutput.YELLOW, "─".repeat(60));
-        var logFile = Environment.proxyLogFile();
-        System.err.println();
-        System.err.println(sep);
-        System.err.println(BuildOutput.styled(BuildOutput.BOLD, ProxyService.describeExit(code)));
-        System.err.println();
-        System.err.println("Last lines of the proxy log (" + logFile + "):");
-        printLogTail(logFile);
+    static String[] abnormalExitLines(int code, Path logFile) {
+        var lines = new ArrayList<String>();
+        lines.add("");
+        lines.add("Last lines of the proxy log (" + logFile + "):");
+        // The banner prints its lines as given, and a log line can quote what a request carried
+        logTail(logFile).forEach(line -> lines.add(LOG_INDENT + OutputFormat.oneLine(line)));
         if (code != ProxyService.EXIT_CONFIG) {
-            System.err.println();
-            System.err.println("Foreground proxies don't auto-recover. To survive crashes, suspend/resume,");
-            System.err.println("and terminal close, install it as a managed service that restarts automatically:");
-            System.err.println("  " + BuildOutput.styled(BuildOutput.BOLD, "isx proxy install"));
+            lines.add("");
+            lines.add("Foreground proxies don't auto-recover. To survive crashes, suspend/resume,");
+            lines.add("and terminal close, install it as a managed service that restarts automatically:");
+            lines.add(LOG_INDENT + BuildOutput.styled(BuildOutput.BOLD, "isx proxy install"));
         }
-        System.err.println(sep);
+        return lines.toArray(String[]::new);
     }
 
-    /** Print the last {@link #LOG_TAIL_LINES} lines of the log via {@code tail} (O(1) seek). */
-    private void printLogTail(Path logFile) {
-        if (!Files.exists(logFile)) {
-            System.err.println("  (no log file found)");
-            return;
-        }
+    /** How far the log's lines, and the command to run, sit under what introduces them. */
+    private static final String LOG_INDENT = "  ";
+
+    /** The last {@link #LOG_TAIL_LINES} lines of the log via {@code tail} (O(1) seek), or why there are none. */
+    private static List<String> logTail(Path logFile) {
+        if (!Files.exists(logFile)) return List.of("(no log file found)");
         var lines = runTail(logFile);
-        if (lines == null) {
-            lines = readTailFallback(logFile);
-        }
-        if (lines == null) return;
-        for (String line : lines) {
-            System.err.println("  " + line);
-        }
+        return lines != null ? lines : readTailFallback(logFile);
     }
 
-    private static java.util.List<String> runTail(Path logFile) {
+    private static List<String> runTail(Path logFile) {
         try {
             var pb = new ProcessBuilder("tail", "-n", String.valueOf(LOG_TAIL_LINES), logFile.toString());
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
@@ -259,7 +249,7 @@ public class ProxyStartCommand extends BaseCommand {
         return null;
     }
 
-    private static java.util.List<String> readTailFallback(Path logFile) {
+    private static List<String> readTailFallback(Path logFile) {
         var tail = new ArrayDeque<String>(LOG_TAIL_LINES);
         try (var reader = Files.newBufferedReader(logFile)) {
             String line;
@@ -268,10 +258,9 @@ public class ProxyStartCommand extends BaseCommand {
                 tail.addLast(line);
             }
         } catch (IOException e) {
-            System.err.println("  (could not read log file: " + e.getMessage() + ")");
-            return null;
+            return List.of("(could not read log file: " + e.getMessage() + ")");
         }
-        return java.util.List.copyOf(tail);
+        return List.copyOf(tail);
     }
 
     private boolean hasNonDefaultOptions() {

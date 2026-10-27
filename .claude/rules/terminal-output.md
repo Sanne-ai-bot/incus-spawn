@@ -23,6 +23,8 @@ Key helpers: `section()` for a block of work at column 0, `header()` (bold bulle
 Every escape `BuildOutput` writes goes through `styled()`/`ansi()`, which is `TerminalProgress.isAnsiTerminal()`: false without a console, for `TERM=dumb`, and under a non-empty `NO_COLOR`.
 `warn`, `stepWarn`, `note` and `warnBanner` write to stderr; steps, headers, groups and `success` to stdout, so a piped action command's stdout holds what it did, not diagnostics.
 A line that *is* the command's result (a dry-run's "Would delete ...", pool usage, the current base image, "already installed") is a `step()`, never a `note()`.
+A query's answer (a status report, a table, `OutputFormat`'s records) is printed as given to `BuildOutput.results()`: the terminal's stdout, nothing while the TUI draws.
+Printers take it as a `PrintStream`, and tests hand them a `RecordingOutput`'s `results()`, which records each line as a `RESULT`.
 Styled text anywhere, a command included, goes through the public `BuildOutput.styled(style, text)` with its colour constants; only paths that draw on an ANSI terminal alone (the live step, `TerminalProgress` line formatters, the shell status bar) append them directly.
 `TerminalLink.link()` asks the same gate (`BuildOutput.ansi()`) and prints the bare URL off a terminal.
 An AI answer never reaches the terminal raw (#1413): `TerminalLink.plainText` turns what `OutputFormat.isControl` names into spaces, line feeds and tabs apart.

@@ -51,7 +51,7 @@ public class ProxyCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
-        System.out.println(commandInvocation.getHelpInfo());
+        BuildOutput.results().println(commandInvocation.getHelpInfo());
         return CommandResult.SUCCESS;
     }
 
@@ -80,13 +80,13 @@ public class ProxyCommand extends BaseCommand {
                 status = ProxyHealthCheck.check(incus);
                 healthIp = ProxyHealthCheck.healthAddress(incus);
             } catch (Exception e) {
-                System.err.println("Could not determine Incus bridge gateway IP: " + e.getMessage());
-                System.err.println(ProxyConfig.gatewayUnavailableHint(Platform.isMacOS()));
+                BuildOutput.error("Could not determine Incus bridge gateway IP: " + e.getMessage(),
+                        ProxyConfig.gatewayUnavailableHint(Platform.isMacOS()));
                 if (outputFormat != OutputFormat.TABLE) {
                     // Exit 1 as in the table, but the record says the state is unknown, so a
                     // script tells "could not check" from "not running".
                     var serviceInstalled = ProxyService.isInstalled();
-                    outputFormat.printOne(System.out, record(null, null, null, serviceInstalled,
+                    outputFormat.printOne(BuildOutput.results(), record(null, null, null, serviceInstalled,
                             serviceInstalled && ProxyService.isActive() ? (Platform.isMacOS() ? "launchd" : "systemd") : null,
                             ("Could not determine Incus bridge gateway IP: " + e.getMessage()).strip()));
                 }
@@ -104,55 +104,64 @@ public class ProxyCommand extends BaseCommand {
                 var record = record(status, proxyInfo, healthIp, serviceInstalled,
                         managedBy(status, serviceActive, Platform.isMacOS()), null);
                 addHolder(record, proxyInfo, serviceInstalled, holder);
-                outputFormat.printOne(System.out, record);
+                outputFormat.printOne(BuildOutput.results(), record);
                 return CommandResult.valueOf(exitCode(status, holder));
             }
-            switch (status) {
-                case RUNNING, WAITING_FOR_DNS -> {
-                    System.out.println(status == ProxyHealthCheck.ProxyStatus.RUNNING
-                            ? "Proxy is running." : "Proxy is running (waiting for DNS configuration).");
-                    if (holder != null) {
-                        holder.lines().forEach(line -> System.out.println("  " + BuildOutput.styled(
-                                BuildOutput.BOLD + BuildOutput.RED, ">>> " + line)));
-                    }
-                    // Another user's drift and auth error are theirs to act on, not this user's.
-                    var ownInfo = holder != null && holder.otherUser() ? null : proxyInfo;
-                    if (ownInfo != null) {
-                        if (!proxyInfo.isLegacy()) {
-                            System.out.println("  Version:         " + proxyInfo.version() + " (" + proxyInfo.gitSha() + ")");
-                            if (proxyInfo.runtime() != null && !proxyInfo.runtime().isEmpty()) {
-                                System.out.println("  Runtime:         " + proxyInfo.runtime());
-                            }
-                        }
-                        System.out.println("  DNS overrides:   " + (proxyInfo.dnsConfigured() ? "active" : "pending"));
-                        var drift = ProxyHealthCheck.assessDrift(ownInfo);
-                        for (var d : drift.drifts()) {
-                            System.out.println("  " + BuildOutput.styled(BuildOutput.BOLD + BuildOutput.YELLOW, ">>> " + d));
-                        }
-                        if (drift.futileReason() != null) System.out.println("      " + drift.futileReason());
-                    }
-                    if (ownInfo != null && ownInfo.hasAuthError()) {
-                        System.out.println("  " + BuildOutput.styled(BuildOutput.BOLD + BuildOutput.RED, ">>> Auth error: " + ownInfo.authError()));
-                    }
-                    System.out.println("  Health endpoint: http://" + healthIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health");
-                    System.out.println("  MITM port:       " + ProxyConfig.DEFAULT_MITM_PORT);
-                    if (holder != null) {
-                        System.out.println("  Managed by:      " + (holder.otherUser()
-                                ? "user " + holder.user() : "manual (not the proxy service)"));
-                        return CommandResult.valueOf(exitCode(status, holder));
-                    }
-                    if (serviceActive) {
-                        var manager = Platform.isMacOS() ? "launchd (dev.incusspawn.proxy)" : "systemd (incus-spawn-proxy.service)";
-                        System.out.println("  Managed by:      " + manager);
-                    } else {
-                        System.out.println("  Managed by:      manual (foreground process)");
+            return CommandResult.valueOf(switch (status) {
+                case RUNNING, WAITING_FOR_DNS -> reportRunning(status, proxyInfo, healthIp, holder, serviceActive,
+                        Platform.isMacOS(), BuildOutput.results());
+                case NOT_RUNNING, STALE_DNS, STALE_GATEWAY -> reportDown(status, serviceInstalled, serviceActive,
+                        BuildOutput.results());
+            });
+        }
+
+        /** How far a field of the report sits under its state. */
+        private static final String FIELD_INDENT = "  ";
+
+        /** A field of the report: {@code "  Version:         1.2 (abc)"}. */
+        static String field(String label, Object value) {
+            return FIELD_INDENT + String.format("%-17s", label + ":") + value;
+        }
+
+        /** A line of the report that stands out under its state, such as a drift: {@code "  >>> ..."}. */
+        private static String flagged(String style, String text) {
+            return FIELD_INDENT + BuildOutput.styled(style, ">>> " + text);
+        }
+
+        /**
+         * Report a proxy that answers, on {@code out}: its state, then what it says of itself and
+         * who runs it, one field a line. Another user's drift and auth error are theirs to act on,
+         * so a proxy another user holds reports neither.
+         */
+        static int reportRunning(ProxyHealthCheck.ProxyStatus status, ProxyHealthCheck.ProxyInfo proxyInfo,
+                                 String healthIp, ProxyHolder holder, boolean serviceActive, boolean macOS,
+                                 PrintStream out) {
+            out.println(status == ProxyHealthCheck.ProxyStatus.RUNNING
+                    ? "Proxy is running." : "Proxy is running (waiting for DNS configuration).");
+            var urgent = BuildOutput.BOLD + BuildOutput.RED;
+            if (holder != null) holder.lines().forEach(line -> out.println(flagged(urgent, line)));
+            var ownInfo = holder != null && holder.otherUser() ? null : proxyInfo;
+            if (ownInfo != null) {
+                if (!ownInfo.isLegacy()) {
+                    out.println(field("Version", ownInfo.version() + " (" + ownInfo.gitSha() + ")"));
+                    if (ownInfo.runtime() != null && !ownInfo.runtime().isEmpty()) {
+                        out.println(field("Runtime", ownInfo.runtime()));
                     }
                 }
-                case NOT_RUNNING, STALE_DNS, STALE_GATEWAY -> {
-                    return CommandResult.valueOf(reportDown(status, serviceInstalled, serviceActive, System.out));
-                }
+                out.println(field("DNS overrides", ownInfo.dnsConfigured() ? "active" : "pending"));
+                var drift = ProxyHealthCheck.assessDrift(ownInfo);
+                for (var d : drift.drifts()) out.println(flagged(BuildOutput.BOLD + BuildOutput.YELLOW, d));
+                // Under the drift it explains, past its ">>> "
+                if (drift.futileReason() != null) out.println(FIELD_INDENT.repeat(3) + drift.futileReason());
+                if (ownInfo.hasAuthError()) out.println(flagged(urgent, "Auth error: " + ownInfo.authError()));
             }
-            return CommandResult.SUCCESS;
+            out.println(field("Health endpoint", "http://" + healthIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health"));
+            out.println(field("MITM port", ProxyConfig.DEFAULT_MITM_PORT));
+            out.println(field("Managed by", holder != null
+                    ? (holder.otherUser() ? "user " + holder.user() : "manual (not the proxy service)")
+                    : serviceActive ? (macOS ? "launchd (dev.incusspawn.proxy)" : "systemd (incus-spawn-proxy.service)")
+                    : "manual (foreground process)"));
+            return exitCode(status, holder);
         }
 
         /**
@@ -302,11 +311,11 @@ public class ProxyCommand extends BaseCommand {
             try {
                 activity = ProxyActivity.fetch(ProxyHealthCheck.healthAddress(RuntimeServices.incus()));
             } catch (ProxyActivity.Unavailable e) {
-                System.err.println("Cannot read the proxy's activity: " + e.getMessage()
-                        + ". Check it with: isx proxy status");
+                BuildOutput.error("Cannot read the proxy's activity: " + e.getMessage() + ".",
+                        "Check it with: isx proxy status");
                 return CommandResult.valueOf(1);
             }
-            print(activity, outputFormat, byDomain, ZoneId.systemDefault(), Instant.now(), System.out);
+            print(activity, outputFormat, byDomain, ZoneId.systemDefault(), Instant.now(), BuildOutput.results());
             return CommandResult.SUCCESS;
         }
 
@@ -492,7 +501,7 @@ public class ProxyCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (!ProxyService.isInstalled() && !ProxyService.isActive()) {
-                System.out.println("Proxy is not installed or running. Use 'isx proxy start' or 'isx proxy install'.");
+                BuildOutput.step("Proxy is not installed or running. Use 'isx proxy start' or 'isx proxy install'.");
                 return CommandResult.SUCCESS;
             }
             if (!ProxyService.restart()) return CommandResult.valueOf(1);
@@ -541,9 +550,7 @@ public class ProxyCommand extends BaseCommand {
                     if (futile != null) BuildOutput.note(futile);
                 }
                 if (!ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
-                    System.err.println("Warning: proxy service is registered but not responding.");
-                    ProxyService.reportMacOsJob();
-                    System.err.println("Check logs with: isx proxy logs");
+                    BuildOutput.error("Proxy service is registered but not responding.", ProxyService.notResponding());
                     return CommandResult.FAILURE;
                 }
                 // Something answering is not enough: it may be another proxy on the ports (#1570).
@@ -584,8 +591,8 @@ public class ProxyCommand extends BaseCommand {
                 if (showFallbackLogs()) {
                     return CommandResult.SUCCESS;
                 }
-                System.err.println("No proxy log file found at " + logFile());
-                System.err.println("The proxy has not been started yet, or logs have been cleared.");
+                BuildOutput.error("No proxy log file found at " + logFile(),
+                        "The proxy has not been started yet, or logs have been cleared.");
                 return CommandResult.valueOf(1);
             }
 
@@ -596,19 +603,22 @@ public class ProxyCommand extends BaseCommand {
                 gatewayIp = ProxyConfig.resolveGatewayIp(incus);
             } catch (Exception ignored) {}
 
-            System.out.println("Gateway IP:    " + gatewayIp);
-            System.out.println("MITM port:     " + ProxyConfig.DEFAULT_MITM_PORT);
-            System.out.println("Version:       " + build.version() + " (" + build.gitSha() + ")");
-            System.out.println("Runtime:       " + build.runtime());
-            System.out.println();
+            var out = BuildOutput.results();
+            var row = "%-15s%s%n";
+            out.printf(row, "Gateway IP:", gatewayIp);
+            out.printf(row, "MITM port:", ProxyConfig.DEFAULT_MITM_PORT);
+            out.printf(row, "Version:", build.version() + " (" + build.gitSha() + ")");
+            out.printf(row, "Runtime:", build.runtime());
+            out.println();
 
+            // tail inherits the terminal: only the CLI runs this, and nothing else prints meanwhile
             try {
                 var pb = new ProcessBuilder("tail", "-f", logFile().toString());
                 pb.inheritIO();
                 var process = pb.start();
                 process.waitFor();
             } catch (IOException | InterruptedException e) {
-                System.err.println("Failed to tail log file: " + e.getMessage());
+                BuildOutput.error("Failed to tail log file: " + e.getMessage());
             }
             return CommandResult.SUCCESS;
         }
@@ -628,9 +638,8 @@ public class ProxyCommand extends BaseCommand {
             } else {
                 return false;
             }
-            System.err.println("No proxy log file at " + logFile());
-            System.err.println(header);
-            System.err.println();
+            BuildOutput.note("No proxy log file at " + logFile());
+            BuildOutput.note(header);
             try {
                 var pb = new ProcessBuilder(command);
                 pb.inheritIO();
@@ -639,7 +648,7 @@ public class ProxyCommand extends BaseCommand {
                 Thread.currentThread().interrupt();
                 return false;
             } catch (IOException e) {
-                System.err.println("Failed to read service logs: " + e.getMessage());
+                BuildOutput.error("Failed to read service logs: " + e.getMessage());
                 return false;
             }
             return true;
@@ -664,7 +673,7 @@ public class ProxyCommand extends BaseCommand {
                 var proxy = new DumpProxy(port, debugLog);
                 proxy.start();
             } catch (IOException e) {
-                System.err.println("Failed to start dump proxy: " + e.getMessage());
+                BuildOutput.error("Failed to start dump proxy: " + e.getMessage());
                 return CommandResult.valueOf(1);
             }
             return CommandResult.SUCCESS;
