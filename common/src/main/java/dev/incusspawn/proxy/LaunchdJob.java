@@ -1,7 +1,8 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.Output;
+
 import java.nio.file.Path;
-import java.util.function.Consumer;
 
 /**
  * One launchd job, started and restarted through {@code launchctl}.
@@ -100,8 +101,8 @@ final class LaunchdJob {
      * <p>
      * {@code startService()} goes on to wait for health after {@link Outcome#EXITED} too.
      */
-    Outcome start(Consumer<String> log) {
-        return load(log);
+    Outcome start(Output out) {
+        return load(out);
     }
 
     /**
@@ -110,13 +111,13 @@ final class LaunchdJob {
      * @param plistChanged the plist on disk is not the one the job was loaded from, so launchd
      *                     has to read it again, which only unloading and loading does
      */
-    Outcome restart(boolean plistChanged, Consumer<String> log) {
-        if (!isLoaded()) return load(log);
-        if (!plistChanged) return kick(log, "kickstart", "-k", target);
+    Outcome restart(boolean plistChanged, Output out) {
+        if (!isLoaded()) return load(out);
+        if (!plistChanged) return kick(out, "kickstart", "-k", target);
 
         // The result of bootout says nothing useful: it is 0 as soon as the job was told to go.
         launchctl.run("bootout", target);
-        return awaitUnloaded(log) ? load(log) : Outcome.STILL_UNLOADING;
+        return awaitUnloaded(out) ? load(out) : Outcome.STILL_UNLOADING;
     }
 
     /**
@@ -124,25 +125,25 @@ final class LaunchdJob {
      * unloading, as after {@code isx proxy stop} on a proxy that will not exit; that one is
      * waited out and loaded afresh. Any other refusal leaves the job as it is.
      */
-    private Outcome kick(Consumer<String> log, String... kickstart) {
+    private Outcome kick(Output out, String... kickstart) {
         var kicked = launchctl.run(kickstart);
         if (kicked.ok()) return awaitUp() ? Outcome.RUNNING : Outcome.EXITED;
         if (kicked.exitCode() != BEING_UNLOADED) {
-            report(log, kickstart[0], kicked);
+            report(out, kickstart[0], kicked);
             return Outcome.FAILED;
         }
-        return awaitUnloaded(log) ? load(log) : Outcome.STILL_UNLOADING;
+        return awaitUnloaded(out) ? load(out) : Outcome.STILL_UNLOADING;
     }
 
     /** Loads a job launchd does not have, and starts it. */
-    private Outcome load(Consumer<String> log) {
-        if (!step(log, "bootstrap", domain, plist.toString()) || !step(log, "kickstart", target)) return Outcome.FAILED;
+    private Outcome load(Output out) {
+        if (!step(out, "bootstrap", domain, plist.toString()) || !step(out, "kickstart", target)) return Outcome.FAILED;
         return awaitUp() ? Outcome.RUNNING : Outcome.EXITED;
     }
 
-    private boolean awaitUnloaded(Consumer<String> log) {
+    private boolean awaitUnloaded(Output out) {
         if (await(UNLOAD_POLLS, () -> !isLoaded())) return true;
-        log.accept("launchd is still unloading the proxy service; not loading it again.");
+        out.warn("launchd is still unloading the proxy service; not loading it again.");
         return false;
     }
 
@@ -194,15 +195,15 @@ final class LaunchdJob {
     }
 
     /** Runs one launchctl verb and, when it fails, says so with launchd's own message. */
-    private boolean step(Consumer<String> log, String... args) {
+    private boolean step(Output out, String... args) {
         var result = launchctl.run(args);
-        if (!result.ok()) report(log, args[0], result);
+        if (!result.ok()) report(out, args[0], result);
         return result.ok();
     }
 
-    private static void report(Consumer<String> log, String verb, Result result) {
+    private static void report(Output out, String verb, Result result) {
         var message = result.output().lines().map(String::strip).filter(l -> !l.isEmpty()).findFirst().orElse("");
-        log.accept("launchctl " + verb + " failed (exit " + result.exitCode() + ")"
+        out.warn("launchctl " + verb + " failed (exit " + result.exitCode() + ")"
                 + (message.isEmpty() ? "." : ": " + message));
     }
 }

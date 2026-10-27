@@ -514,18 +514,16 @@ public final class ProxyHealthCheck {
         return tryAutoRestart(incus, BuildOutput.bound());
     }
 
-    /** Restart an unhealthy proxy service: its progress as notes to {@code out}, why it failed as warnings. */
+    /**
+     * Restart an unhealthy proxy service: its progress as notes to {@code out}, why it failed as
+     * warnings, and the refusal before init as an error.
+     */
     public static boolean tryAutoRestart(IncusClient incus, Output out) {
         if (!ProxyService.isInstalled()) return false;
         var addr = healthAddress(incus);
         out.note("Proxy is not reachable, restarting service...");
-        // A restart refused until init runs has said why, and has nothing to wait for. ProxyService
-        // still marks its own errors and warnings, so they are told from its progress here.
-        java.util.function.Consumer<String> service = line -> {
-            var marked = line.strip();
-            if (marked.startsWith("Error:") || marked.startsWith("Warning:")) out.warn(line); else out.note(line);
-        };
-        if (!ProxyService.restartIfUnhealthy(addr, service) && !Environment.hasBeenInitialized()) return false;
+        // A restart refused until init runs has said why, and has nothing to wait for.
+        if (!ProxyService.restartIfUnhealthy(addr, out) && !Environment.hasBeenInitialized()) return false;
         for (int i = 0; i < 30; i++) {
             try { Thread.sleep(500); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -584,7 +582,7 @@ public final class ProxyHealthCheck {
             var active = ProxyService.isActive();
             if (active) {
                 lines.add(report.futileReason() != null ? report.futileReason()
-                        : "Reinstalling the proxy service to pick up the changes.");
+                        : "Restarting the proxy service, if a restart can pick up the changes.");
             } else {
                 lines.add("Restart the proxy to pick up changes:");
                 lines.add(RESTART);

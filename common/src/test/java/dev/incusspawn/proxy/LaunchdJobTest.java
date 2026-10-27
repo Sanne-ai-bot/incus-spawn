@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -111,7 +112,8 @@ class LaunchdJobTest {
     }
 
     private final FakeLaunchd launchd = new FakeLaunchd();
-    private final List<String> log = new ArrayList<>();
+    /** What the job reported: a launchctl refusal is a warning, which the TUI's log keeps. */
+    private final RecordingOutput out = new RecordingOutput();
     private int pauses;
     private final LaunchdJob job =
             new LaunchdJob(launchd, () -> pauses++, DOMAIN, "dev.incusspawn.proxy", PLIST);
@@ -126,11 +128,11 @@ class LaunchdJobTest {
     void restartReloadsAJobWhoseBootoutIsStillInProgress() {
         aRunningJob();
 
-        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(true, log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(true, out), out.events().toString());
 
         assertTrue(launchd.loaded && launchd.running, "the job must end up loaded and running");
         assertEquals(1, launchd.count("bootstrap"), "bootstrap is tried once, after the teardown: " + launchd.calls);
-        assertEquals(List.of(), log);
+        assertEquals(List.of(), out.events());
     }
 
     @Test
@@ -138,15 +140,15 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.plistRejected = true;
 
-        assertEquals(LaunchdJob.Outcome.FAILED, job.restart(true, log::add));
+        assertEquals(LaunchdJob.Outcome.FAILED, job.restart(true, out));
 
         assertFalse(launchd.loaded);
-        assertEquals(List.of("launchctl bootstrap failed (exit 5): Bootstrap failed: 5: Input/output error"), log);
+        assertEquals(List.of("launchctl bootstrap failed (exit 5): Bootstrap failed: 5: Input/output error"), out.warnings());
     }
 
     @Test
     void restartingAJobThatIsNotLoadedLoadsAndStartsIt() {
-        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(false, log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(false, out), out.events().toString());
 
         assertTrue(launchd.loaded && launchd.running);
         assertEquals(0, launchd.count("bootout"));
@@ -159,7 +161,7 @@ class LaunchdJobTest {
     void aLoadedJobWithAnUnchangedPlistIsRestartedInPlace() {
         aRunningJob();
 
-        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(false, log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(false, out), out.events().toString());
 
         assertEquals(List.of("kickstart -k " + TARGET),
                 launchd.calls.stream().filter(c -> !c.startsWith("print ")).toList());
@@ -171,11 +173,11 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.run("bootout", TARGET);
 
-        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(false, log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(false, out), out.events().toString());
 
         assertTrue(launchd.loaded && launchd.running);
         assertEquals(1, launchd.count("bootout"), "it is going already: no second bootout");
-        assertEquals(List.of(), log);
+        assertEquals(List.of(), out.events());
     }
 
     /** Only "being unloaded" is answered by loading afresh; anything else must not unload a loaded job. */
@@ -184,11 +186,11 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.kickstartExit = 1;
 
-        assertEquals(LaunchdJob.Outcome.FAILED, job.restart(false, log::add));
+        assertEquals(LaunchdJob.Outcome.FAILED, job.restart(false, out));
 
         assertTrue(launchd.loaded, "the job was loaded and still is");
         assertEquals(0, launchd.count("bootout"));
-        assertEquals(List.of("launchctl kickstart failed (exit 1)."), log);
+        assertEquals(List.of("launchctl kickstart failed (exit 1)."), out.warnings());
     }
 
     /** #969: a timed-out wait for health says whether launchd is still retrying or the job exited. */
@@ -236,11 +238,11 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.printsUntilUnloaded = -1;
 
-        assertEquals(LaunchdJob.Outcome.STILL_UNLOADING, job.restart(true, log::add));
+        assertEquals(LaunchdJob.Outcome.STILL_UNLOADING, job.restart(true, out));
 
         assertEquals(0, launchd.count("bootstrap"), "loading it again could only fail");
         assertEquals(LaunchdJob.UNLOAD_POLLS, pauses);
-        assertEquals(List.of("launchd is still unloading the proxy service; not loading it again."), log);
+        assertEquals(List.of("launchd is still unloading the proxy service; not loading it again."), out.warnings());
     }
 
     /**
@@ -252,7 +254,7 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.exitsAtOnce = true;
 
-        var outcome = job.restart(false, log::add);
+        var outcome = job.restart(false, out);
 
         assertEquals(LaunchdJob.Outcome.EXITED, outcome);
         assertFalse(outcome.up());
@@ -268,13 +270,13 @@ class LaunchdJobTest {
     void aStartWhoseFirstRunExitsIsLaunchedButNotUp() {
         launchd.exitsAtOnce = true;
 
-        var outcome = job.start(log::add);
+        var outcome = job.start(out);
 
-        assertEquals(LaunchdJob.Outcome.EXITED, outcome, log.toString());
+        assertEquals(LaunchdJob.Outcome.EXITED, outcome, out.events().toString());
         assertFalse(outcome.up());
         assertTrue(outcome.launched(), "launchd has the job and will run it again");
         assertTrue(job.isLoaded());
-        assertEquals(List.of(), log, "launchctl refused nothing, so there is nothing to report");
+        assertEquals(List.of(), out.events(), "launchctl refused nothing, so there is nothing to report");
     }
 
     /** A load launchd refused leaves nothing for launchd to retry, and says what it refused. */
@@ -282,12 +284,12 @@ class LaunchdJobTest {
     void aStartLaunchdRefusesIsNotLaunched() {
         launchd.plistRejected = true;
 
-        var outcome = job.start(log::add);
+        var outcome = job.start(out);
 
         assertEquals(LaunchdJob.Outcome.FAILED, outcome);
         assertFalse(outcome.launched());
         assertFalse(job.isLoaded());
-        assertEquals(List.of("launchctl bootstrap failed (exit 5): Bootstrap failed: 5: Input/output error"), log);
+        assertEquals(List.of("launchctl bootstrap failed (exit 5): Bootstrap failed: 5: Input/output error"), out.warnings());
     }
 
     @Test
@@ -301,7 +303,7 @@ class LaunchdJobTest {
     /** start() only ever reaches a job that is not loaded (review on #916: see LaunchdJob#start). */
     @Test
     void startLoadsAJobThatIsNotLoaded() {
-        assertEquals(LaunchdJob.Outcome.RUNNING, job.start(log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.start(out), out.events().toString());
 
         assertEquals(1, launchd.count("bootstrap"));
         assertTrue(launchd.loaded && launchd.running);

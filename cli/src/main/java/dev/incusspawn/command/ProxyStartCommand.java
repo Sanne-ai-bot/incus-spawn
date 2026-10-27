@@ -60,7 +60,7 @@ public class ProxyStartCommand extends BaseCommand {
         if (serviceActive && ProxyHealthCheck.awaitHealthy(0)) {
             // A healthy answer may come from another proxy on the ports (#1570), which
             // restarting this service cannot end.
-            if (!ProxyService.answeringIsTheService(System.err::println)) return CommandResult.FAILURE;
+            if (!ProxyService.answeringIsTheService()) return CommandResult.FAILURE;
             System.out.println("Proxy is already running (service-managed).");
             return CommandResult.SUCCESS;
         }
@@ -84,16 +84,16 @@ public class ProxyStartCommand extends BaseCommand {
             if (!ProxyService.initComplete()) return CommandResult.FAILURE;
             if (serviceActive) {
                 System.err.println("Proxy service is registered but not responding. Restarting...");
-                ProxyService.restart(System.err::println);
+                ProxyService.restart();
                 if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
-                    return ProxyService.answeringIsTheService(System.err::println)
+                    return ProxyService.answeringIsTheService()
                             ? CommandResult.SUCCESS : CommandResult.FAILURE;
                 }
                 if (ProxyService.failedWithConfigError()) {
                     System.err.println("Proxy failed due to a configuration problem (exit " + ProxyService.EXIT_CONFIG + ").");
                 } else {
                     System.err.println("Proxy is still not responding after restart.");
-                    ProxyService.reportMacOsJob("");
+                    ProxyService.reportMacOsJob();
                 }
                 System.err.println("Check logs with: isx proxy logs");
                 return CommandResult.FAILURE;
@@ -101,12 +101,12 @@ public class ProxyStartCommand extends BaseCommand {
             System.out.println("Starting proxy via service manager...");
             if (ProxyService.startService()) {
                 if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
-                    if (!ProxyService.answeringIsTheService(System.err::println)) return CommandResult.FAILURE;
+                    if (!ProxyService.answeringIsTheService()) return CommandResult.FAILURE;
                     System.out.println("Proxy service started.");
                     return CommandResult.SUCCESS;
                 }
                 System.err.println("Proxy service started but is not responding.");
-                ProxyService.reportMacOsJob("");
+                ProxyService.reportMacOsJob();
                 System.err.println("Check logs with: isx proxy logs");
                 return CommandResult.FAILURE;
             }

@@ -9,6 +9,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.HostPath;
+import dev.incusspawn.util.Output;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,7 +17,6 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 public final class ProxyService {
@@ -233,29 +233,28 @@ public final class ProxyService {
 
     /**
      * Whether the healthy proxy that answers is the active service's own, reporting the holder
-     * to {@code out} when it is not (#1570). A health check alone passes for any proxy on the
-     * ports, so every path that reports the service as running asks this after it.
+     * as an error when it is not (#1570). A health check alone passes for any proxy on the ports,
+     * so every path that reports the service as running asks this after it.
      * A holder of this user's is asked about again for up to {@link #LAUNCHD_THROTTLE_SECONDS}:
      * a restarted service's previous process frees the health port last (#1219), and launchd
      * kills one that ignores SIGTERM only seconds later. Another user's is never the service's.
      */
-    public static boolean answeringIsTheService(Consumer<String> out) {
+    public static boolean answeringIsTheService() {
         var address = ProxyHealthCheck.resolveHealthAddress();
         if (address == null) return true;
         for (int attempt = 1; ; attempt++) {
             var holder = foreignHolder(ProxyHealthCheck.fetchProxyInfo(address, 500));
             if (holder == null) return true;
-            if (holder.otherUser() || attempt >= LAUNCHD_THROTTLE_SECONDS * 2) {
-                holder.report(out);
-                return false;
+            if (!holder.otherUser() && attempt < LAUNCHD_THROTTLE_SECONDS * 2) {
+                try {
+                    Thread.sleep(500);
+                    continue;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                holder.report(out);
-                return false;
-            }
+            holder.report(BuildOutput.bound());
+            return false;
         }
     }
 
@@ -294,13 +293,13 @@ public final class ProxyService {
      * restart would stop a working proxy for one that refuses to start (#1048).
      */
     public static boolean initComplete() {
-        return initComplete(System.err::println);
+        return initComplete(BuildOutput.bound());
     }
 
-    /** {@link #initComplete()}, reporting the refusal to {@code log}: the TUI's paths reach this. */
-    public static boolean initComplete(java.util.function.Consumer<String> log) {
+    /** {@link #initComplete()}, reporting the refusal to {@code out} as an error: the TUI's paths reach this. */
+    public static boolean initComplete(Output out) {
         if (Environment.hasBeenInitialized()) return true;
-        log.accept("Error: incus-spawn is not initialized for this version of isx. Run 'isx init' first.");
+        out.error("incus-spawn is not initialized for this version of isx. Run 'isx init' first.");
         return false;
     }
 
@@ -319,30 +318,28 @@ public final class ProxyService {
             Files.createDirectories(Environment.proxyServiceFile().getParent());
             Files.writeString(Environment.proxyServiceFile(), serviceContent);
         } catch (IOException e) {
-            System.err.println("Failed to write service file: " + e.getMessage());
+            BuildOutput.error("Failed to write service file: " + e.getMessage());
             return false;
         }
 
-        System.out.println("Service file written to " + Environment.proxyServiceFile());
-        System.out.println("Enabling and starting proxy service...");
+        BuildOutput.step("Service file written to " + Environment.proxyServiceFile());
+        BuildOutput.step("Enabling and starting proxy service...");
         runQuiet("systemctl", "--user", "daemon-reload");
         runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME);
 
-        System.out.println("Enabling lingering for user (sudo required)...");
+        BuildOutput.step("Enabling lingering for user (sudo required)...");
         runQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"));
 
         if (isActive()) {
             if (ProxyHealthCheck.awaitHealthy(configuredStartWaitSeconds())) {
-                if (!answeringIsTheService(System.err::println)) return false;
-                System.out.println("Proxy service is running.");
+                if (!answeringIsTheService()) return false;
+                BuildOutput.step("Proxy service is running.");
                 return true;
             }
-            System.err.println("Warning: service started but proxy is not responding.");
-            printServiceLogs();
+            BuildOutput.error("Service started but proxy is not responding.", serviceLogs());
             return false;
         } else {
-            System.err.println("Warning: service did not start.");
-            printServiceLogs();
+            BuildOutput.error("Service did not start.", serviceLogs());
             return false;
         }
     }
@@ -366,11 +363,11 @@ public final class ProxyService {
             return true;
         }
         if (!isInstalled()) {
-            System.err.println("Proxy service is not installed.");
+            BuildOutput.step("Proxy service is not installed.");
             return false;
         }
 
-        System.out.println("Stopping and disabling proxy service...");
+        BuildOutput.step("Stopping and disabling proxy service...");
         runQuiet("systemctl", "--user", "stop", SERVICE_NAME);
         runQuiet("systemctl", "--user", "disable", SERVICE_NAME);
 
@@ -378,24 +375,26 @@ public final class ProxyService {
             Files.deleteIfExists(Environment.proxyServiceFile());
             Files.deleteIfExists(proxyStartScript());
         } catch (IOException e) {
-            System.err.println("Failed to remove service files: " + e.getMessage());
+            BuildOutput.error("Failed to remove service files: " + e.getMessage());
             return false;
         }
 
         runQuiet("systemctl", "--user", "daemon-reload");
-        System.out.println("Proxy service uninstalled.");
+        BuildOutput.step("Proxy service uninstalled.");
         return true;
     }
 
     public static boolean restart() {
-        try (var ignored = acquireProxyLock()) {
-            return restartLocked();
-        }
+        return restart(BuildOutput.bound());
     }
 
-    public static boolean restart(java.util.function.Consumer<String> log) {
+    /**
+     * Restart the service: its progress as notes to {@code out}, the refusal before init as an
+     * error, and a restart that did not take, or launchd's refusal of one, as a warning.
+     */
+    public static boolean restart(Output out) {
         try (var ignored = acquireProxyLock()) {
-            return restartLocked(log);
+            return restartLocked(out);
         }
     }
 
@@ -409,13 +408,13 @@ public final class ProxyService {
      * re-checks drift, rather than before it: another process could otherwise finish its own
      * restart in the gap between this check and acquiring the lock.
      */
-    public static boolean restartIfUnhealthy(String healthAddr, java.util.function.Consumer<String> log) {
-        return restartIfUnhealthy(healthAddr, ProxyConfig.DEFAULT_HEALTH_PORT, log);
+    public static boolean restartIfUnhealthy(String healthAddr, Output out) {
+        return restartIfUnhealthy(healthAddr, ProxyConfig.DEFAULT_HEALTH_PORT, out);
     }
 
-    /** {@link #restartIfUnhealthy(String, java.util.function.Consumer)} against a given port, for tests. */
-    static boolean restartIfUnhealthy(String healthAddr, int healthPort, java.util.function.Consumer<String> log) {
-        return restartIfUnhealthy(healthAddr, healthPort, log, () -> restartLocked(log));
+    /** {@link #restartIfUnhealthy(String, Output)} against a given port, for tests. */
+    static boolean restartIfUnhealthy(String healthAddr, int healthPort, Output out) {
+        return restartIfUnhealthy(healthAddr, healthPort, () -> restartLocked(out));
     }
 
     /**
@@ -424,20 +423,15 @@ public final class ProxyService {
      * systemctl} — which a regression in that recheck would otherwise run against whatever
      * service is actually installed on the machine running the test (review on #916).
      */
-    static boolean restartIfUnhealthy(String healthAddr, int healthPort, java.util.function.Consumer<String> log,
-                                       java.util.function.BooleanSupplier restart) {
+    static boolean restartIfUnhealthy(String healthAddr, int healthPort, java.util.function.BooleanSupplier restart) {
         try (var ignored = acquireProxyLock()) {
             if (ProxyHealthCheck.isHealthy(healthAddr, healthPort)) return true;
             return restart.getAsBoolean();
         }
     }
 
-    private static boolean restartLocked() {
-        return restartLocked(System.err::println, false);
-    }
-
-    private static boolean restartLocked(java.util.function.Consumer<String> log) {
-        return restartLocked(log, false);
+    private static boolean restartLocked(Output out) {
+        return restartLocked(out, false);
     }
 
     /**
@@ -451,11 +445,11 @@ public final class ProxyService {
      *                     the plist but before this restart) would otherwise last until the next
      *                     login (review on #916).
      */
-    private static boolean restartLocked(java.util.function.Consumer<String> log, boolean forceReload) {
+    private static boolean restartLocked(Output out, boolean forceReload) {
         // Under the lock, after restartIfUnhealthy's recheck: a healthy proxy is never refused.
-        if (!initComplete(log)) return false;
+        if (!initComplete(out)) return false;
         ProxyLog.info("Service restarting");
-        log.accept("Restarting proxy service...");
+        out.note("Restarting proxy service...");
         boolean restarted;
         if (Platform.isMacOS()) {
             // Refresh a stale plist before loading it: a plist from an older build — one whose
@@ -471,8 +465,8 @@ public final class ProxyService {
             // here, instead of asking refreshStaleMacOsPlist's own comparison again, means a
             // restart they already committed to is never second-guessed by a check that would
             // say "nothing to do" in the second case.
-            var rewrote = forceReload ? writeMacOsPlist() : refreshStaleMacOsPlist();
-            restarted = proxyJob().restart(forceReload || rewrote, log).up();
+            var rewrote = forceReload ? writeMacOsPlist(out) : refreshStaleMacOsPlist(out);
+            restarted = proxyJob().restart(forceReload || rewrote, out).up();
         } else {
             // A unit halted by RestartPreventExitStatus sits in 'failed' state, and repeated
             // restart attempts can trip systemd's start rate limit — reset makes recovery
@@ -482,10 +476,10 @@ public final class ProxyService {
             restarted = isActive();
         }
         if (restarted) {
-            log.accept("Proxy service restarted.");
+            out.note("Proxy service restarted.");
             return true;
         }
-        log.accept("Warning: proxy service did not restart.");
+        out.warn("Proxy service did not restart.");
         return false;
     }
 
@@ -505,7 +499,7 @@ public final class ProxyService {
         if (!initComplete()) return false;
         try (var ignored = acquireProxyLock()) {
             if (isActive()) return true;
-            if (Platform.isMacOS()) return proxyJob().start(System.err::println).launched();
+            if (Platform.isMacOS()) return proxyJob().start(BuildOutput.bound()).launched();
             runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
             runQuiet("systemctl", "--user", "start", SERVICE_NAME);
             return isActive();
@@ -520,13 +514,13 @@ public final class ProxyService {
 
     private static void stopLocked() {
         if (isActive()) {
-            System.out.println("Stopping proxy service...");
+            BuildOutput.step("Stopping proxy service...");
             if (Platform.isMacOS()) {
                 runQuiet("launchctl", "bootout", "gui/" + getUid() + "/" + PROXY_LABEL);
-                System.out.println("Proxy service stopped (re-enable with: isx proxy install).");
+                BuildOutput.step("Proxy service stopped (re-enable with: isx proxy install).");
             } else {
                 runQuiet("systemctl", "--user", "stop", SERVICE_NAME);
-                System.out.println("Proxy service stopped.");
+                BuildOutput.step("Proxy service stopped.");
             }
             return;
         }
@@ -545,16 +539,16 @@ public final class ProxyService {
         if (pid <= 0) pid = pidOnPort.getAsLong();
         // The PID came over HTTP: 0 or a negative one would make `kill` signal a process group.
         if (pid > 0) {
-            System.out.println("Stopping proxy (PID " + pid + ")...");
+            BuildOutput.step("Stopping proxy (PID " + pid + ")...");
             if (runQuiet("kill", String.valueOf(pid))) {
-                System.out.println("Proxy stopped.");
+                BuildOutput.step("Proxy stopped.");
             } else {
-                System.err.println("Could not stop the proxy (PID " + pid + "); is it another user's?");
+                BuildOutput.error("Could not stop the proxy (PID " + pid + "); is it another user's?");
             }
             return;
         }
 
-        System.out.println("Proxy is not running.");
+        BuildOutput.step("Proxy is not running.");
     }
 
     /**
@@ -589,7 +583,7 @@ public final class ProxyService {
                 // was assessed from a health signal, not from needsMacOsPlistUpdate() above, so
                 // there is nothing here to tell restartLocked the loaded job is stale except
                 // saying so directly.
-                var restarted = restartLocked(System.err::println, true);
+                var restarted = restartLocked(BuildOutput.bound(), true);
                 // The service files now exec proxyBin, so this records the binary the service
                 // really restarted onto. A bare restart() may still exec a binary from a previous
                 // installation, which says nothing about this one, so it records nothing.
@@ -652,7 +646,7 @@ public final class ProxyService {
 
             return changed;
         } catch (IOException e) {
-            System.err.println("Warning: could not update proxy service files: " + e.getMessage());
+            BuildOutput.warn("Could not update proxy service files: " + e.getMessage());
             return false;
         }
     }
@@ -690,12 +684,12 @@ public final class ProxyService {
                 // Forcing the reload here is also what lets restartLocked skip asking
                 // needsMacOsPlistUpdate() a second time: it already answered yes, right above.
                 if (!needsMacOsPlistUpdate()) return false;
-                var restarted = restartLocked(System.err::println, true);
+                var restarted = restartLocked(BuildOutput.bound(), true);
                 if (restarted) DriftRestartRecord.write(proxyBin);
                 return restarted;
             }
             if (!regenerateServiceFiles(proxyBin)) return false;
-            System.out.println("Updated proxy service configuration.");
+            BuildOutput.step("Updated proxy service configuration.");
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
             if (isActive()) DriftRestartRecord.write(proxyBin);
             return true;
@@ -862,7 +856,9 @@ public final class ProxyService {
                 + "resolvable from the shell you run 'isx init' in.";
     }
 
-    private static void printServiceLogs() {
+    /** What the journal says of the service, with advice for what it shows: the lines under a failed start. */
+    private static String[] serviceLogs() {
+        var lines = new ArrayList<String>();
         try {
             var pb = new ProcessBuilder(
                     "journalctl", "--user", "-u", SERVICE_NAME, "--no-pager", "-n", "10");
@@ -871,28 +867,29 @@ public final class ProxyService {
             var output = new String(process.getInputStream().readAllBytes()).strip();
             process.waitFor();
             if (!output.isBlank()) {
-                System.err.println("Recent logs:");
-                System.err.println(output);
+                lines.add("Recent logs:");
+                output.lines().forEach(lines::add);
                 if (output.contains("status=127")) {
-                    System.err.println();
-                    System.err.println("Exit code 127 usually means a binary was not found.");
+                    lines.add("");
+                    lines.add("Exit code 127 usually means a binary was not found.");
                     try {
                         var svc = Files.readString(Environment.proxyServiceFile());
                         var m = java.util.regex.Pattern.compile("ExecStart=(.*)").matcher(svc);
-                        if (m.find()) System.err.println("ExecStart: " + m.group(1));
+                        if (m.find()) lines.add("ExecStart: " + m.group(1));
                     } catch (Exception ignored) {}
-                    System.err.println("If isx-proxy was installed as a JVM wrapper, ensure Java "
+                    lines.add("If isx-proxy was installed as a JVM wrapper, ensure Java "
                             + REQUIRED_JAVA_MAJOR + "+ is available at the path embedded in the wrapper."
                             + " If it was installed with JBang, ensure 'jbang' is on the PATH the"
                             + " service was installed with.");
-                    System.err.println("Alternatively, reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
+                    lines.add("Alternatively, reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
                 }
             } else {
-                System.err.println("Check logs with: journalctl --user -u " + SERVICE_NAME);
+                lines.add("Check logs with: journalctl --user -u " + SERVICE_NAME);
             }
         } catch (Exception ignored) {
-            System.err.println("Check logs with: journalctl --user -u " + SERVICE_NAME);
+            lines.add("Check logs with: journalctl --user -u " + SERVICE_NAME);
         }
+        return lines.toArray(String[]::new);
     }
 
     /** The installed {@code isx} to point services and clients at, or null if none is found. */
@@ -955,9 +952,11 @@ public final class ProxyService {
         }
         var launcherIssue = checkJvmWrapper(proxyBin);
         if (launcherIssue != null) {
-            System.err.println(launcherIssue);
-            System.err.println("Reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
-            System.err.println("Then run: isx init");
+            var issue = launcherIssue.lines().toList();
+            var details = new ArrayList<>(issue.subList(1, issue.size()));
+            details.add("Reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
+            details.add("Then run: isx init");
+            BuildOutput.error(issue.getFirst(), details.toArray(String[]::new));
             return false;
         }
         return true;
@@ -979,10 +978,10 @@ public final class ProxyService {
      * separately, which is how an {@code isx}-only installation arises in practice.
      */
     public static void printMissingProxyBinary() {
-        System.err.println("Error: could not find the 'isx-proxy' binary next to 'isx'.");
-        System.err.println("The proxy runs as its own binary; isx cannot serve it in-process.");
-        System.err.println(MISSING_PROXY_REMEDIATION);
-        System.err.println("Then run: isx init");
+        BuildOutput.error("Could not find the 'isx-proxy' binary next to 'isx'.",
+                "The proxy runs as its own binary; isx cannot serve it in-process.",
+                MISSING_PROXY_REMEDIATION,
+                "Then run: isx init");
     }
 
     /**
@@ -1014,14 +1013,13 @@ public final class ProxyService {
         try {
             Files.deleteIfExists(proxyPlistFile());
         } catch (IOException e) {
-            System.err.println("Warning: could not remove the proxy launch agent: " + e.getMessage());
-            System.err.println("Remove " + proxyPlistFile() + " by hand to stop launchd retrying it.");
+            BuildOutput.warn("Could not remove the proxy launch agent: " + e.getMessage(),
+                    "Remove " + proxyPlistFile() + " by hand to stop launchd retrying it.");
             return false;
         }
-        System.err.println();
-        System.err.println("Removed the proxy launch agent: launchd would otherwise keep restarting");
-        System.err.println("a service that cannot start. 'isx init' reinstalls it once isx-proxy is"
-                + " present.");
+        BuildOutput.warn("Removed the proxy launch agent: launchd would otherwise keep restarting"
+                        + " a service that cannot start.",
+                "'isx init' reinstalls it once isx-proxy is present.");
         return true;
     }
 
@@ -1183,16 +1181,20 @@ public final class ProxyService {
         return Files.exists(proxyPlistFile());
     }
 
-    /** On macOS, prints to stderr what launchd says of the proxy job's last runs, if anything. */
-    public static void reportMacOsJob(String indent) {
-        if (!Platform.isMacOS()) return;
-        String described;
+    /** On macOS, notes what launchd says of the proxy job's last runs, if anything. */
+    public static void reportMacOsJob() {
+        var described = macOsJobLastRun();
+        if (described != null) BuildOutput.note(described);
+    }
+
+    /** What launchd says of the proxy job's last runs on macOS, or null when it says nothing. */
+    private static String macOsJobLastRun() {
+        if (!Platform.isMacOS()) return null;
         try {
-            described = proxyJob().lastRun();
+            return proxyJob().lastRun();
         } catch (RuntimeException e) {
-            return;
+            return null;
         }
-        if (described != null) System.err.println(indent + described);
     }
 
     public static boolean isMacOsServiceActive() {
@@ -1257,12 +1259,12 @@ public final class ProxyService {
      * cannot see (health-assessed drift, in {@link #reinstallIfChanged}) and would otherwise be
      * told "nothing changed" by it.
      */
-    private static boolean refreshStaleMacOsPlist() {
-        return needsMacOsPlistUpdate() && writeMacOsPlist();
+    private static boolean refreshStaleMacOsPlist(Output out) {
+        return needsMacOsPlistUpdate() && writeMacOsPlist(out);
     }
 
     /** Writes the plist this build would generate. Returns whether the write succeeded. */
-    private static boolean writeMacOsPlist() {
+    private static boolean writeMacOsPlist(Output out) {
         var proxyBin = resolveProxyBinaryPath();
         if (proxyBin == null) return false;
         try {
@@ -1270,7 +1272,7 @@ public final class ProxyService {
             Files.writeString(proxyPlistFile(), generateProxyPlist(proxyBin));
             return true;
         } catch (IOException e) {
-            System.err.println("Warning: could not update proxy plist: " + e.getMessage());
+            out.warn("Could not update proxy plist: " + e.getMessage());
             return false;
         }
     }
@@ -1294,14 +1296,14 @@ public final class ProxyService {
     public static void migrateMacOsPlistIfSupervised() {
         if (!Platform.isMacOS()) return;
         try (var ignored = acquireProxyLock()) {
-            refreshStaleMacOsPlist();
+            refreshStaleMacOsPlist(BuildOutput.bound());
         }
     }
 
     public static boolean installMacOs() {
         var isxPath = resolveIsxPath();
         if (isxPath == null) {
-            System.err.println("Could not find 'isx' in PATH.");
+            BuildOutput.error("Could not find 'isx' in PATH.");
             return false;
         }
 
@@ -1340,12 +1342,12 @@ public final class ProxyService {
                     """.formatted(VM_LABEL, isxPath, path, logDir, logDir);
             Files.writeString(vmPlistFile(), vmPlist);
         } catch (IOException e) {
-            System.err.println("Failed to write launchd plist: " + e.getMessage());
+            BuildOutput.error("Failed to write launchd plist: " + e.getMessage());
             return false;
         }
 
         var uid = getUid();
-        System.out.println("  Installing VM service...");
+        BuildOutput.step("Installing VM service...");
         runQuiet("launchctl", "bootout", "gui/" + uid, vmPlistFile().toString());
         // bootout returns before launchd has actually removed the job — the same race #916 found
         // for the proxy — and bootstrapping it again in that window fails with "Input/output
@@ -1359,7 +1361,7 @@ public final class ProxyService {
             // fails the same "Input/output error" this all exists to avoid. Warn rather than fail
             // outright — the proxy agent below is unaffected and still worth installing — but say
             // so, since nothing else here would otherwise reveal that no VM login agent is loaded.
-            System.err.println("  Warning: VM service did not reinstall cleanly. Run 'isx doctor' or retry 'isx init'.");
+            BuildOutput.warn("VM service did not reinstall cleanly.", "Run 'isx doctor' or retry 'isx init'.");
         }
 
         // Only the proxy agent needs the separate binary — the VM agent runs `isx vm start`, so it
@@ -1375,27 +1377,27 @@ public final class ProxyService {
         // Configure bridge DNS now (from Terminal) so the launchd proxy service
         // doesn't need to reach the Incus VM API at startup — macOS Sequoia blocks
         // local network access from ad-hoc-signed binaries under launchd.
-        System.out.println("  Configuring bridge DNS...");
+        BuildOutput.step("Configuring bridge DNS...");
         try {
             ProxyConfig.configureBridgeDns(new IncusClient(), SpawnConfig.load());
         } catch (Exception e) {
-            System.err.println("  Warning: could not configure bridge DNS: " + e.getMessage());
-            System.err.println("  Is the VM running? The proxy will retry DNS at startup.");
+            BuildOutput.warn("Could not configure bridge DNS: " + e.getMessage(),
+                    "Is the VM running? The proxy will retry DNS at startup.");
         }
 
-        System.out.println("  Installing proxy service...");
+        BuildOutput.step("Installing proxy service...");
         // Written only now, right before it is loaded: restartLocked takes a plist that is
         // current on disk for the one the job runs, so the two must not be left apart by an
         // install that stops in between.
         try {
             Files.writeString(proxyPlistFile(), generateProxyPlist(proxyBin));
         } catch (IOException e) {
-            System.err.println("Failed to write proxy plist: " + e.getMessage());
+            BuildOutput.error("Failed to write proxy plist: " + e.getMessage());
             return false;
         }
         // A reinstall over a loaded job is a restart with a new plist, with the same teardown
         // to wait for (see LaunchdJob).
-        var outcome = proxyJob().restart(true, message -> System.err.println("  " + message));
+        var outcome = proxyJob().restart(true, BuildOutput.bound());
 
         if (outcome == LaunchdJob.Outcome.STILL_UNLOADING) {
             // Named by LaunchdJob itself, not guessed from isActive(): that alone cannot tell
@@ -1403,28 +1405,30 @@ public final class ProxyService {
             // would read the same way and report as generic "not responding" below (review on
             // #916) — wrong, since nothing here was actually loaded when the install started.
             ProxyLog.info("Service installed, restart did not complete");
-            System.err.println("  Services installed, but the previous job had not finished unloading.");
-            System.err.println("  It may not come back on its own; check: isx proxy status");
+            BuildOutput.error("Services installed, but the previous job had not finished unloading.",
+                    "It may not come back on its own; check: isx proxy status");
             return false;
         }
         if (isActive()) {
             if (awaitStarted(configuredStartWaitSeconds())) {
-                if (!answeringIsTheService(message -> System.err.println("  " + message))) {
+                if (!answeringIsTheService()) {
                     ProxyLog.info("Service installed, but another proxy holds its ports");
                     return false;
                 }
                 ProxyLog.info("Service installed and running");
-                System.out.println("  Services installed and running.");
+                BuildOutput.step("Services installed and running.");
                 return true;
             }
             ProxyLog.info("Service installed but not healthy");
-            System.err.println("  Services installed but proxy is not responding.");
-            reportMacOsJob("  ");
-            System.err.println("  Check logs with: isx proxy logs");
+            var details = new ArrayList<String>();
+            var lastRun = macOsJobLastRun();
+            if (lastRun != null) details.add(lastRun);
+            details.add("Check logs with: isx proxy logs");
+            BuildOutput.error("Services installed but proxy is not responding.", details.toArray(String[]::new));
             return false;
         } else {
             ProxyLog.info("Service installed (waiting for VM)");
-            System.out.println("  Services installed (proxy will start when VM is ready).");
+            BuildOutput.step("Services installed (proxy will start when VM is ready).");
             return true;
         }
     }
@@ -1435,7 +1439,7 @@ public final class ProxyService {
         runQuiet("launchctl", "bootout", "gui/" + uid, vmPlistFile().toString());
         try { Files.deleteIfExists(proxyPlistFile()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(vmPlistFile()); } catch (IOException ignored) {}
-        System.out.println("  macOS services uninstalled.");
+        BuildOutput.step("macOS services uninstalled.");
     }
 
     private static LaunchdJob proxyJob() {
