@@ -114,6 +114,9 @@ class ZshCompletionTest {
     @Test
     void accountSubcommandsCompleteTheirOwnArguments() throws Exception {
         assertEquals("isx account show box1", complete("isx account show "));
+        assertEquals("isx account show box1", complete("isx account show box1 "), "show takes one instance");
+        assertEquals("isx account reset-proofs box1", complete("isx account reset-proofs box1 "));
+        assertEquals("isx account list --format=", complete("isx account list --form"));
         assertEquals("isx account set box1", complete("isx account set "));
         assertEquals("isx account set box1 claude=work", complete("isx account set box1 "));
         assertEquals("isx account unset box1 claude", complete("isx account unset box1 "));
