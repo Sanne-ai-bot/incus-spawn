@@ -5,8 +5,11 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.util.BuildOutput;
 
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -17,7 +20,12 @@ import java.util.stream.Collectors;
  * dependency as skippable, so a transient download failure leaves {@code npm install -g} (and
  * {@code npm update -g}) exiting 0 with only the launcher installed -- and the template would be
  * stamped as built and CoW-copied into every branch (#808). For those CLIs the platform package
- * is checked after every install or update, and a skipped one is reinstalled once before failing.
+ * is checked after every install or update, and a skipped one is reinstalled before failing.
+ * <p>
+ * A just-published release takes minutes to reach the registry whole: npm publishes the
+ * launcher before its platform builds, and the CDN can answer 404 for a tarball the metadata
+ * already names. So an install that the registry cannot serve yet is retried with a bounded
+ * backoff ({@link #REGISTRY_RETRY_DELAYS}) rather than failed at once (#1757).
  * <p>
  * The check resolves the package with node as root rather than running the CLI: running it would
  * write into the template ({@code copilot --version} unpacks ~165 MB into agentuser's cache).
@@ -41,6 +49,22 @@ public final class NpmGlobalInstall {
     private static final List<String> NPM_INSTALL =
             List.of("npm", "install", "-g", "--ignore-scripts", "--loglevel=verbose");
 
+    /**
+     * The waits before each retry while a release is still reaching the registry, shared by
+     * every retry of one npm command or repair pass: 6m45s in all. Codex's Linux builds have
+     * landed up to six minutes after its launcher.
+     */
+    static final List<Duration> REGISTRY_RETRY_DELAYS = List.of(Duration.ofSeconds(15),
+            Duration.ofSeconds(30), Duration.ofSeconds(60), Duration.ofSeconds(120), Duration.ofSeconds(180));
+
+    // The code npm fails with when the registry does not serve a tarball (E404) or version
+    // (ETARGET): its own line, since the verbose log can mention either on the way.
+    private static final Pattern REGISTRY_MISS =
+            Pattern.compile("^npm (?:error|ERR!) code E(?:404|TARGET)$", Pattern.MULTILINE);
+
+    /** How an install waits before a retry; tests record the waits instead. */
+    static DownloadCache.Pause pause = Thread::sleep;
+
     private static final int NOT_INSTALLED = 2;
     private static final int PLATFORM_PACKAGE_MISSING = 3;
 
@@ -60,25 +84,27 @@ public final class NpmGlobalInstall {
 
     /** Installs a self-contained npm CLI, failing the build step if npm fails. */
     static void install(Container c, String displayName, String npmPackage) {
-        var npm = npmInstall(c, npmPackage);
+        var npm = npmInstall(c, npmPackage, new Retries());
         if (!npm.success()) {
             throw npmFailed(displayName, npm);
         }
     }
 
     /**
-     * Installs a platform-split CLI, reinstalling once if npm skipped the platform package,
+     * Installs a platform-split CLI, reinstalling while npm skips the platform package,
      * then checks that agentuser's login PATH finds it.
      */
     static void install(Container c, PlatformSplitCli cli) {
-        var npm = npmInstall(c, cli.npmPackage());
+        var retries = new Retries();
+        var npm = npmInstall(c, cli.npmPackage(), retries);
         if (!npm.success()) {
             throw npmFailed(cli.displayName(), npm);
         }
         var check = checkPlatformPackage(c, cli);
         if (check.missing() != null) {
-            npm = npmInstall(c, cli.npmPackage());
-            check = npm.success() ? checkPlatformPackage(c, cli) : check;
+            var reinstalled = reinstallSkipped(c, cli, check, retries);
+            npm = reinstalled.npm();
+            check = reinstalled.check();
         }
         if (!npm.success()) {
             throw npmFailed(cli.displayName(), npm);
@@ -107,20 +133,56 @@ public final class NpmGlobalInstall {
      */
     public static List<String> repairAfterUpdate(Container c) {
         var problems = new ArrayList<String>();
+        var retries = new Retries();
         for (var cli : PLATFORM_SPLIT_CLIS) {
             var check = checkPlatformPackage(c, cli);
             if (check.missing() == null) continue;
-            var npm = npmInstall(c, cli.npmPackage());
-            var recheck = npm.success() ? checkPlatformPackage(c, cli) : check;
-            if (recheck.missing() != null) {
-                problems.add(skipped(cli, recheck.missing()).getMessage()
-                        + skipReasons(npm).stream().map(l -> "\n  " + l).collect(Collectors.joining()));
+            var reinstalled = reinstallSkipped(c, cli, check, retries);
+            if (reinstalled.check().missing() != null) {
+                problems.add(skipped(cli, reinstalled.check().missing()).getMessage()
+                        + skipReasons(reinstalled.npm()).stream().map(l -> "\n  " + l).collect(Collectors.joining()));
             }
         }
         return problems;
     }
 
     private record Check(boolean notInstalled, String missing) {}
+
+    private record Reinstall(IncusClient.ExecResult npm, Check check) {}
+
+    /**
+     * Reinstalls a CLI whose platform package npm skipped: at once, then after each wait
+     * {@code retries} has left, until npm fails or the package is there. npm logs nothing when
+     * it skips a platform build that is not published yet, so every skip may be one.
+     */
+    private static Reinstall reinstallSkipped(Container c, PlatformSplitCli cli, Check check, Retries retries) {
+        var npm = npmInstall(c, cli.npmPackage(), retries);
+        while (npm.success()) {
+            check = checkPlatformPackage(c, cli);
+            if (check.missing() == null || !retries.waitBefore("npm skipped " + check.missing())) break;
+            npm = npmInstall(c, cli.npmPackage(), retries);
+        }
+        return new Reinstall(npm, check);
+    }
+
+    /** The waits one install, or one repair pass, has left for the registry to catch up with a release. */
+    private static final class Retries {
+        private final Iterator<Duration> delays = REGISTRY_RETRY_DELAYS.iterator();
+
+        /** Waits the next delay, showing why on the live step; false when none is left. */
+        boolean waitBefore(String why) {
+            if (!delays.hasNext()) return false;
+            var delay = delays.next();
+            BuildOutput.stepProgress(why + ", retrying in " + delay.toSeconds() + "s");
+            try {
+                pause.sleep(delay);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IncusException("Interrupted while waiting for the npm registry");
+            }
+            return true;
+        }
+    }
 
     private static Check checkPlatformPackage(Container c, PlatformSplitCli cli) {
         var result = c.sh("root=$(npm root -g) || exit 1\n"
@@ -140,10 +202,33 @@ public final class NpmGlobalInstall {
         };
     }
 
-    private static IncusClient.ExecResult npmInstall(Container c, String npmPackage) {
+    /**
+     * Runs {@code npm update -g}, retrying while the registry does not serve a release it
+     * resolved yet. {@link #repairAfterUpdate} checks what it dropped without failing.
+     */
+    public static IncusClient.ExecResult update(Container c) {
+        return npm(c, new Retries(), "what npm update -g resolved", "npm", "update", "-g");
+    }
+
+    private static IncusClient.ExecResult npmInstall(Container c, String npmPackage, Retries retries) {
         var command = new ArrayList<>(NPM_INSTALL);
         command.add(npmPackage);
-        return c.exec(command.toArray(String[]::new));
+        return npm(c, retries, npmPackage, command.toArray(String[]::new));
+    }
+
+    /** Runs npm, retrying while the registry answers that it has no such version or tarball. */
+    private static IncusClient.ExecResult npm(Container c, Retries retries, String what, String... command) {
+        while (true) {
+            var npm = c.exec(command);
+            if (npm.success() || !registryMiss(npm)
+                    || !retries.waitBefore("The npm registry does not serve " + what + " yet")) {
+                return npm;
+            }
+        }
+    }
+
+    private static boolean registryMiss(IncusClient.ExecResult npm) {
+        return REGISTRY_MISS.matcher(npm.stdout()).find() || REGISTRY_MISS.matcher(npm.stderr()).find();
     }
 
     private static IncusException npmFailed(String displayName, IncusClient.ExecResult npm) {
@@ -155,8 +240,9 @@ public final class NpmGlobalInstall {
 
     private static IncusException skipped(PlatformSplitCli cli, String platformPackage) {
         return new IncusException("npm skipped " + cli.displayName() + "'s platform package "
-                + platformPackage + " twice without failing, so '" + cli.binary() + "' cannot run."
-                + " It is an optional dependency, which npm drops when its download fails");
+                + platformPackage + " on every install without failing, so '" + cli.binary() + "' cannot run."
+                + " It is an optional dependency, which npm drops when its download fails"
+                + " or the registry does not serve it yet");
     }
 
     private static void printSkipReasons(IncusClient.ExecResult npm) {

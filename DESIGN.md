@@ -435,7 +435,11 @@ Dependencies are installed before the tools that require them.
 - npm-distributed CLIs whose real binary is an *optional* per-platform package (`codex`, `copilot`) install through `NpmGlobalInstall`.
   npm treats a failed optional dependency as skippable and still exits 0 -- at any log level below `http` it does not even mention it -- so a transient download failure leaves only the JS launcher and the template is stamped as built anyway (#808).
   After `npm install -g`, and after the `npm update -g` of `isx update-all` / `isx project update`, a node one-liner run as root resolves the platform package the way the launcher does.
-  A missing one is reinstalled once, then fails the step with the failure lines from npm's verbose log.
+  A missing one is reinstalled, then fails the step with the failure lines from npm's verbose log.
+  A just-published release reaches the registry piecemeal (#1757): npm publishes the launcher minutes before its platform builds, skips a platform version it cannot resolve without a word, and the CDN can answer 404 for a tarball the metadata already names.
+  So the first reinstall is immediate, and each later one waits out a bounded backoff (`REGISTRY_RETRY_DELAYS`, 6m45s in all); an `npm install` that fails with E404 or ETARGET retries from the same budget.
+  The `npm update -g` of `NpmUpdate` retries the same way, from a budget of its own.
+  Any other npm failure fails at once, and nothing pins an older version: the build still verifies the latest release, only later.
   The check deliberately does not run the CLI: `copilot --version` unpacks ~165 MB into agentuser's cache and `codex --version` leaves lock files, all of which would be baked into the template.
 
 `GeminiSetup` installs `@google/gemini-cli` through `NpmGlobalInstall` and configures user settings in `~/.gemini/settings.json`.

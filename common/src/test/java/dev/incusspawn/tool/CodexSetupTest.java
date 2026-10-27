@@ -92,11 +92,13 @@ class CodexSetupTest {
         when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg -> arg.contains("npm root -g"))))
                 .thenReturn(new IncusClient.ExecResult(3, "@openai/codex-linux-x64\n", ""));
 
-        var e = assertThrows(dev.incusspawn.incus.IncusException.class,
-                () -> new CodexSetup().install(new Container(incus, CONTAINER), Map.of()));
-        assertTrue(e.getMessage().contains("@openai/codex-linux-x64"), e.getMessage());
-        verify(incus, never()).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), argThat(arg -> arg.contains(CodexSetup.CONFIG_PATH)));
+        try (var ignored = new NpmWaits()) {
+            var e = assertThrows(dev.incusspawn.incus.IncusException.class,
+                    () -> new CodexSetup().install(new Container(incus, CONTAINER), Map.of()));
+            assertTrue(e.getMessage().contains("@openai/codex-linux-x64"), e.getMessage());
+            verify(incus, never()).shellExec(eq(CONTAINER),
+                    eq("sh"), eq("-c"), argThat(arg -> arg.contains(CodexSetup.CONFIG_PATH)));
+        }
     }
 
     @Test

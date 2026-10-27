@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.tool.NpmWaits;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -42,14 +43,31 @@ class NpmUpdateTest {
     }
 
     @Test
+    void retriesAnUpdateTheRegistryCannotServeYet() {
+        var incus = incus();
+        when(incus.shellExec(NAME, "npm", "update", "-g")).thenReturn(
+                new IncusClient.ExecResult(1, "", "npm error code ETARGET\n"), OK);
+
+        try (var waits = new NpmWaits()) {
+            assertTrue(NpmUpdate.run(incus, NAME));
+            assertEquals(1, waits.waited().size());
+        }
+        verify(incus, times(2)).shellExec(NAME, "npm", "update", "-g");
+    }
+
+    @Test
     void reportsAnUpdateThatLeftACliWithoutItsPlatformBinary() {
         // npm update -g exits 0 when it drops a CLI's optional platform package (#808).
         var incus = incus();
         stubCheck(incus, "@openai/codex", new IncusClient.ExecResult(3, "@openai/codex-linux-x64\n", ""));
 
-        assertFalse(NpmUpdate.run(incus, NAME));
+        int retries;
+        try (var waits = new NpmWaits()) {
+            assertFalse(NpmUpdate.run(incus, NAME));
+            retries = waits.waited().size();
+        }
 
-        verify(incus).shellExec(eq(NAME), eq("npm"), eq("install"), eq("-g"),
+        verify(incus, times(1 + retries)).shellExec(eq(NAME), eq("npm"), eq("install"), eq("-g"),
                 eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@openai/codex"));
     }
 

@@ -3,8 +3,10 @@ package dev.incusspawn.tool;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -24,7 +26,19 @@ class NpmGlobalInstallTest {
             npm verbose reify failed optional dependency /usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64
             npm http fetch GET 200 https://registry.npmjs.org/@openai/codex 12ms (referer: install)
             """);
+    // What the registry answered while @openai/codex 0.165.0 was being published (#1757).
+    private static final IncusClient.ExecResult NPM_404 = new IncusClient.ExecResult(1, "", """
+            npm error code E404
+            npm error 404 Not Found - GET https://registry.npmjs.org/@openai/codex/-/codex-0.165.0.tgz - Not found
+            """);
     private static final String CONTAINER = "test-container";
+
+    private final NpmWaits waits = new NpmWaits();
+
+    @AfterEach
+    void restoreSleep() {
+        waits.close();
+    }
     private static final NpmGlobalInstall.PlatformSplitCli CODEX = CodexSetup.NPM_CLI;
 
     private static IncusClient incus() {
@@ -39,6 +53,12 @@ class NpmGlobalInstallTest {
         when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
                 argThat(arg -> arg.contains("npm root -g") && arg.contains("/" + npmPackage + "/package.json"))))
                 .thenReturn(first, rest);
+    }
+
+    private static void stubNpm(IncusClient incus, String npmPackage, IncusClient.ExecResult first,
+                                IncusClient.ExecResult... rest) {
+        when(incus.shellExec(eq(CONTAINER), eq("npm"), eq("install"), eq("-g"),
+                eq("--ignore-scripts"), eq("--loglevel=verbose"), eq(npmPackage))).thenReturn(first, rest);
     }
 
     private static void verifyNpmInstalls(IncusClient incus, String npmPackage, int times) {
@@ -77,20 +97,98 @@ class NpmGlobalInstallTest {
                 () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX));
 
         assertTrue(e.getMessage().contains("@openai/codex-linux-x64"), e.getMessage());
-        verifyNpmInstalls(incus, "@openai/codex", 2);
+        assertEquals(NpmGlobalInstall.REGISTRY_RETRY_DELAYS, waits.waited());
+        verifyNpmInstalls(incus, "@openai/codex", 2 + NpmGlobalInstall.REGISTRY_RETRY_DELAYS.size());
         verify(incus, never()).execInContainer(anyString(), anyString(), anyString());
     }
 
     @Test
-    void failsWhenNpmItselfFails() {
+    void waitsForAPlatformBuildPublishedAfterItsLauncher() {
+        // npm publishes @openai/codex minutes before @openai/codex@<v>-linux-x64, and skips the
+        // missing optional version silently (#1757).
         var incus = incus();
-        when(incus.shellExec(eq(CONTAINER), eq("npm"), any(), any(), any(), any(), any()))
-                .thenReturn(new IncusClient.ExecResult(1, "", "npm error code E404"));
+        stubCheck(incus, "@openai/codex", CODEX_MISSING, CODEX_MISSING, CODEX_MISSING, OK);
+
+        NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX);
+
+        assertEquals(List.of(Duration.ofSeconds(15), Duration.ofSeconds(30)), waits.waited());
+        verifyNpmInstalls(incus, "@openai/codex", 4);
+    }
+
+    @Test
+    void retriesATarballTheRegistryDoesNotServeYet() {
+        var incus = incus();
+        stubNpm(incus, "@openai/codex", NPM_404, OK);
+
+        NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX);
+
+        assertEquals(List.of(Duration.ofSeconds(15)), waits.waited());
+        verifyNpmInstalls(incus, "@openai/codex", 2);
+    }
+
+    @Test
+    void retriesAVersionTheRegistryDoesNotResolveYet() {
+        var incus = incus();
+        stubNpm(incus, "@google/gemini-cli", new IncusClient.ExecResult(1, "",
+                "npm error code ETARGET\nnpm error notarget No matching version found for @google/gemini-cli@0.99.0.\n"), OK);
+
+        NpmGlobalInstall.install(new Container(incus, CONTAINER), "Gemini CLI", "@google/gemini-cli");
+
+        assertEquals(List.of(Duration.ofSeconds(15)), waits.waited());
+        verifyNpmInstalls(incus, "@google/gemini-cli", 2);
+    }
+
+    @Test
+    void givesUpOnARegistryMissOnceTheRetriesAreSpent() {
+        var incus = incus();
+        stubNpm(incus, "@openai/codex", NPM_404);
 
         var e = assertThrows(IncusException.class,
                 () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX));
 
         assertEquals("Failed to install Codex CLI (exit code 1)", e.getMessage());
+        assertEquals(NpmGlobalInstall.REGISTRY_RETRY_DELAYS, waits.waited());
+        verifyNpmInstalls(incus, "@openai/codex", 1 + NpmGlobalInstall.REGISTRY_RETRY_DELAYS.size());
+    }
+
+    @Test
+    void failsAtOnceWhenOnlyTheVerboseLogMentionsA404() {
+        var incus = incus();
+        stubNpm(incus, "@openai/codex", new IncusClient.ExecResult(1, "", """
+                npm http fetch GET 404 https://registry.npmjs.org/@types%2fnode 40ms
+                npm verbose stack HttpErrorGeneral: 404 Not Found, code E404
+                npm error code EACCES
+                """));
+
+        assertThrows(IncusException.class,
+                () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX));
+
+        assertEquals(List.of(), waits.waited());
+        verifyNpmInstalls(incus, "@openai/codex", 1);
+    }
+
+    @Test
+    void sharesOneRetryBudgetAcrossAMissedTarballAndASkippedPlatformBuild() {
+        var incus = incus();
+        stubNpm(incus, "@openai/codex", NPM_404, OK);
+        stubCheck(incus, "@openai/codex", CODEX_MISSING);
+
+        assertThrows(IncusException.class,
+                () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX));
+
+        assertEquals(NpmGlobalInstall.REGISTRY_RETRY_DELAYS, waits.waited());
+    }
+
+    @Test
+    void failsAtOnceWhenNpmFailsForAnotherReason() {
+        var incus = incus();
+        stubNpm(incus, "@openai/codex", new IncusClient.ExecResult(1, "", "npm error code EACCES"));
+
+        var e = assertThrows(IncusException.class,
+                () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX));
+
+        assertEquals("Failed to install Codex CLI (exit code 1)", e.getMessage());
+        assertEquals(List.of(), waits.waited());
         verifyNpmInstalls(incus, "@openai/codex", 1);
     }
 
@@ -164,6 +262,18 @@ class NpmGlobalInstallTest {
     }
 
     @Test
+    void repairAfterUpdateWaitsForAPlatformBuildNotPublishedYet() {
+        var incus = incus();
+        stubCheck(incus, "@openai/codex", CODEX_MISSING, CODEX_MISSING, OK);
+        stubCheck(incus, "@github/copilot", OK);
+
+        assertEquals(List.of(), NpmGlobalInstall.repairAfterUpdate(new Container(incus, CONTAINER)));
+
+        assertEquals(List.of(Duration.ofSeconds(15)), waits.waited());
+        verifyNpmInstalls(incus, "@openai/codex", 2);
+    }
+
+    @Test
     void repairAfterUpdateReinstallsACliTheUpdateBroke() {
         var incus = incus();
         stubCheck(incus, "@openai/codex", CODEX_MISSING, OK);
@@ -180,8 +290,7 @@ class NpmGlobalInstallTest {
         var incus = incus();
         stubCheck(incus, "@openai/codex", CODEX_MISSING);
         stubCheck(incus, "@github/copilot", OK);
-        when(incus.shellExec(eq(CONTAINER), eq("npm"), eq("install"), eq("-g"),
-                eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@openai/codex"))).thenReturn(NPM_SKIPPED_IT);
+        stubNpm(incus, "@openai/codex", NPM_SKIPPED_IT);
 
         var problems = NpmGlobalInstall.repairAfterUpdate(new Container(incus, CONTAINER));
 
@@ -205,8 +314,7 @@ class NpmGlobalInstallTest {
         var incus = incus();
         stubCheck(incus, "@openai/codex", CODEX_MISSING);
         stubCheck(incus, "@github/copilot", OK);
-        when(incus.shellExec(eq(CONTAINER), eq("npm"), eq("install"), eq("-g"),
-                eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@openai/codex"))).thenReturn(npm);
+        stubNpm(incus, "@openai/codex", npm);
         var err = stderrOf(() -> assertThrows(IncusException.class,
                 () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX)));
         assertEquals("npm error skipped\n", err);
