@@ -5263,3 +5263,12 @@ It is deferred because the premise is gone: the proxy split removed Vert.x from 
 Pulling vertx-core and Netty into the CLI would add more code than it removes, add startup cost to every command, and bring Vert.x's native-image workarounds with it.
 The only form worth revisiting is replacing `java.net.http` with `HttpsURLConnection`, and only with a fresh native build report showing the size win.
 
+### A Linux appliance mode
+
+On Linux isx drives the host's own Incus, and the appliance VM runs only under vfkit on macOS.
+A Linux appliance mode, with isx booting and managing the same VM as on a Mac, is a possible future: for a host whose Incus cannot be installed or upgraded, or to develop the appliance on Linux with isx in the loop.
+`VmManager` once had a QEMU backend for it, but no released isx could reach it: `isx vm` is registered only on macOS, and every other caller of `VmManager` is behind a macOS check.
+It was removed so that fixes stop landing on a path no user runs (#1695).
+PR #1754 removed it, so its diff shows the code: `startQemu` and `qemuDriveArgs` in `VmManager`, with `Backend.QEMU` and the Linux branch of `detectBackend`.
+`0434e17e` on `main` still has it, and `git log -S startQemu` finds the commit that removed it.
+That is the starting point, not the design: the mode would also need vsock wiring to the forwarder, a reachable entry point such as `isx vm` on Linux, and a CI job that boots it through isx.
