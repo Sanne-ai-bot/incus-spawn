@@ -139,6 +139,12 @@ public class CompletionCommand extends BaseCommand {
               _describe -t namespaces 'namespace' namespaces
             }
 
+            _isx_account_add_names() {
+              local -a names
+              names=(${(f)"$(isx account add --completion 2>/dev/null)"})
+              _describe -t credentials 'credential' names
+            }
+
             _isx_template_names() {
               local -a templates
               templates=(${(f)"$(isx templates 2>/dev/null)"})
@@ -412,7 +418,7 @@ public class CompletionCommand extends BaseCommand {
                     show|reset-proofs) _arguments '1:instance:_isx_instances' ;;
                     set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts' ;;
                     unset) _arguments '1:instance:_isx_instances' '*:namespace:_isx_account_namespaces' ;;
-                    add) _arguments '1:namespace:_isx_account_namespaces' ;;
+                    add) _arguments '1:credential:_isx_account_add_names' ;;
                   esac ;;
               esac
             }
@@ -524,6 +530,11 @@ public class CompletionCommand extends BaseCommand {
 
             _isx_list_account_namespaces() {
               isx account list --completion 2>/dev/null | grep -v =
+            }
+
+            # What account add takes: credential namespaces and tool names.
+            _isx_list_account_add_names() {
+              isx account add --completion 2>/dev/null
             }
 
             # Offer <namespace>= then <namespace>=<account>.
@@ -676,7 +687,7 @@ public class CompletionCommand extends BaseCommand {
                     "") COMPREPLY=( $(compgen -W "list add show set unset reset-proofs --help" -- "$cur") ) ;;
                     add)
                       if [[ "$prev" == add ]]; then
-                        COMPREPLY=( $(compgen -W "$(_isx_list_account_namespaces) --help" -- "$cur") )
+                        COMPREPLY=( $(compgen -W "$(_isx_list_account_add_names) --help" -- "$cur") )
                       fi
                       ;;
                     show|set|unset|reset-proofs)
@@ -837,6 +848,11 @@ public class CompletionCommand extends BaseCommand {
             # Helper: every credential namespace, for `account unset`
             function __isx_account_namespaces
               isx account list --completion 2>/dev/null | string match -v -- '*=*'
+            end
+
+            # Helper: what `account add` takes, credential namespaces and tool names
+            function __isx_account_add_names
+              isx account add --completion 2>/dev/null
             end
 
             # Helper: true when the line is `isx account $argv[1]` followed by exactly $argv[2]
@@ -1001,7 +1017,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_account_args unset 0' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_account_args reset-proofs 0' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_account_args unset +' -a '(__isx_account_namespaces)' -d 'Namespace'
-            complete -c isx -f -n '__isx_account_args add 0' -a '(__isx_account_namespaces)' -d 'Namespace'
+            complete -c isx -f -n '__isx_account_args add 0' -a '(__isx_account_add_names)' -d 'Credential'
 
             # ── tools ────────────────────────────────────────────────────────────────────
 

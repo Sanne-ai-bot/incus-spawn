@@ -4,12 +4,15 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.AccountUsage;
+import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.InstanceRegistry;
+import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.tool.ToolDefValidator;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
@@ -300,10 +303,31 @@ public class AccountCommand extends BaseCommand {
                 + " without one, choose from a menu")
         String credential;
 
+        // Used by the generated shell completion scripts; see addCompletionLines.
+        @Option(name = "completion", hasValue = false,
+                description = "Print the credential names it takes, for shell completion")
+        boolean completion;
+
         @Override
         protected CommandResult doExecute() throws Exception {
+            if (completion) {
+                // Names only, and no Incus: this runs on every TAB.
+                addCompletionLines(new ToolDefLoader().allToolSetups()).forEach(BuildOutput.results()::println);
+                return CommandResult.SUCCESS;
+            }
             return CommandResult.valueOf(new InitCommand().addCredential(credential));
         }
+    }
+
+    /**
+     * What {@code isx account add} takes, one per line, sorted: the names the command resolves
+     * ({@link CredentialCheck#acceptedNames}), the identifiers among them. Names only, never a
+     * value. A tool's name is not constrained, and a cloned repository's tool named
+     * {@code $(...)} would run when bash's {@code compgen -W} expands the list on TAB, so a name
+     * that is not an identifier is left out; {@code isx account add} still takes it.
+     */
+    static List<String> addCompletionLines(Map<String, ToolSetup> tools) {
+        return CredentialCheck.acceptedNames(tools).stream().filter(ToolDefValidator::isNamespace).toList();
     }
 
     // ── show ────────────────────────────────────────────────────────────────────

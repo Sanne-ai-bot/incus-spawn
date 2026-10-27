@@ -27,6 +27,14 @@ class BashAccountCompletionTest {
     private static final String TWO_ACCOUNTS =
             "claude\\ngithub\\ngithub=\\ngithub=personal\\tdefault\\ngithub=acme\\n";
 
+    /** What the fake {@code isx account add --completion} prints. */
+    private Path addNames;
+
+    @org.junit.jupiter.api.BeforeEach
+    void writeAddNames() throws Exception {
+        addNames = Files.writeString(dir.resolve("add-names.txt"), "claude\ngh\ngithub\n");
+    }
+
     /** Completes {@code line}; the cursor is at its end. Returns the line after readline applies each candidate. */
     private List<String> complete(String line) throws Exception {
         return complete(line, TWO_ACCOUNTS);
@@ -41,9 +49,10 @@ class BashAccountCompletionTest {
         Files.writeString(isx, """
                 #!/bin/bash
                 [ "$1 $2 $3" = "account list --completion" ] && printf '%s'
+                [ "$1 $2 $3" = "account add --completion" ] && cat %s
                 [ "$1 $2" = "list -q" ] && echo box1
                 exit 0
-                """.formatted(accounts));
+                """.formatted(accounts, addNames));
         isx.toFile().setExecutable(true);
         var script = dir.resolve("isx.bash");
         Files.writeString(script, CompletionCommand.rawScript(CompletionCommand.Shell.bash));
@@ -124,5 +133,27 @@ class BashAccountCompletionTest {
     void unsetOffersEveryNamespace() throws Exception {
         assertEquals(List.of("isx account unset box1 claude", "isx account unset box1 github"),
                 complete("isx account unset box1 "));
+    }
+
+    /** add takes a tool as well as a namespace, so gh is offered beside github (#1773). */
+    @Test
+    void addOffersToolNamesBesideNamespaces() throws Exception {
+        assertEquals(List.of("isx account add gh", "isx account add github"), complete("isx account add g"));
+    }
+
+    /**
+     * A cloned repository's tool named like a command substitution is never run on TAB: what
+     * {@code isx account add --completion} prints for it goes through compgen -W, which expands it.
+     */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(IsolatedHome.class)
+    void addNeverRunsAHostileToolName() throws Exception {
+        var marker = dir.resolve("pwned");
+        var hostile = "$(touch " + marker + ")";
+        var tools = AccountCompletionTest.toolsWithCredentialStep(hostile);
+        assertTrue(tools.containsKey(hostile), "the hostile tool loads: " + tools.keySet());
+        Files.writeString(addNames, String.join("\n", AccountCommand.addCompletionLines(tools)) + "\n");
+        complete("isx account add ");
+        assertFalse(Files.exists(marker), "completion ran the tool's name as a command");
     }
 }
