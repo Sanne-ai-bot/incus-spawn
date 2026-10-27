@@ -1849,11 +1849,15 @@ public class Tui {
         return true;
     }
 
-    /** Opens AI Help, or explains in the status bar why no configured account can answer. */
+    /**
+     * Opens AI Help, or explains why no configured account can answer: the cause in the status
+     * bar, all of it in the warning log.
+     */
     private void openHelpChat(SpawnConfig config) {
         var targets = AiHelpClient.targets(config);
         if (targets.isEmpty()) {
-            statusMessage = AiHelpClient.noProviderMessage(config);
+            // Its advice and the credits URL would fall off the status bar (#1765)
+            refuseAtLength(AiHelpClient.noProvider(config).message());
             mode = Mode.BROWSE;
             return;
         }

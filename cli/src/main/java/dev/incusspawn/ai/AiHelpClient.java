@@ -97,7 +97,7 @@ public class AiHelpClient {
     /**
      * Every configured account that can answer, the one to use by default first: Claude
      * accounts that serve the API directly (in file order, the default account leading), then
-     * OpenAI. Empty when nothing can answer -- see {@link #noProviderMessage}.
+     * OpenAI. Empty when nothing can answer -- see {@link #noProvider}.
      *
      * <p>Selection is by what an account <em>is</em>, not by any designation: a Claude Pro/Max
      * OAuth account cannot serve this, because such a token is only valid for Claude Code
@@ -138,21 +138,21 @@ public class AiHelpClient {
                 : new Target(Provider.ANTHROPIC, name, ANTHROPIC_MODEL);
     }
 
-    /**
-     * Explains why {@link #targets} found nothing usable. A Claude Pro/Max OAuth token
-     * counts as configured credentials to the rest of isx, so "no credentials" would be a
-     * confusing thing to tell that user -- name the real reason instead.
-     */
-    public static String noProviderMessage(SpawnConfig config) {
-        var why = noProvider(config);
-        return why.cause() + (why.advice().size() > 1 ? "\n" + String.join("\n", why.advice())
-                : " " + why.advice().getFirst());
+    /** Why nothing can answer, and what to do about it, one line each. */
+    public record NoProvider(String cause, List<String> advice) {
+
+        /** The cause and its advice as one message: one line when a single advice follows it. */
+        public String message() {
+            return cause + (advice.size() > 1 ? "\n" + String.join("\n", advice)
+                    : " " + advice.getFirst());
+        }
     }
 
-    /** Why nothing can answer, and what to do about it, one line each. */
-    public record NoProvider(String cause, List<String> advice) {}
-
-    /** {@link #noProviderMessage} as its cause and its advice, for an error that shows them apart. */
+    /**
+     * Why {@link #targets} found nothing usable, and what to do about it. A Claude Pro/Max
+     * OAuth token counts as configured credentials to the rest of isx, so "no credentials"
+     * would be a confusing thing to tell that user -- name the real reason instead.
+     */
     public static NoProvider noProvider(SpawnConfig config) {
         var configured = config.getClaude().effectiveAccounts();
         if (configured.isEmpty()) {
@@ -166,10 +166,12 @@ public class AiHelpClient {
         var allOauth = configured.values().stream()
                 .allMatch(a -> a.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH);
         if (allOauth) {
-            return new NoProvider("The configured Claude account"
-                    + (configured.size() > 1 ? "s are all" : " is")
-                    + " a Claude Pro/Max subscription, whose token is only valid for Claude Code"
-                    + " itself and cannot answer here.", List.of(
+            // Two sentences, so the first fits on the TUI's status bar (#1765)
+            return new NoProvider(configured.size() > 1
+                    ? "Your Claude Pro/Max subscriptions cannot answer here."
+                            + " Their tokens are only valid for Claude Code itself."
+                    : "Your Claude Pro/Max subscription cannot answer here."
+                            + " Its token is only valid for Claude Code itself.", List.of(
                     "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.",
                     "Max and Team plans include monthly API credits for a key: " + API_CREDITS_URL));
         }

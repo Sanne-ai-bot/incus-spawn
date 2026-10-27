@@ -1,5 +1,7 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.Environment;
+import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.command.IsolatedHome;
 import dev.incusspawn.command.InstanceListing;
 import dev.incusspawn.config.ImageDef;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -530,6 +533,40 @@ class TuiCharacterisationTest {
         assertTrue(tui.statusMessage.endsWith(". Press w for the rest."), tui.statusMessage);
         assertTrue(tui.warningMessages().getFirst().endsWith("untick KVM passthrough in the branch dialog."),
                 tui.warningMessages().toString());
+    }
+
+    @Test
+    void helpChatWithNoAccountKeepsItsRemedyInTheWarningLog() {
+        var tui = tui();
+        press(tui, KeyEvent.ofChar('?'));
+        assertEquals(Tui.Mode.BROWSE, tui.mode(), "nothing can answer, so the chat stays closed");
+        // The status bar holds the cause, and where the rest is (#1765)
+        assertEquals("No AI credentials configured. Press w for the rest.", tui.statusMessage);
+        assertEquals(List.of("No AI credentials configured."
+                + " Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials."),
+                tui.warningMessages());
+    }
+
+    @Test
+    void helpChatWithOnlyASubscriptionKeepsItsAdviceInTheWarningLog() throws Exception {
+        var config = Environment.configDir().resolve("config.yaml");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, """
+                claude:
+                  oauthToken: "sk-ant-oat01-x"
+                """);
+        var tui = tui();
+        press(tui, KeyEvent.ofChar('?'));
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        // Its cause alone is too long for the status bar, so only the first sentence goes there
+        assertEquals("Your Claude Pro/Max subscription cannot answer here. Press w for the rest.",
+                tui.statusMessage);
+        assertTrue(tui.statusMessage.length() < 80, "fits an 80-column status bar after its margin");
+        // Its advice spans lines, the credits URL last; none of it fits the status bar (#1765)
+        var refusal = tui.warningMessages();
+        assertEquals(1, refusal.size(), refusal.toString());
+        assertTrue(refusal.getFirst().contains("\nRun 'isx init' to add an Anthropic API key"), refusal.getFirst());
+        assertTrue(refusal.getFirst().endsWith(AiHelpClient.API_CREDITS_URL), refusal.getFirst());
     }
 
     @Test
