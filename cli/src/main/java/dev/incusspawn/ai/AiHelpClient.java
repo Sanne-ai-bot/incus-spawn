@@ -144,10 +144,20 @@ public class AiHelpClient {
      * confusing thing to tell that user -- name the real reason instead.
      */
     public static String noProviderMessage(SpawnConfig config) {
+        var why = noProvider(config);
+        return why.cause() + (why.advice().size() > 1 ? "\n" + String.join("\n", why.advice())
+                : " " + why.advice().getFirst());
+    }
+
+    /** Why nothing can answer, and what to do about it, one line each. */
+    public record NoProvider(String cause, List<String> advice) {}
+
+    /** {@link #noProviderMessage} as its cause and its advice, for an error that shows them apart. */
+    public static NoProvider noProvider(SpawnConfig config) {
         var configured = config.getClaude().effectiveAccounts();
         if (configured.isEmpty()) {
-            return "No AI credentials configured. "
-                    + "Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials.";
+            return new NoProvider("No AI credentials configured.",
+                    List.of("Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials."));
         }
         // Describe what is actually configured rather than inferring it from the absence of a
         // provider -- a confidently wrong explanation is worse than a vague one. Both branches
@@ -156,15 +166,15 @@ public class AiHelpClient {
         var allOauth = configured.values().stream()
                 .allMatch(a -> a.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH);
         if (allOauth) {
-            return "The configured Claude account"
+            return new NoProvider("The configured Claude account"
                     + (configured.size() > 1 ? "s are all" : " is")
                     + " a Claude Pro/Max subscription, whose token is only valid for Claude Code"
-                    + " itself and cannot answer here.\n"
-                    + "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.\n"
-                    + "Max and Team plans include monthly API credits for a key: " + API_CREDITS_URL;
+                    + " itself and cannot answer here.", List.of(
+                    "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.",
+                    "Max and Team plans include monthly API credits for a key: " + API_CREDITS_URL));
         }
-        return "No configured Claude account can answer this. "
-                + "Run 'isx init' to add an Anthropic API key or Vertex AI account.";
+        return new NoProvider("No configured Claude account can answer this.",
+                List.of("Run 'isx init' to add an Anthropic API key or Vertex AI account."));
     }
 
     /**
