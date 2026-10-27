@@ -291,7 +291,9 @@ class UpdateAllCommandTest {
         var said = RecordingOutput.during(() -> assertEquals(1, command.updateTemplates(incus, resolved)));
 
         assertEquals(List.of("cd '/home/agentuser/app' && mise install", "cd '/home/agentuser/app' && ./gradlew dependencies"),
-                guestScripts.subList(1, guestScripts.size()), "after the git fetch script");
+                guestScripts.subList(1, 3), "after the git fetch script");
+        assertTrue(guestScripts.get(3).startsWith("/usr/local/bin/isx-trust "), "then the bind: " + guestScripts);
+        assertEquals(4, guestScripts.size(), guestScripts.toString());
         assertTrue(failedSteps(said).contains("Prime command failed for ~/app: ./gradlew dependencies"), failedSteps(said));
     }
 
@@ -326,6 +328,62 @@ class UpdateAllCommandTest {
         verify(incus, times(2)).execInContainer(NAME, "agentuser", prime);
         assertTrue(rootCommands.contains("/usr/local/bin/isx-trust /usr/lib/jvm /opt /usr/local"),
                 String.join("\n", rootCommands));
+    }
+
+    /** A JDK a successful prime downloaded trusts the isx CA in later branches too, as after a build. */
+    @Test
+    void anUpdateThatPrimesBindsWhatThePrimesDownloadedBeforeTheStop() {
+        var incus = incus();
+        var command = new UpdateAllCommand();
+        command.prime = true;
+
+        assertEquals(0, command.updateTemplates(incus, primed("~/app", "./gradlew dependencies")));
+
+        var stop = inOrder(incus);
+        stop.verify(incus).execInContainer(NAME, "agentuser", "cd '/home/agentuser/app' && ./gradlew dependencies");
+        stop.verify(incus).shellExec(NAME, "/usr/local/bin/isx-trust", "/usr/lib/jvm", "/opt", "/usr/local");
+        stop.verify(incus).execInContainer(eq(NAME), eq("agentuser"),
+                startsWith("/usr/local/bin/isx-trust '/home/agentuser/opt' "));
+        stop.verify(incus).stop(NAME);
+    }
+
+    @Test
+    void aBindThatFailsAfterThePrimesWarnsWithoutFailingThem() {
+        var incus = incus();
+        when(incus.shellExec(NAME, "/usr/local/bin/isx-trust", "/usr/lib/jvm", "/opt", "/usr/local"))
+                .thenThrow(new IncusException("exec failed"));
+        var command = new UpdateAllCommand();
+        command.prime = true;
+
+        var said = RecordingOutput.during(() ->
+                assertEquals(0, command.updateTemplates(incus, primed("~/app", "./gradlew dependencies"))));
+
+        var warned = String.join("\n", said.events(RecordingOutput.Kind.WARN).stream().map(RecordingOutput.Event::msg).toList());
+        assertTrue(warned.contains("exec failed"), warned);
+        verify(incus).stop(NAME);
+    }
+
+    @Test
+    void aTemplateBuiltBeforeTheHelperIsUpdatedWithoutAWarning() {
+        var incus = incus();
+        when(incus.shellExec(NAME, "/usr/local/bin/isx-trust", "/usr/lib/jvm", "/opt", "/usr/local"))
+                .thenReturn(new IncusClient.ExecResult(127, "", "isx-trust: not found"));
+        var command = new UpdateAllCommand();
+        command.prime = true;
+
+        var said = RecordingOutput.during(() ->
+                assertEquals(0, command.updateTemplates(incus, primed("~/app", "./gradlew dependencies"))));
+
+        assertTrue(said.events(RecordingOutput.Kind.WARN).isEmpty(), said.events(RecordingOutput.Kind.WARN).toString());
+    }
+
+    @Test
+    void anUpdateWithoutPrimeBindsNothing() {
+        var incus = incus();
+
+        assertEquals(0, new UpdateAllCommand().updateTemplates(incus, primed("~/app", "./gradlew dependencies")));
+
+        assertTrue(rootCommands.stream().noneMatch(c -> c.contains("isx-trust")), String.join("\n", rootCommands));
     }
 
     @Test

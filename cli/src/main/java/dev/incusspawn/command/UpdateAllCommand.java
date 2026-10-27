@@ -212,7 +212,33 @@ public class UpdateAllCommand extends BaseCommand {
                 skipped = true;
             }
         }
+        if (prime && repos.stream().anyMatch(ImageDef.RepoEntry::hasPrime)) bindDownloadedRuntimes(incus, name);
         return new PrimeResult(skipped, failed);
+    }
+
+    /** Exit status of a shell command that does not exist: no isx-trust in the template. */
+    private static final int COMMAND_NOT_FOUND = 127;
+
+    /**
+     * A runtime a prime downloaded (a Gradle toolchain, a mise JDK) would keep its own roots in
+     * every later branch: the path units do not settle before the stop. Bind it, as a build's
+     * bindTrustStores does. A template built before isx-trust has no helper, and nothing to bind;
+     * a bind that fails otherwise warns rather than failing primes that passed.
+     */
+    private static void bindDownloadedRuntimes(IncusClient incus, String name) {
+        String why;
+        try {
+            why = GuestProvisioning.runTrustHelper(new Container(incus, name)).stream()
+                    .filter(r -> !r.success() && r.exitCode() != COMMAND_NOT_FOUND)
+                    .map(r -> BuildProgress.lastNonEmptyLine(BuildProgress.combinedOutput(r)))
+                    .findFirst().orElse(null);
+        } catch (RuntimeException e) {
+            why = e.getMessage();
+        }
+        if (why != null) {
+            BuildOutput.warn("Could not bind the runtimes the primes downloaded in " + name + ": " + why,
+                    "A JDK they downloaded may not trust the isx CA in later branches; run isx-trust in one.");
+        }
     }
 
 }
