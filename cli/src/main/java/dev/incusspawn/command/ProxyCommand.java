@@ -479,8 +479,7 @@ public class ProxyCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            ProxyService.stop();
-            return CommandResult.SUCCESS;
+            return ProxyService.stop() ? CommandResult.SUCCESS : CommandResult.FAILURE;
         }
     }
 

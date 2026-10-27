@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
 
 public final class ProxyService {
@@ -423,7 +424,7 @@ public final class ProxyService {
      * systemctl} — which a regression in that recheck would otherwise run against whatever
      * service is actually installed on the machine running the test (review on #916).
      */
-    static boolean restartIfUnhealthy(String healthAddr, int healthPort, java.util.function.BooleanSupplier restart) {
+    static boolean restartIfUnhealthy(String healthAddr, int healthPort, BooleanSupplier restart) {
         try (var ignored = acquireProxyLock()) {
             if (ProxyHealthCheck.isHealthy(healthAddr, healthPort)) return true;
             return restart.getAsBoolean();
@@ -506,26 +507,36 @@ public final class ProxyService {
         }
     }
 
-    public static void stop() {
+    /** Stops the proxy, the service's or one run by hand; false when one is running and could not be stopped. */
+    public static boolean stop() {
         try (var ignored = acquireProxyLock()) {
-            stopLocked();
+            return stopLocked();
         }
     }
 
-    private static void stopLocked() {
+    private static boolean stopLocked() {
         if (isActive()) {
             BuildOutput.step("Stopping proxy service...");
-            if (Platform.isMacOS()) {
-                runQuiet("launchctl", "bootout", "gui/" + getUid() + "/" + PROXY_LABEL);
-                BuildOutput.step("Proxy service stopped (re-enable with: isx proxy install).");
-            } else {
-                runQuiet("systemctl", "--user", "stop", SERVICE_NAME);
-                BuildOutput.step("Proxy service stopped.");
-            }
-            return;
+            if (!Platform.isMacOS()) return stopSystemdUnit(ProxyService::isActive);
+            // launchd's bootout answers as soon as the job is told to go (see LaunchdJob), so its
+            // result proves nothing and is not asked
+            runQuiet("launchctl", "bootout", "gui/" + getUid() + "/" + PROXY_LABEL);
+            BuildOutput.step("Proxy service stopped (re-enable with: isx proxy install).");
+            return true;
         }
 
-        stopManualProxy(ProxyHealthCheck::reportedProxyPid, ProxyService::findProxyPid);
+        return stopManualProxy(ProxyHealthCheck::reportedProxyPid, ProxyService::findProxyPid);
+    }
+
+    /** Stops the systemd unit, false with an error when {@code systemctl} refused or the unit is still {@code active} after it. */
+    static boolean stopSystemdUnit(BooleanSupplier active) {
+        if (runQuiet("systemctl", "--user", "stop", SERVICE_NAME) && !active.getAsBoolean()) {
+            BuildOutput.step("Proxy service stopped.");
+            return true;
+        }
+        BuildOutput.error("Could not stop the proxy service.",
+                "Check it with: systemctl --user status " + SERVICE_NAME);
+        return false;
     }
 
     /**
@@ -534,7 +545,7 @@ public final class ProxyService {
      * alone finds nothing on macOS, whose {@code fuser} has no {@code port/tcp} form, nor where
      * psmisc is not installed, and the proxy was then left running behind "Proxy is not running."
      */
-    static void stopManualProxy(LongSupplier reportedPid, LongSupplier pidOnPort) {
+    static boolean stopManualProxy(LongSupplier reportedPid, LongSupplier pidOnPort) {
         var pid = reportedPid.getAsLong();
         if (pid <= 0) pid = pidOnPort.getAsLong();
         // The PID came over HTTP: 0 or a negative one would make `kill` signal a process group.
@@ -542,13 +553,14 @@ public final class ProxyService {
             BuildOutput.step("Stopping proxy (PID " + pid + ")...");
             if (runQuiet("kill", String.valueOf(pid))) {
                 BuildOutput.step("Proxy stopped.");
-            } else {
-                BuildOutput.error("Could not stop the proxy (PID " + pid + "); is it another user's?");
+                return true;
             }
-            return;
+            BuildOutput.error("Could not stop the proxy (PID " + pid + "); is it another user's?");
+            return false;
         }
 
         BuildOutput.step("Proxy is not running.");
+        return true;
     }
 
     /**
