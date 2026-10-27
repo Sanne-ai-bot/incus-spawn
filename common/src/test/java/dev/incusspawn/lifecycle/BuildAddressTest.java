@@ -126,6 +126,22 @@ class BuildAddressTest {
         assertTrue(e.getMessage().contains("lease"), e.getMessage());
     }
 
+    /** isx update-all pins a template too (#1743): its failure names the template and update-all, not a build. */
+    @Test
+    void anUpdatesAddressFailureNamesWhatToRetry() {
+        var daemon = new FakeIncusDaemon().container("tpl-java", Map.of())
+                .dhcpAnswers("tpl-java", "10.166.11.87");
+        var incus = daemon.client();
+        var ip = assign(incus, "tpl-java", Map.of());
+        incus.start("tpl-java");
+
+        var e = assertThrows(IncusException.class, () -> InstanceNetwork.requireBuildAddress(incus, "tpl-java", ip,
+                new InstanceNetwork.AddressUse("Template", "'isx update-all'"), Duration.ZERO));
+        assertTrue(e.getMessage().startsWith("Template tpl-java was given " + ip), e.getMessage());
+        assertTrue(e.getMessage().contains("Retry 'isx update-all' once that lease has expired"), e.getMessage());
+        assertFalse(e.getMessage().contains("build"), e.getMessage());
+    }
+
     @Test
     void anotherInterfacesAddressIsNotTheDhcpAnswer() {
         // A parent that enabled docker: its bridge is up, but the guest holds its own address
