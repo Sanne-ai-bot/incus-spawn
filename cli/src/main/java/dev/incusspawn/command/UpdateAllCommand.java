@@ -6,6 +6,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.HostRepoRefresh;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceNetwork;
@@ -120,7 +121,7 @@ public class UpdateAllCommand extends BaseCommand {
 
     /**
      * {@code failedSteps} names each failed step in plural, for one summary line; {@code leftRunning}
-     * is a template that could not be stopped.
+     * is a template that could not be stopped, or was refused for not being stopped.
      */
     private record UpdateResult(boolean primesSkipped, Set<String> failedSteps, boolean leftRunning) {}
 
@@ -128,7 +129,13 @@ public class UpdateAllCommand extends BaseCommand {
         var read = incus.readInstance(name);
         var machineType = IncusClient.machineType(read.metadata());
         // Before the try: a template refused here was not started, so is not this update's to stop
-        InstanceLifecycle.requireStoppedTemplate(name, read);
+        try {
+            InstanceLifecycle.requireStoppedTemplate(name, read);
+        } catch (RuntimeException e) {
+            // As one left running: a re-run cannot retry it, so the summary does not offer one
+            BuildOutput.stepFail(e.getMessage());
+            return new UpdateResult(false, Set.of(), true);
+        }
         // Stopped however the update ends, even when its start failed: a template left running
         // fails the next update-all's start
         var failedSteps = new LinkedHashSet<String>();
@@ -138,10 +145,11 @@ public class UpdateAllCommand extends BaseCommand {
             // Pinned and filtered as a build is, since it runs the same prime commands (#1743)
             var address = InstanceLifecycle.startTemplate(incus, name, read, BuildOutput.bound());
             incus.waitForReady(name, machineType);
-            InstanceNetwork.requireBuildAddress(incus, name, address, UPDATE_ADDRESS);
 
             // Every step below needs the network: without one, each would only fail the same way
-            if (!GuestUpdate.network(incus, name, machineType)) {
+            if (!holdsItsAddress(incus, name, address)) {
+                failedSteps.add("address checks");
+            } else if (!GuestUpdate.network(incus, name, machineType)) {
                 failedSteps.add("network waits");
             } else {
                 if (!GuestUpdate.system(incus, name)) failedSteps.add("system updates");
@@ -160,6 +168,20 @@ public class UpdateAllCommand extends BaseCommand {
             if (!leftRunning) InstanceNetwork.releaseBuildAddressOrWarn(incus, name, BuildOutput.bound());
         }
         return new UpdateResult(primesSkipped, failedSteps, leftRunning);
+    }
+
+    /**
+     * Whether the template's guest took the address it was pinned to; reported as a failed step
+     * when it did not, since filtering drops all its traffic, so the next template still updates.
+     */
+    private static boolean holdsItsAddress(IncusClient incus, String name, String address) {
+        try {
+            InstanceNetwork.requireBuildAddress(incus, name, address, UPDATE_ADDRESS);
+            return true;
+        } catch (IncusException e) {
+            BuildOutput.stepFail(e.getMessage());
+            return false;
+        }
     }
 
     /**
