@@ -119,13 +119,23 @@ public class DestroyCommand extends BaseCommand {
         if (!confirmDestructive("Destroy all listed " + kind + "s?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
 
         var incus = RuntimeServices.incus();
-        var result = destroyNames(incus, names);
+        return summarize(destroyNames(incus, names), kind);
+    }
 
+    /**
+     * How a bulk destroy ended: a success only when everything went, else an error, since one
+     * left behind, locked or failed, fails the command.
+     */
+    static CommandResult summarize(DestroyResult result, String kind) {
         var msg = new StringBuilder("Destroyed " + result.destroyed + " " + kind + "(s).");
+        if (result.skipped == 0 && result.failed == 0) {
+            BuildOutput.success(msg.toString());
+            return CommandResult.SUCCESS;
+        }
         if (result.skipped > 0) msg.append(" ").append(result.skipped).append(" skipped (locked).");
         if (result.failed > 0) msg.append(" ").append(result.failed).append(" failed.");
-        BuildOutput.success(msg.toString());
-        return (result.failed > 0 || result.skipped > 0) ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
+        BuildOutput.error(msg.toString());
+        return CommandResult.valueOf(1);
     }
 
     static List<String> listClones(IncusClient incus) {
