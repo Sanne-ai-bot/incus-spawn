@@ -165,12 +165,59 @@ class UpdateAllCommandTest {
         var incus = incus();
         daemon.instance(NAME, "container", "Running", Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
 
-        var e = assertThrows(IllegalStateException.class, () -> update(incus));
+        var said = RecordingOutput.during(() -> assertEquals(1, update(incus)));
 
-        assertTrue(e.getMessage().contains("must be stopped"), e.getMessage());
+        assertTrue(failedSteps(said).contains(NAME + " must be stopped"), failedSteps(said));
         assertEquals("Running", daemon.instance(NAME).pathText("status", ""));
         assertEquals(0, daemon.instance(NAME).path("devices").size());
         verify(incus, never()).stop(NAME);
+    }
+
+    private static final String NEXT = "tpl-next";
+
+    /** {@link #NAME}, which each test sets up to fail, then {@link #NEXT}, a template that updates. */
+    private int updateBothWith(IncusClient incus) {
+        daemon.instance(NEXT, "container", "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
+        doReturn(new IncusClient.ExecResult(1, "", "")).when(incus).shellExec(NEXT, "which", "npm");
+        doReturn(OK).when(incus).execInContainer(eq(NEXT), eq("agentuser"), anyString());
+        var resolved = new LinkedHashMap<String, ImageDef>();
+        resolved.put(NAME, null);
+        resolved.put(NEXT, null);
+        return new UpdateAllCommand().updateTemplates(incus, resolved);
+    }
+
+    /** One template that cannot be updated is that template's failure: the ones after it still update. */
+    @Test
+    void aRefusedTemplateDoesNotStopTheNextOnesUpdate() {
+        var incus = incus();
+        daemon.instance(NAME, "container", "Running", Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
+
+        var said = RecordingOutput.during(() -> assertEquals(1, updateBothWith(incus)));
+
+        verify(incus).shellExec(NEXT, "dnf", "update", "-y");
+        assertFalse(warnings(said).contains("re-run"), "a re-run is refused the same way: " + warnings(said));
+    }
+
+    /** A guest that did not take its pinned address has no network at all: its update fails, the next one runs. */
+    @Test
+    void aTemplateThatDidNotTakeItsAddressDoesNotStopTheNextOnesUpdate() {
+        var incus = incus();
+        doThrow(new IncusException("Template " + NAME + " was given 10.166.11.2 but its DHCP client got 10.166.11.87"))
+                .when(incus).ipv4Addresses(NAME);
+
+        var said = RecordingOutput.during(() -> assertEquals(1, updateBothWith(incus)));
+
+        verify(incus, never()).shellExec(NAME, "dnf", "update", "-y");
+        verify(incus).shellExec(NEXT, "dnf", "update", "-y");
+        assertTrue(failedSteps(said).contains("its DHCP client got"), failedSteps(said));
+        assertTrue(warnings(said).contains("Some address checks failed"), warnings(said));
+        assertEquals("Stopped", daemon.instance(NAME).pathText("status", ""));
+        assertFalse(daemon.instance(NAME).path("config").has(Metadata.STATIC_IP), "the address is given back");
+    }
+
+    private static String warnings(RecordingOutput said) {
+        return String.join("\n", said.events(RecordingOutput.Kind.WARN).stream()
+                .map(RecordingOutput.Event::msg).toList());
     }
 
     /** A template the update leaves running fails the next update-all's start. */
