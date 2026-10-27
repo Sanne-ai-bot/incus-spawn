@@ -51,6 +51,10 @@ jobs:
           key: maven-${{ hashFiles('**/pom.xml') }}
           restore-keys: maven-
 
+      # ZshCompletionTest drives a real zsh and skips without one, which the runner does not ship.
+      - name: Install zsh
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
+
       - name: Build and test
         run: mvn package
 

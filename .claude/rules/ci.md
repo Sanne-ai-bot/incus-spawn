@@ -17,7 +17,7 @@ paths:
 On a push, root jobs are gated so feature-branch pushes only run on forks (not upstream, where the PR trigger covers them).
 Key jobs:
 
-- **`unit-tests`**: `mvn package` (no Incus required)
+- **`unit-tests`**: `mvn package` (no Incus required), with zsh installed so `ZshCompletionTest` runs rather than skips
 - **`unit-tests-macos`**: `mvn test` on `macos-15` (a standard arm64 runner), so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970). arm64 only, by decision (#974); the reasoning is in DESIGN.md "Testing".
   It sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`, which enables `KeychainTrustMacTest`: it adds CAs to the runner's System keychain, which only a discarded runner may do (#1467).
   Test failures are counted from the surefire reports after the run, so a failure in `common` does not skip `cli` and `proxy` (`-fae` would: they depend on it), and the reports are uploaded when it fails, since few contributors have a Mac to reproduce on
