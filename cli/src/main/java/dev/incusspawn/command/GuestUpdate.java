@@ -1,10 +1,11 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.util.BuildOutput;
 
 /**
- * The system update and git fetch steps shared by {@code isx update-all} and
+ * The network wait, system update and git fetch steps shared by {@code isx update-all} and
  * {@code isx project update}. Each returns false, after reporting it, when the step failed.
  */
 final class GuestUpdate {
@@ -27,6 +28,21 @@ final class GuestUpdate {
     static final String EMPTY_TMP_SCRIPT = "find /tmp /var/tmp -xdev -mindepth 1 -delete";
 
     private GuestUpdate() {
+    }
+
+    /**
+     * Waits for the started template's network ({@link GuestNetwork}). It boots on DHCP, so its
+     * lease may not be in place yet, and every later step needs the network (#1734).
+     */
+    static boolean network(IncusClient incus, String name, MachineType machineType) {
+        BuildOutput.stepStart("Waiting for network...");
+        var failure = GuestNetwork.waitUntilOnline(incus, name, machineType);
+        if (failure != null) {
+            BuildOutput.stepFail(failure);
+            return false;
+        }
+        BuildOutput.stepDone();
+        return true;
     }
 
     static boolean system(IncusClient incus, String name) {

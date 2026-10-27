@@ -238,15 +238,20 @@ public class ProjectCommand extends BaseCommand {
             var failedSteps = new ArrayList<String>();
             try (var credentials = BuildAccounts.project(incus, name)) {
                 credentials.start(machineType);
-                if (!GuestUpdate.system(incus, name)) failedSteps.add("system update");
-                // Update globally installed npm packages (coding tools, etc.)
-                if (!NpmUpdate.run(incus, name)) failedSteps.add("npm update");
-                // Git fetch in all repos
-                if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetch");
+                // Every step below needs the network: without one, each would only fail the same way
+                if (!GuestUpdate.network(incus, name, machineType)) {
+                    failedSteps.add("network wait");
+                } else {
+                    if (!GuestUpdate.system(incus, name)) failedSteps.add("system update");
+                    // Update globally installed npm packages (coding tools, etc.)
+                    if (!NpmUpdate.run(incus, name)) failedSteps.add("npm update");
+                    // Git fetch in all repos
+                    if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetch");
 
-                // Re-run pre-build if config available
-                if (projectConfig != null && !preBuild(incus, name, projectConfig.getPreBuild())) {
-                    failedSteps.add("pre-build");
+                    // Re-run pre-build if config available
+                    if (projectConfig != null && !preBuild(incus, name, projectConfig.getPreBuild())) {
+                        failedSteps.add("pre-build");
+                    }
                 }
                 GuestUpdate.emptyTmp(incus, name);
             }

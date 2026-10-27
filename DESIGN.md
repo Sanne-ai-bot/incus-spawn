@@ -220,6 +220,13 @@ It is not in the base image either, which would put an isx choice in a Fedora im
 What a step leaves in `/tmp` is now saved with the template, so every path that saves one empties `/tmp` and `/var/tmp` first, hidden files included (`GuestUpdate.EMPTY_TMP_SCRIPT`): the builds' `cleanCaches`, `isx update-all`, and `isx project create` and `update`.
 A base image pinned before #1563 replaced the whole built-in definition, so it keeps the tmpfs until `isx update-base` pins it again or unpins it (below).
 
+**An update waits for the template's network** (#1734).
+A template boots on DHCP, and exec answers before its lease is in place, so a dnf run straight after cannot resolve its mirrors.
+`isx update-all` and `isx project update` wait first through `GuestNetwork`, the same waits a build makes: an address, then a Fedora mirror that answers.
+Both run in the guest, in one exec, so a network already up costs one exec more than before.
+A container's wait looks for an address on `eth0` and starts its `systemd-networkd`; a VM's NIC keeps its kernel's name (#997), so its wait looks for a default route.
+A template whose network never comes up fails its update with the build's diagnostics, and no step that needs the network runs.
+
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
 Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
 

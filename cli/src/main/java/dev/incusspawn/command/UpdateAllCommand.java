@@ -127,19 +127,24 @@ public class UpdateAllCommand extends BaseCommand {
         InstanceLifecycle.startTemplate(incus, name, instance, BuildOutput.bound());
         // Stopped however the update ends: a template left running fails the next update-all's start
         var failedSteps = new LinkedHashSet<String>();
-        boolean primesSkipped;
+        boolean primesSkipped = false;
         boolean leftRunning;
         try {
             incus.waitForReady(name, machineType);
 
-            if (!GuestUpdate.system(incus, name)) failedSteps.add("system updates");
-            // Update globally installed npm packages (coding tools, etc.)
-            if (!NpmUpdate.run(incus, name)) failedSteps.add("npm updates");
-            // Git fetch in all repos (for project images)
-            if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetches");
-            var primeResult = handlePrimeCommands(incus, name, imageDef);
-            if (primeResult.failed) failedSteps.add("prime commands");
-            primesSkipped = primeResult.skipped;
+            // Every step below needs the network: without one, each would only fail the same way
+            if (!GuestUpdate.network(incus, name, machineType)) {
+                failedSteps.add("network waits");
+            } else {
+                if (!GuestUpdate.system(incus, name)) failedSteps.add("system updates");
+                // Update globally installed npm packages (coding tools, etc.)
+                if (!NpmUpdate.run(incus, name)) failedSteps.add("npm updates");
+                // Git fetch in all repos (for project images)
+                if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetches");
+                var primeResult = handlePrimeCommands(incus, name, imageDef);
+                if (primeResult.failed) failedSteps.add("prime commands");
+                primesSkipped = primeResult.skipped;
+            }
             GuestUpdate.emptyTmp(incus, name);
         } finally {
             leftRunning = !stop(incus, name);

@@ -4,6 +4,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.RecordingOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -25,23 +26,35 @@ class UpdateAllCommandTest {
     private static final String NAME = "tpl-test";
 
     private final List<String> guestScripts = new ArrayList<>();
+    /** Each command run as root, joined with spaces, in order. */
+    private final List<String> rootCommands = new ArrayList<>();
 
     /** A template whose every step succeeds; each test fails one. Records what runs as agentuser. */
     private IncusClient incus() {
         var incus = mock(IncusClient.class);
         when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running"));
-        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.shellExec(anyString(), any(String[].class))).thenAnswer(inv -> {
+            var args = inv.getArguments();
+            // Matchers pass null while a stub is set up
+            if (NAME.equals(args[0])) rootCommands.add(String.join(" ", java.util.Arrays.copyOfRange(args, 1, args.length, String[].class)));
+            return OK;
+        });
         when(incus.shellExec(NAME, "which", "npm")).thenReturn(new IncusClient.ExecResult(1, "", ""));
         when(incus.execInContainer(eq(NAME), eq("agentuser"), anyString())).thenAnswer(inv -> {
             guestScripts.add(inv.getArgument(2));
             return OK;
         });
+        rootCommands.clear();
         return incus;
     }
 
     /** A base template as read, in {@code status}. */
     private static JqObject template(String status) {
-        return JqObject.builder(2).put("status", status)
+        return template(status, "container");
+    }
+
+    private static JqObject template(String status, String type) {
+        return JqObject.builder(3).put("status", status).put("type", type)
                 .put("config", JqObject.builder(1).put(Metadata.TYPE, Metadata.TYPE_BASE).build()).build();
     }
 
@@ -189,6 +202,72 @@ class UpdateAllCommandTest {
                 .thenReturn(new IncusClient.ExecResult(1, "", "Failed to download metadata"));
 
         assertEquals(1, update(incus));
+    }
+
+    /**
+     * A template boots on DHCP, and exec answers before the lease is in place: dnf run then
+     * cannot resolve its mirrors (#1734). The network is waited for first, in one exec.
+     */
+    @Test
+    void theSystemUpdateWaitsForTheNetwork() {
+        assertEquals(0, update(incus()));
+
+        assertTrue(rootCommands.size() > 1, rootCommands.toString());
+        assertTrue(rootCommands.getFirst().contains("mirrors.fedoraproject.org"),
+                "the first exec must wait for the network: " + rootCommands);
+        assertEquals("dnf update -y", rootCommands.get(1));
+    }
+
+    /** A VM's NIC is not eth0 (#997), and its guest may not run systemd-networkd. */
+    @Test
+    void aVmTemplateWaitsForItsNetworkWithoutNamingANic() {
+        var incus = incus();
+        when(incus.instanceMetadataOrThrow(NAME)).thenReturn(template("Running", "virtual-machine"));
+
+        assertEquals(0, update(incus));
+
+        var wait = rootCommands.getFirst();
+        assertTrue(wait.contains("mirrors.fedoraproject.org"), rootCommands.toString());
+        assertTrue(wait.contains("ip -4 route show default"), wait);
+        assertFalse(wait.contains("eth0"), wait);
+        assertFalse(wait.contains("systemd-networkd"), wait);
+    }
+
+    /** No step that needs the network runs without one; the update fails, saying what it waited for. */
+    @Test
+    void aNetworkThatNeverComesUpFailsTheUpdateWithoutRunningDnf() {
+        var incus = incus();
+        when(incus.shellExec(eq(NAME), eq("sh"), eq("-c"), contains("mirrors.fedoraproject.org")))
+                .thenReturn(new IncusClient.ExecResult(4, "", ""));
+
+        var said = RecordingOutput.during(() -> assertEquals(1, update(incus)));
+
+        verify(incus, never()).shellExec(NAME, "dnf", "update", "-y");
+        verify(incus, never()).execInContainer(eq(NAME), eq("agentuser"), anyString());
+        verify(incus).stop(NAME);
+        assertTrue(failedSteps(said).contains("cannot reach https://mirrors.fedoraproject.org"), failedSteps(said));
+    }
+
+    /** No address at all: the guest's own network state is what explains it. */
+    @Test
+    void aTemplateWithoutAnAddressFailsWithTheGuestsNetworkState() {
+        var incus = incus();
+        when(incus.shellExec(eq(NAME), eq("sh"), eq("-c"), contains("mirrors.fedoraproject.org")))
+                .thenReturn(new IncusClient.ExecResult(3, "", ""));
+        when(incus.shellExec(eq(NAME), eq("sh"), eq("-c"), contains("networkctl")))
+                .thenReturn(new IncusClient.ExecResult(0, "eth0: no carrier", ""));
+
+        var said = RecordingOutput.during(() -> assertEquals(1, update(incus)));
+
+        verify(incus, never()).shellExec(NAME, "dnf", "update", "-y");
+        var failed = failedSteps(said);
+        assertTrue(failed.contains(NAME + " did not acquire an IPv4 address"), failed);
+        assertTrue(failed.contains("eth0: no carrier"), failed);
+    }
+
+    private static String failedSteps(RecordingOutput said) {
+        return String.join("\n", said.events(RecordingOutput.Kind.STEP_FAIL).stream()
+                .map(RecordingOutput.Event::msg).toList());
     }
 
     @Test

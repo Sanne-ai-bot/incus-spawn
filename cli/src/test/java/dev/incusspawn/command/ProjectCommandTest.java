@@ -123,6 +123,21 @@ class ProjectCommandTest {
         order.verify(incus).stop(NAME);
     }
 
+    /** As update-all's, the update waits for the template's network before its first step (#1734). */
+    @Test
+    void updateWaitsForTheNetworkBeforeTheSystemUpdate() {
+        var incus = parentWhoseGuestAnswers(OK);
+        assertEquals(0, create(incus, config(null)));
+
+        var update = new ProjectCommand.Update();
+        update.name = NAME;
+        assertEquals(0, update.update(incus, config(null)));
+
+        var order = inOrder(incus);
+        order.verify(incus).shellExec(eq(NAME), eq("sh"), eq("-c"), contains("mirrors.fedoraproject.org"));
+        order.verify(incus).shellExec(NAME, "dnf", "update", "-y");
+    }
+
     @Test
     void projectCreateAndUpdateAuthenticateThenRevokeWithoutLosingAccountRestrictions() {
         var incus = preparedClient(false);
