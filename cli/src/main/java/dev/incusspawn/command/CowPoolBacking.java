@@ -11,8 +11,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -136,13 +136,14 @@ final class CowPoolBacking {
      * after Incus's error; {@code makeDisksDir} makes {@link #DISKS_DIR} for the loop file.
      */
     static Created create(Function<Path, String> fsOf, BooleanSupplier skipTrim, Runner run,
-                          Runnable makeDisksDir, Consumer<String> warn) {
+                          Runnable makeDisksDir, BiConsumer<String, List<String>> warn) {
         if ("btrfs".equals(fsOf.apply(POOLS_DIR))) {
             var subvolume = run.run(subvolumeCommand());
             if (subvolume.exitCode() == 0) return new Created(true, subvolume);
-            warn.accept("Could not create the pool as a subvolume; falling back to a loop file.");
-            failureExplanation(subvolume.stderr()).forEach(l -> warn.accept("  " + l));
-            warn.accept("'isx doctor' will say how to move it to a subvolume later.");
+            // One warning, before the loop file is made: why, then what doctor offers later
+            var details = new ArrayList<>(failureExplanation(subvolume.stderr()));
+            details.add("'isx doctor' will say how to move it to a subvolume later.");
+            warn.accept("Could not create the pool as a subvolume; falling back to a loop file.", details);
         }
         makeDisksDir.run();
         // Whether to compress depends on where the file lives, as doctor judges it

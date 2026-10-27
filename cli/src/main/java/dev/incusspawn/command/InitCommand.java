@@ -430,7 +430,7 @@ public class InitCommand extends BaseCommand {
      * @return the exit code
      */
     int addCredential(String name) throws Exception {
-        if (credentialPrompts() == null) {
+        if (prompts() == null) {
             BuildOutput.error("'isx account add' asks for the credential, so it needs a terminal.");
             return 1;
         }
@@ -548,13 +548,13 @@ public class InitCommand extends BaseCommand {
 
     /** The terminal, or null after saying why interactive setup cannot run without one. */
     private Prompts consoleOrExplain() {
-        var prompts = credentialPrompts();
+        var prompts = prompts();
         if (prompts == null) BuildOutput.error("No console available for interactive setup.");
         return prompts;
     }
 
-    /** Where the credential steps read their answers: the terminal, or null without one. */
-    Prompts credentialPrompts() {
+    /** Where init's questions read their answers, its credential and host steps' alike: the terminal, or null without one. */
+    Prompts prompts() {
         return Prompts.console();
     }
 
@@ -700,7 +700,7 @@ public class InitCommand extends BaseCommand {
                 "Choose which API credentials to configure. Each credential",
                 "stays on your host — containers only hold placeholders, and",
                 "the MITM proxy injects real values transparently.");
-        var prompts = credentialPrompts();
+        var prompts = prompts();
         if (prompts == null) {
             return List.of();
         }

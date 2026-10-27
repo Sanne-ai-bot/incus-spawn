@@ -4,9 +4,6 @@ import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -20,23 +17,20 @@ class InitStepOutputTest {
 
     private static final Pattern COUNTER = Pattern.compile("\\[(\\d+)/(\\d+)]");
 
-    /** What a test step would print to stdout and stderr. */
-    record Output(String out, String err) {}
+    /**
+     * What a test step reported, as a terminal splits it: what it did ({@code out}) and its
+     * diagnostics and notes ({@code err}), a line each, recorded rather than read off the streams.
+     */
+    record Reported(String out, String err) {}
 
-    static Output capture(InitCommand.Step body) throws Exception {
-        var out = System.out;
-        var err = System.err;
-        var outBuffer = new ByteArrayOutputStream();
-        var errBuffer = new ByteArrayOutputStream();
-        System.setOut(new PrintStream(outBuffer, true, StandardCharsets.UTF_8));
-        System.setErr(new PrintStream(errBuffer, true, StandardCharsets.UTF_8));
-        try {
-            body.run();
-        } finally {
-            System.setOut(out);
-            System.setErr(err);
+    static Reported capture(InitCommand.Step body) {
+        var recorded = RecordingOutput.during(body::run);
+        var out = new StringBuilder();
+        var err = new StringBuilder();
+        for (var event : recorded.events()) {
+            if (event.msg() != null) (RecordingOutput.onStderr(event.kind()) ? err : out).append(event.text()).append('\n');
         }
-        return new Output(outBuffer.toString(StandardCharsets.UTF_8), errBuffer.toString(StandardCharsets.UTF_8));
+        return new Reported(out.toString(), err.toString());
     }
 
     /** Init with {@code chosen} credentials picked at Credential Setup, and host commands faked. */

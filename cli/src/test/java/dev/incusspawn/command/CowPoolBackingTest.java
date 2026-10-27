@@ -43,7 +43,10 @@ class CowPoolBackingTest {
             return cmd[cmd.length - 1].startsWith("source=")
                     ? new CowPoolBacking.Attempt(1, "Error: Storage pool directory \"/var/lib/incus/storage-pools/cow\" already exists\n")
                     : new CowPoolBacking.Attempt(0, "");
-        }, () -> ran.add(List.of("mkdir")), warned::add);
+        }, () -> ran.add(List.of("mkdir")), (msg, details) -> {
+            warned.add(msg);
+            warned.addAll(details);
+        });
         assertFalse(created.subvolume());
         assertEquals(0, created.result().exitCode());
         assertEquals(List.of(
@@ -63,7 +66,7 @@ class CowPoolBackingTest {
         var ran = new ArrayList<List<String>>();
         var created = CowPoolBacking.create(p -> "btrfs", () -> fail("a subvolume runs no mkfs"),
                 cmd -> { ran.add(List.of(cmd)); return new CowPoolBacking.Attempt(0, ""); },
-                () -> fail("a subvolume needs no disks directory"), w -> fail(w));
+                () -> fail("a subvolume needs no disks directory"), (w, d) -> fail(w));
         assertTrue(created.subvolume());
         assertEquals(List.of(List.of(CowPoolBacking.subvolumeCommand())), ran);
     }
@@ -73,7 +76,7 @@ class CowPoolBackingTest {
         var ran = new ArrayList<List<String>>();
         var created = CowPoolBacking.create(p -> "ext4", () -> false,
                 cmd -> { ran.add(List.of(cmd)); return new CowPoolBacking.Attempt(0, ""); },
-                () -> ran.add(List.of("mkdir")), w -> fail(w));
+                () -> ran.add(List.of("mkdir")), (w, d) -> fail(w));
         assertFalse(created.subvolume());
         assertEquals(List.of(List.of("mkdir"), List.of("sudo", "incus", "storage", "create", "cow", "btrfs", "size=100GiB",
                 "btrfs.mount_options=user_subvol_rm_allowed,noatime,commit=300,compress=zstd:1")), ran);
@@ -89,7 +92,7 @@ class CowPoolBackingTest {
         var ran = new ArrayList<List<String>>();
         CowPoolBacking.create(p -> p.equals(CowPoolBacking.POOLS_DIR) ? "btrfs" : "ext4", () -> false,
                 cmd -> { ran.add(List.of(cmd)); return new CowPoolBacking.Attempt(cmd[cmd.length - 1].startsWith("source=") ? 1 : 0, ""); },
-                () -> {}, w -> {});
+                () -> {}, (w, d) -> {});
         assertEquals("btrfs.mount_options=user_subvol_rm_allowed,noatime,commit=300,compress=zstd:1",
                 ran.get(1).get(ran.get(1).size() - 1));
     }
