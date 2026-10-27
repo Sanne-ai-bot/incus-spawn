@@ -73,7 +73,8 @@ class ExitCodeTest {
             var run = isx(args);
             assertEquals(1, run.exit(), () -> String.join(" ", args) + "\n" + run);
             assertEquals("", run.out(), () -> String.join(" ", args));
-            assertTrue(run.err().startsWith("Error: ") && run.err().contains(c[0]),
+            // An error sits at the step indent, as every command's does
+            assertTrue(run.err().startsWith(dev.incusspawn.util.BuildOutput.STEP_INDENT + "Error: ") && run.err().contains(c[0]),
                     () -> String.join(" ", args) + "\n" + run.err());
         }
     }

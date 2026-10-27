@@ -18,6 +18,22 @@ class BaseCommandTest {
         assertTrue(BaseCommand.confirmDestructive("Wipe?", true, "--yes", null), "the skip flag still skips the question");
     }
 
+    /** A command that fails says why as an error, never "Error: null" for an exception without a message. */
+    @Test
+    void aFailedCommandIsAnErrorThatSaysWhat() throws Exception {
+        var failing = new BaseCommand() {
+            @Override
+            protected org.aesh.command.CommandResult doExecute() {
+                throw new IllegalStateException();
+            }
+        };
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> assertEquals(1, failing.execute(null).getResultValue()));
+
+        assertEquals(java.util.List.of("java.lang.IllegalStateException"),
+                recorded.events(dev.incusspawn.util.RecordingOutput.Kind.ERROR).stream()
+                        .map(dev.incusspawn.util.RecordingOutput.Event::msg).toList());
+    }
+
     @Test
     void parseConfirmationAcceptsYesAndNoCaseInsensitively() {
         assertEquals(true, BaseCommand.parseConfirmation(" y ", false));
