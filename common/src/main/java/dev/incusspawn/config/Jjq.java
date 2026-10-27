@@ -187,8 +187,14 @@ public final class Jjq {
         return String.valueOf(refused.getMessage()).startsWith("Unpaired surrogate escape");
     }
 
+    /**
+     * Without {@code refused} as its cause, whose message may quote the whole document after the
+     * reason; its stack trace is kept, so a trace still shows where jjq refused.
+     */
     private static IllegalArgumentException notJson(String source, IllegalArgumentException refused) {
-        return new IllegalArgumentException(source + " is not valid JSON: " + brief(refused), refused);
+        var e = new IllegalArgumentException(source + " is not valid JSON: " + brief(refused));
+        e.setStackTrace(refused.getStackTrace());
+        return e;
     }
 
     /**
