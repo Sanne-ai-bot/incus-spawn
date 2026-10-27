@@ -28,6 +28,8 @@ A helper therefore sees its subcommand as the command and completes positional v
 Never shift `words` or decrement `CURRENT` again in the dispatcher: that made the word being completed the command, so `isx destroy <TAB>` listed nothing.
 A helper with subcommands parses them with its own `_arguments -C` and `case $line[1]`, as `_isx_account` does, never from `$words[1]`.
 `ZshCompletionTest` types each line into a real interactive zsh through `zpty` and pins the buffer TAB leaves behind, so the whole dispatcher is exercised; `CompletionCommandTest` keeps a cheap structural guard for machines without zsh.
+Its driver (`zsh-completion-driver.zsh`) waits on markers only the sourced setup or the widget can print, with blocking `zpty -r -m` reads that drain the pty, never on timed polling: on macOS the timed loop hung (#1738).
+It runs `compinit -D`, so no test writes the developer's `~/.zcompdump`.
 
 `isx account add [<ns>|<tool>]` is `InitCommand.addCredential`: init's step for that one credential, or with no argument its Credential Setup menu, under the same `[n/N]` headers (#1469).
 Init's credential and host steps read their answers from `InitCommand.prompts()`, which tests override.
