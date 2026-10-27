@@ -81,6 +81,8 @@ class JjqForeignJsonTest {
     void theMessageNeverQuotesTheDocument() {
         var e = assertThrows(IllegalArgumentException.class, () -> Jjq.parseForeign("{\"secret\":\"s3cr3t\"} x", "x.json"));
         assertFalse(e.getMessage().contains("s3cr3t"), e.getMessage());
+        assertNull(e.getCause(), "jjq's own message quotes the document, so a stack trace would too");
+        assertTrue(e.getStackTrace()[0].getClassName().startsWith("io.hyperfoil.tools.jjq"), "where jjq refused");
     }
 
     private static void assertRefused(String json, String why) {
