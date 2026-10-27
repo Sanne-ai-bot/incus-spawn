@@ -1209,7 +1209,7 @@ public class Tui {
             var credError = branchInherited == null ? "" : BranchFlow.credentialProblem(
                     branchInherited, branch.accountOverrides(), imageDefs, toolDefLoader);
             if (!credError.isEmpty()) {
-                statusMessage = credError;
+                refuseAtLength(credError);
                 mode = Mode.BROWSE;
                 return true;
             }
@@ -1219,6 +1219,18 @@ public class Tui {
         pendingActionTarget = new ActionContext(name, null);
         tui.quit();
         return true;
+    }
+
+    /**
+     * A refusal longer than the one-line status bar holds, such as a missing credential's remedy and
+     * tool note (#1759): its first sentence on the status bar, all of it in the warning log.
+     */
+    private void refuseAtLength(String message) {
+        // Announced by this line, so not again, cut off, after the next key
+        warningLog.addAnnounced(message);
+        int end = message.indexOf(". ");
+        statusMessage = end < 0 ? message
+                : message.substring(0, end + 1) + " Press " + WarningsModal.KEY + " for the rest.";
     }
 
     /**

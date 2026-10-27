@@ -49,14 +49,29 @@ public final class WarningLog {
      * CLI carry one) are dropped; inner lines are kept for the modal.
      */
     public synchronized void add(String message) {
-        if (message == null || message.isBlank()) return;
+        append(message);
+    }
+
+    /**
+     * As {@link #add}, for a message its caller has put on the status line itself: it is not
+     * announced again, while every other warning still waiting is.
+     */
+    public synchronized void addAnnounced(String message) {
+        var slot = append(message);
+        if (slot != null) slot.announced = true;
+    }
+
+    private Slot append(String message) {
+        if (message == null || message.isBlank()) return null;
         var text = dedent(message).strip().replaceFirst("^Warning:\\s*", "");
-        if (text.isEmpty()) return;
+        if (text.isEmpty()) return null;
         slots.removeIf(s -> s.entry.message().equals(text));
-        slots.add(new Slot(new Entry(text, clock.get())));
+        var slot = new Slot(new Entry(text, clock.get()));
+        slots.add(slot);
         if (slots.size() > CAPACITY) {
             slots.remove(0);
         }
+        return slot;
     }
 
     /**

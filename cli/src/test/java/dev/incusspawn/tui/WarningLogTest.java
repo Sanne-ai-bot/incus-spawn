@@ -108,4 +108,13 @@ class WarningLogTest {
         assertEquals(0, log.unread());
         assertEquals(List.of(), log.takeUnannounced());
     }
+
+    @Test
+    void anAnnouncedAdditionLeavesTheOthersWaitingToBeAnnounced() {
+        log.add("could not set up git remote");
+        log.addAnnounced("Missing credentials: GitHub token. Run 'isx account add github'.");
+
+        assertEquals(List.of("could not set up git remote"), messages(log.takeUnannounced()));
+        assertEquals(2, log.unread(), "both are still unread in the dialog");
+    }
 }
