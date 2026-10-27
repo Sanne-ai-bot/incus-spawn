@@ -6,6 +6,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
@@ -44,6 +45,9 @@ class TuiCharacterisationTest {
 
     /** The host firewall's banner title, as the stood-in check reports it; null for a running one. */
     private String stoppedFirewall;
+
+    /** The tools tpl-minimal declares; none unless a test says. */
+    private List<ToolDef.ToolRef> minimalTools = List.of();
 
     @BeforeEach
     void runner() throws Exception {
@@ -101,7 +105,9 @@ class TuiCharacterisationTest {
 
     private Tui tui(boolean withInstances, FakeIncusDaemon daemon) {
         var defs = new LinkedHashMap<String, ImageDef>();
-        defs.put("tpl-minimal", def("tpl-minimal", null, "Minimal Fedora"));
+        var minimal = def("tpl-minimal", null, "Minimal Fedora");
+        minimal.setTools(minimalTools);
+        defs.put("tpl-minimal", minimal);
         defs.put("tpl-dev", def("tpl-dev", "tpl-minimal", "Development tools"));
         daemon.container("tpl-minimal", template("tpl-minimal", null));
         if (withInstances) {
@@ -475,6 +481,27 @@ class TuiCharacterisationTest {
         assertEquals(List.of("firewalld is not running:\nFix:\n  sudo systemctl enable --now firewalld"),
                 tui.warningMessages());
         assertEquals(Tui.PendingAction.SHELL, tui.pendingAction(), "an advisory, so the shell still opens");
+    }
+
+    @Test
+    void aBranchRefusedForMissingCredentialsKeepsTheWholeRefusalInTheWarningLog() {
+        // No Claude account is configured, so a branch of a template with claude is refused.
+        minimalTools = List.of(new ToolDef.ToolRef("claude"));
+        var tui = tui();
+        press(tui, ENTER);
+        typeText(tui, "-x");
+        press(tui, ENTER);
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        assertEquals(Tui.PendingAction.NONE, tui.pendingAction(), "the branch is refused");
+        // The status bar holds one line: what is missing, and where the rest is
+        assertTrue(tui.statusMessage.startsWith("Missing credentials: "), tui.statusMessage);
+        assertTrue(tui.statusMessage.endsWith(". Press w for the rest."), tui.statusMessage);
+        assertFalse(tui.statusMessage.contains("isx account add"), tui.statusMessage);
+        // The remedy and any tool note no longer fall off the end of it (#1759)
+        var refusal = tui.warningMessages();
+        assertEquals(1, refusal.size(), refusal.toString());
+        assertTrue(refusal.getFirst().startsWith("Missing credentials: "), refusal.getFirst());
+        assertTrue(refusal.getFirst().contains("Run 'isx account add claude'"), refusal.getFirst());
     }
 
     @Test

@@ -4967,6 +4967,7 @@ They now all go to one `WarningLog`, whichever thread raised them.
 The status line only *announces* what arrived since the last frame (the latest, led by how many arrived, since a long line is cut off at the terminal width), and only when it is empty or holds an older announcement, so an action's result ("Build failed") is never replaced -- the warnings wait for the next key; the header keeps "⚠ N warnings (w)" up while any are unread, so an announcement cleared by a keypress is not lost; and `w` opens a dialog listing every warning, newest first, with its lines intact -- several warnings carry a command or a YAML fix to copy, which a one-line status bar cannot show.
 A warning raised again moves to the end with the new time instead of appearing twice, and the log is capped at 100 entries.
 Warnings still unread when the TUI exits are printed once the terminal is released, so quitting does not discard them.
+A refusal too long for the line, such as a branch's missing credentials with their remedy and a tool's note (#1759), goes to the log too: the line keeps its first sentence and points at `w`, and the log entry counts as announced.
 
 The log is not cleared by a reload, because it records warnings that happened, not the definitions' current state: a fixed tool file's warning stays, with its time, until cleared (`c` in the dialog).
 Clearing also calls the TUI channel's `forgetReported()`, so a warning that is still true comes back on the next reload rather than staying hidden for the rest of the session.
