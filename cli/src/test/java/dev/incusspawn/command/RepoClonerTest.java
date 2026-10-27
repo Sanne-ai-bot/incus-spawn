@@ -563,6 +563,69 @@ class RepoClonerTest {
     }
 
     @Test
+    void aBindThatThrowsKeepsWhyThePrimeFailed() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.shellExec(anyString(), any(String[].class))).thenThrow(new IncusException("exec failed"));
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenAnswer(inv ->
+                ((String) inv.getArgument(2)).startsWith("cd ") ? new IncusClient.ExecResult(1, PKIX, "") : OK);
+
+        var run = RepoCloner.runPrime(container, repo("https://github.com/owner/app.git", "~/app", "./fetch-deps"), () -> {});
+
+        assertFalse(run.success());
+        assertTrue(run.output().contains("PKIX path building failed"), run.output());
+        assertTrue(run.label().contains("exec failed"), run.label());
+    }
+
+    @Test
+    void aTemplateWithoutTheHelperIsNotPrimedAgainAsIfItHadBound() {
+        // isx update-all --prime on a template built before isx-trust existed.
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.shellExec(anyString(), any(String[].class)))
+                .thenReturn(new IncusClient.ExecResult(127, "", "/usr/local/bin/isx-trust: not found"));
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenAnswer(inv ->
+                ((String) inv.getArgument(2)).startsWith("cd ") ? new IncusClient.ExecResult(1, PKIX, "") : OK);
+
+        var run = RepoCloner.runPrime(container, repo("https://github.com/owner/app.git", "~/app", "./fetch-deps"), () -> {});
+
+        assertFalse(run.success());
+        assertTrue(run.label().contains("rebuild"), run.label());
+        assertTrue(run.output().contains("not found"), run.output());
+        verify(incus, times(1)).execInContainer("test", "agentuser", "cd '/home/agentuser/app' && ./fetch-deps");
+    }
+
+    @Test
+    void onlyTheListedPrimeCommandThatFailedUntrustedRunsAgain() {
+        // A prime that is a list: the commands before the failing one succeeded and do not run
+        // again; the bind and the second try are for the failing command, and the list goes on.
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var calls = primeAnswers(incus, OK);
+        var download = "cd '/home/agentuser/jbang' && mise x -- ./gradlew dependencies";
+        var downloads = new java.util.concurrent.atomic.AtomicInteger();
+        when(incus.execInContainer("test", "agentuser", download)).thenAnswer(inv -> {
+            calls.add("agentuser: " + download);
+            return downloads.incrementAndGet() == 1 ? new IncusClient.ExecResult(1, PKIX, "") : OK;
+        });
+        calls.clear(); // stubbing ran the default answer
+        var repo = repo("https://github.com/jbangdev/jbang", "~/jbang", null);
+        repo.setPrime(List.of("mise install", "mise x -- ./gradlew dependencies", "echo after"));
+
+        var run = RepoCloner.runPrime(container, repo, () -> {});
+
+        assertTrue(run.success(), run.label());
+        assertEquals(List.of(
+                "agentuser: cd '/home/agentuser/jbang' && mise install",
+                "agentuser: " + download,
+                "root: /usr/local/bin/isx-trust /usr/lib/jvm /opt /usr/local"),
+                calls.subList(0, 3), String.join("\n", calls));
+        assertTrue(calls.get(3).startsWith("agentuser: /usr/local/bin/isx-trust '/home/agentuser/opt' "), calls.get(3));
+        assertEquals(List.of("agentuser: " + download, "agentuser: cd '/home/agentuser/jbang' && echo after"),
+                calls.subList(4, calls.size()), String.join("\n", calls));
+    }
+
+    @Test
     void aPrimeThatFailsForAnotherReasonRunsOnce() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");

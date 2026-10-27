@@ -1669,7 +1669,7 @@ public class BuildCommand extends BaseCommand {
             maskServices(container, layer);
             installSkills(container, layer, defs, toolResolution.effective());
             // Before the layer's primes, which may use a JDK its tools just installed, run
-            // isx-trust themselves, or need it run again (RepoCloner.primeOne).
+            // isx-trust themselves, or need it run again (RepoCloner.runPrime).
             if (layer.getRepos().stream().anyMatch(ImageDef.RepoEntry::hasPrime)) {
                 bindInstalledRuntimes(container);
             }

@@ -644,43 +644,78 @@ class RepoCloner {
     }
 
     static final String UNTRUSTED_AFTER_BIND = "the prime still shows an untrusted certificate after isx-trust"
-            + " bound the runtimes in its landing directories; if it uses a runtime elsewhere, add"
-            + " `isx-trust <dir>` for that runtime's directory to the prime, before the command that uses it";
+            + " bound the runtimes in its landing directories. A runtime elsewhere needs `isx-trust <dir>` in the"
+            + " prime, before the command that uses it; a JVM daemon the first run started (Gradle, mvnd) keeps"
+            + " its old store until it stops (`./gradlew --stop`); otherwise the server's own certificate is"
+            + " not trusted";
+
+    /**
+     * How a prime went: on failure, the command that failed, its output and a one-line label
+     * for it, and whether that command ran again after isx-trust.
+     */
+    record PrimeRun(boolean success, String command, String output, String label, boolean retried) {
+        static final PrimeRun OK = new PrimeRun(true, null, "", "", false);
+    }
+
+    /**
+     * Runs a repo's prime commands in turn as agentuser, stopping at the first that fails, for a
+     * build and {@code isx update-all --prime} alike. A command that downloads a runtime and uses
+     * it at once ({@code mise x -- ./gradlew ...}) runs it before the isx-trust path unit binds
+     * it (#1746): when a command fails on an untrusted certificate, bind what landed and run that
+     * command once more, after {@code onRetry}; the commands before it succeeded and do not run
+     * again. The helper is not installed here: a build installed it before the primes, and
+     * rewriting it could cut short another prime running it; a template that predates it says so.
+     */
+    static PrimeRun runPrime(Container container, ImageDef.RepoEntry repo, Runnable onRetry) {
+        var dir = shellQuote(expandHome(repo.getPath()));
+        for (var command : repo.getPrime()) {
+            var run = runPrimeCommand(container, command, "cd " + dir + " && " + command, onRetry);
+            if (!run.success()) return run;
+        }
+        return PrimeRun.OK;
+    }
+
+    private static PrimeRun runPrimeCommand(Container container, String command, String prime, Runnable onRetry) {
+        var result = container.shAsUser("agentuser", prime);
+        if (result.success()) return PrimeRun.OK;
+        // Prime output is not git, so use the last meaningful line for the
+        // concise inline label; the full log is preserved and printed on failure.
+        var first = combinedOutput(result);
+        if (!GuestProvisioning.untrustedCertificate(first)) {
+            return new PrimeRun(false, command, first, lastNonEmptyLine(first), false);
+        }
+        onRetry.run();
+        try {
+            var unbound = GuestProvisioning.runTrustHelper(container).stream().filter(r -> !r.success()).findFirst();
+            if (unbound.isPresent()) {
+                return new PrimeRun(false, command, first.strip() + "\n--- isx-trust ---\n" + combinedOutput(unbound.get()),
+                        "isx-trust failed (a template built before it has none: rebuild it)", true);
+            }
+        } catch (RuntimeException e) {
+            return new PrimeRun(false, command, first, "isx-trust could not run: " + e.getMessage(), true);
+        }
+        try {
+            result = container.shAsUser("agentuser", prime);
+        } catch (RuntimeException e) {
+            return new PrimeRun(false, command, first, "the prime's second run failed: " + e.getMessage(), true);
+        }
+        if (result.success()) return PrimeRun.OK;
+        // Both runs: the second may fail for another reason, and the first says why it ran.
+        var second = combinedOutput(result);
+        return new PrimeRun(false, command, first.strip() + "\n--- isx-trust ran; the prime's second run ---\n" + second,
+                GuestProvisioning.untrustedCertificate(second) ? UNTRUSTED_AFTER_BIND : lastNonEmptyLine(second), true);
+    }
 
     /** Run a repo's prime commands in turn, stopping at the first that fails. Returns true on
      *  success; on failure records it in {@code states[idx]} and returns false. */
     private boolean primeOne(Container container, ImageDef.RepoEntry repo,
                              AtomicReferenceArray<StepProgress> states, int idx) {
         try {
-            var expanded = expandHome(repo.getPath());
-            for (var command : repo.getPrime()) {
-                var prime = "cd " + shellQuote(expanded) + " && " + command;
-                var result = container.shAsUser("agentuser", prime);
-                if (result.success()) continue;
-                var combined = combinedOutput(result);
-                // A command that downloads a runtime and uses it at once (`mise x -- ./gradlew
-                // ...`) runs it before the isx-trust path unit binds it (#1746): bind what landed,
-                // as the build does after the primes, and run that command once more. The build
-                // installed the helper before the primes; reinstalling it here would rewrite a
-                // script another prime may be running.
-                boolean retried = GuestProvisioning.untrustedCertificate(combined);
-                if (retried) {
-                    states.set(idx, StepProgress.running("Binding new runtimes to the isx CA, priming again"));
-                    GuestProvisioning.runTrustHelper(container);
-                    result = container.shAsUser("agentuser", prime);
-                    if (result.success()) continue;
-                    // Both runs: the second may fail for another reason, and the first says why it ran.
-                    combined = combined.strip() + "\n--- isx-trust ran; the prime's second run ---\n"
-                            + combinedOutput(result);
-                }
-                // Prime output is not git, so use the last meaningful line for the
-                // concise inline label; the full log is preserved and printed on failure.
-                var label = retried && GuestProvisioning.untrustedCertificate(combinedOutput(result))
-                        ? UNTRUSTED_AFTER_BIND : lastNonEmptyLine(combined);
-                states.set(idx, StepProgress.failed(label, combined));
-                return false;
-            }
-            return true;
+            var run = runPrime(container, repo, () -> states.set(idx,
+                    StepProgress.running("Binding new runtimes to the isx CA, priming again")));
+            if (run.success()) return true;
+            states.set(idx, StepProgress.failed(run.label(), run.output()));
+            return false;
         } catch (Exception e) {
             states.set(idx, StepProgress.failed(e.getMessage(), null));
             return false;
