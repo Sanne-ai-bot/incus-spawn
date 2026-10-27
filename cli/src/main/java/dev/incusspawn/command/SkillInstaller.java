@@ -83,8 +83,9 @@ final class SkillInstaller {
                     }
                     BuildOutput.stepDone();
                 } catch (IOException | InterruptedException e) {
+                    if (e instanceof InterruptedException) Thread.currentThread().interrupt();
                     BuildOutput.stepBreak();
-                    System.err.println("Error: Failed to fetch skill '" + resolved + "': " + e.getMessage());
+                    BuildOutput.error("could not fetch skill '" + resolved + "': " + BaseCommand.failure(e));
                     throw new BuildFailedException();
                 }
             }
@@ -228,8 +229,8 @@ final class SkillInstaller {
         try {
             return resolveSkillSource(entry, repo);
         } catch (IllegalArgumentException e) {
-            System.err.println("Error: " + e.getMessage() + " (declared by " + source + ")");
-            System.err.println("Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in the " + source + ".");
+            BuildOutput.error(e.getMessage() + " (declared by " + source + ")",
+                    "Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in the " + source + ".");
             throw new BuildFailedException();
         }
     }

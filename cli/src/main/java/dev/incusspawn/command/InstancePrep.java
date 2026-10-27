@@ -38,11 +38,21 @@ public class InstancePrep {
         try {
             templateName = prepare(incus, name, BuildOutput.bound());
         } catch (Refused e) {
-            if (!e.reported()) e.getMessage().lines().forEach(l -> System.err.println(l));
+            if (!e.reported()) reportRefusal(e.getMessage());
             return null;
         }
         GuiPassthrough.checkGuiHealth(incus, name, BuildOutput.bound());
         return templateName;
+    }
+
+    /** A refusal's first line as the error, and the lines under it as its advice. */
+    private static void reportRefusal(String message) {
+        var lines = message.lines().toList();
+        if (lines.isEmpty()) {
+            BuildOutput.error("the instance could not be prepared.");
+            return;
+        }
+        BuildOutput.error(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
     }
 
     /** Why {@link #prepare} refused, as lines for the user; {@code reported} when already printed. */
@@ -70,14 +80,14 @@ public class InstancePrep {
      */
     public static String prepare(IncusClient incus, String name, Output out) {
         if (!incus.exists(name)) {
-            throw new Refused("Error: no instance named '" + name + "' found.\n"
+            throw new Refused("no instance named '" + name + "' found.\n"
                     + "Run 'isx list' to see available instances.", false);
         }
 
         // Validate parent template before any side effects
         var parent = incus.configGet(name, Metadata.PARENT);
         if (parent == null || parent.isEmpty()) {
-            throw new Refused("Error: instance '" + name + "' has no parent template.\n"
+            throw new Refused("instance '" + name + "' has no parent template.\n"
                     + "This does not appear to be an incus-spawn managed instance.", false);
         }
 
