@@ -400,6 +400,32 @@ class InstanceRegistryTest {
         assertTrue(route.admits(agent.template(), agent.untrusted()), "an ordinary branch still is");
     }
 
+    /**
+     * isx update-all gives a template a pinned address and a secret while it runs (#1743), as a
+     * build container has: like one, it is refused host routes, while its branches are not.
+     */
+    @Test
+    void aTemplateBeingUpdatedIsRefusedHostRoutesButItsBranchesAreNot() {
+        var secret = InstanceSecret.generate();
+        var hash = InstanceSecret.sha256(secret);
+        var tpl = dev.incusspawn.incus.Metadata.PROFILE;
+        var type = dev.incusspawn.incus.Metadata.TYPE;
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("tpl-isx-agent", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5", SECRET_KEY, hash,
+                        tpl, "tpl-isx-agent", type, dev.incusspawn.incus.Metadata.TYPE_BASE))
+                .instance("dev-1", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.6", SECRET_KEY, hash,
+                        tpl, "tpl-isx-agent", type, dev.incusspawn.incus.Metadata.TYPE_CLONE,
+                        dev.incusspawn.incus.Metadata.PARENT, "tpl-isx-agent"));
+        var registry = new InstanceRegistry(daemon.client());
+        registry.refresh();
+
+        var route = new dev.incusspawn.config.HostRoutes.Route("work.isx.internal", "127.0.0.1", 1, java.util.List.of("tpl-isx-agent"));
+        var template = registry.identifyWithLineage("10.0.0.5", secret, false).lineage();
+        assertFalse(route.admits(template.template(), template.untrusted()), "the template is admitted: " + template);
+        var branch = registry.identifyWithLineage("10.0.0.6", secret, false).lineage();
+        assertTrue(route.admits(branch.template(), branch.untrusted()), "its branch is refused: " + branch);
+    }
+
     @Test
     void anInstanceDescendedFromAFailedBuildIsNobodysTemplateAtAnyDepth() {
         // Before #936 nothing was stamped: a branch of a branch of a failed build, and a branch of a
