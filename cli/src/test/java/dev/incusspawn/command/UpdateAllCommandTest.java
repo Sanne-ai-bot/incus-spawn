@@ -265,6 +265,36 @@ class UpdateAllCommandTest {
         assertTrue(failed.contains("eth0: no carrier"), failed);
     }
 
+    /** {@code --prime} runs a repo's prime commands in turn and names the first that fails (#1745). */
+    @Test
+    void primeRunsEachCommandInTurnAndStopsAtTheFirstFailure() throws Exception {
+        var incus = incus();
+        when(incus.execInContainer(NAME, "agentuser", "cd '/home/agentuser/app' && ./gradlew dependencies"))
+                .thenAnswer(inv -> {
+                    guestScripts.add(inv.getArgument(2));
+                    return new IncusClient.ExecResult(1, "", "");
+                });
+        guestScripts.clear(); // stubbing ran the default answer
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/app.git");
+        repo.setPath("~/app");
+        repo.setPrime(List.of("mise install", "./gradlew dependencies", "echo never"));
+        var def = new ImageDef();
+        def.setRepos(List.of(repo));
+        var command = new UpdateAllCommand();
+        var prime = UpdateAllCommand.class.getDeclaredField("prime");
+        prime.setAccessible(true);
+        prime.setBoolean(command, true);
+        var resolved = new LinkedHashMap<String, ImageDef>();
+        resolved.put(NAME, def);
+
+        var said = RecordingOutput.during(() -> assertEquals(1, command.updateTemplates(incus, resolved)));
+
+        assertEquals(List.of("cd '/home/agentuser/app' && mise install", "cd '/home/agentuser/app' && ./gradlew dependencies"),
+                guestScripts.subList(1, guestScripts.size()), "after the git fetch script");
+        assertTrue(failedSteps(said).contains("Prime command failed for ~/app: ./gradlew dependencies"), failedSteps(said));
+    }
+
     private static String failedSteps(RecordingOutput said) {
         return String.join("\n", said.events(RecordingOutput.Kind.STEP_FAIL).stream()
                 .map(RecordingOutput.Event::msg).toList());

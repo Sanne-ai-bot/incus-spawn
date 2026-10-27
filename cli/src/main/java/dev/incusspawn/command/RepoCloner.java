@@ -643,20 +643,22 @@ class RepoCloner {
         }
     }
 
-    /** Run a repo's prime command. Returns true on success; on failure records it in
-     *  {@code states[idx]} and returns false. */
+    /** Run a repo's prime commands in turn, stopping at the first that fails. Returns true on
+     *  success; on failure records it in {@code states[idx]} and returns false. */
     private boolean primeOne(Container container, ImageDef.RepoEntry repo,
                              AtomicReferenceArray<StepProgress> states, int idx) {
         try {
             var expanded = expandHome(repo.getPath());
-            var result = container.shAsUser("agentuser",
-                    "cd " + shellQuote(expanded) + " && " + repo.getPrime());
-            if (result.success()) return true;
-            // Prime output is not git, so use the last meaningful line for the
-            // concise inline label; the full log is preserved and printed on failure.
-            var combined = combinedOutput(result);
-            states.set(idx, StepProgress.failed(lastNonEmptyLine(combined), combined));
-            return false;
+            for (var command : repo.getPrime()) {
+                var result = container.shAsUser("agentuser", "cd " + shellQuote(expanded) + " && " + command);
+                if (result.success()) continue;
+                // Prime output is not git, so use the last meaningful line for the
+                // concise inline label; the full log is preserved and printed on failure.
+                var combined = combinedOutput(result);
+                states.set(idx, StepProgress.failed(lastNonEmptyLine(combined), combined));
+                return false;
+            }
+            return true;
         } catch (Exception e) {
             states.set(idx, StepProgress.failed(e.getMessage(), null));
             return false;

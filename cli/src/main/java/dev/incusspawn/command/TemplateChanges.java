@@ -115,8 +115,8 @@ public final class TemplateChanges {
         if (!Objects.equals(built.getDepth(), now.getDepth())) {
             what.add("depth " + orElse(built.getDepth(), "(full)") + " → " + orElse(now.getDepth(), "(full)"));
         }
-        if (!Objects.equals(built.getPrime(), now.getPrime())) {
-            what.add("prime " + orElse(built.getPrime(), "(none)") + " → " + orElse(now.getPrime(), "(none)"));
+        if (!built.getPrime().equals(now.getPrime())) {
+            what.add("prime " + orElse(built.primeText(), "(none)") + " → " + orElse(now.primeText(), "(none)"));
         }
         return what.isEmpty() ? null : now.sourceDescription() + " → " + now.getPath() + " (" + String.join(", ", what) + ")";
     }

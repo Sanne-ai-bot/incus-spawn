@@ -74,7 +74,7 @@ class RepoClonerReferenceTest {
             var repo = new ImageDef.RepoEntry();
             repo.setUrl(url);
             repo.setPath("~/" + name + i);
-            repo.setPrime("echo primed");
+            repo.setPrime(List.of("echo primed"));
             repos.add(repo);
         }
         var imageDef = new ImageDef();

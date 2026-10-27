@@ -63,7 +63,7 @@ class RepoClonerHostSourceTest {
         repo.setHostSource(host.toString());
         repo.setPath(tmp.resolve("guest").toString());
         repo.setBranch(pin);
-        repo.setPrime("git fsck --full --no-dangling");
+        repo.setPrime(List.of("git fsck --full --no-dangling"));
         var planned = new RepoCloner.RepoReference("ref", "/mnt/ref", host.toString(), null);
         var mounts = new RepoCloner.ReferenceMounts() {
             public RepoCloner.RepoReference attach(int idx, RepoCloner.RepoReference ref) {

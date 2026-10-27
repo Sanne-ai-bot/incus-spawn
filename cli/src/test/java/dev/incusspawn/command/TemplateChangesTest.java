@@ -84,6 +84,16 @@ class TemplateChangesTest {
     }
 
     @Test
+    void aPrimeWrittenAsAListIsTheSameCommandsAsWritten() throws Exception {
+        var built = def("repos:\n  - url: https://github.com/a/b.git\n    prime: mise install");
+        var same = def("repos:\n  - url: https://github.com/a/b.git\n    prime: [mise install]");
+        var more = def("repos:\n  - url: https://github.com/a/b.git\n    prime: [mise install, gradle deps]");
+        assertEquals(List.of(), TemplateChanges.definitionChanges(built, same, java.util.Map.of()));
+        assertEquals(List.of("~ repo https://github.com/a/b.git → ~/b (prime mise install → mise install && gradle deps)"),
+                TemplateChanges.definitionChanges(built, more, java.util.Map.of()));
+    }
+
+    @Test
     void anUnsetPrimeIsShownAsNone() throws Exception {
         var built = def("repos:\n  - url: https://github.com/a/b.git");
         var now = def("repos:\n  - url: https://github.com/a/b.git\n    prime: mvn b");

@@ -200,16 +200,20 @@ public class UpdateAllCommand extends BaseCommand {
             if (prime) {
                 var expanded = GuestProvisioning.expandHome(repo.getPath());
                 BuildOutput.stepStart("Priming " + repo.getPath() + "...");
-                var result = incus.execInContainer(name, "agentuser",
-                        "cd " + shellQuote(expanded) + " && " + repo.getPrime());
-                if (result.success()) {
+                String failedCommand = null;
+                for (var command : repo.getPrime()) {
+                    if (incus.execInContainer(name, "agentuser", "cd " + shellQuote(expanded) + " && " + command).success()) continue;
+                    failedCommand = command;
+                    break;
+                }
+                if (failedCommand == null) {
                     BuildOutput.stepDone();
                 } else {
-                    BuildOutput.stepFail("Prime command failed for " + repo.getPath() + ": " + repo.getPrime());
+                    BuildOutput.stepFail("Prime command failed for " + repo.getPath() + ": " + failedCommand);
                     failed = true;
                 }
             } else {
-                BuildOutput.note("Skipping prime for " + repo.getPath() + ": " + repo.getPrime());
+                BuildOutput.note("Skipping prime for " + repo.getPath() + ": " + repo.primeText());
                 skipped = true;
             }
         }

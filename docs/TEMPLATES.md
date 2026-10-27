@@ -228,7 +228,10 @@ repos:
 | `path` | Target directory; `~` expands to agentuser's home | `~/<repo name>` |
 | `branch` | Branch or tag to check out | the repo's default branch |
 | `depth` | A positive number of commits to keep: the clone is shallow and follows only its branch | full history |
-| `prime` | Shell command to run inside the repo directory after cloning, typically to pre-fetch dependencies, such as `mvn dependency:go-offline` or `gradle dependencies` | |
+| `prime` | Shell command, or a list of them, to run inside the repo directory after cloning, typically to pre-fetch dependencies, such as `mvn dependency:go-offline` or `gradle dependencies` | |
+
+A list runs its commands in turn, and the first that fails stops the rest and fails the build.
+Each command runs in its own shell, so a variable one exports is gone in the next.
 
 `depth` is for repositories that store release binaries in their history.
 Omit it for development repositories, which get the full history.
