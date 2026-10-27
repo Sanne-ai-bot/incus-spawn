@@ -18,15 +18,23 @@ import java.util.function.Consumer;
 public final class LineOutputStream extends OutputStream {
 
     private final Consumer<String> sink;
+    private final boolean keepBlank;
     private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
 
     public LineOutputStream(Consumer<String> sink) {
+        this(sink, false);
+    }
+
+    /** As above, delivering an empty line too when {@code keepBlank}: for text whose layout counts. */
+    public LineOutputStream(Consumer<String> sink, boolean keepBlank) {
         this.sink = sink;
+        this.keepBlank = keepBlank;
     }
 
     @Override
     public void write(int b) {
         if (b == '\n') {
+            if (keepBlank && buf.size() == 0) sink.accept("");
             emit();
         } else if (b != '\r') {
             buf.write(b);

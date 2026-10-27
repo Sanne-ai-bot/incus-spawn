@@ -199,6 +199,15 @@ public final class BuildOutput {
         bound.list(items);
     }
 
+    /**
+     * Where the command's answer goes ({@link Output#results()}): stdout on a terminal, nowhere
+     * while the TUI draws. Query commands and status reports print here, and hand it to
+     * {@link OutputFormat} for scripts.
+     */
+    public static java.io.PrintStream results() {
+        return bound.results();
+    }
+
     /** Tests set this to exercise the animated rendering without a console; null means detect. */
     static volatile Boolean forceAnsi;
 

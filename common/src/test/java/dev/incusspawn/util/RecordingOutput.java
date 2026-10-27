@@ -1,5 +1,7 @@
 package dev.incusspawn.util;
 
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -30,7 +32,7 @@ public final class RecordingOutput implements Output {
     public enum Kind {
         WARN, ERROR, WARN_ASIDE, STEP_WARN, WARN_BANNER, STEP_FAIL, NOTE,
         HEADER, BUILD_HEADER, BRANCH_HEADER, SECTION, GROUP, GROUP_END,
-        STEP, STEP_NOTE, OK, SUCCESS, LIST,
+        STEP, STEP_NOTE, OK, SUCCESS, LIST, RESULT,
         STEP_START, STEP_PROGRESS, STEP_DONE, STEP_BREAK, RELEASE_TERMINAL, ABANDON_STEP
     }
 
@@ -67,6 +69,9 @@ public final class RecordingOutput implements Output {
     }
 
     private final List<Event> events = new ArrayList<>();
+    /** Each line written to {@link #results()}, blank ones included, as a {@link Kind#RESULT}. */
+    private final PrintStream results =
+            new PrintStream(new LineOutputStream(line -> record(Kind.RESULT, line), true), true, StandardCharsets.UTF_8);
     /** Where {@link #into} also adds each line; null for a recorder read through its methods. */
     private final List<String> mirror;
 
@@ -152,6 +157,7 @@ public final class RecordingOutput implements Output {
     @Override public void list(Collection<String> items) {
         record(Kind.LIST, String.join(", ", items), items.toArray(String[]::new));
     }
+    @Override public PrintStream results() { return results; }
     @Override public void stepStart(String msg) { record(Kind.STEP_START, msg); }
     @Override public void stepProgress(String detail) { record(Kind.STEP_PROGRESS, detail); }
     @Override public void stepDone(String detail) { record(Kind.STEP_DONE, detail); }
@@ -176,6 +182,11 @@ public final class RecordingOutput implements Output {
      */
     public synchronized List<String> lines() {
         return events.stream().filter(RecordingOutput::isLine).map(Event::text).toList();
+    }
+
+    /** What was written to {@link #results()}, a line each, blank ones included. */
+    public synchronized List<String> resultLines() {
+        return events(Kind.RESULT).stream().map(Event::msg).toList();
     }
 
     /** The diagnostics (the kinds that default to {@link Output#warn}), each with its details under it. */
