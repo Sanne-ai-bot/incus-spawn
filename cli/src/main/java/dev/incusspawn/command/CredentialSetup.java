@@ -833,7 +833,7 @@ class CredentialSetup {
                 BuildOutput.step("Token generation complete.");
             }
         } catch (Exception e) {
-            BuildOutput.warn("Failed to run 'claude setup-token': " + e.getMessage());
+            BuildOutput.warn("Failed to run 'claude setup-token': " + BaseCommand.failure(e));
         }
     }
 
@@ -1593,7 +1593,7 @@ class CredentialSetup {
 
             return new GitHubVerifyResult(login, email);
         } catch (Exception e) {
-            BuildOutput.warn("Could not test token: " + e.getMessage());
+            BuildOutput.warn("Could not test token: " + BaseCommand.failure(e));
             return null;
         }
     }

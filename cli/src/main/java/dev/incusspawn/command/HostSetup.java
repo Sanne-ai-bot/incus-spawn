@@ -191,7 +191,7 @@ class HostSetup {
                 BuildOutput.step("Group membership updated (active after next login).");
             }
         } catch (Exception e) {
-            BuildOutput.warn("Could not check group membership: " + e.getMessage());
+            BuildOutput.warn("Could not check group membership: " + BaseCommand.failure(e));
         }
     }
 
@@ -381,7 +381,7 @@ class HostSetup {
             java.nio.file.Files.deleteIfExists(tempFile);
             return copied;
         } catch (java.io.IOException e) {
-            BuildOutput.warn("Could not write before.rules: " + e.getMessage());
+            BuildOutput.warn("Could not write before.rules: " + BaseCommand.failure(e));
             return false;
         }
     }
@@ -406,7 +406,7 @@ class HostSetup {
                 BuildOutput.step("Configured NetworkManager to ignore veth devices.");
             }
         } catch (IOException e) {
-            BuildOutput.warn("Could not configure NetworkManager: " + e.getMessage());
+            BuildOutput.warn("Could not configure NetworkManager: " + BaseCommand.failure(e));
         } finally {
             if (tempFile != null) {
                 try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
@@ -474,7 +474,7 @@ class HostSetup {
             }
             Files.deleteIfExists(tempFile);
         } catch (IOException e) {
-            BuildOutput.warn("Could not configure host sysctls: " + e.getMessage());
+            BuildOutput.warn("Could not configure host sysctls: " + BaseCommand.failure(e));
         }
     }
 
@@ -517,7 +517,7 @@ class HostSetup {
                 BuildOutput.step("Enabled kernel same-page merging (KSM) for VMs.");
             }
         } catch (IOException e) {
-            BuildOutput.warn("Could not enable KSM: " + e.getMessage());
+            BuildOutput.warn("Could not enable KSM: " + BaseCommand.failure(e));
         } finally {
             if (tempFile != null) {
                 try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
@@ -696,7 +696,7 @@ class HostSetup {
         try {
             content = Files.readString(java.nio.file.Path.of(path));
         } catch (IOException e) {
-            BuildOutput.warn("Could not read " + path + ": " + e.getMessage());
+            BuildOutput.warn("Could not read " + path + ": " + BaseCommand.failure(e));
             return false;
         }
 
@@ -869,7 +869,7 @@ class HostSetup {
             }
             Files.deleteIfExists(tempFile);
         } catch (IOException e) {
-            BuildOutput.warn("Could not configure btrfs disk accounting: " + e.getMessage());
+            BuildOutput.warn("Could not configure btrfs disk accounting: " + BaseCommand.failure(e));
         }
     }
 
@@ -896,7 +896,7 @@ class HostSetup {
             }
             upgradeProfilePoolIfNeeded(pool);
         } catch (Exception e) {
-            BuildOutput.warn("Could not repair the default profile: " + e.getMessage(),
+            BuildOutput.warn("Could not repair the default profile: " + BaseCommand.failure(e),
                     "If instance creation fails with 'No root device could be found', run:",
                     "incus profile device add default root disk path=/ pool=" + pool,
                     "If containers come up without networking, also run:",
@@ -1001,7 +1001,7 @@ class HostSetup {
                 BuildOutput.step("Bridge subnet is clear of VPN route conflicts.");
             }
         } catch (Exception e) {
-            BuildOutput.warn("Could not check bridge subnet: " + e.getMessage());
+            BuildOutput.warn("Could not check bridge subnet: " + BaseCommand.failure(e));
         }
     }
 

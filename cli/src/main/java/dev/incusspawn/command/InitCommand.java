@@ -632,7 +632,7 @@ public class InitCommand extends BaseCommand {
             }
         } catch (RuntimeException e) {
             // The redirect still follows the bridge; the stale check below fails the remedy
-            BuildOutput.warn("Could not migrate instances: " + e.getMessage());
+            BuildOutput.warn("Could not migrate instances: " + failure(e));
         }
         if (!followBridgeMove(subnet.substring(0, subnet.indexOf('/')), firewall)) {
             throw new IllegalStateException("the bridge moved, but its firewall redirect was not updated"
@@ -689,7 +689,7 @@ public class InitCommand extends BaseCommand {
                         "Add manually: Include ~/.config/incus-spawn/ssh/config");
             }
         } catch (Exception e) {
-            BuildOutput.warn("SSH key setup failed: " + e.getMessage(),
+            BuildOutput.warn("SSH key setup failed: " + failure(e),
                     "SSH container access will fall back to your personal keys.",
                     "You can retry later with: isx init");
         }
@@ -1191,7 +1191,7 @@ public class InitCommand extends BaseCommand {
                 BuildOutput.step("Installed git remote helper: " + shimPath);
             }
         } catch (Exception e) {
-            BuildOutput.warn("Could not install git-remote-isx shim: " + e.getMessage());
+            BuildOutput.warn("Could not install git-remote-isx shim: " + failure(e));
         }
     }
 
@@ -1201,7 +1201,7 @@ public class InitCommand extends BaseCommand {
             pb.inheritIO();
             return pb.start().waitFor();
         } catch (IOException | InterruptedException e) {
-            BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
+            BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + failure(e));
             return 1;
         }
     }
@@ -1250,7 +1250,7 @@ public class InitCommand extends BaseCommand {
             }
             return exitCode;
         } catch (IOException | InterruptedException e) {
-            BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
+            BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + failure(e));
             return 1;
         }
     }
