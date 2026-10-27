@@ -144,8 +144,8 @@ public class BuildCommand extends BaseCommand {
         if (yes) return true;
         var prompts = prompts();
         if (prompts == null) return true;
-        if (!askConfirmation(prompts, prompt, false)) {
-            System.out.println("Aborted.");
+        if (!askYesNo(prompts, prompt, false)) {
+            BuildOutput.step("Aborted.");
             return false;
         }
         return true;
@@ -2051,7 +2051,7 @@ public class BuildCommand extends BaseCommand {
         if (prompts == null) {
             throw new IllegalStateException(refused + "  Re-run the build in a terminal to remove it" + reimport);
         }
-        if (!askConfirmation(prompts, "  Delete local image '" + shownImage + "' (imported by project "
+        if (!askYesNo(prompts, "Delete local image '" + shownImage + "' (imported by project "
                 + shownProject + ")?", false)) {
             throw new IllegalStateException(refused + "  It was kept, so the build cannot start from it.");
         }

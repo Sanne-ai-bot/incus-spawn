@@ -4276,6 +4276,7 @@ Prompts show at the output's step indent, so a question asked inside a group sit
 What a flow reports between questions is not the conversation and goes through `BuildOutput`; init's frames, which it lays out itself, are an `Output.frame`: not a result, which a script reads, and nothing off a terminal.
 A question is an `Output.prompt`, so the terminal shows it at the step indent and a live step is frozen first, as for any line.
 `ScriptedPrompts` shows its questions and said lines through the bound output too, as the terminal's prompts do, so a test that records the output reads the whole conversation in order, and the old `askConfirmation` overloads, which printed the question as each caller wrote it, are gone.
+Every question in `cli/command` is asked this way, `isx update-base`'s choice between tracking and pinning and `isx run`'s wait after an action included.
 Init's narration sits at the same step indent as every command's, for consistency, so the step boxes alone keep init's own look.
 
 **The macOS tunnel, without a Mac**: the compensations described in "macOS vsock robustness" exist because of how vfkit's tunnel *behaves*, and Java never touches vsock -- vfkit hands the host an ordinary Unix socket.

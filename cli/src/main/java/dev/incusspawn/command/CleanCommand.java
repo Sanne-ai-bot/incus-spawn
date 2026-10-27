@@ -763,7 +763,7 @@ public class CleanCommand extends BaseCommand {
                 return true;
             }
 
-            if (!confirmDestructive(BuildOutput.STEP_INDENT + "Delete " + failed.size() + " failed build instance(s)?", skip, "--skip-confirmation")) {
+            if (!confirmDestructive("Delete " + failed.size() + " failed build instance(s)?", skip, "--skip-confirmation")) {
                 return true;
             }
 
@@ -788,7 +788,7 @@ public class CleanCommand extends BaseCommand {
                 return true;
             }
 
-            if (!confirmDestructive(BuildOutput.STEP_INDENT + "Delete " + images.size() + " " + noun + "?", skip, "--skip-confirmation")) {
+            if (!confirmDestructive("Delete " + images.size() + " " + noun + "?", skip, "--skip-confirmation")) {
                 return true;
             }
 
@@ -823,8 +823,7 @@ public class CleanCommand extends BaseCommand {
                 return true;
             }
 
-            if (!confirm.test(BuildOutput.STEP_INDENT
-                    + "Delete the DNF cache volume? The next build downloads its packages again.")) {
+            if (!confirm.test("Delete the DNF cache volume? The next build downloads its packages again.")) {
                 return true;
             }
 

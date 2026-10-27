@@ -217,15 +217,15 @@ public class DoctorCommand extends BaseCommand {
             return;
         }
         var warn = r.destructive() ? " This is disruptive." : "";
-        if (!askConfirmation(console, "     " + r.description() + "." + warn + " Apply now?", false)) {
-            System.out.println("     skipped.");
+        if (!askYesNo(Prompts.of(console), r.description() + "." + warn + " Apply now?", false)) {
+            BuildOutput.stepNote("skipped.");
             return;
         }
         try {
             r.action().run();
-            System.out.println("     done.");
+            BuildOutput.stepNote("done.");
         } catch (Exception e) {
-            System.out.println("     failed: " + e.getMessage());
+            BuildOutput.warn("Failed: " + e.getMessage());
         }
     }
 

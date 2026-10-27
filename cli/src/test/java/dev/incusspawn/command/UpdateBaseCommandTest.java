@@ -312,4 +312,32 @@ class UpdateBaseCommandTest {
             assertEquals(RELEASE.tag(), minimal.getImageTag());
         });
     }
+
+    /** The track-or-pin question is asked through Prompts, so a test sees and answers it (#1703). */
+    @Test
+    void theTrackOrPinQuestionIsAskedThroughPrompts() throws Exception {
+        var prompts = ScriptedPrompts.lines("3");
+        var recorded = RecordingOutput.during(() -> assertEquals(0,
+                new UpdateBaseCommand().askWhatToDo(prompts, RELEASE, List.of(RELEASE), null).getResultValue()));
+        assertEquals(List.of(
+                "What would you like to do?",
+                "1) Track latest (fedora-44-20261020) — always installs the newest release on build",
+                "2) Pin a specific version",
+                "3) Cancel",
+                "? Choice [1-3]: "), prompts.conversation());
+        assertTrue(recorded.events(RecordingOutput.Kind.STEP).stream().anyMatch(e -> e.msg().equals("Aborted.")));
+    }
+
+    /** Pinning asks for the tag through the same prompts, and an empty one pins nothing. */
+    @Test
+    void anEmptyTagToPinAborts(@TempDir Path home) throws Exception {
+        var prompts = ScriptedPrompts.lines("2", "");
+        InitCommandTest.withHome(home, () -> {
+            var recorded = RecordingOutput.during(() -> assertEquals(0,
+                    new UpdateBaseCommand().askWhatToDo(prompts, RELEASE, List.of(RELEASE), null).getResultValue()));
+            assertTrue(recorded.events(RecordingOutput.Kind.STEP).stream().anyMatch(e -> e.msg().equals("Aborted.")));
+            assertFalse(Files.exists(BaseImagePin.file()));
+        });
+        assertEquals("? Enter version tag: ", prompts.conversation().getLast());
+    }
 }
