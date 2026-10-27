@@ -5225,3 +5225,10 @@ It is deferred because it reverses the rule that `ask` runs in the instance, nev
 Up to 400 KB of untrusted guest output would pass through a host process, and the call would bypass the proxy, so `instance_activity` would not count it.
 It is worth revisiting when Codex-only coordinator targets lose real work to the missing `ask`, or when an answerer without Claude Code can run in the instance through its own proxied connection.
 The proposal is in #1676.
+
+### Vert.x's HTTP client in the CLI
+
+Moving the CLI's HTTP clients off `java.net.http` onto Vert.x's `HttpClient` was considered, to drop that module (about 583 KB) from the native image (#40).
+It is deferred because the premise is gone: the proxy split removed Vert.x from the CLI, and Quarkus 4 does not bring it back to `cli` or `common`.
+Pulling vertx-core and Netty into the CLI would add more code than it removes, add startup cost to every command, and bring Vert.x's native-image workarounds with it.
+The only form worth revisiting is replacing `java.net.http` with `HttpsURLConnection`, and only with a fresh native build report showing the size win.
