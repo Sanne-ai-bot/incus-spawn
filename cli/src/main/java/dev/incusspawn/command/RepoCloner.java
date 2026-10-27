@@ -643,18 +643,28 @@ class RepoCloner {
         }
     }
 
-    static final String UNTRUSTED_AFTER_BIND = "the prime still shows an untrusted certificate after isx-trust"
-            + " bound the runtimes in its landing directories. A runtime elsewhere needs `isx-trust <dir>` in the"
-            + " prime, before the command that uses it; a JVM daemon the first run started (Gradle, mvnd) keeps"
-            + " its old store until it stops (`./gradlew --stop`); otherwise the server's own certificate is"
-            + " not trusted";
+    /** The label of a command still failing on an untrusted certificate after isx-trust. */
+    static final String STILL_UNTRUSTED = "still untrusted after isx-trust";
+
+    /** What is left once isx-trust bound the landing directories, added to the command's output. */
+    static final String UNTRUSTED_AFTER_BIND = "isx-trust bound the runtimes in its landing directories, and the"
+            + " command still met an untrusted certificate. A runtime elsewhere needs `isx-trust <dir>` in the"
+            + " prime, before the command that uses it. A JVM daemon the first run started (Gradle, mvnd) keeps"
+            + " its old store until it stops: run `./gradlew --stop` first. Otherwise the server's own"
+            + " certificate is not trusted.";
 
     /**
      * How a prime went: on failure, the command that failed, its output and a one-line label
-     * for it, and whether that command ran again after isx-trust.
+     * for it, whether that command ran again after isx-trust, and whether it then met an
+     * untrusted certificate again.
      */
-    record PrimeRun(boolean success, String command, String output, String label, boolean retried) {
-        static final PrimeRun OK = new PrimeRun(true, null, "", "", false);
+    record PrimeRun(boolean success, String command, String output, String label, boolean retried,
+                    boolean stillUntrusted) {
+        static final PrimeRun OK = new PrimeRun(true, null, "", "", false, false);
+
+        static PrimeRun failed(String command, String output, String label, boolean retried) {
+            return new PrimeRun(false, command, output, label, retried, false);
+        }
     }
 
     /**
@@ -682,28 +692,30 @@ class RepoCloner {
         // concise inline label; the full log is preserved and printed on failure.
         var first = combinedOutput(result);
         if (!GuestProvisioning.untrustedCertificate(first)) {
-            return new PrimeRun(false, command, first, lastNonEmptyLine(first), false);
+            return PrimeRun.failed(command, first, lastNonEmptyLine(first), false);
         }
         onRetry.run();
         try {
             var unbound = GuestProvisioning.runTrustHelper(container).stream().filter(r -> !r.success()).findFirst();
             if (unbound.isPresent()) {
-                return new PrimeRun(false, command, first.strip() + "\n--- isx-trust ---\n" + combinedOutput(unbound.get()),
+                return PrimeRun.failed(command, first.strip() + "\n--- isx-trust ---\n" + combinedOutput(unbound.get()),
                         "isx-trust failed (a template built before it has none: rebuild it)", true);
             }
         } catch (RuntimeException e) {
-            return new PrimeRun(false, command, first, "isx-trust could not run: " + e.getMessage(), true);
+            return PrimeRun.failed(command, first, "isx-trust could not run: " + e.getMessage(), true);
         }
         try {
             result = container.shAsUser("agentuser", prime);
         } catch (RuntimeException e) {
-            return new PrimeRun(false, command, first, "the prime's second run failed: " + e.getMessage(), true);
+            return PrimeRun.failed(command, first, "the prime's second run failed: " + e.getMessage(), true);
         }
         if (result.success()) return PrimeRun.OK;
         // Both runs: the second may fail for another reason, and the first says why it ran.
         var second = combinedOutput(result);
-        return new PrimeRun(false, command, first.strip() + "\n--- isx-trust ran; the prime's second run ---\n" + second,
-                GuestProvisioning.untrustedCertificate(second) ? UNTRUSTED_AFTER_BIND : lastNonEmptyLine(second), true);
+        var both = first.strip() + "\n--- isx-trust ran; the prime's second run ---\n" + second;
+        return GuestProvisioning.untrustedCertificate(second)
+                ? new PrimeRun(false, command, both.strip() + "\n--- isx ---\n" + UNTRUSTED_AFTER_BIND, STILL_UNTRUSTED, true, true)
+                : PrimeRun.failed(command, both, lastNonEmptyLine(second), true);
     }
 
     /** Run a repo's prime commands in turn, stopping at the first that fails. Returns true on
