@@ -41,7 +41,7 @@ public class GitRemoteHelperCommand extends BaseCommand {
         var incus = dev.incusspawn.RuntimeServices.incus();
 
         if (!ALLOWED_SERVICES.contains(service)) {
-            System.err.println("Error: unknown git service: " + OutputFormat.oneLine(service));
+            BuildOutput.error("unknown git service: " + OutputFormat.oneLine(service));
             return CommandResult.valueOf(1);
         }
 
@@ -68,18 +68,18 @@ public class GitRemoteHelperCommand extends BaseCommand {
     private boolean checkInstanceRunning(dev.incusspawn.incus.IncusClient incus) {
         try {
             if (!incus.exists(instance)) {
-                System.err.println("Error: instance '" + OutputFormat.oneLine(instance) + "' does not exist.");
+                BuildOutput.error("instance '" + OutputFormat.oneLine(instance) + "' does not exist.");
                 return false;
             }
             var status = incus.getInstanceStatus(instance);
             if (!"Running".equalsIgnoreCase(status)) {
-                System.err.println("Error: instance '" + OutputFormat.oneLine(instance) + "' is not running (status: " + status + ").");
-                System.err.println("Start it first: isx shell " + OutputFormat.oneLine(instance));
+                BuildOutput.error("instance '" + OutputFormat.oneLine(instance) + "' is not running (status: " + status + ").",
+                        "Start it first: isx shell " + OutputFormat.oneLine(instance));
                 return false;
             }
             return true;
         } catch (Exception e) {
-            System.err.println("Error: could not check instance status: " + OutputFormat.oneLine(String.valueOf(e.getMessage())));
+            BuildOutput.error("could not check instance status: " + OutputFormat.oneLine(BaseCommand.failure(e)));
             return false;
         }
     }
@@ -88,8 +88,10 @@ public class GitRemoteHelperCommand extends BaseCommand {
         var repos = GitRemoteUtils.collectReposForInstance(instance, incus);
         if (repos.isEmpty()) return;
 
-        System.err.println();
-        repoHints(instance, resolvedPath, repos).forEach(System.err::println);
+        // An error, which writes nothing to stdout: that is git's protocol stream, which a
+        // warning's closing blank line would reach
+        var hints = repoHints(instance, resolvedPath, repos);
+        BuildOutput.error(hints.getFirst(), hints.subList(1, hints.size()).toArray(String[]::new));
     }
 
     /**

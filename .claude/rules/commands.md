@@ -54,11 +54,13 @@ Every query command has it, plus `isx branch` (the new name alone).
 `isx templates` adds build state and staleness from `TemplateStaleness`, the same judgement as the TUI's `! △ ↑` marks and `isx build --out-of-sync` (`Staleness.outOfSync()` says which count), so a change to what counts as stale goes there, never into one caller.
 `--out-of-sync` calls `assess` on the same one listing; a named build's parents go through `BuildCommand.isImageOutdated`, which calls its `versionOutdated`, `definitionChanged` and `parentRebuilt`.
 `QueryCommandFormatTest` pins each JSON shape and `ExitCodeTest` the shared rejection.
-Work that prints progress runs under `BaseCommand.withStdoutOnStderr`, the machine formats never prompt, and the exit code is the table's.
+Work that prints progress runs under `BaseCommand.withStdoutOnStderr` (its swap is the gate class `StdoutOnStderr`), the machine formats never prompt, and the exit code is the table's.
 See DESIGN.md "Output for scripts".
 
 **Confirmations that delete data fail closed.**
 `BaseCommand.confirm()` proceeds when there is no terminal (and never reads stdin), so `echo n | isx ...` answers yes.
+`confirm` and `confirmDestructive` ask through `Prompts.terminal()`, null unless stdin and stdout are a terminal (#1703).
+On JDK 25 `System.console()` is already null when either is redirected; `terminal()` also guards against a console that exists with stdin redirected (JDK 22 to 24, or `-Djdk.console=jdk.internal.le`).
 Anything that deletes data -- `destroy --all-*`, `clean`, `reset`, `vm reset` -- uses `confirmDestructive(prompt, skip, skipFlag)` instead.
 Without a terminal (`System.console()` null or `!isTerminal()`) it throws `NoTerminalException`, which `BaseCommand.execute` reports as an error with exit status 1, naming the flag that skips the question.
 Declining at the prompt is still a successful exit.
