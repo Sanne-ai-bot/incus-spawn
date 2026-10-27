@@ -111,6 +111,25 @@ public class PiSetup implements ToolSetup {
         };
     }
 
+    /**
+     * Names pi and its provider, since a template that lists only pi would not otherwise say why
+     * it needs a Claude account, and offers another provider (#1750).
+     */
+    @Override
+    public List<String> credentialNote(java.util.Map<String, String> resolvedParams) {
+        var account = switch (credentialFor(resolvedParams)) {
+            case ANTHROPIC -> "a Claude account";
+            case VERTEX -> "a Vertex AI Claude account";
+            case OPENAI, NONE -> "";
+        };
+        if (account.isEmpty()) return List.of();
+        return List.of("Pi needs " + account + " for its provider '" + provider(resolvedParams) + "'.",
+                "To use another provider, set it in the template's tools, run 'isx build' on the template"
+                        + " and branch from it:"
+                        + " '- pi: {provider: openai}' spends an OpenAI API key,"
+                        + " and a provider isx does not manage needs nothing from isx.");
+    }
+
     /** The isx-managed credential a pi provider spends. */
     private enum Credential {
         /** Claude's account, whatever its type. */
@@ -125,13 +144,18 @@ public class PiSetup implements ToolSetup {
 
     /** Which credential pi spends for the {@code provider} in its resolved parameters. */
     private static Credential credentialFor(java.util.Map<String, String> resolvedParams) {
-        var provider = resolvedParams.get("provider");
-        return switch (provider != null ? provider : DEFAULT_PROVIDER) {
+        return switch (provider(resolvedParams)) {
             case "anthropic" -> Credential.ANTHROPIC;
             case "vertex", "google" -> Credential.VERTEX;
             case "openai" -> Credential.OPENAI;
             default -> Credential.NONE;
         };
+    }
+
+    /** The {@code provider} in pi's resolved parameters; a null one is the default. */
+    private static String provider(java.util.Map<String, String> resolvedParams) {
+        var provider = resolvedParams.get("provider");
+        return provider != null ? provider : DEFAULT_PROVIDER;
     }
 
     @Override

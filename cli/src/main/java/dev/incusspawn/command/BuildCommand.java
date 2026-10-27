@@ -2261,7 +2261,8 @@ public class BuildCommand extends BaseCommand {
         }
         missing.forEach((credential, names) -> BuildOutput.warn("Missing credential: " + credential.credential()
                 + ". 'isx branch' will refuse " + OutputFormat.andList(names)
-                + " until it is configured with '" + credential.command() + "'."));
+                + " until it is configured with '" + credential.command() + "'.",
+                credential.notes().toArray(String[]::new)));
     }
 
     /**

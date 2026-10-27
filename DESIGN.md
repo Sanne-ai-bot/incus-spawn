@@ -1518,6 +1518,11 @@ Tools the proxy does not serve (feature-gated off, or project-local) are not che
 Readiness that is more than a key being set is the tool's to state, through `ToolSetup.credentialProblem()`.
 So `CredentialCheck` names no tool: `ClaudeSetup` requires the resolved Claude account to be *complete* (a pre-accounts `useVertex: true` with no region still presents as an account, and fails every request).
 `PiSetup` applies the same rule for its Anthropic provider and requires a Vertex account for `vertex`/`google`.
+A template listing only pi would not otherwise say why it needs a Claude account, so pi adds a note through `ToolSetup.credentialNote()` (#1750).
+The note names pi and its provider, and offers another provider; it follows the command that configures the account.
+`CredentialCheck` leaves the note out when a tool without one needs the same namespace, as Claude Code beside pi does.
+The credential itself is still reported, so pi's stricter Vertex need is not hidden behind Claude Code's.
+A missing credential is one entry, identified by the credential and its command; the notes of the tools and templates that need it are collected on it, so a note never splits one credential into two lines.
 
 **Auth error reporting**: When credential injection fails the proxy records an `authError` and surfaces it on `/health`, which `isx proxy status`, `isx doctor` and the TUI banner all render.
 Injection only runs on real container traffic, so that latch alone makes the status wrong in both directions: it reports failures the user has already fixed, and reports nothing at all before the first API call of a session.

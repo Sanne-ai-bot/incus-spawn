@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Whether an instance about to be branched has the credentials its tools need, answered for the
@@ -34,9 +35,37 @@ public final class CredentialCheck {
 
     /**
      * A credential that is not configured, and the command that configures it: {@code isx
-     * account add <namespace>} when one step owns it (#1469), else {@code isx init}.
+     * account add <namespace>} when one step owns it (#1469), else {@code isx init}. {@code
+     * notes} are what the tools needing it say of it ({@link ToolSetup#credentialNote}), each once.
+     *
+     * <p>Its identity is the credential and its command: notes only add to what is said of it, so
+     * one credential is one entry however many tools and templates need it.
      */
-    public record Missing(String credential, String command) {}
+    public record Missing(String credential, String command, List<String> notes) {
+        public Missing {
+            // A blank note says nothing, and must not count as one
+            notes = notes.stream().filter(n -> !n.isBlank()).distinct().toList();
+        }
+
+        public Missing(String credential, String command) {
+            this(credential, command, List.of());
+        }
+
+        /** This credential, said of with {@code notes} instead. */
+        Missing withNotes(List<String> notes) {
+            return new Missing(credential, command, notes);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof Missing m && credential.equals(m.credential) && command.equals(m.command);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(credential, command);
+        }
+    }
 
     /**
      * Whether {@code tool} has a credential step of its own, as {@code isx init}'s credential
@@ -82,10 +111,17 @@ public final class CredentialCheck {
         return "isx init";
     }
 
-    /** {@code Run '<command>' to configure it.}, naming each distinct command in {@code missing}. */
+    /**
+     * {@code Run '<command>' to configure it.}, naming each distinct command in {@code missing},
+     * then each distinct note.
+     */
     public static String remedy(Collection<Missing> missing) {
         var commands = missing.stream().map(m -> "'" + m.command() + "'").distinct().toList();
-        return "Run " + OutputFormat.andList(commands) + " to configure " + (missing.size() == 1 ? "it." : "them.");
+        var remedy = new StringBuilder("Run " + OutputFormat.andList(commands) + " to configure "
+                + (missing.size() == 1 ? "it." : "them."));
+        missing.stream().flatMap(m -> m.notes().stream()).distinct()
+                .forEach(n -> remedy.append(' ').append(n));
+        return remedy.toString();
     }
 
     /**
@@ -96,13 +132,13 @@ public final class CredentialCheck {
      * borrows the key without a step (Copilot) is sent to the owner; with neither, to init.
      */
     private static Missing missing(String credential, String namespace, String toolName,
-                                   Map<String, ToolSetup> allTools) {
+                                   Map<String, ToolSetup> allTools, List<String> notes) {
         var owner = namespaceOwner(namespace, allTools);
         var tool = allTools.get(toolName);
         if (tool != null && hasCredentialStep(tool) && !toolName.equals(owner)) {
-            return new Missing(credential, stepCommand(toolName, allTools));
+            return new Missing(credential, stepCommand(toolName, allTools), notes);
         }
-        return new Missing(credential, owner != null ? "isx account add " + namespace : "isx init");
+        return new Missing(credential, owner != null ? "isx account add " + namespace : "isx init", notes);
     }
 
     /**
@@ -168,6 +204,8 @@ public final class CredentialCheck {
         var tree = config.tree();
         var owners = AccountSelection.byNamespace(served);
         var byCredential = new LinkedHashMap<Missing, List<String>>();
+        // Beside the key, which keeps the notes of the first template that needed it
+        var notes = new LinkedHashMap<Missing, List<String>>();
         for (var name : templates) {
             var template = allDefs.get(name);
             if (template == null) continue;
@@ -175,12 +213,16 @@ public final class CredentialCheck {
                 var selection = ImageDef.resolveAccounts(template, allDefs);
                 for (var credential : gaps(tree, owners, config, template, allDefs, selection, allTools, served).missing()) {
                     byCredential.computeIfAbsent(credential, c -> new ArrayList<>()).add(name);
+                    notes.computeIfAbsent(credential, c -> new ArrayList<>()).addAll(credential.notes());
                 }
             } catch (AccountResolver.UnknownAccountException e) {
                 // Not this check's to report: the build refuses an unknown account by itself
             }
         }
-        return byCredential;
+        var withNotes = new LinkedHashMap<Missing, List<String>>();
+        byCredential.forEach((credential, names) ->
+                withNotes.put(credential.withNotes(notes.get(credential)), names));
+        return withNotes;
     }
 
     /** What is missing, and the namespaces that are the parent instance's instead. */
@@ -198,10 +240,15 @@ public final class CredentialCheck {
         toolRefs.keySet().forEach(name -> ToolSetup.addWithRequires(name, allTools, tools));
 
         var secretsOf = new LinkedHashSet<>(tools);
-        var missing = new LinkedHashSet<Missing>();
+        // Each missing credential once, with the notes of the tools that need it
+        var missing = new LinkedHashMap<Missing, List<String>>();
         // An inherited credential is the parent instance's, whatever this config holds: its
         // tool's own check is not asked, and there must be a parent instead
         var inherited = new LinkedHashSet<String>();
+        // Each tool's problem with the namespace it is in, and the namespaces some tool needs
+        // without a note: a note there would say another provider does, when it would not
+        var problems = new ArrayList<Map.Entry<Missing, String>>();
+        var needed = new LinkedHashSet<String>();
         for (var name : tools) {
             var tool = allTools.get(name);
             if (tool == null) continue;
@@ -220,12 +267,22 @@ public final class CredentialCheck {
             }
             if (own.isEmpty() && !namespaces.isEmpty()) continue;
             var problem = tool.credentialProblem(config, params, selection);
-            if (!problem.isEmpty()) missing.add(missing(problem, own, name, allTools));
+            if (problem.isEmpty()) continue;
+            var gap = missing(problem, own, name, allTools, tool.credentialNote(params));
+            problems.add(Map.entry(gap, own));
+            if (gap.notes().isEmpty() && !own.isEmpty()) needed.add(own);
+        }
+        for (var problem : problems) {
+            var gap = problem.getKey();
+            missing.computeIfAbsent(gap, g -> new ArrayList<>())
+                    .addAll(needed.contains(problem.getValue()) ? List.of() : gap.notes());
         }
         for (var secret : ToolProxyResolver.missingSecrets(tree, served, secretsOf, selection)) {
-            missing.add(missing(secret.description().isBlank() ? secret.path() : secret.description(),
-                    secret.namespace(), secret.tool(), allTools));
+            missing.computeIfAbsent(missing(secret.description().isBlank() ? secret.path() : secret.description(),
+                    secret.namespace(), secret.tool(), allTools, List.of()), g -> new ArrayList<>());
         }
-        return new Gaps(List.copyOf(missing), List.copyOf(inherited));
+        return new Gaps(missing.entrySet().stream()
+                .map(e -> e.getKey().withNotes(e.getValue())).toList(),
+                List.copyOf(inherited));
     }
 }

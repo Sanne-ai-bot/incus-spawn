@@ -110,6 +110,7 @@ It never sees the credential: the proxy adds it on the way out.
 If you did not install the services `isx init` offers, start them before building: `isx proxy start` on Linux, `isx vm start && isx proxy start` on macOS.
 
 For another agent, replace `claude` with `codex`, `pi`, `gemini-cli`, `bob` or `copilot`; see [Agents](#agents).
+Pi uses your Claude credential too, unless its `provider` names another API ([Pi](docs/AGENTS.md#pi-coding-agent)).
 To give the agent a project, add `repos:` ([Declarative Repos](docs/TEMPLATES.md#declarative-repos)).
 Its commits come back to your host with `git fetch` ([Git Remotes](#git-remotes)).
 
