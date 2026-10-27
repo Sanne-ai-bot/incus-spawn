@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import static dev.incusspawn.tool.ClaudeSetup.CLAUDE_JSON_PATH;
 import static dev.incusspawn.command.BuildProgress.dnfCommand;
@@ -202,19 +203,27 @@ public class GuestProvisioning {
         allRepos.removeAll(ancestorRepos);
         if (allRepos.isEmpty()) return;
 
-        if (allRepos.stream().anyMatch(key -> "copr".equals(key.type()))) {
+        if (allRepos.stream().anyMatch(key -> "copr".equals(key.type()) && key.name() != null)) {
             ensureCoprPlugin(container);
         }
         for (var key : allRepos) {
+            if (key.name() == null) {
+                BuildOutput.warn(key.type() == null ? "A package_repos entry has no name or type, skipping it"
+                        : "A package_repos entry of type '" + OutputFormat.oneLine(key.type())
+                                + "' has no name, skipping it");
+                continue;
+            }
             // A template, project-local included, names its repositories: shown as text (#1610).
             var shownName = OutputFormat.oneLine(key.name());
-            switch (key.type()) {
+            switch (Objects.requireNonNullElse(key.type(), "")) {
                 case "copr" -> runWithSpinner("Enabling", "COPR repo " + shownName,
                         "Failed to enable COPR repo " + shownName,
                         state -> state.set(0, stepFrom(
                                 container.exec("dnf", "copr", "enable", "-y", key.name()))));
-                default -> BuildOutput.warn("Unknown package_repos type '" + OutputFormat.oneLine(key.type())
-                        + "' for '" + shownName + "', skipping it");
+                default -> BuildOutput.warn(key.type() == null
+                        ? "package_repos entry '" + shownName + "' has no type, skipping it"
+                        : "Unknown package_repos type '" + OutputFormat.oneLine(key.type())
+                                + "' for '" + shownName + "', skipping it");
             }
         }
     }

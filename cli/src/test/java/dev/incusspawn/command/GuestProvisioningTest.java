@@ -184,6 +184,31 @@ class GuestProvisioningTest {
     }
 
     @Test
+    void enablePackageReposWarnsOfAMissingTypeInsteadOfThrowing() {
+        var incus = mock(IncusClient.class);
+        var imageDef = coprImage("owner/project");
+        imageDef.getPackageRepos().get(0).setType(null);
+
+        var said = RecordingOutput.during(() -> GuestProvisioning.enablePackageRepos(
+                new Container(incus, "test"), imageDef, List.of(), List.of(), Map.of()));
+
+        assertEquals(List.of("package_repos entry 'owner/project' has no type, skipping it"), said.warnings());
+        verifyNoInteractions(incus);
+    }
+
+    @Test
+    void enablePackageReposWarnsOfAMissingNameInsteadOfThrowing() {
+        var incus = mock(IncusClient.class);
+        var imageDef = coprImage(null);
+
+        var said = RecordingOutput.during(() -> GuestProvisioning.enablePackageRepos(
+                new Container(incus, "test"), imageDef, List.of(), List.of(), Map.of()));
+
+        assertEquals(List.of("A package_repos entry of type 'copr' has no name, skipping it"), said.warnings());
+        verifyNoInteractions(incus);
+    }
+
+    @Test
     void updateClaudeJsonTrustAddsProjectsAndGithubPaths() throws Exception {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
