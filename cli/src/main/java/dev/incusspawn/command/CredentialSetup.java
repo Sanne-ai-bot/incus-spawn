@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.AccountUsage;
@@ -18,6 +19,7 @@ import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.SystemTrust;
 import dev.incusspawn.util.TerminalLink;
@@ -97,6 +99,9 @@ class CredentialSetup {
     boolean openUrl(String url) {
         return Platform.openUrl(url);
     }
+
+    private static final String ADD_API_KEY_LATER = "No API key added. Add one later with 'isx account add "
+            + SpawnConfig.ClaudeConfig.NAMESPACE + "'.";
 
     private static final String CLAUDE_SKIPPED = "  Skipped Claude setup. Configure later with 'isx account add "
             + SpawnConfig.ClaudeConfig.NAMESPACE + "'.";
@@ -241,8 +246,7 @@ class CredentialSetup {
             if (oauthResult.verified()) {
                 System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + oauthResult.message()));
                 if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this token?"), true)) {
-                    saveOauthConfig(config, target, envOauthToken);
-                    System.out.println("  Claude auth configuration saved.");
+                    saveOauthConfig(config, prompts, target, envOauthToken, "  Claude auth configuration saved.");
                     return;
                 }
                 System.out.println("  Skipping environment token. Continuing with manual setup...");
@@ -279,7 +283,7 @@ class CredentialSetup {
 
         System.out.println("  How do you authenticate with Claude?");
         System.out.println("    1. Anthropic API key");
-        System.out.println("    2. Claude Pro/Max subscription (OAuth token)");
+        System.out.println("    2. Claude Pro, Max or Team subscription (OAuth token)");
         System.out.println("    3. Google Cloud Vertex AI");
         System.out.println();
         System.out.print("  Choice (1/2/3, or Enter to skip): ");
@@ -329,42 +333,41 @@ class CredentialSetup {
         } else if (authChoice.equals("2")) {
             setupClaudeOauth(config, prompts, target);
         } else if (authChoice.equals("1")) {
-            while (true) {
-                System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
-                var key = askSecret(prompts);
-                if (key.isBlank()) {
-                    System.out.println(CLAUDE_SKIPPED);
-                    break;
-                }
-
-                System.out.println("  Verifying API key...");
-                var result = verifyAnthropicApiKey(key);
-                if (result.verified()) {
-                    System.out.println("  " + styled(BOLD + GREEN, "✓ " + result.message()));
-                    saveDirectConfig(config, target, key);
-                    System.out.println("  Claude auth configuration saved.");
-                    break;
-                } else {
-                    System.out.println("  " + result.message());
-                    switch (askVerificationFailureAction(prompts)) {
-                        case SKIP -> {
-                            System.out.println(CLAUDE_SKIPPED);
-                            break;
-                        }
-                        case SAVE_UNVERIFIED -> {
-                            saveDirectConfig(config, target, key);
-                            System.out.println("  Claude auth configuration saved (unverified).");
-                            break;
-                        }
-                        case RETRY -> {
-                            continue;
-                        }
-                    }
-                    break;
-                }
-            }
+            if (!setupClaudeApiKey(config, prompts, target)) System.out.println(CLAUDE_SKIPPED);
         } else {
             System.out.println(CLAUDE_SKIPPED);
+        }
+    }
+
+    /** Asks for an Anthropic API key until one verifies or is saved anyway: false when the user skips. */
+    private boolean setupClaudeApiKey(SpawnConfig config, Prompts prompts, AccountTarget target) {
+        while (true) {
+            System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
+            var key = askSecret(prompts);
+            if (key.isBlank()) return false;
+
+            System.out.println("  Verifying API key...");
+            var result = verifyAnthropicApiKey(key);
+            if (result.verified()) {
+                System.out.println("  " + styled(BOLD + GREEN, "✓ " + result.message()));
+                saveDirectConfig(config, target, key);
+                System.out.println("  Claude auth configuration saved.");
+                return true;
+            }
+            System.out.println("  " + result.message());
+            switch (askVerificationFailureAction(prompts)) {
+                case SKIP -> {
+                    return false;
+                }
+                case SAVE_UNVERIFIED -> {
+                    saveDirectConfig(config, target, key);
+                    System.out.println("  Claude auth configuration saved (unverified).");
+                    return true;
+                }
+                case RETRY -> {
+                    // ask again
+                }
+            }
         }
     }
 
@@ -402,7 +405,7 @@ class CredentialSetup {
             accounts.forEach((name, account) ->
                     System.out.println(describeClaudeAccount(name, account, name.equals(defaultName))));
             if (claude.accountFor(SpawnConfig.ClaudeAccount::servesDirectApi) == null) {
-                System.out.println("    (none of these can answer 'isx ask' — add an API key or Vertex account)");
+                System.out.println("    (none of these can answer 'isx ask' — add an API key, which Max and Team plans include credits for, or Vertex)");
             }
             System.out.println();
             // 'd' and 'x' are reachable as raw keystrokes even when not listed, so the same
@@ -686,8 +689,12 @@ class CredentialSetup {
         saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofApiKey(apiKey));
     }
 
-    private void saveOauthConfig(SpawnConfig config, AccountTarget target, String oauthToken) {
+    /** Saves a subscription account, reports {@code saved}, then offers what AI Help needs. */
+    private void saveOauthConfig(SpawnConfig config, Prompts prompts, AccountTarget target, String oauthToken,
+                                 String saved) {
         saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofOauth(oauthToken));
+        System.out.println(saved);
+        offerApiKeyForAiHelp(config, prompts);
     }
 
     private void saveVertexConfig(SpawnConfig config, AccountTarget target, String region, String projectId) {
@@ -701,20 +708,33 @@ class CredentialSetup {
             config.getClaude().putAccount(target.name(), account);
         }
         config.save();
-        noteAiHelpNeedsDirectApiAccount(config);
     }
 
     /**
-     * A Pro/Max token cannot answer 'isx ask' -- it is only valid for Claude Code itself. Say so
-     * when the account is saved, rather than letting the feature fail later with an API error.
+     * A subscription token cannot answer 'isx ask' -- it is only valid for Claude Code itself.
+     * Max and Team plans include monthly API credit that can, so say so when such an account is
+     * saved and offer to add the key beside it, rather than letting AI Help fail later (#1674).
+     * The subscription stays the default: instances keep using it, and AI Help picks the key.
      */
-    private void noteAiHelpNeedsDirectApiAccount(SpawnConfig config) {
-        if (config.getClaude().accountFor(SpawnConfig.ClaudeAccount::servesDirectApi) != null) return;
-        if (config.getOpenai().hasAuth()) return;
-        System.out.println();
-        System.out.println("  Note: 'isx ask' and '?' in the TUI cannot use a Pro/Max token — it is");
-        System.out.println("  only valid for Claude Code itself. Add an Anthropic API key or a Vertex");
-        System.out.println("  AI account as a second Claude account to enable them.");
+    private void offerApiKeyForAiHelp(SpawnConfig config, Prompts prompts) {
+        if (!AiHelpClient.targets(config).isEmpty()) return;
+        BuildOutput.step("'isx ask' and '?' in the TUI cannot use a subscription token, only an API key.");
+        BuildOutput.step("Max and Team plans include monthly API credits for one (Pro does not): claim them");
+        BuildOutput.step("on claude.ai under Settings > Billing, then create a key in the linked Claude Console.");
+        BuildOutput.step(TerminalLink.link(AiHelpClient.API_CREDITS_URL));
+        if (!askConfirmation(prompts, "  Add an Anthropic API key account now?", false)) {
+            BuildOutput.step(ADD_API_KEY_LATER);
+            return;
+        }
+        var name = askAccountName(prompts, config.getClaude().allAccounts().keySet(),
+                "  Name for the API key account (e.g. api — Enter to cancel): ");
+        if (name.isEmpty()) {
+            BuildOutput.step(ADD_API_KEY_LATER);
+            return;
+        }
+        if (!setupClaudeApiKey(config, prompts, new AccountTarget(name, false))) {
+            BuildOutput.step(ADD_API_KEY_LATER);
+        }
     }
 
     AuthResult verifyAnthropicApiKey(String key) {
@@ -756,8 +776,8 @@ class CredentialSetup {
     }
 
     private void setupClaudeOauth(SpawnConfig config, Prompts prompts, AccountTarget target) {
-        System.out.println("  A Pro/Max subscription does not come with an API key. What it can");
-        System.out.println("  produce is a long-lived OAuth token (valid about a year):");
+        System.out.println("  A subscription signs Claude Code in with a long-lived OAuth token (valid");
+        System.out.println("  about a year). Pro has no API key; Max and Team include API credits for one.");
         System.out.println();
         System.out.println("    1. Install Claude Code: " + TerminalLink.link("https://claude.com/claude-code"));
         System.out.println("    2. Sign in with the subscription account: run " + styled(BOLD, "claude")
@@ -791,8 +811,7 @@ class CredentialSetup {
             var result = verifyOauthToken(token);
             if (result.verified()) {
                 System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + result.message()));
-                saveOauthConfig(config, target, token);
-                System.out.println("  Claude auth configuration saved.");
+                saveOauthConfig(config, prompts, target, token, "  Claude auth configuration saved.");
                 break;
             } else {
                 System.out.println("  " + result.message());
@@ -802,8 +821,8 @@ class CredentialSetup {
                         break;
                     }
                     case SAVE_UNVERIFIED -> {
-                        saveOauthConfig(config, target, token);
-                        System.out.println("  Claude auth configuration saved (unverified).");
+                        saveOauthConfig(config, prompts, target, token,
+                                "  Claude auth configuration saved (unverified).");
                         break;
                     }
                     case RETRY -> {

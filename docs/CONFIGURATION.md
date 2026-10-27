@@ -42,6 +42,12 @@ github:
 You do not need to write this by hand: `isx init` adds, renames and removes accounts and sets the default.
 Re-run it any time to change them.
 
+A subscription account serves Claude Code in your instances, but not [`isx ask`](CLI.md#isx-ask), which needs an API key.
+Claude Max and Team plans include [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) for one, claimed on claude.ai under Settings > Billing.
+
+Add the key as a second `claude` account with `type: api-key`, and keep the subscription as the default.
+`isx init` offers this when it saves a subscription.
+
 An instance uses, most specific first:
 
 1. its own choice: `isx branch --account`, `isx account set`, or the `a` key in the TUI;

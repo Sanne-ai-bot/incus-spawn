@@ -72,6 +72,9 @@ public class AiHelpClient {
     public static final String ANTHROPIC_MODEL = "claude-sonnet-5";
     public static final String VERTEX_MODEL = "claude-sonnet-5";
     public static final String OPENAI_MODEL = "gpt-4o-mini";
+    /** Where Anthropic explains the API credits Max and Team plans include, which can pay for this (#1674). */
+    public static final String API_CREDITS_URL =
+            "https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers";
 
     /**
      * A configured account a question can be sent to. {@code accountName} is the Claude
@@ -158,7 +161,8 @@ public class AiHelpClient {
                     + (configured.size() > 1 ? "s are all" : " is")
                     + " a Claude Pro/Max subscription, whose token is only valid for Claude Code"
                     + " itself and cannot answer here.\n"
-                    + "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.";
+                    + "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.\n"
+                    + "Max and Team plans include monthly API credits for a key: " + API_CREDITS_URL;
         }
         return "No configured Claude account can answer this. "
                 + "Run 'isx init' to add an Anthropic API key or Vertex AI account.";
