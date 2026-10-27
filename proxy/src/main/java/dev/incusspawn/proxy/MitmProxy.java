@@ -1082,7 +1082,7 @@ public class MitmProxy {
                         + "): something in an instance does not trust the isx CA");
                 return;
             }
-            // A connection's failure, on stderr alone: the event loop writes no file for it
+            // A connection's failure is a trace: on the console, which proxy.log copies, not a lifecycle warning
             ProxyLog.trace("MITM server error: " + err.getMessage(), err);
         });
         mitmServer.requestHandler(this::routeRequest);
