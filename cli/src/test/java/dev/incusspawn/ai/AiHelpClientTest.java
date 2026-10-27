@@ -75,7 +75,7 @@ class AiHelpClientTest {
     void oauthOnlyConfigIsNotReportedAsMissingCredentials() {
         var config = config();
         config.getClaude().setOauthToken(SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN);
-        var message = AiHelpClient.noProviderMessage(config);
+        var message = AiHelpClient.noProvider(config).message();
         assertTrue(message.contains("Claude Code"), message);
         assertTrue(message.contains("Max and Team plans include monthly API credits"), message);
         assertTrue(message.contains(AiHelpClient.API_CREDITS_URL), message);
@@ -84,7 +84,7 @@ class AiHelpClientTest {
 
     @Test
     void emptyConfigIsReportedAsMissingCredentials() {
-        assertTrue(AiHelpClient.noProviderMessage(config()).startsWith("No AI credentials"));
+        assertTrue(AiHelpClient.noProvider(config()).message().startsWith("No AI credentials"));
     }
 
     @Test
