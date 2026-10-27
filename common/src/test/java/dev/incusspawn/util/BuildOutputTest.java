@@ -424,4 +424,15 @@ class BuildOutputTest {
             assertEquals(" 0".repeat(100_000), BuildOutput.guestText("\u009b0".repeat(100_000)));
         });
     }
+
+    /** One line over the cap is shown whole: a marker in its place would save nothing. */
+    @Test
+    void oneLineOverTheFailedOutputCapIsShownWhole() {
+        var lines = new String[BuildOutput.FAILED_OUTPUT_LINES + 1];
+        java.util.Arrays.setAll(lines, i -> "line " + i);
+        assertEquals(java.util.List.of(lines), java.util.List.of(BuildOutput.lastOf(lines)));
+        var more = new String[BuildOutput.FAILED_OUTPUT_LINES + 2];
+        java.util.Arrays.setAll(more, i -> "line " + i);
+        assertEquals("(2 earlier lines not shown)", BuildOutput.lastOf(more)[0]);
+    }
 }

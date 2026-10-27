@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.util.BuildOutput;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -51,7 +52,7 @@ public class SkillsCache {
             result = downloadSkillMd(ownerRepo, skillName, http, existingEtag);
         } catch (IOException e) {
             if (hasCached) {
-                System.err.println("Warning: could not refresh skill '" + skillName
+                BuildOutput.warn("could not refresh skill '" + skillName
                         + "' from " + ownerRepo + " (offline?), using cached version.");
                 return Files.readString(cached);
             }

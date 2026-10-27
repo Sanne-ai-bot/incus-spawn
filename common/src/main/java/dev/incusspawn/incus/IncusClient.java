@@ -10,6 +10,7 @@ import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ReadyTimeoutsConfig;
 import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.tool.ShellMenu;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 
 import java.io.IOException;
@@ -510,7 +511,7 @@ public class IncusClient {
     public void waitForSystemd(String name) {
         if (!pollUntilReady(name, 30,
                 "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'")) {
-            System.err.println("Warning: systemd in " + name + " did not reach running/degraded state — continuing anyway");
+            BuildOutput.warn("systemd in " + name + " did not reach running/degraded state — continuing anyway");
         }
     }
 

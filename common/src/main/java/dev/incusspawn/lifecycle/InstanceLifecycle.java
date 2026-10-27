@@ -301,7 +301,7 @@ public final class InstanceLifecycle {
                     : AccountSelection.identityReconcile(config, incus, name, knownSetups);
             if (plan.isEmpty()) return;
 
-            var container = new Container(incus, name);
+            var container = new Container(incus, name, out);
             var setups = knownSetups != null ? knownSetups : AccountSelection.rederivableSetups();
             var stale = new LinkedHashMap<>(plan.stale());
             var updates = new LinkedHashMap<String, String>();

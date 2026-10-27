@@ -7,6 +7,7 @@ import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.util.BuildOutput;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -1332,7 +1333,7 @@ class IncusApi {
                         opPath + "/wait?timeout=" + pollSeconds,
                         null, (int) pollSeconds + (limit != 0 ? 2 : 30));
                 if (!waitResp.isSuccess()) {
-                    System.err.println("Warning: exec operation lost (HTTP " + waitResp.statusCode()
+                    BuildOutput.warn("exec operation lost (HTTP " + waitResp.statusCode()
                             + " on " + opPath + "/wait) — exit code unknown");
                     return -1;
                 }
@@ -1347,7 +1348,7 @@ class IncusApi {
                 if (!"Success".equals(status)) return -1;
                 return meta.getField("metadata").getField("return").asInt(0);
             }
-            System.err.println("Warning: exec operation timed out after "
+            BuildOutput.warn("exec operation timed out after "
                     + MAX_EXEC_WAIT_SECONDS + "s on " + opPath + " — exit code unknown");
             return -1;
         } finally {

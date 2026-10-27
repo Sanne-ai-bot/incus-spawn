@@ -66,16 +66,14 @@ class NpmGlobalInstallTest {
                 eq("--ignore-scripts"), eq("--loglevel=verbose"), eq(npmPackage));
     }
 
-    private static String stderrOf(Runnable action) {
-        var captured = new java.io.ByteArrayOutputStream();
-        var originalErr = System.err;
-        try {
-            System.setErr(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
-            action.run();
-        } finally {
-            System.setErr(originalErr);
+    /** The lines the warnings {@code action} reported show under them, each ended by a newline. */
+    private static String warnedLinesOf(Runnable action) {
+        var recorded = dev.incusspawn.util.RecordingOutput.during(action::run);
+        var lines = new StringBuilder();
+        for (var warning : recorded.events(dev.incusspawn.util.RecordingOutput.Kind.WARN)) {
+            warning.details().forEach(line -> lines.append(line).append('\n'));
         }
-        return captured.toString(java.nio.charset.StandardCharsets.UTF_8);
+        return lines.toString();
     }
 
     @Test
@@ -198,9 +196,12 @@ class NpmGlobalInstallTest {
         var incus = incus();
         when(incus.shellExec(eq(CONTAINER), eq("npm"), any(), any(), any(), any(), any()))
                 .thenReturn(new IncusClient.ExecResult(1, "\033]0;pwned\007out\n", "\033[31mnpm error\033[0m\n"));
-        var err = stderrOf(() -> assertThrows(IncusException.class,
+        var thrown = new IncusException[1];
+        var err = warnedLinesOf(() -> thrown[0] = assertThrows(IncusException.class,
                 () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX)));
         assertEquals("out\nnpm error\n", err);
+        // The failure report gets it from the exception, all of it, as text
+        assertEquals("npm printed:\nout\nnpm error\n\n", thrown[0].stepOutput());
     }
 
     @Test
@@ -315,7 +316,7 @@ class NpmGlobalInstallTest {
         stubCheck(incus, "@openai/codex", CODEX_MISSING);
         stubCheck(incus, "@github/copilot", OK);
         stubNpm(incus, "@openai/codex", npm);
-        var err = stderrOf(() -> assertThrows(IncusException.class,
+        var err = warnedLinesOf(() -> assertThrows(IncusException.class,
                 () -> NpmGlobalInstall.install(new Container(incus, CONTAINER), CODEX)));
         assertEquals("npm error skipped\n", err);
 

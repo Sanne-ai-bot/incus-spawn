@@ -1,5 +1,8 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
+
 /**
  * A handle to a specific Incus container, providing a convenient API
  * for running commands and managing files inside it.
@@ -8,12 +11,40 @@ public class Container {
 
     private final IncusClient incus;
     private final String name;
+    private final Output out;
     private String architecture;
     private MachineType machineType;
 
+    /** A container whose failed commands' output goes to whoever owns the terminal. */
     public Container(IncusClient incus, String name) {
+        this(incus, name, BuildOutput.bound());
+    }
+
+    /** A container whose failed commands' output is reported to {@code out}. */
+    public Container(IncusClient incus, String name, Output out) {
         this.incus = incus;
         this.name = name;
+        this.out = out;
+    }
+
+    /** Where this container reports what a failed command printed. */
+    public Output out() {
+        return out;
+    }
+
+    /**
+     * The failure of a command that printed {@code result}: a warning to {@code out} with the end
+     * of what it printed, shown as text, since a tool's run step or an install script decides that
+     * (#1588), and the exception to throw, carrying all of it for the build's failure report, which
+     * keeps what the warning's {@link BuildOutput#FAILED_OUTPUT_LINES} leave out.
+     */
+    public static IncusException failed(Output out, String title, String message, IncusClient.ExecResult result) {
+        var lines = BuildOutput.guestLines(result.stdout(), result.stderr());
+        var failure = new IncusException(message);
+        if (lines.length == 0) return failure;
+        out.warn(title, BuildOutput.lastOf(lines));
+        // Under its title, and set apart from the diagnostics the failure report adds after it
+        return failure.withStepOutput(title + "\n" + String.join("\n", lines) + "\n\n");
     }
 
     public String name() {
@@ -66,13 +97,11 @@ public class Container {
         }
     }
 
-    /** Run a command as root, suppressing output. On failure, prints captured output to stderr before throwing. */
+    /** Run a command as root, suppressing output. On failure, reports the captured output before throwing. */
     public void runQuiet(String failureMessage, String... command) {
         var result = incus.shellExec(name, command);
         if (!result.success()) {
-            if (!result.stdout().isBlank()) System.err.print(dev.incusspawn.util.BuildOutput.guestText(result.stdout()));
-            if (!result.stderr().isBlank()) System.err.print(dev.incusspawn.util.BuildOutput.guestText(result.stderr()));
-            throw new IncusException(failureMessage + " (exit code " + result.exitCode() + ")");
+            throw failed(out, "The failed command printed:", failureMessage + " (exit code " + result.exitCode() + ")", result);
         }
     }
 
@@ -101,13 +130,11 @@ public class Container {
         }
     }
 
-    /** Run a shell snippet as a specific user, suppressing output. On failure, prints captured output to stderr. */
+    /** Run a shell snippet as a specific user, suppressing output. On failure, reports the captured output before throwing. */
     public void runAsUserQuiet(String user, String script, String failureMessage) {
         var result = incus.execInContainer(name, user, script);
         if (!result.success()) {
-            if (!result.stdout().isBlank()) System.err.print(dev.incusspawn.util.BuildOutput.guestText(result.stdout()));
-            if (!result.stderr().isBlank()) System.err.print(dev.incusspawn.util.BuildOutput.guestText(result.stderr()));
-            throw new IncusException(failureMessage + " (exit code " + result.exitCode() + ")");
+            throw failed(out, "The failed command printed:", failureMessage + " (exit code " + result.exitCode() + ")", result);
         }
     }
 
