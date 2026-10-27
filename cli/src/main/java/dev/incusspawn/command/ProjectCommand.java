@@ -228,7 +228,7 @@ public class ProjectCommand extends BaseCommand {
             }
             if (configPath == null && projectConfig != null && projectConfig.getName() != null && !projectConfig.getName().equals(name)) {
                 BuildOutput.error("the incus-spawn.yaml found here is for project '" + projectConfig.getName()
-                        + "', not '" + name + "'. Use --config to name the one for '" + name + "'.");
+                        + "', not '" + name + "'.", "Use --config to name the one for '" + name + "'.");
                 return 1;
             }
 
