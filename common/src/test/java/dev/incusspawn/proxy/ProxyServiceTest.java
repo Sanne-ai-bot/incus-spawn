@@ -215,7 +215,7 @@ class ProxyServiceTest {
     void stopManualProxyStopsTheProxyHealthReports() throws Exception {
         var proxy = new ProcessBuilder("sleep", "600").start();
         try {
-            ProxyService.stopManualProxy(proxy::pid, () -> -1);
+            assertTrue(ProxyService.stopManualProxy(proxy::pid, () -> -1));
             assertTrue(proxy.waitFor(10, TimeUnit.SECONDS),
                     "the proxy /health reported is still running");
         } finally {
@@ -226,10 +226,46 @@ class ProxyServiceTest {
     /** A PID of 0 or below would make `kill` signal a whole process group: never sent. */
     @Test
     void stopManualProxyNeverSignalsAProcessGroup() {
-        var recorded = RecordingOutput.during(() -> ProxyService.stopManualProxy(() -> 0, () -> -1));
+        var recorded = RecordingOutput.during(() -> assertTrue(ProxyService.stopManualProxy(() -> 0, () -> -1)));
         // The command's result, on stdout: a step, not a note
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP, "Proxy is not running.")),
                 recorded.events());
+    }
+
+    /** A service systemd did not stop is a failed `isx proxy stop`, as is one still active after it. */
+    @Test
+    void stopSystemdUnitFailsWhenTheServiceDoesNotStop() {
+        var saved = ProxyService.replaceCommandRunner(command -> false);
+        try {
+            var refused = RecordingOutput.during(() -> assertFalse(ProxyService.stopSystemdUnit(() -> false)));
+            assertEquals(List.of("Could not stop the proxy service."),
+                    refused.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList());
+
+            ProxyService.replaceCommandRunner(command -> true);
+            var stillActive = RecordingOutput.during(() -> assertFalse(ProxyService.stopSystemdUnit(() -> true)));
+            assertEquals(1, stillActive.events(RecordingOutput.Kind.ERROR).size(), stillActive.events()::toString);
+            assertEquals(List.of(), stillActive.events(RecordingOutput.Kind.STEP), "not reported as stopped");
+
+            var stopped = RecordingOutput.during(() -> assertTrue(ProxyService.stopSystemdUnit(() -> false)));
+            assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP, "Proxy service stopped.")),
+                    stopped.events());
+        } finally {
+            ProxyService.replaceCommandRunner(saved);
+        }
+    }
+
+    /** A proxy left running is a failed `isx proxy stop`: an error, and false for its exit code. */
+    @Test
+    void stopManualProxyFailsWhenTheKillIsRefused() {
+        var saved = ProxyService.replaceCommandRunner(command -> false);
+        try {
+            var recorded = RecordingOutput.during(() -> assertFalse(ProxyService.stopManualProxy(() -> 4242, () -> -1)));
+            assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
+                    "Could not stop the proxy (PID 4242); is it another user's?")),
+                    recorded.events(RecordingOutput.Kind.ERROR));
+        } finally {
+            ProxyService.replaceCommandRunner(saved);
+        }
     }
 
     /**
