@@ -191,8 +191,7 @@ public class TemplatesCommand extends BaseCommand {
                 editPath = Path.of(def.getSource());
             }
 
-            editLoop(editPath, name, isBuiltinCopy);
-            return CommandResult.SUCCESS;
+            return editLoop(editPath, name, isBuiltinCopy) ? CommandResult.SUCCESS : CommandResult.valueOf(1);
         }
 
         private void copyBuiltinResource(String filename, Path target) throws IOException {
@@ -247,15 +246,14 @@ public class TemplatesCommand extends BaseCommand {
                     return CommandResult.valueOf(1);
                 }
                 BuildOutput.step("Created " + targetPath);
-                editLoop(targetPath, null, false);
-                return CommandResult.SUCCESS;
+                return editLoop(targetPath, null, false) ? CommandResult.SUCCESS : CommandResult.valueOf(1);
             }
 
             try {
                 var dir = project ? ImageDef.projectImagesDir() : ImageDef.userImagesDir();
                 var targetPath = createTemplateFile(templateName, null, dir);
                 BuildOutput.step("Created " + targetPath);
-                editLoop(targetPath, templateName, false);
+                if (!editLoop(targetPath, templateName, false)) return CommandResult.valueOf(1);
             } catch (IOException e) {
                 BuildOutput.error("Failed to create template: " + e.getMessage());
                 return CommandResult.valueOf(1);
@@ -331,7 +329,8 @@ public class TemplatesCommand extends BaseCommand {
         return !result.hasErrors();
     }
 
-    public static void editLoop(Path file, String originalName, boolean isBuiltinCopy) {
+    /** Edits {@code file} until it is valid or the user stops; whether it ended valid. */
+    public static boolean editLoop(Path file, String originalName, boolean isBuiltinCopy) {
         while (true) {
             try {
                 int exitCode = launchEditor(file);
@@ -344,10 +343,10 @@ public class TemplatesCommand extends BaseCommand {
                 if (isBuiltinCopy) {
                     cleanup(file);
                 }
-                return;
+                return false;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return;
+                return false;
             }
 
             var loadWarnings = new ArrayList<String>();
@@ -360,15 +359,15 @@ public class TemplatesCommand extends BaseCommand {
                 checkNameChange(file, originalName, isBuiltinCopy);
             }
 
-            if (valid) return;
+            if (valid) return true;
 
             var console = System.console();
-            if (console == null) return;
+            if (console == null) return false;
             if (!askConfirmation(console, "Re-edit?", true, true)) {
                 if (isBuiltinCopy) {
                     cleanup(file);
                 }
-                return;
+                return false;
             }
         }
     }
