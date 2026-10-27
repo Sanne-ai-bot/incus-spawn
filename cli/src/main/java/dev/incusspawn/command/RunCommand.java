@@ -60,9 +60,8 @@ public class RunCommand extends BaseCommand {
             var noDefault = noDefaultAction(name, ref, allActions);
             if (noDefault != null) {
                 // Fall back to shell; a broken reference is a warning
-                var fallback = noDefault + ", opening shell...";
-                if (ref == null) BuildOutput.step(fallback);
-                else BuildOutput.warn(fallback);
+                if (ref == null) BuildOutput.step(noDefault + ", opening shell...");
+                else BuildOutput.warn(noDefault + ".", "Opening a shell instead.");
                 var prep = dev.incusspawn.incus.IncusClient.ShellPrep.fromInstance(incus, instance);
                 incus.interactiveShell(name, "agentuser", prep,
                         resolver.shellMenu(name, instance, parent, prep.workdir()));
