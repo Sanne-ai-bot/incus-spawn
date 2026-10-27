@@ -680,6 +680,9 @@ The package **install/upgrade** paths (and the VM rootfs dependency install, whi
 The rpm transaction itself is serial.
 These shared flags are centralized in `BuildProgress.DNF_BASE_OPTS` and spliced on by `dnfCommand(...)`.
 Repo-management calls that download nothing (`dnf copr enable`, `dnf clean`) run plain `dnf` — the cache/download flags don't apply to them.
+`dnf copr` is a dnf5 plugin isx's base images do not ship (stock Fedora does), so a layer that enables a COPR repo first installs `dnf5-command(copr)` through `dnfCommand(...)` (#1736).
+An `rpm -q --whatprovides` check skips that install when the plugin is present, since a no-op dnf install still costs seconds of metadata loading.
+It asks for the plugin of the dnf that runs (`dnf5-command(copr)` when `dnf5` is on the path, dnf4's `dnf-command(copr)` otherwise): a package can pull `dnf-plugins-core` into a dnf5 guest, whose `dnf copr` still fails.
 The cache device is unmounted before the final cleanup step so the image stays small.
 For VMs, `unmountDnfCache` unmounts inside the guest before removing the device (the agent would otherwise tear the mount down asynchronously).
 `cleanCaches` skips `dnf clean`/`rm -rf` of the cache dir while it is still a mount point, since cleaning through a live mount would wipe the shared volume for every later build.

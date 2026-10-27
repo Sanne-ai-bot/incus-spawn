@@ -94,6 +94,8 @@ Streaming without terminal echo is provided by `Container.execLines` -> `IncusCl
 COPR-enable and VM rootfs-expansion use `runWithSpinner` (captured exec, no live detail -- they're single/short ops).
 Its `runSpinnerWork` wrapper (and `dnfWork`) convert a thrown exception into a recorded `failed` state, because `TerminalProgress` swallows task exceptions.
 Otherwise the step would stay RUNNING and `finishSpinner` would throw a generic message with no cause.
+Before the first `dnf copr enable`, `ensureCoprPlugin` installs the copr plugin of the guest's own dnf through `runDnf` when `rpm -q --whatprovides` misses it: `dnf5-command(copr)` when `dnf5` is on the path, `dnf-command(copr)` otherwise, since a dnf5 guest can hold dnf4's plugin and still lack `dnf copr`.
+isx's base images ship dnf5 without its plugins (#1736).
 The VM rootfs dependency install goes through `dnfCommand(...)` too, and is skipped when the resize tools are already present (the prebaked VM image ships them); `dnf copr enable`/`dnf clean` run plain `dnf` (the download/cache flags don't apply).
 Full dnf output is printed to stderr only on failure, after the animated line, via the shared `finishSpinner`.
 `runDnf` still retries once with `--refresh` on failure (the spinner shows "retrying with --refresh"). dnf has no built-in single-line progress mode -- `-q` would suppress the very lines we parse -- so consuming its native `[N/M]` output is the approach.

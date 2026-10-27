@@ -12,6 +12,7 @@ import dev.incusspawn.config.EnvResolver;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
@@ -201,6 +202,9 @@ public class GuestProvisioning {
         allRepos.removeAll(ancestorRepos);
         if (allRepos.isEmpty()) return;
 
+        if (allRepos.stream().anyMatch(key -> "copr".equals(key.type()))) {
+            ensureCoprPlugin(container);
+        }
         for (var key : allRepos) {
             // A template, project-local included, names its repositories: shown as text (#1610).
             var shownName = OutputFormat.oneLine(key.name());
@@ -213,6 +217,35 @@ public class GuestProvisioning {
                         + "' for '" + shownName + "', skipping.");
             }
         }
+    }
+
+    /** What provides {@code dnf copr} on dnf5, and on dnf4. */
+    static final String DNF5_COPR_PLUGIN = "dnf5-command(copr)";
+    static final String DNF4_COPR_PLUGIN = "dnf-command(copr)";
+
+    /**
+     * Prints the copr plugin the guest's own dnf needs when it is missing, nothing when it is
+     * there: one quick rpm query. The provide follows the dnf that runs, since a dnf5 guest
+     * can still hold dnf4's plugin from a package that pulled in {@code dnf-plugins-core}.
+     */
+    static final String MISSING_COPR_PLUGIN = "p='" + DNF4_COPR_PLUGIN + "'; "
+            + "if command -v dnf5 >/dev/null 2>&1; then p='" + DNF5_COPR_PLUGIN + "'; fi; "
+            + "rpm -q --whatprovides \"$p\" >/dev/null 2>&1 || printf '%s\\n' \"$p\"";
+
+    /**
+     * Install the copr plugin of the guest's dnf unless it has it: isx's base images ship
+     * dnf5 without its plugins, so {@code dnf copr enable} fails without it (#1736).
+     */
+    private static void ensureCoprPlugin(Container container) {
+        var probe = container.sh(MISSING_COPR_PLUGIN);
+        var missing = probe.stdout().strip();
+        if (probe.success() && missing.isEmpty()) return;
+        if (!missing.equals(DNF5_COPR_PLUGIN) && !missing.equals(DNF4_COPR_PLUGIN)) {
+            throw new IncusException("Could not tell whether dnf's copr plugin is installed: "
+                    + OutputFormat.oneLine(probe.stdout() + probe.stderr()).strip());
+        }
+        runDnf(container, "Installing the COPR plugin", "Failed to install " + missing,
+                dnfCommand("install", "-y", missing));
     }
 
     /**

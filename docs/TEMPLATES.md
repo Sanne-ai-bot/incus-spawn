@@ -109,7 +109,7 @@ All fields are optional except `name`.
 | `parent` | Parent image name; omit for root images | |
 | `packages` | dnf packages to install | |
 | `remove_packages` | dnf packages to remove before installing | |
-| `package_repos` | Additional package repositories to enable before installing packages, each with `type: copr` and `name: owner/project`; copr is the only kind | |
+| `package_repos` | Additional package repositories to enable before installing packages, each with `type: copr` and `name: owner/project`; copr is the only kind, and isx installs dnf's copr plugin first when the image lacks it | |
 | `tools` | Tool names to run, resolved from YAML or Java (see [Custom Tools](TOOLS.md#custom-tools)) | |
 | `repos` | Git repositories to clone as agentuser (see [Declarative Repos](#declarative-repos)) | |
 | `skills` | Agent skills to bake into the image: a list, or an object with `repo` and `list` sub-fields (see [Agent Skills](AGENTS.md#agent-skills)) | |
