@@ -45,11 +45,6 @@ class StreamSwapGateTest {
             Map.entry("cli/src/test/java/dev/incusspawn/command/AccountAddTest.java", INIT_FLOW),
             Map.entry("cli/src/test/java/dev/incusspawn/command/CredentialPromptsTest.java", INIT_FLOW),
             Map.entry("cli/src/test/java/dev/incusspawn/command/GitHubAuthFlowTest.java", INIT_FLOW),
-            Map.entry("cli/src/test/java/dev/incusspawn/command/InitStepOutputTest.java", INIT_FLOW),
-            // Through InitStepOutputTest.capture
-            Map.entry("cli/src/test/java/dev/incusspawn/command/InitFirewallOutputTest.java", INIT_FLOW),
-            Map.entry("cli/src/test/java/dev/incusspawn/command/MoveBridgeOffTest.java", INIT_FLOW),
-            Map.entry("cli/src/test/java/dev/incusspawn/command/FollowBridgeMoveTest.java", INIT_FLOW),
             Map.entry("cli/src/test/java/dev/incusspawn/command/BuildCommandBatchTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/BuildCommandTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/BuildProgressTest.java", CLI_COMMAND),

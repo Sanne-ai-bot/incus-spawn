@@ -28,7 +28,7 @@ class AccountAddTest {
         Prompts prompts;
 
         @Override
-        Prompts credentialPrompts() {
+        Prompts prompts() {
             return prompts;
         }
 

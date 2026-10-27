@@ -1,8 +1,9 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 
-import dev.incusspawn.command.InitStepOutputTest.Output;
+import dev.incusspawn.command.InitStepOutputTest.Reported;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,23 +48,38 @@ class InitFirewallOutputTest {
         }
     }
 
-    private static Output run(String failing, Consumer<FakeInit> step) throws Exception {
+    private static Reported run(String failing, Consumer<FakeInit> step) throws Exception {
         var init = new FakeInit();
         init.failing = failing;
         return capture(() -> step.accept(init));
     }
 
-    private static Output firewalld(String failing) throws Exception {
+    private static Reported firewalld(String failing) throws Exception {
         return run(failing, init -> init.host().configureFirewalld());
     }
 
-    private static Output ufw(String failing) throws Exception {
+    private static Reported ufw(String failing) throws Exception {
         return run(failing, init -> init.host().configureUfw(GATEWAY, BEFORE_RULES));
     }
 
-    private static void assertFailureReported(Output output, String command) {
+    private static void assertFailureReported(Reported output, String command) {
         assertFalse(output.out().contains("configured"), output.out());
         assertTrue(output.err().contains(command), output.err());
+    }
+
+    /**
+     * The firewall step's outcomes are typed (#1703): what it did is steps, a failure a warning
+     * with what to do under it, which the TUI's log and any binding keep.
+     */
+    @Test
+    void aFailedReloadIsAWarningWithItsRemedy() {
+        var init = new FakeInit();
+        init.failing = "--reload";
+        var recorded = RecordingOutput.during(() -> init.host().configureFirewalld());
+
+        assertEquals(List.of("Firewall reload failed.\nRun: sudo firewall-cmd --reload"), recorded.warnings());
+        assertTrue(recorded.events(RecordingOutput.Kind.STEP).stream()
+                .noneMatch(e -> e.msg().startsWith("Firewall configured")), recorded.events()::toString);
     }
 
     @Test
@@ -114,7 +130,7 @@ class InitFirewallOutputTest {
      * What a MITM step printed and returned: {@code configureMitmProxy} prints "MITM proxy
      * configured." only when the step returns true.
      */
-    private record Mitm(Output output, boolean redirected) {}
+    private record Mitm(Reported output, boolean redirected) {}
 
     private static Mitm mitm(String failing, Predicate<FakeInit> step) throws Exception {
         var redirected = new AtomicBoolean();

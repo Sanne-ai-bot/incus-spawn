@@ -39,6 +39,11 @@ public final class RecordingOutput implements Output {
     /** The kinds {@link Output} treats as diagnostics: those that default to {@link Output#warn}. */
     private static final Set<Kind> DIAGNOSTICS =
             EnumSet.of(Kind.WARN, Kind.ERROR, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.WARN_BANNER, Kind.STEP_FAIL);
+    /** Whether a terminal prints {@code kind} on stderr: every diagnostic, and notes. */
+    public static boolean onStderr(Kind kind) {
+        return DIAGNOSTICS.contains(kind) || kind == Kind.NOTE;
+    }
+
     /** The kinds a terminal skips when blank ({@link TerminalOutput}). */
     private static final Set<Kind> SKIPPED_WHEN_BLANK =
             EnumSet.of(Kind.WARN, Kind.ERROR, Kind.WARN_ASIDE, Kind.STEP_WARN, Kind.STEP_NOTE, Kind.NOTE);

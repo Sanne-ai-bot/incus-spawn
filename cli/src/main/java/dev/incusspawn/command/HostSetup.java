@@ -13,6 +13,7 @@ import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
@@ -28,7 +29,7 @@ import java.util.regex.Pattern;
 import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.YELLOW;
 import static dev.incusspawn.util.BuildOutput.styled;
-import static dev.incusspawn.command.BaseCommand.askConfirmation;
+import static dev.incusspawn.command.BaseCommand.askYesNo;
 import static dev.incusspawn.command.InitCommand.commandExists;
 import static dev.incusspawn.command.InitCommand.runHost;
 import static dev.incusspawn.command.InitCommand.runHostCapturingExit;
@@ -93,7 +94,7 @@ class HostSetup {
         if (!commandExists("btrfs"))       missing.add("btrfs-progs");
         if (missing.isEmpty()) return;
 
-        System.out.println("Installing dependencies: " + String.join(", ", missing) + "...");
+        BuildOutput.step("Installing dependencies: " + String.join(", ", missing) + "...");
         // zypper uses "btrfsprogs" instead of "btrfs-progs"
         if (commandExists("zypper")) {
             missing.replaceAll(p -> "btrfs-progs".equals(p) ? "btrfsprogs" : p);
@@ -122,57 +123,56 @@ class HostSetup {
         var result = runHost("which", "incus");
         if (result != 0) {
             var installCmd = detectInstallCommand();
-            System.out.println("  Incus is not installed on this system.");
-            System.out.println("  The following steps require sudo privileges:");
-            System.out.println("    - Install the 'incus' package");
-            System.out.println("    - Enable the incus systemd service");
-            System.out.println("    - Add your user to the 'incus-admin' group");
-            System.out.println();
+            BuildOutput.step("Incus is not installed on this system.");
+            BuildOutput.step("The following steps require sudo privileges:");
+            BuildOutput.stepNote("Install the 'incus' package");
+            BuildOutput.stepNote("Enable the incus systemd service");
+            BuildOutput.stepNote("Add your user to the 'incus-admin' group");
             if (installCmd != null) {
-                System.out.println("  If you prefer to install manually, abort now (Ctrl+C) and run:");
-                System.out.println("    sudo " + String.join(" ", installCmd) + " incus");
+                BuildOutput.step("If you prefer to install manually, abort now (Ctrl+C) and run:");
+                BuildOutput.stepNote("sudo " + String.join(" ", installCmd) + " incus");
             } else {
-                System.out.println("  No supported package manager found (dnf, apt, zypper, pacman).");
-                System.out.println("  Install Incus manually (see " + TerminalLink.link("https://linuxcontainers.org/incus/docs/main/installing/") + "), then run:");
+                BuildOutput.step("No supported package manager found (dnf, apt, zypper, pacman).");
+                BuildOutput.step("Install Incus manually (see " + TerminalLink.link("https://linuxcontainers.org/incus/docs/main/installing/") + "), then run:");
             }
-            System.out.println("    sudo systemctl enable --now incus");
-            System.out.println("    sudo usermod -aG incus-admin " + System.getProperty("user.name"));
-            System.out.println("  Then re-run 'isx init' to continue setup.");
-            System.out.println();
+            BuildOutput.stepNote("sudo systemctl enable --now incus");
+            BuildOutput.stepNote("sudo usermod -aG incus-admin " + System.getProperty("user.name"));
+            BuildOutput.step("Then re-run 'isx init' to continue setup.");
 
             if (installCmd == null) {
-                System.out.println("  Cannot auto-install without a supported package manager.");
+                BuildOutput.error("Cannot auto-install without a supported package manager.");
                 System.exit(1);
             }
 
-            var console = System.console();
-            if (console != null) {
-                if (!askConfirmation(console, "  Proceed with automatic installation?", true)) {
-                    System.out.println("  Aborted. Install Incus manually and re-run 'isx init'.");
+            var prompts = init.prompts();
+            if (prompts != null) {
+                if (!askYesNo(prompts, "Proceed with automatic installation?", true)) {
+                    BuildOutput.step("Aborted. Install Incus manually and re-run 'isx init'.");
                     System.exit(0);
                 }
             }
 
-            System.out.println("  Installing Incus via " + installCmd[0] + " (sudo required)...");
+            BuildOutput.step("Installing Incus via " + installCmd[0] + " (sudo required)...");
             var fullCmd = new String[installCmd.length + 2];
             fullCmd[0] = "sudo";
             System.arraycopy(installCmd, 0, fullCmd, 1, installCmd.length);
             fullCmd[fullCmd.length - 1] = "incus";
             runHost(fullCmd);
-            System.out.println("  Enabling incus service...");
+            BuildOutput.step("Enabling incus service...");
             runHost("sudo", "systemctl", "enable", "--now", "incus");
-            System.out.println("  Adding user to incus-admin group...");
+            BuildOutput.step("Adding user to incus-admin group...");
             runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name"));
-            System.out.println("  NOTE: You may need to log out and back in for group membership to take effect.");
-            System.out.println("  Alternatively, run: newgrp incus-admin");
+            BuildOutput.step("You may need to log out and back in for group membership to take effect, or run:");
+            BuildOutput.stepNote("newgrp incus-admin");
         } else {
-            System.out.println("  Incus is installed.");
+            BuildOutput.step("Incus is installed.");
             var serviceActive = runHost("systemctl", "is-active", "--quiet", "incus");
             if (serviceActive != 0) {
-                System.out.println("  Incus service is not running. Enabling and starting it (sudo required)...");
+                BuildOutput.step("Incus service is not running. Enabling and starting it (sudo required)...");
                 var enableResult = runHost("sudo", "systemctl", "enable", "--now", "incus");
                 if (enableResult != 0) {
-                    System.err.println("  Failed to start the Incus service. Run 'sudo systemctl enable --now incus' manually, then re-run 'isx init'.");
+                    BuildOutput.error("Failed to start the Incus service.",
+                            "Run 'sudo systemctl enable --now incus' manually, then re-run 'isx init'.");
                     System.exit(1);
                 }
             }
@@ -186,12 +186,12 @@ class HostSetup {
             var groups = new String(process.getInputStream().readAllBytes()).strip();
             process.waitFor();
             if (!groups.contains("incus-admin")) {
-                System.out.println("  Adding user to incus-admin group...");
+                BuildOutput.step("Adding user to incus-admin group...");
                 runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name"));
-                System.out.println("  Group membership updated (active after next login).");
+                BuildOutput.step("Group membership updated (active after next login).");
             }
         } catch (Exception e) {
-            System.err.println("  Warning: could not check group membership: " + e.getMessage());
+            BuildOutput.warn("Could not check group membership: " + e.getMessage());
         }
     }
 
@@ -206,23 +206,22 @@ class HostSetup {
         switch (detection) {
             case DetectionResult.UseFirewalld fwd -> {
                 if (fwd.needsStart()) {
-                    System.out.println("  firewalld is installed but not running. Starting and enabling it...");
+                    BuildOutput.step("firewalld is installed but not running. Starting and enabling it...");
                     var startResult = runHost("sudo", "systemctl", "enable", "--now", "firewalld");
                     if (startResult != 0) {
-                        System.err.println("  Error: failed to start firewalld.");
-                        System.err.println("  Run manually: sudo systemctl enable --now firewalld");
-                        System.err.println("  Then re-run: isx init");
+                        BuildOutput.warn("Failed to start firewalld.",
+                                "Run manually: sudo systemctl enable --now firewalld", "Then re-run: isx init");
                         return;
                     }
-                    System.out.println("  firewalld started and enabled.");
+                    BuildOutput.step("firewalld started and enabled.");
                     if (ProxyService.isActive()) {
                         if (Environment.hasBeenInitialized()) {
-                            System.out.println("  Restarting proxy service so it picks up the restored firewall rules...");
+                            BuildOutput.step("Restarting proxy service so it picks up the restored firewall rules...");
                             restartProxyService();
                         } else {
                             // Restarted before the marker, it would refuse to start (#1048);
                             // completeWithProxyService restarts it once the marker is written.
-                            System.out.println("  The proxy service will be restarted once init completes, to pick up the restored firewall rules.");
+                            BuildOutput.step("The proxy service will be restarted once init completes, to pick up the restored firewall rules.");
                         }
                     }
                 }
@@ -233,10 +232,10 @@ class HostSetup {
                 configureUfw(ProxyConfig.resolveGatewayIp(init.incus), UfwCheck.readBeforeRules());
             }
             case DetectionResult.NeitherInstalled n -> {
-                System.out.println("  No firewall detected. Installing firewalld...");
+                BuildOutput.step("No firewall detected. Installing firewalld...");
                 var installCmd = detectInstallCommand();
                 if (installCmd == null) {
-                    System.err.println("  Error: could not detect package manager.");
+                    BuildOutput.warn("Could not detect package manager.");
                     return;
                 }
                 var cmd = new java.util.ArrayList<String>();
@@ -245,12 +244,12 @@ class HostSetup {
                 cmd.add("firewalld");
                 var installResult = runHost(cmd.toArray(String[]::new));
                 if (installResult != 0) {
-                    System.err.println("  Error: failed to install firewalld.");
+                    BuildOutput.warn("Failed to install firewalld.");
                     return;
                 }
                 var startResult = runHost("sudo", "systemctl", "enable", "--now", "firewalld");
                 if (startResult != 0) {
-                    System.err.println("  Error: failed to start firewalld.");
+                    BuildOutput.warn("Failed to start firewalld.");
                     return;
                 }
                 configureFirewalld();
@@ -269,37 +268,36 @@ class HostSetup {
         boolean hasForwardOut = FirewalldCheck.isForwardRulePresent(directRulesOutput, "-o", "incusbr0");
 
         if (hasInterface && hasMasquerade && hasForwardIn && hasForwardOut) {
-            System.out.println("  Firewall already configured (firewalld).");
+            BuildOutput.step("Firewall already configured (firewalld).");
             return;
         }
 
         if (!hasInterface) {
-            System.out.println("  Adding incusbr0 to the trusted firewall zone (sudo required)...");
+            BuildOutput.step("Adding incusbr0 to the trusted firewall zone (sudo required)...");
             var addResult = runHostQuiet("sudo", "firewall-cmd", "--zone=trusted", "--change-interface=incusbr0", "--permanent");
             if (addResult != 0) {
-                System.err.println("  Warning: failed to add incusbr0 to trusted zone.");
-                System.err.println("  Containers may not have network/DNS access.");
-                System.err.println("  You can fix this manually:");
-                System.err.println("    sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent");
-                System.err.println("    sudo firewall-cmd --zone=trusted --add-masquerade --permanent");
-                System.err.println("    sudo firewall-cmd --reload");
+                BuildOutput.warn("Failed to add incusbr0 to trusted zone.",
+                        "Containers may not have network/DNS access. You can fix this manually:",
+                        "sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent",
+                        "sudo firewall-cmd --zone=trusted --add-masquerade --permanent",
+                        "sudo firewall-cmd --reload");
                 return;
             }
         }
         boolean ok = true;
         if (!hasMasquerade) {
-            System.out.println("  Enabling masquerading (NAT) for container internet access...");
+            BuildOutput.step("Enabling masquerading (NAT) for container internet access...");
             ok &= ran("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent");
         }
         if (!hasForwardIn) {
-            System.out.println("  Adding FORWARD rules for Incus bridge (Docker coexistence)...");
+            BuildOutput.step("Adding FORWARD rules for Incus bridge (Docker coexistence)...");
             ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--add-rule", "ipv4", "filter", "FORWARD", "0",
                     "-i", "incusbr0", "-j", "ACCEPT");
         }
         if (!hasForwardOut) {
             if (hasForwardIn) {
-                System.out.println("  Adding FORWARD rules for Incus bridge (Docker coexistence)...");
+                BuildOutput.step("Adding FORWARD rules for Incus bridge (Docker coexistence)...");
             }
             ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--add-rule", "ipv4", "filter", "FORWARD", "0",
@@ -308,7 +306,7 @@ class HostSetup {
 
         var reloadResult = runHostQuiet("sudo", "firewall-cmd", "--reload");
         if (reloadResult != 0) {
-            System.err.println("  Warning: firewall reload failed. Run: sudo firewall-cmd --reload");
+            BuildOutput.warn("Firewall reload failed.", "Run: sudo firewall-cmd --reload");
             if (!ok) warnFirewallIncomplete();
             return;
         }
@@ -316,36 +314,36 @@ class HostSetup {
             warnFirewallIncomplete();
             return;
         }
-        System.out.println("  Firewall configured: incusbr0 in trusted zone with masquerading (firewalld).");
+        BuildOutput.step("Firewall configured: incusbr0 in trusted zone with masquerading (firewalld).");
     }
 
     void configureUfw(String gatewayIp, String beforeRules) {
         var subnet = CidrUtils.deriveSubnet(gatewayIp);
 
         if (beforeRules.isEmpty()) {
-            System.err.println("  Error: could not read /etc/ufw/before.rules.");
-            System.err.println("  Skipping UFW configuration to avoid overwriting existing rules.");
+            BuildOutput.warn("Could not read /etc/ufw/before.rules.",
+                    "Skipping UFW configuration to avoid overwriting existing rules.");
             return;
         }
         boolean hasForward = UfwCheck.hasForwardRules(beforeRules);
         boolean hasMasquerade = UfwCheck.hasMasquerade(beforeRules, subnet);
 
         if (hasForward && hasMasquerade) {
-            System.out.println("  Firewall already configured (UFW).");
+            BuildOutput.step("Firewall already configured (UFW).");
             return;
         }
 
-        System.out.println("  Allowing traffic on incusbr0...");
+        BuildOutput.step("Allowing traffic on incusbr0...");
         boolean ok = ran("sudo", "ufw", "allow", "in", "on", "incusbr0");
 
         var content = beforeRules;
         if (!hasMasquerade) {
-            System.out.println("  Adding NAT masquerading for container internet access...");
+            BuildOutput.step("Adding NAT masquerading for container internet access...");
             var natBlock = UfwCheck.generateNatBlockWithoutRedirect(subnet);
             content = UfwCheck.insertNatBlock(content, natBlock);
         }
         if (!hasForward) {
-            System.out.println("  Adding FORWARD rules for Incus bridge...");
+            BuildOutput.step("Adding FORWARD rules for Incus bridge...");
             var filterInsert = UfwCheck.generateFilterInsert();
             content = UfwCheck.insertFilterRules(content, filterInsert);
         }
@@ -354,7 +352,7 @@ class HostSetup {
             ok &= writeBeforeRules(content);
             var reloadResult = runHostQuiet("sudo", "ufw", "reload");
             if (reloadResult != 0) {
-                System.err.println("  Warning: UFW reload failed. Run: sudo ufw reload");
+                BuildOutput.warn("UFW reload failed.", "Run: sudo ufw reload");
                 if (!ok) warnFirewallIncomplete();
                 return;
             }
@@ -363,16 +361,15 @@ class HostSetup {
             warnFirewallIncomplete();
             return;
         }
-        System.out.println("  Firewall configured: incusbr0 trusted with masquerading (UFW).");
+        BuildOutput.step("Firewall configured: incusbr0 trusted with masquerading (UFW).");
     }
 
     private static void warnFirewallIncomplete() {
-        warnIncomplete("firewall only partly configured; containers may lack network/DNS access.");
+        warnIncomplete("Firewall only partly configured; containers may lack network/DNS access.");
     }
 
     private static void warnIncomplete(String consequence) {
-        System.err.println("  Warning: " + consequence);
-        System.err.println("  Fix the problem reported above, then re-run: isx init");
+        BuildOutput.warn(consequence, "Fix the problem reported above, then re-run: isx init");
     }
 
     /** Whether the new rules reached {@code before.rules}. */
@@ -384,7 +381,7 @@ class HostSetup {
             java.nio.file.Files.deleteIfExists(tempFile);
             return copied;
         } catch (java.io.IOException e) {
-            System.err.println("  Error writing before.rules: " + e.getMessage());
+            BuildOutput.warn("Could not write before.rules: " + e.getMessage());
             return false;
         }
     }
@@ -404,13 +401,12 @@ class HostSetup {
                     "[keyfile]\nunmanaged-devices=interface-name:veth*\n");
             if (installHostFile(tempFile, confFile.toString()) != 0) return;
             if (runHostQuiet("sudo", "nmcli", "general", "reload") != 0) {
-                System.err.println("  Warning: wrote " + confFile
-                        + " but could not reload NetworkManager; it applies after a reboot.");
+                BuildOutput.warn("Wrote " + confFile + " but could not reload NetworkManager; it applies after a reboot.");
             } else {
-                System.out.println("  Configured NetworkManager to ignore veth devices.");
+                BuildOutput.step("Configured NetworkManager to ignore veth devices.");
             }
         } catch (IOException e) {
-            System.err.println("  Warning: could not configure NetworkManager: " + e.getMessage());
+            BuildOutput.warn("Could not configure NetworkManager: " + e.getMessage());
         } finally {
             if (tempFile != null) {
                 try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
@@ -470,16 +466,15 @@ class HostSetup {
             var tempFile = Files.createTempFile("isx-sysctl-", ".conf");
             Files.writeString(tempFile, content);
             if (installHostFile(tempFile, sysctlConf) != 0) {
-                System.err.println("  Warning: could not write " + sysctlConf + ".");
+                BuildOutput.warn("Could not write " + sysctlConf + ".");
             } else if (runHostQuiet("sudo", "sysctl", "-p", sysctlConf) != 0) {
-                System.err.println("  Warning: wrote " + sysctlConf
-                        + " but could not apply it now; it applies after a reboot.");
+                BuildOutput.warn("Wrote " + sysctlConf + " but could not apply it now; it applies after a reboot.");
             } else {
-                System.out.println("  Configured host sysctls (inotify, perf_event_paranoid).");
+                BuildOutput.step("Configured host sysctls (inotify, perf_event_paranoid).");
             }
             Files.deleteIfExists(tempFile);
         } catch (IOException e) {
-            System.err.println("  Warning: could not configure host sysctls: " + e.getMessage());
+            BuildOutput.warn("Could not configure host sysctls: " + e.getMessage());
         }
     }
 
@@ -497,7 +492,7 @@ class HostSetup {
             return; // kernel built without CONFIG_KSM
         }
         if ("active".equals(captureOutput("systemctl", "is-active", "ksmtuned"))) {
-            System.out.println("  KSM is managed by ksmtuned; leaving it alone.");
+            BuildOutput.step("KSM is managed by ksmtuned; leaving it alone.");
             return;
         }
         var content = """
@@ -515,14 +510,14 @@ class HostSetup {
             tempFile = Files.createTempFile("isx-ksm-", ".conf");
             Files.writeString(tempFile, content);
             if (installHostFile(tempFile, KSM_TMPFILES) != 0) {
-                System.err.println("  Warning: could not write " + KSM_TMPFILES + "; KSM stays off.");
+                BuildOutput.warn("Could not write " + KSM_TMPFILES + "; KSM stays off.");
             } else if (runHostQuiet("sudo", "systemd-tmpfiles", "--create", KSM_TMPFILES) != 0) {
-                System.err.println("  Warning: could not enable KSM now; it will be on after a reboot.");
+                BuildOutput.warn("Could not enable KSM now; it will be on after a reboot.");
             } else {
-                System.out.println("  Enabled kernel same-page merging (KSM) for VMs.");
+                BuildOutput.step("Enabled kernel same-page merging (KSM) for VMs.");
             }
         } catch (IOException e) {
-            System.err.println("  Warning: could not enable KSM: " + e.getMessage());
+            BuildOutput.warn("Could not enable KSM: " + e.getMessage());
         } finally {
             if (tempFile != null) {
                 try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
@@ -553,15 +548,15 @@ class HostSetup {
 
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {
-            System.out.println("  MITM CA certificate already exists.");
+            BuildOutput.step("MITM CA certificate already exists.");
         } else {
             CertificateAuthority.loadOrCreate();
         }
         if (!redirected) {
-            warnIncomplete("the PREROUTING redirect was not fully configured; containers' HTTPS may not reach the proxy.");
+            warnIncomplete("The PREROUTING redirect was not fully configured; containers' HTTPS may not reach the proxy.");
             return;
         }
-        System.out.println("  MITM proxy configured.");
+        BuildOutput.step("MITM proxy configured.");
     }
 
     /** Whether every command updating the PREROUTING redirect, stale-rule removals included, succeeded. */
@@ -571,13 +566,13 @@ class HostSetup {
 
         boolean ok = true;
         if (hasRedirect) {
-            System.out.println("  PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
+            BuildOutput.step("PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
                     + ProxyConfig.DEFAULT_MITM_PORT + ").");
         } else {
             // Remove stale redirect rule pointing to a previous gateway IP
             var staleIp = FirewalldCheck.extractRedirectGatewayIp(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT);
             if (staleIp != null) {
-                System.out.println("  Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
+                BuildOutput.step("Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
                 ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
                         "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
                         "-i", "incusbr0", "-d", staleIp, "-p", "tcp", "--dport",
@@ -585,7 +580,7 @@ class HostSetup {
                         "-j", "REDIRECT", "--to-port",
                         String.valueOf(ProxyConfig.DEFAULT_MITM_PORT));
             }
-            System.out.println("  Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
+            BuildOutput.step("Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
                     + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0)...");
             ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--add-rule", "ipv4", "nat", "PREROUTING", "0",
@@ -607,20 +602,20 @@ class HostSetup {
     /** Whether the PREROUTING redirect was written and applied. */
     boolean configureMitmProxyUfw(String gatewayIp, String beforeRules) {
         if (beforeRules.isEmpty()) {
-            System.err.println("  Warning: could not read /etc/ufw/before.rules. Skipping PREROUTING redirect.");
+            BuildOutput.warn("Could not read /etc/ufw/before.rules.", "Skipping the PREROUTING redirect.");
             return false;
         }
         boolean hasRedirect = UfwCheck.hasPreRoutingRedirect(beforeRules, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp);
 
         if (hasRedirect) {
-            System.out.println("  PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
+            BuildOutput.step("PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
                     + ProxyConfig.DEFAULT_MITM_PORT + ").");
         } else {
             var staleIp = UfwCheck.extractRedirectGatewayIp(beforeRules, ProxyConfig.DEFAULT_MITM_PORT);
             if (staleIp != null) {
-                System.out.println("  Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
+                BuildOutput.step("Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
             }
-            System.out.println("  Adding PREROUTING redirect (" + gatewayIp + ":443 -> "
+            BuildOutput.step("Adding PREROUTING redirect (" + gatewayIp + ":443 -> "
                     + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0) to UFW before.rules...");
             var subnet = CidrUtils.deriveSubnet(gatewayIp);
             var natBlock = UfwCheck.generateNatBlock(gatewayIp, subnet,
@@ -645,10 +640,10 @@ class HostSetup {
             changed |= ensureSubidEntry(path, "root:1000000:1000000000", "root:1000000:65536");
         }
         if (changed) {
-            System.out.println("  Restarting Incus to apply idmap changes...");
+            BuildOutput.step("Restarting Incus to apply idmap changes...");
             runHost("sudo", "systemctl", "restart", "incus");
         }
-        System.out.println("  subuid/subgid configured.");
+        BuildOutput.step("subuid/subgid configured.");
     }
 
     enum SubidAction { UNCHANGED, UPDATED, NEEDS_CONFIRMATION }
@@ -701,7 +696,7 @@ class HostSetup {
         try {
             content = Files.readString(java.nio.file.Path.of(path));
         } catch (IOException e) {
-            System.err.println("  Warning: could not read " + path + ": " + e.getMessage());
+            BuildOutput.warn("Could not read " + path + ": " + e.getMessage());
             return false;
         }
 
@@ -711,17 +706,21 @@ class HostSetup {
             case UNCHANGED -> false;
             case UPDATED -> writeSubidFile(path, result.newContent());
             case NEEDS_CONFIRMATION -> {
-                System.err.println();
-                System.err.println("  " + path + " contains an unexpected entry: " + result.conflictingEntry());
-                System.err.println("  incus-spawn expects: " + entry);
-                var console = System.console();
-                if (console != null) {
-                    if (askConfirmation(console, System.err, "  " + styled(BOLD + YELLOW, "Replace it?"), false)) {
-                        yield writeSubidFile(path,
-                                replaceSubidLine(content, result.conflictingEntry(), entry));
+                // The entry is the host file's own text: shown as text
+                var conflicting = BuildOutput.guestText(result.conflictingEntry());
+                var prompts = init.prompts();
+                if (prompts != null) {
+                    prompts.say(path + " contains an unexpected entry: " + conflicting);
+                    prompts.say("incus-spawn expects: " + entry);
+                    if (askYesNo(prompts, styled(BOLD + YELLOW, "Replace it?"), false)) {
+                        yield writeSubidFile(path, replaceSubidLine(content, result.conflictingEntry(), entry));
                     }
+                    // The entries were just shown with the question
+                    BuildOutput.warn("Left " + path + " as it is: containers may not start correctly.");
+                } else {
+                    BuildOutput.warn("Left " + path + " as it is: containers may not start correctly.",
+                            "It holds " + result.conflictingEntry() + "; incus-spawn expects: " + entry);
                 }
-                System.err.println("  Skipped \u2014 containers may not start correctly.");
                 yield false;
             }
         };
@@ -734,7 +733,7 @@ class HostSetup {
                         + " && sudo chmod --reference=" + path + " " + tmpPath
                         + " && sudo mv " + tmpPath + " " + path);
         if (exitCode != 0) {
-            System.err.println("  Warning: failed to write " + path);
+            BuildOutput.warn("Failed to write " + path);
             runHostCapturingExit("sudo", "rm", "-f", tmpPath);
             return false;
         }
@@ -765,21 +764,15 @@ class HostSetup {
         if (connectivity != null) {
             if (connectivity.contains("not running") || connectivity.contains("Connection refused")
                     || connectivity.contains("not accepting connections")) {
-                System.out.println();
-                System.out.println("  Cannot connect to the Incus daemon — it does not appear to be running.");
-                System.out.println("  Enable and start it with:");
-                System.out.println("    sudo systemctl enable --now incus");
-                System.out.println("  Then re-run 'isx init' to continue.");
+                BuildOutput.error("Cannot connect to the Incus daemon — it does not appear to be running.",
+                        "Enable and start it with: sudo systemctl enable --now incus",
+                        "Then re-run 'isx init' to continue.");
                 System.exit(1);
             } else if (connectivity.contains("permission denied") || connectivity.contains("newgrp")) {
-                System.out.println();
-                System.out.println("  Cannot connect to the Incus daemon.");
-                System.out.println("  This usually means the 'incus-admin' group membership is not active in this shell.");
-                System.out.println();
-                System.out.println("  Please do one of the following:");
-                System.out.println("    - Run: newgrp incus-admin");
-                System.out.println("    - Or log out and log back in");
-                System.out.println("  Then re-run 'isx init' to continue.");
+                BuildOutput.error("Cannot connect to the Incus daemon.",
+                        "This usually means the 'incus-admin' group membership is not active in this shell.",
+                        "Run 'newgrp incus-admin', or log out and log back in.",
+                        "Then re-run 'isx init' to continue.");
                 System.exit(1);
             }
             // Unknown error — continue anyway (daemon may start during init)
@@ -789,13 +782,13 @@ class HostSetup {
         // .listed() means "the list call succeeded", NOT "a pool exists" — using it here skipped
         // admin init on every fresh daemon, leaving no default profile / no incusbr0 bridge.
         if (init.incus.hasStoragePool()) {
-            System.out.println("  Incus already initialized.");
+            BuildOutput.step("Incus already initialized.");
         } else {
             var exitCode = runHost("sudo", "incus", "admin", "init", "--minimal");
             if (exitCode == 0) {
-                System.out.println("  Incus initialized with default storage pool and network.");
+                BuildOutput.step("Incus initialized with default storage pool and network.");
             } else {
-                System.err.println("  Warning: Incus initialization may have failed. Check 'incus storage list'.");
+                BuildOutput.warn("Incus initialization may have failed.", "Check 'incus storage list'.");
             }
         }
 
@@ -805,7 +798,7 @@ class HostSetup {
         // check, MITM proxy) hard-fail without it. Ensure it exists here; this is a no-op when
         // the bridge is already present, and checkBridgeSubnet() fixes any VPN subnet conflict.
         if (init.incus.createBridgeIfMissing("incusbr0", VmManager.gatewayIp())) {
-            System.out.println("  Bridge 'incusbr0' was missing — created it ("
+            BuildOutput.step("Bridge 'incusbr0' was missing — created it ("
                     + VmManager.gatewayIp() + "/24).");
         }
 
@@ -866,17 +859,17 @@ class HostSetup {
             Files.writeString(tempFile, content);
             // Validate before installing: a malformed sudoers file can lock the user out of sudo.
             if (runHostQuiet("visudo", "-cf", tempFile.toString()) != 0) {
-                System.err.println("  Warning: generated btrfs sudoers rule failed validation; skipping.");
+                BuildOutput.warn("Generated btrfs sudoers rule failed validation; skipping.");
                 Files.deleteIfExists(tempFile);
                 return;
             }
             if (runHostQuiet("sudo", "install", "-m", "0440", "-o", "root", "-g", "root",
                     tempFile.toString(), BTRFS_SUDOERS) == 0) {
-                System.out.println("  Enabled per-template disk accounting (scoped btrfs read).");
+                BuildOutput.step("Enabled per-template disk accounting (scoped btrfs read).");
             }
             Files.deleteIfExists(tempFile);
         } catch (IOException e) {
-            System.err.println("  Warning: could not configure btrfs disk accounting: " + e.getMessage());
+            BuildOutput.warn("Could not configure btrfs disk accounting: " + e.getMessage());
         }
     }
 
@@ -892,22 +885,22 @@ class HostSetup {
         // the profile worse than an empty one, and "default" is not guaranteed to be present.
         var pool = init.incus.findUsablePool();
         if (pool == null) {
-            System.err.println("  Warning: no storage pool found — skipping the default profile check.");
+            BuildOutput.warn("No storage pool found — skipping the default profile check.");
             return;
         }
         try {
             var added = init.incus.ensureDefaultProfileDevices(pool, "incusbr0");
             if (!added.isEmpty()) {
-                System.out.println("  Default profile was incomplete — added " + added
+                BuildOutput.step("Default profile was incomplete — added " + added
                         + " (root disk on pool '" + pool + "').");
             }
             upgradeProfilePoolIfNeeded(pool);
         } catch (Exception e) {
-            System.err.println("  Warning: could not repair the default profile: " + e.getMessage());
-            System.err.println("  If instance creation fails with 'No root device could be found', run:");
-            System.err.println("    incus profile device add default root disk path=/ pool=" + pool);
-            System.err.println("  If containers come up without networking, also run:");
-            System.err.println("    incus profile device add default eth0 nic network=incusbr0");
+            BuildOutput.warn("Could not repair the default profile: " + e.getMessage(),
+                    "If instance creation fails with 'No root device could be found', run:",
+                    "incus profile device add default root disk path=/ pool=" + pool,
+                    "If containers come up without networking, also run:",
+                    "incus profile device add default eth0 nic network=incusbr0");
         }
     }
 
@@ -922,7 +915,7 @@ class HostSetup {
         if (IncusClient.isCowDriver(currentDriver) || !IncusClient.isCowDriver(desiredDriver)) return;
 
         if (init.incus.updateProfileRootDiskPool("default", devices, desiredPool)) {
-            System.out.println("  Default profile root disk upgraded from pool '" + currentPool
+            BuildOutput.step("Default profile root disk upgraded from pool '" + currentPool
                     + "' (" + currentDriver + ") to '" + desiredPool + "' (" + desiredDriver + ").");
         }
     }
@@ -942,47 +935,41 @@ class HostSetup {
         var anyCow = cowProbe.poolName() != null;
 
         if (!anyCow) {
-            System.out.println("  No copy-on-write storage pool detected. Creating one...");
+            BuildOutput.step("No copy-on-write storage pool detected. Creating one...");
             var hostFs = CowPoolBacking.filesystemOf(CowPoolBacking.POOLS_DIR);
             var created = CowPoolBacking.create(CowPoolBacking::filesystemOf,
                     () -> init.incus.hasApiExtension(STORAGE_CREATE_OPTIONS_EXTENSION),
                     CowPoolBacking::runCapturingStderr,
                     () -> runHostQuiet("sudo", "mkdir", "-p", CowPoolBacking.DISKS_DIR),
-                    line -> System.err.println("  " + line));
+                    // The explanation can quote what the command printed: shown as text
+                    (msg, details) -> BuildOutput.warn(msg, details.stream().map(BuildOutput::guestText).toArray(String[]::new)));
             var create = created.result();
             if (create.exitCode() == 0) {
                 if (created.subvolume()) {
-                    System.out.println("  Created btrfs storage pool 'cow' as a subvolume of the host filesystem.");
-                    System.out.println("  It has no size cap of its own: it shares that filesystem's free space.");
+                    BuildOutput.step("Created btrfs storage pool 'cow' as a subvolume of the host filesystem.");
+                    BuildOutput.step("It has no size cap of its own: it shares that filesystem's free space.");
                 } else {
-                    System.out.println("  Created btrfs storage pool 'cow' (100 GiB, thin-provisioned).");
-                    System.out.println("  Resize with: sudo incus storage set cow size=200GiB");
+                    BuildOutput.step("Created btrfs storage pool 'cow' (100 GiB, thin-provisioned).");
+                    BuildOutput.step("Resize with: sudo incus storage set cow size=200GiB");
                 }
-                System.out.println("  All new instances will use it automatically.");
+                BuildOutput.step("All new instances will use it automatically.");
             } else {
-                System.out.println();
-                var warning = BOLD + YELLOW;
-                System.err.println(styled(warning, "  ╔══════════════════════════════════════════════════════════════╗"));
-                System.err.println(styled(warning, "  ║  WARNING: Failed to create btrfs storage pool!             ║"));
-                System.err.println(styled(warning, "  ╚══════════════════════════════════════════════════════════════╝"));
-                System.err.println();
-                for (var line : CowPoolBacking.failureExplanation(create.stderr())) {
-                    System.err.println("  " + styled(YELLOW, line));
-                }
-                System.err.println();
-                System.err.println("  " + styled(YELLOW, "Without a CoW pool, clones and branches will be FULL COPIES,"));
-                System.err.println("  " + styled(YELLOW, "using significantly more disk space and taking longer to create."));
-                System.err.println();
-                System.err.println("  You can create one manually later:");
-                System.err.println("    " + styled(BOLD, String.join(" ", CowPoolBacking.createCommand(hostFs, false))));
-                System.err.println("  incus-spawn will automatically use it for all new instances.");
-                System.err.println();
+                // The banner prints its lines as given, and the explanation can quote what the command printed
+                var lines = new ArrayList<String>(CowPoolBacking.failureExplanation(create.stderr()).stream()
+                        .map(BuildOutput::guestText).toList());
+                lines.add("");
+                lines.add("Without a CoW pool, clones and branches will be FULL COPIES,");
+                lines.add("using significantly more disk space and taking longer to create.");
+                lines.add("");
+                lines.add("You can create one manually later:");
+                lines.add(styled(BOLD, String.join(" ", CowPoolBacking.createCommand(hostFs, false))));
+                lines.add("incus-spawn will automatically use it for all new instances.");
+                BuildOutput.warnBanner("Failed to create btrfs storage pool!", lines.toArray(String[]::new));
 
-                var console = System.console();
-                if (console != null) {
-                    if (!askConfirmation(console, System.err,
-                            "  " + styled(BOLD + YELLOW, "Continue without CoW storage?"), false)) {
-                        System.out.println("  Aborted. Re-run 'isx init' after creating a CoW storage pool.");
+                var prompts = init.prompts();
+                if (prompts != null) {
+                    if (!askYesNo(prompts, styled(BOLD + YELLOW, "Continue without CoW storage?"), false)) {
+                        BuildOutput.step("Aborted. Re-run 'isx init' after creating a CoW storage pool.");
                         System.exit(0);
                     }
                 }
@@ -991,30 +978,30 @@ class HostSetup {
     }
 
     private void checkBridgeSubnet() {
-        System.out.println("  Checking bridge subnet for VPN conflicts...");
+        BuildOutput.step("Checking bridge subnet for VPN conflicts...");
         try {
             var result = BridgeSubnetCheck.detectAndFix(init.incus);
             if (result.conflictDetected()) {
-                System.out.println("  Detected subnet conflict: bridge " + result.oldSubnet()
+                BuildOutput.step("Detected subnet conflict: bridge " + result.oldSubnet()
                         + " overlaps with route: " + result.conflictingRoute());
                 if (result.newSubnet() != null) {
-                    System.out.println("  Reconfigured bridge to " + result.newSubnet()
+                    BuildOutput.step("Reconfigured bridge to " + result.newSubnet()
                             + " to avoid conflict.");
                     var migrated = InstanceNetwork.migrateAllInstancesToNewSubnet(init.incus);
                     if (migrated > 0) {
-                        System.out.println("  Migrated network config for " + migrated
+                        BuildOutput.step("Migrated network config for " + migrated
                                 + " instance" + (migrated == 1 ? "" : "s") + ".");
                     }
                 } else {
-                    System.err.println("  Warning: could not find a non-conflicting subnet.");
-                    System.err.println("  You may need to manually set the bridge address:");
-                    System.err.println("    incus network set incusbr0 ipv4.address 172.20.0.1/24");
+                    BuildOutput.warn("Could not find a non-conflicting subnet.",
+                            "You may need to manually set the bridge address:",
+                            "incus network set incusbr0 ipv4.address 172.20.0.1/24");
                 }
             } else {
-                System.out.println("  Bridge subnet is clear of VPN route conflicts.");
+                BuildOutput.step("Bridge subnet is clear of VPN route conflicts.");
             }
         } catch (Exception e) {
-            System.err.println("  Warning: could not check bridge subnet: " + e.getMessage());
+            BuildOutput.warn("Could not check bridge subnet: " + e.getMessage());
         }
     }
 
@@ -1042,7 +1029,7 @@ class HostSetup {
             case DetectionResult.UseFirewalld fwd when !fwd.needsStart() -> configureMitmProxyFirewalld(gatewayIp);
             case DetectionResult.UseUfw u -> configureMitmProxyUfw(gatewayIp, beforeRules.get());
             default -> {
-                System.err.println("  No firewall is running to redirect the proxy's port on the new gateway.");
+                BuildOutput.warn("No firewall is running to redirect the proxy's port on the new gateway.");
                 yield false;
             }
         };

@@ -716,7 +716,8 @@ public class DoctorCommand extends BaseCommand {
                     () -> {
                         var created = CowPoolBacking.create(CowPoolBacking::filesystemOf, skipTrim,
                                 CowPoolBacking::runCapturingStderr, DoctorCommand::makeDisksDir,
-                                line -> System.err.println("  " + line));
+                                (msg, details) -> System.err.println("  " + msg + details.stream()
+                                        .map(detail -> "\n    " + detail).collect(java.util.stream.Collectors.joining())));
                         if (created.result().exitCode() != 0) {
                             var why = CowPoolBacking.failureExplanation(created.result().stderr());
                             throw new RuntimeException("Failed to create pool: " + (why.isEmpty()

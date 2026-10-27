@@ -34,11 +34,11 @@ class NoIncusCliHintTest {
     private static final Map<String, Set<String>> ALLOWED = Map.of(
             // isx init's Linux setup, before any pool or profile is isx's to manage
             "HostSetup.java", Set.of(
-                    "\"  Warning: Incus initialization may have failed. Check 'incus storage list'.\"",
-                    "\"    incus profile device add default root disk path=/ pool=\"",
-                    "\"    incus profile device add default eth0 nic network=incusbr0\"",
-                    "\"  Resize with: sudo incus storage set cow size=200GiB\"",
-                    "\"    incus network set incusbr0 ipv4.address 172.20.0.1/24\""),
+                    "\"Check 'incus storage list'.\"",
+                    "\"incus profile device add default root disk path=/ pool=\"",
+                    "\"incus profile device add default eth0 nic network=incusbr0\"",
+                    "\"Resize with: sudo incus storage set cow size=200GiB\"",
+                    "\"incus network set incusbr0 ipv4.address 172.20.0.1/24\""),
             // the Linux arm of unknownRemoteMsg
             "IncusClient.java", Set.of(
                     "\"Add it with: incus remote add \""),
