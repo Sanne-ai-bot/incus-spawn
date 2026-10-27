@@ -165,16 +165,34 @@ if $NATIVE; then
             echo "Error: docker or podman is required for native builds on Linux."
             exit 1
         fi
-        GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:latest"
-        # The tag is a local cache name, not a pull ref: the builder FROMs :latest.
-        # Bump it together with graalvm-version in .github/workflows/: that
-        # invalidates the cached builder so the next build re-pulls :latest and
-        # picks up the new GraalVM. Forgetting it leaves local builds on the old one.
-        BUILDER_TAG="incus-spawn-graalvm-builder:25.4"
-        if ! $CTR image inspect "$BUILDER_TAG" >/dev/null 2>&1; then
-            echo "Preparing GraalVM builder image (one-time)..."
-            $CTR rmi "$GRAALVM_BASE" >/dev/null 2>&1 || true
-            printf 'FROM %s\nWORKDIR /project\n' "$GRAALVM_BASE" | $CTR build -t "$BUILDER_TAG" -
+        # The same Oracle GraalVM line as the Linux graalvm-version in .github/workflows/:
+        # 25i4 is Oracle's floating tag of GraalVM 25.4 (Innovation 4), as version: '25.4' is in
+        # setup-graalvm, so it follows each 25.4 patch. Not :latest, which is the 25.0 LTS line.
+        # -ol10 (Oracle Linux 10, what :latest was) because the bare 25i4 is amd64 only.
+        GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:25i4-ol10"
+        # A local cache of the base with WORKDIR /project (Quarkus mounts the project there),
+        # named after the base tag and labelled with the base it was built from: rebuilt
+        # whenever a pull brings a newer base, used as is when the registry is unreachable.
+        BUILDER_TAG="incus-spawn-graalvm-builder:${GRAALVM_BASE##*:}"
+        $CTR pull -q "$GRAALVM_BASE" >/dev/null \
+            || echo "Note: could not refresh $GRAALVM_BASE, building with what is cached locally."
+        BASE_ID=$($CTR image inspect --format '{{.Id}}' "$GRAALVM_BASE" 2>/dev/null || true)
+        BUILT_FROM=$($CTR image inspect --format '{{index .Config.Labels "dev.incusspawn.graalvm-base"}}' "$BUILDER_TAG" 2>/dev/null || true)
+        [ "$BUILT_FROM" = "<no value>" ] && BUILT_FROM=""  # docker's answer for a missing label
+        if [ -z "$BASE_ID$BUILT_FROM" ]; then
+            echo "Error: cannot pull $GRAALVM_BASE to build the native image."
+            exit 1
+        fi
+        if [ -n "$BASE_ID" ] && [ "$BUILT_FROM" != "$BASE_ID" ]; then
+            echo "Preparing GraalVM builder image..."
+            OLD_BUILDER=$($CTR image inspect --format '{{.Id}}' "$BUILDER_TAG" 2>/dev/null || true)
+            printf 'FROM %s\nWORKDIR /project\nLABEL dev.incusspawn.graalvm-base=%s\n' "$GRAALVM_BASE" "$BASE_ID" \
+                | $CTR build -q -t "$BUILDER_TAG" - >/dev/null
+            # What this one replaces, about 1 GB each, is no longer used: the previous builder and
+            # its base, and the builder of older install.sh, which was named after the version.
+            for OLD in $OLD_BUILDER $BUILT_FROM incus-spawn-graalvm-builder:25.4; do
+                $CTR rmi "$OLD" >/dev/null 2>&1 || true
+            done
         fi
         NATIVE_ARGS="$NATIVE_ARGS -Dquarkus.native.container-build=true -Dquarkus.native.container-runtime=$CTR -Dquarkus.native.builder-image=$BUILDER_TAG -Dquarkus.native.builder-image.pull=never"
     elif [ "$(uname -s)" = "Darwin" ]; then

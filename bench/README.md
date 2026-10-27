@@ -258,8 +258,15 @@ instrumented binary does is timed or saved as a result: its numbers mean nothing
 The same code built by two different GraalVM releases, on one host:
 
 ```shell
-bench/run.sh --builder-image=incus-spawn-graalvm-builder:25.2 --label=25.2
-bench/run.sh --builder-image=incus-spawn-graalvm-builder:25.3 --label=25.3
+bench/run.sh --builder-image=incus-spawn-graalvm-builder:25i3-ol10 --label=25.3
+bench/run.sh --builder-image=incus-spawn-graalvm-builder:25i4-ol10 --label=25.4
+```
+
+`install.sh --native` prepares the builder of the release's GraalVM; prepare another the same way:
+
+```shell
+printf 'FROM container-registry.oracle.com/graalvm/native-image:25i3-ol10\nWORKDIR /project\n' \
+    | podman build -t incus-spawn-graalvm-builder:25i3-ol10 -
 ```
 
 Use `--graalvm=DIR` instead to point at an unpacked GraalVM (the only option on macOS).
