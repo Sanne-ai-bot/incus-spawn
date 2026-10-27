@@ -4271,6 +4271,10 @@ So interactive code reads from `Prompts` (line / secret, `null` at EOF) instead:
 Each step's logic lives in a `(SpawnConfig, Prompts)` overload, and every effect outside the process -- token verification, the host's `gh` login, the browser, environment variables -- is a package-private method a test overrides.
 `GitHubAuthFlowTest`, `ClaudeAuthFlowTest`, `CredentialPromptsTest`, `PathListPromptsTest` and `AccountMenuTest` drive the flows end to end under `IsolatedHome` and assert on the config.yaml actually written.
 `ScriptedPrompts` also fails a test when a value scripted as a secret is read through an echoing prompt, so a token prompt cannot quietly start printing the token.
+The question is shown by the same `Prompts` (`show`, `ask`, `say` for its options or a re-ask), so what a flow asks and what it reads live in one place, and `ScriptedPrompts.conversation()` lets a test assert on both (#1703).
+Prompts show at the output's step indent, so a question asked inside a group sits in it, where a literal indent in the question used to place it by hand.
+What a flow reports between questions is not the conversation and goes through `BuildOutput`; init's frames, which it lays out itself, are an `Output.frame`: not a result, which a script reads, and nothing off a terminal.
+A question is an `Output.prompt`, so the terminal shows it at the step indent and a live step is frozen first, as for any line.
 
 **The macOS tunnel, without a Mac**: the compensations described in "macOS vsock robustness" exist because of how vfkit's tunnel *behaves*, and Java never touches vsock -- vfkit hands the host an ordinary Unix socket.
 So the behaviour is faked instead of the hypervisor.

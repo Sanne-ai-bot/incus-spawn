@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -68,7 +69,8 @@ class InitStepOutputTest {
     private static List<int[]> counters(int setup, int chosen, int finish) throws Exception {
         var init = new FakeInit();
         init.chosen = chosen;
-        var out = capture(() -> init.runSteps(steps(init, setup), steps(init, finish))).out();
+        // The step boxes are frames init draws as given
+        var out = String.join("\n", RecordingOutput.during(() -> init.runSteps(steps(init, setup), steps(init, finish))).frameLines());
         var counters = new ArrayList<int[]>();
         var matcher = COUNTER.matcher(out);
         while (matcher.find()) {
@@ -124,16 +126,16 @@ class InitStepOutputTest {
     /** firewall-cmd warns on stderr and exits 0 when it removes a rule that is not there. */
     @Test
     void aHostCommandThatSucceedsPrintsNothing() throws Exception {
-        var output = capture(() -> assertEquals(0, new InitCommand().runHostQuiet("sh", "-c",
+        var recorded = RecordingOutput.during(() -> assertEquals(0, new InitCommand().runHostQuiet("sh", "-c",
                 "echo \"Warning: NOT_ENABLED: rule is not in 'ipv4:nat:PREROUTING'\" >&2; echo done")));
-        assertEquals(new Output("", ""), output);
+        assertEquals(List.of(), recorded.events());
     }
 
     @Test
     void aHostCommandThatFailsShowsItsOutput() throws Exception {
-        var output = capture(() -> assertEquals(3, new InitCommand().runHostQuiet("sh", "-c",
+        var recorded = RecordingOutput.during(() -> assertEquals(3, new InitCommand().runHostQuiet("sh", "-c",
                 "echo 'trying'; echo 'sysctl: permission denied' >&2; exit 3")));
-        assertEquals("", output.out());
-        assertEquals("  trying\n  sysctl: permission denied\n", output.err());
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.NOTE, "trying"),
+                new RecordingOutput.Event(RecordingOutput.Kind.NOTE, "sysctl: permission denied")), recorded.events());
     }
 }
