@@ -4,12 +4,10 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -243,16 +241,9 @@ class CleanCommandTest {
         void run() throws Exception;
     }
 
+    /** What {@code action} reported, every kind of message, one per line. */
     private static String capture(Action action) throws Exception {
-        var out = new ByteArrayOutputStream();
-        var oldOut = System.out;
-        System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
-        try {
-            action.run();
-        } finally {
-            System.setOut(oldOut);
-        }
-        return out.toString(StandardCharsets.UTF_8);
+        return String.join("\n", RecordingOutput.during(action::run).lines());
     }
 
     private static String runCache(IncusClient incus, boolean dryRun, boolean answer) throws Exception {
@@ -307,7 +298,7 @@ class CleanCommandTest {
         var out = runCache(incus, true, true);
 
         verify(incus, never()).deleteStorageVolume(anyString(), anyString());
-        assertTrue(out.contains("Would delete:"), out);
+        assertTrue(out.contains("Would delete"), out);
         assertTrue(out.contains("DNF cache volume"), out);
     }
 
@@ -471,5 +462,29 @@ class CleanCommandTest {
 
         assertFalse(out.contains("SSH keys"), out);
         verify(incus).deleteStorageVolume("cow", GuestProvisioning.DNF_CACHE_VOLUME);
+    }
+
+    /**
+     * What a clean would delete is a group of its directories and their total, and what it costs
+     * is a warning with its consequence under it, which the TUI's log and a recorder keep (#1703).
+     */
+    @Test
+    void whatACleanDeletesIsAGroupAndItsCostAWarning() throws Exception {
+        Files.createDirectories(Environment.configDir());
+        Files.writeString(Environment.configDir().resolve("config.yaml"), "x: 1\n");
+        var config = new CleanCommand.Config();
+        config.skipConfirmation = true;
+
+        var recorded = RecordingOutput.during(config::doExecute);
+
+        var group = recorded.events(RecordingOutput.Kind.GROUP);
+        assertEquals(List.of("Will delete"), group.stream().map(RecordingOutput.Event::msg).toList());
+        assertTrue(recorded.events(RecordingOutput.Kind.STEP).stream()
+                .anyMatch(e -> e.msg().startsWith(Environment.configDir().toString())), recorded.lines().toString());
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
+                "This will permanently delete your SSH keys, CA certificate, and configuration.",
+                "You will need to run 'isx init' again and rebuild all templates.")),
+                recorded.events(RecordingOutput.Kind.WARN));
+        assertFalse(Files.exists(Environment.configDir()));
     }
 }

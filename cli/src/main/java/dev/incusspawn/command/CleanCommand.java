@@ -46,7 +46,7 @@ public class CleanCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
-        System.out.println(commandInvocation.getHelpInfo());
+        BuildOutput.results().println(commandInvocation.getHelpInfo());
         return CommandResult.SUCCESS;
     }
 
@@ -101,21 +101,24 @@ public class CleanCommand extends BaseCommand {
         return new DirInfo(dir, size[0], files[0]);
     }
 
-    /** The directories and their total, then the DNF cache volume if there is one. */
-    static void printSummary(List<DirInfo> infos, DnfCacheVolume dnfCache) {
-        long total = 0;
-        int totalFiles = 0;
-        for (var info : infos) {
-            System.out.printf("  %-50s %8s  (%d files)%n",
-                    info.path, formatSize(info.size), info.files);
-            total += info.size;
-            totalFiles += info.files;
+    /** The directories and their total, then the DNF cache volume if there is one, as a group. */
+    static void printSummary(String title, List<DirInfo> infos, DnfCacheVolume dnfCache) {
+        try (var group = BuildOutput.group(title, null)) {
+            long total = 0;
+            int totalFiles = 0;
+            for (var info : infos) {
+                BuildOutput.step(summaryRow(info.path.toString(), info.size, info.files));
+                total += info.size;
+                totalFiles += info.files;
+            }
+            // The volume's size is not known here, so it stays out of the total, below it
+            if (!infos.isEmpty()) BuildOutput.step(summaryRow("Total:", total, totalFiles));
+            if (dnfCache != null) BuildOutput.step("and the " + dnfCache.label());
         }
-        // The volume's size is not known here, so it stays out of the total, below it
-        if (!infos.isEmpty()) {
-            System.out.printf("  %-50s %8s  (%d files)%n", "Total:", formatSize(total), totalFiles);
-        }
-        if (dnfCache != null) System.out.println("  and the " + dnfCache.label());
+    }
+
+    private static String summaryRow(String what, long size, int files) {
+        return String.format("%-50s %8s  (%d files)", what, formatSize(size), files);
     }
 
     /** Delete {@code dir}, or everything in it but {@code keep} when that is one of its entries. */
@@ -140,11 +143,11 @@ public class CleanCommand extends BaseCommand {
 
     static void cleanDirs(List<Path> dirs, boolean deleteInstances, boolean dryRun, boolean skipConfirmation,
                           String category) throws IOException {
-        cleanDirs(dirs, deleteInstances, dryRun, skipConfirmation, category, "Will delete:", List.of(), "Proceed?");
+        cleanDirs(dirs, deleteInstances, dryRun, skipConfirmation, category, "Will delete", () -> {}, "Proceed?");
     }
 
     /**
-     * Show what deleting {@code dirs} frees, then {@code warning}, and delete them once confirmed.
+     * Show what deleting {@code dirs} frees, then its {@code caveats}, and delete them once confirmed.
      *
      * <p>When one of them holds the macOS VM's data disk, it is kept unless {@code deleteInstances}:
      * it is mounted at {@code /var/lib/incus}, so it is the Incus database and the {@code cow} pool,
@@ -153,10 +156,10 @@ public class CleanCommand extends BaseCommand {
      * @return whether anything was deleted
      */
     static boolean cleanDirs(List<Path> dirs, boolean deleteInstances, boolean dryRun, boolean skipConfirmation,
-                             String category, String header, List<String> warning, String question)
+                             String category, String header, Runnable caveats, String question)
             throws IOException {
         return cleanDirs(dirs, deleteInstances, dryRun, confirmation(skipConfirmation),
-                category, header, warning, question, null);
+                category, header, caveats, question, null);
     }
 
     static Predicate<String> confirmation(boolean skipConfirmation) {
@@ -168,38 +171,35 @@ public class CleanCommand extends BaseCommand {
      * deleted before them: it is never deleted on an answer that kept them (#1627).
      */
     static boolean cleanDirs(List<Path> dirs, boolean deleteInstances, boolean dryRun, Predicate<String> confirm,
-                             String category, String header, List<String> warning, String question,
+                             String category, String header, Runnable caveats, String question,
                              DnfCacheVolume dnfCache)
             throws IOException {
         var disk = Environment.vmDataImage();
         // Only a directory holding the disk itself: delete() spares it there and nowhere deeper
         boolean holdsDisk = Files.exists(disk) && dirs.contains(disk.getParent());
         if (deleteInstances && !holdsDisk) {
-            System.out.println("Note: --delete-instances only deletes the macOS VM's data disk, and there is none.");
-            System.out.println("To remove instances, use 'isx destroy', or 'isx reset' for everything.");
+            BuildOutput.warn("--delete-instances only deletes the macOS VM's data disk, and there is none.",
+                    "To remove instances, use 'isx destroy', or 'isx reset' for everything.");
         }
         var keep = holdsDisk && !deleteInstances ? disk : null;
         var infos = collectInfo(dirs, keep);
         if (infos.isEmpty() && dnfCache == null) {
-            System.out.println("Nothing to clean — no " + category + " data found.");
+            BuildOutput.step("Nothing to clean — no " + category + " data found.");
             return false;
         }
 
-        System.out.println(dryRun ? "Would delete:" : header);
-        printSummary(infos, dnfCache);
+        printSummary(dryRun ? "Would delete" : header, infos, dnfCache);
         if (holdsDisk) {
-            System.out.println();
             if (deleteInstances) {
-                System.out.println("WARNING: This includes the VM's data disk (" + disk + "):");
-                System.out.println("every instance, template and image. They cannot be recovered.");
+                BuildOutput.warn("This includes the VM's data disk (" + disk + "): every instance, template and image.",
+                        "They cannot be recovered.");
             } else {
-                System.out.println("Kept " + disk + ": the VM's data disk, with every instance,");
-                System.out.println("template and image. Pass --delete-instances to delete it too.");
+                BuildOutput.step("Kept " + disk + ": the VM's data disk, with every instance, template and image.");
+                BuildOutput.stepNote("Pass --delete-instances to delete it too.");
             }
         }
         if (dryRun) return false;
-        System.out.println();
-        warning.forEach(System.out::println);
+        caveats.run();
 
         if (!confirm.test(question)) return false;
 
@@ -211,7 +211,7 @@ public class CleanCommand extends BaseCommand {
         if (!infos.isEmpty()) {
             long total = infos.stream().mapToLong(i -> i.size).sum();
             int totalFiles = infos.stream().mapToInt(i -> i.files).sum();
-            System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
+            BuildOutput.success("Freed " + formatSize(total) + " from " + totalFiles + " files.");
         }
         return true;
     }
@@ -250,7 +250,7 @@ public class CleanCommand extends BaseCommand {
             try {
                 return find(incus);
             } catch (IllegalStateException e) {
-                System.err.println("Warning: " + e.getMessage());
+                BuildOutput.warn(failure(e));
                 return null;
             }
         }
@@ -278,14 +278,14 @@ public class CleanCommand extends BaseCommand {
             try {
                 deleteOrThrow();
             } catch (IllegalStateException e) {
-                System.err.println("Warning: " + e.getMessage());
+                BuildOutput.warn(failure(e));
             }
         }
 
         /** Delete it, or throw saying why: for {@code isx clean dnf}, whose whole job it is. */
         void deleteOrThrow() {
             try {
-                System.out.println(incus.deleteStorageVolume(pool, GuestProvisioning.DNF_CACHE_VOLUME)
+                BuildOutput.step(incus.deleteStorageVolume(pool, GuestProvisioning.DNF_CACHE_VOLUME)
                         ? "Deleted " + label()
                         : "The " + label() + " was already gone.");
             } catch (Exception e) {
@@ -325,8 +325,8 @@ public class CleanCommand extends BaseCommand {
 
         /** {@code incus} is null when there is no Incus to ask about the DNF cache volume. */
         static void clean(IncusClient incus, boolean dryRun, Predicate<String> confirm) throws IOException {
-            cleanDirs(List.of(Environment.cacheDir()), false, dryRun, confirm, "cache", "Will delete:",
-                    List.of(), "Proceed?", incus == null ? null : DnfCacheVolume.findOrWarn(incus));
+            cleanDirs(List.of(Environment.cacheDir()), false, dryRun, confirm, "cache", "Will delete",
+                    () -> {}, "Proceed?", incus == null ? null : DnfCacheVolume.findOrWarn(incus));
         }
     }
 
@@ -346,7 +346,7 @@ public class CleanCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (Platform.isMacOS() && !VmManager.isRunning()) {
-                System.err.println("Error: the DNF cache volume is in the VM, which is stopped. Start it with 'isx vm start'.");
+                BuildOutput.error("the DNF cache volume is in the VM, which is stopped.", "Start it with 'isx vm start'.");
                 return CommandResult.valueOf(1);
             }
             clean(RuntimeServices.incus(), dryRun, confirmation(skipConfirmation));
@@ -360,13 +360,11 @@ public class CleanCommand extends BaseCommand {
         static void clean(IncusClient incus, boolean dryRun, Predicate<String> confirm) {
             var volume = DnfCacheVolume.find(incus);
             if (volume == null) {
-                System.out.println("Nothing to clean — no DNF cache volume found.");
+                BuildOutput.step("Nothing to clean — no DNF cache volume found.");
                 return;
             }
-            System.out.println(dryRun ? "Would delete:" : "Will delete:");
-            System.out.println("  " + volume.label());
+            groupOfSteps(dryRun ? "Would delete" : "Will delete", List.of(volume.label()));
             if (dryRun) return;
-            System.out.println();
             if (confirm.test("Proceed?")) volume.deleteOrThrow();
         }
     }
@@ -391,7 +389,7 @@ public class CleanCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (VmManager.isRunning()) {
-                System.err.println("Error: VM is currently running. Stop it first with 'isx vm stop'.");
+                BuildOutput.error("the VM is running.", "Stop it first with 'isx vm stop'.");
                 return CommandResult.valueOf(1);
             }
             cleanDirs(List.of(Environment.vmStateDir(), Environment.dataDir()), deleteInstances,
@@ -416,10 +414,9 @@ public class CleanCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             cleanDirs(List.of(Environment.configDir()), false, dryRun, skipConfirmation, "configuration",
-                    "Will delete:", List.of(
-                            "WARNING: This will permanently delete your SSH keys, CA certificate,",
-                            "and configuration. You will need to run 'isx init' again and rebuild",
-                            "all templates."),
+                    "Will delete", () -> BuildOutput.warn(
+                            "This will permanently delete your SSH keys, CA certificate, and configuration.",
+                            "You will need to run 'isx init' again and rebuild all templates."),
                     "Delete configuration?");
             return CommandResult.SUCCESS;
         }
@@ -445,7 +442,7 @@ public class CleanCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (VmManager.isRunning()) {
-                System.err.println("Error: VM is currently running. Stop it first with 'isx vm stop'.");
+                BuildOutput.error("the VM is running.", "Stop it first with 'isx vm stop'.");
                 return CommandResult.valueOf(1);
             }
 
@@ -464,20 +461,22 @@ public class CleanCommand extends BaseCommand {
                     Environment.dataDir(),
                     Environment.configDir());
             boolean poolDeleted = deleteInstances && Files.exists(Environment.vmDataImage());
-            var warning = new ArrayList<String>();
             // With only the DNF cache volume left, there is no configuration to warn about
-            if (Files.isDirectory(Environment.configDir())) {
-                warning.add("WARNING: This includes your SSH keys, CA certificate, and configuration.");
-                warning.add("You will need to run 'isx init' again and rebuild all templates.");
-            }
-            if (!poolDeleted) {
-                warning.add("Note: Built templates and instances in the Incus storage pool are not affected.");
-                warning.add("Use 'isx clean pool' to reclaim pool space.");
-            }
+            boolean configGoes = Files.isDirectory(Environment.configDir());
+            Runnable caveats = () -> {
+                if (configGoes) {
+                    BuildOutput.warn("This includes your SSH keys, CA certificate, and configuration.",
+                            "You will need to run 'isx init' again and rebuild all templates.");
+                }
+                if (!poolDeleted) {
+                    BuildOutput.note("Built templates and instances in the Incus storage pool are not affected."
+                            + " Use 'isx clean pool' to reclaim pool space.");
+                }
+            };
             // With the data disk gone there is no pool left to hold the DNF cache volume
             var dnfCache = poolDeleted || incus == null ? null : DnfCacheVolume.findOrWarn(incus);
             cleanDirs(dirs, deleteInstances, dryRun, confirm, "incus-spawn",
-                    "Will delete incus-spawn cache, state, and configuration:", warning,
+                    "Will delete incus-spawn cache, state, and configuration", caveats,
                     "Delete everything listed?", dnfCache);
         }
     }
@@ -711,7 +710,7 @@ public class CleanCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             var pool = incus.findCowPool();
             if (pool == null) {
-                System.out.println("No CoW storage pool found.");
+                BuildOutput.step("No CoW storage pool found.");
                 return CommandResult.SUCCESS;
             }
 
@@ -734,7 +733,6 @@ public class CleanCommand extends BaseCommand {
                 BuildOutput.step("Nothing to clean — no reclaimable artifacts found.");
             }
             if (!baseImages && !images.base().isEmpty()) {
-                System.out.println();
                 BuildOutput.note("Kept " + images.base().size() + " cached base image(s) (~"
                         + formatSize(totalSize(images.base())) + "); pass --base-images to remove them"
                         + " (the next build downloads them again).");
@@ -752,11 +750,7 @@ public class CleanCommand extends BaseCommand {
             var failed = findFailedBuilds(incus);
             if (failed.isEmpty()) return false;
 
-            System.out.println();
-            BuildOutput.step("Failed builds (" + failed.size() + "):");
-            for (var name : failed) {
-                BuildOutput.step("  " + name);
-            }
+            groupOfSteps("Failed builds (" + failed.size() + ")", failed);
 
             if (dryRun) {
                 BuildOutput.step("Would delete " + failed.size() + " failed build instance(s).");
@@ -767,9 +761,8 @@ public class CleanCommand extends BaseCommand {
                 return true;
             }
 
-            deleteFailedBuilds(incus, failed, name -> BuildOutput.step("  Deleted " + name),
-                    (name, e) -> System.err.println(BuildOutput.STEP_INDENT + "  Warning: could not delete "
-                            + name + ": " + e.getMessage()));
+            deleteFailedBuilds(incus, failed, name -> BuildOutput.step("Deleted " + name),
+                    (name, e) -> BuildOutput.warn("Could not delete " + name + ": " + failure(e)));
             return true;
         }
 
@@ -777,11 +770,8 @@ public class CleanCommand extends BaseCommand {
                                     String noun, boolean dryRun, boolean skip) {
             if (images.isEmpty()) return false;
 
-            System.out.println();
-            BuildOutput.step(title + " (" + images.size() + ", ~" + formatSize(totalSize(images)) + "):");
-            for (var image : images) {
-                BuildOutput.step("  " + image.label() + " (" + formatSize(image.size()) + ")");
-            }
+            groupOfSteps(title + " (" + images.size() + ", ~" + formatSize(totalSize(images)) + ")", images.stream()
+                    .map(image -> image.label() + " (" + formatSize(image.size()) + ")").toList());
 
             if (dryRun) {
                 BuildOutput.step("Would delete " + images.size() + " " + noun + ".");
@@ -795,9 +785,9 @@ public class CleanCommand extends BaseCommand {
             for (var image : images) {
                 try {
                     deleteImage(incus, image);
-                    BuildOutput.step("  Deleted " + image.label());
+                    BuildOutput.step("Deleted " + image.label());
                 } catch (Exception e) {
-                    System.err.println(BuildOutput.STEP_INDENT + "  Warning: could not delete image: " + e.getMessage());
+                    BuildOutput.warn("Could not delete image " + image.label() + ": " + failure(e));
                 }
             }
             return true;
@@ -811,23 +801,19 @@ public class CleanCommand extends BaseCommand {
                 volume = DnfCacheVolume.find(incus, pool);
             } catch (IllegalStateException e) {
                 // The pool listing just answered, so this is rare; the other categories still stand
-                System.err.println(BuildOutput.STEP_INDENT + "Warning: " + e.getMessage());
+                BuildOutput.warn(failure(e));
                 return false;
             }
             if (volume == null) return false;
 
-            System.out.println();
-            BuildOutput.step(volume.label() + ":");
+            groupOfSteps("DNF cache volume", List.of(volume.label()));
             if (dryRun) {
                 BuildOutput.step("Would delete the DNF cache volume; the next build downloads its packages again.");
                 return true;
             }
-
-            if (!confirm.test("Delete the DNF cache volume? The next build downloads its packages again.")) {
-                return true;
+            if (confirm.test("Delete the DNF cache volume? The next build downloads its packages again.")) {
+                volume.delete();
             }
-
-            volume.delete();
             return true;
         }
     }
