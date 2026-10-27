@@ -5,7 +5,6 @@ import dev.incusspawn.ai.HelpContext;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.TerminalLink;
-import dev.incusspawn.util.TerminalProgress;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Arguments;
@@ -13,7 +12,7 @@ import org.aesh.command.option.Option;
 
 import java.io.PrintStream;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 @CommandDefinition(
         name = "ask",
@@ -42,61 +41,84 @@ public class AskCommand extends BaseCommand {
         var targets = AiHelpClient.targets(config);
 
         if (targets.isEmpty()) {
-            System.err.println(AiHelpClient.noProviderMessage(config));
+            var why = AiHelpClient.noProvider(config);
+            BuildOutput.error(why.cause(), why.advice().toArray(String[]::new));
             return CommandResult.valueOf(1);
         }
 
         var target = targets.getFirst();
-        var label = "Asking " + target.label() + "…" + (withTemplates ? " (with templates)" : "");
-
+        var label = "Asking " + target.label() + (withTemplates ? " (with templates)" : "") + "...";
         var systemBlocks = HelpContext.systemBlocks(withTemplates);
-        var ansi = TerminalProgress.isAnsiTerminal();
-
-        if (!ansi) {
-            System.err.println(BuildOutput.STEP_INDENT + label);
-        }
-
-        var spinning = new AtomicBoolean(ansi);
-        Thread spinner = null;
-        if (ansi) {
-            spinner = Thread.startVirtualThread(() -> {
-                var frames = TerminalProgress.SPINNER;
-                int i = 0;
-                while (spinning.get()) {
-                    System.err.print("\r" + BuildOutput.STEP_INDENT + BuildOutput.DIM
-                            + frames[i % frames.length] + " " + label + BuildOutput.RESET + "  ");
-                    System.err.flush();
-                    i++;
-                    try { Thread.sleep(80); } catch (InterruptedException e) { break; }
-                }
-            });
-        }
-
-        var firstChunk = new AtomicBoolean(true);
-        var answer = new AnswerWriter(System.out, ansi);
-        try {
-            AiHelpClient.askStreaming(question, systemBlocks, config, target, chunk -> {
-                if (firstChunk.getAndSet(false)) {
-                    spinning.set(false);
-                    if (ansi) {
-                        System.err.print("\r\033[2K" + BuildOutput.STEP_INDENT // raw ANSI: spinner line, only when ansi
-                                + BuildOutput.DIM + "✓ " + label + BuildOutput.RESET + "\n");
-                    }
-                    System.err.println();
-                }
-                answer.accept(chunk);
-            });
-        } finally {
-            // A stream that fails part way still shows what came, and stops the spinner before the error.
-            answer.finish();
-            spinning.set(false);
-            if (spinner != null) spinner.join(200);
-            if (firstChunk.get() && ansi) {
-                System.err.print("\r\033[2K"); // raw ANSI: spinner line, only when ansi
-            }
-            System.out.println();
-        }
+        answer(label,
+                chunks -> AiHelpClient.askStreaming(question, systemBlocks, config, target, chunks));
         return CommandResult.SUCCESS;
+    }
+
+    /** A streamed answer: hands each chunk to its consumer as it comes. */
+    @FunctionalInterface
+    interface Answer {
+        void stream(Consumer<String> chunks) throws Exception;
+    }
+
+    /**
+     * Asks, as a live step that ends when the first chunk comes, then prints the answer as the
+     * command's result (#1703). The step goes to stderr, so stdout holds only the answer, as for
+     * any query. A stream that fails part way still shows what came, on a line of its own; one
+     * that fails before anything came breaks the step, and the error follows it.
+     */
+    static void answer(String label, Answer answer) throws Exception {
+        // Taken before the progress moves to stderr: the answer is what stdout is for
+        var streamed = new Streamed(BuildOutput.results(), BuildOutput.ansi());
+        withStdoutOnStderr(() -> {
+            BuildOutput.stepStart(label);
+            try {
+                answer.stream(streamed);
+            } catch (Exception e) {
+                if (!streamed.started()) BuildOutput.stepBreak();
+                throw e;
+            } finally {
+                streamed.finish();
+            }
+            if (!streamed.started()) BuildOutput.stepDone("no answer");
+            return null;
+        });
+    }
+
+    /** The answer as it streams: the first chunk with text ends the step, and each is written. */
+    private static final class Streamed implements Consumer<String> {
+        private final PrintStream results;
+        private final boolean ansi;
+        private AnswerWriter writer;
+
+        Streamed(PrintStream results, boolean ansi) {
+            this.results = results;
+            this.ansi = ansi;
+        }
+
+        boolean started() {
+            return writer != null;
+        }
+
+        @Override
+        public void accept(String chunk) {
+            if (chunk.isEmpty()) return;
+            if (writer == null) {
+                BuildOutput.stepDone();
+                // A blank line after the step, on its stream as it is drawn, so a script's capture
+                // of stdout still starts with the answer
+                BuildOutput.frame("");
+                writer = new AnswerWriter(results, ansi);
+            }
+            writer.accept(chunk);
+        }
+
+        /** Ends what came on a line of its own, also when the stream failed part way. */
+        void finish() {
+            if (writer == null) return;
+            writer.finish();
+            results.println();
+            results.flush();
+        }
     }
 
     /**
@@ -135,20 +157,22 @@ public class AskCommand extends BaseCommand {
     }
 
     private void printUsage() {
-        System.out.println("AI-powered help for incus-spawn. Tokens will be consumed.");
-        System.out.println();
-        System.out.println("Usage: isx ask <question>");
-        System.out.println("       isx ask --with-templates <question>");
-        System.out.println();
-        System.out.println("Examples:");
-        System.out.println("  isx ask how do I configure a custom base image?");
-        System.out.println("  isx ask what proxy domains are intercepted?");
-        System.out.println("  isx ask --with-templates why is my maven tool broken?");
-        System.out.println();
-        System.out.println("Options:");
-        System.out.println("  --with-templates  Include tool and image definitions in the AI context");
-        System.out.println();
-        System.out.println("Credentials: Uses your configured Anthropic, Vertex AI, or OpenAI credentials.");
-        System.out.println("Run 'isx init' to configure them.");
+        BuildOutput.results().print("""
+                AI-powered help for incus-spawn. Tokens will be consumed.
+
+                Usage: isx ask <question>
+                       isx ask --with-templates <question>
+
+                Examples:
+                  isx ask how do I configure a custom base image?
+                  isx ask what proxy domains are intercepted?
+                  isx ask --with-templates why is my maven tool broken?
+
+                Options:
+                  --with-templates  Include tool and image definitions in the AI context
+
+                Credentials: Uses your configured Anthropic, Vertex AI, or OpenAI credentials.
+                Run 'isx init' to configure them.
+                """);
     }
 }
