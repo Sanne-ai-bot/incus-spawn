@@ -133,6 +133,28 @@ public final class TerminalOutput implements Output {
         out.get().println(indent() + styled(GREEN, "✓") + " " + msg);
     }
 
+    /**
+     * As given, its leading blank line included, also after a block that ended on a blank line:
+     * while {@code isx init}'s host and credential steps still print raw lines between its boxes,
+     * the record of a closing blank line cannot be trusted, and two blank lines read better than
+     * none. A trailing blank line ends the block, as a group's does.
+     */
+    @Override
+    public void frame(String... lines) {
+        if (lines.length == 0) return;
+        var stdout = out.get();
+        for (var line : lines) stdout.println(line);
+        blankLineEnded = lines[lines.length - 1].isEmpty();
+    }
+
+    @Override
+    public void prompt(String question) {
+        blankLineEnded = false;
+        var stdout = out.get();
+        stdout.print(indent() + question);
+        stdout.flush();
+    }
+
     /** Its stdout, as it is now: a live step's guard included, so a result first freezes the step's line. */
     @Override
     public PrintStream results() {

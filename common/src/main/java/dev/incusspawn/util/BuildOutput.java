@@ -208,6 +208,16 @@ public final class BuildOutput {
         return bound.results();
     }
 
+    /** A block laid out by the caller, drawn as given ({@link Output#frame}): {@code isx init}'s boxes. */
+    public static void frame(String... lines) {
+        bound.frame(lines);
+    }
+
+    /** A question at the step indent, its answer typed after it ({@link Output#prompt}). */
+    public static void prompt(String question) {
+        bound.prompt(question);
+    }
+
     /** Tests set this to exercise the animated rendering without a console; null means detect. */
     static volatile Boolean forceAnsi;
 

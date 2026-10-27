@@ -92,6 +92,15 @@ public interface Output {
     default void list(Collection<String> items) {}
 
     /**
+     * A block the caller laid out itself, drawn as given at column 0 on stdout: {@code isx
+     * init}'s banner, step boxes and closing box. Not a result, and nothing off a terminal.
+     */
+    default void frame(String... lines) {}
+
+    /** A question, at the step indent, with no line end: its answer is typed after it ({@code Prompts}). */
+    default void prompt(String question) {}
+
+    /**
      * Where the command's answer goes: a status report, a table, a script's records
      * ({@link OutputFormat}), each line as given. A terminal's is its stdout, which holds results
      * alone; an output that is not a terminal has none, so by default what is written is dropped.

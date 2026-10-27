@@ -25,6 +25,8 @@ final class ScriptedPrompts implements Prompts {
     }
 
     private final Deque<Answer> answers = new ArrayDeque<>();
+    /** What the flow showed and said, in order: a question as {@code "? <question>"}, a said line as itself. */
+    private final java.util.List<String> conversation = new java.util.ArrayList<>();
     private int scripted = 1;
     private int readsPastEnd;
 
@@ -41,6 +43,26 @@ final class ScriptedPrompts implements Prompts {
     ScriptedPrompts secret(String value) {
         answers.add(new Answer(scripted++, value, true));
         return this;
+    }
+
+    @Override
+    public void show(String question) {
+        conversation.add("? " + question);
+    }
+
+    @Override
+    public void say(String line) {
+        conversation.add(line);
+    }
+
+    /** What the flow showed and said, in order: each question as {@code "? <question>"}. */
+    java.util.List<String> conversation() {
+        return java.util.List.copyOf(conversation);
+    }
+
+    /** The questions the flow showed, in order. */
+    java.util.List<String> questions() {
+        return conversation.stream().filter(l -> l.startsWith("? ")).map(l -> l.substring(2)).toList();
     }
 
     @Override
