@@ -96,7 +96,7 @@ class RepoClonerTest {
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/quarkusio/quarkus.git");
         repo.setPath("~/quarkus");
-        repo.setPrime("mvn -B dependency:go-offline");
+        repo.setPrime(List.of("mvn -B dependency:go-offline"));
 
         var imageDef = new ImageDef();
         imageDef.setName("tpl-quarkus");
@@ -111,6 +111,34 @@ class RepoClonerTest {
                 "git -C '/home/agentuser/quarkus' remote set-branches origin '*'");
         verify(incus).execInContainer("test", "agentuser",
                 "cd '/home/agentuser/quarkus' && mvn -B dependency:go-offline");
+    }
+
+    @Test
+    void cloneReposRunsEachPrimeCommandInTurnAndStopsAtTheFirstFailure() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+        when(incus.execInContainer("test", "agentuser", "cd '/home/agentuser/app' && ./gradlew dependencies"))
+                .thenReturn(new IncusClient.ExecResult(1, "BUILD FAILED", ""));
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/app.git");
+        repo.setPath("~/app");
+        repo.setPrime(List.of("mise install", "./gradlew dependencies", "echo never"));
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo));
+
+        var ex = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+
+        var inOrder = org.mockito.Mockito.inOrder(incus);
+        inOrder.verify(incus).execInContainer("test", "agentuser", "cd '/home/agentuser/app' && mise install");
+        inOrder.verify(incus).execInContainer("test", "agentuser", "cd '/home/agentuser/app' && ./gradlew dependencies");
+        verify(incus, org.mockito.Mockito.never())
+                .execInContainer("test", "agentuser", "cd '/home/agentuser/app' && echo never");
+        assertTrue(ex.stepOutput().contains("BUILD FAILED"), ex.stepOutput());
     }
 
     @Test
@@ -316,11 +344,11 @@ class RepoClonerTest {
         var a = new ImageDef.RepoEntry();
         a.setUrl("https://github.com/owner/alpha.git");
         a.setPath("~/alpha");
-        a.setPrime("build-alpha");
+        a.setPrime(List.of("build-alpha"));
         var b = new ImageDef.RepoEntry();
         b.setUrl("https://github.com/owner/beta.git");
         b.setPath("~/beta");
-        b.setPrime("build-beta");
+        b.setPrime(List.of("build-beta"));
 
         var imageDef = new ImageDef();
         imageDef.setName("tpl-test");
@@ -344,7 +372,7 @@ class RepoClonerTest {
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/beta.git");
         repo.setPath("~/beta");
-        repo.setPrime("build-beta");
+        repo.setPrime(List.of("build-beta"));
 
         var states = new java.util.concurrent.atomic.AtomicReferenceArray<BuildProgress.StepProgress>(1);
         states.set(0, BuildProgress.StepProgress.running("Cloning"));
@@ -472,7 +500,7 @@ class RepoClonerTest {
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/app.git");
         repo.setPath("~/app");
-        repo.setPrime("npm install");
+        repo.setPrime(List.of("npm install"));
 
         var imageDef = new ImageDef();
         imageDef.setName("tpl-app");
@@ -565,7 +593,7 @@ class RepoClonerTest {
         var repo = new ImageDef.RepoEntry();
         repo.setUrl(url);
         repo.setPath(path);
-        repo.setPrime(prime);
+        repo.setPrime(prime == null ? List.of() : List.of(prime));
         return repo;
     }
 
@@ -754,7 +782,7 @@ class RepoClonerTest {
             var repo = new ImageDef.RepoEntry();
             repo.setUrl("https://github.com/owner/repo" + i + ".git");
             repo.setPath("~/repo" + i);
-            repo.setPrime("echo primed");
+            repo.setPrime(List.of("echo primed"));
             repo.setDepth(1);
             repos.add(repo);
         }
@@ -788,7 +816,7 @@ class RepoClonerTest {
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
         repo.setPath("~/repo");
-        repo.setPrime("echo primed");
+        repo.setPrime(List.of("echo primed"));
         var imageDef = trusted("tpl-test");
         imageDef.setRepos(List.of(repo));
 

@@ -454,7 +454,7 @@ public class TemplatesCommand extends BaseCommand {
             #     path: ~/repo                         # where to clone it; defaults to ~/<repo name>
             #     branch: main                         # branch or tag to check out; defaults to the repo's default
             #     depth: 1                             # keep only this many commits, on this branch only; omit for all
-            #     prime: mvn -B install -DskipTests    # command run in the clone once it is cloned
+            #     prime: mvn -B install -DskipTests    # command, or a list of them, run in the clone once cloned
             #   - host-source: ~/work/private-repo      # instead of url; local branches/tags, including unpushed work
             #     path: ~/private-repo                  # trusted templates only; no depth or upstream access
 

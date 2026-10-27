@@ -259,7 +259,7 @@ final class TemplateDetailView {
                 if (repo.hasPrime()) {
                     lines.add(Line.from(List.of(
                             Span.styled("    prime: ", labelStyle),
-                            Span.styled(repo.getPrime(), lineStyle))));
+                            Span.styled(repo.primeText(), lineStyle))));
                 }
                 var hostMatch = repo.isHostSource() ? repo.getHostSource() : source.hostRepoMatch(repo.getUrl());
                 lines.add(Line.styled(hostMatch != null
@@ -560,7 +560,7 @@ final class TemplateDetailView {
                 if (repo.hasPrime()) {
                     lines.add(Line.from(List.of(
                             Span.styled(contentIndent + "  prime: ", labelStyle),
-                            Span.styled(repo.getPrime(), lineStyle))));
+                            Span.styled(repo.primeText(), lineStyle))));
                 }
                 var hostMatch = repo.isHostSource() ? repo.getHostSource() : source.hostRepoMatch(repo.getUrl());
                 lines.add(Line.styled(contentIndent + (hostMatch != null

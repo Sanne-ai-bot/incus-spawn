@@ -196,13 +196,43 @@ class ImageDefTest {
         assertEquals("https://github.com/quarkusio/quarkus.git", repo1.getUrl());
         assertEquals("~/quarkus", repo1.getPath());
         assertEquals("main", repo1.getBranch());
-        assertEquals("mvn -B dependency:go-offline", repo1.getPrime());
+        assertEquals(List.of("mvn -B dependency:go-offline"), repo1.getPrime());
 
         var repo2 = quarkus.getRepos().get(1);
         assertEquals("https://github.com/hibernate/hibernate-reactive.git", repo2.getUrl());
         assertEquals("~/hibernate-reactive", repo2.getPath());
         assertNull(repo2.getBranch());
-        assertNull(repo2.getPrime());
+        assertEquals(List.of(), repo2.getPrime());
+    }
+
+    @Test
+    void primeTakesAListOfCommandsOrASingleOne() throws Exception {
+        var def = ImageDef.parseYaml("""
+                name: tpl-primed
+                repos:
+                  - url: https://github.com/o/listed.git
+                    prime:
+                      - mise install
+                      - ./gradlew dependencies
+                  - url: https://github.com/o/single.git
+                    prime: mvn -B dependency:go-offline
+                """);
+
+        assertEquals(List.of("mise install", "./gradlew dependencies"), def.getRepos().get(0).getPrime());
+        assertEquals(List.of("mvn -B dependency:go-offline"), def.getRepos().get(1).getPrime());
+    }
+
+    @Test
+    void aSingleCommandPrimeKeepsItsFingerprintAsAOneItemList() throws Exception {
+        var single = ImageDef.parseYaml("name: t\nrepos:\n  - url: https://e.com/a.git\n    prime: make\n");
+        var listed = ImageDef.parseYaml("name: t\nrepos:\n  - url: https://e.com/a.git\n    prime: [make]\n");
+        var more = ImageDef.parseYaml("name: t\nrepos:\n  - url: https://e.com/a.git\n    prime: [make, make test]\n");
+
+        assertEquals(single.contentFingerprint(Map.of()), listed.contentFingerprint(Map.of()));
+        assertNotEquals(single.contentFingerprint(Map.of()), more.contentFingerprint(Map.of()));
+        var split = ImageDef.parseYaml("name: t\nrepos:\n  - url: https://e.com/a.git\n    prime: ['a, b', c]\n");
+        var resplit = ImageDef.parseYaml("name: t\nrepos:\n  - url: https://e.com/a.git\n    prime: [a, 'b, c']\n");
+        assertNotEquals(split.contentFingerprint(Map.of()), resplit.contentFingerprint(Map.of()));
     }
 
     @Test
@@ -1596,7 +1626,7 @@ class ImageDefTest {
         repo.setPath(path);
         repo.setBranch(branch);
         repo.setDepth(depth);
-        repo.setPrime(prime);
+        repo.setPrime(prime == null ? List.of() : List.of(prime));
         return repo;
     }
 

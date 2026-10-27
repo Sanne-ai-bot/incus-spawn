@@ -3094,7 +3094,7 @@ Every way a repo ends up on the network clone instead of its reference says why 
 Before the fallback the failed attempt's destination is removed, but only one it created: the clone from the reference first checks that its destination does not exist or is an empty directory (`freshDestination`, exiting 3), and a destination already there is left alone, so the network clone then fails on it rather than a checkout another layer made being deleted (#1394).
 The latch the primes wait on counts *planned raw shallow* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached.
 So a failed or re-queued attach can neither hang the primes nor land after them.
-Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every raw shallow reference has been detached**, so priming pipelines with other clean preparations and network clones.
+Each repo's declared `prime` commands (also captured, no PTY; a list runs in turn and stops at the first failure) run in the same worker once that repo's clone is done **and every raw shallow reference has been detached**, so priming pipelines with other clean preparations and network clones.
 Full-clone mounts contain only objects authorized by the declared source and sanitized repository metadata; the unchanged shallow path can still mount the host checkout's whole working tree.
 A prime command is arbitrary code with network access, and the old "remove all references after everything" order let any repo's prime read every mounted checkout (#765).
 A failed detach fails the build rather than prime next to a mount.

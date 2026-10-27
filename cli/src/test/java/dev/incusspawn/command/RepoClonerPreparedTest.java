@@ -91,7 +91,7 @@ class RepoClonerPreparedTest {
         repo.setUrl(server.url(remote));
         repo.setBranch(branch);
         repo.setPath(tmp.resolve("guest").toString());
-        repo.setPrime("git fsck --full --no-dangling");
+        repo.setPrime(List.of("git fsck --full --no-dangling"));
         var planned = new RepoCloner.RepoReference("ref", "/mnt/ref", host.toString(), null,
                 new GitPreparation.Request(repo.getUrl(), branch, host), null);
         var mounts = new RepoCloner.ReferenceMounts() {

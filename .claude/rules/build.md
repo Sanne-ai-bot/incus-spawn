@@ -183,7 +183,7 @@ From the network it is `--single-branch --depth`, and its refspec stays narrow (
 Full preparation refuses shallow references and uses a standalone snapshot or the remote.
 The shallow fixup then drops the host checkout's own branch and origin/HEAD, leaving a network clone's refs.
 Clones and `prime` commands use captured (non-streamed) exec so parallel output doesn't garble; progress renders via `util/TerminalProgress.java`, the shared animated braille-spinner display also used by `HostRepoRefresh`'s parallel fetch and by `BuildCommand`'s dnf operations.
-Each repo's `prime` command runs in the same worker once that repo's clone finishes **and every raw shallow host reference is detached** (Cloning -> Waiting to prime -> Priming within one progress line).
+Each repo's `prime` commands (one, or a list run in turn that stops at the first failure) run in the same worker once that repo's clone finishes **and every raw shallow host reference is detached** (Cloning -> Waiting to prime -> Priming within one progress line).
 The shallow path still mounts the host checkout's working tree, so no prime may run next to any raw shallow reference (#765).
 A prepared clone detaches its own clean snapshot before priming, while other clean preparations and copies may continue.
 Which repos have a reference is decided on the host up front (`planReference`).

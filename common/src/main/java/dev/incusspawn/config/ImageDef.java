@@ -281,7 +281,8 @@ public class ImageDef extends MappedDefinition {
         private String branch;
         @JqConverter(IntegerConverter.class)
         private Integer depth;
-        private String prime;
+        @JqConverter(CommandListConverter.class)
+        private List<String> prime = List.of();
 
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
@@ -323,9 +324,19 @@ public class ImageDef extends MappedDefinition {
         /** How many commits of history a clone keeps, or null for all of it (#1344). */
         public Integer getDepth() { return depth; }
         public void setDepth(Integer depth) { this.depth = depth; }
-        public String getPrime() { return prime; }
-        public void setPrime(String prime) { this.prime = prime; }
-        public boolean hasPrime() { return prime != null && !prime.isBlank(); }
+        /** The commands run in turn in the clone, each stopping the rest when it fails (#1745). */
+        public List<String> getPrime() { return prime; }
+        public void setPrime(List<String> prime) { this.prime = items(prime).stream().filter(c -> !c.isBlank()).toList(); }
+        public boolean hasPrime() { return !prime.isEmpty(); }
+        /** The commands as one line for people, joined as {@code &&} would run them, or null for none. */
+        public String primeText() { return hasPrime() ? String.join(" && ", prime) : null; }
+        /**
+         * One command as written, so a template that has one keeps the fingerprint it was built with.
+         * Several are joined with NUL, which no command can hold, so no two lists read the same.
+         */
+        String primeFingerprint() {
+            return prime.isEmpty() ? "null" : String.join("\0", prime);
+        }
     }
 
     @JqMapped
@@ -494,7 +505,7 @@ public class ImageDef extends MappedDefinition {
                 .sorted(java.util.Comparator.<RepoEntry, String>comparing(r -> String.valueOf(r.getUrl()))
                         .thenComparing(r -> String.valueOf(r.getPath())))
                 .forEach(r -> sb.append("repo=").append(r.getUrl()).append(',').append(r.getPath())
-                        .append(',').append(r.getBranch()).append(',').append(r.getPrime())
+                        .append(',').append(r.getBranch()).append(',').append(r.primeFingerprint())
                         // Only when set, so a template without one keeps the fingerprint it was built with.
                         .append(r.getDepth() != null ? ",depth=" + r.getDepth() : "")
                         .append(r.isHostSource() ? ",host-source=" + r.getHostSource() : "").append('\n'));
@@ -687,14 +698,18 @@ public class ImageDef extends MappedDefinition {
         if (!java.util.Objects.equals(a.getDepth(), b.getDepth())) {
             differences.add("depth (" + shown(a.getDepth()) + " vs " + shown(b.getDepth()) + ")");
         }
-        if (!java.util.Objects.equals(blankToNull(a.getPrime()), blankToNull(b.getPrime()))) {
-            differences.add("prime (" + shown(a.getPrime()) + " vs " + shown(b.getPrime()) + ")");
+        if (!stripped(a.getPrime()).equals(stripped(b.getPrime()))) {
+            differences.add("prime (" + shown(a.primeText()) + " vs " + shown(b.primeText()) + ")");
         }
         return differences;
     }
 
     private static String shown(Object value) {
         return value == null ? "none" : OutputFormat.oneLine(String.valueOf(value));
+    }
+
+    private static List<String> stripped(List<String> commands) {
+        return commands.stream().map(String::strip).toList();
     }
 
     private static String blankToNull(String s) {
