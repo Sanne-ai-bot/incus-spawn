@@ -4,6 +4,7 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.HostRepoRefresh;
+import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
@@ -18,8 +19,6 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
-import static dev.incusspawn.incus.Container.shellQuote;
-
 @CommandDefinition(
         name = "update-all",
         description = "Update system packages, npm globals, and git-fetch repos in all templates."
@@ -30,7 +29,7 @@ import static dev.incusspawn.incus.Container.shellQuote;
 public class UpdateAllCommand extends BaseCommand {
 
     @Option(name = "prime", hasValue = false, description = "Re-run prime commands (e.g. 'mvn install -DskipTests') for repositories that define one")
-    private boolean prime;
+    boolean prime;
 
     @Override
     protected CommandResult doExecute() throws Exception {
@@ -198,18 +197,14 @@ public class UpdateAllCommand extends BaseCommand {
         for (var repo : repos) {
             if (!repo.hasPrime()) continue;
             if (prime) {
-                var expanded = GuestProvisioning.expandHome(repo.getPath());
                 BuildOutput.stepStart("Priming " + repo.getPath() + "...");
-                String failedCommand = null;
-                for (var command : repo.getPrime()) {
-                    if (incus.execInContainer(name, "agentuser", "cd " + shellQuote(expanded) + " && " + command).success()) continue;
-                    failedCommand = command;
-                    break;
-                }
-                if (failedCommand == null) {
+                var run = RepoCloner.runPrime(new Container(incus, name), repo,
+                        () -> BuildOutput.stepProgress("binding new runtimes to the isx CA, priming again"));
+                if (run.success()) {
                     BuildOutput.stepDone();
                 } else {
-                    BuildOutput.stepFail("Prime command failed for " + repo.getPath() + ": " + failedCommand);
+                    BuildOutput.stepFail("Prime command failed for " + repo.getPath() + ": " + run.command()
+                            + (run.retried() ? "; " + run.label() : ""));
                     failed = true;
                 }
             } else {

@@ -512,16 +512,16 @@ public class GuestProvisioning {
     }
 
     /**
-     * Runs the installed helper on the landing directories, root's and then agentuser's. A
-     * prime that failed on {@link #untrustedCertificate} runs it before its second try, for a
-     * runtime it downloaded and used at once (#1746).
+     * Runs the installed helper on the landing directories, root's and then agentuser's, and
+     * returns both results. A prime that failed on {@link #untrustedCertificate} runs it before
+     * its second try, for a runtime it downloaded and used at once (#1746).
      */
-    static void runTrustHelper(Container container) {
+    static List<IncusClient.ExecResult> runTrustHelper(Container container) {
         var system = new ArrayList<>(List.of(TRUST_HELPER_PATH));
         system.addAll(TRUST_SYSTEM_DIRS);
-        container.exec(system.toArray(String[]::new));
-        container.shAsUser("agentuser", TRUST_HELPER_PATH + " "
-                + String.join(" ", TRUST_HOME_DIRS.stream().map(Container::shellQuote).toList()));
+        return java.util.stream.Stream.of(container.exec(system.toArray(String[]::new)),
+                container.shAsUser("agentuser", TRUST_HELPER_PATH + " "
+                        + String.join(" ", TRUST_HOME_DIRS.stream().map(Container::shellQuote).toList()))).toList();
     }
 
     /**

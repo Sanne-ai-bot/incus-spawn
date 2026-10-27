@@ -62,7 +62,7 @@ After that, two systemd path units watch where runtimes land and bind each new o
 A watch is not recursive, so a runtime is caught when it lands directly in one of those directories, and each costs one inotify instance.
 
 A watch binds a new runtime shortly after it lands, and a command that downloads a JDK and uses it at once can run it first.
-In a template's prime, isx then binds the new runtime and runs the prime again (see [Templates](TEMPLATES.md#runtimes-a-prime-downloads)).
+In a template's prime, isx then binds the new runtime and runs the failed prime command again (see [Templates](TEMPLATES.md#runtimes-a-prime-downloads)).
 Elsewhere, run `isx-trust` and repeat the command.
 
 A bare `isx-trust` binds all of those directories.

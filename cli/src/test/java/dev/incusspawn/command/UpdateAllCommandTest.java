@@ -300,6 +300,63 @@ class UpdateAllCommandTest {
                 .map(RecordingOutput.Event::msg).toList());
     }
 
+    /** #1746: `isx update-all --prime` binds a JDK the prime downloaded and primes again, as a build does. */
+    @Test
+    void aPrimeThatDownloadsItsOwnJdkRunsAgainOnUpdateOnceThatJdkTrustsTheIsxCa() {
+        var incus = incus();
+        var prime = "cd '/home/agentuser/jbang' && mise x -- ./gradlew dependencies";
+        when(incus.execInContainer(NAME, "agentuser", prime))
+                .thenReturn(new IncusClient.ExecResult(1, "javax.net.ssl.SSLHandshakeException:"
+                        + " (certificate_unknown) PKIX path building failed", ""))
+                .thenReturn(OK);
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/jbangdev/jbang");
+        repo.setPath("~/jbang");
+        repo.setPrime(List.of("mise x -- ./gradlew dependencies"));
+        var def = new ImageDef();
+        def.setName(NAME);
+        def.setRepos(List.of(repo));
+        var resolved = new LinkedHashMap<String, ImageDef>();
+        resolved.put(NAME, def);
+        var command = new UpdateAllCommand();
+        command.prime = true;
+
+        assertEquals(0, command.updateTemplates(incus, resolved));
+
+        verify(incus, times(2)).execInContainer(NAME, "agentuser", prime);
+        assertTrue(rootCommands.contains("/usr/local/bin/isx-trust /usr/lib/jvm /opt /usr/local"),
+                String.join("\n", rootCommands));
+    }
+
+    @Test
+    void aPrimeStillUntrustedOnUpdateSaysWhatIsLeft() {
+        var incus = incus();
+        var prime = "cd '/home/agentuser/app' && ./fetch-deps";
+        when(incus.execInContainer(NAME, "agentuser", prime))
+                .thenReturn(new IncusClient.ExecResult(1, "PKIX path building failed", ""));
+        var command = new UpdateAllCommand();
+        command.prime = true;
+
+        var said = RecordingOutput.during(() ->
+                assertEquals(1, command.updateTemplates(incus, primed("~/app", "./fetch-deps"))));
+
+        verify(incus, times(2)).execInContainer(NAME, "agentuser", prime);
+        assertTrue(failedSteps(said).contains(RepoCloner.UNTRUSTED_AFTER_BIND), failedSteps(said));
+    }
+
+    private static Map<String, ImageDef> primed(String path, String prime) {
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/app");
+        repo.setPath(path);
+        repo.setPrime(List.of(prime));
+        var def = new ImageDef();
+        def.setName(NAME);
+        def.setRepos(List.of(repo));
+        var resolved = new LinkedHashMap<String, ImageDef>();
+        resolved.put(NAME, def);
+        return resolved;
+    }
+
     @Test
     void aFailedGitFetchFailsTheCommand() {
         var incus = incus();

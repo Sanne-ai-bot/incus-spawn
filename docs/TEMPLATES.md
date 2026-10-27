@@ -248,7 +248,7 @@ The [Fedora page](FEDORA.md#file-bindings) lists them.
 
 A prime that downloads a JDK and uses it in the same command can run it before isx has bound it.
 `mise x -- ./gradlew dependencies` is such a prime.
-When a prime fails with `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`, isx binds what landed and runs the prime once more.
+When a prime fails with `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`, isx binds what landed and runs that command once more.
 
 A runtime unpacked anywhere else stays on its own roots, and the second run fails the same way.
 The build then asks you to bind it in the prime, before the command that uses it:
