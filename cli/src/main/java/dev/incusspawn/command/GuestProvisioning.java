@@ -489,8 +489,8 @@ public class GuestProvisioning {
     }
 
     /**
-     * Installs the helper and binds what is on disk now, nothing else. A child build runs it
-     * before its repos' prime commands, so a vendor JDK this layer's tools just installed
+     * Installs the helper and binds what is on disk now, nothing else. Each build layer runs it
+     * before its repos' prime commands, so a vendor JDK the layer's tools just installed
      * already trusts the isx CA when a prime uses it; {@link #bindTrustStores} follows the
      * primes, for what they download.
      */

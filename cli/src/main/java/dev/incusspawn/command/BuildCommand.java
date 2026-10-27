@@ -1668,6 +1668,11 @@ public class BuildCommand extends BaseCommand {
             runToolSetup(container, toolResolution.effective(), ImageDef.resolveAccounts(imageDef, defs));
             maskServices(container, layer);
             installSkills(container, layer, defs, toolResolution.effective());
+            // Before the layer's primes, which may use a JDK its tools just installed, run
+            // isx-trust themselves, or need it run again (RepoCloner.primeOne).
+            if (layer.getRepos().stream().anyMatch(ImageDef.RepoEntry::hasPrime)) {
+                bindInstalledRuntimes(container);
+            }
             cloneRepos(container, layer, defs, machineType);
         }
         updateClaudeJsonTrust(container, imageDef, defs);

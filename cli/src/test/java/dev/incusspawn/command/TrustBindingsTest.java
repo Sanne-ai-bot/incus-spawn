@@ -193,15 +193,18 @@ class TrustBindingsTest {
     }
 
     @Test
-    void aChildBuildBindsBeforeTheReposPrimesToo() throws Exception {
+    void bothBuildPathsBindBeforeTheReposPrimesToo() throws Exception {
         // A layer that adds a vendor JDK (labsjdk, JAVA_HOME=/opt/jdks/...) and primes with it
-        // needs the isx CA before the prime runs; the bind after cloneRepos covers what a prime
-        // downloads. Both are in the source order because the build has no fake guest to run.
+        // needs the isx CA before the prime runs, and a prime may run isx-trust itself; the bind
+        // after cloneRepos covers what a prime downloads. Both are in the source order because
+        // the build has no fake guest to run.
         var src = Files.readString(Path.of("src/main/java/dev/incusspawn/command/BuildCommand.java"));
-        int start = src.indexOf("void buildFromParent(");
-        var body = src.substring(start, src.indexOf("\n    }\n", start));
-        int early = body.indexOf("bindInstalledRuntimes(container)");
-        assertTrue(early >= 0 && early < body.indexOf("cloneRepos(container"), "bind before cloneRepos");
+        for (var method : List.of("void buildFromParent(", "void buildFromScratch(")) {
+            int start = src.indexOf(method);
+            var body = src.substring(start, src.indexOf("\n    }\n", start));
+            int early = body.indexOf("bindInstalledRuntimes(container)");
+            assertTrue(early >= 0 && early < body.indexOf("cloneRepos(container"), method + ": bind before cloneRepos");
+        }
     }
 
     @Test
