@@ -1,17 +1,17 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.Platform;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -226,15 +226,10 @@ class ProxyServiceTest {
     /** A PID of 0 or below would make `kill` signal a whole process group: never sent. */
     @Test
     void stopManualProxyNeverSignalsAProcessGroup() {
-        var out = new ByteArrayOutputStream();
-        var original = System.out;
-        System.setOut(new PrintStream(out, true));
-        try {
-            ProxyService.stopManualProxy(() -> 0, () -> -1);
-        } finally {
-            System.setOut(original);
-        }
-        assertEquals("Proxy is not running.", out.toString().strip());
+        var recorded = RecordingOutput.during(() -> ProxyService.stopManualProxy(() -> 0, () -> -1));
+        // The command's result, on stdout: a step, not a note
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP, "Proxy is not running.")),
+                recorded.events());
     }
 
     /**
@@ -272,15 +267,13 @@ class ProxyServiceTest {
         var originalHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.toString());
         try {
-            var log = new java.util.ArrayList<String>();
             // The restart action itself is a stub that fails the test if ever reached, rather
             // than the real launchctl/systemctl restartLocked() would call: were the recheck
             // this test pins to regress, a bare restartIfUnhealthy(...) call would restart
             // whatever service is actually installed on the machine running the test (review
             // on #916 — hit on the Mac runner while verifying this very test by reverting the fix).
-            assertTrue(ProxyService.restartIfUnhealthy("127.0.0.1", server.getAddress().getPort(), log::add,
+            assertTrue(ProxyService.restartIfUnhealthy("127.0.0.1", server.getAddress().getPort(),
                     () -> fail("already healthy: must not have restarted")));
-            assertEquals(java.util.List.of(), log, "already healthy: nothing should have been restarted");
         } finally {
             System.setProperty("user.home", originalHome);
             server.stop(0);

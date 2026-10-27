@@ -9,8 +9,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,18 +34,13 @@ class ProxyServiceInitGateTest {
     @TempDir
     Path home;
     private String savedHome;
-    private PrintStream savedErr;
-    private final ByteArrayOutputStream err = new ByteArrayOutputStream();
     private final List<String> commands = new ArrayList<>();
-    private final List<String> log = new ArrayList<>();
     private Predicate<String[]> savedRunner;
 
     @BeforeEach
     void isolate() {
         savedHome = System.getProperty("user.home");
         System.setProperty("user.home", home.toString());
-        savedErr = System.err;
-        System.setErr(new PrintStream(err, true));
         // A regression here must not restart whatever proxy service the test machine runs.
         savedRunner = ProxyService.replaceCommandRunner(command -> {
             commands.add(String.join(" ", command));
@@ -58,48 +51,46 @@ class ProxyServiceInitGateTest {
     @AfterEach
     void restore() {
         ProxyService.replaceCommandRunner(savedRunner);
-        System.setErr(savedErr);
         System.setProperty("user.home", savedHome);
     }
 
     @Test
     void installRefusesBeforeInitAndAsksForIt() {
-        assertFalse(ProxyService.install());
-        assertAsksForInit();
+        assertAsksForInit(RecordingOutput.during(() -> assertFalse(ProxyService.install())));
     }
 
     @Test
     void installRefusesWithAMarkerFromAnOlderInit() throws Exception {
         markerFromAnOlderInit();
 
-        assertFalse(ProxyService.install());
-        assertAsksForInit();
+        assertAsksForInit(RecordingOutput.during(() -> assertFalse(ProxyService.install())));
     }
 
     @Test
     void restartKeepsTheRunningProxyWithAMarkerFromAnOlderInit() throws Exception {
         markerFromAnOlderInit();
 
-        assertFalse(ProxyService.restart());
-        assertRefusedWithoutTouchingTheService(err.toString());
+        assertRefusedWithoutTouchingTheService(RecordingOutput.during(() -> assertFalse(ProxyService.restart())));
     }
 
-    /** The automatic paths report through a sink, which the TUI routes to its warning log. */
+    /** The automatic paths report to the caller's output, which the TUI routes to its warning log. */
     @Test
     void restartReportsItsRefusalToTheCallersLog() throws Exception {
         markerFromAnOlderInit();
+        var log = new RecordingOutput();
 
-        assertFalse(ProxyService.restart(log::add));
-        assertRefusedWithoutTouchingTheService(String.join("\n", log));
-        assertEquals("", err.toString(), "nothing printed past the sink");
+        var bound = RecordingOutput.during(() -> assertFalse(ProxyService.restart(log)));
+        assertRefusedWithoutTouchingTheService(log);
+        assertEquals(List.of(), bound.events(), "nothing reported past the caller's output");
     }
 
     @Test
     void restartIfUnhealthyRefusesWithAMarkerFromAnOlderInit() throws Exception {
         markerFromAnOlderInit();
 
-        assertFalse(ProxyService.restartIfUnhealthy("127.0.0.1", unusedPort(), log::add));
-        assertRefusedWithoutTouchingTheService(String.join("\n", log));
+        var log = new RecordingOutput();
+        assertFalse(ProxyService.restartIfUnhealthy("127.0.0.1", unusedPort(), log));
+        assertRefusedWithoutTouchingTheService(log);
     }
 
     /**
@@ -112,8 +103,8 @@ class ProxyServiceInitGateTest {
         markerFromAnOlderInit();
         var unit = staleUnitFile();
 
-        assertFalse(ProxyService.reinstallIfChanged(null, null));
-        assertRefusedWithoutTouchingTheService(err.toString());
+        assertRefusedWithoutTouchingTheService(
+                RecordingOutput.during(() -> assertFalse(ProxyService.reinstallIfChanged(null, null))));
         assertEquals("stale", Files.readString(unit));
     }
 
@@ -122,8 +113,7 @@ class ProxyServiceInitGateTest {
         markerFromAnOlderInit();
         var unit = staleUnitFile();
 
-        assertFalse(ProxyService.upgradeIfNeeded());
-        assertRefusedWithoutTouchingTheService(err.toString());
+        assertRefusedWithoutTouchingTheService(RecordingOutput.during(() -> assertFalse(ProxyService.upgradeIfNeeded())));
         assertEquals("stale", Files.readString(unit));
     }
 
@@ -137,9 +127,10 @@ class ProxyServiceInitGateTest {
         // A loopback gateway nothing listens on: the proxy reads as unhealthy at once.
         var incus = new FakeIncusDaemon().network("incusbr0", Map.of("ipv4.address", "127.0.0.2/8")).client();
 
-        assertFalse(ProxyHealthCheck.tryAutoRestart(incus, RecordingOutput.into(log)));
-        assertRefusedWithoutTouchingTheService(String.join("\n", log));
-        assertEquals("", err.toString(), "nothing printed past the sink");
+        var log = new RecordingOutput();
+        var bound = RecordingOutput.during(() -> assertFalse(ProxyHealthCheck.tryAutoRestart(incus, log)));
+        assertRefusedWithoutTouchingTheService(log);
+        assertEquals(List.of(), bound.events(), "nothing reported past the caller's output");
     }
 
     private static void markerFromAnOlderInit() throws Exception {
@@ -160,14 +151,21 @@ class ProxyServiceInitGateTest {
         }
     }
 
-    private void assertRefusedWithoutTouchingTheService(String output) {
-        assertTrue(output.contains("Run 'isx init' first"), output);
+    private void assertRefusedWithoutTouchingTheService(RecordingOutput output) {
+        assertRefusalIsAnError(output);
         assertEquals(List.of(), commands, "no systemctl call");
     }
 
-    private void assertAsksForInit() {
-        assertTrue(err.toString().contains("Run 'isx init' first"), err::toString);
+    private void assertAsksForInit(RecordingOutput output) {
+        assertRefusalIsAnError(output);
         assertFalse(Files.exists(Environment.proxyServiceFile()), "no service file before init");
         assertFalse(Files.exists(Environment.configDir().resolve("proxy.lock")), "no proxy lock taken");
+    }
+
+    /** The refusal is why the command failed: an error, not a warning or a note a log would drop. */
+    private static void assertRefusalIsAnError(RecordingOutput output) {
+        var errors = output.events(RecordingOutput.Kind.ERROR);
+        assertEquals(1, errors.size(), output.events()::toString);
+        assertTrue(errors.getFirst().msg().contains("Run 'isx init' first"), errors.getFirst()::msg);
     }
 }

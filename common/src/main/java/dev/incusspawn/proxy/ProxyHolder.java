@@ -1,7 +1,9 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.Output;
+
+import java.util.List;
 import java.util.Optional;
-import java.util.function.Consumer;
 import java.util.function.LongFunction;
 
 /**
@@ -115,13 +117,21 @@ public record ProxyHolder(long pid, String version, String user, boolean otherUs
     }
 
     /**
-     * Reports this holder to someone at a terminal: who holds the ports and how it ends. One
-     * wording for {@code isx proxy install}, {@code isx proxy start} and {@code isx proxy status}.
+     * Who holds the ports and how it ends, a line each. One wording for {@code isx proxy
+     * install}, {@code isx proxy start} and {@code isx proxy status}.
      */
-    public void report(Consumer<String> out) {
-        out.accept(describe() + ", holds " + ProxyConfig.DEFAULT_MITM_PORT + "/"
-                + ProxyConfig.DEFAULT_HEALTH_PORT + ": it is not this user's proxy service.");
-        out.accept(remedy());
+    public List<String> lines() {
+        return List.of(holds(), remedy());
+    }
+
+    /** Reports this holder as why the service cannot serve: an error, how it ends under it. */
+    public void report(Output out) {
+        out.error(holds(), remedy());
+    }
+
+    private String holds() {
+        return describe() + ", holds " + ProxyConfig.DEFAULT_MITM_PORT + "/"
+                + ProxyConfig.DEFAULT_HEALTH_PORT + ": it is not this user's proxy service.";
     }
 
     /** How the holder ends, for {@link #report} and {@code isx doctor}. */

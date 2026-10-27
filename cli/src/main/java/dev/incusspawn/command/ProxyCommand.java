@@ -112,7 +112,7 @@ public class ProxyCommand extends BaseCommand {
                     System.out.println(status == ProxyHealthCheck.ProxyStatus.RUNNING
                             ? "Proxy is running." : "Proxy is running (waiting for DNS configuration).");
                     if (holder != null) {
-                        holder.report(line -> System.out.println("  " + BuildOutput.styled(
+                        holder.lines().forEach(line -> System.out.println("  " + BuildOutput.styled(
                                 BuildOutput.BOLD + BuildOutput.RED, ">>> " + line)));
                     }
                     // Another user's drift and auth error are theirs to act on, not this user's.
@@ -499,7 +499,7 @@ public class ProxyCommand extends BaseCommand {
             if (!ProxyService.restart()) return CommandResult.valueOf(1);
             // A healthy answer may be another proxy's, which this restart did not reach (#1570).
             if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())
-                    && !ProxyService.answeringIsTheService(System.err::println)) {
+                    && !ProxyService.answeringIsTheService()) {
                 return CommandResult.valueOf(1);
             }
             return CommandResult.SUCCESS;
@@ -525,7 +525,7 @@ public class ProxyCommand extends BaseCommand {
                 // no restart of this service can take the ports from it.
                 var holder = ProxyService.foreignHolder(info);
                 if (holder != null && holder.otherUser()) {
-                    holder.report(System.err::println);
+                    holder.report(BuildOutput.bound());
                     return CommandResult.FAILURE;
                 }
                 // An upgrade restarts the service: the drift read above is then the old proxy's,
@@ -543,12 +543,12 @@ public class ProxyCommand extends BaseCommand {
                 }
                 if (!ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
                     System.err.println("Warning: proxy service is registered but not responding.");
-                    ProxyService.reportMacOsJob("");
+                    ProxyService.reportMacOsJob();
                     System.err.println("Check logs with: isx proxy logs");
                     return CommandResult.FAILURE;
                 }
                 // Something answering is not enough: it may be another proxy on the ports (#1570).
-                return ProxyService.answeringIsTheService(System.err::println)
+                return ProxyService.answeringIsTheService()
                         ? CommandResult.SUCCESS : CommandResult.FAILURE;
             }
             if (!ProxyService.install()) {

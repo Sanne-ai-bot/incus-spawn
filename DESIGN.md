@@ -4844,7 +4844,9 @@ A bare `System.err` line reaches the terminal only.
 The sites on the branch path that printed one (GUI and KVM passthrough's explanations, the CA mismatch note, #1690) now warn through `BuildOutput`.
 GUI and KVM passthrough return why they could not, the cause and then what to do about it, and the branch makes it one warning with what it does instead (`Unavailable.warn`), since the log used to keep only "Continuing without GUI passthrough." with no cause.
 The pre-upgrade CA note is a warning rather than a note, so the TUI's copying binding keeps it.
-`common/vm` and `common/proxy`, `ProxyService` apart, report through `BuildOutput` too: the VM's start before the TUI opens is the same header, start and wait as `isx vm start`, and a proxy refusal is one banner the TUI's log keeps (`ProxyHealthCheck.refusal`).
+`common/vm` and `common/proxy` report through `BuildOutput` too: the VM's start before the TUI opens is the same header, start and wait as `isx vm start`, and a proxy refusal is one banner the TUI's log keeps (`ProxyHealthCheck.refusal`).
+`ProxyService` reports its install, stop and restart the same way: what was done as steps, why it failed as an error with the journal's lines or launchd's last run under it.
+A restart reached from a start (`tryAutoRestart`) reports to the `Output` its caller hands it, and so does `LaunchdJob`, whose refusals are warnings the TUI's log keeps.
 The proxy daemon runs some of that code (the bridge DNS, certificates, the API traffic log), so it binds `Output.logTo`, which keeps progress as info lines instead of dropping them, as a log-only output would.
 Why a command failed is an `error`, a kind of its own (red `Error:` on stderr, no closing blank line), since a warning would say it went on; off a terminal it is a diagnostic, and the TUI's copying binding keeps it.
 Notes go to their own sink, which the proxy prints on stderr alone (`ProxyLog.trace`): the API traffic log writes one per request, which the lifecycle log of starts and reloads should not keep.
@@ -4888,7 +4890,7 @@ A binding is process-wide too, so recording does not make tests safe to run in p
 `RecordingOutput` (common test-jar) is the recording binding: every method of `Output` records a typed event (kind, message, details), and `OutputBindingTest` holds it to every method, so no kind falls through unrecorded.
 A test binds it, or hands it to code that takes an `Output`; how an event is drawn is `BuildOutputTest`'s alone.
 Checks whose only point was that nothing reached stderr, or that a copy reached a listener, were dropped, since the raw-output gate and the binding tests prove there is no other path; tests of which warnings a flow raises stay, reading the recorder or the log binding.
-What still prints raw (the init flow, much of `cli/command`, `ProxyService`, the proxy's log) cannot be recorded yet, so its tests keep their swap until its step moves it to the seam; `StreamSwapGateTest` lists them, each with why, and the list only shrinks.
+What still prints raw (the init flow, much of `cli/command`, the proxy's log) cannot be recorded yet, so its tests keep their swap until its step moves it to the seam; `StreamSwapGateTest` lists them, each with why, and the list only shrinks.
 A class that calls another's swapping helper counts as swapping; it lists classes, not swaps, so a listed class's own helper can take a new caller, which review has to catch until the class is dropped.
 
 **One status line cannot hold several warnings.**
