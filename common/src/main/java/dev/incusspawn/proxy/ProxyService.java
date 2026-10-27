@@ -1211,10 +1211,19 @@ public final class ProxyService {
         return Files.exists(proxyPlistFile());
     }
 
-    /** On macOS, notes what launchd says of the proxy job's last runs, if anything. */
-    public static void reportMacOsJob() {
-        var described = macOsJobLastRun();
-        if (described != null) BuildOutput.note(described);
+    /** Where to look when the service does not do what it was asked. */
+    public static final String CHECK_LOGS = "Check logs with: isx proxy logs";
+
+    /**
+     * The lines under a service that is not responding: what launchd says of the proxy job's
+     * last runs on macOS, if anything, and where its logs are.
+     */
+    public static String[] notResponding() {
+        var details = new ArrayList<String>();
+        var lastRun = macOsJobLastRun();
+        if (lastRun != null) details.add(lastRun);
+        details.add(CHECK_LOGS);
+        return details.toArray(String[]::new);
     }
 
     /** What launchd says of the proxy job's last runs on macOS, or null when it says nothing. */
@@ -1450,11 +1459,7 @@ public final class ProxyService {
                 return true;
             }
             ProxyLog.info("Service installed but not healthy");
-            var details = new ArrayList<String>();
-            var lastRun = macOsJobLastRun();
-            if (lastRun != null) details.add(lastRun);
-            details.add("Check logs with: isx proxy logs");
-            BuildOutput.error("Services installed but proxy is not responding.", details.toArray(String[]::new));
+            BuildOutput.error("Services installed but proxy is not responding.", notResponding());
             return false;
         } else {
             ProxyLog.info("Service installed (waiting for VM)");

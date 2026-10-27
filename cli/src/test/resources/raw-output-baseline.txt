@@ -25,10 +25,7 @@
 2 0 cli/src/main/java/dev/incusspawn/command/ListCommand.java
 1 0 cli/src/main/java/dev/incusspawn/command/NpmUpdate.java
 7 0 cli/src/main/java/dev/incusspawn/command/ProjectCommand.java
-37 12 cli/src/main/java/dev/incusspawn/command/ProxyCommand.java
-23 4 cli/src/main/java/dev/incusspawn/command/ProxyStartCommand.java
 6 0 cli/src/main/java/dev/incusspawn/command/RepoCloner.java
-30 19 cli/src/main/java/dev/incusspawn/command/ResetCommand.java
 12 2 cli/src/main/java/dev/incusspawn/command/RunCommand.java
 8 3 cli/src/main/java/dev/incusspawn/command/ShellCommand.java
 3 0 cli/src/main/java/dev/incusspawn/command/SkillInstaller.java

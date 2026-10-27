@@ -244,6 +244,7 @@ Tests read what code reported from `RecordingOutput` (common test-jar), never fr
 
 **Output a script reads is a contract.**
 `--format=plain|json` (on `isx list` and every other query command, and `isx branch`) goes through `OutputFormat` (`common/util`): one ordered map per record feeds both formats.
+Every format, `table` included, is printed to `BuildOutput.results()`, the bound output's stream for a command's answer: stdout on a terminal, nothing while the TUI draws.
 Fields are added, never renamed, removed or reordered.
 Stdout holds only results, never colour, glyphs, progress or prose.
 No value writes a control character raw (`plain` spaces them through `OutputFormat.oneLine`, `json` escapes them, #1118).
