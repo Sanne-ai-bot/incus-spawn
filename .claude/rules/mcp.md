@@ -30,7 +30,7 @@ Codex rejects `max_turns` and a configured `delegate-max-turns` ceiling; it does
 **No Quarkus extensions for it.**
 The protocol is hand-rolled (`JsonRpc`, `McpServer`, `StdioTransport`) because the Quarkus MCP extension, even initialized on demand, added ~1.7 ms (+55%) to every isx command's startup.
 Anything new here must not add runtime-init work to other commands: measure native `hyperfine 'isx --help'` against main if in doubt.
-Messages are jjq `JqValue` trees, read with `JqValues.parseStrict` (non-JSON is a `-32700` parse error); no `@RegisterForReflection` DTOs.
+Messages are jjq `JqValue` trees, read with `Jjq.parseForeign` (a lone surrogate escape reads as U+FFFD; anything else malformed is a `-32700` parse error saying what and where); no `@RegisterForReflection` DTOs.
 
 **Stdout is the protocol channel.**
 `StdioGuard.install()` runs first: the transport owns fd 0/1, `System.out` goes to stderr, `System.in` is empty, `Headless.enable()` turns off `TerminalProgress` animation and makes `Prompts.console()` return null.

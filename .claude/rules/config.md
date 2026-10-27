@@ -93,5 +93,6 @@ Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (DESIGN.md "
 - A converter that reads scalars from the tree uses `Jjq.text`, so `0022` stays `0022`; `asText()` gives the resolved `18`.
 - An object is never iterated with `asList()` (empty for an object); use `JqObject.values()`/`forEach`.
 - An `Integer` field takes `@JqConverter(IntegerConverter.class)`: jjq bound `.inf` and `.nan` as 0 before 0.2.4 (and `Jjq.exactInt` still refuses them, now non-finite) where a bad value must fail the file, refuses a blank string Jackson left unset, and names the field as a `$` path rather than as written.
-- JSON is read with `JqValues.parseStrict`, and a parse failure is shown with `Jjq.brief`.
-  `~/.claude.json` is read with `ClaudeSetup.parseClaudeJson` instead, which first drops the approval line the login script appends (a repeated key) and reads a lone surrogate escape as U+FFFD (refused by strict parsing since jjq 0.2.4).
+- isx's own JSON (its stamps, its proxy's endpoints, `isx mcp`'s output, Incus's answers) is read with `JqValues.parseStrict`, and a parse failure is shown with `Jjq.brief`.
+  JSON another program wrote (a tool's file, an agent's events, an MCP client's message, an API's answer) is read with `Jjq.parseForeign(json, source)`: a lone surrogate escape reads as U+FFFD, everything else malformed fails as `<source> is not valid JSON: <why> at line L, column C` (DESIGN.md "jjq rather than Jackson").
+  `~/.claude.json` is read with `ClaudeSetup.parseClaudeJson`, which first drops the approval line the login script appends (a repeated key).

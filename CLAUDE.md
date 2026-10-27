@@ -108,7 +108,7 @@ Tests that run `git credential` or log in over HTTPS configure Git with `Hermeti
 
 - **Java 25**, **Quarkus 3.x** with aesh for CLI commands
 - **Tamboui** for the interactive TUI (terminal UI framework)
-- **jjq** (`io.hyperfoil.tools:jjq-*`) for YAML and JSON: definitions and `config.yaml` bind through generated `@JqMapped` mappings (`Jjq`), and JSON from Incus, MCP and the network is read with `JqValues.parseStrict`
+- **jjq** (`io.hyperfoil.tools:jjq-*`) for YAML and JSON: definitions and `config.yaml` bind through generated `@JqMapped` mappings (`Jjq`), and JSON is read with `JqValues.parseStrict` when isx or Incus wrote it, and with `Jjq.parseForeign` (a lone surrogate escape reads as U+FFFD, nothing else is let through) when another program did
 - **Quarkus CDI** for dependency injection (tool discovery, command wiring)
 
 ## Module Structure

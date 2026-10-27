@@ -199,9 +199,9 @@ final class McpBridge {
     private void post(HttpServerRequest req, String instance, Buffer body) {
         JqValue message;
         try {
-            message = JqValues.parseStrict(body.toString(StandardCharsets.UTF_8));
+            message = Jjq.parseForeign(body.getBytes(), "the MCP request");
         } catch (RuntimeException e) {
-            refuse(req, 400, "not JSON: " + Jjq.brief(e));
+            refuse(req, 400, Jjq.brief(e));
             return;
         }
         if (!message.isObject()) {

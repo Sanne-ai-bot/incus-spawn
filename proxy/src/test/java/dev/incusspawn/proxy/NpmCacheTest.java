@@ -390,6 +390,18 @@ class NpmCacheTest {
         assertEquals(HELLO_SHA512, result.digest(), "the tarball is verified on its SHA-512");
     }
 
+    /** A package's metadata is the registry's, written by Node tools: a cut description must not cost its digest. */
+    @Test
+    void aLoneSurrogateEscapeInTheMetadataKeepsTheDigestAndBrokenMetadataHasNone() {
+        var cut = "{\"description\":\"cut \\ud83d\",\"dist\":{\"integrity\":" + quoted(HELLO_INTEGRITY) + "}}";
+        assertEquals(HELLO_SHA512, ArtifactCacheHandler.npmDigest(cut.getBytes(StandardCharsets.UTF_8)));
+        var broken = "{\"description\":\"\\q\",\"dist\":{\"integrity\":" + quoted(HELLO_INTEGRITY) + "}}";
+        assertNull(ArtifactCacheHandler.npmDigest(broken.getBytes(StandardCharsets.UTF_8)));
+        // In the integrity itself the replacement character is no base64: no digest, never a repaired one
+        var cutIntegrity = "{\"dist\":{\"integrity\":" + quoted(HELLO_INTEGRITY + "\\ud83d") + "}}";
+        assertNull(ArtifactCacheHandler.npmDigest(cutIntegrity.getBytes(StandardCharsets.UTF_8)));
+    }
+
     @Test
     void shasumIsTheFallbackWithoutAnIntegrity() {
         assertEquals(SHA1_DIGEST, npmDigest("{\"shasum\":\"" + "A".repeat(40) + "\"}"));

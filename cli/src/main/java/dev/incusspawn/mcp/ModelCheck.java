@@ -1,5 +1,6 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.McpConfig;
 
 import java.io.ByteArrayOutputStream;
@@ -89,7 +90,7 @@ final class ModelCheck {
         var success = false;
         var last = out.strip().lines().reduce((a, b) -> b).orElse("");
         try {
-            var json = last.isEmpty() ? null : JsonRpc.parse(last);
+            var json = last.isEmpty() ? null : Jjq.parseForeign(last, "Claude Code's answer");
             if (json instanceof io.hyperfoil.tools.jjq.value.JqObject obj) {
                 isError = JsonRpc.bool(obj, "is_error", false);
                 result = JsonRpc.text(obj, "result", null);

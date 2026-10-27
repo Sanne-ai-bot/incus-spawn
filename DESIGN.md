@@ -4353,7 +4353,14 @@ Jackson's semantics are the ones users' files were written against, so where jjq
 - A strict-parse failure quotes the whole document; messages show `Jjq.brief`.
 - A JSON document with a repeated key is refused, where Jackson kept the last value: a request body, an MCP message or `~/.claude.json` with one fails like malformed JSON rather than being read one way or the other.
   The one exception is the `customApiKeyResponses` approval the login script repeats on the last line of `~/.claude.json`: `ClaudeSetup.parseClaudeJson` drops that line before parsing (#1638).
-  It also reads a lone surrogate escape, which `JSON.stringify` writes for a string cut inside a pair, as U+FFFD: since jjq 0.2.4 the strict parse refuses one, and a merge that cannot read the file drops what earlier layers put there.
+  It reads the rest as JSON another program wrote (`Jjq.parseForeign`, below), since a merge that cannot read the file drops what earlier layers put there.
+- isx's own JSON is read with `JqValues.parseStrict`: its stamps, its proxy's endpoints, `isx mcp`'s output, and Incus's answers, where isx keeps its state and whose Go encoder cannot write a lone surrogate.
+  JSON another program wrote is read with `Jjq.parseForeign`: a tool's file (`~/.claude.json`, the Gemini settings), Claude Code's and Codex's events, an MCP client's message, an API's answer.
+  It differs on one point: a lone surrogate escape reads as U+FFFD.
+  RFC 8259 allows one, and `JSON.stringify` writes one for a string cut inside a pair, but jjq 0.2.4 refuses the whole document for it (Hyperfoil/jjq#146), and a user cannot fix a file another tool keeps rewriting.
+  Anything else malformed still fails, as `<source> is not valid JSON: <why> at line L, column C`.
+  The escapes are rewritten, length for length, only after the strict parse refused one, so a clean document costs nothing and a later error's position holds.
+  The rewrite goes when jjq offers the choice in its `ParseOptions`.
 - An `Integer` field binds through `IntegerConverter`: jjq bound `.inf` and `.nan` as 0 before 0.2.4, which for `orphan-grace-hours` in `mcp.yaml` or `max-instances` would fail open, and refuses `""`, which Jackson left unset (a word, a boolean, a fraction or an out-of-range number it refuses itself since 0.2.3).
   Since 0.2.4 taking their decimal value throws, so `Jjq.exactInt` refuses a non-finite number before it does.
 The upstream issues behind these are Hyperfoil/jjq#126-#128 (fixed in 0.2.2), #131-#134 (fixed in 0.2.3), #150 and #163 (fixed in 0.2.4), #146 (a lone surrogate escape refused by strict parsing since 0.2.4) and #130 (open).

@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.EnvEntry;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
@@ -112,7 +113,7 @@ public class GeminiSetup implements ToolSetup {
     }
 
     static String selectApiKeyAuth(String json) {
-        if (!(JqValues.parseStrict(json) instanceof JqObject root)) {
+        if (!(Jjq.parseForeign(json, CONFIG_PATH) instanceof JqObject root)) {
             throw new IllegalStateException("Gemini settings must be a JSON object");
         }
         var security = objectOrEmpty(root, "security");

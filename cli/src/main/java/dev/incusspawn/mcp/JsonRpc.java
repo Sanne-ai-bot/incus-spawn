@@ -3,7 +3,6 @@ package dev.incusspawn.mcp;
 import io.hyperfoil.tools.jjq.value.JqNull;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
-import io.hyperfoil.tools.jjq.value.JqValues;
 
 /**
  * JSON-RPC 2.0 message shapes, over jjq trees so nothing needs reflection registration in
@@ -17,10 +16,6 @@ final class JsonRpc {
     static final int INVALID_PARAMS = -32602;
 
     private JsonRpc() {}
-
-    static JqValue parse(String line) {
-        return JqValues.parseStrict(line);
-    }
 
     static JqObject emptyObject() {
         return JqObject.builder(0).build();

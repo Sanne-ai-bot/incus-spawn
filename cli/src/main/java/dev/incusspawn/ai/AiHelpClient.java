@@ -4,7 +4,6 @@ import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
-import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.config.SpawnConfig;
 
 import dev.incusspawn.proxy.ProxyConfig;
@@ -312,7 +311,7 @@ public class AiHelpClient {
                 if (!line.startsWith("data: ")) continue;
                 var data = line.substring(6).strip();
                 if ("[DONE]".equals(data)) break;
-                var node = JqValues.parseStrict(data);
+                var node = Jjq.parseForeign(data, "the AI provider's stream event");
                 var text = node.getField("choices").getElement(0).getField("delta").pathText("content", null);
                 if (text != null) onChunk.accept(text);
                 var reported = node.getField("usage");
@@ -336,7 +335,7 @@ public class AiHelpClient {
                 var data = line.substring(6).strip();
                 if ("[DONE]".equals(data)) break;
 
-                var node = JqValues.parseStrict(data);
+                var node = Jjq.parseForeign(data, "the AI provider's stream event");
                 var type = node.pathText("type", "");
 
                 switch (type) {
@@ -417,7 +416,7 @@ public class AiHelpClient {
         var detail = new StringBuilder("API error (").append(status);
         String message = null;
         try {
-            var tree = JqValues.parseStrict(body);
+            var tree = Jjq.parseForeign(body, "the AI provider's error");
             message = tree.getField("error").pathText("message", null);
             var type = tree.getField("error").pathText("type", null);
             if (type != null) detail.append(", ").append(type);

@@ -1,8 +1,8 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
-import io.hyperfoil.tools.jjq.value.JqValues;
 import io.vertx.core.buffer.Buffer;
 
 import java.nio.charset.StandardCharsets;
@@ -516,7 +516,7 @@ final class ApiActivity {
         private void read(int offset, int length) {
             JqValue node;
             try {
-                node = JqValues.parseStrict(java.util.Arrays.copyOfRange(pending, offset, offset + length));
+                node = Jjq.parseForeign(java.util.Arrays.copyOfRange(pending, offset, offset + length), "the API event");
             } catch (RuntimeException e) {
                 return;
             }
