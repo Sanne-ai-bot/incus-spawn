@@ -174,7 +174,7 @@ public class ResetCommand extends BaseCommand {
         if (proxyInstalled) {
             BuildOutput.header("Uninstalling proxy service");
             try {
-                ProxyService.uninstall(incus);
+                if (!ProxyService.uninstall(incus)) failed = true;
             } catch (Exception e) {
                 System.err.println("Warning: proxy uninstall failed: " + e.getMessage());
                 failed = true;

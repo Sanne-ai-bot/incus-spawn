@@ -566,8 +566,7 @@ public class ProxyCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            ProxyService.uninstall(RuntimeServices.incus());
-            return CommandResult.SUCCESS;
+            return ProxyService.uninstall(RuntimeServices.incus()) ? CommandResult.SUCCESS : CommandResult.FAILURE;
         }
     }
 
