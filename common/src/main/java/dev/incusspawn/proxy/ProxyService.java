@@ -365,10 +365,16 @@ public final class ProxyService {
      * still running keeps its DNS overrides and redirect rules, which it needs.
      */
     public static boolean uninstall(IncusClient incus) {
-        if (!uninstallService()) return false;
+        return uninstall(ProxyService::uninstallService, () -> ProxyConfig.clearBridgeDns(incus),
+                ProxyConfig::clearRedirectRules);
+    }
+
+    /** {@link #uninstall(IncusClient)} with its three removals replaceable, for tests. */
+    static boolean uninstall(BooleanSupplier service, BooleanSupplier bridgeDns, BooleanSupplier redirectRules) {
+        if (!service.getAsBoolean()) return false;
         // Both are tried: one that stays does not keep the other
-        var dnsCleared = ProxyConfig.clearBridgeDns(incus);
-        return ProxyConfig.clearRedirectRules() && dnsCleared;
+        var dnsCleared = bridgeDns.getAsBoolean();
+        return redirectRules.getAsBoolean() && dnsCleared;
     }
 
     private static boolean uninstallLocked(BooleanSupplier active) {
