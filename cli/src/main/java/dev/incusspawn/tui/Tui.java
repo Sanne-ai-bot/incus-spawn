@@ -526,16 +526,24 @@ public class Tui {
                             var parent = newTemplate.parent();
                             var dir = newTemplate.locationDir();
                             var targetPath = TemplatesCommand.createTemplateFile(pendingActionTarget.name(), parent, dir);
-                            TemplatesCommand.editLoop(targetPath, pendingActionTarget.name(), false);
-                            statusMessage = "Created template " + pendingActionTarget.name();
+                            var valid = TemplatesCommand.editLoop(targetPath, pendingActionTarget.name(), false);
+                            // Not valid when the file was left broken, or the editor never started
+                            statusMessage = "Created template " + pendingActionTarget.name()
+                                    + (valid ? "" : ", but its edit did not end with a valid file");
                         } catch (Exception e) {
                             statusMessage = "Failed to create template: " + e.getMessage();
                         }
                     }
                     case EDIT_TEMPLATE -> {
                         returnToTemplate = pendingActionTarget.name();
-                        try { var editCmd = new TemplatesCommand.Edit(); editCmd.name = pendingActionTarget.name(); editCmd.doExecute(); }
-                        catch (Exception e) { statusMessage = "Edit failed: " + e.getMessage(); }
+                        try {
+                            var editCmd = new TemplatesCommand.Edit();
+                            editCmd.name = pendingActionTarget.name();
+                            // The edit loop ends invalid when the editor could not start or the file was left broken
+                            if (editCmd.doExecute().getResultValue() != 0) {
+                                statusMessage = "Editing template " + pendingActionTarget.name() + " did not end with a valid file";
+                            }
+                        } catch (Exception e) { statusMessage = "Edit failed: " + e.getMessage(); }
                     }
                     case EXECUTE_ACTION -> {
                         var result = pendingToolAction.execute(pendingActionTarget);
