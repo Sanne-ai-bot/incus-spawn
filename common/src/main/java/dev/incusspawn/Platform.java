@@ -1,5 +1,6 @@
 package dev.incusspawn;
 
+import dev.incusspawn.util.BuildOutput;
 import java.io.IOException;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
@@ -46,7 +47,7 @@ public final class Platform {
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
             pb.start();
         } catch (IOException e) {
-            System.err.println("Desktop notification failed: " + e.getMessage());
+            BuildOutput.warn("Desktop notification failed: " + e.getMessage());
         }
     }
 

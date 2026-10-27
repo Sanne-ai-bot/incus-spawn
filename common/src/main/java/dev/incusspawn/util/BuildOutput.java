@@ -90,6 +90,34 @@ public final class BuildOutput {
         return TerminalLink.plainText(text);
     }
 
+    /**
+     * The lines of what a guest command printed, each stream in turn, as {@link #guestText}: the
+     * details of a warning that shows why the command failed. Blank streams add nothing.
+     */
+    public static String[] guestLines(String... texts) {
+        return Arrays.stream(texts)
+                .filter(t -> t != null && !t.isBlank())
+                .flatMap(t -> guestText(t).lines())
+                .toArray(String[]::new);
+    }
+
+    /** How many lines of a failed command's output a warning shows: the end, where it says why. */
+    public static final int FAILED_OUTPUT_LINES = 40;
+
+    /**
+     * The last {@link #FAILED_OUTPUT_LINES} of {@code lines}, after a line saying how many came
+     * before: a verbose npm log runs to thousands, which a warning in the TUI's log must not hold.
+     * One line over is shown whole, since the marker would take its place.
+     */
+    public static String[] lastOf(String[] lines) {
+        // One line more is shown whole: the marker would take its place and save nothing
+        if (lines.length <= FAILED_OUTPUT_LINES + 1) return lines;
+        var kept = new String[FAILED_OUTPUT_LINES + 1];
+        kept[0] = "(" + (lines.length - FAILED_OUTPUT_LINES) + " earlier lines not shown)";
+        System.arraycopy(lines, lines.length - FAILED_OUTPUT_LINES, kept, 1, FAILED_OUTPUT_LINES);
+        return kept;
+    }
+
     /** The last carriage-return segment of {@code line} with text in it, or "" when none has. */
     private static String lastFrame(String line) {
         var frames = line.split("\r");

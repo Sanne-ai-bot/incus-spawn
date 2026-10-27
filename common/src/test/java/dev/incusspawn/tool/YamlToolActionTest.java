@@ -370,23 +370,22 @@ class YamlToolActionTest {
             @Override public boolean hasExtension(String cli, String id) { return false; }
         };
         var originalIn = System.in;
-        var originalOut = System.out;
-        var printed = new java.io.ByteArrayOutputStream();
+        dev.incusspawn.util.RecordingOutput printed;
         try {
             System.setIn(new java.io.InputStream() {
                 @Override public int read() { throw new AssertionError("read the terminal"); }
             });
-            System.setOut(new java.io.PrintStream(printed));
-            var result = YamlToolAction.checkVscodePrerequisites(
-                    "vscode://vscode-remote/ssh-remote+dev-1/home/agentuser/p", false, probe);
-            assertFalse(result.success());
-            assertTrue(result.message().contains("Remote - SSH"), result.message());
-            assertFalse(result.message().contains("\n"));
+            printed = dev.incusspawn.util.RecordingOutput.during(() -> {
+                var result = YamlToolAction.checkVscodePrerequisites(
+                        "vscode://vscode-remote/ssh-remote+dev-1/home/agentuser/p", false, probe);
+                assertFalse(result.success());
+                assertTrue(result.message().contains("Remote - SSH"), result.message());
+                assertFalse(result.message().contains("\n"));
+            });
         } finally {
             System.setIn(originalIn);
-            System.setOut(originalOut);
         }
-        assertEquals("", printed.toString());
+        assertEquals(List.of(), printed.events());
     }
 
     @Test

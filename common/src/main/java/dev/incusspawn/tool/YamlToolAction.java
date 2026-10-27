@@ -320,9 +320,9 @@ public class YamlToolAction implements ToolAction {
                     return ActionResult.error("VS Code's 'Remote - SSH' extension is not installed: "
                             + "install ms-vscode-remote.remote-ssh, then retry");
                 }
-                System.out.println(
-                        "The VS Code 'Remote - SSH' extension is required for this action but is not installed.\n" +
-                        "\nPress Enter to open VS Code and install it...");
+                BuildOutput.step(
+                        "The VS Code 'Remote - SSH' extension is required for this action but is not installed.");
+                BuildOutput.prompt("Press Enter to open VS Code and install it...");
                 try { System.in.read(); } catch (java.io.IOException ignored) {}
                 dev.incusspawn.Platform.openUrl("vscode:extension/ms-vscode-remote.remote-ssh");
                 return ActionResult.error(

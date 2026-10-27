@@ -86,7 +86,7 @@ public final class NpmGlobalInstall {
     static void install(Container c, String displayName, String npmPackage) {
         var npm = npmInstall(c, npmPackage, new Retries());
         if (!npm.success()) {
-            throw npmFailed(displayName, npm);
+            throw npmFailed(c, displayName, npm);
         }
     }
 
@@ -98,7 +98,7 @@ public final class NpmGlobalInstall {
         var retries = new Retries();
         var npm = npmInstall(c, cli.npmPackage(), retries);
         if (!npm.success()) {
-            throw npmFailed(cli.displayName(), npm);
+            throw npmFailed(c, cli.displayName(), npm);
         }
         var check = checkPlatformPackage(c, cli);
         if (check.missing() != null) {
@@ -107,20 +107,19 @@ public final class NpmGlobalInstall {
             check = reinstalled.check();
         }
         if (!npm.success()) {
-            throw npmFailed(cli.displayName(), npm);
+            throw npmFailed(c, cli.displayName(), npm);
         }
         if (check.notInstalled()) {
-            BuildOutput.stepBreak();
+            c.out().stepBreak();
             throw new IncusException("npm reported installing " + cli.npmPackage()
                     + ", but it is not in npm's global root");
         }
         if (check.missing() != null) {
-            BuildOutput.stepBreak();
-            printSkipReasons(npm);
-            throw skipped(cli, check.missing());
+            c.out().stepBreak();
+            throw withSkipReasons(c, skipped(cli, check.missing()), npm);
         }
         if (!c.shAsUser("agentuser", "command -v " + cli.binary()).success()) {
-            BuildOutput.stepBreak();
+            c.out().stepBreak();
             throw new IncusException(cli.displayName() + " was installed, but '" + cli.binary()
                     + "' is not on agentuser's PATH");
         }
@@ -194,10 +193,11 @@ public final class NpmGlobalInstall {
             case NOT_INSTALLED -> new Check(true, null);
             case PLATFORM_PACKAGE_MISSING -> new Check(false, result.stdout().strip());
             default -> {
-                BuildOutput.stepBreak();
-                if (!result.stderr().isBlank()) System.err.print(BuildOutput.guestText(result.stderr()));
-                throw new IncusException("Could not check " + cli.displayName() + "'s platform package"
-                        + " (exit code " + result.exitCode() + ")");
+                c.out().stepBreak();
+                // Its stdout is the check's answer, so only what went wrong is shown
+                throw Container.failed(c.out(), "The check printed:", "Could not check " + cli.displayName()
+                        + "'s platform package (exit code " + result.exitCode() + ")",
+                        new IncusClient.ExecResult(result.exitCode(), "", result.stderr()));
             }
         };
     }
@@ -231,11 +231,10 @@ public final class NpmGlobalInstall {
         return REGISTRY_MISS.matcher(npm.stdout()).find() || REGISTRY_MISS.matcher(npm.stderr()).find();
     }
 
-    private static IncusException npmFailed(String displayName, IncusClient.ExecResult npm) {
-        BuildOutput.stepBreak();
-        if (!npm.stdout().isBlank()) System.err.print(BuildOutput.guestText(npm.stdout()));
-        if (!npm.stderr().isBlank()) System.err.print(BuildOutput.guestText(npm.stderr()));
-        return new IncusException("Failed to install " + displayName + " (exit code " + npm.exitCode() + ")");
+    private static IncusException npmFailed(Container c, String displayName, IncusClient.ExecResult npm) {
+        c.out().stepBreak();
+        return Container.failed(c.out(), "npm printed:",
+                "Failed to install " + displayName + " (exit code " + npm.exitCode() + ")", npm);
     }
 
     private static IncusException skipped(PlatformSplitCli cli, String platformPackage) {
@@ -245,8 +244,15 @@ public final class NpmGlobalInstall {
                 + " or the registry does not serve it yet");
     }
 
-    private static void printSkipReasons(IncusClient.ExecResult npm) {
-        skipReasons(npm).forEach(System.err::println);
+    /**
+     * {@code skipped}, after warning with the end of why npm dropped the platform package, from its
+     * log; the exception carries all of it for the failure report.
+     */
+    private static IncusException withSkipReasons(Container c, IncusException skipped, IncusClient.ExecResult npm) {
+        var reasons = skipReasons(npm);
+        if (reasons.isEmpty()) return skipped;
+        c.out().warn("npm's log says why:", BuildOutput.lastOf(reasons.toArray(String[]::new)));
+        return skipped.withStepOutput("npm's log says why:\n" + String.join("\n", reasons) + "\n\n");
     }
 
     /**

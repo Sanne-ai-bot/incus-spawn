@@ -80,10 +80,6 @@ public final class AutoRemoteService {
         }
     }
 
-    public static void removeRemotes(String instanceName) {
-        removeRemotes(instanceName, System.out::println);
-    }
-
     public static void removeRemotes(String instanceName, Consumer<String> output) {
         var config = SpawnConfig.load();
         var candidates = new java.util.LinkedHashSet<>(GitRemoteUtils.findAllCandidateRepoDirs(config));

@@ -39,7 +39,10 @@ Output captured from a guest command is someone else's text too (#1588).
 Its one pattern ends a control string at the next escape or introducer, as a terminal does, so a guest's long line costs linear time, never a stall.
 A build step's `StepProgress` cleans its detail and log through it as it is made, the detail also through `OutputFormat.oneLine`, since a prime is code the repository controls.
 So the live line, the plain failure line on stdout, the printed log and the saved failure report all show it as text, and the failure line is the last one with text left.
-`Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` print a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
+`Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` show a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
+They report it as one warning, its lines as details (`BuildOutput.guestLines`), to the container's `Output`: the caller's when it made the `Container` with one, else the bound output (#1703).
+A long output shows its last 40 lines (`BuildOutput.lastOf`), after one saying how many came before.
+The exception thrown carries all of it (`Container.failed`, `withStepOutput`), so the build's failure report keeps what the warning leaves out.
 `VmAgentFailure` quotes a VM's console lines through it too, since whatever runs in the guest can write its console.
 `AnsiEscapeGateTest` fails on any raw CSI/OSC literal (`\033[`, `\033]`) whose line lacks a `// raw ANSI: <why>` comment, apart from the gates, `TerminalProgress` and `ShellStatusBar` (#1082).
 `RawOutputGateTest` fails on raw stream use or replacement (`System.setOut`/`setErr`), console or `printStackTrace()` use and on a print literal that starts with spaces, outside the gate classes (#1703).

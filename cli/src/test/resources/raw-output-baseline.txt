@@ -30,14 +30,8 @@
 9 0 cli/src/main/java/dev/incusspawn/tui/PreTuiOutput.java
 5 0 cli/src/main/java/dev/incusspawn/tui/ShellLaunch.java
 5 0 cli/src/main/java/dev/incusspawn/tui/Tui.java
-1 0 common/src/main/java/dev/incusspawn/Platform.java
-1 0 common/src/main/java/dev/incusspawn/git/AutoRemoteService.java
 7 0 common/src/main/java/dev/incusspawn/git/HostRepoRefresh.java
-4 0 common/src/main/java/dev/incusspawn/incus/Container.java
-4 0 common/src/main/java/dev/incusspawn/incus/IncusApi.java
-6 0 common/src/main/java/dev/incusspawn/incus/IncusClient.java
+2 0 common/src/main/java/dev/incusspawn/incus/IncusApi.java
+5 0 common/src/main/java/dev/incusspawn/incus/IncusClient.java
 6 0 common/src/main/java/dev/incusspawn/incus/InteractiveShell.java
-4 0 common/src/main/java/dev/incusspawn/tool/NpmGlobalInstall.java
-1 0 common/src/main/java/dev/incusspawn/tool/SkillsCache.java
-1 0 common/src/main/java/dev/incusspawn/tool/YamlToolAction.java
 2 0 common/src/main/java/dev/incusspawn/util/TerminalProgress.java

@@ -100,19 +100,35 @@ class ContainerTest {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(eq("test"), org.mockito.ArgumentMatchers.<String>any())).thenReturn(hostile);
         when(incus.execInContainer("test", "agentuser", "setup")).thenReturn(hostile);
-        var container = new Container(incus, "test");
-        var captured = new java.io.ByteArrayOutputStream();
-        var originalErr = System.err;
-        try {
-            System.setErr(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
-            org.junit.jupiter.api.Assertions.assertThrows(IncusException.class,
-                    () -> container.runQuiet("failed", "setup"));
-            org.junit.jupiter.api.Assertions.assertThrows(IncusException.class,
-                    () -> container.runAsUserQuiet("agentuser", "setup", "failed"));
-        } finally {
-            System.setErr(originalErr);
-        }
-        var once = "out\nerr\n";
-        assertEquals(once + once, captured.toString(java.nio.charset.StandardCharsets.UTF_8));
+        var recorded = new dev.incusspawn.util.RecordingOutput();
+        var container = new Container(incus, "test", recorded);
+        org.junit.jupiter.api.Assertions.assertThrows(IncusException.class,
+                () -> container.runQuiet("failed", "setup"));
+        org.junit.jupiter.api.Assertions.assertThrows(IncusException.class,
+                () -> container.runAsUserQuiet("agentuser", "setup", "failed"));
+        // The caller's output gets it, as one warning with the output as text under it
+        var once = new dev.incusspawn.util.RecordingOutput.Event(dev.incusspawn.util.RecordingOutput.Kind.WARN,
+                "The failed command printed:", "out", "err");
+        assertEquals(java.util.List.of(once, once), recorded.events());
+    }
+
+    /** A verbose failure shows its end, where it says why, not thousands of lines in one warning. */
+    @Test
+    void aLongFailedOutputShowsItsLastLines() {
+        var output = new StringBuilder();
+        for (int i = 1; i <= 100; i++) output.append("line ").append(i).append('\n');
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), org.mockito.ArgumentMatchers.<String>any()))
+                .thenReturn(new IncusClient.ExecResult(1, output.toString(), ""));
+        var recorded = new dev.incusspawn.util.RecordingOutput();
+        var thrown = org.junit.jupiter.api.Assertions.assertThrows(IncusException.class,
+                () -> new Container(incus, "test", recorded).runQuiet("failed", "setup"));
+        // The failure report keeps it all, from the exception the build is handed
+        assertEquals("The failed command printed:\n" + output + "\n", thrown.stepOutput());
+        var details = recorded.events().getFirst().details();
+        assertEquals(dev.incusspawn.util.BuildOutput.FAILED_OUTPUT_LINES + 1, details.size());
+        assertEquals("(60 earlier lines not shown)", details.getFirst());
+        assertEquals("line 61", details.get(1));
+        assertEquals("line 100", details.getLast());
     }
 }

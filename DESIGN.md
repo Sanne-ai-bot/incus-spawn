@@ -876,7 +876,7 @@ Notes (dim) are for expected conditions the user may want to know about (skipped
 Warnings (`System.err`) are for conditions that may need action.
 The distinction: a note is "this is fine, FYI"; a warning is "you should look at this."
 
-**Container commands during build:** tool `run:` and `run_as_user:` scripts use `Container.runQuiet()`/`runAsUserQuiet()`, which capture output and only print it on failure.
+**Container commands during build:** tool `run:` and `run_as_user:` scripts use `Container.runQuiet()`/`runAsUserQuiet()`, which capture output and only show it on failure.
 This prevents leaked output (e.g. systemd's "Created symlink" lines) from breaking alignment.
 `runInteractive` is reserved for commands that genuinely need live terminal output (e.g. interactive shells).
 
@@ -978,7 +978,10 @@ Output captured from a guest command is someone else's text too (#1588).
 Its one pattern ends a control string at the next escape or introducer, as a terminal does, so a guest's long line costs linear time, never a stall.
 A build step's `StepProgress` cleans its detail and log through it as it is made, the detail also through `OutputFormat.oneLine`, since a prime is code the repository controls.
 So the live line, the plain failure line on stdout, the printed log and the saved failure report all show it as text, and the failure line is the last one with text left.
-`Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` print a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
+`Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` show a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
+They report it as one warning, its lines as details (`BuildOutput.guestLines`), to the container's `Output`: the caller's when it made the `Container` with one, else the bound output (#1703).
+A long output shows its last 40 lines (`BuildOutput.lastOf`), after one saying how many came before.
+The exception thrown carries all of it (`Container.failed`, `withStepOutput`), so the build's failure report keeps what the warning leaves out.
 `VmAgentFailure` quotes a VM's console lines through it too, since whatever runs in the guest can write its console.
 The console is decided by stdin and stdout, never stderr, and Java cannot ask whether stderr alone is a terminal without native code.
 So the contract is that escapes follow stdout: redirecting stdout or setting `NO_COLOR` clears both streams, while `2>log` alone from a terminal keeps colour in the log.

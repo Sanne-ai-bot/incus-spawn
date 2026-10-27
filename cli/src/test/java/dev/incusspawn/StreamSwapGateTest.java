@@ -49,9 +49,6 @@ class StreamSwapGateTest {
             Map.entry("cli/src/test/java/dev/incusspawn/command/RepoClonerReferenceTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/RepoClonerTest.java", CLI_COMMAND),
             Map.entry("cli/src/test/java/dev/incusspawn/command/ToolsCommandTest.java", CLI_COMMAND),
-            Map.entry("common/src/test/java/dev/incusspawn/incus/ContainerTest.java", "reads a guest command's output, printed raw on failure"),
-            Map.entry("common/src/test/java/dev/incusspawn/tool/NpmGlobalInstallTest.java", "reads a guest command's output, printed raw on failure"),
-            Map.entry("common/src/test/java/dev/incusspawn/tool/YamlToolActionTest.java", "a raw prompt, and the stdin it must not read"),
             Map.entry("proxy/src/test/java/dev/incusspawn/proxy/MitmTlsTest.java", PROXY_LOG),
             Map.entry("proxy/src/test/java/dev/incusspawn/proxy/VerifiedArtifactStoreTest.java", PROXY_LOG),
             Map.entry("proxy/src/test/java/dev/incusspawn/proxy/WebSocketProxyTest.java", PROXY_LOG));
