@@ -664,6 +664,11 @@ public final class InstanceRegistry {
             var ancestor = current;
             Function<String, String> read = key -> ancestor.pathText(key, "");
             var reason = Metadata.untrustedReason(read);
+            // A template runs only to be built or updated, and an update grants it proofs (#1743):
+            // refused as itself, never as an ancestor, so its branches are not refused meanwhile
+            if (hop == 0 && reason.isEmpty() && Metadata.TYPE_BASE.equals(read.apply(Metadata.TYPE))) {
+                return Lineage.untrusted("a template, which runs only to be built or updated");
+            }
             if (!reason.isEmpty()) {
                 return Lineage.untrusted((hop == 0 ? "untrusted (" : "descended from an untrusted instance (")
                         + reason + "): an unfinished, failed or project build, or a copy of one");
