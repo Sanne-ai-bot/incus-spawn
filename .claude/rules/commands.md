@@ -100,7 +100,7 @@ Every init step is idempotent, so re-running is safe.
 A step added to init goes above that one.
 `InitServiceStepTest` pins the order.
 
-**Interactive prompts read from `Prompts`, never a `Console`.**
+**Interactive prompts read from `Prompts`, never a `Console`, and show their questions through it.**
 `java.io.Console` is final, so a method that takes one is reachable only by a human at a keyboard -- which is how the credential flows shipped bugs no test could catch (#740, #772).
 Each interactive step is split in two: a thin entry (`setupGitHubAuth()`, `setupClaudeAuth()`, `setupGenericToolCredentials(name, tool)`, `selectCredentials(tools)`, `setupPathList(...)`) that prints the step header, loads the config and gets `Prompts.console()`, and a package-private overload on `CredentialSetup` taking `(SpawnConfig, Prompts)` that holds all the logic.
 Effects outside the process are package-private overridable seams on `CredentialSetup` -- `verifyGitHubToken`, `verifyAnthropicApiKey`/`verifyOauthToken`/`verifyVertexConfig`, `ghCliLoggedIn`/`readGhAuthToken`, `openUrl`, `env`, `hostHasCommand`, `runClaudeSetupToken` -- and on `InitCommand` -- `hostHasCommand`, `proxyServiceActive`, `macOsServicesInstalled`, `upgradeProxyService`, `installProxyService` -- which the flow tests override.

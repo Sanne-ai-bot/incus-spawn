@@ -23,6 +23,7 @@ import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.vm.VmManager;
@@ -42,7 +43,6 @@ import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.CYAN;
 import static dev.incusspawn.util.BuildOutput.DIM;
 import static dev.incusspawn.util.BuildOutput.GREEN;
-import static dev.incusspawn.util.BuildOutput.RED;
 import static dev.incusspawn.util.BuildOutput.YELLOW;
 import static dev.incusspawn.util.BuildOutput.stripAnsi;
 import static dev.incusspawn.util.BuildOutput.styled;
@@ -98,16 +98,19 @@ public class InitCommand extends BaseCommand {
     }
 
     private static void printBanner(String title, String subtitle, String info) {
-        System.out.println();
-        System.out.println(topBorder());
-        System.out.println(boxLine(""));
-        System.out.println(boxLine("   " + styled(BOLD, title)));
-        System.out.println(boxLine("   " + subtitle));
-        System.out.println(boxLine(""));
-        System.out.println(boxLine("   " + styled(DIM, info)));
-        System.out.println(boxLine(""));
-        System.out.println(bottomBorder());
-        System.out.println();
+        var out = new ArrayList<String>();
+        out.add("");
+        out.add(topBorder());
+        out.add(boxLine(""));
+        out.add(boxLine("   " + styled(BOLD, title)));
+        out.add(boxLine("   " + subtitle));
+        out.add(boxLine(""));
+        out.add(boxLine("   " + styled(DIM, info)));
+        out.add(boxLine(""));
+        out.add(bottomBorder());
+        out.add("");
+        // A frame of init's own: laid out here, drawn as given
+        BuildOutput.frame(out.toArray(String[]::new));
     }
 
     /**
@@ -130,33 +133,39 @@ public class InitCommand extends BaseCommand {
         String right = "[" + currentStep + "/" + totalSteps + "]  ";
         int gap = BOX_WIDTH - left.length() - right.length();
 
-        System.out.println();
-        System.out.println(topBorder());
-        System.out.println(styled(CYAN, "│") + styled(BOLD, left)
+        var out = new ArrayList<String>();
+        out.add("");
+        out.add(topBorder());
+        out.add(styled(CYAN, "│") + styled(BOLD, left)
                 + " ".repeat(Math.max(1, gap)) + styled(DIM, right) + styled(CYAN, "│"));
-        System.out.println(bottomBorder());
+        out.add(bottomBorder());
 
         if (hintLines.length > 0) {
             for (var line : hintLines) {
-                System.out.println(styled(CYAN, "  ┃ ") + styled(DIM, line));
+                out.add(styled(CYAN, "  ┃ ") + styled(DIM, line));
             }
-            System.out.println();
+            out.add("");
         }
+        // A frame of init's own: laid out here, drawn as given
+        BuildOutput.frame(out.toArray(String[]::new));
     }
 
     private static void printCompletionBox(String... lines) {
-        System.out.println();
-        System.out.println(topBorder());
-        System.out.println(boxLine(""));
+        var out = new ArrayList<String>();
+        out.add("");
+        out.add(topBorder());
+        out.add(boxLine(""));
         for (var line : lines) {
-            System.out.println(boxLine(line));
+            out.add(boxLine(line));
         }
         for (var line : credentialGapLines()) {
-            System.out.println(boxLine(line));
+            out.add(boxLine(line));
         }
-        System.out.println(boxLine(""));
-        System.out.println(bottomBorder());
-        System.out.println();
+        out.add(boxLine(""));
+        out.add(bottomBorder());
+        out.add("");
+        // A frame of init's own: laid out here, drawn as given
+        BuildOutput.frame(out.toArray(String[]::new));
     }
 
     /**
@@ -219,16 +228,14 @@ public class InitCommand extends BaseCommand {
         if (!requireIncusHost()) return false;
         if (hasBeenInitialized()) return true;
 
-        System.out.println();
-        System.out.println(styled(BOLD + YELLOW, "  First-time setup required."));
-        System.out.println("  Running 'isx init'...");
-        System.out.println();
+        BuildOutput.header("First-time setup required.", "Running 'isx init'...");
 
         try {
             var result = new InitCommand().doExecute();
             return result.getResultValue() == 0 && hasBeenInitialized();
         } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
+            // A missing or blank message would say nothing, and init would fail silently
+            BuildOutput.error(e.getMessage() != null && !e.getMessage().isBlank() ? e.getMessage() : e.toString());
             return false;
         }
     }
@@ -253,15 +260,10 @@ public class InitCommand extends BaseCommand {
     public static boolean requireLinux() {
         var os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
         if (!os.contains("linux")) {
-            System.err.println();
-            System.err.println(styled(BOLD + RED, "  incus-spawn requires Linux."));
-            System.err.println();
-            System.err.println("  Incus system containers require a Linux kernel.");
-            System.err.println("  macOS and Windows support is planned but not yet available.");
-            System.err.println("  Detected OS: " + System.getProperty("os.name"));
-            System.err.println();
-            System.err.println("  For now, run incus-spawn on a Linux host or inside a Linux VM.");
-            System.err.println();
+            BuildOutput.error("incus-spawn requires Linux.",
+                    "Incus system containers require a Linux kernel.",
+                    "Detected OS: " + System.getProperty("os.name"),
+                    "Run incus-spawn on a Linux host or inside a Linux VM.");
             return false;
         }
         return true;
@@ -279,10 +281,7 @@ public class InitCommand extends BaseCommand {
         if (Platform.isMacOS()) {
             return VmManager.ensureRunning();
         }
-        System.err.println();
-        System.err.println(styled(BOLD + RED, "  incus-spawn requires Linux or macOS."));
-        System.err.println("  Detected OS: " + System.getProperty("os.name"));
-        System.err.println();
+        BuildOutput.error("incus-spawn requires Linux or macOS.", "Detected OS: " + System.getProperty("os.name"));
         return false;
     }
 
@@ -298,12 +297,10 @@ public class InitCommand extends BaseCommand {
         }
         printSetupBanner("", "~3 minutes · some steps require sudo");
 
-        System.out.println();
-        System.out.println("  Several steps need " + styled(BOLD, "sudo") + " to install packages, configure");
-        System.out.println("  the firewall, and set up user namespace mappings.");
-        System.out.println();
+        BuildOutput.step("Several steps need " + styled(BOLD, "sudo") + " to install packages, configure"
+                + " the firewall, and set up user namespace mappings.");
         if (runHost("sudo", "-v") != 0) {
-            System.err.println("  sudo authentication failed. Please ensure you have sudo access and try again.");
+            BuildOutput.error("sudo authentication failed.", "Please ensure you have sudo access and try again.");
             return CommandResult.valueOf(1);
         }
 
@@ -434,7 +431,7 @@ public class InitCommand extends BaseCommand {
      */
     int addCredential(String name) throws Exception {
         if (credentialPrompts() == null) {
-            System.err.println("Error: 'isx account add' asks for the credential, so it needs a terminal.");
+            BuildOutput.error("'isx account add' asks for the credential, so it needs a terminal.");
             return 1;
         }
         currentStep = 0;
@@ -446,8 +443,8 @@ public class InitCommand extends BaseCommand {
             var tools = new ToolDefLoader().allToolSetups();
             var toolName = CredentialCheck.credentialTool(name, tools);
             if (toolName == null) {
-                System.err.println("Error: no credential named '" + OutputFormat.oneLine(name) + "'."
-                        + " Credentials: " + String.join(", ", credentialNames(tools)) + ".");
+                BuildOutput.error("no credential named '" + OutputFormat.oneLine(name) + "'.",
+                        "Credentials: " + String.join(", ", credentialNames(tools)) + ".");
                 return 1;
             }
             steps = List.of(credentialStep(toolName, tools.get(toolName)));
@@ -504,7 +501,8 @@ public class InitCommand extends BaseCommand {
                 return;
             } catch (IncusException e) {
                 if (attempt == BRIDGE_DNS_ATTEMPTS) throw e;
-                System.err.println("  Warning: " + e.getMessage() + "; trying again...");
+                // Progress, not a problem yet: the next write usually takes
+                BuildOutput.note(e.getMessage() + "; trying again...");
                 try {
                     pauseBeforeBridgeDnsRetry();
                 } catch (InterruptedException ie) {
@@ -531,10 +529,10 @@ public class InitCommand extends BaseCommand {
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
         if (CertificateAuthority.exists()) {
-            System.out.println("  MITM CA certificate already exists.");
+            BuildOutput.step("MITM CA certificate already exists.");
         } else {
             CertificateAuthority.loadOrCreate();
-            System.out.println("  CA certificate generated.");
+            BuildOutput.ok("CA certificate generated.");
         }
     }
 
@@ -551,7 +549,7 @@ public class InitCommand extends BaseCommand {
     /** The terminal, or null after saying why interactive setup cannot run without one. */
     private Prompts consoleOrExplain() {
         var prompts = credentialPrompts();
-        if (prompts == null) System.err.println("  Error: no console available for interactive setup.");
+        if (prompts == null) BuildOutput.error("No console available for interactive setup.");
         return prompts;
     }
 
@@ -609,7 +607,7 @@ public class InitCommand extends BaseCommand {
      */
     void moveBridgeOff(BridgeSubnetCheck.ConflictResult conflict) {
         if (!conflict.conflictDetected()) {
-            System.out.println("     The bridge no longer overlaps a host route; nothing to move.");
+            BuildOutput.step("The bridge no longer overlaps a host route; nothing to move.");
             return;
         }
         var subnet = conflict.newSubnet();
@@ -626,15 +624,15 @@ public class InitCommand extends BaseCommand {
             throw new IllegalStateException("sudo authentication failed; nothing was changed");
         }
         incus.networkConfigSet(BridgeAddress.BRIDGE, "ipv4.address", subnet);
-        System.out.println("     Moved the bridge from " + conflict.oldSubnet() + " to " + subnet + ".");
+        BuildOutput.step("Moved the bridge from " + conflict.oldSubnet() + " to " + subnet + ".");
         try {
             var migrated = migrateInstances();
             if (migrated > 0) {
-                System.out.println("     Migrated " + migrated + " instance" + (migrated == 1 ? "" : "s") + ".");
+                BuildOutput.step("Migrated " + migrated + " instance" + (migrated == 1 ? "" : "s") + ".");
             }
         } catch (RuntimeException e) {
             // The redirect still follows the bridge; the stale check below fails the remedy
-            System.err.println("     Warning: could not migrate instances: " + e.getMessage());
+            BuildOutput.warn("Could not migrate instances: " + e.getMessage());
         }
         if (!followBridgeMove(subnet.substring(0, subnet.indexOf('/')), firewall)) {
             throw new IllegalStateException("the bridge moved, but its firewall redirect was not updated"
@@ -647,9 +645,9 @@ public class InitCommand extends BaseCommand {
         }
         // The proxy follows the move itself (#966): it exits on a moved bridge within a minute, and
         // the service's Restart=on-failure binds it to the new gateway. A restart here would be a second one.
-        System.out.println("     The proxy moves to the new gateway by itself within a minute;"
+        BuildOutput.step("The proxy moves to the new gateway by itself within a minute;"
                 + " one started in a terminal stops instead, and needs 'isx proxy start' again.");
-        System.out.println("     Re-run 'isx doctor' to check the bridge's firewall and DNS findings again.");
+        BuildOutput.step("Re-run 'isx doctor' to check the bridge's firewall and DNS findings again.");
     }
 
     boolean sudoValidated() {
@@ -680,20 +678,20 @@ public class InitCommand extends BaseCommand {
                 "updated automatically.");
         try {
             if (SshKeyManager.exists()) {
-                System.out.println("  SSH key pair already exists.");
+                BuildOutput.step("SSH key pair already exists.");
             } else {
                 SshKeyManager.ensureKeyPairExists();
             }
             if (SshKeyManager.ensureSshConfigInclude()) {
-                System.out.println("  SSH configuration ready.");
+                BuildOutput.ok("SSH configuration ready.");
             } else {
-                System.out.println("  SSH key generated but ~/.ssh/config could not be updated.");
-                System.out.println("  Add manually: Include ~/.config/incus-spawn/ssh/config");
+                BuildOutput.warn("SSH key generated but ~/.ssh/config could not be updated.",
+                        "Add manually: Include ~/.config/incus-spawn/ssh/config");
             }
         } catch (Exception e) {
-            System.err.println("  Warning: SSH key setup failed: " + e.getMessage());
-            System.err.println("  SSH container access will fall back to your personal keys.");
-            System.err.println("  You can retry later with: isx init");
+            BuildOutput.warn("SSH key setup failed: " + e.getMessage(),
+                    "SSH container access will fall back to your personal keys.",
+                    "You can retry later with: isx init");
         }
     }
 
@@ -764,7 +762,7 @@ public class InitCommand extends BaseCommand {
                 "Agents can never approve templates themselves.");
         var prompts = Prompts.console();
         if (prompts == null) {
-            System.out.println("  Skipped: no console. Re-run 'isx init' interactively to set this up.");
+            BuildOutput.step("Skipped: no console. Re-run 'isx init' interactively to set this up.");
             return;
         }
         setupMcp(prompts, ImageDef.loadTrusted());
@@ -778,20 +776,19 @@ public class InitCommand extends BaseCommand {
      */
     void setupMcp(Prompts prompts, java.util.Map<String, ImageDef> defs) {
         if (!hostHasCommand("claude")) {
-            System.out.println("  Claude Code is not installed on this host; skipping.");
-            System.out.println("  Install it and re-run 'isx init' to enable this.");
+            BuildOutput.step("Claude Code is not installed on this host; skipping."
+                    + " Install it and re-run 'isx init' to enable this.");
             return;
         }
         McpConfig mcp;
         try {
             mcp = McpConfig.load();
         } catch (McpConfig.Invalid e) {
-            System.out.println("  " + e.getMessage() + ".");
-            System.out.println("  Fix it, then re-run 'isx init'.");
+            BuildOutput.warn(e.getMessage() + ".", "Fix it, then re-run 'isx init'.");
             return;
         }
         var legacy = McpConfig.legacySectionNotice(SpawnConfig.load());
-        if (legacy != null) System.out.println("  " + Character.toUpperCase(legacy.charAt(0)) + legacy.substring(1) + ".");
+        if (legacy != null) BuildOutput.step(Character.toUpperCase(legacy.charAt(0)) + legacy.substring(1) + ".");
         var registered = claudeMcpRegistered();
         var approved = mcp.templates();
         var candidates = defs.values().stream()
@@ -802,7 +799,7 @@ public class InitCommand extends BaseCommand {
                 .toList();
         var enabled = registered || !approved.isEmpty();
         if (enabled) {
-            System.out.println("  Currently " + (registered ? "registered with Claude Code" : "not registered")
+            BuildOutput.step("Currently " + (registered ? "registered with Claude Code" : "not registered")
                     + "; approved templates: " + (approved.isEmpty() ? "none" : String.join(", ", approved)) + ".");
         }
         // Fully set up: a re-run of init for something else costs one Enter, as credentials do (#1292).
@@ -810,20 +807,20 @@ public class InitCommand extends BaseCommand {
         if (registered && !approved.isEmpty()) {
             var unasked = candidates.stream().filter(n -> !approved.contains(n)).toList();
             if (!unasked.isEmpty()) {
-                System.out.println("  Not approved: " + String.join(", ", unasked) + ".");
+                BuildOutput.step("Not approved: " + String.join(", ", unasked) + ".");
             }
             var choice = mcpSetupChoice(prompts);
             if (choice.isEmpty()) {
-                System.out.println("  Left as it is.");
+                BuildOutput.step("Left as it is.");
                 return;
             }
             proceed = choice.equals("t");
         } else {
-            proceed = askConfirmation(prompts, "  Enable the experimental isx MCP server?", enabled);
+            proceed = askYesNo(prompts, "Enable the experimental isx MCP server?", enabled);
         }
         if (!proceed) {
             if (registered) {
-                System.out.println("  Left as it is. To remove it: claude mcp remove --scope user " + McpClientRegistration.SERVER_NAME);
+                BuildOutput.step("Left as it is. To remove it: claude mcp remove --scope user " + McpClientRegistration.SERVER_NAME);
             }
             return;
         }
@@ -831,53 +828,50 @@ public class InitCommand extends BaseCommand {
         if (!registered) {
             var isx = isxPath();
             if (isx == null) {
-                System.out.println("  Could not find the installed isx binary; register it yourself:");
-                System.out.println("    claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- <path to isx> mcp");
+                BuildOutput.step("Could not find the installed isx binary; register it yourself:");
+                BuildOutput.stepNote("claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- <path to isx> mcp");
             } else if (registerClaudeMcp(isx)) {
-                System.out.println("  " + styled(BOLD + GREEN, "✓") + " Registered with Claude Code as '"
-                        + McpClientRegistration.SERVER_NAME + "' (all projects).");
+                BuildOutput.ok("Registered with Claude Code as '" + McpClientRegistration.SERVER_NAME + "' (all projects).");
             } else {
-                System.out.println("  Registering failed; register it yourself:");
-                System.out.println("    claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- " + isx + " mcp");
+                BuildOutput.step("Registering failed; register it yourself:");
+                BuildOutput.stepNote("claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- " + isx + " mcp");
             }
         }
 
         if (candidates.isEmpty()) {
-            System.out.println("  No template installs Claude Code or Codex yet, so there is");
-            System.out.println("  none to approve. Add one, then re-run 'isx init' or edit");
-            System.out.println("  " + McpConfig.file() + ".");
+            BuildOutput.step("No template installs Claude Code or Codex yet, so there is none to approve."
+                    + " Add one, then re-run 'isx init' or edit " + McpConfig.file() + ".");
             return;
         }
-        System.out.println("  Approve the templates agents may create instances from:");
         var chosen = new java.util.ArrayList<String>();
-        for (var name : candidates) {
-            var note = templateBuilt(name) ? "" : styled(DIM, " (not built yet: isx build " + name + ")");
-            // End of input keeps the existing answer: a closed terminal must not drop an approval.
-            var current = approved.contains(name);
-            if (askConfirmation(prompts, "    " + name + note + "?", current, current)) chosen.add(name);
+        try (var group = BuildOutput.group("Approve the templates agents may create instances from", null)) {
+            for (var name : candidates) {
+                var note = templateBuilt(name) ? "" : styled(DIM, " (not built yet: isx build " + name + ")");
+                // End of input keeps the existing answer: a closed terminal must not drop an approval.
+                var current = approved.contains(name);
+                if (askYesNo(prompts, name + note + "?", current, current)) chosen.add(name);
+            }
         }
         // Keep hand-approved templates this step does not ask about, in their order.
         var updated = new java.util.ArrayList<String>();
         approved.stream().filter(n -> !candidates.contains(n) || chosen.contains(n)).forEach(updated::add);
         chosen.stream().filter(n -> !updated.contains(n)).forEach(updated::add);
         if (updated.equals(approved)) {
-            System.out.println("  Approved templates unchanged.");
+            BuildOutput.step("Approved templates unchanged.");
         } else {
             mcp.setTemplates(updated);
             mcp.save();
-            System.out.println("  Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)) + ".");
+            BuildOutput.ok("Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)) + ".");
         }
-        System.out.println("  " + styled(DIM, "Keep agents to the MCP tools with Claude Code permissions: see"));
-        System.out.println("  " + styled(DIM, "https://isx.run/docs/mcp (docs/MCP.md)."));
+        BuildOutput.stepNote("Keep agents to the MCP tools with Claude Code permissions: see https://isx.run/docs/mcp (docs/MCP.md).");
     }
 
     /** Enter (or end of input) to keep the MCP setup, {@code t} to change templates, {@code n} for how to turn it off. */
     private static String mcpSetupChoice(Prompts prompts) {
         while (true) {
-            System.out.println("    t. Change the approved templates");
-            System.out.println("    n. How to turn it off");
-            System.out.print("  Choice (Enter to keep as-is): ");
-            var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
+            prompts.say("t. Change the approved templates");
+            prompts.say("n. How to turn it off");
+            var choice = readInput(prompts.ask("Choice (Enter to keep as-is): ")).toLowerCase(java.util.Locale.ROOT);
             if (choice.isEmpty() || choice.equals("t") || choice.equals("n")) return choice;
         }
     }
@@ -924,6 +918,7 @@ public class InitCommand extends BaseCommand {
 
     private static final String TEMPLATES_REPO = "incus-spawn-templates";
     private static final String TEMPLATES_UPSTREAM = "Sanne/" + TEMPLATES_REPO;
+    private static final String TEMPLATES_URL = "https://github.com/" + TEMPLATES_UPSTREAM;
 
     private void setupSearchPaths() {
         startStep("Template Search Paths",
@@ -949,26 +944,10 @@ public class InitCommand extends BaseCommand {
     }
 
     private void offerTemplatesRepo() {
-        if (!commandExists("gh") || !commandExists("git")) {
-            System.out.println("  For community templates, see (clone and add the local path):");
-            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
-            System.out.println();
-            return;
-        }
-
-        var login = getGhLogin();
-        if (login == null) {
-            System.out.println("  For community templates, see (clone and add the local path):");
-            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
-            System.out.println();
-            return;
-        }
-
-        var prompts = Prompts.console();
+        var login = commandExists("gh") && commandExists("git") ? getGhLogin() : null;
+        var prompts = login == null ? null : Prompts.console();
         if (prompts == null) {
-            System.out.println("  For community templates, see (clone and add the local path):");
-            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
-            System.out.println();
+            pointAt("For community templates, see (clone and add the local path):");
             return;
         }
 
@@ -977,6 +956,12 @@ public class InitCommand extends BaseCommand {
         } else {
             offerForkAndCloneTemplates(prompts, login);
         }
+    }
+
+    /** {@code lead}, then the link to the upstream templates repository. */
+    private static void pointAt(String lead) {
+        BuildOutput.step(lead);
+        BuildOutput.step(TerminalLink.link(TEMPLATES_URL));
     }
 
     private String getGhLogin() {
@@ -998,7 +983,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private void offerCloneTemplates(Prompts prompts, String login) {
-        System.out.println("  Found " + styled(BOLD, login + "/" + TEMPLATES_REPO) + " on GitHub.");
+        BuildOutput.step("Found " + styled(BOLD, login + "/" + TEMPLATES_REPO) + " on GitHub.");
         var defaultPath = defaultClonePath();
         var clonePath = askClonePath(prompts, defaultPath);
         if (clonePath == null) return;
@@ -1006,29 +991,25 @@ public class InitCommand extends BaseCommand {
     }
 
     private void offerForkAndCloneTemplates(Prompts prompts, String login) {
-        System.out.println("  You don't have a " + styled(BOLD, TEMPLATES_REPO) + " repo yet.");
-        if (!askConfirmation(prompts, "  Fork " + TEMPLATES_UPSTREAM + " to your account?", true)) {
-            System.out.println("  Skipped. You can fork it manually at:");
-            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
-            System.out.println();
+        BuildOutput.step("You don't have a " + styled(BOLD, TEMPLATES_REPO) + " repo yet.");
+        if (!askYesNo(prompts, "Fork " + TEMPLATES_UPSTREAM + " to your account?", true)) {
+            pointAt("Skipped. You can fork it manually at:");
             return;
         }
 
-        System.out.println("  Forking " + TEMPLATES_UPSTREAM + "...");
+        BuildOutput.step("Forking " + TEMPLATES_UPSTREAM + "...");
         var forkResult = runHostCapturingExit("gh", "repo", "fork", TEMPLATES_UPSTREAM, "--clone=false");
         if (forkResult != 0) {
-            System.out.println("  Fork failed. You can fork it manually at:");
-            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM + "/fork"));
-            System.out.println();
+            // The URL as text: a warning's details are made safe, which a hyperlink's escapes are not
+            BuildOutput.warn("Fork failed.", "You can fork it manually at: " + TEMPLATES_URL + "/fork");
             return;
         }
-        System.out.println("  " + styled(BOLD + GREEN, "✓") + " Forked to " + login + "/" + TEMPLATES_REPO);
+        BuildOutput.ok("Forked to " + login + "/" + TEMPLATES_REPO);
 
         var defaultPath = defaultClonePath();
         var clonePath = askClonePath(prompts, defaultPath);
         if (clonePath == null) {
-            System.out.println("  You can clone it later with: gh repo clone " + login + "/" + TEMPLATES_REPO);
-            System.out.println();
+            BuildOutput.step("You can clone it later with: gh repo clone " + login + "/" + TEMPLATES_REPO);
             return;
         }
         cloneAndAddSearchPath(prompts, login + "/" + TEMPLATES_REPO, clonePath, clonePath.equals(defaultPath));
@@ -1039,14 +1020,12 @@ public class InitCommand extends BaseCommand {
     }
 
     static String askClonePath(Prompts prompts, String defaultPath) {
-        System.out.print("  Clone to " + defaultPath + "? (Y/path/n): ");
-        var answer = readInput(prompts.readLine());
+        var answer = readInput(prompts.ask("Clone to " + defaultPath + "? (Y/path/n): "));
         if (answer.equalsIgnoreCase("n")) return null;
         if (answer.isEmpty() || answer.equalsIgnoreCase("y")) return defaultPath;
 
         if (answer.equalsIgnoreCase("path")) {
-            System.out.print("  Clone path: ");
-            var path = readInput(prompts.readLine());
+            var path = readInput(prompts.ask("Clone path: "));
             if (path.isEmpty()) return defaultPath;
             return HostResourceSetup.expandHostTilde(path);
         }
@@ -1061,25 +1040,25 @@ public class InitCommand extends BaseCommand {
             adjusted = true;
         }
         if (Files.isDirectory(target)) {
-            System.out.println("  Directory already exists: " + target);
+            BuildOutput.step("Directory already exists: " + target);
             addToSearchPaths(target.toString());
             return;
         }
 
         if (!alreadyConfirmed || adjusted) {
-            if (!askConfirmation(prompts, "  Will clone to " + target + ". Proceed?", true)) {
-                System.out.println("  Skipped cloning. You can add the path manually below.");
+            if (!askYesNo(prompts, "Will clone to " + target + ". Proceed?", true)) {
+                BuildOutput.step("Skipped cloning. You can add the path manually below.");
                 return;
             }
         }
 
-        System.out.println("  Cloning...");
+        BuildOutput.step("Cloning...");
         var result = runHostCapturingExit("gh", "repo", "clone", nwo, target.toString());
         if (result != 0) {
-            System.out.println("  Clone failed. You can clone it manually and add the path below.");
+            BuildOutput.warn("Clone failed.", "You can clone it manually and add the path below.");
             return;
         }
-        System.out.println("  " + styled(BOLD + GREEN, "✓") + " Cloned to " + target);
+        BuildOutput.ok("Cloned to " + target);
         addToSearchPaths(target.toString());
     }
 
@@ -1090,9 +1069,8 @@ public class InitCommand extends BaseCommand {
             paths.add(path);
             config.setSearchPaths(paths);
             config.save();
-            System.out.println("  Added to search paths.");
+            BuildOutput.step("Added to search paths.");
         }
-        System.out.println();
     }
 
     static int runHostCapturingExit(String... command) {
@@ -1137,20 +1115,21 @@ public class InitCommand extends BaseCommand {
      */
     boolean completeWithMacOsServices(Prompts prompts) throws IOException {
         var present = macOsServicesInstalled();
-        if (present) System.out.println("  macOS services already installed.");
+        if (present) BuildOutput.step("macOS services already installed.");
         var install = !present && wantsMacOsServices(prompts);
         markInitComplete();
         return present || install && installProxyService();
     }
 
     private boolean wantsMacOsServices(Prompts prompts) {
-        System.out.println();
-        System.out.println("  Optional: install VM and proxy as macOS services so they start");
-        System.out.println("  automatically on login and survive reboots.");
-        System.out.println();
-        if (prompts == null) return false;
-        if (!askConfirmation(prompts, "  Install services?", true)) {
-            System.out.println("  Skipped. Start manually with: isx vm start && isx proxy start");
+        if (prompts == null) {
+            BuildOutput.step("Skipped: no console. Start manually with: isx vm start && isx proxy start");
+            return false;
+        }
+        prompts.say("Optional: install VM and proxy as macOS services so they start automatically on login"
+                + " and survive reboots.");
+        if (!askYesNo(prompts, "Install services?", true)) {
+            BuildOutput.step("Skipped. Start manually with: isx vm start && isx proxy start");
             return false;
         }
         return true;
@@ -1173,21 +1152,20 @@ public class InitCommand extends BaseCommand {
         markInitComplete();
         if (active) {
             if (!upgradeProxyService() && restartOwed) restartProxyService();
-            System.out.println();
-            System.out.println("  Proxy service is already running.");
+            BuildOutput.step("Proxy service is already running.");
             return true;
         }
         return install && installProxyService();
     }
 
     private boolean wantsProxyService(Prompts prompts) {
-        System.out.println();
-        System.out.println("  Optional: install the proxy as a systemd service so it starts");
-        System.out.println("  automatically and survives reboots.");
-        System.out.println();
-        if (prompts == null) return false;
-        if (!askConfirmation(prompts, "  Install proxy service?", true)) {
-            System.out.println("  Skipped. You can start the proxy manually with: isx proxy start");
+        if (prompts == null) {
+            BuildOutput.step("Skipped: no console. You can start the proxy manually with: isx proxy start");
+            return false;
+        }
+        prompts.say("Optional: install the proxy as a systemd service so it starts automatically and survives reboots.");
+        if (!askYesNo(prompts, "Install proxy service?", true)) {
+            BuildOutput.step("Skipped. You can start the proxy manually with: isx proxy start");
             return false;
         }
         return true;
@@ -1210,10 +1188,10 @@ public class InitCommand extends BaseCommand {
                 if (is == null) return;
                 Files.write(shimPath, is.readAllBytes());
                 shimPath.toFile().setExecutable(true, false);
-                System.out.println("  Installed git remote helper: " + shimPath);
+                BuildOutput.step("Installed git remote helper: " + shimPath);
             }
         } catch (Exception e) {
-            System.err.println("  Warning: could not install git-remote-isx shim: " + e.getMessage());
+            BuildOutput.warn("Could not install git-remote-isx shim: " + e.getMessage());
         }
     }
 
@@ -1223,7 +1201,7 @@ public class InitCommand extends BaseCommand {
             pb.inheritIO();
             return pb.start().waitFor();
         } catch (IOException | InterruptedException e) {
-            System.err.println("  Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
+            BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
             return 1;
         }
     }
@@ -1247,7 +1225,7 @@ public class InitCommand extends BaseCommand {
      */
     boolean ran(String... command) {
         if (runHostQuiet(command) == 0) return true;
-        System.err.println("  Failed: " + String.join(" ", command));
+        BuildOutput.warn("Failed: " + String.join(" ", command));
         return false;
     }
 
@@ -1266,12 +1244,13 @@ public class InitCommand extends BaseCommand {
             var output = new String(process.getInputStream().readAllBytes());
             var exitCode = process.waitFor();
             if (exitCode != 0) {
+                // The host's own text, shown as text: notes, which the caller's report of the failure follows
                 output.lines().map(String::strip).filter(line -> !line.isEmpty())
-                        .forEach(line -> System.err.println("  " + line));
+                        .forEach(line -> BuildOutput.note(BuildOutput.guestText(line)));
             }
             return exitCode;
         } catch (IOException | InterruptedException e) {
-            System.err.println("  Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
+            BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
             return 1;
         }
     }

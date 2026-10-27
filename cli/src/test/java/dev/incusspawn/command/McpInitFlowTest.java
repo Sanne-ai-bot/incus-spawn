@@ -2,6 +2,8 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -83,20 +85,9 @@ class McpInitFlowTest {
         prompts.assertFullyConsumed();
     }
 
-    interface Body {
-        void run() throws Exception;
-    }
-
-    private static String captureStdout(Body body) throws Exception {
-        var original = System.out;
-        var buffer = new java.io.ByteArrayOutputStream();
-        System.setOut(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
-        try {
-            body.run();
-        } finally {
-            System.setOut(original);
-        }
-        return buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+    /** Everything the step reported, steps and warnings alike, a line each. */
+    private static String reported(RecordingOutput.Work body) {
+        return String.join("\n", RecordingOutput.during(body).lines());
     }
 
     private static List<String> approved() {
@@ -138,6 +129,24 @@ class McpInitFlowTest {
 
         run(host, ScriptedPrompts.lines(""));
         assertNothingSavedAnywhere();
+    }
+
+    /**
+     * The questions are shown through the prompts that read their answers (#1703): what the step
+     * asks is what a test sees, the template questions under the group that names them.
+     */
+    @Test
+    void theStepAsksThroughItsPrompts() throws Exception {
+        var host = new Host();
+        var prompts = ScriptedPrompts.lines("y", "n", "y");
+        var recorded = RecordingOutput.during(() -> run(host, prompts));
+
+        assertEquals(List.of("Enable the experimental isx MCP server? (y/N): ",
+                "tpl-agent (not built yet: isx build tpl-agent)? (y/N): ",
+                "tpl-agent-java (not built yet: isx build tpl-agent-java)? (y/N): "),
+                prompts.questions().stream().map(BuildOutput::stripAnsi).toList());
+        assertEquals(List.of("Approve the templates agents may create instances from"),
+                recorded.events(RecordingOutput.Kind.GROUP).stream().map(RecordingOutput.Event::msg).toList());
     }
 
     @Test
@@ -209,7 +218,7 @@ class McpInitFlowTest {
         host.registered = true;
         var seeded = "templates: [tpl-agent]\n";
         seedMcp(seeded);
-        var out = captureStdout(() -> run(host, ScriptedPrompts.lines("")));
+        var out = reported(() -> run(host, ScriptedPrompts.lines("")));
         assertMcpUnchanged(seeded);
         assertTrue(out.contains("Not approved: tpl-agent-java."), "a template not yet approved is named: " + out);
 
@@ -288,14 +297,14 @@ class McpInitFlowTest {
         seed(seeded);
         var host = new Host();
         host.registered = true;
-        var out = captureStdout(() -> run(host, ScriptedPrompts.lines()));
+        var out = reported(() -> run(host, ScriptedPrompts.lines()));
         assertTrue(out.contains("mcp.yaml does not exist, and the mcp: section of config.yaml"), out);
         assertFalse(Files.exists(McpConfig.file()));
         assertUnchanged(seeded);
 
         seedMcp("templates: [tpl-agent-java]\n");
         // Already set up: Enter keeps it.
-        out = captureStdout(() -> run(host, ScriptedPrompts.lines("")));
+        out = reported(() -> run(host, ScriptedPrompts.lines("")));
         assertTrue(out.contains("The mcp: section of config.yaml is no longer read; move its contents to"), out);
         assertTrue(out.contains("approved templates: tpl-agent-java."), out);
         assertUnchanged(seeded);
@@ -306,7 +315,7 @@ class McpInitFlowTest {
         var seeded = "templates: [tpl-agent\n";
         seedMcp(seeded);
         var host = new Host();
-        var out = captureStdout(() -> run(host, ScriptedPrompts.lines()));
+        var out = reported(() -> run(host, ScriptedPrompts.lines()));
         assertTrue(out.contains("mcp.yaml"), out);
         assertTrue(out.contains("Fix it, then re-run 'isx init'."), out);
         assertMcpUnchanged(seeded);

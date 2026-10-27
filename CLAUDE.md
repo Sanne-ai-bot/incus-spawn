@@ -212,6 +212,7 @@ See `.claude/rules/proxy.md`.
 Each credential step has a thin entry that gets `Prompts.console()` and a package-private `(SpawnConfig, Prompts)` overload holding the logic; network and host calls (token verification, `gh`, the browser, env vars) are overridable methods on `CredentialSetup`.
 Flow tests drive them with `ScriptedPrompts` under `@ExtendWith(IsolatedHome.class)` and assert on the `config.yaml` written to disk.
 Secrets go through `askSecret()` and are shown only via `maskSecret()`, which never reveals more than a third of one.
+The question is shown by the same `Prompts` (`ask`, `say`; `BaseCommand.askYesNo` for yes or no), at the step indent, so `ScriptedPrompts.conversation()` sees what a flow asks; what it reports between questions goes through `BuildOutput` (#1703).
 A new prompt follows the same shape and gets a flow test.
 See `.claude/rules/commands.md` and DESIGN.md "Testing".
 

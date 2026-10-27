@@ -13,7 +13,9 @@ paths:
 # Terminal Output
 
 All multi-step lifecycle commands use `BuildOutput` (`common/.../util/BuildOutput.java`) for terminal output formatting -- not just build/branch but also `vm` (start/stop/resize), `destroy`, `update-all`, `update-base`, `project`, and the shared `VmManager`.
-`isx init`'s interactive first-run flow is the one exception (its own style).
+`isx init` keeps its own frames (the setup banner, the numbered step boxes, the closing box), which `InitCommand` lays out and `BuildOutput.frame` draws as given (a kind of its own: not a result, nothing off a terminal); what it reports between them is steps, warnings and errors like any command's (#1703).
+Its questions are shown by the `Prompts` that reads their answers (`show`, `ask`, and `say` for a line said only because one is asked), which the terminal's shows through `BuildOutput.prompt` at the step indent; `BaseCommand.askYesNo` asks a yes/no question that way.
+`HostSetup` and `CredentialSetup` still print their own lines until their steps move them, through the older `askConfirmation` overloads.
 This centralizes ANSI constants and step patterns -- individual commands should not define their own.
 `BuildOutput`'s printing methods delegate to the bound `Output` (#1703); the printing itself, with the indent depth and the live step, lives in `TerminalOutput`.
 A change to how a line looks goes there; a new kind of message is a method on `Output`, with a default for outputs that are not terminals.

@@ -18,7 +18,6 @@
 9 0 cli/src/main/java/dev/incusspawn/command/GitRemoteHelperCommand.java
 4 0 cli/src/main/java/dev/incusspawn/command/GuestProvisioning.java
 157 137 cli/src/main/java/dev/incusspawn/command/HostSetup.java
-141 89 cli/src/main/java/dev/incusspawn/command/InitCommand.java
 1 0 cli/src/main/java/dev/incusspawn/command/InstancePrep.java
 1 0 cli/src/main/java/dev/incusspawn/command/NpmUpdate.java
 7 0 cli/src/main/java/dev/incusspawn/command/ProjectCommand.java
