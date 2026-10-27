@@ -505,6 +505,34 @@ class TuiCharacterisationTest {
     }
 
     @Test
+    @ExtendWith(dev.incusspawn.lifecycle.MacOsBranching.class)
+    void aVmBranchRefusedOnMacOsKeepsItsRemedyInTheWarningLog() {
+        var tui = tui();
+        // The VM is the second instance row.
+        press(tui, TAB, DOWN, KeyEvent.ofKey(KeyCode.F4));
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
+        assertTrue(tui.statusMessage.endsWith("'vm-1' is a VM. Press w for the rest."), tui.statusMessage);
+        assertEquals(1, tui.warningMessages().size(), tui.warningMessages().toString());
+        assertTrue(tui.warningMessages().getFirst().endsWith("Branch a container template instead."),
+                tui.warningMessages().getFirst());
+    }
+
+    @Test
+    @ExtendWith(dev.incusspawn.lifecycle.MacOsBranching.class)
+    void aKvmBranchRefusedOnMacOsKeepsItsRemedyInTheWarningLog() {
+        var tui = tui();
+        // Name, then GUI, then KVM, which Space ticks.
+        press(tui, ENTER);
+        typeText(tui, "-x");
+        press(tui, TAB, TAB, KeyEvent.ofChar(' '), ENTER);
+        assertEquals(Tui.PendingAction.NONE, tui.pendingAction(), "the branch is refused");
+        assertTrue(tui.statusMessage.startsWith("KVM passthrough is "), tui.statusMessage);
+        assertTrue(tui.statusMessage.endsWith(". Press w for the rest."), tui.statusMessage);
+        assertTrue(tui.warningMessages().getFirst().endsWith("untick KVM passthrough in the branch dialog."),
+                tui.warningMessages().toString());
+    }
+
+    @Test
     void quitting() {
         var tui = tui();
         press(tui, KeyEvent.ofChar('q'));
