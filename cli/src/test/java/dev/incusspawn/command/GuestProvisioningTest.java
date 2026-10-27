@@ -8,6 +8,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.util.RecordingOutput;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -167,6 +168,19 @@ class GuestProvisioningTest {
 
         verify(incus, never()).shellExecStreaming(any(), any(), any(), any(String[].class));
         verify(incus).shellExec("test", "dnf", "copr", "enable", "-y", "jdxcode/mise");
+    }
+
+    @Test
+    void enablePackageReposWarnsOfAnUnknownTypeThroughTheOutput() {
+        var incus = mock(IncusClient.class);
+        var imageDef = coprImage("owner/project");
+        imageDef.getPackageRepos().get(0).setType("ppa");
+
+        var said = RecordingOutput.during(() -> GuestProvisioning.enablePackageRepos(
+                new Container(incus, "test"), imageDef, List.of(), List.of(), Map.of()));
+
+        assertEquals(List.of("Unknown package_repos type 'ppa' for 'owner/project', skipping it"), said.warnings());
+        verifyNoInteractions(incus);
     }
 
     @Test
@@ -997,7 +1011,8 @@ class GuestProvisioningTest {
         var originalOut = System.out;
         var originalErr = System.err;
         dev.incusspawn.incus.IncusException ex;
-        try {
+        var said = new RecordingOutput();
+        try (var bound = dev.incusspawn.util.BuildOutput.bind(said)) {
             System.setOut(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
             System.setErr(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
             ex = assertThrows(dev.incusspawn.incus.IncusException.class, () -> GuestProvisioning.enablePackageRepos(
@@ -1007,7 +1022,7 @@ class GuestProvisioningTest {
             System.setErr(originalErr);
         }
         var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
-        assertTrue(shown.contains("unknown package_repos type 'x ]0;pwned ' for 'a b'"), shown.replace("\033", "ESC"));
+        assertEquals(List.of("Unknown package_repos type 'x ]0;pwned ' for 'a b', skipping it"), said.warnings());
         assertEquals(dev.incusspawn.util.TerminalLink.plainText(shown), shown, shown.replace("\033", "ESC"));
         assertTrue(ex.getMessage().startsWith("Failed to enable COPR repo "), ex.getMessage());
         assertFalse(ex.getMessage().contains("\n"), "a name cannot forge a line in the failure report: " + ex.getMessage());

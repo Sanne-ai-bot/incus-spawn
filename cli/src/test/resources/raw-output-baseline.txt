@@ -12,7 +12,7 @@
 34 4 cli/src/main/java/dev/incusspawn/command/CleanCommand.java
 21 10 cli/src/main/java/dev/incusspawn/command/DoctorCommand.java
 9 0 cli/src/main/java/dev/incusspawn/command/GitRemoteHelperCommand.java
-4 0 cli/src/main/java/dev/incusspawn/command/GuestProvisioning.java
+3 0 cli/src/main/java/dev/incusspawn/command/GuestProvisioning.java
 1 0 cli/src/main/java/dev/incusspawn/command/InstancePrep.java
 1 0 cli/src/main/java/dev/incusspawn/command/NpmUpdate.java
 6 0 cli/src/main/java/dev/incusspawn/command/RepoCloner.java

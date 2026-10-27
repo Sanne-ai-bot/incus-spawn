@@ -213,8 +213,8 @@ public class GuestProvisioning {
                         "Failed to enable COPR repo " + shownName,
                         state -> state.set(0, stepFrom(
                                 container.exec("dnf", "copr", "enable", "-y", key.name()))));
-                default -> System.err.println("Warning: unknown package_repos type '" + OutputFormat.oneLine(key.type())
-                        + "' for '" + shownName + "', skipping.");
+                default -> BuildOutput.warn("Unknown package_repos type '" + OutputFormat.oneLine(key.type())
+                        + "' for '" + shownName + "', skipping it");
             }
         }
     }
