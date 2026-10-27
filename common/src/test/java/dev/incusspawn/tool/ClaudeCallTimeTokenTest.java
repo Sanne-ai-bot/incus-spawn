@@ -187,6 +187,12 @@ class ClaudeCallTimeTokenTest {
         assertEquals("\ufffd \\ud800 \ud83d\ude00", child.path("tail").asText(""), "an escaped backslash and a pair are kept");
     }
 
+    @Test
+    void anEscapeWithFullwidthDigitsIsLeftForTheParserToRefuse() {
+        var notJson = "{\"a\": \"\\u\uFF24\uFF18\uFF10\uFF10\"}";
+        assertThrows(IllegalArgumentException.class, () -> ClaudeSetup.parseClaudeJson(notJson));
+    }
+
     private static final String FRESH_CLAUDE_JSON = """
             {
               "hasCompletedOnboarding": true,

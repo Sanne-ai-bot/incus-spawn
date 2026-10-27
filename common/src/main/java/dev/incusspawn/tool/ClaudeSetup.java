@@ -560,12 +560,10 @@ public class ClaudeSetup implements ToolSetup {
     /** The surrogate a {@code \\uXXXX} escape at {@code at} writes, or -1 for anything else. */
     private static int surrogateEscape(String json, int at) {
         if (at + 6 > json.length() || json.charAt(at) != '\\' || json.charAt(at + 1) != 'u') return -1;
-        int unit = 0;
         for (int k = at + 2; k < at + 6; k++) {
-            int digit = Character.digit(json.charAt(k), 16);
-            if (digit < 0) return -1;
-            unit = unit * 16 + digit;
+            if (!java.util.HexFormat.isHexDigit(json.charAt(k))) return -1; // ASCII only, unlike Character.digit
         }
+        int unit = java.util.HexFormat.fromHexDigits(json, at + 2, at + 6);
         return Character.isSurrogate((char) unit) ? unit : -1;
     }
 
