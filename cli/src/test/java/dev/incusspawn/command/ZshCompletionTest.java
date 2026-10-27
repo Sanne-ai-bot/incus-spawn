@@ -1,9 +1,11 @@
 package dev.incusspawn.command;
 
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,22 +29,6 @@ class ZshCompletionTest {
     @TempDir
     Path dir;
 
-    private static Boolean zshUsable;
-
-    private static synchronized boolean zshUsable() {
-        if (zshUsable == null) {
-            try {
-                var p = new ProcessBuilder("zsh", "-f", "-c", "zmodload zsh/zpty")
-                        .redirectErrorStream(true)
-                        .start();
-                zshUsable = p.waitFor(20, TimeUnit.SECONDS) && p.exitValue() == 0;
-            } catch (Exception e) {
-                zshUsable = false;
-            }
-        }
-        return zshUsable;
-    }
-
     /** One candidate per source: box1 for instances, base for templates, claude/claude=work for accounts. */
     private static final String FAKE_ISX = """
             #!/bin/bash
@@ -55,32 +41,42 @@ class ZshCompletionTest {
             esac
             """;
 
-    /** Completes {@code line} with the cursor at its end and returns the resulting buffer, stripped. */
-    private String complete(String line) throws Exception {
-        Assumptions.assumeTrue(zshUsable(), "zsh with the zpty module is not installed");
+    private Path bin, script, driver;
 
-        var bin = Files.createDirectories(dir.resolve("bin"));
+    @BeforeEach
+    void writeFixtures() throws Exception {
+        bin = Files.createDirectories(dir.resolve("bin"));
         var isx = bin.resolve("isx");
         Files.writeString(isx, FAKE_ISX);
         isx.toFile().setExecutable(true);
-        var script = dir.resolve("_isx");
+        script = dir.resolve("_isx");
         Files.writeString(script, CompletionCommand.rawScript(CompletionCommand.Shell.zsh));
-        var driver = dir.resolve("zsh-completion-driver.zsh");
+        driver = dir.resolve("zsh-completion-driver.zsh");
         try (InputStream in = getClass().getResourceAsStream("/zsh-completion-driver.zsh")) {
             assertNotNull(in, "driver resource is on the test classpath");
             Files.write(driver, in.readAllBytes());
         }
+    }
+
+    /** Completes {@code line} with the cursor at its end and returns the resulting buffer, stripped. */
+    private String complete(String line) throws Exception {
         var out = dir.resolve("buffer.txt");
         var log = dir.resolve("driver.log");
         var pb = new ProcessBuilder("zsh", "-f", driver.toString(),
                 bin.toString(), script.toString(), line, out.toString());
         pb.redirectErrorStream(true).redirectOutput(log.toFile());
-        var p = pb.start();
+        Process p;
+        try {
+            p = pb.start();
+        } catch (IOException e) {
+            Assumptions.abort("zsh is not installed");
+            throw e;
+        }
         if (!p.waitFor(30, TimeUnit.SECONDS)) {
             p.destroyForcibly();
             fail("zsh completion did not finish in 30s: " + readQuietly(log));
         }
-        // The driver exits 77 when zsh has zpty but cannot run it here (no usable pty).
+        // The driver exits 77 when zsh lacks zpty or zselect, or cannot run zpty here (no pty).
         Assumptions.assumeFalse(p.exitValue() == 77, () -> "zpty cannot run here: " + readQuietly(log));
         assertEquals(0, p.exitValue(), () -> "driver failed: " + readQuietly(log));
         return Files.readString(out).strip();
