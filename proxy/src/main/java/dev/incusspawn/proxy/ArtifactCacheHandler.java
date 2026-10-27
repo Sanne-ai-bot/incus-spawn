@@ -1997,7 +1997,7 @@ class ArtifactCacheHandler {
         vertx.executeBlocking(() -> {
             for (var dir : Environment.unverifiedLegacyCacheDirs()) {
                 if (Files.isDirectory(dir)) {
-                    ProxyLog.trace("Deleting cache stored without verification: " + dir);
+                    ProxyLog.info("Deleting cache stored without verification: " + dir);
                     FileTrees.delete(dir);
                 }
             }
