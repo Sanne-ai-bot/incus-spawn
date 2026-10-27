@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.RuntimeServices;
@@ -53,11 +54,11 @@ public class ListCommand extends BaseCommand {
         if (!incusHostReady()) return CommandResult.FAILURE;
         try {
             // Anything listed means the disk has been used since a reset: the reset no longer explains an empty list.
-            if (printListing(RuntimeServices.incus(), System.out, java.time.ZoneId.systemDefault())) {
+            if (printListing(RuntimeServices.incus(), BuildOutput.results(), java.time.ZoneId.systemDefault())) {
                 VmManager.forgetDataDiskReset();
             }
         } catch (IncusException e) {
-            System.err.println("Error: " + e.getMessage());
+            BuildOutput.error(e.getMessage());
             return CommandResult.FAILURE;
         }
         return CommandResult.SUCCESS;

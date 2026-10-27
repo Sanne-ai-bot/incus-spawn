@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.RuntimeServices;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -19,7 +20,7 @@ public class InstancesCommand extends BaseCommand {
     protected CommandResult doExecute() throws Exception {
         var list = new ListCommand();
         list.quiet = true;
-        list.printListing(RuntimeServices.incus(), System.out, java.time.ZoneId.systemDefault());
+        list.printListing(RuntimeServices.incus(), BuildOutput.results(), java.time.ZoneId.systemDefault());
         return CommandResult.SUCCESS;
     }
 }

@@ -24,9 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class StatusCommandOutputTest {
 
     private final ByteArrayOutputStream out = new ByteArrayOutputStream();
-    private final ByteArrayOutputStream err = new ByteArrayOutputStream();
     private final PrintStream outStream = new PrintStream(out, true, StandardCharsets.UTF_8);
-    private final PrintStream errStream = new PrintStream(err, true, StandardCharsets.UTF_8);
 
     /** A running proxy's report is the command's result: its state, then one aligned field a line. */
     @Test
@@ -70,8 +68,10 @@ class StatusCommandOutputTest {
         var unreachable = new IncusClient() {
             @Override public String checkConnectivity() { return "no socket"; }
         };
-        assertEquals(1, VmCommand.Status.report("VM not running", unreachable, outStream, errStream));
-        assertEquals("VM not running\n", out.toString(StandardCharsets.UTF_8));
-        assertEquals("\nIncus not reachable: no socket\n", err.toString(StandardCharsets.UTF_8));
+        var recorded = new RecordingOutput();
+        assertEquals(1, VmCommand.Status.report("VM not running", unreachable, recorded));
+        assertEquals(List.of(
+                new RecordingOutput.Event(RecordingOutput.Kind.RESULT, "VM not running"),
+                new RecordingOutput.Event(RecordingOutput.Kind.ERROR, "Incus not reachable: no socket")), recorded.events());
     }
 }

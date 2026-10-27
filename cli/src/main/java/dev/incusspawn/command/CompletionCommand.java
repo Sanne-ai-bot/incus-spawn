@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -33,7 +34,7 @@ public class CompletionCommand extends BaseCommand {
         if (!Platform.isMacOS()) {
             script = stripVmCommand(script, shell);
         }
-        System.out.println(script);
+        BuildOutput.results().println(script);
         return CommandResult.SUCCESS;
     }
 
@@ -74,7 +75,7 @@ public class CompletionCommand extends BaseCommand {
     }
 
     private void printInstallInstructions() {
-        System.out.println("""
+        BuildOutput.results().println("""
                 # ── Zsh ────────────────────────────────────────────────────────────────────
                 # Option A: source directly from your ~/.zshrc
                 #   eval "$(isx completion zsh)"

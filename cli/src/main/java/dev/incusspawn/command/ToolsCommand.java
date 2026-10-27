@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
@@ -59,10 +60,10 @@ public class ToolsCommand extends BaseCommand {
             var loader = RuntimeServices.toolDefLoader();
             var tools = new TreeMap<>(loader.allToolSetups());
             if (outputFormat != OutputFormat.TABLE) {
-                outputFormat.print(System.out, records(tools, loader::getSource));
+                outputFormat.print(BuildOutput.results(), records(tools, loader::getSource));
                 return CommandResult.SUCCESS;
             }
-            printTable(System.out, tools, loader::getSource, verbose);
+            printTable(BuildOutput.results(), tools, loader::getSource, verbose);
             return CommandResult.SUCCESS;
         }
 
@@ -120,17 +121,16 @@ public class ToolsCommand extends BaseCommand {
             var tools = loader.allToolSetups();
             var tool = tools.get(name);
             if (tool == null) {
-                System.err.println("Tool '" + name + "' not found.");
-                line(System.err, "Available tools: " + String.join(", ",
-                        new TreeMap<>(tools).keySet()));
+                BuildOutput.error("Tool '" + cell(name) + "' not found.", cell("Available tools: " + String.join(", ",
+                        new TreeMap<>(tools).keySet())));
                 return CommandResult.valueOf(1);
             }
             if (outputFormat != OutputFormat.TABLE) {
-                outputFormat.printOne(System.out, record(tool, loader.getSource(name)));
+                outputFormat.printOne(BuildOutput.results(), record(tool, loader.getSource(name)));
                 return CommandResult.SUCCESS;
             }
 
-            print(System.out, tool, loader.getSource(name));
+            print(BuildOutput.results(), tool, loader.getSource(name));
             return CommandResult.SUCCESS;
         }
 
