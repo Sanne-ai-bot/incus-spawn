@@ -11,9 +11,7 @@ import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.SpawnConfig;
-import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
-import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.Platform;
@@ -2208,58 +2206,24 @@ public class BuildCommand extends BaseCommand {
                 inherited, BuildOutput.bound());
     }
 
-    /** Containers only: their NIC is eth0, a VM's is not (see RuntimeSetup.addressUpCheck). */
+    /** Containers only: a VM's build has no step between its start and the mirror wait. */
     private void waitForIpv4(Container container) {
         BuildOutput.stepStart("Waiting for network...");
-        var result = container.sh(
-                "systemctl start systemd-networkd 2>/dev/null; " +
-                "for i in $(seq 1 30); do " +
-                "  ip -4 -o addr show eth0 | grep -q 'inet ' && exit 0; " +
-                "  sleep 0.5; " +
-                "done; exit 1");
-        if (result.success()) {
-            BuildOutput.stepDone();
-            return;
-        }
-        BuildOutput.stepBreak();
-        var diag = container.sh(
-                "echo '--- systemd-networkd status ---'; " +
-                "systemctl status systemd-networkd 2>&1 || true; " +
-                "echo '--- networkctl ---'; " +
-                "networkctl status eth0 2>&1 || true; " +
-                "echo '--- ip link ---'; " +
-                "ip link show eth0 2>&1 || true; " +
-                "echo '--- journalctl networkd ---'; " +
-                "journalctl -u systemd-networkd --no-pager -n 20 2>&1 || true");
-        throw new RuntimeException(
-                "Container did not acquire an IPv4 address within 15 seconds.\n" +
-                "Diagnostics:\n" + diag.stdout() + diag.stderr());
+        requireNetwork(GuestNetwork.waitForAddress(incus, container.name()));
     }
 
     private void waitForNetwork(String container) {
         BuildOutput.stepStart("Verifying DNS resolution...");
-        for (int attempt = 0; attempt < 10; attempt++) {
-            var dnsCheck = incus.shellExec(container, "sh", "-c",
-                    "curl -4 -s -o /dev/null -w '%{http_code}' https://mirrors.fedoraproject.org");
-            if (dnsCheck.success() && dnsCheck.stdout().strip().contains("302")) {
-                BuildOutput.stepDone();
-                return;
-            }
-            if (attempt == 9) {
-                BuildOutput.stepBreak();
-                var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
-                var fwDiagnostic = FirewallDetector.detectDiagnostic();
-                var message = "DNS resolution is not working. Check your network setup.";
-                if (diagnostic != null) {
-                    message += "\n\n" + diagnostic;
-                }
-                if (fwDiagnostic != null) {
-                    message += "\n\n" + fwDiagnostic;
-                }
-                throw new RuntimeException(message);
-            }
-            try { Thread.sleep(2000); } catch (InterruptedException e) { break; }
+        requireNetwork(GuestNetwork.waitForMirror(incus, container));
+    }
+
+    private static void requireNetwork(String failure) {
+        if (failure == null) {
+            BuildOutput.stepDone();
+            return;
         }
+        BuildOutput.stepBreak();
+        throw new RuntimeException(failure);
     }
 
     void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef,
