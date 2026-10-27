@@ -588,9 +588,8 @@ public class ProxyCommand extends BaseCommand {
         protected CommandResult doExecute() throws Exception {
             var incus = RuntimeServices.incus();
             if (!Files.exists(logFile())) {
-                if (showFallbackLogs()) {
-                    return CommandResult.SUCCESS;
-                }
+                var fallback = showFallbackLogs();
+                if (fallback != null) return fallback;
                 BuildOutput.error("No proxy log file found at " + logFile(),
                         "The proxy has not been started yet, or logs have been cleared.");
                 return CommandResult.valueOf(1);
@@ -615,20 +614,28 @@ public class ProxyCommand extends BaseCommand {
             try {
                 var pb = new ProcessBuilder("tail", "-f", logFile().toString());
                 pb.inheritIO();
-                var process = pb.start();
-                process.waitFor();
-            } catch (IOException | InterruptedException e) {
+                // tail says itself why it could not read the log
+                return CommandResult.valueOf(pb.start().waitFor() == 0 ? 0 : 1);
+            } catch (InterruptedException e) {
+                // The logs were shown until whoever followed them stopped
+                Thread.currentThread().interrupt();
+                return CommandResult.SUCCESS;
+            } catch (IOException e) {
                 BuildOutput.error("Failed to tail log file: " + e.getMessage());
+                return CommandResult.valueOf(1);
             }
-            return CommandResult.SUCCESS;
         }
 
-        private boolean showFallbackLogs() {
+        /**
+         * Follows the service's own log where there is no proxy log file; null when there is none
+         * to show, else how following it ended.
+         */
+        private CommandResult showFallbackLogs() {
             String header;
             java.util.List<String> command;
             if (Platform.isMacOS()) {
                 var serviceLog = Environment.proxyServiceLogFile();
-                if (!Files.exists(serviceLog)) return false;
+                if (!Files.exists(serviceLog)) return null;
                 header = "Showing launchd service log instead (" + serviceLog + "):";
                 command = java.util.List.of("tail", "-f", serviceLog.toString());
             } else if (ProxyService.isInstalled()) {
@@ -636,22 +643,21 @@ public class ProxyCommand extends BaseCommand {
                 command = java.util.List.of("journalctl", "--user", "-u",
                         Environment.PROXY_SERVICE_NAME, "--no-pager", "-n", "50", "-f");
             } else {
-                return false;
+                return null;
             }
             BuildOutput.note("No proxy log file at " + logFile());
             BuildOutput.note(header);
             try {
                 var pb = new ProcessBuilder(command);
                 pb.inheritIO();
-                pb.start().waitFor();
+                return CommandResult.valueOf(pb.start().waitFor() == 0 ? 0 : 1);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return false;
+                return CommandResult.SUCCESS;
             } catch (IOException e) {
                 BuildOutput.error("Failed to read service logs: " + e.getMessage());
-                return false;
+                return CommandResult.valueOf(1);
             }
-            return true;
         }
     }
 
