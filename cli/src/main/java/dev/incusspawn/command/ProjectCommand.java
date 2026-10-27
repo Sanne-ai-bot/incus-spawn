@@ -39,7 +39,7 @@ public class ProjectCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
-        System.out.println(commandInvocation.getHelpInfo());
+        BuildOutput.results().println(commandInvocation.getHelpInfo());
         return CommandResult.SUCCESS;
     }
 
@@ -89,7 +89,7 @@ public class ProjectCommand extends BaseCommand {
             var imageName = name != null ? name : projectConfig.getName();
 
             if (imageName == null || imageName.isBlank()) {
-                System.err.println("Error: project name is required (either as argument or in incus-spawn.yaml 'name' field).");
+                BuildOutput.error("project name is required (either as argument or in incus-spawn.yaml 'name' field).");
                 return 1;
             }
             if (BuildCommand.reportNameTooLong(imageName)) return 1;
@@ -104,7 +104,7 @@ public class ProjectCommand extends BaseCommand {
             // away meanwhile (#1212)
             try (var parentHeld = TemplateLock.reading(parent, BuildOutput.bound())) {
                 if (!incus.exists(parent)) {
-                    System.err.println("Error: parent image '" + parent + "' does not exist. Run 'incus-spawn build " + parent + "' first.");
+                    BuildOutput.error("parent image '" + parent + "' does not exist.", "Run 'isx build " + parent + "' first.");
                     return 1;
                 }
 
@@ -144,9 +144,9 @@ public class ProjectCommand extends BaseCommand {
                 BuildOutput.stepStart("Deleting the incomplete template...");
                 incus.delete(buildName, true);
                 BuildOutput.stepDone();
-                System.err.println("Error: project template " + imageName + " was not "
-                        + (exists ? "replaced; the previous one is kept." : "created.")
-                        + " Fix the failure above and run 'isx project create' again.");
+                BuildOutput.error("project template " + imageName + " was not "
+                        + (exists ? "replaced; the previous one is kept." : "created."),
+                        "Fix the failure above and run 'isx project create' again.");
                 return 1;
             }
             // Not deleted if this fails: by then it may be the only build there is
@@ -190,7 +190,7 @@ public class ProjectCommand extends BaseCommand {
             if (found != null) {
                 return found;
             }
-            System.err.println("Error: no incus-spawn.yaml found. Use --config to specify one.");
+            BuildOutput.error("no incus-spawn.yaml found.", "Use --config to specify one.");
             System.exit(1);
             return null;
         }
@@ -223,11 +223,11 @@ public class ProjectCommand extends BaseCommand {
          */
         int update(IncusClient incus, ProjectConfig projectConfig) {
             if (!incus.exists(name)) {
-                System.err.println("Error: image '" + name + "' does not exist.");
+                BuildOutput.error("image '" + name + "' does not exist.");
                 return 1;
             }
             if (configPath == null && projectConfig != null && projectConfig.getName() != null && !projectConfig.getName().equals(name)) {
-                System.err.println("Error: the incus-spawn.yaml found here is for project '" + projectConfig.getName()
+                BuildOutput.error("the incus-spawn.yaml found here is for project '" + projectConfig.getName()
                         + "', not '" + name + "'. Use --config to name the one for '" + name + "'.");
                 return 1;
             }

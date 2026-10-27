@@ -105,7 +105,7 @@ public class BranchCommand extends BaseCommand {
             // A script captures the new name, so stdout holds only that, and no shell is opened.
             var created = withStdoutOnStderr(this::create);
             if (created == null) return CommandResult.valueOf(1);
-            outputFormat.printOne(System.out, record(name));
+            outputFormat.printOne(BuildOutput.results(), record(name));
             return CommandResult.SUCCESS;
         }
 
@@ -114,7 +114,7 @@ public class BranchCommand extends BaseCommand {
         if (noStart) return CommandResult.SUCCESS;
         if (!IncusClient.hasTerminal()) {
             // The branch is done; only the shell needs a terminal (#1027).
-            System.out.println("No terminal, so no shell opened. From a terminal: isx shell " + name);
+            BuildOutput.step("No terminal, so no shell opened. From a terminal: isx shell " + name);
             return CommandResult.SUCCESS;
         }
 
@@ -151,7 +151,7 @@ public class BranchCommand extends BaseCommand {
         try (var held = TemplateLock.reading(named, BuildOutput.bound())) {
             return create(named);
         } catch (HostLock.HostLockException e) {
-            System.err.println("Error: " + e.getMessage());
+            BuildOutput.error(failure(e));
             return null;
         }
     }
@@ -161,18 +161,18 @@ public class BranchCommand extends BaseCommand {
         if (resolvedSource == null) return null;
 
         if (airgap && proxyOnly) {
-            System.err.println("Error: --airgap and --proxy-only are mutually exclusive.");
+            BuildOutput.error("--airgap and --proxy-only are mutually exclusive.");
             return null;
         }
         if (airgap && mcpClient) {
-            System.err.println("Error: an --airgap instance cannot reach " + ProxyConfig.MCP_DOMAIN
+            BuildOutput.error("an --airgap instance cannot reach " + ProxyConfig.MCP_DOMAIN
                     + "; --mcp-client needs --proxy-only or full network.");
             return null;
         }
         var networkMode = airgap ? NetworkMode.AIRGAP
                 : proxyOnly ? NetworkMode.PROXY_ONLY : NetworkMode.FULL;
         if (gui && noGui) {
-            System.err.println("Error: --gui and --no-gui are mutually exclusive.");
+            BuildOutput.error("--gui and --no-gui are mutually exclusive.");
             return null;
         }
         Boolean guiChoice = gui ? Boolean.TRUE : noGui ? Boolean.FALSE : null;
@@ -187,7 +187,7 @@ public class BranchCommand extends BaseCommand {
             preflight = BranchFlow.preflight(incus, request);
             prefetched = BranchFlow.create(incus, preflight);
         } catch (BranchFlow.BranchException e) {
-            if (!e.reported()) System.err.println("Error: " + e.getMessage());
+            if (!e.reported()) BuildOutput.error(failure(e));
             return null;
         }
 
@@ -205,11 +205,11 @@ public class BranchCommand extends BaseCommand {
     /** {@code named}, the source given or {@linkplain #detectSource detected}, if it exists. */
     private String resolveSource(String named) {
         if (!incus.exists(named)) {
-            System.err.println("Error: " + (source != null ? "source instance" : "auto-detected source")
+            BuildOutput.error((source != null ? "source instance" : "auto-detected source")
                     + " '" + named + "' does not exist.");
             return null;
         }
-        if (source == null) System.out.println("Auto-detected source: " + named);
+        if (source == null) BuildOutput.step("Auto-detected source: " + named);
         return named;
     }
 
@@ -220,8 +220,8 @@ public class BranchCommand extends BaseCommand {
             return projectConfig.getName();
         }
 
-        System.err.println("Error: no --from specified and no incus-spawn.yaml found in current directory.");
-        System.err.println("Usage: isx branch <name> --from <source-instance>");
+        BuildOutput.error("no --from specified and no incus-spawn.yaml found in current directory.",
+                "Usage: isx branch <name> --from <source-instance>");
         return null;
     }
 }
