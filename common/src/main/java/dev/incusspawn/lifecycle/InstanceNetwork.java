@@ -85,10 +85,31 @@ public final class InstanceNetwork {
      * is left to the build's own network waits, which diagnose that case.
      */
     public static void requireBuildAddress(IncusClient incus, String name, String assigned) {
-        requireBuildAddress(incus, name, assigned, BUILD_ADDRESS_WAIT);
+        requireBuildAddress(incus, name, assigned, BUILD, BUILD_ADDRESS_WAIT);
+    }
+
+    /**
+     * What a failed {@link #requireBuildAddress} names: the instance, and what to retry once the
+     * lease has expired.
+     *
+     * @param subject how the failure names the instance, as in "Build container"
+     * @param retry   what the user runs again, as in "the build"
+     */
+    public record AddressUse(String subject, String retry) {}
+
+    /** A template build's, the default. */
+    public static final AddressUse BUILD = new AddressUse("Build container", "the build");
+
+    /** {@link #requireBuildAddress} for another use of a build address, such as {@code isx update-all}'s. */
+    public static void requireBuildAddress(IncusClient incus, String name, String assigned, AddressUse use) {
+        requireBuildAddress(incus, name, assigned, use, BUILD_ADDRESS_WAIT);
     }
 
     static void requireBuildAddress(IncusClient incus, String name, String assigned, Duration wait) {
+        requireBuildAddress(incus, name, assigned, BUILD, wait);
+    }
+
+    static void requireBuildAddress(IncusClient incus, String name, String assigned, AddressUse use, Duration wait) {
         var deadline = System.nanoTime() + wait.toNanos();
         var held = incus.ipv4Addresses(name);
         while (!held.contains(assigned) && System.nanoTime() < deadline) {
@@ -106,11 +127,11 @@ public final class InstanceNetwork {
         var mask = subnet.prefixLen() == 0 ? 0L : (0xFFFFFFFFL << (32 - subnet.prefixLen())) & 0xFFFFFFFFL;
         var onBridge = held.stream().filter(ip -> (CidrUtils.ipToLong(ip) & mask) == subnet.network()).toList();
         if (onBridge.isEmpty()) return;
-        throw new IncusException("Build container " + name + " was given " + assigned
+        throw new IncusException(use.subject() + " " + name + " was given " + assigned
                 + " but its DHCP client got " + String.join(", ", onBridge) + ". The bridge's DHCP"
                 + " server did not hand out the reserved address, most likely because another"
                 + " instance still holds a lease on it, and the proxy drops traffic from any other"
-                + " address. Retry the build once that lease has expired, or report this with"
+                + " address. Retry " + use.retry() + " once that lease has expired, or report this with"
                 + " 'isx doctor --bundle'.");
     }
 

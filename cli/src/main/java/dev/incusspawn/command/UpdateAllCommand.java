@@ -29,6 +29,9 @@ import java.util.Set;
 )
 public class UpdateAllCommand extends BaseCommand {
 
+    /** What a template that did not take its pinned address names, and how to retry it. */
+    static final InstanceNetwork.AddressUse UPDATE_ADDRESS = new InstanceNetwork.AddressUse("Template", "'isx update-all'");
+
     @Option(name = "prime", hasValue = false, description = "Re-run prime commands (e.g. 'mvn install -DskipTests') for repositories that define one")
     boolean prime;
 
@@ -135,7 +138,7 @@ public class UpdateAllCommand extends BaseCommand {
             // Pinned and filtered as a build is, since it runs the same prime commands (#1743)
             var address = InstanceLifecycle.startTemplate(incus, name, read, BuildOutput.bound());
             incus.waitForReady(name, machineType);
-            InstanceNetwork.requireBuildAddress(incus, name, address);
+            InstanceNetwork.requireBuildAddress(incus, name, address, UPDATE_ADDRESS);
 
             // Every step below needs the network: without one, each would only fail the same way
             if (!GuestUpdate.network(incus, name, machineType)) {
