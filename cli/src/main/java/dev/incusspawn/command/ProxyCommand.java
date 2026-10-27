@@ -614,16 +614,25 @@ public class ProxyCommand extends BaseCommand {
             try {
                 var pb = new ProcessBuilder("tail", "-f", logFile().toString());
                 pb.inheritIO();
-                // tail says itself why it could not read the log
-                return CommandResult.valueOf(pb.start().waitFor() == 0 ? 0 : 1);
+                return CommandResult.valueOf(followed(pb.start().waitFor()));
             } catch (InterruptedException e) {
-                // The logs were shown until whoever followed them stopped
+                // Nothing interrupts this thread; were it, the logs were shown until then
                 Thread.currentThread().interrupt();
                 return CommandResult.SUCCESS;
             } catch (IOException e) {
                 BuildOutput.error("Failed to tail log file: " + e.getMessage());
                 return CommandResult.valueOf(1);
             }
+        }
+
+        /**
+         * The exit code of following a log with {@code tail -f} or {@code journalctl -f}, from
+         * theirs: a follower ended by a signal (above 128) was stopped by whoever read it, as
+         * {@code isx proxy logs | head} sends {@code tail} SIGPIPE, so that is a success; one that
+         * exited by itself could not read the log, and has said why.
+         */
+        static int followed(int exitCode) {
+            return exitCode == 0 || exitCode > 128 ? 0 : 1;
         }
 
         /**
@@ -650,7 +659,7 @@ public class ProxyCommand extends BaseCommand {
             try {
                 var pb = new ProcessBuilder(command);
                 pb.inheritIO();
-                return CommandResult.valueOf(pb.start().waitFor() == 0 ? 0 : 1);
+                return CommandResult.valueOf(followed(pb.start().waitFor()));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return CommandResult.SUCCESS;
