@@ -260,15 +260,18 @@ public final class ProxyConfig {
         thread.start();
     }
 
-    public static void clearBridgeDns(IncusClient incus) {
+    /** Removes isx's overrides from the bridge's dnsmasq config; false, with a warning, when they could not be. */
+    public static boolean clearBridgeDns(IncusClient incus) {
         try {
             var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
             var cleared = BridgeDns.withoutOverrides(existing);
             if (!cleared.equals(existing)) {
                 incus.networkConfigSet("incusbr0", "raw.dnsmasq", cleared);
             }
+            return true;
         } catch (Exception e) {
             BuildOutput.warn("could not clear bridge DNS overrides: " + e.getMessage());
+            return false;
         }
     }
 
