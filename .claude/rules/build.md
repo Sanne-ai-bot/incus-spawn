@@ -117,6 +117,9 @@ The path constant lives in `ClaudeSetup.MANAGED_MEMORY_PATH` beside the rest of 
 When the resolved tools include `gemini-cli`, the same content is written to `~/.gemini/GEMINI.md` and owned by `agentuser`.
 This file is build-owned and regenerated for each child template, including when Gemini is inherited without reconfiguration.
 Project context files are untouched and `context.fileName` stays unset.
+When they include `pi`, the same content goes to `/AGENTS.md`, owned by root, with or without the `claude` tool.
+Pi loads the `AGENTS.md` of every ancestor of its working directory, so the root's reaches every session and `~/.pi/agent/AGENTS.md` stays the user's.
+A tool declares such a copy's path with `ToolSetup.environmentContextPath`; `writeAgentContext` reads it for every resolved tool, giving a path under the home to `agentuser` and leaving any other to root.
 
 That path is Claude Code's **managed policy** memory layer: it loads ahead of `~/.claude/CLAUDE.md` and any project `CLAUDE.md`, layers concatenate rather than override, and it can't be suppressed via `claudeMdExcludes`.
 So isx never merges with or overwrites a file a user or template owns -- no marker blocks, no read-modify-write.

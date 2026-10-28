@@ -16,7 +16,6 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
-import dev.incusspawn.tool.GeminiSetup;
 import dev.incusspawn.tool.ToolVerifier;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
@@ -342,8 +341,9 @@ public class GuestProvisioning {
      * That layer loads ahead of, and concatenates with, {@code ~/.claude/CLAUDE.md} and
      * any project CLAUDE.md, so isx never merges with or overwrites a file someone else
      * owns. Root ownership is correct here; no chown.
-     * Images containing Gemini CLI also receive this content in its build-owned
-     * {@code ~/.gemini/GEMINI.md}, with agentuser ownership.
+     * Each installed tool whose agent reads its own global context file gets a copy there
+     * ({@link dev.incusspawn.tool.ToolSetup#environmentContextPath}): Gemini CLI's
+     * {@code ~/.gemini/GEMINI.md}, owned by agentuser, and Pi's {@code /AGENTS.md}, owned by root.
      */
     static void writeAgentContext(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
                            List<ResolvedTool> allTools, String canonicalName) {
@@ -369,8 +369,15 @@ public class GuestProvisioning {
 
         var content = AgentContextGenerator.generate(canonicalName, toolNames, repos, notes);
         container.writeFile(ClaudeSetup.MANAGED_MEMORY_PATH, content);
-        if (toolNames.contains("gemini-cli")) {
-            GeminiSetup.writeEnvironmentContext(container, content);
+        var paths = new java.util.LinkedHashSet<String>();
+        for (var resolved : allTools) {
+            var path = resolved.setup().environmentContextPath();
+            if (path != null && paths.add(path)) {
+                container.writeFile(path, content);
+                if (path.startsWith(AGENTUSER_HOME + "/")) {
+                    container.chown(path, "agentuser:agentuser");
+                }
+            }
         }
     }
 

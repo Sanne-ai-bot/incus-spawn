@@ -34,6 +34,7 @@ It disables telemetry, usage statistics, self-updates and notifications, startup
 It writes `~/.gemini/policies/isx-auto-approve.toml`, a priority-zero allow-all user policy for default, auto-edit, and YOLO modes.
 The policy also applies to direct and headless launches, excludes plan mode, and permits higher-priority user overrides.
 At the end of either build path, `GuestProvisioning.writeAgentContext()` writes the resolved environment instructions to the build-owned `~/.gemini/GEMINI.md` as `agentuser`.
+It reads that path from `ToolSetup.environmentContextPath`, which `PiSetup` declares too, as `/AGENTS.md`, without needing the `claude` tool.
 The tool leaves `context.fileName` unset.
 It selects `security.auth.selectedType: gemini-api-key` and exports only `GEMINI_API_KEY=gemini-placeholder` at build time.
 Its `proxy.placeholders` declaration fills that variable with the stable `gemini` namespace proof at login; Gemini reads it when launched, without a credential file or wrapper.

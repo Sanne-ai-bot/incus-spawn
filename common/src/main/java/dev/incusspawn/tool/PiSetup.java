@@ -14,6 +14,14 @@ public class PiSetup implements ToolSetup {
     static final String DEFAULT_PROVIDER = "anthropic";
     static final String DEFAULT_MODEL = "claude-sonnet-4-6";
 
+    /**
+     * Where Pi finds the environment instructions. Pi has no system-wide layer like Claude Code's
+     * managed policy, but it loads the {@code AGENTS.md} of every directory from its working
+     * directory up to the root, so the root's reaches every session. The user's own
+     * {@code ~/.pi/agent/AGENTS.md} stays theirs, and loads before it.
+     */
+    public static final String CONTEXT_PATH = "/AGENTS.md";
+
     @Override
     public String name() {
         return "pi";
@@ -211,6 +219,14 @@ public class PiSetup implements ToolSetup {
         NpmGlobalInstall.install(c, "Pi coding agent", "@earendil-works/pi-coding-agent");
         BuildOutput.stepDone();
     }
+
+    /**
+     * A copy of its own, as Gemini CLI gets, not a link to Claude Code's managed policy file:
+     * Pi then depends on neither the claude tool nor where Claude Code keeps its files.
+     * Rendered alike with or without the claude tool, so there is one path to test.
+     */
+    @Override
+    public String environmentContextPath() { return CONTEXT_PATH; }
 
     private void configureSettings(Container c, java.util.Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Pi...");
