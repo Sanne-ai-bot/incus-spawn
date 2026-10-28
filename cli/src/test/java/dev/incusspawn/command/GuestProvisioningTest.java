@@ -1077,7 +1077,9 @@ class GuestProvisioningTest {
             System.setErr(originalErr);
         }
         var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
-        assertEquals(List.of("Unknown package_repos type 'x ]0;pwned ' for 'a b', skipping it"), said.warnings());
+        assertTrue(said.warnings().contains("Unknown package_repos type 'x ]0;pwned ' for 'a b', skipping it"), said.warnings().toString());
+        // Every diagnostic, the failed COPR step's and its output's included, shows the names as text
+        said.warnings().forEach(w -> assertEquals(dev.incusspawn.util.TerminalLink.plainText(w), w, w.replace("\033", "ESC")));
         assertEquals(dev.incusspawn.util.TerminalLink.plainText(shown), shown, shown.replace("\033", "ESC"));
         assertTrue(ex.getMessage().startsWith("Failed to enable COPR repo "), ex.getMessage());
         assertFalse(ex.getMessage().contains("\n"), "a name cannot forge a line in the failure report: " + ex.getMessage());

@@ -443,17 +443,10 @@ class BuildToolsTest {
             new ToolDef.ToolRef("claude", java.util.Map.of("model", "claude-opus-4-6"))
         ));
 
-        var oldErr = System.err;
-        var errContent = new java.io.ByteArrayOutputStream();
-        System.setErr(new java.io.PrintStream(errContent));
-        try {
-            var resolved = BuildTools.resolveTools(imageDef, toolDefLoader, false);
-            assertEquals(2, resolved.size());
-            assertTrue(errContent.toString().contains("overriding"),
-                "Should warn when explicit overrides transitive dep with params");
-        } finally {
-            System.setErr(oldErr);
-        }
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() ->
+                assertEquals(2, BuildTools.resolveTools(imageDef, toolDefLoader, false).size()));
+        assertTrue(recorded.warnings().stream().anyMatch(w -> w.contains("overriding")),
+            "Should warn when explicit overrides transitive dep with params");
     }
 
     @Test
@@ -486,17 +479,10 @@ class BuildToolsTest {
             new ToolDef.ToolRef("claude", java.util.Map.of("model", "claude-opus-4-6"))
         ));
 
-        var oldErr = System.err;
-        var errContent = new java.io.ByteArrayOutputStream();
-        System.setErr(new java.io.PrintStream(errContent));
-        try {
-            var resolved = BuildTools.resolveTools(imageDef, toolDefLoader, false);
-            assertEquals(2, resolved.size());
-            assertFalse(errContent.toString().contains("overriding"),
-                "Should not warn when transitive dep has no explicit params");
-        } finally {
-            System.setErr(oldErr);
-        }
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() ->
+                assertEquals(2, BuildTools.resolveTools(imageDef, toolDefLoader, false).size()));
+        assertFalse(recorded.warnings().stream().anyMatch(w -> w.contains("overriding")),
+            "Should not warn when transitive dep has no explicit params");
     }
 
     @Test
