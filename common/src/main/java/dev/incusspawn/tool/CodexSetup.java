@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
@@ -59,6 +60,21 @@ public class CodexSetup implements ToolSetup {
         a.setCommand("d=$(find ~/.codex/sessions -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-); if [ -n \"$d\" ]; then c=$(grep -m1 -o '\"cwd\":\"[^\"]*\"' \"$d\" | cut -d'\"' -f4); [ -n \"$c\" ] && [ -d \"$c\" ] && cd \"$c\"; codex resume --last || codex; else codex; fi");
         a.setAutoReturn(true);
         return List.of(a);
+    }
+
+    /**
+     * Codex's system requirements layer: it reads no Markdown file outside the user's own
+     * {@code ~/.codex/AGENTS.md}, but sends {@code additional_developer_instructions} from here as
+     * a developer message of their own, after the user's instructions rather than in place of
+     * them, in the TUI and {@code codex exec} alike (#1783). {@code developer_instructions} in
+     * {@code /etc/codex/config.toml} would be replaced by a user's own.
+     */
+    @Override
+    public String environmentContextPath() { return REQUIREMENTS_PATH; }
+
+    @Override
+    public String renderEnvironmentContext(String instructions) {
+        return requirementsToml(instructions);
     }
 
     @Override
@@ -123,6 +139,13 @@ public class CodexSetup implements ToolSetup {
     static final String PLACEHOLDER_API_KEY = "sk-placeholder";
 
     public static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
+    public static final String REQUIREMENTS_PATH = "/etc/codex/requirements.toml";
+
+    /**
+     * Codex caps {@code additional_developer_instructions} at 10,000 tokens it estimates at four
+     * bytes each, its own markers included; this leaves those markers room.
+     */
+    static final int MAX_INSTRUCTIONS_BYTES = 39_000;
     static final String AUTH_PATH = "/home/agentuser/.codex/auth.json";
 
     /**
@@ -248,6 +271,42 @@ public class CodexSetup implements ToolSetup {
               esac
             fi
             """.formatted(PLACEHOLDER_API_KEY);
+
+    /**
+     * The instructions as Codex's requirements file. The heading leads as a TOML comment, so a
+     * later build knows the file as its own; the value is a multi-line basic string with every
+     * quote and backslash escaped, so no content can close it early.
+     */
+    static String requirementsToml(String instructions) {
+        var text = instructions.strip();
+        var bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        if (bytes > MAX_INSTRUCTIONS_BYTES) {
+            // Codex refuses to load any config past its limit, so it would not start at all.
+            throw new IllegalStateException("The environment instructions are " + bytes + " bytes, more than the "
+                    + MAX_INSTRUCTIONS_BYTES + " Codex accepts as managed developer instructions: shorten the agent notes");
+        }
+        var toml = new StringBuilder(AgentContextGenerator.HEADING).append('\n');
+        toml.append("# Written by isx at each build: the environment instructions, as Codex's managed developer instructions\n");
+        toml.append("additional_developer_instructions = \"\"\"\n");
+        text.codePoints().forEach(c -> {
+            switch (c) {
+                case '\\' -> toml.append("\\\\");
+                case '"' -> toml.append("\\\"");
+                case '\n', '\t' -> toml.appendCodePoint(c);
+                default -> {
+                    if (Character.isSurrogate((char) c)) {
+                        // A lone one: TOML holds only scalar values, and UTF-8 cannot encode it.
+                        toml.append("\\uFFFD");
+                    } else if (c < 0x20 || c == 0x7f) {
+                        toml.append(String.format("\\u%04X", c));
+                    } else {
+                        toml.appendCodePoint(c);
+                    }
+                }
+            }
+        });
+        return toml.append("\n\"\"\"\n").toString();
+    }
 
     private static void appendIfPresent(StringBuilder toml, Map<String, String> params,
                                         String paramKey, String tomlKey) {

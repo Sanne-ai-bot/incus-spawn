@@ -692,6 +692,17 @@ So the root's file reaches every Pi session, while the user's `~/.pi/agent/AGENT
 The agent directory was rejected for the same reason Claude Code's user layer was: isx would overwrite a file the user owns.
 Pi links to the store, not to `/etc/claude-code/CLAUDE.md`, so it depends neither on the `claude` tool nor on where Claude Code keeps its managed policy.
 
+Images containing `codex` get the instructions in `CodexSetup.REQUIREMENTS_PATH` (`/etc/codex/requirements.toml`), root-owned and 0644 (#1783).
+Codex reads no Markdown outside the user's `~/.codex/AGENTS.md`, which isx must not write.
+Its system requirements layer is the analogue of Claude Code's managed policy: `additional_developer_instructions` there is sent as a developer message of its own, beside the user's instructions, in the TUI and `codex exec` alike.
+The rejected alternative, `developer_instructions` in `/etc/codex/config.toml`, is the lowest config layer, so a user's own value would replace it.
+TOML cannot be a link to the store, so `ToolSetup.renderEnvironmentContext` lets a tool render its own file, which `AgentInstructions` writes in place.
+It starts with `AgentContextGenerator.HEADING`, a TOML comment, so stale cleanup treats it like a link.
+The value is a multi-line basic string with every quote, backslash and control character escaped, so an agent note cannot end it early.
+A requirements file can also hold a template's own policy, such as allowed sandbox modes, so a non-empty one under another first line is kept and the build warns.
+Codex refuses to load any config whose managed instructions pass 10,000 estimated tokens, so instructions above `MAX_INSTRUCTIONS_BYTES` fail the build rather than leave Codex unable to start.
+The MCP Codex runner still sends its primer from the store, since an older Codex inherited from a parent image may not read the requirement.
+
 **Why the managed-policy layer for Claude Code.**
 That path is Claude Code's *managed policy* memory location on Linux: it loads ahead of the user layer (`~/.claude/CLAUDE.md`) and the project layer (`./CLAUDE.md`), all layers concatenate rather than override, and it cannot be suppressed via `claudeMdExcludes`.
 Writing there means isx never merges with, prepends to, or overwrites a file a user or a template owns — no marker blocks and no read-modify-write logic, which the obvious alternative (generating into the user layer) would have required.

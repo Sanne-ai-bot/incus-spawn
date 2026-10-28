@@ -93,6 +93,7 @@ tools:
 ### What the build sets up
 
 The build configures Codex for unattended use, turns off its update check and marks the home directory as trusted.
+It also hands Codex the [environment primer](#agent-environment-context), without touching `~/.codex/AGENTS.md`.
 The default action resumes your most recent session.
 
 The footer shows the model, the current directory and `Running unconstrained in isx [version] [container name]`.
@@ -325,6 +326,9 @@ The build stores it once, in `/etc/isx/agent-instructions.md`.
 With Claude Code it appears at `/etc/claude-code/CLAUDE.md`, and with Pi at `/AGENTS.md`, both links to that one file.
 With Gemini CLI, `~/.gemini/GEMINI.md` gets a copy you own.
 Editing one of the links changes every agent's, and the next build replaces them all.
+
+With Codex CLI, `/etc/codex/requirements.toml` holds them as managed developer instructions, which Codex adds to your own.
+A template that ships its own `requirements.toml` keeps it, and the build warns that Codex goes without the primer.
 
 Your own `~/.claude/CLAUDE.md` and project `CLAUDE.md` files load as usual.
 

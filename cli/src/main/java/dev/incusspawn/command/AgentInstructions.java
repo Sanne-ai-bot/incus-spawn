@@ -2,8 +2,11 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.util.BuildOutput;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 /**
@@ -15,6 +18,11 @@ import java.util.List;
  * {@code ~/.gemini/GEMINI.md}) is a copy owned by agentuser, since all links share one owner and
  * mode, and a root-owned file there would be one the user cannot edit. A link that cannot be
  * made, as when a mount puts the location on another filesystem, falls back to a copy.
+ *
+ * <p>An agent that reads another format (Codex's {@code /etc/codex/requirements.toml}, #1783)
+ * gets the instructions rendered into it, root-owned and 0644 like the store. Such a file holds
+ * other settings too, so one a template wrote itself is kept, with a warning, rather than
+ * replaced: isx writes it only where there is none, an empty one or the last build's.
  *
  * <p>The store is replaced by a rename and every location is linked again on each build, so a
  * location a tool replaced with a file of its own is relinked rather than left stale. A location
@@ -34,20 +42,54 @@ final class AgentInstructions {
     /** Locations builds wrote before {@link #RECORD} existed: what they wrote, so never changed. */
     static final List<String> LEGACY = List.of("/etc/claude-code/CLAUDE.md", "/AGENTS.md");
 
+    /** What the script ({@code isx_render}) prints for a rendered location it kept, followed by the path. */
+    static final String KEPT = "isx-kept ";
+
+    /**
+     * Where an agent reads the instructions, and what it reads there: null for the stored copy
+     * itself, else the file {@link dev.incusspawn.tool.ToolSetup#renderEnvironmentContext} made.
+     */
+    record Location(String path, String rendered) {
+        Location {
+            if (rendered != null && !rendered.startsWith(AgentContextGenerator.HEADING + "\n")) {
+                throw new IllegalArgumentException(path + " must start with the line " + AgentContextGenerator.HEADING);
+            }
+        }
+    }
+
     private AgentInstructions() {
     }
 
+    /** Every installed agent's location for {@code content}, the first tool declaring a path winning. */
+    static List<Location> locations(List<BuildTools.ResolvedTool> tools, String content) {
+        var byPath = new LinkedHashMap<String, Location>();
+        for (var resolved : tools) {
+            var path = resolved.setup().environmentContextPath();
+            if (path != null && !byPath.containsKey(path)) {
+                byPath.put(path, new Location(path, resolved.setup().renderEnvironmentContext(content)));
+            }
+        }
+        return new ArrayList<>(byPath.values());
+    }
+
     /** Store {@code content} and place it at every declared location, cleaning up stale ones. */
-    static void install(Container container, String content, Collection<String> declared) {
-        container.sh(script("", content, declared))
+    static void install(Container container, String content, Collection<Location> declared) {
+        var result = container.sh(script("", content, declared))
                 .assertSuccess("Failed to write the agent instructions");
+        for (var line : result.stdout().split("\n")) {
+            if (line.startsWith(KEPT)) {
+                BuildOutput.warn("Kept " + line.substring(KEPT.length())
+                                + ", which the template wrote: its agent gets no environment instructions",
+                        "Add them to that file in the template, or remove it there so isx writes its own.");
+            }
+        }
     }
 
     /**
      * The script {@link #install} runs, with every path under {@code root} ({@code ""} in a
      * guest), so a test can run it against a scratch directory. Starts with the store's heredoc.
      */
-    static String script(String root, String content, Collection<String> declared) {
+    static String script(String root, String content, Collection<Location> declared) {
         var store = Container.shellQuote(root + STORE);
         var sb = new StringBuilder();
         sb.append(Container.heredoc("set -e; mkdir -p \"$(dirname " + store + ")\"; cat > " + store + ".new",
@@ -72,11 +114,19 @@ final class AgentInstructions {
                   isx_place "$1"
                   rm -f "$r$1" && cp "$store" "$r$1" && chown agentuser:agentuser "$r$1"
                 }
+                isx_render() {
+                  isx_place "$1"
+                  if [ -s "$r$1" ] && [ "$(head -n 1 "$r$1" 2>/dev/null)" != "$heading" ]; then
+                    echo "isx-kept $1"; return 0
+                  fi
+                  cat > "$r$1.isx-new" && chmod 0644 "$r$1.isx-new" && mv -f "$r$1.isx-new" "$r$1"
+                }
                 """);
 
         // Stale locations first, while a link isx made still names the store's inode.
         var kept = new StringBuilder("''");
-        for (var path : declared) {
+        var paths = declared.stream().map(Location::path).toList();
+        for (var path : paths) {
             kept.append('|').append(Container.shellQuote(path));
         }
         sb.append("{ cat \"$r").append(RECORD).append("\" 2>/dev/null || true; printf '%s\\n'");
@@ -89,14 +139,20 @@ final class AgentInstructions {
 
         // Recorded before any is placed, so a build that fails partway still leaves the next
         // one a record of every location it may have touched.
-        sb.append(Container.heredoc("cat > \"$r" + RECORD + "\"", String.join("\n", declared))).append('\n');
+        sb.append(Container.heredoc("cat > \"$r" + RECORD + "\"", String.join("\n", paths))).append('\n');
 
         // A new inode for the new content, then every location linked to it again.
         sb.append("chmod 0644 \"$store.new\"\n");
         sb.append("mv -f \"$store.new\" \"$store\"\n");
-        for (var path : declared) {
-            sb.append(path.startsWith(GuestProvisioning.AGENTUSER_HOME + "/") ? "isx_copy " : "isx_link ")
-                    .append(Container.shellQuote(path)).append('\n');
+        for (var location : declared) {
+            var path = Container.shellQuote(location.path());
+            if (location.rendered() != null) {
+                sb.append(Container.heredoc("isx_render " + path, location.rendered().strip()));
+            } else {
+                sb.append(location.path().startsWith(GuestProvisioning.AGENTUSER_HOME + "/") ? "isx_copy " : "isx_link ")
+                        .append(path);
+            }
+            sb.append('\n');
         }
         return sb.toString();
     }
