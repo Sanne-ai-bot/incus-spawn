@@ -14,8 +14,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * Output reaches the terminal only through the gate classes below (#1703).
@@ -24,15 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * from the group it sits in, so main source of all three modules may not use or replace the raw
  * streams, use the console or {@code printStackTrace()}, nor print a string literal that starts
  * with spaces, through a stream or the proxy's {@code ProxyLog.stdout} alike.
- *
- * <p>The code that predates the gate is held by {@value #BASELINE}: per file, how many of each
- * it still has. A file not listed may have none, a listed one may not grow, and a listed count
- * above what the file holds fails too, so the baseline only ever shrinks and every migration
- * deletes its lines. Comments and the contents of string literals are not scanned.
+ * Comments and the contents of string literals are not scanned.
  */
 class RawOutputGateTest {
-
-    private static final String BASELINE = "raw-output-baseline.txt";
 
     private static final Pattern RAW_STREAM = Pattern.compile(
             "\\bSystem\\s*\\.\\s*(?:(?:out|err)\\b|(?:console|setOut|setErr)\\s*\\()"
@@ -43,7 +35,7 @@ class RawOutputGateTest {
             "\\b(?:print|println|printf|stdout)\\s*\\(\\s*\"(?:\\\\n|%n)*(?: |\\\\t)");
     /** The pieces of a string literal's start that {@link #blank} keeps, so {@link #INDENTED_PRINT} can see them. */
     private static final Set<String> LEADING_INDENT = Set.of(" ", "\\n", "\\t", "%", "n");
-    /** Never needed, so never baselined: it would hide every bare {@code out.println} that follows it. */
+    /** Refused in every file, gate classes included: it would hide every bare {@code out.println} that follows it. */
     private static final Pattern STATIC_IMPORT = Pattern.compile(
             "\\bimport\\s+static\\s+java\\.lang\\.System\\.(?:out|err|console|setOut|setErr|\\*)\\s*;");
 
@@ -66,50 +58,34 @@ class RawOutputGateTest {
         return EXEMPT.containsKey(path) || BUILD_TIME_FEATURE.matcher(path).matches();
     }
 
-    record Count(int raw, int indented) {
-        static final Count NONE = new Count(0, 0);
-    }
-
-    /** What a file still holds: the one-based lines of each kind of offence. */
-    record Found(List<Integer> raw, List<Integer> indented) {
-        Count count() {
-            return new Count(raw.size(), indented.size());
-        }
-    }
+    /** What a file holds: the one-based lines of each kind of offence. */
+    record Found(List<Integer> raw, List<Integer> indented) {}
 
     @Test
     void outputStaysBehindTheGate() throws IOException {
-        var baseline = readBaseline();
         var failures = new StringBuilder();
-        var scanned = scan(failures);
-        for (var entry : scanned.entrySet()) {
-            var path = entry.getKey();
-            var found = entry.getValue();
-            var allowed = baseline.getOrDefault(path, Count.NONE);
-            over(failures, path, "raw output uses", found.raw(), allowed.raw());
-            over(failures, path, "indented print literals", found.indented(), allowed.indented());
+        for (var source : sources("src/main/java").entrySet()) {
+            var path = source.getKey();
+            var code = blank(source.getValue());
+            var imports = lines(STATIC_IMPORT, code);
+            if (!imports.isEmpty()) {
+                failures.append(path).append(": static import of a System stream at lines ")
+                        .append(imports).append('\n');
+            }
+            if (exempt(path)) continue;
+            var found = find(code);
+            report(failures, path, "raw output uses", found.raw());
+            report(failures, path, "indented print literals", found.indented());
         }
         assertEquals("", failures.toString(),
                 "write through BuildOutput or a sink the caller hands in (CLAUDE.md, \"Never print straight to"
                         + " stdout/stderr\"), and indent with BuildOutput's groups, not leading spaces");
-
-        var stale = new StringBuilder();
-        for (var entry : baseline.entrySet()) {
-            var found = scanned.get(entry.getKey());
-            var actual = found == null ? Count.NONE : found.count();
-            if (actual.equals(Count.NONE)) {
-                stale.append("delete: ").append(line(entry.getKey(), entry.getValue())).append('\n');
-            } else if (!actual.equals(entry.getValue())) {
-                stale.append("lower to: ").append(line(entry.getKey(), actual)).append('\n');
-            }
-        }
-        assertEquals("", stale.toString(), "the baseline only shrinks: update cli/src/test/resources/" + BASELINE);
     }
 
-    private static void over(StringBuilder failures, String path, String kind, List<Integer> lines, int allowed) {
-        if (lines.size() <= allowed) return;
-        failures.append(path).append(": ").append(lines.size()).append(' ').append(kind).append(", ")
-                .append(allowed).append(" allowed, at lines ").append(lines).append('\n');
+    private static void report(StringBuilder failures, String path, String kind, List<Integer> lines) {
+        if (lines.isEmpty()) return;
+        failures.append(path).append(": ").append(lines.size()).append(' ').append(kind)
+                .append(" at lines ").append(lines).append('\n');
     }
 
     private static final Pattern TERMINAL_STREAMS = Pattern.compile("\\bTerminalStreams\\s*(?:\\.|::)");
@@ -188,27 +164,6 @@ class RawOutputGateTest {
     }
 
     /**
-     * Every non-exempt main source file of the three modules that holds an offence, by repository
-     * path; a static import of a stream, in any file, goes straight to {@code failures}.
-     */
-    private static Map<String, Found> scan(StringBuilder failures) throws IOException {
-        var scanned = new TreeMap<String, Found>();
-        for (var source : sources("src/main/java").entrySet()) {
-            var path = source.getKey();
-            var code = blank(source.getValue());
-            var imports = lines(STATIC_IMPORT, code);
-            if (!imports.isEmpty()) {
-                failures.append(path).append(": static import of a System stream at lines ")
-                        .append(imports).append('\n');
-            }
-            if (exempt(path)) continue;
-            var found = find(code);
-            if (!found.count().equals(Count.NONE)) scanned.put(path, found);
-        }
-        return scanned;
-    }
-
-    /**
      * Every Java source under {@code dir} ({@code src/main/java}, {@code src/test/java}) of the
      * three modules, by repository path: the one walk every source gate makes, so a module added
      * is seen by all of them.
@@ -260,25 +215,6 @@ class RawOutputGateTest {
                 """;
         assertEquals(new Found(List.of(9, 10, 11, 11, 11, 12, 15, 16, 17, 17, 21), List.of(9, 14, 15, 16)), find(blank(source)));
         assertEquals(List.of(21, 22), lines(STATIC_IMPORT, blank(source)));
-    }
-
-    private static String line(String path, Count count) {
-        return count.raw() + " " + count.indented() + " " + path;
-    }
-
-    private static Map<String, Count> readBaseline() throws IOException {
-        var baseline = new TreeMap<String, Count>();
-        try (var in = RawOutputGateTest.class.getResourceAsStream("/" + BASELINE)) {
-            assertNotNull(in, BASELINE + " is not on the test classpath");
-            for (var line : new String(in.readAllBytes()).split("\n")) {
-                if (line.isBlank() || line.startsWith("#")) continue;
-                var fields = line.trim().split("\\s+");
-                var previous = baseline.put(fields[2],
-                        new Count(Integer.parseInt(fields[0]), Integer.parseInt(fields[1])));
-                assertNull(previous, BASELINE + " lists " + fields[2] + " twice");
-            }
-        }
-        return baseline;
     }
 
     /** One-based line numbers of each match. */

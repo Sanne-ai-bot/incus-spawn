@@ -926,7 +926,7 @@ Host commands run under a step capture their output instead of inheriting it (`Y
 
 **Warnings and errors** go to stderr.
 Notes (dim) are for expected conditions the user may want to know about (skipped steps, cache hits).
-Warnings (`System.err`) are for conditions that may need action.
+Warnings (`warn`, on stderr) are for conditions that may need action.
 The distinction: a note is "this is fine, FYI"; a warning is "you should look at this."
 
 **Container commands during build:** tool `run:` and `run_as_user:` scripts use `Container.runQuiet()`/`runAsUserQuiet()`, which capture output and only show it on failure.
@@ -934,7 +934,7 @@ This prevents leaked output (e.g. systemd's "Created symlink" lines) from breaki
 `runInteractive` is reserved for commands that genuinely need live terminal output (e.g. interactive shells).
 
 **Adding new output:** use `BuildOutput.section()` to introduce a block of work, `header()` to frame a named multi-step operation within it, `group()` for a batch of related steps, `step()`/`ok()` for quick actions, `stepStart()`/`stepDone()`/ `stepDone(detail)` for slow ones (with `stepProgress()` when a phase can take a while), `stepNote()`/`stepWarn()` for detail about the step above, `note()` for informational dim messages, `warnBanner()` for bordered stderr warnings, and `success()` for the final confirmation.
-Do not add raw `System.out.println()` with inline ANSI escapes, and do not leave a `Doing X...` line dangling.
+Never print to the raw streams or indent a line with leading spaces (a `group` indents its children), and do not leave a `Doing X...` line dangling.
 Pure reports/tables and interactive prompts (e.g. `proxy` status, `clean` summaries, the TUI) are not step sequences and stay as plain output.
 
 ### Output for scripts: `--format=table|plain|json`
@@ -1058,12 +1058,11 @@ Every window title, the shell's `isx:<name>` and its reset as well as the TUI sh
 Only the two gates, `TerminalProgress` and the shell status bar are exempt as whole files, so a new escape on an ordinary path in `BuildCommand` still fails.
 `RawOutputGateTest` does the same for the raw streams (#1703): `System.out`, `System.err`, `System.setOut`/`setErr`, `System.console()`, `FileDescriptor.out`/`err` and `printStackTrace()`, and a print literal indented by hand.
 The rule against printing from code the TUI can reach was prose for five rounds of fixes, and nothing failed when the next site was added.
-Over 1,300 such uses predate the gate, so it ratchets: `raw-output-baseline.txt` counts them per file, a file may not exceed its count, and a count it no longer reaches fails until it is lowered.
+It began as a ratchet over the 1,300 uses that predated it, a baseline counted per file that each migration lowered; the migration emptied it, so a raw use outside a gate class now fails wherever it is.
 A static import of a stream is refused outright, since it would hide every bare `out.println` after it, and an exemption whose file no longer writes fails as well.
 Code that must reach the terminal itself, to hand it to an interactive guest command, draw on it whole or speak another program's protocol on it (`isx git-remote-helper`, `isx ssh-proxy`), takes the streams from the gate `TerminalStreams` rather than being exempted file by file, so a stray print beside it is still caught; only the files the gate test names may call it, a method reference included, and a named file that no longer calls it fails.
 Its `terminal()` holds the one copy of the JDK 22 to 24 check that stdin and stdout are a terminal, which `Prompts.terminal()` reuses.
-The counts are totals, so a new print in a baselined file still needs a reviewer's eye when an old one goes in the same change.
-It is a source scan rather than forbiddenapis, which reads Java 25 class files as of 3.9 but keeps no per-file counts and cannot see an indentation literal.
+It is a source scan rather than forbiddenapis, which reads Java 25 class files as of 3.9 but cannot see an indentation literal.
 A styled string is never a `static final`: it would be decided when the native image is built.
 `BuildOutputTest` and `StatusCommandOutputTest` pin these.
 
@@ -5092,7 +5091,8 @@ A binding is process-wide too, so recording does not make tests safe to run in p
 `RecordingOutput` (common test-jar) is the recording binding: every method of `Output` records a typed event (kind, message, details), and `OutputBindingTest` holds it to every method, so no kind falls through unrecorded.
 A test binds it, or hands it to code that takes an `Output`; how an event is drawn is `BuildOutputTest`'s alone.
 Checks whose only point was that nothing reached stderr, or that a copy reached a listener, were dropped, since the raw-output gate and the binding tests prove there is no other path; tests of which warnings a flow raises stay, reading the recorder or the log binding.
-What still prints raw (the init flow, much of `cli/command`, the proxy's log) cannot be recorded yet, so its tests keep their swap until its step moves it to the seam; `StreamSwapGateTest` lists them, each with why, and the list only shrinks.
+Nothing outside the gate classes prints raw any more, so only tests of a gate's own stream swap one: the terminal printer's rendering, the bindings, the pre-TUI hold and the proxy's `ProxyLog` lines.
+`StreamSwapGateTest` lists them, each with why, and an entry that no longer swaps fails.
 A class that calls another's swapping helper counts as swapping; it lists classes, not swaps, so a listed class's own helper can take a new caller, which review has to catch until the class is dropped.
 
 **One status line cannot hold several warnings.**
