@@ -98,11 +98,12 @@ create() {
     # Orca repeats a create that failed: the instance an earlier attempt left for this runtime never
     # reached Orca, so it is taken back first. --owner deletes it only if it is still this runtime's.
     isx destroy "$name" --owner "$OWNER" --owner-id "$runtime" >&2
+    # From the branch on until the result is printed, any failure or an interrupt from Orca takes it
+    # back, a branch that failed midway included: Orca destroys only what a result named. --owner
+    # deletes only an instance stamped for this runtime, so a branch that made nothing loses nothing
+    trap 'isx destroy "$name" --owner "$OWNER" --owner-id "$runtime" >&2 || true' EXIT
     local branched
     branched=$(isx branch "$name" --from "$template" --owner "$OWNER" --owner-id "$runtime" --format=json)
-    # From here until the result is printed, any failure or an interrupt from Orca takes it back:
-    # Orca destroys only what a result named
-    trap 'isx destroy "$name" --owner "$OWNER" --owner-id "$runtime" >&2 || true' EXIT
     jq -e 'type == "object"' <<<"$branched" >/dev/null || die "could not read what isx branch printed"
     [ "$(jq -r '.ssh_host // ""' <<<"$branched")" != "" ] || die "template $template has no SSH server: build it with the orca tool"
     local printed
