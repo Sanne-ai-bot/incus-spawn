@@ -2054,6 +2054,9 @@ A hash two instances share comes only from an `incus copy` made outside isx, and
 Unlike an address, a proof never names a stopped instance, even its only holder: it sends nothing, and a listing taken before its start costs only the refresh `authorize` makes on a miss.
 The host's own traffic (loopback, or from the listener's address) is never identified this way, and a caller at a known instance's address is always held to that instance's proofs.
 Linux keeps the strict address check, which is what stops a proof replayed from another instance; that protection never existed on macOS, where the address identifies nothing.
+`integration-tests` boots the appliance in `remote` mode (`appliance/test-proxy-remote.sh`, #1585) on a tap network shaped like vfkit's NAT.
+Two containers' requests to the gateway's `:443` must reach a host listener on the MITM port, and both must arrive from the VM's leased address.
+The listener stands in for `isx-proxy`, whose macOS build cannot run on Linux: `Platform.isMacOS()` is fixed when the binary is compiled.
 Matching the VM's DHCP lease to accept only the VM's address was rejected: it adds nothing an address that identifies nothing could give, and an unreadable leases file would reproduce this failure.
 The proof's instance also gets the request's traffic in `/activity`: a flow from such a caller is counted once `authorize` has named it, not in flight while its proof is checked.
 A PROXY-protocol relay in the appliance restoring per-container addresses was considered and deferred (#1584, "Considered and deferred").
@@ -4354,6 +4357,7 @@ A fake that slept between chunks on its own thread assumed the thread woke on ti
 The guest half is covered too, in `integration-tests`.
 The appliance boots under QEMU with a `vhost-vsock-pci` device, host `socat` bridges its vsock ports to Unix sockets on the paths isx uses (the shape vfkit gives it), and `appliance/test-tunnel.sh` checks the forwarder, every `isx-agent` verb, concurrent-connection accounting, that silent and partial clients stall no request, the `-T` backstop against a test-only silent endpoint, and no-reboot recovery.
 The native `isx` then connects through the same socket.
+A second boot, in `remote` proxy mode on a tap network, checks the macOS data path: the guest's DNAT of the gateway's `:443` to the host and the masquerade that makes every container arrive from the VM's address (`appliance/test-proxy-remote.sh`, #1585).
 Both arches run it: x86_64 under KVM, aarch64 (the arch Apple Silicon runs) under TCG, since GitHub's arm64 runners expose no `/dev/kvm`.
 What remains uncovered is vfkit itself.
 It cannot run on GitHub-hosted macOS runners at all -- they are macOS VMs, and Virtualization.framework nests only Linux guests -- so it needs a bare-metal Mac, as a self-hosted release gate or the manual pre-release run of `test-boot.sh` / `test-with-isx.sh` (#774).
