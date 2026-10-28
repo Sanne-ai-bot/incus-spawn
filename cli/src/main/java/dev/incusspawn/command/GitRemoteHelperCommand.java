@@ -10,10 +10,6 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.invocation.CommandInvocation;
 import org.aesh.command.option.Argument;
 
-import java.io.ByteArrayOutputStream;
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -53,7 +49,7 @@ public class GitRemoteHelperCommand extends BaseCommand {
         var resolvedPath = GitRemoteUtils.containerPath(path);
 
         // git's protocol: stdin and stdout are git's, and stderr is what git shows its user
-        var stderrOut = new GuestStderr(TerminalStreams.err());
+        var stderrOut = new GuestStderr(TerminalStreams.err(), GitRemoteHelperCommand::saysNotARepository);
         int exitCode;
         try {
             exitCode = incus.execBidirectional(instance, 1000, 1000, "/home/agentuser",
@@ -61,7 +57,7 @@ public class GitRemoteHelperCommand extends BaseCommand {
         } finally {
             stderrOut.close();  // a last line without a break, even when the exec fails
         }
-        if (exitCode != 0 && stderrOut.sawNotARepository()) {
+        if (exitCode != 0 && stderrOut.sawWatched()) {
             printRepoHints(incus, resolvedPath);
         }
         return CommandResult.valueOf(exitCode);
@@ -112,57 +108,9 @@ public class GitRemoteHelperCommand extends BaseCommand {
         return lines;
     }
 
-    /**
-     * The service's stderr, shown a line at a time as text that cannot drive the terminal: whatever
-     * runs in the instance decides it, and git passes a helper's stderr through untouched (#1588).
-     * Lines are decoded as UTF-8 whole, so a character whose bytes arrive apart stays intact.
-     */
-    static final class GuestStderr extends OutputStream {
-        /** A line without a break is shown in pieces of this size rather than held without bound. */
-        private static final int MAX_LINE = 64 * 1024;
-
-        private final PrintStream out;
-        private final ByteArrayOutputStream line = new ByteArrayOutputStream();
-        private boolean notARepository;
-
-        GuestStderr(PrintStream out) {
-            this.out = out;
-        }
-
-        @Override
-        public synchronized void write(int b) {
-            // Cut a long line where a character starts, never inside one; past the longest
-            // UTF-8 character, cut anyway, so a run of continuation bytes cannot grow it forever.
-            if (line.size() >= MAX_LINE && ((b & 0xC0) != 0x80 || line.size() >= MAX_LINE + 4)) emit();
-            line.write(b);
-            if (b == '\n') emit();
-        }
-
-        @Override
-        public synchronized void write(byte[] b, int off, int len) {
-            for (int i = off; i < off + len; i++) write(b[i]);
-        }
-
-        @Override
-        public synchronized void close() {
-            if (line.size() > 0) emit();
-            out.flush();
-        }
-
-        synchronized boolean sawNotARepository() {
-            return notARepository;
-        }
-
-        private void emit() {
-            var text = line.toString(StandardCharsets.UTF_8);
-            line.reset();
-            if (text.endsWith("\n")) text = text.substring(0, text.length() - 1);
-            // Matched before guestText, which keeps only a line's last carriage-return frame.
-            // "does not appear to be a git repository" from upload-pack and receive-pack.
-            if (text.contains("not a git repository") || text.contains("not appear to be a git repository")) {
-                notARepository = true;
-            }
-            out.println(BuildOutput.guestText(text));
-        }
+    /** Whether a line of a git service's stderr says the path is not a repository. */
+    static boolean saysNotARepository(String line) {
+        // "does not appear to be a git repository" from upload-pack and receive-pack.
+        return line.contains("not a git repository") || line.contains("not appear to be a git repository");
     }
 }
