@@ -13,8 +13,6 @@ import org.mockito.MockedStatic;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
-import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -141,17 +139,13 @@ class HostResourceBuildDevicesTest {
                 .filter(args -> args.length > 2 && args[2].contains("mount -t overlay"))
                 .findFirst().orElseThrow();
 
-        var bin = Files.createDirectories(tmp.resolve("bin"));
         var mountLog = tmp.resolve("mount.log");
-        stub(bin.resolve("findmnt"), "true");
         for (boolean mounted : new boolean[] {true, false}) {
             Files.deleteIfExists(mountLog);
-            stub(bin.resolve("mountpoint"), "exit " + (mounted ? 0 : 1));
-            stub(bin.resolve("mount"), "echo \"$@\" >> " + mountLog);
-            var cmd = new ArrayList<>(List.of(mountCall));
-            var pb = new ProcessBuilder(cmd).redirectErrorStream(true);
-            pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
-            var proc = pb.start();
+            var proc = runStubbed(mountCall,
+                    "mountpoint() { return " + (mounted ? 0 : 1) + "; }",
+                    "findmnt() { true; }",
+                    "mount() { echo \"$@\" >> '" + mountLog + "'; }");
             var out = new String(proc.getInputStream().readAllBytes());
             int rc = proc.waitFor();
 
@@ -182,14 +176,11 @@ class HostResourceBuildDevicesTest {
                 .filter(args -> args.length > 2 && args[2].contains("mount -t overlay"))
                 .findFirst().orElseThrow();
 
-        var bin = Files.createDirectories(tmp.resolve("bin"));
         var mountLog = tmp.resolve("mount.log");
-        stub(bin.resolve("mountpoint"), "exit 0");
-        stub(bin.resolve("findmnt"), "[ \"$5\" = /opt/ov ] && echo overlay");
-        stub(bin.resolve("mount"), "echo \"$@\" >> " + mountLog);
-        var pb = new ProcessBuilder(List.of(mountCall)).redirectErrorStream(true);
-        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
-        var proc = pb.start();
+        var proc = runStubbed(mountCall,
+                "mountpoint() { true; }",
+                "findmnt() { [ \"$5\" = /opt/ov ] && echo overlay; }",
+                "mount() { echo \"$@\" >> '" + mountLog + "'; }");
         var out = new String(proc.getInputStream().readAllBytes());
 
         assertEquals(0, proc.waitFor(), out);
@@ -212,8 +203,16 @@ class HostResourceBuildDevicesTest {
         assertTrue(unit.getValue().contains("After=local-fs.target incus-agent.service"), unit.getValue());
     }
 
-    private static void stub(Path path, String body) throws Exception {
-        Files.writeString(path, "#!/bin/sh\n" + body + "\n");
-        Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rwxr-xr-x"));
+    /**
+     * Runs the {@code sh -c} script of {@code call} with the guest's tools replaced by shell
+     * functions, which the shell prefers to any command on {@code PATH}. They were scripts written
+     * to a directory on {@code PATH}, but a process another test thread forks while one is open for
+     * writing holds it, so its exec fails with ETXTBSY; dash then quietly ran the host's real
+     * {@code mountpoint} instead (#1846).
+     */
+    private static Process runStubbed(String[] call, String... functions) throws Exception {
+        var cmd = call.clone();
+        cmd[2] = String.join("\n", functions) + "\n" + call[2];
+        return new ProcessBuilder(cmd).redirectErrorStream(true).start();
     }
 }
