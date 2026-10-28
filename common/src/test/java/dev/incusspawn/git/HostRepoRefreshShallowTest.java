@@ -18,8 +18,9 @@ import static dev.incusspawn.git.GitTestUtils.releasesFixture;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Host clones and refreshes of a repository whose commits each replace a binary file, with the
- * real git against a local fixture (#1344).
+ * Refreshes of host checkouts of a repository whose commits each replace a binary file, with the
+ * real git against a local fixture (#1344). A shallow checkout whose depth isx manages is one an
+ * earlier isx cloned, marked with {@link HostRepoRefresh#DEPTH_KEY}; isx no longer clones one (#1789).
  */
 class HostRepoRefreshShallowTest {
 
@@ -36,28 +37,17 @@ class HostRepoRefreshShallowTest {
         Files.createDirectories(host.getParent());
         config = new SpawnConfig();
         config.setRepoPaths(Map.of("releases", host.toString()));
-        config.setAutoCloneRepos("always");
     }
 
     @Test
-    void aShallowRepoIsClonedShallowOnTheHostAndStaysShallowOnRefresh() throws Exception {
-        refresh(repo(2, null));
-        assertEquals("true", git(host, "rev-parse", "--is-shallow-repository"));
-        assertEquals("2", git(host, "rev-list", "--count", "HEAD"));
-
+    void aManagedShallowCheckoutStaysShallowOnRefresh() throws Exception {
+        managedClone(2);
         commitBinary(upstream, "release 6");
         commitBinary(upstream, "release 7");
         commitBinary(upstream, "release 8");
         refresh(repo(2, null));
         assertEquals("release 8", git(host, "log", "-1", "--format=%s", "origin/main"));
         assertEquals("2", git(host, "rev-list", "--count", "origin/main"));
-    }
-
-    @Test
-    void aShallowRepoIsClonedOnTheHostAtItsConfiguredBranch() throws Exception {
-        refresh(repo(1, "stable"));
-        assertEquals("stable", git(host, "branch", "--show-current"));
-        assertEquals("1", git(host, "rev-list", "--count", "HEAD"));
     }
 
     @Test
@@ -71,14 +61,16 @@ class HostRepoRefreshShallowTest {
     }
 
     @Test
-    void anotherTemplateWantingFullHistoryKeepsTheHostCloneFull() throws Exception {
+    void anotherTemplateWantingFullHistoryDeepensAManagedShallowCheckout() throws Exception {
+        managedClone(1);
         refresh(repo(1, null), repo(null, null));
         assertEquals("false", git(host, "rev-parse", "--is-shallow-repository"));
         assertEquals("5", git(host, "rev-list", "--count", "HEAD"));
     }
 
     @Test
-    void aTemplateOutsideTheBuildWantingFullHistoryKeepsTheHostCloneFull() throws Exception {
+    void aTemplateOutsideTheBuildWantingFullHistoryDeepensAManagedShallowCheckout() throws Exception {
+        managedClone(1);
         // Only the shallow template is built, but another one names the URL without a depth.
         refresh(List.of(repo(1, null)), repo(1, null), repo(null, null));
         assertEquals("false", git(host, "rev-parse", "--is-shallow-repository"));
@@ -87,9 +79,7 @@ class HostRepoRefreshShallowTest {
 
     @Test
     void aShallowHostCloneIsDeepenedOnceATemplateWantsTheFullHistory() throws Exception {
-        refresh(repo(1, null));
-        assertEquals("true", git(host, "rev-parse", "--is-shallow-repository"));
-
+        managedClone(1);
         refresh(List.of(repo(null, null)), repo(1, null), repo(null, null));
         assertEquals("false", git(host, "rev-parse", "--is-shallow-repository"));
         assertEquals("5", git(host, "rev-list", "--count", "origin/main"));
@@ -115,13 +105,6 @@ class HostRepoRefreshShallowTest {
         assertEquals("2", git(host, "rev-list", "--count", "origin/main"));
     }
 
-    @Test
-    void withoutADepthTheHostCloneHasTheFullHistory() throws Exception {
-        refresh(repo(null, null));
-        assertEquals("false", git(host, "rev-parse", "--is-shallow-repository"));
-        assertEquals("5", git(host, "rev-list", "--count", "HEAD"));
-    }
-
     /** A build of templates naming {@code repos}, and nothing else. */
     private void refresh(ImageDef.RepoEntry... repos) {
         refresh(List.of(repos), repos);
@@ -129,7 +112,14 @@ class HostRepoRefreshShallowTest {
 
     /** A build of templates naming {@code built}, with {@code everyTemplate} all the repos defined. */
     private void refresh(List<ImageDef.RepoEntry> built, ImageDef.RepoEntry... everyTemplate) {
-        HostRepoRefresh.refresh(built, HostRepoRefresh.hostDepths(List.of(everyTemplate)), config, true, s -> {});
+        HostRepoRefresh.refresh(built, HostRepoRefresh.hostDepths(List.of(everyTemplate)), config, s -> {});
+    }
+
+    /** The host checkout an earlier isx cloned for a template asking for {@code depth}. */
+    private void managedClone(int depth) throws Exception {
+        git(tmp, "clone", "-q", "--depth", Integer.toString(depth), "-c", HostRepoRefresh.DEPTH_KEY + "=" + depth,
+                "--", upstream.toUri().toString(), host.toString());
+        assertEquals("true", git(host, "rev-parse", "--is-shallow-repository"));
     }
 
     private ImageDef.RepoEntry repo(Integer depth, String branch) {

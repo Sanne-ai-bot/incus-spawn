@@ -61,51 +61,23 @@ class HostRepoRefreshTest {
         config.setRepoPaths(Map.of("private", repo.getHostSource()));
         assertTrue(HostRepoRefresh.deduplicateByUrl(List.of(repo)).isEmpty());
         var output = new ArrayList<String>();
-        HostRepoRefresh.refresh(List.of(repo), Map.of(), config, true, output::add);
+        HostRepoRefresh.refresh(List.of(repo), Map.of(), config, output::add);
         assertTrue(output.isEmpty());
         assertFalse(java.nio.file.Files.exists(repo.hostSourcePath()));
     }
 
-    // ── resolveCloneTarget ────────────────────────────────────────────────
-
-    @Test
-    void resolveCloneTargetUsesRepoPathsOverride(@TempDir Path tempDir) {
+    @Test void aMissingHostCheckoutIsNeverCloned(@TempDir Path dir) {
+        // isx no longer clones host checkouts (#1789): a repo with none is left to the build.
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/example/myrepo.git");
         var config = new SpawnConfig();
-        config.setHostPaths(List.of(tempDir.resolve("default").toString()));
-        config.setRepoPaths(Map.of("myrepo", tempDir.resolve("custom/myrepo").toString()));
-
-        var target = HostRepoRefresh.resolveCloneTarget("myrepo", config);
-        assertEquals(tempDir.resolve("custom/myrepo"), target);
-    }
-
-    @Test
-    void resolveCloneTargetFallsBackToFirstHostPath(@TempDir Path tempDir) {
-        var config = new SpawnConfig();
-        config.setHostPaths(List.of(tempDir.toString()));
-        config.setRepoPaths(Map.of());
-
-        var target = HostRepoRefresh.resolveCloneTarget("myrepo", config);
-        assertEquals(tempDir.resolve("myrepo"), target);
-    }
-
-    @Test
-    void resolveCloneTargetReturnsNullWhenNoHostPaths() {
-        var config = new SpawnConfig();
-        config.setHostPaths(List.of());
-        config.setRepoPaths(Map.of());
-
-        var target = HostRepoRefresh.resolveCloneTarget("myrepo", config);
-        assertNull(target);
-    }
-
-    @Test
-    void resolveCloneTargetWorksWithRepoPathsOnly(@TempDir Path tempDir) {
-        var config = new SpawnConfig();
-        config.setHostPaths(List.of());
-        config.setRepoPaths(Map.of("myrepo", tempDir.resolve("repos/myrepo").toString()));
-
-        var target = HostRepoRefresh.resolveCloneTarget("myrepo", config);
-        assertEquals(tempDir.resolve("repos/myrepo"), target);
+        config.setHostPaths(List.of(dir.resolve("src").toString()));
+        config.setRepoPaths(Map.of("myrepo", dir.resolve("custom/myrepo").toString()));
+        var output = new ArrayList<String>();
+        HostRepoRefresh.refresh(List.of(repo), Map.of(), config, output::add);
+        assertTrue(output.isEmpty(), output.toString());
+        assertFalse(java.nio.file.Files.exists(dir.resolve("custom")));
+        assertFalse(java.nio.file.Files.exists(dir.resolve("src")));
     }
 
     // ── collectAllRepos ───────────────────────────────────────────────────

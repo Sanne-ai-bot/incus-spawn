@@ -2776,9 +2776,8 @@ Trusted layers (user, search paths, built-in) are unaffected, and so are a proje
 
 #### Project-local templates never touch host checkouts
 
-A project-local template's `repos:` get no host reference mount, and `HostRepoRefresh.collectAllRepos()` leaves them out of the host-side fetch/clone.
+A project-local template's `repos:` get no host reference mount, and `HostRepoRefresh.collectAllRepos()` leaves them out of the host-side fetch.
 Otherwise a cloned repository could list the URL of a repo you have checked out and get your working tree mounted into a build it controls.
-With `auto-clone-repos: always` it could also name a `file:///` URL and get any local repository cloned into your host-paths first.
 Their repos are cloned from the network inside the container, which is slower but reaches nothing of the host's.
 Trusted ancestors of a project-local template keep their references.
 

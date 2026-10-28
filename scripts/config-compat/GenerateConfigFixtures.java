@@ -12,10 +12,11 @@ import java.util.Map;
  * the release's classes -- never against the working tree, whose serializer is the thing under test.
  *
  * <p>Uses only setters every release since v0.3.8 has, so the same source produces each new
- * release's fixture set. What only some releases write is in the other {@code Generate*} classes
- * here, which {@code generate-fixtures.sh} runs against a release that has what they call. The
- * credential values are recognisable placeholders, never real ones;
- * {@code PreviousReleaseConfigCompatTest} asserts on them.
+ * release's fixture set. The retired {@code setAutoCloneRepos} is called only where it exists.
+ * What only some releases write is in the other {@code Generate*} classes here, which
+ * {@code generate-fixtures.sh} runs against a release that has what they call. The credential
+ * values are recognisable placeholders, never real ones; {@code PreviousReleaseConfigCompatTest}
+ * asserts on them.
  *
  * <p>Args: output directory, file-name prefix (the release tag).
  */
@@ -42,7 +43,12 @@ public class GenerateConfigFixtures {
             c.setHostPaths(List.of("~/src"));
             c.setRepoPaths(Map.of("quarkus", "~/quarkus"));
             c.setIncusBridgeGateway("10.0.0.1");
-            c.setAutoCloneRepos("always");
+            // Retired (#1789): written only by the releases that still have the setter.
+            try {
+                SpawnConfig.class.getMethod("setAutoCloneRepos", String.class).invoke(c, "always");
+            } catch (NoSuchMethodException retired) {
+                // a release after the retirement: nothing to write
+            }
         });
         write(out, prefix, "oauth", c -> {
             c.getClaude().setOauthToken("sk-ant-oat01-fixture");

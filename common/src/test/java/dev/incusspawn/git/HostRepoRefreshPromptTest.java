@@ -41,7 +41,7 @@ class HostRepoRefreshPromptTest {
         repo.setUrl(url);
         var output = new ArrayList<String>();
         long start = System.nanoTime();
-        HostRepoRefresh.refresh(List.of(repo), Map.of(), config, false, output::add);
+        HostRepoRefresh.refresh(List.of(repo), Map.of(), config, output::add);
         assertTrue(System.nanoTime() - start < 30_000_000_000L, "fails fast");
 
         var lines = String.join("\n", output).lines().toList();

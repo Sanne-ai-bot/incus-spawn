@@ -124,7 +124,6 @@ class RawOutputGateTest {
             "common/src/main/java/dev/incusspawn/incus/InteractiveShell.java", "draws the shell's status bar on the terminal it hands the guest",
             "common/src/main/java/dev/incusspawn/util/TerminalOutput.java", "writes a window title only where TerminalStreams.terminal() finds one",
             "common/src/main/java/dev/incusspawn/util/TerminalProgress.java", "the live renderer, which draws on the terminal whole",
-            "common/src/main/java/dev/incusspawn/git/HostRepoRefresh.java", "asks on the console, where Prompts cannot reach",
             "cli/src/main/java/dev/incusspawn/command/Prompts.java", "its terminal() asks only when stdin and stdout are a terminal",
             "cli/src/main/java/dev/incusspawn/command/GitRemoteHelperCommand.java", "a git remote helper: stdin and stdout are git's protocol, stderr what git shows",
             "cli/src/main/java/dev/incusspawn/command/SshProxyCommand.java", "an ssh ProxyCommand: stdin and stdout are the connection, stderr what ssh shows");

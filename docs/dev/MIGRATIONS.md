@@ -222,3 +222,16 @@ grep -l 'isx instances' ~/.zsh/completions/_isx ~/.local/share/bash-completion/c
 That covers the paths `isx completion --install` suggests; grep a script saved anywhere else, such as another `$fpath` entry, the same way.
 Regenerate each file it lists with the command `isx completion --install` gives for that shell, for example `isx completion zsh > ~/.zsh/completions/_isx`.
 Then open a new shell and check that `isx shell <Tab>` offers your instances.
+
+## Every config.yaml holds auto-clone-repos
+
+The `auto-clone-repos` setting is retired (issue 1789), because no command cloned a missing host checkout any more.
+Every isx release before then, through v0.5.0-dev.1, wrote the key on each save, so nearly every `config.yaml` holds it, usually as `auto-clone-repos: ""`.
+Finding it does not mean anyone set it.
+isx ignores its value, whatever it is, and the file still loads.
+A save keeps the line as written.
+
+Nothing has to change: the line may stay or be deleted.
+Builds behave as before, since the clone path it governed had no caller left.
+A host checkout of a template's repository is made by hand, such as `git clone <url>` in a directory of `host-paths`.
+`isx update-all` fetches the checkouts that exist, and existing shallow checkouts an earlier isx cloned keep their managed depth.

@@ -1,15 +1,11 @@
 package dev.incusspawn.git;
 
-import dev.incusspawn.FileTrees;
 import dev.incusspawn.config.GitTransferConfig;
-import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.util.BuildOutput;
-import dev.incusspawn.util.TerminalStreams;
 import dev.incusspawn.util.TerminalProgress;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -41,30 +37,21 @@ public final class HostRepoRefresh {
 
     /** {@code depths} is {@link #hostDepths(Map)} of every definition, not only of those refreshed. */
     public static void refresh(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths, SpawnConfig config,
-                               boolean cloneMissing, Consumer<String> output) {
+                               Consumer<String> output) {
         if (repos.isEmpty()) return;
         if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
 
-        var classified = classify(repos, depths, config, cloneMissing);
-        if (classified.toFetch.isEmpty() && classified.toClone.isEmpty()) return;
+        var toFetch = checkoutsToFetch(repos, depths, config);
+        if (toFetch.isEmpty()) return;
 
-        if (!classified.toFetch.isEmpty()) {
-            BuildOutput.section("Refreshing " + classified.toFetch.size() + " host " + (classified.toFetch.size() == 1 ? "repo:" : "repos:"));
-            fetchInParallel(classified.toFetch, config.gitTransfer(), output);
-        }
-
-        if (!classified.toClone.isEmpty()) {
-            cloneSequentially(classified.toClone, config);
-        }
+        BuildOutput.section("Refreshing " + toFetch.size() + " host " + (toFetch.size() == 1 ? "repo:" : "repos:"));
+        fetchInParallel(toFetch, config.gitTransfer(), output);
     }
 
-    private record ClassifiedRepos(List<FetchTask> toFetch, List<CloneTask> toClone) {}
-
-    private static ClassifiedRepos classify(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths,
-                                            SpawnConfig config, boolean cloneMissing) {
+    private static List<FetchTask> checkoutsToFetch(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths,
+                                                    SpawnConfig config) {
         var deduplicated = deduplicateByUrl(repos);
         var toFetch = new ArrayList<FetchTask>();
-        var toClone = new ArrayList<CloneTask>();
 
         for (var repo : deduplicated) {
             var repoName = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
@@ -86,16 +73,10 @@ public final class HostRepoRefresh {
                 } else {
                     BuildOutput.note("Host repo " + hostPath + " has no remote matching " + repo.getUrl() + ", skipping.");
                 }
-            } else if (cloneMissing) {
-                var targetDir = resolveCloneTarget(repoName, config);
-                if (targetDir != null) {
-                    toClone.add(new CloneTask(repoName, repo.getUrl(), targetDir, depth,
-                            depth != null && repo.hasBranch() ? repo.getBranch() : null));
-                }
             }
         }
 
-        return new ClassifiedRepos(toFetch, toClone);
+        return toFetch;
     }
 
     private static void fetchInParallel(List<FetchTask> tasks, GitTransferConfig limits, Consumer<String> output) {
@@ -183,108 +164,6 @@ public final class HostRepoRefresh {
         return msg.toString();
     }
 
-    private static void cloneSequentially(List<CloneTask> tasks, SpawnConfig config) {
-        var policy = resolvePolicy(config);
-        var limits = config.gitTransfer();
-
-        if (policy == ClonePolicy.ASK && TerminalStreams.terminal() == null) {
-            BuildOutput.note("Skipping clone of " + tasks.size() + " repo(s) — set auto-clone-repos: always in config.yaml to clone automatically.");
-            return;
-        }
-
-        if (policy == ClonePolicy.ASK) {
-            BuildOutput.note("Local repo clones are kept in sync and shared across containers — builds copy from disk instead of the network.");
-        }
-
-        for (var task : tasks) {
-            if (policy == ClonePolicy.NEVER) {
-                break;
-            }
-
-            if (policy == ClonePolicy.ASK) {
-                var answer = promptClone(task.url, task.targetDir);
-                switch (answer) {
-                    case YES -> {}
-                    case NO -> { continue; }
-                    case ALWAYS -> {
-                        policy = ClonePolicy.ALWAYS;
-                        config.setAutoCloneRepos("always");
-                        config.save();
-                        BuildOutput.note("Saved preference: auto-clone-repos: always");
-                    }
-                    case NEVER -> {
-                        policy = ClonePolicy.NEVER;
-                        config.setAutoCloneRepos("never");
-                        config.save();
-                        BuildOutput.note("Saved preference: auto-clone-repos: never");
-                        continue;
-                    }
-                }
-            }
-
-            BuildOutput.stepStart("Cloning " + task.repoName + "...");
-            boolean existed = Files.exists(task.targetDir);
-            var result = GitRemoteUtils.hostGitTransfer(task.targetDir.getParent(), PreparationGit.SshScope.CLONE, limits,
-                    progress -> BuildOutput.stepProgress(progress.summary()), task.cloneArgs());
-            if (result.success()) {
-                BuildOutput.stepDone();
-            } else {
-                BuildOutput.stepBreak();
-                // A clone stopped part way is no checkout: never leave it for a later build to use.
-                if (!existed) deletePartialClone(task.targetDir);
-                BuildOutput.warn("Clone failed for " + GitCommandException.scrub(task.url)
-                        + (result.reason() == null ? "" : " (" + result.reason() + ")"),
-                        result.details().toArray(String[]::new));
-            }
-        }
-    }
-
-    private static void deletePartialClone(Path dir) {
-        try {
-            FileTrees.delete(dir);
-        } catch (IOException e) {
-            BuildOutput.warn("Could not remove the incomplete clone at " + dir + ": " + e.getMessage());
-        }
-    }
-
-    private static ClonePolicy resolvePolicy(SpawnConfig config) {
-        return switch (config.getAutoCloneRepos()) {
-            case "always" -> ClonePolicy.ALWAYS;
-            case "never" -> ClonePolicy.NEVER;
-            default -> ClonePolicy.ASK;
-        };
-    }
-
-    /**
-     * Asked only on a terminal, at the step indent as every question is; no answer is no. The
-     * console shows the question itself, so whatever output is bound, it is seen before the read.
-     */
-    private static CloneAnswer promptClone(String url, Path targetDir) {
-        var console = TerminalStreams.terminal();
-        if (console == null) return CloneAnswer.NO;
-
-        var input = console.readLine("%s", BuildOutput.indent() + "Clone " + url + " into " + targetDir
-                + "? (y/n/always/never): ");
-        if (input == null) return CloneAnswer.NO;
-        return switch (input.strip().toLowerCase()) {
-            case "y", "yes" -> CloneAnswer.YES;
-            case "always" -> CloneAnswer.ALWAYS;
-            case "never" -> CloneAnswer.NEVER;
-            default -> CloneAnswer.NO;
-        };
-    }
-
-    static Path resolveCloneTarget(String repoName, SpawnConfig config) {
-        var override = config.getRepoPaths().get(repoName);
-        if (override != null && !override.isEmpty()) {
-            return Path.of(HostResourceSetup.expandHostTilde(override));
-        }
-        var hostPaths = config.getHostPaths();
-        if (hostPaths.isEmpty()) return null;
-        var basePath = HostResourceSetup.expandHostTilde(hostPaths.get(0));
-        return Path.of(basePath, repoName);
-    }
-
     static List<ImageDef.RepoEntry> deduplicateByUrl(List<ImageDef.RepoEntry> repos) {
         var seen = new LinkedHashMap<String, ImageDef.RepoEntry>();
         for (var repo : repos) {
@@ -296,9 +175,9 @@ public final class HostRepoRefresh {
     }
 
     /**
-     * The repos a host-side refresh may clone or fetch for {@code imageDef}'s chain. Project-local
-     * definitions contribute none: a host clone of their URL (possibly a local path) would be
-     * shared with the build, so their repos are only ever cloned inside the container (#765).
+     * The repos a host-side refresh may fetch for {@code imageDef}'s chain. Project-local
+     * definitions contribute none: a host checkout of their URL is never shared with their build,
+     * so their repos are only ever cloned inside the container (#765).
      */
     public static List<ImageDef.RepoEntry> collectAllRepos(ImageDef imageDef, Map<String, ImageDef> defs) {
         var repos = new ArrayList<ImageDef.RepoEntry>();
@@ -341,8 +220,9 @@ public final class HostRepoRefresh {
     }
 
     /**
-     * Marks a host checkout isx cloned shallow, with the depth it keeps. Only such a checkout has its
-     * depth managed: one without the mark is the user's, shallow or not, and only ever plainly fetched.
+     * Marks a host checkout an earlier isx cloned shallow, with the depth it keeps (isx no longer
+     * clones host checkouts, #1789). Only such a checkout has its depth managed: one without the
+     * mark is the user's, shallow or not, and only ever plainly fetched.
      */
     static final String DEPTH_KEY = "isx.depth";
 
@@ -356,8 +236,8 @@ public final class HostRepoRefresh {
     }
 
     /**
-     * {@code managedDepth} is the depth isx cloned the checkout with ({@link #DEPTH_KEY}), null for a
-     * user's checkout; {@code depth} is the one the templates ask for now, null for all of history.
+     * {@code managedDepth} is the depth {@link #DEPTH_KEY} keeps, null for a user's checkout;
+     * {@code depth} is the one the templates ask for now, null for all of history.
      */
     record FetchTask(String repoName, Path hostPath, String remoteName, Integer managedDepth, Integer depth) {
         GitRemoteUtils.ExecResult fetch(GitTransferConfig limits, Consumer<GitProcess.Progress> progress) {
@@ -398,17 +278,4 @@ public final class HostRepoRefresh {
                     : new GitRemoteUtils.ExecResult(false, result.output(), "git " + args[0] + " failed", null);
         }
     }
-
-    private record CloneTask(String repoName, String url, Path targetDir, Integer depth, String branch) {
-        String[] cloneArgs() {
-            var args = new ArrayList<>(List.of("clone", "--progress"));
-            if (depth != null) args.addAll(List.of("--depth", depth.toString(), "-c", DEPTH_KEY + "=" + depth));
-            if (branch != null) args.addAll(List.of("--branch", branch));
-            args.addAll(List.of("--", url, targetDir.getFileName().toString()));
-            return args.toArray(String[]::new);
-        }
-    }
-
-    private enum ClonePolicy { ASK, ALWAYS, NEVER }
-    private enum CloneAnswer { YES, NO, ALWAYS, NEVER }
 }
