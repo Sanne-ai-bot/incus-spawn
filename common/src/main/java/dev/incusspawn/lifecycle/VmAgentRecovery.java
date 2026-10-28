@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.util.Output;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -41,8 +42,29 @@ public final class VmAgentRecovery {
      * Bring VM {@code name}'s unresponsive agent back, restarting the VM if that can help, and
      * wait until it answers; or throw saying why a restart would not help. Progress and warnings
      * go to {@code out}.
+     *
+     * <p>Under the instance's secret lock (#1065), as its restart gives it a new secret. After
+     * waiting for another isx, which may have just restarted it, it asks the agent again first.
      */
     public static void restartForAgent(IncusClient incus, String name, Output out) {
+        try (var lock = InstanceLifecycle.secretLock(incus, name, MachineType.VM, "recovering " + name, out)) {
+            JqValue instance = null;
+            if (lock.waited()) {
+                instance = incus.instanceMetadataOrThrow(name);
+                var probe = InstanceLifecycle.probeAgent(incus, name, instance);
+                if (probe != null) {
+                    if (InstanceSecret.missingIn(probe)) {
+                        InstanceLifecycle.giveSecretHeld(incus, name, instance, null, Metadata.isMcpCaller(instance), out);
+                    }
+                    return;
+                }
+            }
+            restartHeld(incus, name, instance, out);
+        }
+    }
+
+    /** @param read the instance as read under the lock, or null to read it before the stop */
+    private static void restartHeld(IncusClient incus, String name, JqValue read, Output out) {
         if (!incus.agentFailureLines(name).isEmpty()) {
             // systemd may still be restarting the agent: waitForReady gives it that grace,
             // then reports the failure it logged.
@@ -57,7 +79,7 @@ public final class VmAgentRecovery {
         // One read serves both the stamp and the device repairs before the start: a stop
         // changes neither config nor devices. A stamp is never "0", so a pid the daemon
         // cannot report never matches it.
-        var instance = incus.instanceMetadata(name);
+        var instance = read != null ? read : incus.instanceMetadata(name);
         if (Long.toString(incus.pid(name)).equals(instance.path("config").path(Metadata.AGENT_RESTART_BOOT).asText())) {
             throw refusal(name, "The incus-agent in VM " + name + " is not responding, and isx"
                     + " already restarted " + name + " once to recover it; not restarting it again."
