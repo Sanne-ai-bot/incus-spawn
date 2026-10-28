@@ -295,6 +295,7 @@ See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for reco
 `isx start` and `isx stop` reuse `isx shell`'s preparation and the marked stop, and `isx ssh-proxy --start` lets an orchestrator's reconnect start a stopped instance; the Host block a plain `ssh` reads never starts one.
 `isx destroy --owner <tool>` deletes only for a tool `drivers:` in `config.yaml` lets destroy, and only while the instance still carries that owner; a plain destroy of an owned instance asks.
 `isx list`'s `OWNER` column folds in `isx mcp`'s standing, and its formats append `owner` and `owner_id`.
+An orchestrator with hooks (Orca) needs no isx code: `integrations/orca/isx-orca-recipe` speaks its recipe contract over those commands, with `jq` (`OrcaRecipeScriptTest`, `docs/INTEGRATIONS.md`).
 An orchestrator with no hooks (herdr) is served by a tool's host half instead: a built-in `HostIntegration` keyed on the tool being in the instance's build, which registers the instance on its first start and removes it on destroy, never for a project-local or untrusted build (`.claude/rules/tools-env.md`).
 See `.claude/rules/commands.md` and DESIGN.md "External orchestrators: owners, start, stop and destroy".
 

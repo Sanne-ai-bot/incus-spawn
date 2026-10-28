@@ -1,0 +1,13 @@
+name: orca
+description: What the Orca agent orchestrator needs to run its server and agents over SSH
+requires:
+  - sshd
+
+# Orca installs its own server and a pinned Node over SSH on the first connect. It unpacks the
+# Node archive with tar and checks the installed server's hash through awk, and a base image
+# has neither: without them the first connect, or the first after a restart, fails.
+packages:
+  - tar
+  - gawk
+
+verify: tar --version >/dev/null && awk --version >/dev/null

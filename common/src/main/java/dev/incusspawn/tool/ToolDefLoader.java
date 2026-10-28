@@ -47,6 +47,7 @@ public class ToolDefLoader {
             "podman.yaml",
             "maven-3.yaml",
             "mvnd.yaml",
+            "orca.yaml",
             "sshd.yaml",
             "idea-backend.yaml",
             "vscode-remote.yaml",

@@ -16,6 +16,7 @@ A branch is to a template what a git worktree is to a repository, except that th
 - [Tools](https://isx.run/docs/tools): built-in tools, and adding your own with YAML definitions
 - [Configuration](https://isx.run/docs/configuration): files, credential accounts (several per service, chosen per instance) and caching
 - [Delegating from an agent on your host (MCP)](https://isx.run/docs/mcp): `isx mcp`, approved templates, Claude Code and Codex workers, agent discovery, background commands and delegated tasks
+- [Driving isx from other tools](https://isx.run/docs/integrations): orchestrators such as Orca and herdr, with an instance per task
 - [CLI reference](https://isx.run/docs/cli): every command, and the stable output formats for scripts
 - [Compared with other sandboxes](https://isx.run/docs/sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
 - [FAQ](https://isx.run/docs/faq): URL clicks in Codex, the clipboard, and why there is no read-write project mount
