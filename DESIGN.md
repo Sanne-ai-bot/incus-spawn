@@ -2555,6 +2555,11 @@ This is the one place isx calls a model API on its own behalf; everywhere else (
 Because providers answer errors with varying usefulness, `describeError()` reports the HTTP status, the error `type` and the `request_id` alongside the message.
 A stream that ends in a refusal, at `max_tokens` or at the context window reads like a finished answer, so `processStream()` returns a note saying which (`StreamEnd`).
 The note is isx's word, not the model's, so it never joins the answer: `isx ask` warns with it on stderr, keeping stdout to what the model wrote, and the TUI shows it under the answer in the warning colour.
+Every answer also carries `AiHelpClient.DISCLAIMER`, that it is AI-generated and to check it against the docs, by the same rule: `isx ask` prints it as a note on stderr, and the TUI shows it in the footer below the answer, outside its scrolling.
+Measured on #1675, both Sonnet 5.5 and Haiku 5.5 sometimes state commands or behaviour the docs do not support, so the prompt also asks every answer to end with a `Sources:` list of the sections it relies on.
+A reader can follow those to check it, and DESIGN.md, which has no page, is cited by file and heading.
+It may cite only headings that appear verbatim in the bundled files, and writes no `Sources:` line when none supports the answer, since a guessed source is the failure it is meant to expose.
+The prompt states the site's anchor rule as `site/render.js` applies it, so `#### Fedora / RHEL` links to `#fedora-rhel`, and the `--with-templates` definitions, which have no page, are never cited.
 `isx ask` always uses that first one.
 But the TUI's AI Help dialog makes the account explicit, offering every target as a selector -- a fixed line when there is only one -- because which credentials are billed should be visible rather than implied.
 `subscriptionAccounts()` names the Pro/Max accounts so the dialog can show them as unavailable with the reason, instead of leaving a subscriber to wonder why their account is missing.

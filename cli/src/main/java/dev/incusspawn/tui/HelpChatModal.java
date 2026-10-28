@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
 
+import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.ai.AiHelpClient.AiResponse;
 import dev.incusspawn.ai.AiHelpClient.Target;
 import dev.incusspawn.ai.AiHelpClient.Usage;
@@ -282,12 +283,12 @@ final class HelpChatModal {
         if (showResponse) {
             // Leave a column for the scrollbar.
             var answer = answerLines(Math.max(1, contentWidth - 1));
-            var usageNote = usageNote(usage);
-            // Fit the answer (+ border, spacer + usage, and hint rows), but grow no taller than 3/4 of the screen.
-            int height = Math.min(maxHeight, Math.clamp(answer.size() + 3 + (usageNote != null ? 2 : 0),
+            var footer = footerLines(contentWidth);
+            // Fit the answer (+ border, footer, and hint rows), but grow no taller than 3/4 of the screen.
+            int height = Math.min(maxHeight, Math.clamp(answer.size() + 3 + footer.size(),
                     8, Math.max(24, screen.height() * 3 / 4)));
             var inner = renderFrame(frame, screen, block, width, height);
-            renderResponse(frame, inner, answer, usageNote);
+            renderResponse(frame, inner, answer, footer);
         } else if (loading) {
             var inner = renderFrame(frame, screen, block, width, 5);
             renderLoading(frame, inner);
@@ -304,22 +305,47 @@ final class HelpChatModal {
         return block.inner(modalArea);
     }
 
-    private void renderResponse(Frame frame, Rect inner, List<Line> contentLines, String usageNote) {
+    private void renderResponse(Frame frame, Rect inner, List<Line> contentLines, List<Line> footer) {
         var rows = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.length(usageNote != null ? 2 : 0), Constraint.length(1))
+                .constraints(Constraint.fill(), Constraint.length(footer.size()), Constraint.length(1))
                 .split(inner);
 
         scrollOffset = modal.renderScrollableContent(frame, rows.get(0), contentLines, scrollOffset);
-        if (usageNote != null) {
-            // After a spacer row, indented to line up with the key hints below.
-            frame.renderWidget(Paragraph.from(Text.from(Line.from(""), Line.styled(" " + usageNote,
-                    Style.EMPTY.fg(theme.textDim()).bg(modal.bg())))), rows.get(1));
-        }
+        frame.renderWidget(Paragraph.from(Text.from(footer)), rows.get(1));
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "n", "New question");
         modal.addKey(hintSpans, "q/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(2));
+    }
+
+    /**
+     * Below an answer, outside its scrolling so it is always in view: a spacer row, the
+     * {@link AiHelpClient#DISCLAIMER} and what the answer cost, indented to line up with the
+     * key hints. Only an answer with text gets the disclaimer: an error or a refusal is isx's own word.
+     */
+    private List<Line> footerLines(int contentWidth) {
+        var lines = new ArrayList<Line>();
+        var answer = responseLines;
+        var usageNote = usageNote(usage);
+        boolean answered = error == null && answer != null && answer.stream().anyMatch(l -> !l.isBlank());
+        if (!answered && usageNote == null) return lines;
+        var style = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
+        lines.add(Line.from(""));
+        if (answered) lines.addAll(disclaimerLines(contentWidth - 1, style));
+        if (usageNote != null) lines.add(Line.styled(" " + usageNote, style));
+        return lines;
+    }
+
+    /** The disclaimer, its link clickable when it fits on one line, else wrapped as plain text. */
+    private List<Line> disclaimerLines(int width, Style style) {
+        var text = AiHelpClient.DISCLAIMER;
+        int url = text.indexOf("https://");
+        if (text.length() <= width && url >= 0) {
+            return List.of(Line.from(List.of(Span.styled(" " + text.substring(0, url), style),
+                    Span.styled(text.substring(url), style.hyperlink(text.substring(url))))));
+        }
+        return ModalRenderer.wrapText(text, Math.max(1, width)).stream().map(l -> Line.styled(" " + l, style)).toList();
     }
 
     /**

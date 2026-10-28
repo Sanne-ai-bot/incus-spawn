@@ -91,6 +91,12 @@ public class AiHelpClient {
     static final String EFFORT = "low";
     /** The Messages API version a Vertex request names in its body. */
     static final String VERTEX_VERSION = "vertex-2023-10-16";
+    /**
+     * Shown with every answer, apart from it: the answer is a model's, and can be wrong or name
+     * commands and flags isx does not have (#1675 measured both).
+     */
+    public static final String DISCLAIMER =
+            "AI-generated and may be wrong: check it against https://isx.run/docs";
     /** Why an answer is empty or stops short: the model declined to give it. */
     static final String REFUSAL_NOTE = "The model declined to answer this question.";
     /** Why an answer stops short: {@code max_tokens} or the context window cut it off. */

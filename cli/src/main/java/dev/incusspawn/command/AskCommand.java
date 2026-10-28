@@ -68,24 +68,30 @@ public class AskCommand extends BaseCommand {
      * command's result (#1703). The step goes to stderr, so stdout holds only the answer, as for
      * any query. A stream that fails part way still shows what came, on a line of its own; one
      * that fails before anything came breaks the step, and the error follows it. Why an answer
-     * ended early is isx's word, not the answer's, so it is a warning after it, on stderr.
+     * ended early is isx's word, not the answer's, so it is a warning after it, on stderr, and
+     * so is the {@link AiHelpClient#DISCLAIMER} that closes every answer.
      */
     static void answer(String label, Answer answer) throws Exception {
         // Taken before the progress moves to stderr: the answer is what stdout is for
         var streamed = new Streamed(BuildOutput.results(), BuildOutput.ansi());
         withStdoutOnStderr(() -> {
             BuildOutput.stepStart(label);
-            String note;
             try {
-                note = answer.stream(streamed);
-            } catch (Exception e) {
-                if (!streamed.started()) BuildOutput.stepBreak();
-                throw e;
+                String note;
+                try {
+                    note = answer.stream(streamed);
+                } catch (Exception e) {
+                    if (!streamed.started()) BuildOutput.stepBreak();
+                    throw e;
+                } finally {
+                    streamed.finish();
+                }
+                if (!streamed.started()) BuildOutput.stepDone("no answer");
+                if (note != null) BuildOutput.warn(note);
             } finally {
-                streamed.finish();
+                // What came is the model's word, also when the stream failed part way
+                if (streamed.started()) BuildOutput.note(AiHelpClient.DISCLAIMER);
             }
-            if (!streamed.started()) BuildOutput.stepDone("no answer");
-            if (note != null) BuildOutput.warn(note);
             return null;
         });
     }

@@ -54,14 +54,28 @@ public class HelpContext {
                 generated from the files provided below: README.md is \
                 https://isx.run/docs, and each docs/NAME.md is \
                 https://isx.run/docs/name (docs/CLI.md is https://isx.run/docs/cli). \
-                When answering, link to relevant documentation sections using \
-                anchor fragments derived from the headings: lowercase the \
-                heading, replace spaces with hyphens, strip punctuation except \
-                hyphens. For example, "## Custom Tools" in docs/TOOLS.md becomes \
-                [custom tools](https://isx.run/docs/tools#custom-tools) and \
+                When answering, link to relevant documentation sections. A section's \
+                anchor comes from its heading exactly as the site makes it: lowercase \
+                the heading, delete every character that is not an ASCII letter, digit, \
+                underscore, space or hyphen, turn each run of spaces into one hyphen, \
+                and drop trailing hyphens. A heading repeated in a file keeps the same \
+                anchor, with no number added. For example, "## Custom Tools" in \
+                docs/TOOLS.md becomes \
+                [custom tools](https://isx.run/docs/tools#custom-tools), \
                 "## Credential Isolation" in README.md becomes \
-                [credential isolation](https://isx.run/docs#credential-isolation). \
-                Prefer deep links to specific sections over linking a whole page.
+                [credential isolation](https://isx.run/docs#credential-isolation), and \
+                "#### Fedora / RHEL" in README.md becomes \
+                [Fedora / RHEL](https://isx.run/docs#fedora-rhel). \
+                Prefer deep links to specific sections over linking a whole page. \
+                Cite your sources: end an answer that draws on the documentation with \
+                a line `Sources:` followed by one dash item per section it relies on, \
+                as a deep link like the ones above. Cite only headings that appear \
+                verbatim in the documentation files below. If no section supports the answer, write \
+                no `Sources:` line rather than guess one. DESIGN.md is not published, \
+                so cite it by file and heading instead, such as DESIGN.md \
+                "## Security Considerations". Never cite the tool and template \
+                definitions that may follow the documentation ("Available Tools", \
+                "Image Templates"): they have no page.
 
                 """);
         for (var resource : HELP_RESOURCES) {

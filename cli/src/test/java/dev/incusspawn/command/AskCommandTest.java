@@ -8,6 +8,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.ForcedAnsi;
 import dev.incusspawn.util.RecordingOutput;
@@ -47,7 +48,8 @@ class AskCommandTest {
             chunks.accept("branch.\nDone.");
             return null;
         }));
-        assertEquals(List.of(RecordingOutput.Kind.STEP_START, RecordingOutput.Kind.STEP_DONE, RecordingOutput.Kind.FRAME),
+        assertEquals(List.of(RecordingOutput.Kind.STEP_START, RecordingOutput.Kind.STEP_DONE, RecordingOutput.Kind.FRAME,
+                        RecordingOutput.Kind.NOTE),
                 recorded.events().stream().map(RecordingOutput.Event::kind)
                         .filter(k -> k != RecordingOutput.Kind.RESULT).toList());
         assertEquals("Asking Claude...", recorded.events().getFirst().msg());
@@ -76,6 +78,34 @@ class AskCommandTest {
                 refused.events().stream().map(RecordingOutput.Event::kind).toList());
     }
 
+    /**
+     * Every answer is followed by a note that it is AI-generated, on stderr, so a script's capture
+     * of stdout holds only what the model wrote (#1675); with no answer there is nothing to qualify.
+     */
+    @Test
+    void anAnswerIsFollowedByTheDisclaimerOnStderr() {
+        var recorded = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks -> {
+            chunks.accept("Use isx branch.");
+            return null;
+        }));
+        assertEquals(List.of("Use isx branch."), recorded.resultLines());
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.NOTE, AiHelpClient.DISCLAIMER)),
+                recorded.events(RecordingOutput.Kind.NOTE));
+
+        var refused = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks ->
+                "The model declined to answer this question."));
+        assertEquals(List.of(), refused.events(RecordingOutput.Kind.NOTE));
+
+        // Why an answer was cut off comes first, then the disclaimer on what did come
+        var cut = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks -> {
+            chunks.accept("Run isx");
+            return "The answer was cut off at its length limit.";
+        }));
+        assertEquals(List.of(RecordingOutput.Kind.WARN, RecordingOutput.Kind.NOTE),
+                cut.events().stream().map(RecordingOutput.Event::kind)
+                        .filter(k -> k == RecordingOutput.Kind.WARN || k == RecordingOutput.Kind.NOTE).toList());
+    }
+
     /** A stream that fails before anything came breaks the step, so the error follows a closed line. */
     @Test
     void aStreamThatFailsAtOnceBreaksTheStep() {
@@ -101,7 +131,9 @@ class AskCommandTest {
             }));
         }
         assertEquals(List.of("Use isx bra"), recorded.resultLines());
-        assertEquals(List.of(RecordingOutput.Kind.STEP_START, RecordingOutput.Kind.STEP_DONE, RecordingOutput.Kind.FRAME),
+        // What came is still the model's, so the disclaimer follows it
+        assertEquals(List.of(RecordingOutput.Kind.STEP_START, RecordingOutput.Kind.STEP_DONE, RecordingOutput.Kind.FRAME,
+                        RecordingOutput.Kind.NOTE),
                 recorded.events().stream().map(RecordingOutput.Event::kind)
                         .filter(k -> k != RecordingOutput.Kind.RESULT).toList());
     }
