@@ -268,7 +268,7 @@ public final class HostRepoRefresh {
                                                    String... args) {
             var fetch = new ArrayList<>(List.of("fetch", "--progress"));
             fetch.addAll(List.of(args));
-            return GitRemoteUtils.hostGitTransfer(hostPath, PreparationGit.SshScope.CHECKOUT, limits, progress, fetch.toArray(String[]::new));
+            return GitRemoteUtils.hostGitTransfer(hostPath, limits, progress, fetch.toArray(String[]::new));
         }
 
         private GitRemoteUtils.ExecResult git(String... args) {

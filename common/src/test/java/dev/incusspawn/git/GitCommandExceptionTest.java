@@ -242,54 +242,6 @@ class GitCommandExceptionTest {
     }
 
     @Test
-    void anUpdateAllCloneSetsNoSshCommandFromConfig(@TempDir Path tmp) throws Exception {
-        // Neither a repository around the new checkout nor a global command: the clone's own config decides.
-        var around = tmp.resolve("work");
-        GitTestUtils.git(tmp, "init", "-q", around.toString());
-        GitTestUtils.git(around, "config", "core.sshCommand", "ssh -i work_key");
-        var home = java.nio.file.Files.createDirectories(tmp.resolve("home"));
-        var environment = new HashMap<String, String>(Map.of("PATH", System.getenv("PATH"), "HOME", home.toString(),
-                "GIT_CONFIG_NOSYSTEM", "1"));
-        GitTestUtils.git(home, "config", "--file", home.resolve(".gitconfig").toString(), "core.sshCommand", "ssh -i home_key");
-        var setup = PreparationGit.nonInteractiveSsh(environment, around, PreparationGit.SshScope.CLONE);
-        assertNull(environment.get("GIT_SSH_COMMAND"), "the clone's own config may still choose one");
-        assertEquals("force", environment.get("SSH_ASKPASS_REQUIRE"));
-        assertEquals("isx set SSH_ASKPASS_REQUIRE=force with SSH_ASKPASS=false for ssh", setup.done());
-        assertEquals("a global core.sshCommand, or one an includeIf \"gitdir:\" sets for the new checkout", setup.keySetting());
-        environment.put("GIT_SSH", "/usr/bin/ssh");
-        assertEquals("your GIT_SSH program", PreparationGit.nonInteractiveSsh(environment, around, PreparationGit.SshScope.CLONE).keySetting());
-    }
-
-    @Test
-    void anUpdateAllCloneKeepsTheSshCommandAGlobalIncludeIfChoosesForTheNewCheckout(@TempDir Path tmp) throws Exception {
-        // git clone evaluates includeIf "gitdir:" against the new checkout: a per-directory key isx cannot probe for.
-        // Reached through a symlink, as macOS's temp dir is (/var -> /private/var): Git matches gitdir: against
-        // the real path, so the include names that.
-        java.nio.file.Files.createDirectories(tmp.resolve("real").resolve("work"));
-        var clones = java.nio.file.Files.createSymbolicLink(tmp.resolve("link"), tmp.resolve("real")).resolve("work");
-        var ssh = java.nio.file.Files.writeString(tmp.resolve("work-ssh"), "#!/bin/sh\n"
-                + "echo \"ran work-ssh: $1 askpass=$SSH_ASKPASS_REQUIRE\" >&2\nexit 255\n");
-        java.nio.file.Files.setPosixFilePermissions(ssh, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
-        var include = tmp.resolve("work.inc");
-        GitTestUtils.git(tmp, "config", "--file", include.toString(), "core.sshCommand", ssh.toString());
-        var home = java.nio.file.Files.createDirectories(tmp.resolve("home"));
-        // A global command too, which the included one overrides for the new checkout.
-        GitTestUtils.git(tmp, "config", "--file", home.resolve(".gitconfig").toString(), "core.sshCommand", "ssh -i home_key");
-        GitTestUtils.git(tmp, "config", "--file", home.resolve(".gitconfig").toString(),
-                "includeIf.gitdir:" + clones.toRealPath() + "/.path", include.toString());
-
-        var builder = new ProcessBuilder("git", "clone", "git@example.invalid:o/r.git", "r").redirectErrorStream(true)
-                .directory(clones.toFile());
-        builder.environment().keySet().removeIf(k -> k.startsWith("GIT_") || k.startsWith("SSH_"));
-        builder.environment().putAll(Map.of("HOME", home.toString(), "XDG_CONFIG_HOME", home.toString(),
-                "GIT_CONFIG_NOSYSTEM", "1"));
-        var result = GitProcess.run(builder, clones, PreparationGit.SshScope.CLONE, GitTransferConfig.DEFAULT, p -> {});
-        assertEquals(GitProcess.Status.FAILED, result.status());
-        assertTrue(result.diagnostics().lines().anyMatch(l -> l.equals("ran work-ssh: git@example.invalid askpass=force")),
-                "the included command ran, unable to prompt: " + result.diagnostics());
-    }
-
-    @Test
     void buildsAddBatchModeToTheUsersOwnSshCommand(@TempDir Path repo) throws Exception {
         GitTestUtils.git(repo, "init", "-q");
         GitTestUtils.git(repo, "config", "core.sshCommand", "ssh -i work_key");

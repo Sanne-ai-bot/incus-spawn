@@ -495,11 +495,9 @@ A `\r` alone ends a progress update; `\r\n`, as ssh ends its messages, ends a wh
 SSH never prompts, in a build (decided on #1403) or in `update-all` (#1410).
 isx inserts `-o BatchMode=yes` right after the `ssh` of the command Git would run, in Git's order (`GIT_SSH_COMMAND`, else `core.sshCommand`, else `GIT_SSH`), where a later `-o BatchMode=no` or a trailing comment cannot undo it, or uses plain `ssh -o BatchMode=yes`.
 `update-all` fetches in the user's checkout, so that repository's own `core.sshCommand` applies; a build runs Git in isx's own repository, so only the user's global one does.
-A clone is different: a repository around the new checkout does not apply, but a global `includeIf "gitdir:"` matching the new checkout does, and no probe sees it before the clone exists.
-Any `GIT_SSH_COMMAND` isx set would override it, so for a clone isx sets none from config and relies on the askpass settings (`PreparationGit.SshScope`).
 Where the option cannot go (`GIT_SSH`, a wrapper or plink, a command isx could not read), `SSH_ASKPASS_REQUIRE=force` with `SSH_ASKPASS=false` makes OpenSSH 8.4 and later ask a program that answers nothing instead of the terminal.
 isx sets those two for every case.
-OpenSSH before 8.4 ignores them, so there a wrapper, `GIT_SSH` or a clone's ssh can still prompt until the stall budget ends it.
+OpenSSH before 8.4 ignores them, so there a wrapper or `GIT_SSH` can still prompt until the stall budget ends it.
 isx also sets an empty `GIT_ASKPASS`, which ends Git's own askpass chain (`GIT_ASKPASS`, `core.askPass`, `SSH_ASKPASS`) before any dialog.
 The failure note says which of these isx did, and to which command.
 Local preparation steps use no SSH and skip reading `core.sshCommand`.

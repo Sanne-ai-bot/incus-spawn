@@ -110,13 +110,7 @@ final class PreparationGit {
         /** A build: Git in isx's own repository, where only a global {@code core.sshCommand} applies. */
         BUILD("your global core.sshCommand", "a global core.sshCommand (a repository's own does not apply to builds)"),
         /** {@code update-all} fetching: Git in the user's checkout, where its own applies. */
-        CHECKOUT("your core.sshCommand", "core.sshCommand"),
-        /**
-         * {@code update-all} cloning: a global {@code includeIf "gitdir:"} matching the new checkout may choose
-         * the command, and no probe sees it before the clone. isx never sets one from config, since any it set would
-         * win, and reads no config ({@code repo} is unused).
-         */
-        CLONE("your core.sshCommand", "a global core.sshCommand, or one an includeIf \"gitdir:\" sets for the new checkout");
+        CHECKOUT("your core.sshCommand", "core.sshCommand");
 
         private final String source, keySetting;
 
@@ -145,9 +139,6 @@ final class PreparationGit {
         // Git's own order: GIT_SSH_COMMAND, then core.sshCommand, then GIT_SSH, then plain ssh.
         var command = environment.get("GIT_SSH_COMMAND");
         if (command != null) return insertBatchMode(environment, command, "your GIT_SSH_COMMAND", "your GIT_SSH_COMMAND");
-        if (scope == SshScope.CLONE) return environment.containsKey("GIT_SSH")
-                ? new SshSetup(ASKPASS_FOR + "your GIT_SSH program", "your GIT_SSH program")
-                : new SshSetup(ASKPASS_FOR + "ssh", scope.keySetting);
         var configured = repo == null ? java.util.Optional.of("") : configuredSshCommand(environment, repo);
         if (configured.isEmpty()) return new SshSetup(ASKPASS_FOR + "ssh", scope.keySetting);
         if (!configured.get().isBlank()) {
