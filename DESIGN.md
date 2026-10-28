@@ -5332,6 +5332,15 @@ A stamp on the instance was the first version: a copy carries it, it is gone onc
 A host half is built-in Java, never a definition's: a cloned repository's tool must not make isx run host commands, and an instance built from a project-local definition gets none, since such a tool may share a built-in's name.
 zmx's host-side socket sharing predates the seam and could move onto it.
 
+**Orca: a recipe over the commands, as a first version.**
+Orca's environment recipes are four host commands and a strict JSON contract: `create` prints one object naming an SSH target and a project root, and the others read a lifecycle payload on stdin.
+`integrations/orca/isx-orca-recipe` speaks that contract over `isx branch --owner orca --format=json`, `isx stop`, `isx start` and `isx destroy --owner orca`, translating with `jq`, so isx has no Orca code.
+It names the instance after Orca's runtime id (`orca-<12 hex of its sha256>`), and acts on a payload only when its instance is that name for its runtime.
+Orca destroys only what a result named, so a create takes back, through `isx destroy --owner`, both the instance an earlier attempt for the runtime left and its own on any failure or interrupt once it exists.
+It covers Orca's worktree mode only, takes the template from the recipe line, and needs the repository cloned as the template's workdir: setup Sanne accepted for a first version, ahead of a smoother one (the `orca` tool's host half writing an Orca plugin, which needs a decision on where the adapter lives).
+The `orca` tool installs what Orca's server needs over SSH (`tar`, `gawk`, with `sshd`), from the contributor's branch.
+`docs/INTEGRATIONS.md` is the landing page for both kinds of tool.
+
 **Alternatives.**
 A dedicated `isx sandbox create|suspend|resume|destroy` group with its own JSON contract would be a second lifecycle surface to keep in step with `branch` and `destroy`.
 A built-in `isx orca` (the contributor's branch) ties the surface to one tool's contract and a Java package per orchestrator; its generic pieces are what this takes.

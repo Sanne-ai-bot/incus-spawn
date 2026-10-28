@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# isx-orca-recipe: Orca's environment-recipe contract over isx's own commands (#1720).
+#
+# A proof of concept: Orca (https://github.com/stablyai/orca) creates a workspace's machine with a
+# recipe's create command, and suspends, resumes and destroys it with three more. Each is a
+# subcommand here, and each is an ordinary isx command underneath:
+#
+#   create   isx branch <name> --from <template> --owner orca --owner-id <runtime> --format=json
+#   suspend  isx stop <name>
+#   resume   isx start <name>
+#   destroy  isx destroy <name> --owner orca --owner-id <runtime>
+#
+# Only Orca's worktree mode (recipe result schema 1): Orca adds its worktree under the project root,
+# which is the template's workdir, so the template must clone the repository. The recipe needs
+#   drivers: { orca: { destroy: true } }
+# in ~/.config/incus-spawn/config.yaml. Needs bash, jq, and sha256sum or shasum on the host. See
+# docs/INTEGRATIONS.md.
+#
+# Stdout is Orca's: one JSON object from create and resume, nothing else. isx's own progress goes
+# to stderr, which Orca shows while it waits.
+set -euo pipefail
+
+OWNER=orca
+PROVIDER=incus-spawn
+# What isx accepts as an --owner-id (Metadata.OWNER_HANDLE)
+HANDLE='^[A-Za-z0-9._:-]{1,128}$'
+
+die() {
+    echo "isx-orca-recipe: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || die "needs jq on the PATH"
+if command -v sha256sum >/dev/null; then
+    sha256() { sha256sum | cut -c1-64; }
+elif command -v shasum >/dev/null; then
+    sha256() { shasum -a 256 | cut -c1-64; }
+else
+    die "needs sha256sum or shasum on the PATH"
+fi
+
+# The instance a runtime gets: one name per runtime, so a payload can be checked against its runtime
+instance_for() {
+    local hash
+    hash=$(printf '%s' "$1" | sha256)
+    [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die "could not hash the runtime id"
+    echo "orca-${hash:0:12}"
+}
+
+# The one JSON object Orca accepts from create and resume, from what isx branch --format=json printed.
+result() {
+    jq -cn --argjson b "$1" --arg runtime "$2" --arg provider "$PROVIDER" '{
+        schemaVersion: 1,
+        connection: {
+            type: "ssh",
+            projectRoot: $b.project_root,
+            target: {
+                label: $b.name, host: $b.ssh_host, configHost: $b.ssh_host, port: $b.ssh_port,
+                username: $b.ssh_user, identityFile: $b.ssh_identity_file, identitiesOnly: true,
+                proxyCommand: $b.ssh_proxy_command
+            }
+        },
+        userData: {provider: $provider, resourceId: $b.name, runtimeId: $runtime}
+    }'
+}
+
+# The lifecycle payload Orca writes on stdin: sets instance and runtime, refusing one create did not answer.
+read_payload() {
+    local mode=$1 payload
+    payload=$(cat)
+    jq -e 'type == "object"' <<<"$payload" >/dev/null 2>&1 || die "expected Orca's lifecycle payload, one JSON object, on stdin"
+    [ "$(jq -r '.mode // ""' <<<"$payload")" = "$mode" ] || die "the payload is not for $mode: check the recipe's $mode command"
+    [ "$(jq -r '.recipeResult.userData.provider // ""' <<<"$payload")" = "$PROVIDER" ] \
+        || die "the payload's recipe result is not one this recipe's create printed"
+    instance=$(jq -r '.recipeResult.userData.resourceId // ""' <<<"$payload")
+    # The runtime create stamped, as create wrote it into the result
+    runtime=$(jq -r '.recipeResult.userData.runtimeId // ""' <<<"$payload")
+    [[ "$runtime" =~ $HANDLE ]] || die "the payload names no Orca runtime"
+    # Only the name create makes for that runtime, so a payload cannot point isx at another instance
+    [ "$instance" = "$(instance_for "$runtime")" ] || die "the payload names no instance this recipe made for its runtime"
+    recipe_result=$(jq -c '.recipeResult' <<<"$payload")
+}
+
+create() {
+    local template=
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --from) [ $# -ge 2 ] || die "--from needs a template"; template=$2; shift 2 ;;
+            *) die "unknown argument: $1" ;;
+        esac
+    done
+    [ -n "$template" ] || die "name the template: isx-orca-recipe create --from <template>"
+    local schema=${ORCA_RECIPE_RESULT_SCHEMA_VERSION:-1}
+    [ "$schema" = 1 ] || die "only Orca's worktree mode (result schema 1) is supported, not $schema"
+    runtime=${ORCA_VM_INSTANCE_ID:-}
+    [[ "$runtime" =~ $HANDLE ]] || die "ORCA_VM_INSTANCE_ID is missing or not a handle isx can stamp"
+    name=$(instance_for "$runtime")
+    # Orca repeats a create that failed: the instance an earlier attempt left for this runtime never
+    # reached Orca, so it is taken back first. --owner deletes it only if it is still this runtime's.
+    isx destroy "$name" --owner "$OWNER" --owner-id "$runtime" >&2
+    local branched
+    branched=$(isx branch "$name" --from "$template" --owner "$OWNER" --owner-id "$runtime" --format=json)
+    # From here until the result is printed, any failure or an interrupt from Orca takes it back:
+    # Orca destroys only what a result named
+    trap 'isx destroy "$name" --owner "$OWNER" --owner-id "$runtime" >&2 || true' EXIT
+    jq -e 'type == "object"' <<<"$branched" >/dev/null || die "could not read what isx branch printed"
+    [ "$(jq -r '.ssh_host // ""' <<<"$branched")" != "" ] || die "template $template has no SSH server: build it with the orca tool"
+    local printed
+    printed=$(result "$branched" "$runtime")
+    printf '%s\n' "$printed"
+    trap - EXIT
+}
+
+subcommand=${1:-}
+[ $# -gt 0 ] && shift
+case "$subcommand" in
+    create) create "$@" ;;
+    suspend) read_payload suspend; isx stop "$instance" >&2 ;;
+    resume) read_payload resume; isx start "$instance" >&2; printf '%s\n' "$recipe_result" ;;
+    destroy) read_payload destroy; isx destroy "$instance" --owner "$OWNER" --owner-id "$runtime" >&2 ;;
+    *) die "usage: isx-orca-recipe create --from <template> | suspend | resume | destroy (payload on stdin)" ;;
+esac

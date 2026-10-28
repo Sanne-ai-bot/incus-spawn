@@ -29,6 +29,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `tmux` | Terminal multiplexer with incus-spawn session integration |
 | `zmx` | zmx: session attach/detach for the terminal |
 | `herdr` | herdr terminal workspace manager, with each instance added to the host's herdr |
+| `orca` | What the Orca agent orchestrator needs to run its server over SSH |
 | `headroom` | Headroom context optimization for Claude Code |
 
 Run `isx tools list -v` to see all available tools, including user-defined and project-local definitions.
@@ -499,6 +500,13 @@ When `herdr` is installed on the host too, isx adds each instance of such a temp
 isx removes the machine again when it destroys the instance.
 herdr then lists the instance by its name, and `herdr --machine <name> agent list` reaches it.
 A template built from project-local definitions is never added.
+
+See [Driving isx from other tools](INTEGRATIONS.md#herdr).
+
+### Orca workspaces
+
+The `orca` tool adds what [Orca](https://github.com/stablyai/orca) needs to run its server in an instance: `sshd`, `tar` and `gawk`.
+See [Driving isx from other tools](INTEGRATIONS.md#orca) for the recipe that gives each Orca workspace an instance of its own.
 
 ### Terminal Session Persistence (zmx)
 
