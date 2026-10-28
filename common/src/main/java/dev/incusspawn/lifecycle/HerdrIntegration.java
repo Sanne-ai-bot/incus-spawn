@@ -91,6 +91,7 @@ public final class HerdrIntegration implements HostIntegration {
     @Override
     public void started(IncusClient incus, String name, JqValue instance, Output out) {
         if (!host.onPath(TOOL)) return;
+        removeOrphans(out);
         var shown = OutputFormat.oneLine(name);
         // One first start at a time: a branch and an orchestrator's start must not both add it
         try (var lock = HostLock.acquire(records.get().resolve(".lock"), "adding " + shown + " to herdr", out::step)) {
@@ -135,11 +136,17 @@ public final class HerdrIntegration implements HostIntegration {
         try {
             var id = Files.readString(record).strip();
             if (id.matches(HERDR_ID) && !host.onPath(TOOL)) {
-                // The record is what lets isx remove it later: kept, and said
+                // Kept so a later isx with herdr removes it, but not under the name: a new instance
+                // of that name must not be taken as already added (review of #1823)
+                var orphan = orphans().resolve(id);
+                Files.createDirectories(orphan.getParent());
+                Files.writeString(orphan, name + "\n");
+                Files.deleteIfExists(record);
                 out.warn("could not remove " + shown + " from herdr: herdr is not on the PATH.",
                         "Remove it yourself: herdr machine remove " + id);
                 return;
             }
+            if (host.onPath(TOOL)) removeOrphans(out);
             if (id.matches(HERDR_ID) && listed(id)) {
                 var removed = host.run(QUICK, List.of(TOOL, "machine", "remove", id));
                 if (!removed.ok()) {
@@ -151,6 +158,30 @@ public final class HerdrIntegration implements HostIntegration {
             Files.deleteIfExists(record);
         } catch (IOException | RuntimeException e) {
             out.warn("could not remove " + shown + " from herdr: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Machines isx added for instances destroyed while herdr was not on the PATH, one file per
+     * machine id. A dot name, which no instance can have, so it never shadows an instance's record.
+     */
+    private Path orphans() {
+        return records.get().resolve(".orphaned");
+    }
+
+    /** Remove from herdr the machines {@link #orphans} holds, and forget them; one still failing stays. */
+    private void removeOrphans(Output out) {
+        var dir = orphans();
+        if (!Files.isDirectory(dir)) return;
+        try (var files = Files.list(dir)) {
+            for (var orphan : files.toList()) {
+                var id = orphan.getFileName().toString();
+                if (!id.matches(HERDR_ID)) continue;
+                if (listed(id) && !host.run(QUICK, List.of(TOOL, "machine", "remove", id)).ok()) continue;
+                Files.deleteIfExists(orphan);
+            }
+        } catch (IOException | RuntimeException e) {
+            out.warn("could not remove earlier instances' machines from herdr: " + e.getMessage());
         }
     }
 

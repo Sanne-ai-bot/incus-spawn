@@ -234,12 +234,13 @@ class HerdrIntegrationTest {
 
     /** Without herdr on the PATH, the machine cannot be removed: the record stays, and the warning says how (review of #1823). */
     @Test
-    void aDestroyWithoutHerdrKeepsTheRecordAndSaysHowToRemoveIt() throws Exception {
+    void aDestroyWithoutHerdrKeepsTheMachineIdAndSaysHowToRemoveIt() throws Exception {
         var host = new FakeHost(false);
         Files.writeString(records.resolve("ws"), ID + "\n");
         var recorded = RecordingOutput.during(() -> herdr(host).destroyed("ws", BuildOutput.bound()));
         assertEquals(List.of(), host.ran);
-        assertTrue(Files.exists(records.resolve("ws")), "kept");
+        assertTrue(Files.exists(records.resolve(".orphaned").resolve(ID)), "kept, by its machine id");
+        assertFalse(herdr(host).done("ws"), "not under the name: a new ws is added (review of #1823)");
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
                 "could not remove ws from herdr: herdr is not on the PATH.", "Remove it yourself: herdr machine remove " + ID)),
                 recorded.events(RecordingOutput.Kind.WARN));
@@ -270,5 +271,25 @@ class HerdrIntegrationTest {
         assertTrue(BuildSource.installs(buildWith("herdr", false), "herdr"));
         assertFalse(BuildSource.installs(buildWith("zmx", false), "herdr"));
         assertFalse(BuildSource.installs("", "herdr"));
+    }
+
+    /**
+     * A new instance of a destroyed one's name is added to herdr, and once herdr is back on the PATH
+     * the machine the destroy could not remove is removed and forgotten (review of #1823).
+     */
+    @Test
+    void aMachineLeftByADestroyWithoutHerdrIsRemovedLaterAndANewInstanceOfTheNameIsAdded() throws Exception {
+        Files.writeString(records.resolve("ws"), ID + "\n");
+        RecordingOutput.during(() -> herdr(new FakeHost(false)).destroyed("ws", BuildOutput.bound()));
+
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
+        var host = new FakeHost(true);
+        var next = "fedcba9876543210fedcba9876543210";
+        host.answers.put("herdr machine add", new HostCommands.Result(0, "Saved SSH machine " + next + "."));
+        started(herdr(host), daemon, "ws");
+
+        assertEquals(List.of("herdr machine list --json", "herdr machine remove " + ID, "herdr machine add ws --label ws"), host.ran);
+        assertFalse(Files.exists(records.resolve(".orphaned").resolve(ID)), "forgotten once removed");
+        assertEquals(next, recorded("ws"), "the new ws has its own machine");
     }
 }
