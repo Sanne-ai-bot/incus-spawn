@@ -36,7 +36,7 @@ public class BranchCommand extends BaseCommand {
     @Argument(description = "Name for the new instance", required = true)
     String name;
 
-    @Option(name = "from", description = "Source instance to branch from (auto-detected from cwd if omitted)")
+    @Option(name = "from", completer = Completers.Source.class, description = "Source instance to branch from (auto-detected from cwd if omitted)")
     String source;
 
     @Option(name = "gui", description = "Enable GUI passthrough (Wayland + GPU + audio); "
@@ -89,13 +89,13 @@ public class BranchCommand extends BaseCommand {
             + " orchestrator's workspace id (needs --owner)")
     String ownerId;
 
-    @OptionList(name = "account",
+    @OptionList(name = "account", completer = Completers.Account.class,
             description = "Credential account to use, as <namespace>=<account> "
                     + "(e.g. claude=work). Repeatable; overrides the template's choice.")
     List<String> accounts;
 
     // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-    @Option(name = "format", description = "Output format: table (default), or plain or json to print"
+    @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), or plain or json to print"
             + " only the new instance's name, json with how to reach it (progress to stderr, no shell opened)")
     String format;
 

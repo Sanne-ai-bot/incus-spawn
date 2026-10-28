@@ -397,7 +397,7 @@ To uninstall, run `uninstall.sh`:
 - On macOS it keeps the VM's data disk, with every instance and template, unless you pass `--delete-instances`.
 - `--binaries-only` removes only the binaries, to switch install channel, for example from a source build to Homebrew.
 
-Shell completions are available for bash, zsh and fish via `isx completion <shell>`.
+Shell completions are available for bash, zsh, fish and PowerShell via `isx completion <shell>`.
 
 ## CLI
 

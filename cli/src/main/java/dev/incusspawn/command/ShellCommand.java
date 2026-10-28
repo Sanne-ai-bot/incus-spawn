@@ -25,7 +25,7 @@ import java.util.List;
 )
 public class ShellCommand extends BaseCommand {
 
-    @Argument(index = "0", description = "Name of the clone to connect to", required = true)
+    @Argument(index = "0", completer = Completers.Instance.class, description = "Name of the clone to connect to", required = true)
     String name;
 
     @Option(name = "task", hasValue = false,

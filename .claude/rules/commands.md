@@ -20,6 +20,13 @@ The result: on Linux `isx vm` is an unknown command and never appears in `isx --
 When adding a *shared* command, add it to **both** command lists -- `IncusSpawnCommandTreeTest` fails if they drift (the two lists must be identical except for `vm`).
 When adding another macOS-only command, add it to `IncusSpawnCommand` only and extend the completion strip.
 
+**Dynamic completion** (#1744): `isx --aesh-complete -- <words>` answers a TAB from the running binary's command tree, which `IncusSpawn.run` hands to `Completers.answer` before aesh sees it.
+The PowerShell script (`isx completion pwsh`, aesh's dynamic script) uses it; bash, zsh and fish are still hand-written.
+A value comes from a completer on the argument or option itself (`completer = Completers.Instance.class` and its siblings), so a new instance, template, tool or account argument names one.
+A completer offers names only, never starts a VM, costs at most one Incus request, and offers nothing when its source fails.
+`answer` writes each candidate as the whole word (`--format=json`) and a command's or option's description after a TAB; `CompletersTest` pins both.
+`answer` drops the commands in `IncusSpawn.NOT_COMPLETED` (the hidden plumbing and `completion`), which stay runnable.
+
 Account values: `isx account list --completion` (names only, never credentials) prints every namespace on its own line for `account unset`, then `ns=` / `ns=account` lines for the usable accounts (default marked after a TAB) for `--account` and `account set`, in all three scripts.
 It skips names holding a control character.
 `account add`'s positional completes from `isx account add --completion` instead (`CredentialCheck.acceptedNames`): each credential step's namespace and its tool's name, as `credentialTool` resolves them for `addCredential`, so `gh` is offered beside `github`.
@@ -57,7 +64,7 @@ These remain in `groupCommands` (so they're still executable) but are hidden fro
 The completion scripts in `CompletionCommand` must be kept in sync manually (remove the command from suggestion lists, case dispatch, and any dedicated helper functions).
 `IncusSpawnCommandTreeTest.hiddenCommandsAreStillRegistered` asserts they stay in `groupCommands`; `CompletionCommandTest.commandsNotOfferedAsTopLevelCompletions` asserts that no shell offers them, `completion` or the removed `instances` (its `NOT_OFFERED` list).
 `completion` is listed in `isx --help`, the one place a user finds it before completion is installed, but the completion scripts do not offer it: nobody tab-completes the command that sets up tab completion (#1802).
-When hiding a new command: add it to `HIDDEN_COMMANDS` (which `NOT_OFFERED` is built from), remove it from all three completion scripts, update `stripVmCommand()` if it changes `vm`'s neighbors, and run both tests.
+When hiding a new command: add it to `HIDDEN_COMMANDS` (which `NOT_COMPLETED` and `NOT_OFFERED` are built from), remove it from all three completion scripts, update `stripVmCommand()` if it changes `vm`'s neighbors, and run both tests.
 
 **`isx start`, `isx stop` and owners are for programs that drive isx (#1720).**
 `isx start` is `isx shell`'s preparation without the shell (`InstanceStart`, shared with `isx ssh-proxy --start`): `InstancePrep.prepare` under the `starting` lock, waiting up to two minutes for another holder, never a bare Incus start.

@@ -25,7 +25,7 @@ import java.util.List;
 )
 public class RunCommand extends BaseCommand {
 
-    @Argument(description = "Name of the instance", required = true)
+    @Argument(completer = Completers.Instance.class, description = "Name of the instance", required = true)
     String name;
 
     @Option(name = "action", hasValue = true, description = "Action to run (tool-name or tool-name:action-id). If not specified, runs the default action.")

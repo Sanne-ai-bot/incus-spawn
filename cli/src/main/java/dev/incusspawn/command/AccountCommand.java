@@ -53,7 +53,7 @@ public class AccountCommand extends BaseCommand {
 
     @CommandDefinition(name = "reset-proofs", description = "Revoke and replace an instance's shared credential proofs", generateHelp = true)
     public static class ResetProofs extends BaseCommand {
-        @Argument(description = "Instance name", required = true)
+        @Argument(completer = Completers.Instance.class, description = "Instance name", required = true)
         String instance;
 
         @Override protected CommandResult doExecute() {
@@ -65,7 +65,7 @@ public class AccountCommand extends BaseCommand {
     }
 
     // Bare, the command is its list, so it takes list's --format.
-    @Option(name = "format", description = "Output format: table (default), plain or json")
+    @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
     String format;
 
     @Override
@@ -83,7 +83,7 @@ public class AccountCommand extends BaseCommand {
     public static class ListSub extends BaseCommand {
 
         // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-        @Option(name = "format", description = "Output format: table (default), plain or json")
+        @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
         String format;
 
         // Used by the generated shell completion scripts; see completionLines.
@@ -164,7 +164,7 @@ public class AccountCommand extends BaseCommand {
         return namespaces;
     }
 
-    private static boolean typable(String name) {
+    static boolean typable(String name) {
         return !name.isEmpty() && name.chars().noneMatch(Character::isISOControl);
     }
 
@@ -299,7 +299,7 @@ public class AccountCommand extends BaseCommand {
             generateHelp = true)
     public static class Add extends BaseCommand {
 
-        @Argument(description = "The credential: its namespace (e.g. github, claude) or its tool (e.g. gh);"
+        @Argument(completer = Completers.Credential.class, description = "The credential: its namespace (e.g. github, claude) or its tool (e.g. gh);"
                 + " without one, choose from a menu")
         String credential;
 
@@ -336,11 +336,11 @@ public class AccountCommand extends BaseCommand {
             generateHelp = true)
     public static class Show extends BaseCommand {
 
-        @Argument(description = "Instance name", required = true)
+        @Argument(completer = Completers.Instance.class, description = "Instance name", required = true)
         String instance;
 
         // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-        @Option(name = "format", description = "Output format: table (default), plain or json")
+        @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
         String format;
 
         @Override
@@ -529,7 +529,8 @@ public class AccountCommand extends BaseCommand {
             generateHelp = true)
     public static class Set extends BaseCommand {
 
-        @Arguments(description = "Instance name, then one or more <namespace>=<account>")
+        @Arguments(completer = Completers.InstanceThenAccounts.class,
+                description = "Instance name, then one or more <namespace>=<account>")
         List<String> args;
 
         @Override
@@ -581,7 +582,8 @@ public class AccountCommand extends BaseCommand {
             generateHelp = true)
     public static class Unset extends BaseCommand {
 
-        @Arguments(description = "Instance name, then one or more namespaces (e.g. claude github)")
+        @Arguments(completer = Completers.InstanceThenAccounts.class,
+                description = "Instance name, then one or more namespaces (e.g. claude github)")
         List<String> args;
 
         @Override

@@ -1103,6 +1103,17 @@ A styled string is never a `static final`: it would be decided when the native i
 **Not yet covered**: the other query commands (`templates`, `tools`, `account`, `proxy status`, `doctor`, `vm status`, `update-base --list`) have no `--format` yet.
 Each adopts the same helper and contract when it gains one.
 
+### Shell completion asks the running binary
+
+`isx completion pwsh` prints a script that answers every TAB by running `isx --aesh-complete -- <words>` (#1744).
+That request walks the command tree this binary registered, so a platform's commands are offered only on that platform: on Linux there is no `vm` to strip, because the Linux top command has none.
+The values come from aesh completers on the commands' own arguments and options (`Completers`): instances (`isx list -q`'s source, one Incus request at `recursion=1`), `--from` sources with the built templates, template and tool definitions, `<namespace>=<account>` selections, credentials and fixed values such as `--format`.
+They follow the same rules as the hand-written scripts' sources: names only, never a credential, nothing that starts a VM, and nothing at all when the source fails, since an error would be drawn over the line being typed.
+`Completers.answer` replaces aesh's own `--aesh-complete` handler, which in aesh 3.18 gave completers no working directory (a `Path` option threw) and asked the shell for files after every command without a positional argument.
+It answers each candidate as the whole word it replaces (`--format=json`, not `json`), and a command or option with its description after a TAB.
+It never offers `git-remote-helper`, `ssh-proxy` or `completion` (`IncusSpawn.NOT_COMPLETED`), which stay runnable.
+bash, zsh and fish keep their hand-written scripts for now; they ask isx only for values, through the `--completion` helpers and `isx list -q`.
+
 ### Resource Limits (Adaptive)
 
 Detected at branch time from host resources (`ResourceLimits`):

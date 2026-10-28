@@ -204,7 +204,7 @@ public class ProjectCommand extends BaseCommand {
     )
     public static class Update extends BaseCommand {
 
-        @Argument(required = true, description = "Name of the project template to update")
+        @Argument(required = true, completer = Completers.Project.class, description = "Name of the project template to update")
         String name;
 
         @Option(name = "config", description = "Path to incus-spawn.yaml")

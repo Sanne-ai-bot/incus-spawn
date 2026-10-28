@@ -29,7 +29,7 @@ import java.util.List;
 )
 public class DestroyCommand extends BaseCommand {
 
-    @Argument(description = "Name of the environment to destroy")
+    @Argument(completer = Completers.Source.class, description = "Name of the environment to destroy")
     String name;
 
     @Option(name = "all-templates", hasValue = false,

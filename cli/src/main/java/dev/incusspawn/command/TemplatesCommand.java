@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
 public class TemplatesCommand extends BaseCommand {
 
     // Bare, the command is its list, so it takes list's --format.
-    @Option(name = "format", description = "Output format: table (default), plain or json")
+    @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
     String format;
 
     @Override
@@ -63,7 +63,7 @@ public class TemplatesCommand extends BaseCommand {
         boolean verbose;
 
         // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-        @Option(name = "format", description = "Output format: table (default), plain or json")
+        @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
         String format;
 
         @Override
@@ -149,7 +149,7 @@ public class TemplatesCommand extends BaseCommand {
             generateHelp = true)
     public static class Edit extends BaseCommand {
 
-        @Argument(required = true, description = "Template name (e.g. tpl-minimal)")
+        @Argument(required = true, completer = Completers.Template.class, description = "Template name (e.g. tpl-minimal)")
         public String name;
 
         @Override

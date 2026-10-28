@@ -96,7 +96,7 @@ public class DoctorCommand extends BaseCommand {
     boolean deep;
 
     // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-    @Option(name = "format", description = "Output format: table (default), plain or json")
+    @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
     String format;
 
     /**

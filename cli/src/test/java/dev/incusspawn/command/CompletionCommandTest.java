@@ -16,6 +16,10 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class CompletionCommandTest {
 
+    /** The scripts kept in {@code CompletionCommand}; pwsh's asks isx on every TAB (CompletersTest). */
+    private static final List<CompletionCommand.Shell> WRITTEN_BY_HAND = List.of(
+            CompletionCommand.Shell.bash, CompletionCommand.Shell.zsh, CompletionCommand.Shell.fish);
+
     private static String linux(CompletionCommand.Shell shell) {
         return CompletionCommand.stripVmCommand(CompletionCommand.rawScript(shell), shell);
     }
@@ -106,11 +110,11 @@ class CompletionCommandTest {
      * and the removed {@code instances}.
      */
     private static final List<String> NOT_OFFERED = Stream.concat(
-            IncusSpawn.HIDDEN_COMMANDS.stream(), Stream.of("completion", "instances")).sorted().toList();
+            IncusSpawn.NOT_COMPLETED.stream(), Stream.of("instances")).sorted().toList();
 
     @Test
     void commandsNotOfferedAsTopLevelCompletions() {
-        for (var shell : CompletionCommand.Shell.values()) {
+        for (var shell : WRITTEN_BY_HAND) {
             String script = CompletionCommand.rawScript(shell);
             java.util.function.Predicate<String> offers = switch (shell) {
                 case zsh -> name -> script.contains("'" + name + ":");
@@ -120,6 +124,7 @@ class CompletionCommandTest {
                         .orElseThrow(() -> new AssertionError("bash script has no 'local commands=' line"))
                         .split("[\\s\"=]+"))::contains;
                 case fish -> fishTopLevelWords(script)::contains;
+                case pwsh -> throw new AssertionError("pwsh is not written by hand");
             };
             for (var name : NOT_OFFERED) {
                 assertFalse(offers.test(name), shell + " must not offer " + name);
@@ -157,7 +162,7 @@ class CompletionCommandTest {
 
     @Test
     void instanceNamesComeFromListQuietNotTheRemovedInstancesCommand() {
-        for (var shell : CompletionCommand.Shell.values()) {
+        for (var shell : WRITTEN_BY_HAND) {
             String script = CompletionCommand.rawScript(shell);
             assertFalse(script.contains("isx instances"), shell + " must not call the removed isx instances");
             assertTrue(script.contains("isx list -q 2>/dev/null"), shell + " must list instance names with isx list -q");
@@ -170,7 +175,7 @@ class CompletionCommandTest {
 
     @Test
     void everyShellCompletesAccountValuesFromTheNamesOnlyHelper() {
-        for (var shell : CompletionCommand.Shell.values()) {
+        for (var shell : WRITTEN_BY_HAND) {
             String script = linux(shell);
             assertTrue(script.contains("isx account list --completion"), shell + " must call the helper");
             assertFalse(script.contains("--format=json"), shell + " must not parse the full listing");
@@ -184,7 +189,7 @@ class CompletionCommandTest {
     /** account add takes a tool name too, so its positional reads add's own list, not the namespaces (#1773). */
     @Test
     void everyShellCompletesAccountAddFromItsOwnNames() {
-        for (var shell : CompletionCommand.Shell.values()) {
+        for (var shell : WRITTEN_BY_HAND) {
             assertTrue(linux(shell).contains("isx account add --completion"), shell + " must call add's helper");
         }
         assertTrue(linux(CompletionCommand.Shell.zsh).contains("add) _arguments '1:credential:_isx_account_add_names' ;;"));

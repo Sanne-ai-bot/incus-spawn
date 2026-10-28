@@ -65,7 +65,7 @@ public class ProxyCommand extends BaseCommand {
     public static class Status extends BaseCommand {
 
         // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-        @Option(name = "format", description = "Output format: table (default), plain or json")
+        @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
         String format;
 
         @Override
@@ -298,7 +298,7 @@ public class ProxyCommand extends BaseCommand {
     public static class Activity extends BaseCommand {
 
         // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-        @Option(name = "format", description = "Output format: table (default), plain or json")
+        @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
         String format;
 
         @Option(name = "by-domain", hasValue = false, description = "One row per instance and domain")

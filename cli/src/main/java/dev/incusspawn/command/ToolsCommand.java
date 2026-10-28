@@ -30,7 +30,7 @@ import java.util.function.UnaryOperator;
 public class ToolsCommand extends BaseCommand {
 
     // Bare, the command is its list, so it takes list's --format.
-    @Option(name = "format", description = "Output format: table (default), plain or json")
+    @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
     String format;
 
     @Override
@@ -51,7 +51,7 @@ public class ToolsCommand extends BaseCommand {
         boolean verbose;
 
         // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-        @Option(name = "format", description = "Output format: table (default), plain or json")
+        @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
         String format;
 
         @Override
@@ -107,11 +107,11 @@ public class ToolsCommand extends BaseCommand {
             generateHelp = true)
     public static class Show extends BaseCommand {
 
-        @Argument(required = true, description = "Tool name")
+        @Argument(required = true, completer = Completers.Tool.class, description = "Tool name")
         String name;
 
         // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-        @Option(name = "format", description = "Output format: table (default), plain or json")
+        @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
         String format;
 
         @Override

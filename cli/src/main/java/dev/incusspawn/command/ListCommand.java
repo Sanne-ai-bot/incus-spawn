@@ -29,7 +29,7 @@ import static dev.incusspawn.command.InstanceListing.collectEntries;
 public class ListCommand extends BaseCommand {
 
     // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-    @Option(name = "format", description = "Output format: table (default), plain or json")
+    @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
     String format;
 
     @Option(name = "plain", hasValue = false, description = "Same as --format=plain")
@@ -38,7 +38,7 @@ public class ListCommand extends BaseCommand {
     @Option(shortName = 'q', name = "quiet", hasValue = false, description = "Print instance names only, one per line")
     boolean quiet;
 
-    @Option(name = "status", description = "Only instances in this state: running or stopped")
+    @Option(name = "status", completer = Completers.Status.class, description = "Only instances in this state: running or stopped")
     String status;
 
     /** On macOS, starts a stopped VM so Incus can answer (#1393); on Linux, nothing to do. */
