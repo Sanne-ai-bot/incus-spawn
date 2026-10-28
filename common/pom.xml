@@ -30,6 +30,23 @@
                 </configuration>
             </plugin>
             <plugin>
+                <!--
+                  Lets a test class that declares @Execution(CONCURRENT) run its methods in
+                  parallel, four at a time so a many-core host does not start dozens of Git
+                  daemons at once; every other class keeps running one test at a time (#1839).
+                -->
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <properties>
+                        <configurationParameters>
+                            junit.jupiter.execution.parallel.enabled = true
+                            junit.jupiter.execution.parallel.config.strategy = fixed
+                            junit.jupiter.execution.parallel.config.fixed.parallelism = 4
+                        </configurationParameters>
+                    </properties>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>io.smallrye</groupId>
                 <artifactId>jandex-maven-plugin</artifactId>
                 <version>3.6.0</version>

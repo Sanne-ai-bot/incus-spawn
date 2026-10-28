@@ -5,6 +5,8 @@ import dev.incusspawn.config.GitTransferConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -24,6 +26,9 @@ import java.util.concurrent.TimeUnit;
 import static dev.incusspawn.git.GitTestUtils.*;
 import static org.junit.jupiter.api.Assertions.*;
 
+// Each test owns its directories and Git daemon, and its time goes on starting Git processes, which
+// a macOS runner does slowly: concurrently the class fits its job's timeout (#1839).
+@Execution(ExecutionMode.CONCURRENT)
 class GitPreparationTest {
     @TempDir Path tmp;
     private Path remote;
