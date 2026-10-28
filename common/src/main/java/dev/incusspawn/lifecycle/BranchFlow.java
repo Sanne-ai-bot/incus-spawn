@@ -188,6 +188,14 @@ public final class BranchFlow {
         return "VM instances are " + NOT_ON_MACOS + ", and '" + source + "' is a VM. Branch a container template instead.";
     }
 
+    /**
+     * Why a branch on {@code network} cannot hold the {@link Metadata#MCP_CALLER} grant, or null
+     * when it can: an airgapped instance has no route to the proxy that serves {@code isx mcp}.
+     */
+    public static String mcpClientUnreachable(NetworkMode network) {
+        return network == NetworkMode.AIRGAP ? "an airgapped instance cannot reach " + ProxyConfig.MCP_DOMAIN : null;
+    }
+
     /** Why a branch asking for KVM passthrough ({@code kvm}) cannot be made on this host, or null when it can. */
     public static String kvmUnsupportedOnMacOs(boolean kvm) {
         if (!kvm || !macOS.getAsBoolean()) return null;
@@ -261,6 +269,10 @@ public final class BranchFlow {
         // Before any Incus request: the request alone says it asks for KVM
         var refusal = kvmUnsupportedOnMacOs(Boolean.TRUE.equals(req.kvm()));
         if (refusal != null) throw new BranchException(refusal);
+        if (Metadata.isMcpCaller(req.extraConfig())) {
+            refusal = mcpClientUnreachable(req.networkMode());
+            if (refusal != null) throw new BranchException(refusal + ".");
+        }
         // Then from the source, before any other check, so a VM is not first refused for its name
         var sourceInstance = incus.instanceMetadata(req.source());
         refusal = vmUnsupportedOnMacOs(req.source(), IncusClient.machineType(sourceInstance));

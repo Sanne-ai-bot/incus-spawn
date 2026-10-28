@@ -1,5 +1,6 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.command.McpClientGrant;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.lifecycle.BranchFlow;
@@ -23,7 +24,7 @@ import java.util.ArrayList;
 
 /**
  * The TUI's branch dialog (F4, or Enter on a template): the new instance's name, a VM's limits,
- * the GUI, KVM, network and inbox toggles, and the credential accounts. It owns its fields, their
+ * the GUI, KVM, network, MCP control and inbox toggles, and the credential accounts. It owns its fields, their
  * keys and its rendering; the {@link Tui} confirms it (the proxy, credential and still-exists
  * checks) and creates the branch once the terminal is released, from {@link #request}.
  */
@@ -58,6 +59,9 @@ final class BranchModal {
 
     private SelectState branchNetworkSelect;
 
+    /** {@code isx branch --mcp-client}: off until ticked, whatever the defaults (#1811). */
+    private CheckboxState branchMcpCheck;
+
     private CheckboxState branchInboxCheck;
 
     private TextInputState branchInboxInput;
@@ -71,6 +75,11 @@ final class BranchModal {
     private TextInputState vmDiskInput;
 
     private int branchFieldIndex;
+
+    /** The lines from the name to the inbox, blank ones included, before any account rows. */
+    private static final int FIELD_LINES = 10;
+
+    private static final String MCP_LABEL = "MCP control (isx mcp)";
 
     /** A VM's CPU, memory and disk limits as the dialog first shows them; empty for a container. */
     record VmLimits(String cpu, String memory, String disk) {
@@ -105,6 +114,7 @@ final class BranchModal {
         branchNetworkModes = NetworkMode.values();
         branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
                 .map(NetworkMode::label).toArray(String[]::new));
+        branchMcpCheck = new CheckboxState(false);
         branchInboxCheck = new CheckboxState(false);
         branchInboxInput = new TextInputState("");
         branchSourceIsVm = defaults.machineType() == MachineType.VM;
@@ -126,6 +136,10 @@ final class BranchModal {
     /** Whether the KVM passthrough box is ticked. */
     boolean kvm() {
         return branchKvmCheck.isChecked();
+    }
+
+    private boolean mcpClientReachable() {
+        return BranchFlow.mcpClientUnreachable(branchNetworkMode()) == null;
     }
 
     /** The name typed so far, stripped. */
@@ -175,6 +189,10 @@ final class BranchModal {
                 branchKvmCheck.toggle();
             } else if (branchFieldIndex == networkFieldIndex()) {
                 branchNetworkSelect.selectNext();
+                // Unticked, not kept hidden: cycling on past Airgapped must not grant it unasked
+                if (!mcpClientReachable()) branchMcpCheck.setChecked(false);
+            } else if (branchFieldIndex == mcpFieldIndex()) {
+                branchMcpCheck.toggle();
             } else if (branchFieldIndex == inboxFieldIndex()) {
                 branchInboxCheck.toggle();
             }
@@ -182,13 +200,12 @@ final class BranchModal {
         }
         // Shift+Tab / Up: cycle backward (check Shift+Tab before Tab to avoid matching TAB+Shift)
         if (ShiftTabBindings.isShiftTab(key) || key.isKey(KeyCode.UP)) {
-            int max = maxBranchField();
-            branchFieldIndex = (branchFieldIndex - 1 + max + 1) % (max + 1);
+            moveField(-1);
             return Outcome.HANDLED;
         }
         // Tab / Down: cycle forward
         if (key.isKey(KeyCode.TAB) || key.isKey(KeyCode.DOWN)) {
-            branchFieldIndex = (branchFieldIndex + 1) % (maxBranchField() + 1);
+            moveField(1);
             return Outcome.HANDLED;
         }
 
@@ -218,6 +235,15 @@ final class BranchModal {
         return Outcome.HANDLED;
     }
 
+    /** One field on in {@code direction}, wrapping, past the MCP control row while it is disabled. */
+    private void moveField(int direction) {
+        int fields = maxBranchField() + 1;
+        branchFieldIndex = (branchFieldIndex + direction + fields) % fields;
+        if (branchFieldIndex == mcpFieldIndex() && !mcpClientReachable()) {
+            branchFieldIndex = (branchFieldIndex + direction + fields) % fields;
+        }
+    }
+
     private int guiFieldIndex() {
         return branchSourceIsVm ? 4 : 1;
     }
@@ -230,8 +256,12 @@ final class BranchModal {
         return guiFieldIndex() + 2;
     }
 
-    private int inboxFieldIndex() {
+    private int mcpFieldIndex() {
         return guiFieldIndex() + 3;
+    }
+
+    private int inboxFieldIndex() {
+        return guiFieldIndex() + 4;
     }
 
     private int inboxPathFieldIndex() {
@@ -269,9 +299,8 @@ final class BranchModal {
         var accountRows = branchAccounts.size();
         // A blank line and a heading, then a row per credential with a choice to make.
         int accountLines = accountRows == 0 ? 0 : 2 + accountRows;
-        // Nine field lines, the key hints, and the two borders. It was 11, which left the hints
-        // a zero-height line: they were never shown.
-        int height = 12 + accountLines;
+        // The field lines, the key hints, and the two borders.
+        int height = FIELD_LINES + 3 + accountLines;
         // Wide enough for the widest key hints the dialog can show, so none is cut off, and the
         // same width whichever field has focus; never narrower than it was, and never wider than
         // the screen less a margin.
@@ -288,16 +317,7 @@ final class BranchModal {
         var inner = block.inner(modalArea);
 
         var constraints = new ArrayList<Constraint>();
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        for (int i = 0; i < accountLines; i++) constraints.add(Constraint.length(1));
+        for (int i = 0; i < FIELD_LINES + accountLines; i++) constraints.add(Constraint.length(1));
         constraints.add(Constraint.fill());
 
         var rows = Layout.vertical()
@@ -326,6 +346,12 @@ final class BranchModal {
         modal.renderToggle(frame, rows.get(row++), "GUI passthrough", branchGuiCheck, branchFieldIndex == guiFieldIndex());
         modal.renderToggle(frame, rows.get(row++), "KVM passthrough", branchKvmCheck, branchFieldIndex == kvmFieldIndex());
         modal.renderSelect(frame, rows.get(row++), "Network", branchNetworkSelect, branchFieldIndex == networkFieldIndex());
+        if (mcpClientReachable()) {
+            modal.renderToggle(frame, rows.get(row++), MCP_LABEL, branchMcpCheck, branchFieldIndex == mcpFieldIndex());
+        } else {
+            // BranchFlow.mcpClientUnreachable says it at length, too long for the row at 80 columns
+            modal.renderDisabledLine(frame, rows.get(row++), MCP_LABEL, "not when airgapped");
+        }
         renderInboxField(frame, rows.get(row++));
 
         dev.tamboui.layout.Rect openRowArea = null;
@@ -425,7 +451,7 @@ final class BranchModal {
         var request = new BranchFlow.Request(source, name, gui,
                 kvm, branchNetworkMode(),
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
-                cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of());
+                cpu, memory, disk, branchAccounts.overrides(), true, McpClientGrant.extraConfig(branchMcpCheck.isChecked()));
         return request;
     }
 

@@ -1,0 +1,24 @@
+
+
+
+
+
+        ╔ Branch from 'tpl-dev' ═══════════════════════════════════════╗
+        ║ Name:                                                        ║
+        ║ dev-1                                                        ║
+        ║                                                              ║
+        ║   CPU (all)   RAM         Disk                               ║
+        ║                                                              ║
+        ║    [ ] GUI passthrough                                       ║
+        ║    [ ] KVM passthrough                                       ║
+        ║  ▸ Network < Airgapped >                                     ║
+        ║        MCP control (isx mcp) — not when airgapped            ║
+        ║    [ ] Inbox /path/to/dir                                    ║
+        ║  Enter Confirm   Esc Cancel   ↑↓/Tab Navigate   Space Toggle ║
+        ╚══════════════════════════════════════════════════════════════╝
+
+
+
+
+
+

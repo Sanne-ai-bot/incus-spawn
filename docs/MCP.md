@@ -262,10 +262,13 @@ Branch it with `--mcp-client`:
 isx branch coord --from tpl-dev --proxy-only --mcp-client
 ```
 
+In the TUI's branch dialog (F4), tick **MCP control** instead.
+It starts unticked for every template, and is not offered while the network is Airgapped.
+
 Inside it, the host proxy serves `isx mcp` at `https://mcp.isx.internal/mcp` (MCP's Streamable HTTP transport), running one host `isx mcp` for the instance.
 Each request must come from the instance's own address and carry the secret isx gives it at every start, in `X-Isx-Instance-Secret`.
 
-`isx branch --mcp-client` asks the server from inside the new instance once it has started.
+Either way, the branch asks the server from inside the new instance once it has started.
 It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code has the server.
 
 If the template has the `claude` tool, there is nothing to set up.
@@ -290,7 +293,7 @@ What differs:
 - **One connection at a time.**
   A new connection from the instance ends its previous one.
 - **No coordinator makes another.**
-  Only `isx branch --mcp-client` grants it, never to a copy: not to `isx branch --from coord`, and not to anything created through MCP.
+  Only `isx branch --mcp-client` or the dialog's box grants it, never to a copy: not to `isx branch --from coord`, and not to anything created through MCP.
 - **Only the host proxy is reached.**
   `mcp.isx.internal` resolves to the bridge gateway, so this works with `--proxy-only`; an `--airgap` instance cannot use it.
 
