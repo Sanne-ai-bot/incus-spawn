@@ -1000,14 +1000,11 @@ public final class InstanceLifecycle {
 
     /**
      * Remove host-side integration for a destroyed or renamed instance, reporting to {@code out}
-     * a git remote it could not clean up. {@code AutoRemoteService} still marks its own warnings,
-     * so they are told from its progress here, at the edge of {@code lifecycle/}; the progress
-     * (each remote removed) stays unsaid, as it always was, under the caller's live step.
+     * a git remote it could not clean up. The progress (each remote removed) stays unsaid, as it
+     * always was, under the caller's live step.
      */
     public static void removeHostIntegration(String name, Output out) {
-        AutoRemoteService.removeRemotes(name, msg -> {
-            if (msg.strip().regionMatches(true, 0, "Warning:", 0, "Warning:".length())) out.warn(msg);
-        });
+        AutoRemoteService.removeRemotes(name, Output.diagnosticsTo(out::warn));
         SshKeyManager.cleanupInstance(name);
         ZmxSocketForward.cleanup(name, out);
     }
@@ -1113,7 +1110,7 @@ public final class InstanceLifecycle {
         }
 
         if (instanceType == InstanceType.INSTANCE) {
-            AutoRemoteService.addRemotes(name, instance, BuildOutput::step, BuildOutput::warn);
+            AutoRemoteService.addRemotes(name, instance, BuildOutput.bound());
 
             var buildSourceJson = instance.path("config").path(Metadata.BUILD_SOURCE).asText("");
             if (ZmxSocketForward.isZmxInstalled(buildSourceJson)) {

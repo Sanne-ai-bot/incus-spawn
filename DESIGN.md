@@ -3343,7 +3343,7 @@ When the user configures `host-paths` (and optionally `repo-paths`) in `config.y
   If a match is found, add a remote named after the instance.
 - **On `isx destroy`**: scan candidate host repos for any remote with a URL matching `isx://<instance-name>/` and remove it.
 
-`AutoRemoteService` reports its warnings (an existing remote of that name, a failed add) to a sink its caller passes, since the TUI renames instances while it draws, and quotes the repository's path or URL through `OutputFormat.oneLine` (#1624).
+`AutoRemoteService` reports its warnings (an existing remote of that name, a failed add) to the `Output` its caller passes, since the TUI renames instances while it draws, and quotes the repository's path or URL through `OutputFormat.oneLine` (#1624).
 
 The removal is stateless — rather than tracking which remotes were added, we scan for `isx://` URLs matching the instance name.
 This avoids a class of bugs where state gets out of sync (e.g., the user manually removes a remote, or the add failed silently).
@@ -5045,7 +5045,8 @@ The console tee that copies both streams into `proxy.log` lives there as well (`
 A proxy refusal's lines are plain text, since the TUI's log keeps them as given; `tryAutoRestart` and `waitForDns` report their progress as notes and why they failed as warnings, so the log says why a restart did not help.
 Progress stays on the terminal, where it is read while the branch runs.
 A start's warning is a typed `warn` on the `Output` its caller hands it, its advice as details, so no message in `lifecycle/` marks itself `Warning:` for a sink that would print it as it comes.
-Code outside it (`AutoRemoteService`) still does, until its own step, and `BuildOutput.warningText` drops the marker meanwhile.
+Neither does code outside it: `AutoRemoteService` takes the caller's `Output` too, a remote added or removed a step, one it could not add or remove a warning.
+`BuildOutput.warningText` still drops a leading marker from any warning's text, such as a guest command's own `Warning:` line.
 
 `Warnings` reports a distinct message once per output.
 The same files are loaded many times in one command (every fresh loader re-reads them), and before this `isx branch` could print one broken tool file's warning several times.
