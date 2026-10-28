@@ -32,6 +32,22 @@ class HelpContextTest {
         }
     }
 
+    /** Answers cite the sections they rely on, so a reader can check them against the docs (#1675). */
+    @Test
+    void thePromptAsksForTheSectionsAnAnswerReliesOn() {
+        var instructions = HelpContext.documentation().split("--- README.md ---", 2)[0];
+        for (var rule : List.of("a line `Sources:` followed by one dash item per section it relies on",
+                "Cite only headings that appear verbatim in the documentation files below.",
+                "write no `Sources:` line rather than guess one",
+                "Never cite the tool and template definitions",
+                // The site's slug rule (site/render.js): punctuation goes before spaces become hyphens
+                "delete every character that is not an ASCII letter, digit, underscore, space or hyphen,"
+                        + " turn each run of spaces into one hyphen",
+                "\"#### Fedora / RHEL\" in README.md becomes [Fedora / RHEL](https://isx.run/docs#fedora-rhel)")) {
+            assertTrue(instructions.contains(rule), rule + "\n" + instructions);
+        }
+    }
+
     @Test
     void imageYamlRedactsTokenField() {
         var yaml = """

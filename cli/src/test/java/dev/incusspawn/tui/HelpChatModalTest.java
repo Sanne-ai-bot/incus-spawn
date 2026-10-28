@@ -265,6 +265,31 @@ class HelpChatModalTest {
                 .contains("The model declined to answer this question."));
     }
 
+    /**
+     * Every answer says it is AI-generated, below it and outside its scrolling, so a long answer
+     * cannot scroll it out of view (#1675).
+     */
+    @Test
+    void theDisclaimerStaysInViewBelowALongAnswer() {
+        var longAnswer = String.join("\n", java.util.stream.IntStream.rangeClosed(1, 60)
+                .mapToObj(i -> "Line " + i + " of a long answer.").toList());
+        var modal = answering(longAnswer);
+        type(modal, "?");
+        modal.handleKey(CTRL_S);
+        for (int i = 0; i < 2; i++) {
+            var text = TuiSnapshot.toText(TuiSnapshot.render(80, 24, f -> modal.render(f, f.area())));
+            assertTrue(text.contains(dev.incusspawn.ai.AiHelpClient.DISCLAIMER), text);
+            for (int k = 0; k < 30; k++) modal.handleKey(KeyEvent.ofKey(KeyCode.DOWN));
+        }
+
+        // A refusal has no answer to qualify
+        var refused = modal((t, q, a) -> new AiResponse("", USAGE, "The model declined to answer this question."));
+        type(refused, "?");
+        refused.handleKey(CTRL_S);
+        assertFalse(TuiSnapshot.toText(TuiSnapshot.render(80, 24, f -> refused.render(f, f.area())))
+                .contains(dev.incusspawn.ai.AiHelpClient.DISCLAIMER));
+    }
+
     @Test
     void longAnswerScrolls() {
         var longAnswer = String.join("\n", java.util.stream.IntStream.rangeClosed(1, 60)

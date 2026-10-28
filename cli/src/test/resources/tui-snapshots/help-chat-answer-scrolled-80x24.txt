@@ -16,8 +16,8 @@
   ║ Line 19 of a long answer.                                              │ ║
   ║ Line 20 of a long answer.                                              │ ║
   ║ Line 21 of a long answer.                                              │ ║
-  ║ Line 22 of a long answer.                                              │ ║
   ║                                                                          ║
+  ║  AI-generated and may be wrong: check it against https://isx.run/docs    ║
   ║  51.2k tokens in (51.2k from cache) · 312 out                            ║
   ║  n New question   q/Esc Close                                            ║
   ╚══════════════════════════════════════════════════════════════════════════╝

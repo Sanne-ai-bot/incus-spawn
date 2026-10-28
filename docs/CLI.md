@@ -558,6 +558,9 @@ isx ask <question...>
 |--------|--------------|
 | `--with-templates` | Include template and tool definitions in the AI context |
 
+An answer is AI-generated and can be wrong, so it is asked to end with the documentation sections it relies on: check it against them.
+A note on stderr says so after every answer, and stdout holds only the answer.
+
 ## `isx mcp`
 
 Serve isx to an agent on this host over the Model Context Protocol, on stdio.
