@@ -502,6 +502,24 @@ class ToolDefValidatorTest {
         }
     }
 
+    /**
+     * A refused name is the only error: every later message names the tool, which would print
+     * a cloned repository's escape sequence raw.
+     */
+    @Test
+    void anInvalidNameIsTheOnlyErrorReported() {
+        var def = new ToolDef();
+        def.setName("evil\u001b]0;x\u0007");
+        def.setDownloads(List.of(new ToolDef.DownloadEntry()));
+        var errors = new ArrayList<String>();
+        var warnings = new ArrayList<String>();
+        ToolDefValidator.validateDef(def, errors, warnings);
+        assertEquals(1, errors.size(), errors.toString());
+        assertTrue(errors.getFirst().contains("tool name"), errors.toString());
+        assertTrue(java.util.stream.Stream.concat(errors.stream(), warnings.stream())
+                .allMatch(e -> e.chars().noneMatch(Character::isISOControl)), "printed raw: " + errors + warnings);
+    }
+
     /** Every tool isx ships, YAML or Java, already has such a name, as do the names other tools use. */
     @Test
     void toolNameAcceptsEveryBuiltInName(@TempDir Path home) {
