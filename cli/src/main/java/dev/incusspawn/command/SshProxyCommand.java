@@ -121,7 +121,9 @@ public class SshProxyCommand extends BaseCommand {
      * only an SSH connection pays it. It has to happen before {@code nc} runs, since ssh has already
      * written its banner to stdin and a retried exec would lose it. The probe reads the kernel's
      * socket table, so it costs one {@code grep} when sshd is up and logs no connection in sshd.
-     * It waits only while systemd is still starting the guest: after that a stopped or failed sshd
+     * It waits only while systemd is still starting the guest, which includes the moment right
+     * after a start when {@code systemctl} cannot reach the system bus yet and prints nothing; a
+     * guest without {@code systemctl} is not waited for. After that a stopped or failed sshd
      * will not come, and {@code nc} reports the refusal at once, as before. The deadline is wall
      * clock, since early in boot a {@code systemctl} call to a busy PID 1 can take far longer than
      * a pass's sleep; it is set on the first miss, so a ready instance forks no {@code date}.
@@ -129,7 +131,8 @@ public class SshProxyCommand extends BaseCommand {
     static String[] guestCommand() {
         return new String[]{"sh", "-c",
                 "end=; until grep -qs '" + SSHD_LISTENING + "' /proc/net/tcp6 /proc/net/tcp; do"
-                        + " case $(systemctl is-system-running 2>/dev/null) in initializing|starting) ;; *) break ;; esac;"
+                        + " case $(systemctl is-system-running 2>/dev/null) in initializing|starting) ;;"
+                        + " '') command -v systemctl >/dev/null || break ;; *) break ;; esac;"
                         + " now=$(date +%s); : ${end:=$((now + " + SSHD_WAIT_SECONDS + "))}; [ $now -ge $end ] && break;"
                         + " sleep 0.1; done;"
                         + " exec nc localhost 22"};
