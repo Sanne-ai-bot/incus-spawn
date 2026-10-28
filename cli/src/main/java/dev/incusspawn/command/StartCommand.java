@@ -22,7 +22,7 @@ import org.aesh.command.option.Argument;
 )
 public class StartCommand extends BaseCommand {
 
-    @Argument(description = "Name of the instance to start", required = true)
+    @Argument(completer = Completers.Instance.class, description = "Name of the instance to start", required = true)
     String name;
 
     /** The preparation; {@link InstanceStart.Preparer#FOR_USE} but in tests. */

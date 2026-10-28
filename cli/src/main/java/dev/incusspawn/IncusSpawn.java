@@ -22,6 +22,12 @@ public class IncusSpawn implements QuarkusApplication {
     public static final Set<String> HIDDEN_COMMANDS = Set.of(
             "git-remote-helper", "ssh-proxy"
     );
+    /**
+     * The commands shell completion never offers: the hidden ones, and {@code completion}, which
+     * nobody tab-completes since it sets up tab completion (#1802).
+     */
+    public static final Set<String> NOT_COMPLETED = java.util.stream.Stream.concat(
+            HIDDEN_COMMANDS.stream(), java.util.stream.Stream.of("completion")).collect(Collectors.toUnmodifiableSet());
     private static final Pattern ANSI_ESCAPE = Pattern.compile("\033\\[[^m]*m"); // raw ANSI: matches escapes, writes none
 
     @Override
@@ -42,6 +48,13 @@ public class IncusSpawn implements QuarkusApplication {
             var topCommand = Platform.isMacOS()
                     ? IncusSpawnCommand.class
                     : IncusSpawnLinuxCommand.class;
+            if (args[0].equals(Completers.REQUEST)) {
+                // A shell's TAB: the words after "--" (#1744).
+                var words = java.util.Arrays.asList(args).subList(1, args.length);
+                if (!words.isEmpty() && words.getFirst().equals("--")) words = words.subList(1, words.size());
+                Completers.answer(topCommand, words, BuildOutput.results());
+                return 0;
+            }
             if (isTopLevelHelp(args)) {
                 var help = LazyHelp.render(topCommand, args);
                 if (help != null) {

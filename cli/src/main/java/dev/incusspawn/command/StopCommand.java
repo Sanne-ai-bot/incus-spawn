@@ -28,7 +28,7 @@ import java.time.Duration;
 )
 public class StopCommand extends BaseCommand {
 
-    @Argument(description = "Name of the instance to stop", required = true)
+    @Argument(completer = Completers.Instance.class, description = "Name of the instance to stop", required = true)
     String name;
 
     @Override

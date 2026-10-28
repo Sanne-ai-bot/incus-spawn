@@ -6,6 +6,7 @@ import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
+import org.aesh.util.completer.ShellCompletionGenerator;
 
 @CommandDefinition(
         name = "completion",
@@ -14,9 +15,10 @@ import org.aesh.command.option.Option;
 )
 public class CompletionCommand extends BaseCommand {
 
-    enum Shell { bash, zsh, fish }
+    enum Shell { bash, zsh, fish, pwsh }
 
-    @Argument(description = "Shell type: bash, zsh, fish", required = false, defaultValue = {"bash"})
+    @Argument(description = "Shell type: bash, zsh, fish, pwsh", required = false, defaultValue = {"bash"},
+            completer = Completers.Shell.class)
     Shell shell;
 
     @Option(name = "install", description = "Print installation instructions instead of the script", hasValue = false)
@@ -31,7 +33,7 @@ public class CompletionCommand extends BaseCommand {
         var script = rawScript(shell);
         // The `vm` appliance command only exists on macOS (Incus runs natively on Linux), so it is
         // not registered in the Linux command tree — keep the completion script in step with that.
-        if (!Platform.isMacOS()) {
+        if (!Platform.isMacOS() && shell != Shell.pwsh) {
             script = stripVmCommand(script, shell);
         }
         BuildOutput.results().println(script);
@@ -44,6 +46,8 @@ public class CompletionCommand extends BaseCommand {
             case zsh  -> ZSH_COMPLETION;
             case bash -> BASH_COMPLETION;
             case fish -> FISH_COMPLETION;
+            // Asks isx itself on every TAB, so it already follows this platform's command tree.
+            case pwsh -> ShellCompletionGenerator.forShell(ShellCompletionGenerator.ShellType.PWSH).generateDynamic(null, "isx");
         };
     }
 
@@ -66,6 +70,7 @@ public class CompletionCommand extends BaseCommand {
                     .replace("tools|vm|doctor", "tools|doctor")
                     // Drop the unreachable vm) case (ends at the first standalone ";;").
                     .replaceAll("(?sm)^[ \\t]*vm\\)\\R.*?^[ \\t]*;;\\R", "");
+            case pwsh -> script;
             case fish -> script
                     .replace("tools|vm|doctor", "tools|doctor")
                     .replaceAll("(?m)^.*-n __isx_no_subcommand -a vm .*\\R", "")
@@ -98,6 +103,10 @@ public class CompletionCommand extends BaseCommand {
                 # Save to the fish completions directory:
                 #   mkdir -p ~/.config/fish/completions
                 #   isx completion fish > ~/.config/fish/completions/isx.fish
+                #
+                # ── PowerShell ──────────────────────────────────────────────────────────────
+                # Add to your $PROFILE:
+                #   isx completion pwsh | Out-String | Invoke-Expression
                 """);
     }
 

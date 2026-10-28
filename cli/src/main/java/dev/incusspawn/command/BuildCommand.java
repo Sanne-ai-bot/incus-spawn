@@ -99,7 +99,7 @@ import static dev.incusspawn.command.SkillInstaller.installSkills;
 )
 public class BuildCommand extends BaseCommand {
 
-    @Arguments(description = "Names of the templates (e.g. tpl-minimal my-template)")
+    @Arguments(completer = Completers.Template.class, description = "Names of the templates (e.g. tpl-minimal my-template)")
     List<String> names;
 
     @Option(name = "all", hasValue = false, description = "Rebuild all defined templates")

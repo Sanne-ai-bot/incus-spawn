@@ -39,7 +39,7 @@ public class UpdateBaseCommand extends BaseCommand {
     boolean useLatest;
 
     // Output for scripts (#1036): see OutputFormat for what plain and json promise.
-    @Option(name = "format", description = "Output format of --list: table (default), plain or json")
+    @Option(name = "format", completer = Completers.Format.class, description = "Output format of --list: table (default), plain or json")
     String format;
 
     @Override

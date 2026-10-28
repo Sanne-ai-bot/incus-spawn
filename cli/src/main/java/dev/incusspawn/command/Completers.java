@@ -1,0 +1,283 @@
+package dev.incusspawn.command;
+
+import dev.incusspawn.IncusSpawn;
+import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.AccountSelection;
+import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.util.OutputFormat;
+import org.aesh.command.AeshCommandRuntimeBuilder;
+import org.aesh.command.Command;
+import org.aesh.command.completer.CompleterInvocation;
+import org.aesh.command.completer.OptionCompleter;
+import org.aesh.command.impl.parser.CommandLineParser;
+import org.aesh.command.impl.registry.AeshCommandRegistryBuilder;
+import org.aesh.complete.AeshCompleteOperation;
+import org.aesh.console.DefaultAeshContext;
+
+import java.io.PrintStream;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
+import java.util.Locale;
+import java.util.function.Predicate;
+
+/**
+ * The values aesh's completion engine offers for isx's arguments and options (#1744).
+ * <p>
+ * A shell asks {@code isx --aesh-complete -- <words>}, and aesh walks the command tree this
+ * binary registered, so a command that exists only on one platform (the macOS {@code vm} group)
+ * is offered only there. These completers fill in what the tree cannot know: the instances,
+ * templates, tools and accounts on this host.
+ * <p>
+ * Each runs on every TAB, so each costs at most one Incus request and never starts anything
+ * (on macOS a stopped VM stays stopped, as for {@code isx list -q}). Each offers names only,
+ * never a credential's value, and offers nothing when its source fails: a TAB must not print an
+ * error over the command line being typed.
+ */
+public final class Completers {
+
+    private Completers() {}
+
+    /** The flag a shell's completion script passes, then {@code --}, then the words typed after {@code isx}. */
+    public static final String REQUEST = "--aesh-complete";
+
+    /**
+     * Answers {@code isx --aesh-complete -- <words>}: one candidate per line, followed by a TAB
+     * and its description when it is a command or an option. The last word is the one being
+     * completed, empty after a space.
+     * <p>
+     * This replaces aesh's own handler, which in 3.18 hands completers no working directory (so a
+     * path option threw) and told the shell to add files after every command without a
+     * positional argument. Paths are completed here, by the path options' own completer.
+     */
+    public static void answer(Class<? extends Command> topCommand, List<String> words, PrintStream out) {
+        try {
+            var registry = AeshCommandRegistryBuilder.builder().command(topCommand).create();
+            String top = registry.getAllCommandNames().iterator().next();
+            var buffer = new StringBuilder(top);
+            for (var word : words) buffer.append(' ').append(escape(word));
+            if (words.isEmpty()) buffer.append(' ');
+            var line = buffer.toString();
+            var operation = new AeshCompleteOperation(new DefaultAeshContext(), line, line.length());
+            AeshCommandRuntimeBuilder.builder().commandRegistry(registry).build().complete(operation);
+
+            var scope = scope(registry.getCommand(top, "").getParser(), words);
+            var typed = words.isEmpty() ? "" : words.getLast();
+            // aesh replaces the line from its offset on: a path's last segment, a value after
+            // "--format=" or after a list's comma. What the word holds before it is kept.
+            int wordStart = line.length() - escape(typed).length();
+            var kept = operation.isIgnoreOffset() || operation.getOffset() < wordStart || operation.getOffset() > line.length()
+                    ? "" : unescape(line.substring(wordStart, operation.getOffset()));
+            boolean topLevel = words.size() <= 1;
+            operation.getCompletionCandidates().stream()
+                    .map(candidate -> wholeWord(typed, kept, candidate.getCharacters()))
+                    .filter(candidate -> !(topLevel && IncusSpawn.NOT_COMPLETED.contains(candidate)))
+                    .distinct()
+                    .sorted()
+                    .forEach(candidate -> {
+                        var description = description(scope, candidate);
+                        out.println(description.isEmpty() ? candidate : candidate + "\t" + description);
+                    });
+        } catch (Exception e) {
+            // A TAB offers nothing rather than print over the line being typed.
+        }
+    }
+
+    /**
+     * A candidate as the whole word it completes, so every shell can replace the word with it:
+     * aesh answers {@code --format=j} with {@code json} from the offset after the {@code =}, and a
+     * word typed in full with a blank.
+     */
+    static String wholeWord(String typed, String kept, String candidate) {
+        var value = candidate.strip();
+        return value.isEmpty() ? typed : kept + value;
+    }
+
+    /** A word as aesh's parser reads it back: a backslash keeps a space, quote or backslash literal. */
+    private static String escape(String word) {
+        return word.replaceAll("([\\\\ '\"])", "\\\\$1");
+    }
+
+    private static String unescape(String text) {
+        return text.replaceAll("\\\\(.)", "$1");
+    }
+
+    /** The deepest command the complete words name, whose subcommands and options the candidates are. */
+    private static CommandLineParser<?> scope(CommandLineParser<?> parser, List<String> words) {
+        for (int i = 0; i < words.size() - 1 && parser.isGroupCommand(); i++) {
+            var child = parser.getChildParser(words.get(i));
+            if (child != null) parser = child;
+        }
+        return parser;
+    }
+
+    private static String description(CommandLineParser<?> scope, String candidate) {
+        if (scope.isGroupCommand()) {
+            var child = scope.getChildParser(candidate);
+            if (child != null) return oneLine(child.getProcessedCommand().description());
+        }
+        if (candidate.startsWith("--")) {
+            var option = scope.getProcessedCommand().findLongOptionNoActivatorCheck(candidate.substring(2));
+            if (option != null) return oneLine(option.description());
+        }
+        return "";
+    }
+
+    private static String oneLine(String text) {
+        return text == null ? "" : text.replaceAll("\\s+", " ").strip();
+    }
+
+    /** A completer offering, of its names, each that starts with what was typed. */
+    abstract static class Names implements OptionCompleter<CompleterInvocation> {
+
+        abstract Collection<String> names(CompleterInvocation invocation);
+
+        @Override
+        public final void complete(CompleterInvocation invocation) {
+            Collection<String> all;
+            try {
+                all = names(invocation);
+            } catch (RuntimeException e) {
+                return;
+            }
+            var typed = invocation.getGivenCompleteValue() == null ? "" : invocation.getGivenCompleteValue();
+            all.stream()
+                    .filter(name -> AccountCommand.typable(name) && name.startsWith(typed))
+                    .sorted()
+                    .forEach(invocation::addCompleterValue);
+        }
+    }
+
+    /** The names of the instances isx made whose type stamp {@code type} accepts, from one Incus request. */
+    static List<String> instanceNames(IncusClient incus, Predicate<String> type) {
+        return InstanceListing.collectEntries(incus.listJsonConfig()).stream()
+                .filter(i -> type.test(i.type()))
+                .map(InstanceListing.InstanceInfo::name)
+                .toList();
+    }
+
+    /** What {@code isx list -q} prints: everything but the built templates. */
+    static final Predicate<String> NOT_A_TEMPLATE = type -> !Metadata.TYPE_BASE.equals(type);
+
+    /** An instance, as {@code isx shell} or {@code start} take. */
+    public static class Instance extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return instanceNames(RuntimeServices.incus(), NOT_A_TEMPLATE);
+        }
+    }
+
+    /** An instance or a built template, as {@code isx branch --from} and {@code isx destroy} take. */
+    public static class Source extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return instanceNames(RuntimeServices.incus(), type -> true);
+        }
+    }
+
+    /** A project template, as {@code isx project update} takes. */
+    public static class Project extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return instanceNames(RuntimeServices.incus(), Metadata.TYPE_PROJECT::equals);
+        }
+    }
+
+    /** A template definition, built or not, as {@code isx build} and {@code isx templates edit} take. */
+    public static class Template extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return ImageDef.loadAll().keySet();
+        }
+    }
+
+    /** A tool definition, as {@code isx tools show} takes. */
+    public static class Tool extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return RuntimeServices.toolDefLoader().allToolSetups().keySet();
+        }
+    }
+
+    /** A credential by namespace or by tool, as {@code isx account add} takes. */
+    public static class Credential extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return AccountCommand.addCompletionLines(RuntimeServices.toolDefLoader().allToolSetups());
+        }
+    }
+
+    /**
+     * A {@code <namespace>=<account>} selection, as {@code --account} takes: {@code ns=} for each
+     * namespace with a usable account, then each usable account.
+     */
+    public static class Account extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return accountNames(true);
+        }
+    }
+
+    /**
+     * {@code isx account set|unset}'s words: the instance first, then a selection per word for
+     * {@code set} and a namespace per word for {@code unset}.
+     */
+    public static class InstanceThenAccounts extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            List<String> args = switch (invocation.getCommand()) {
+                case AccountCommand.Set set -> set.args;
+                case AccountCommand.Unset unset -> unset.args;
+                default -> List.of();
+            };
+            if (args == null) args = List.of();
+            // aesh may already hold the word being completed as the last one.
+            var typed = invocation.getGivenCompleteValue();
+            boolean typedIsLast = typed != null && !typed.isEmpty() && !args.isEmpty() && typed.equals(args.getLast());
+            if (args.size() == (typedIsLast ? 1 : 0)) return instanceNames(RuntimeServices.incus(), NOT_A_TEMPLATE);
+            return accountNames(invocation.getCommand() instanceof AccountCommand.Set);
+        }
+    }
+
+    /**
+     * With {@code selections}, what {@code --account} takes; otherwise every namespace, which
+     * {@code account unset} takes whatever its accounts look like now. Read with the config's
+     * own tool search paths, so the config is loaded once.
+     */
+    private static List<String> accountNames(boolean selections) {
+        var config = SpawnConfig.load();
+        var setups = AccountSelection.namespaceSetups(config, new ToolDefLoader(config.getSearchPaths()));
+        return AccountCommand.completionLines(config, setups).stream()
+                .filter(line -> line.contains("=") == selections)
+                .map(line -> line.split("\t", 2)[0])
+                .toList();
+    }
+
+    /** A value of {@code --format}. */
+    public static class Format extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return Arrays.stream(OutputFormat.values()).map(f -> f.name().toLowerCase(Locale.ROOT)).toList();
+        }
+    }
+
+    /** A shell {@code isx completion} writes a script for. */
+    public static class Shell extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return Arrays.stream(CompletionCommand.Shell.values()).map(Enum::name).toList();
+        }
+    }
+
+    /** {@code running} or {@code stopped}, as {@code isx list --status} takes. */
+    public static class Status extends Names {
+        @Override
+        Collection<String> names(CompleterInvocation invocation) {
+            return List.of("running", "stopped");
+        }
+    }
+}
