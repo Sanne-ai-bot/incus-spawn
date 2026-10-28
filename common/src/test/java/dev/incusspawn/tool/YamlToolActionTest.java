@@ -425,6 +425,21 @@ class YamlToolActionTest {
     }
 
     @Test
+    void aRemoteSshExtensionPageThatDoesNotOpenIsNotAnInstallationToWaitFor() {
+        var probe = new YamlToolAction.VscodeProbe() {
+            @Override public String cli() { return "code"; }
+            @Override public boolean installed() { return true; }
+            @Override public boolean hasExtension(String cli, String id) { return false; }
+            @Override public boolean open(String url) { return false; }
+        };
+        dev.incusspawn.util.RecordingOutput.during(() -> {
+            var result = YamlToolAction.checkVscodePrerequisites(REMOTE_SSH_URL, question -> "", probe);
+            assertFalse(result.success());
+            assertTrue(result.message().contains("install ms-vscode-remote.remote-ssh, then retry"), result.message());
+        });
+    }
+
+    @Test
     void withoutPromptingACommandActionDoesNotTakeTheTerminal() {
         var entry = new ActionEntry();
         entry.setLabel("Run script");
