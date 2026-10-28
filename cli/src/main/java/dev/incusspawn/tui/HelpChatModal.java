@@ -487,10 +487,10 @@ final class HelpChatModal {
         }
         for (var line : responseLines) {
             var segments = TerminalLink.parseSegments(line);
-            if (TerminalLink.displayLength(segments) <= wrapWidth) {
+            if (SegmentWrap.width(segments) <= wrapWidth) {
                 lines.add(lineFromSegments(segments));
             } else {
-                for (var wrappedSegs : TerminalLink.wrapSegments(segments, wrapWidth)) {
+                for (var wrappedSegs : SegmentWrap.wrap(segments, wrapWidth)) {
                     lines.add(lineFromSegments(wrappedSegs));
                 }
             }

@@ -2499,6 +2499,8 @@ A follow-up question within five minutes then reads the documentation from the c
 The attachment has its own breakpoint so ticking it still reuses the cached documentation, and its content is sorted so it is byte-identical between questions.
 Anything that varies per request must never enter the first block: a single changed byte turns every question back into a full-price write, and nothing fails -- the bill just rises.
 The AI Help answer view shows the provider-reported token split (`51.2k tokens in (51.2k from cache) · 312 out`) as the visible check that caching still works.
+The answer is wrapped by the terminal cells it takes (`SegmentWrap`, #1412): a CJK ideograph or an emoji takes two, and a break never splits a grapheme cluster, so wide text is neither clipped nor split into lone surrogates.
+It lives in `cli` rather than beside `TerminalLink` in `common`, since only the TUI wraps and only the CLI depends on TamboUI's `CharWidth`.
 
 **Configuration**: `~/.config/incus-spawn/config.yaml` (owner-only permissions, `chmod 600`).
 CA key and certificate at `~/.config/incus-spawn/ca.key` and `~/.config/incus-spawn/ca.crt`.

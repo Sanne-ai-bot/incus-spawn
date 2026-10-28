@@ -121,23 +121,6 @@ class TerminalLinkTest {
     }
 
     @Test
-    void displayLengthPlainText() {
-        assertEquals(13, TerminalLink.displayLength("no links here"));
-    }
-
-    @Test
-    void displayLengthMarkdownLink() {
-        assertEquals("see docs here".length(),
-                TerminalLink.displayLength("see [docs](https://example.com/docs) here"));
-    }
-
-    @Test
-    void displayLengthBareUrl() {
-        assertEquals("visit https://example.com now".length(),
-                TerminalLink.displayLength("visit https://example.com now"));
-    }
-
-    @Test
     void linkSanitizesControlChars() {
         var result = TerminalLink.link("https://example.com/\033evil", "cl\033ick");
         assertEquals(OSC8_OPEN + "https://example.com/evil" + ST + "click" + OSC8_CLOSE, result);
@@ -198,44 +181,6 @@ class TerminalLinkTest {
         var result = TerminalLink.link("https://example.com/caf\u00e9", "\u00a0caf\u00e9 \u65e5\u672c");
         assertEquals(OSC8_OPEN + "https://example.com/caf\u00e9" + ST + "\u00a0caf\u00e9 \u65e5\u672c" + OSC8_CLOSE,
                 result);
-    }
-
-    @Test
-    void wrapSegmentsKeepsLinkAtomic() {
-        var segments = List.<TerminalLink.Segment>of(
-                new TerminalLink.Segment.Text("see "),
-                new TerminalLink.Segment.Link("https://example.com", "docs"),
-                new TerminalLink.Segment.Text(" for info"));
-        // "see " (4) + "docs" (4) = 8 fits in 20; + " for info" (9) = 17 fits
-        var wrapped = TerminalLink.wrapSegments(segments, 20);
-        assertEquals(1, wrapped.size());
-
-        // At width 6: "see " (4) + "docs" (4) > 6, link wraps to next line
-        wrapped = TerminalLink.wrapSegments(segments, 6);
-        assertTrue(wrapped.size() >= 2);
-        assertInstanceOf(TerminalLink.Segment.Text.class, wrapped.get(0).getFirst());
-        assertInstanceOf(TerminalLink.Segment.Link.class, wrapped.get(1).getFirst());
-    }
-
-    @Test
-    void wrapSegmentsFitsOnOneLine() {
-        var segments = List.<TerminalLink.Segment>of(
-                new TerminalLink.Segment.Text("see "),
-                new TerminalLink.Segment.Link("https://example.com", "docs"));
-        var wrapped = TerminalLink.wrapSegments(segments, 80);
-        assertEquals(1, wrapped.size());
-        assertEquals(2, wrapped.getFirst().size());
-    }
-
-    @Test
-    void wrapSegmentsStartsTextAfterALinkWiderThanTheLineOnANewLine() {
-        var url = "https://example.com/a/long/path";
-        var segments = List.<TerminalLink.Segment>of(
-                new TerminalLink.Segment.Link(url, url),
-                new TerminalLink.Segment.Text(" and then some words"));
-        var wrapped = TerminalLink.wrapSegments(segments, 10);
-        assertEquals(List.of(new TerminalLink.Segment.Link(url, url)), wrapped.getFirst());
-        assertEquals(List.of(new TerminalLink.Segment.Text("and then")), wrapped.get(1));
     }
 
     @Test
