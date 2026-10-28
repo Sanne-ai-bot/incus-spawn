@@ -191,7 +191,7 @@ public class ListCommand extends BaseCommand {
      * through {@link OutputFormat#oneLine}: isx refuses control characters in both, but a stamp
      * can be set by hand, escape sequence and all.
      */
-    private static String ownerCell(InstanceInfo entry) {
+    public static String ownerCell(InstanceInfo entry) {
         var mcp = entry.mcp();
         if (mcp != null) {
             return Metadata.OWNER_MCP + " " + mcp.state().label()
