@@ -332,18 +332,14 @@ public class GuestProvisioning {
     }
 
     /**
-     * Write the managed-policy CLAUDE.md that tells an agent what this box already
-     * provides. Runs once per build, after the chain loop, so it sees the fully
-     * resolved image rather than one layer at a time.
+     * Write the instructions that tell an agent what this box already provides. Runs once
+     * per build, after the chain loop, so it sees the fully resolved image rather than one
+     * layer at a time.
      *
-     * <p>Written to {@code /etc/claude-code/CLAUDE.md} — Claude Code's managed policy
-     * layer, beside the managed-settings.json that {@code ClaudeSetup} already owns.
-     * That layer loads ahead of, and concatenates with, {@code ~/.claude/CLAUDE.md} and
-     * any project CLAUDE.md, so isx never merges with or overwrites a file someone else
-     * owns. Root ownership is correct here; no chown.
-     * Each installed tool whose agent reads its own global context file gets a copy there
-     * ({@link dev.incusspawn.tool.ToolSetup#environmentContextPath}): Gemini CLI's
-     * {@code ~/.gemini/GEMINI.md}, owned by agentuser, and Pi's {@code /AGENTS.md}, owned by root.
+     * <p>Stored once, and placed where each installed agent reads it
+     * ({@link dev.incusspawn.tool.ToolSetup#environmentContextPath}, {@link AgentInstructions}):
+     * Claude Code's managed policy {@code /etc/claude-code/CLAUDE.md} and Pi's {@code /AGENTS.md}
+     * as hardlinks, Gemini CLI's {@code ~/.gemini/GEMINI.md} as agentuser's copy.
      */
     static void writeAgentContext(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
                            List<ResolvedTool> allTools, String canonicalName) {
@@ -368,20 +364,15 @@ public class GuestProvisioning {
         }
 
         var content = AgentContextGenerator.generate(canonicalName, toolNames, repos, notes);
-        container.writeFile(ClaudeSetup.MANAGED_MEMORY_PATH, content);
         var paths = new LinkedHashSet<String>();
         for (var resolved : allTools) {
             var path = resolved.setup().environmentContextPath();
-            if (path != null && paths.add(path)) {
-                container.writeFile(path, content);
-                if (path.startsWith(AGENTUSER_HOME + "/")) {
-                    container.chown(path, "agentuser:agentuser");
-                }
-            }
+            if (path != null) paths.add(path);
         }
+        AgentInstructions.install(container, content, paths);
     }
 
-    private static final String AGENTUSER_HOME = "/home/agentuser";
+    static final String AGENTUSER_HOME = "/home/agentuser";
 
     /** Where {@link #installTrustHelper} puts the helper. */
     static final String TRUST_HELPER_PATH = "/usr/local/bin/isx-trust";

@@ -533,7 +533,7 @@ Checkout discovery and instance push/pull linking still use `host-paths` and `re
 9. Clone declared repos (with reference optimization — see below)
 10. Configure terminal title (`PROMPT_COMMAND` in `.bashrc` sets `isx:<hostname>`)
 11. Pre-trust cloned repo directories in `.claude.json` and `.codex/config.toml` (when the corresponding tool is installed)
-12. Write the agent context file (`/etc/claude-code/CLAUDE.md`) — see below
+12. Write the agent instructions (`/etc/isx/agent-instructions.md`, linked into each agent's location) — see below
 13. Clean caches (dnf, /tmp)
 14. Tag metadata (version, SHA, definition fingerprint, CA fingerprint, build source), stop
 
@@ -622,7 +622,7 @@ A device node can only be handed to a container, which is why `kvm` is a contain
 2. Install image-defined packages via dnf (deduplicated — see below)
 3. Install image-defined tools (with transitive `requires` resolution)
 4. Install skills, clone declared repos, pre-trust repo directories
-5. Write the agent context file (`/etc/claude-code/CLAUDE.md`) — see below
+5. Write the agent instructions (`/etc/isx/agent-instructions.md`, linked into each agent's location) — see below
 6. Clean caches
 7. Tag metadata, stop
 
@@ -638,11 +638,41 @@ Turning off the terminal's own SIGINT (`stty -isig`) and reading Ctrl+C from std
 
 ### Agent Context File
 
-Every build regenerates `/etc/claude-code/CLAUDE.md`, a short always-loaded primer for agents running inside the box.
+Every build regenerates a short always-loaded primer for agents running inside the box.
 Generation happens once per build, in both `buildFromScratch` and `buildFromParent`, and in each path after all layer work is finished.
 So it sees the fully resolved image (every ancestor's tools and repos) rather than one layer at a time, and the repos it lists have actually been cloned by the time it is written.
 Do not move the call earlier to sit beside `writeEnvFile`: in `buildFromParent` that is before `cloneRepos`.
 Content comes from `AgentContextGenerator` (module `common`), a pure function that `GuestProvisioning.writeAgentContext()` feeds and writes — the same split as `EnvResolver`/`writeEnvFile`, and the reason the whole format is unit-testable without Incus.
+
+**Stored once, linked into each agent's location** (#1788).
+`AgentInstructions` writes the primer to one file, `/etc/isx/agent-instructions.md`, root-owned and 0644.
+Each installed tool declares where its agent reads it with `ToolSetup.environmentContextPath`, so no tool is matched by name.
+A location outside `/home/agentuser` is a hardlink to that file, so every agent reads the same inode.
+`ClaudeSetup` declares `/etc/claude-code/CLAUDE.md`, so a template without the `claude` tool has no managed policy.
+`PiSetup` declares `/AGENTS.md`.
+One script does all of it in one exec, and records the locations in `/etc/isx/agent-instructions.paths`.
+
+What a hardlink needs, and how each is met:
+- **One filesystem.**
+  A mount can put a location on another filesystem, where `ln` fails; that location gets a copy instead.
+- **One owner and mode.**
+  All links share them, so only root-owned system locations are links.
+  A location in the home is the user's own copy, owned by `agentuser`, since a root-owned file there would be one the user cannot edit.
+- **Nothing writes through a link.**
+  A tool that wrote its file in place would change every agent's copy, Claude's managed policy included.
+  So would a person editing one with `sudo`; the user docs say so, and the next build restores them.
+  Claude Code never writes its managed policy and Pi never writes `AGENTS.md`.
+  Gemini's memory tool writes to its global file (`getGlobalMemoryFilePath`), which is one reason Gemini's location is a copy.
+- **Every build relinks.**
+  The new content is a new inode, renamed over the store, and every location is linked to it again.
+  A location a tool replaced with its own file is relinked rather than left stale.
+- **Stale locations go.**
+  Before relinking, a recorded location no tool declares any more is removed if isx wrote it: a link to the store, or a file starting with `AgentContextGenerator.HEADING`.
+  Builds before the record wrote `/etc/claude-code/CLAUDE.md` and `/AGENTS.md` unconditionally, so those two are always checked the same way.
+  A file a template put there itself, under any other first line, is kept.
+- **Images keep their links.**
+  A copy-on-write copy keeps the inode, and `incus publish` keeps the link count, both checked on a real Incus.
+  A VM build runs the same script in the guest, on its own disk.
 
 For images containing `gemini-cli`, the same content is also written to `GeminiSetup.MEMORY_PATH` (`/home/agentuser/.gemini/GEMINI.md`) and owned by `agentuser`.
 Both build paths regenerate it after resolving the whole template chain, including when Gemini is inherited without reconfiguration.
@@ -652,12 +682,9 @@ Pi has no system-wide layer like Claude Code's managed policy.
 It loads `AGENTS.md` from its agent directory (`~/.pi/agent`) and from every directory between its working directory and the root.
 So the root's file reaches every Pi session, while the user's `~/.pi/agent/AGENTS.md` stays theirs and loads before it.
 The agent directory was rejected for the same reason Claude Code's user layer was: isx would overwrite a file the user owns.
-Each tool declares its own copy's path with `ToolSetup.environmentContextPath`, which `writeAgentContext` reads for every resolved tool, so no tool is matched by name.
-A path under `/home/agentuser` is then given to `agentuser`; any other stays root's.
-Pi gets a copy, not a link to `/etc/claude-code/CLAUDE.md`, so it depends neither on the `claude` tool nor on where Claude Code keeps its managed policy.
-The copy is rendered the same way whether or not `claude` is installed, so there is one path to test.
+Pi links to the store, not to `/etc/claude-code/CLAUDE.md`, so it depends neither on the `claude` tool nor on where Claude Code keeps its managed policy.
 
-**Why the managed-policy layer.**
+**Why the managed-policy layer for Claude Code.**
 That path is Claude Code's *managed policy* memory location on Linux: it loads ahead of the user layer (`~/.claude/CLAUDE.md`) and the project layer (`./CLAUDE.md`), all layers concatenate rather than override, and it cannot be suppressed via `claudeMdExcludes`.
 Writing there means isx never merges with, prepends to, or overwrites a file a user or a template owns — no marker blocks and no read-modify-write logic, which the obvious alternative (generating into the user layer) would have required.
 It also sits beside the `managed-settings.json` and `statusline.sh` that `ClaudeSetup` already owns in that directory, and root ownership is correct, so no `chown` is needed.
@@ -4271,7 +4298,7 @@ It now prints `INCONCLUSIVE` per target instead of `ok`, so the report stops rea
 - `YamlToolSetupTest` — execution order with mocked Container
 - `ImageDefTest` — image definition loading, parent chain, descriptions, fingerprinting
 - `BuildCommandTest` — `.claude.json` trust configuration, skill deduplication across inheritance chains, agent context collection (notes root-first, ancestor repos), shell quoting, GitHub URL parsing
-- `AgentContextGeneratorTest` — generated `/etc/claude-code/CLAUDE.md` content: preamble, empty-section omission, note ordering, heredoc-marker neutralization
+- `AgentContextGeneratorTest` — generated agent instructions content: preamble, empty-section omission, note ordering, heredoc-marker neutralization
 - `GitRemoteUtilsTest` — URL normalization (SSH/HTTPS/case), protocol-lenient matching, reference device naming (hash-based, truncation, collision resistance), host repo matching across multiple remotes
 - `IncusApiTest` — REST API request/response parsing, exec body format, default exec environment, LOGIN_PATH_PREFIX
 - `InstanceLifecycleRequestBudgetTest` — exact Incus round-trip counts for the start/shell/branch flows (see "Request budgets" below)

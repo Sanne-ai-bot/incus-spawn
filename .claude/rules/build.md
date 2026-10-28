@@ -109,17 +109,22 @@ The check is per-instance and that is sufficient: another build attaching the vo
 
 # Agent Context File
 
-Every build regenerates `/etc/claude-code/CLAUDE.md` via `GuestProvisioning.writeAgentContext()`, called once in **both** build paths, in each case after all layer work (tools, skills, repo clones) is done.
+Every build regenerates the agent instructions via `GuestProvisioning.writeAgentContext()`, called once in **both** build paths, in each case after all layer work (tools, skills, repo clones) is done.
 So it sees the fully resolved image rather than one layer at a time, and the repos it lists have actually been cloned.
 Content comes from `AgentContextGenerator` (`common/config/`), a pure renderer that takes a template name, tool names, repos and notes, which is what makes the format unit-testable without Incus.
-The path constant lives in `ClaudeSetup.MANAGED_MEMORY_PATH` beside the rest of `/etc/claude-code`, since the generator itself is vendor-neutral.
+`AgentInstructions` stores them once, in `/etc/isx/agent-instructions.md` (root, 0644), and hardlinks that file into each location a resolved tool declares with `ToolSetup.environmentContextPath` (#1788).
+`ClaudeSetup` declares `/etc/claude-code/CLAUDE.md` (`MANAGED_MEMORY_PATH`), so it exists only with the `claude` tool; `PiSetup` declares `/AGENTS.md`.
+A location under `/home/agentuser` is never a link (all links share one owner and mode): it gets `agentuser`'s own copy.
+A link `ln` cannot make, across filesystems, falls back to a copy.
+Every build renames a new store into place and relinks every location; a recorded location (`/etc/isx/agent-instructions.paths`) no tool declares any more, and the two older builds wrote unconditionally, are removed when isx wrote them (a link to the store, or the `AgentContextGenerator.HEADING` first line).
+`AgentInstructionsTest` runs the script in a real shell; DESIGN.md "Agent Context File" lists what a hardlink needs.
+A declared location must be one its tool never writes, since a write would reach every link.
 
-When the resolved tools include `gemini-cli`, the same content is written to `~/.gemini/GEMINI.md` and owned by `agentuser`.
+When the resolved tools include `gemini-cli`, the same content is copied to `~/.gemini/GEMINI.md` and owned by `agentuser`.
 This file is build-owned and regenerated for each child template, including when Gemini is inherited without reconfiguration.
 Project context files are untouched and `context.fileName` stays unset.
-When they include `pi`, the same content goes to `/AGENTS.md`, owned by root, with or without the `claude` tool.
+When they include `pi`, `/AGENTS.md` is a link to the store, with or without the `claude` tool.
 Pi loads the `AGENTS.md` of every ancestor of its working directory, so the root's reaches every session and `~/.pi/agent/AGENTS.md` stays the user's.
-A tool declares such a copy's path with `ToolSetup.environmentContextPath`; `writeAgentContext` reads it for every resolved tool, giving a path under the home to `agentuser` and leaving any other to root.
 
 That path is Claude Code's **managed policy** memory layer: it loads ahead of `~/.claude/CLAUDE.md` and any project `CLAUDE.md`, layers concatenate rather than override, and it can't be suppressed via `claudeMdExcludes`.
 So isx never merges with or overwrites a file a user or template owns -- no marker blocks, no read-modify-write.

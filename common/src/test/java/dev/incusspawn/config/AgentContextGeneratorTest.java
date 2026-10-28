@@ -17,7 +17,7 @@ class AgentContextGeneratorTest {
     @Test
     void preambleIsPresentEvenWithNothingElse() {
         var out = minimal();
-        assertTrue(out.startsWith("# incus-spawn environment\n"));
+        assertTrue(out.startsWith(AgentContextGenerator.HEADING + "\n"));
         assertTrue(out.contains("built from the `tpl-minimal` template"));
         assertTrue(out.contains("Passwordless `sudo` is available"));
         assertTrue(out.contains("injected by a host-side TLS proxy"));

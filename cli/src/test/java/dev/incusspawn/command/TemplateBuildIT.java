@@ -136,13 +136,17 @@ class TemplateBuildIT {
 
         startAndWait(TEST_MINIMAL);
         try {
-            // Claude Code's managed-policy memory layer. Root-owned by design.
-            var content = incus.shellExec(TEST_MINIMAL, "cat", "/etc/claude-code/CLAUDE.md");
-            assertTrue(content.success(), "agent context file should be written by the build");
+            // Stored once, root-owned; linked into an agent's location only with that agent.
+            var content = incus.shellExec(TEST_MINIMAL, "cat", "/etc/isx/agent-instructions.md");
+            assertTrue(content.success(), "agent instructions should be stored by the build");
             assertTrue(content.stdout().contains("# incus-spawn environment"),
                     "should carry the generated preamble");
             assertTrue(content.stdout().contains("template"),
                     "should name the template it was built from");
+
+            // Claude Code's managed policy is Claude's: tpl-minimal does not install it.
+            assertFalse(incus.shellExec(TEST_MINIMAL, "test", "-e", "/etc/claude-code/CLAUDE.md").success(),
+                    "the managed policy is written only with the claude tool");
 
             // The user layer must be left entirely alone — that is the whole reason
             // for writing the managed layer instead of ~/.claude/CLAUDE.md.

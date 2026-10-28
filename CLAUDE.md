@@ -78,7 +78,8 @@ The `gemini-cli` tool installs and configures Google Gemini CLI through `GeminiS
 Its optional `model` parameter leaves the upstream default unpinned, and a user policy auto-approves tools within isx isolation.
 The policy applies to direct launches as well as the action, excludes plan mode, and allows higher-priority user overrides.
 Each build writes the resolved template environment instructions to `~/.gemini/GEMINI.md` when Gemini is installed, leaving `context.fileName` unset.
-With `pi` they go to `/AGENTS.md`, which Pi reads from every working directory, so the user's `~/.pi/agent/AGENTS.md` stays theirs; neither copy needs the `claude` tool (`ToolSetup.environmentContextPath`).
+With `pi` they go to `/AGENTS.md`, which Pi reads from every working directory, so the user's `~/.pi/agent/AGENTS.md` stays theirs.
+They are stored once in `/etc/isx/agent-instructions.md`; Claude's `/etc/claude-code/CLAUDE.md` (only with the `claude` tool) and Pi's `/AGENTS.md` are hardlinks to it, a location in the home is a copy (`ToolSetup.environmentContextPath`, `AgentInstructions`).
 Gemini API keys stay in host-side `gemini` accounts; the guest's `GEMINI_API_KEY` carries that namespace's proof, verified before the proxy injects `x-goog-api-key` at `generativelanguage.googleapis.com`.
 Google OAuth and Vertex are outside this integration; see `.claude/rules/tools-env.md`.
 
