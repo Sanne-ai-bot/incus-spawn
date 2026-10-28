@@ -2,4 +2,3 @@
 # A file may not grow past its counts, and the test fails until a count it no longer reaches is lowered
 # or deleted, so this list only shrinks. Never add a line or raise a count: route the output instead.
 # A file that is moved or renamed takes its line along, with the same counts or lower.
-2 0 cli/src/main/java/dev/incusspawn/command/UpdateAllCommand.java

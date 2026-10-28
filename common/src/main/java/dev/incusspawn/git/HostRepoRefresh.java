@@ -36,8 +36,7 @@ public final class HostRepoRefresh {
     static final long HEARTBEAT_NANOS = TimeUnit.SECONDS.toNanos(30);
 
     /** {@code depths} is {@link #hostDepths(Map)} of every definition, not only of those refreshed. */
-    public static void refresh(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths, SpawnConfig config,
-                               Consumer<String> output) {
+    public static void refresh(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths, SpawnConfig config) {
         if (repos.isEmpty()) return;
         if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
 
@@ -45,7 +44,7 @@ public final class HostRepoRefresh {
         if (toFetch.isEmpty()) return;
 
         BuildOutput.section("Refreshing " + toFetch.size() + " host " + (toFetch.size() == 1 ? "repo:" : "repos:"));
-        fetchInParallel(toFetch, config.gitTransfer(), output);
+        fetchInParallel(toFetch, config.gitTransfer());
     }
 
     private static List<FetchTask> checkoutsToFetch(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths,
@@ -79,7 +78,7 @@ public final class HostRepoRefresh {
         return toFetch;
     }
 
-    private static void fetchInParallel(List<FetchTask> tasks, GitTransferConfig limits, Consumer<String> output) {
+    private static void fetchInParallel(List<FetchTask> tasks, GitTransferConfig limits) {
         var states = new AtomicReferenceArray<TaskProgress>(tasks.size());
         for (int i = 0; i < tasks.size(); i++) {
             states.set(i, new TaskProgress(FetchState.FETCHING, null));
@@ -87,6 +86,8 @@ public final class HostRepoRefresh {
 
         // A terminal shows each fetch's progress live; a log gets a bounded line now and then instead.
         boolean live = TerminalProgress.isAnsiTerminal();
+        // A warning is several lines: a heartbeat from another fetch must not land among them.
+        var reporting = new Object();
         // Fetches are lightweight; run them all at once (no concurrency cap).
         TerminalProgress.run(tasks.size(), tasks.size(),
                 idx -> {
@@ -101,7 +102,9 @@ public final class HostRepoRefresh {
                             states.set(idx, new TaskProgress(FetchState.FETCHING, shown));
                             if (!live && now >= nextHeartbeat[0]) {
                                 nextHeartbeat[0] = now + HEARTBEAT_NANOS; // after a gap, one line rather than a burst
-                                output.accept(BuildOutput.STEP_INDENT + "Still fetching " + task.repoName() + " (" + shown + ")");
+                                synchronized (reporting) {
+                                    BuildOutput.step("Still fetching " + task.repoName() + " (" + shown + ")");
+                                }
                             }
                         });
                         if (result.success()) {
@@ -118,13 +121,14 @@ public final class HostRepoRefresh {
                     }
                 },
                 (idx, frame) -> formatFetchLine(tasks.get(idx), states.get(idx), frame),
-                idx -> plainFetchLine(tasks.get(idx), states.get(idx)),
-                output);
+                idx -> {
+                    synchronized (reporting) { reportPlain(tasks.get(idx), states.get(idx)); }
+                });
         // The animated lines hold one line each: the explanations and Git's words follow them.
         if (live) {
             for (int i = 0; i < tasks.size(); i++) {
                 var failed = states.get(i);
-                if (failed.state() == FetchState.FAILED && !failed.details().isEmpty()) output.accept(plainFetchLine(tasks.get(i), failed));
+                if (failed.state() == FetchState.FAILED && !failed.details().isEmpty()) warnFailed(tasks.get(i), failed);
             }
         }
     }
@@ -151,17 +155,21 @@ public final class HostRepoRefresh {
         return sb.toString();
     }
 
-    static String plainFetchLine(FetchTask task, TaskProgress progress) {
+    /** How a fetch ended, off a terminal: nothing animated said it. */
+    static void reportPlain(FetchTask task, TaskProgress progress) {
         if (progress.state() == FetchState.DONE) {
-            return BuildOutput.STEP_INDENT + "Fetched " + task.repoName() + " (" + task.hostPath() + ")"
-                    + (progress.detail() == null ? "" : " in " + progress.detail());
+            BuildOutput.step("Fetched " + task.repoName() + " (" + task.hostPath() + ")"
+                    + (progress.detail() == null ? "" : " in " + progress.detail()));
+        } else {
+            warnFailed(task, progress);
         }
-        var msg = new StringBuilder(BuildOutput.STEP_INDENT + "Warning: fetch failed for " + task.repoName()
-                + " at " + task.hostPath());
-        if (progress.detail() != null && !progress.detail().isEmpty()) msg.append(" (").append(progress.detail()).append(')');
-        msg.append("; keeping the existing checkout");
-        for (var line : progress.details()) msg.append('\n').append(BuildOutput.STEP_INDENT).append("  ").append(line);
-        return msg.toString();
+    }
+
+    /** isx's reason on the warning's line, its explanation and Git's quoted output under it. */
+    static void warnFailed(FetchTask task, TaskProgress progress) {
+        var detail = progress.detail() == null || progress.detail().isEmpty() ? "" : " (" + progress.detail() + ")";
+        BuildOutput.warn("Fetch failed for " + task.repoName() + " at " + task.hostPath() + detail
+                + "; keeping the existing checkout", progress.details().toArray(String[]::new));
     }
 
     static List<ImageDef.RepoEntry> deduplicateByUrl(List<ImageDef.RepoEntry> repos) {

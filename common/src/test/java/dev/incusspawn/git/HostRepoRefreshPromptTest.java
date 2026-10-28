@@ -2,13 +2,13 @@ package dev.incusspawn.git;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -39,20 +39,21 @@ class HostRepoRefreshPromptTest {
         config.setRepoPaths(Map.of("releases", host.toString()));
         var repo = new ImageDef.RepoEntry();
         repo.setUrl(url);
-        var output = new ArrayList<String>();
         long start = System.nanoTime();
-        HostRepoRefresh.refresh(List.of(repo), Map.of(), config, output::add);
+        var said = RecordingOutput.during(() -> HostRepoRefresh.refresh(List.of(repo), Map.of(), config));
         assertTrue(System.nanoTime() - start < 30_000_000_000L, "fails fast");
 
-        var lines = String.join("\n", output).lines().toList();
-        var warning = lines.stream().filter(l -> l.contains("Warning: fetch failed for releases")).findFirst().orElseThrow();
-        assertFalse(warning.contains("Permission denied"), "isx's warning holds none of Git's words: " + warning);
-        int quoted = lines.indexOf(lines.stream().filter(l -> l.strip().equals("Git's output:")).findFirst().orElseThrow());
+        var warning = said.events(RecordingOutput.Kind.WARN).stream()
+                .filter(w -> w.msg().contains("Fetch failed for releases")).findFirst().orElseThrow();
+        assertFalse(warning.msg().contains("Permission denied"), "isx's warning holds none of Git's words: " + warning);
+        var lines = warning.details();
+        int quoted = lines.indexOf("Git's output:");
+        assertTrue(quoted > 0, "Git's output is quoted after isx's note: " + lines);
         var git = lines.subList(quoted + 1, lines.size()).stream().map(String::strip).toList();
         assertTrue(git.contains("| ran: -o BatchMode=yes -i work_key askpass=force"), "ssh could not prompt: " + lines);
         assertTrue(git.contains("| git@example.invalid: Permission denied (publickey)."), "ssh's words are quoted: " + lines);
         // isx's note, apart from Git's words: what it added, and where the key is chosen.
-        var note = String.join(" ", lines.subList(lines.indexOf(warning) + 1, quoted)).replaceAll("\\s+", " ");
+        var note = String.join(" ", lines.subList(0, quoted)).replaceAll("\\s+", " ");
         assertTrue(note.contains("isx added -o BatchMode=yes to your core.sshCommand, so ssh could not ask for a key's passphrase"), note);
         assertTrue(note.contains("choose another with core.sshCommand."), note);
     }

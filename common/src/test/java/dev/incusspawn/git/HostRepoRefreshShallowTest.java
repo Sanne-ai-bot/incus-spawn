@@ -112,7 +112,7 @@ class HostRepoRefreshShallowTest {
 
     /** A build of templates naming {@code built}, with {@code everyTemplate} all the repos defined. */
     private void refresh(List<ImageDef.RepoEntry> built, ImageDef.RepoEntry... everyTemplate) {
-        HostRepoRefresh.refresh(built, HostRepoRefresh.hostDepths(List.of(everyTemplate)), config, s -> {});
+        HostRepoRefresh.refresh(built, HostRepoRefresh.hostDepths(List.of(everyTemplate)), config);
     }
 
     /** The host checkout an earlier isx cloned for a template asking for {@code depth}. */

@@ -2,13 +2,13 @@ package dev.incusspawn.git;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.util.RecordingOutput;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -36,13 +36,12 @@ class HostRepoRefreshStallTest {
             config.setConfigByPath("git-transfer.stall", "2s");
             var repo = new ImageDef.RepoEntry();
             repo.setUrl(url);
-            var output = new ArrayList<String>();
+            var said = assertTimeoutPreemptively(Duration.ofSeconds(30), () ->
+                    RecordingOutput.during(() -> HostRepoRefresh.refresh(List.of(repo), Map.of(), config)));
 
-            assertTimeoutPreemptively(Duration.ofSeconds(30), () ->
-                    HostRepoRefresh.refresh(List.of(repo), Map.of(), config, output::add));
-
-            assertTrue(output.stream().anyMatch(l -> l.contains("fetch failed for releases") && l.contains("stalled")),
-                    "warning names the stall: " + output);
+            var warnings = said.events(RecordingOutput.Kind.WARN).stream().map(RecordingOutput.Event::msg).toList();
+            assertTrue(warnings.stream().anyMatch(w -> w.contains("Fetch failed for releases") && w.contains("stalled")),
+                    "warning names the stall: " + said.events());
             assertEquals(head, git(host, "rev-parse", "origin/main"), "the existing checkout is untouched");
             assertEquals(List.of(), gitDescendants(), "no Git process survives the stall");
         }

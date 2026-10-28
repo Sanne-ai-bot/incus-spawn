@@ -2,12 +2,11 @@ package dev.incusspawn.git;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
-import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -60,9 +59,8 @@ class HostRepoRefreshTest {
         var config = new SpawnConfig();
         config.setRepoPaths(Map.of("private", repo.getHostSource()));
         assertTrue(HostRepoRefresh.deduplicateByUrl(List.of(repo)).isEmpty());
-        var output = new ArrayList<String>();
-        HostRepoRefresh.refresh(List.of(repo), Map.of(), config, output::add);
-        assertTrue(output.isEmpty());
+        var said = RecordingOutput.during(() -> HostRepoRefresh.refresh(List.of(repo), Map.of(), config));
+        assertEquals(List.of(), said.events());
         assertFalse(java.nio.file.Files.exists(repo.hostSourcePath()));
     }
 
@@ -73,9 +71,8 @@ class HostRepoRefreshTest {
         var config = new SpawnConfig();
         config.setHostPaths(List.of(dir.resolve("src").toString()));
         config.setRepoPaths(Map.of("myrepo", dir.resolve("custom/myrepo").toString()));
-        var output = new ArrayList<String>();
-        HostRepoRefresh.refresh(List.of(repo), Map.of(), config, output::add);
-        assertTrue(output.isEmpty(), output.toString());
+        var said = RecordingOutput.during(() -> HostRepoRefresh.refresh(List.of(repo), Map.of(), config));
+        assertEquals(List.of(), said.events());
         assertFalse(java.nio.file.Files.exists(dir.resolve("custom")));
         assertFalse(java.nio.file.Files.exists(dir.resolve("src")));
     }
@@ -123,12 +120,20 @@ class HostRepoRefreshTest {
         var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FAILED, null,
                 GitCommandException.details("isx ran Git without prompts.", "fatal: could not read Username"));
         assertTrue(HostRepoRefresh.formatFetchLine(task, progress, 0).contains("details below"));
-        var in = BuildOutput.STEP_INDENT;
-        assertEquals(String.join("\n",
-                in + "Warning: fetch failed for myrepo at /tmp/myrepo; keeping the existing checkout",
-                in + "  isx ran Git without prompts.",
-                in + "  Git's output:",
-                in + "    | fatal: could not read Username"), HostRepoRefresh.plainFetchLine(task, progress));
+        var said = RecordingOutput.during(() -> HostRepoRefresh.reportPlain(task, progress));
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
+                "Fetch failed for myrepo at /tmp/myrepo; keeping the existing checkout",
+                "isx ran Git without prompts.", "Git's output:", "  | fatal: could not read Username")), said.events());
+    }
+
+    /** A fetch that ended well is a step, its time after it. */
+    @Test
+    void aFetchThatEndedIsAStep() {
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin", null, null);
+        var said = RecordingOutput.during(() -> HostRepoRefresh.reportPlain(task,
+                new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.DONE, "3.2s")));
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP,
+                "Fetched myrepo (/tmp/myrepo) in 3.2s")), said.events());
     }
 
     // ── formatFetchLine ────────────────────────────────────────────────────
