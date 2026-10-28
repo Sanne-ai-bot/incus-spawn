@@ -495,7 +495,7 @@ class GuestProvisioningTest {
         verify(incus).shellExec("test", "chown", "-R", "agentuser:agentuser", path);
     }
 
-    /** Pi alone, no claude tool: it still gets the instructions, in the file its agent directory reads. */
+    /** Pi alone, no claude tool: it still gets the instructions, in the root AGENTS.md it reads from every directory. */
     @Test
     void piGetsItsOwnContextWithoutClaude() {
         var incus = mock(IncusClient.class);
