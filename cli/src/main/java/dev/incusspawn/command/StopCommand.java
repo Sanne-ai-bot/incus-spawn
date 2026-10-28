@@ -57,13 +57,13 @@ public class StopCommand extends BaseCommand {
                     return "Running".equals(status.get());
                 }, () -> {}, () -> {});
             } catch (RuntimeException e) {
-                BuildOutput.stepFail("failed.");
+                BuildOutput.stepBreak();
                 BuildOutput.error("could not stop " + shown + ": " + failure(e));
                 return CommandResult.valueOf(1);
             }
             if (!stopped && !"Stopped".equals(status.get())) {
                 // A frozen guest cannot shut down, and isx does not decide to force it
-                BuildOutput.stepFail("failed.");
+                BuildOutput.stepBreak();
                 BuildOutput.error(shown + " is " + OutputFormat.oneLine(status.get()).toLowerCase(java.util.Locale.ROOT)
                         + ", not running, so it cannot shut down.", "Resume it first, then stop it.");
                 return CommandResult.valueOf(1);

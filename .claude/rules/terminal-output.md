@@ -11,6 +11,7 @@ paths:
   - "common/src/main/java/dev/incusspawn/Warnings.java"
   - "cli/src/test/java/dev/incusspawn/RawOutputGateTest.java"
   - "cli/src/test/java/dev/incusspawn/StreamSwapGateTest.java"
+  - "cli/src/test/java/dev/incusspawn/StepLabelGateTest.java"
 ---
 
 # Terminal Output
@@ -22,13 +23,21 @@ Every question in `cli/command` is asked through `Prompts` (`askYesNo` for yes o
 This centralizes ANSI constants and step patterns -- individual commands should not define their own.
 `BuildOutput`'s printing methods delegate to the bound `Output` (#1703); the printing itself, with the indent depth and the live step, lives in `TerminalOutput`.
 A change to how a line looks goes there; a new kind of message is a method on `Output`, with a default for outputs that are not terminals.
-Key helpers: `section()` for a block of work at column 0, `header()` (bold bullet) / `buildHeader()` / `branchHeader()`, `group(title, detail)` (try-with-resources; `▸ Title  detail`, children one level deeper, a blank line on close -- used for Packages, Tools, Skills, Repositories) with `list()` for a wrapping comma-separated list, `step()` for complete lines, `ok()` for a `✓` result line, `stepStart()`/`stepDone()`/`stepDone(detail)`/`stepBreak()` for slow operations, `stepProgress(detail)` for the live phase, `stepNote()`/`stepWarn()` for detail one level under the step above, `note()`, `warn()` (both warnings end with a blank line, which a closing group does not repeat), `error()` (why a command failed: red `Error:` on stderr, no blank line), `warnBanner()`, `success()`.
+Key helpers: `section()` for a block of work at column 0, `header()` (bold bullet) / `buildHeader()` / `branchHeader()`, `group(title, detail)` (try-with-resources; `▸ Title  detail`, children one level deeper, a blank line on close -- used for Packages, Tools, Skills, Repositories) with `list()` for a wrapping comma-separated list, `step()` for complete lines, `ok()` for a `✓` result line, `stepStart()`/`stepDone()`/`stepDone(detail)`/`stepBreak()` for slow operations, `stepProgress(detail)` for the live phase (a `Supplier<String>`, read again on every frame, for a value that keeps changing), `stepNote()`/`stepWarn()` for detail one level under the step above, `note()`, `warn()` (both warnings end with a blank line, which a closing group does not repeat), `error()` (why a command failed: red `Error:` on stderr, no blank line), `warnBanner()`, `success()`.
+
+**Five kinds, and bare labels (#1791).**
+Every line under a header is picked without judgement: work that was done is a live step (`stepStart`/`stepDone`, or `ok` when it was already complete), work that was skipped is a `note`, the command's own answer is a `step`, detail about the step above is `stepNote`/`stepWarn`, and `success` closes the block.
+`success` is drawn at the header's column, `  ✓ <bold msg>`, after a blank line, worded like any ✓ line (`tpl-dev built`, no period).
+`stepFail(msg)` is `stepBreak()` and then `msg` as a `stepWarn` under the `✗`.
+A label is a bare phrase in source, with no `...` and no period: `TerminalOutput` prints `label... done.` on a plain terminal and the spinner and `✓ label` on an ANSI one.
+`StepLabelGateTest` fails on a `step`, `stepStart`, `ok`, `success` or `note` call whose last string literal ends in `...` or `…`, or in a period for `stepStart`, `ok` and `success`.
+The labels that predate it are counted per file in `cli/src/test/resources/step-label-baseline.txt`, which only shrinks; until it is empty, `BuildOutput.trimEllipsis` makes a decorated label print like a bare one.
 
 **The seam (#1703).**
 `BuildOutput` is the one way out: its static methods hand every message to the bound `Output`, a `TerminalOutput` unless the owner of the terminal bound another with `BuildOutput.bind`.
 Only owners bind: the TUI binds `Output.diagnosticsTo(warningLog::add)` while it draws or reloads, and `Output.copying(terminal, drawing)` around every action it lends the terminal to.
 `PreTuiOutput` binds `Output.holding`, `isx mcp` binds `TerminalOutput.stderrOnly()` (`StdioGuard`), and the proxy binds `Output.logTo(ProxyLog::info, ProxyLog::trace, ProxyLog::warn)`: progress as info, notes (a request's debug line) on stderr alone, warnings as warnings.
-An output that is not a terminal drops progress and notes, and still receives every diagnostic: `error`, `warnAside`, `stepWarn`, `warnBanner` and `stepFail` default to `warn`.
+An output that is not a terminal drops progress and notes, and still receives every diagnostic: `error`, `warnAside`, `stepWarn` and `warnBanner` default to `warn`, and `stepFail` reports through `stepWarn`.
 Bindings nest, and closing one out of order throws.
 Shared code takes an `Output` from its caller (`InstanceLifecycle.startForUse(..., out)`, `ensureReady(..., out)`, `StaticIpAllocator.claim`): the CLI passes `BuildOutput.bound()`, the TUI its `drawing` log from code it runs while it draws, background threads included.
 Code the TUI runs once it has released the terminal (the `pendingAction` switch, `ShellLaunch.shellInto`, a branch) reports through `BuildOutput`, and the copying binding keeps its warnings in the log (#1646); a failed step is not copied, since the status line reports it.

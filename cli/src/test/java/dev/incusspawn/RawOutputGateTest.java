@@ -396,7 +396,7 @@ class RawOutputGateTest {
     }
 
     /** One-based line numbers of each match. */
-    private static List<Integer> lines(Pattern pattern, String code) {
+    static List<Integer> lines(Pattern pattern, String code) {
         return matches(pattern, code, (line, match) -> line);
     }
 

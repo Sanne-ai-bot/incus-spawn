@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -19,8 +20,8 @@ import java.util.stream.Stream;
  *
  * <p>The vocabulary is what isx already prints. Progress (headers, groups, steps, live steps,
  * lists) and notes mean something only on a terminal, so an output that is not one ignores them by
- * default. Diagnostics never are: {@link #stepWarn}, {@link #warnBanner} and {@link #stepFail}
- * default to {@link #warn}, so an output that implements only that one method still receives
+ * default. Diagnostics never are: {@link #stepWarn} and {@link #warnBanner} default to
+ * {@link #warn}, and {@link #stepFail} reports through {@link #stepWarn}, so an output that implements only that one method still receives
  * every warning and error.
  */
 public interface Output {
@@ -55,9 +56,10 @@ public interface Output {
         warn(title, lines);
     }
 
-    /** Fail the live step, then report {@code msg}. */
+    /** Fail the live step, then report {@code msg} as a warning about it. */
     default void stepFail(String msg) {
-        warn(msg);
+        stepBreak();
+        stepWarn(msg);
     }
 
     /** An informational line beside the warnings; not a warning, so not kept off a terminal. */
@@ -120,7 +122,11 @@ public interface Output {
 
     default void stepStart(String msg) {}
 
-    default void stepProgress(String detail) {}
+    /**
+     * What the live step is doing right now, read again each time its line is drawn, so a value
+     * that keeps changing (a download's rate and time left) needs no call per change.
+     */
+    default void stepProgress(Supplier<String> detail) {}
 
     /** Complete the live step, with a result shown beside it when {@code detail} is not null. */
     default void stepDone(String detail) {}

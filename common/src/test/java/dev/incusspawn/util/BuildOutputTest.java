@@ -58,6 +58,85 @@ class BuildOutputTest {
                 """, text());
     }
 
+    /** A block opens at column 2 with its header, so the line that closes it is drawn there too. */
+    @Test
+    void successClosesTheBlockAtTheHeadersColumn() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.step("before");
+        BuildOutput.header("Building t", null);
+        BuildOutput.step("x");
+        BuildOutput.success("t built");
+        assertEquals("    before\n\n  ● Building t\n    x\n\n  ✓ t built\n", text());
+    }
+
+    /** A label is bare in source: a plain terminal adds the ellipsis, and a decorated one prints alike. */
+    @Test
+    void aPlainTerminalAddsTheEllipsisToABareLabel() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.stepStart("Waiting");
+        BuildOutput.stepDone();
+        BuildOutput.stepStart("Waiting...");
+        BuildOutput.stepDone();
+        System.out.println("between");
+        BuildOutput.stepStart("Waiting");
+        System.err.println("mid-step");
+        BuildOutput.stepDone();
+        assertEquals("""
+                    Waiting... done.
+                    Waiting... done.
+                between
+                    Waiting...
+                mid-step
+                    Waiting... done.
+                """, text());
+    }
+
+    /** A failed step ends in its cross, and why it failed is a warning under it. */
+    @Test
+    void stepFailReportsUnderTheCross() {
+        BuildOutput.forceAnsi = true;
+        BuildOutput.stepStart("Verifying DNS resolution");
+        BuildOutput.stepFail("no answer from 10.0.0.1\nlast line of its output");
+        assertEquals(List.of("    ✗ Verifying DNS resolution", "      ⚠ no answer from 10.0.0.1",
+                "        last line of its output", ""), lastLines());
+    }
+
+    /** A live step's detail is read again on every frame, so a value that keeps changing (a download's rate) is current. */
+    @Test
+    void stepProgressReadsItsSupplierPerFrame() throws Exception {
+        BuildOutput.forceAnsi = true;
+        var value = new java.util.concurrent.atomic.AtomicReference<>("1 MB/s");
+        BuildOutput.stepStart("Downloading image");
+        BuildOutput.stepProgress(value::get);
+        awaitScreen("Downloading image  1 MB/s");
+        value.set("2 MB/s");
+        awaitScreen("Downloading image  2 MB/s");
+        BuildOutput.stepDone();
+        assertEquals("    ✓ Downloading image", lastLines().getLast());
+    }
+
+    /** A detail that cannot be read this frame shows none, and the spinner keeps drawing. */
+    @Test
+    void aThrowingDetailDoesNotStopTheSpinner() throws Exception {
+        BuildOutput.forceAnsi = true;
+        var value = new java.util.concurrent.atomic.AtomicReference<String>();
+        BuildOutput.stepStart("Downloading image");
+        BuildOutput.stepProgress(() -> java.util.Objects.requireNonNull(value.get()));
+        Thread.sleep(200);
+        value.set("1 MB/s\u001b[2J");
+        awaitScreen("Downloading image  1 MB/s [2J");
+        BuildOutput.stepDone();
+    }
+
+    /** Wait for the spinner to draw {@code expected}, failing after a few seconds. */
+    private void awaitScreen(String expected) throws InterruptedException {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (!BuildOutput.stripAnsi(text()).contains(expected)) {
+            if (System.nanoTime() > deadline) fail("never drew '" + expected + "': " + text());
+            Thread.sleep(10);
+        }
+    }
+
     @Test
     void plainOutputPrintedMidStepMovesBelowTheStepLine() {
         BuildOutput.stepStart("Installing foo...");
@@ -205,7 +284,7 @@ class BuildOutputTest {
                       t
                         version 1
 
-                    ✓ built
+                  ✓ built
                 """, BuildOutput.stripAnsi(text()));
     }
 
@@ -295,7 +374,7 @@ class BuildOutputTest {
         BuildOutput.forceAnsi = false;
         BuildOutput.stepFail("failed at /p/\u001b[2Jx\u009b31m\nadvice stays");
         assertFalse(text().contains("\u001b") || text().contains("\u009b"), text());
-        assertTrue(text().contains("failed at /p/ [2Jx 31m\nadvice stays"), text());
+        assertTrue(text().contains("failed at /p/ [2Jx 31m\n        advice stays"), text());
     }
 
     /** A warning keeps isx's own line breaks, but what it quotes cannot drive the terminal (#1235). */

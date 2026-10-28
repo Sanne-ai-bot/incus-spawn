@@ -226,6 +226,7 @@ While the TUI renders it owns the terminal, so a raw `System.out`/`System.err` l
 `BuildOutput`'s static methods hand every message to the bound `Output` (`common/util`), a `TerminalOutput` unless the owner of the terminal bound another (the TUI, `PreTuiOutput`, `isx mcp`, the proxy).
 Say what kind a message is: a `step`, a `warn` with its advice as details (never a `Warning:`-prefixed line), why a command failed as an `error`, a query's answer on `BuildOutput.results()`.
 Indent with `group`, never with leading spaces.
+Under a header, work done is a live step, work skipped a `note`, the answer a `step`, and `success` closes the block; labels are bare (`"Launching x"`, never `"Launching x..."`), which `StepLabelGateTest` holds (#1791).
 Shared code the TUI runs while it draws (`lifecycle/`, `incus/`) takes an `Output` from its caller, never a `Consumer<String>`; code with no caller to ask, such as a definition loader, reports through `Warnings.warn()`.
 `RawOutputGateTest` (`cli`) enforces it: only its gate classes (`EXEMPT` and the build-time `graal/*Feature` classes) touch the raw streams, the console or `printStackTrace()`, and no print literal is indented by hand.
 It counts a logger, `Thread.dumpStack()` and reflection on `System` as raw stream use, and lets only named files hand a child process the terminal or open `/dev/tty`.

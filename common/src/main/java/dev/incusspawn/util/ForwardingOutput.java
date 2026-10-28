@@ -37,7 +37,7 @@ abstract class ForwardingOutput implements Output {
     @Override public void success(String msg) { delegate().success(msg); }
     @Override public void list(Collection<String> items) { delegate().list(items); }
     @Override public void stepStart(String msg) { delegate().stepStart(msg); }
-    @Override public void stepProgress(String detail) { delegate().stepProgress(detail); }
+    @Override public void stepProgress(java.util.function.Supplier<String> detail) { delegate().stepProgress(detail); }
     @Override public void stepDone(String detail) { delegate().stepDone(detail); }
     @Override public void stepBreak() { delegate().stepBreak(); }
     @Override public void releaseTerminal() { delegate().releaseTerminal(); }
