@@ -338,8 +338,11 @@ final class ModalRenderer {
         return result;
     }
 
-    /** Measured in terminal cells (#1412): a CJK ideograph or an emoji takes two. */
-    private static List<String> wrapWords(String paragraph, int width) {
+    /**
+     * Greedy word wrap measured in terminal cells (#1412): a CJK ideograph or an emoji takes two.
+     * A word longer than {@code width} is left whole for the view to clip.
+     */
+    static List<String> wrapWords(String paragraph, int width) {
         var result = new ArrayList<String>();
         var words = paragraph.split("\\s+");
         var line = new StringBuilder();
