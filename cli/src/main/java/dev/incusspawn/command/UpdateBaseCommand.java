@@ -52,13 +52,13 @@ public class UpdateBaseCommand extends BaseCommand {
         var minimal = ImageDef.loadTrusted().get(BaseImagePin.TEMPLATE);
         var unpinned = unpinnedMinimal();
         if (minimal == null || unpinned == null) {
-            System.err.println("Template tpl-minimal not found.");
+            BuildOutput.error("template tpl-minimal not found.");
             return CommandResult.valueOf(1);
         }
 
         releases = BaseImageReleases.fromImageUrl(unpinned.getImageUrl());
         if (releases == null) {
-            System.err.println("Template tpl-minimal has no trackable GitHub base image URL.");
+            BuildOutput.error("template tpl-minimal has no trackable GitHub base image URL.");
             return CommandResult.valueOf(1);
         }
 
@@ -67,10 +67,10 @@ public class UpdateBaseCommand extends BaseCommand {
             try {
                 available = releases.fetchReleases();
             } catch (IOException e) {
-                System.err.println("Failed to fetch releases: " + e.getMessage());
+                BuildOutput.error("could not fetch releases: " + failure(e));
                 return CommandResult.valueOf(1);
             }
-            outputFormat.print(System.out, releaseRecords(available, minimal.getImageTag(), minimal.isPinned()));
+            outputFormat.print(BuildOutput.results(), releaseRecords(available, minimal.getImageTag(), minimal.isPinned()));
             return CommandResult.SUCCESS;
         }
 
@@ -95,7 +95,7 @@ public class UpdateBaseCommand extends BaseCommand {
         BuildOutput.stepDone();
 
         if (available.isEmpty()) {
-            System.out.println("No releases found.");
+            BuildOutput.warn("No releases found.");
             return CommandResult.SUCCESS;
         }
 
@@ -161,7 +161,7 @@ public class UpdateBaseCommand extends BaseCommand {
                 .findFirst()
                 .orElse(null);
         if (selected == null) {
-            System.err.println("Release '" + tag + "' not found.");
+            BuildOutput.error("release '" + OutputFormat.oneLine(tag) + "' not found.");
             printReleaseList(available, current.getImageTag());
             return CommandResult.valueOf(1);
         }
