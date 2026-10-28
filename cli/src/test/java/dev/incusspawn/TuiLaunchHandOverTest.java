@@ -96,4 +96,18 @@ class TuiLaunchHandOverTest {
                 "bare isx exits non-zero after the TUI reports why it failed (#1785)");
         assertTrue(terminal().contains("Error: the terminal went away"), terminal());
     }
+
+    @Test
+    void aWarningHandedOverIsStillShownWhenTheTuiFailsBeforeDrawing() {
+        var tui = new StandInTui();
+        tui.servicesFailure = new IllegalStateException("no Incus client");
+        assertFalse(IncusSpawn.launchTui(() -> {
+            Warnings.warn(SKEW);
+            return true;
+        }, () -> tui));
+
+        assertEquals(List.of(), tui.events, "it failed before drawing");
+        assertTrue(terminal().contains("⚠ " + SKEW), "handed to a log nobody will see: " + terminal());
+        assertTrue(terminal().contains("Error: no Incus client"), terminal());
+    }
 }
