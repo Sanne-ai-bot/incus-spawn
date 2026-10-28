@@ -177,6 +177,23 @@ incus config device get <name> zmx-sockets source   # must no longer name $TMPDI
 rm -rf "${TMPDIR:?}/zmx"        # once no instance's device names it
 ```
 
+## zmx sockets moved out of the host zmx dir
+
+isx used to share each instance's zmx sockets and logs under `<zmx dir>/containers/<name>`, in the host zmx dir (issue 1821).
+On a host without `ZMX_DIR` and `XDG_RUNTIME_DIR` that is `/tmp/zmx-<uid>`, which another local user can make first.
+The source is now `~/.local/state/incus-spawn/zmx/<name>`, and each instance's `zmx-sockets` device moves there the next time isx starts it.
+A running instance keeps the old source until then, so stop it and open a shell on it again.
+The old `containers/` tree is no longer read or cleaned up by isx; on a tmpfs it goes at the next reboot.
+
+```shell
+zmxdir=${ZMX_DIR:-${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/zmx}}
+zmxdir=${zmxdir:-${TMPDIR:-/tmp}/zmx-$(id -u)}
+ls "$zmxdir/containers"         # instances shared under the old directory
+incus stop <name> && isx shell <name>
+incus config device get <name> zmx-sockets source   # must name ~/.local/state/incus-spawn/zmx/<name>
+rm -r "$zmxdir/containers"      # once no instance's device names it
+```
+
 ## A user tool whose name is not an identifier
 
 Since issue 1778, isx refuses a tool whose `name:` is not letters, digits, `.`, `-` and `_`, starting with a letter or digit.

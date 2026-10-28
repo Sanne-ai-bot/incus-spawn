@@ -3,18 +3,22 @@ package dev.incusspawn.lifecycle;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.config.BuildSource;
-import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.InstanceUpdate;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
 import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.Output;
 
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -24,12 +28,13 @@ import java.util.function.UnaryOperator;
  * disk device, so host-side {@code zmx list}, {@code zmx attach}, etc.
  * work natively against container sessions.
  *
- * <p>A per-container directory under the host zmx dir is bind-mounted at
- * {@code /tmp/zmx} inside the container.  Sockets created by zmx appear
- * on the host filesystem immediately — no proxy device required.  A
- * symlink named {@code isx-<container>} in the host zmx dir points to
- * the container's {@code isx} session socket so it shows up in
- * {@code zmx list}.</p>
+ * <p>Each instance's directory, {@code ~/.local/state/incus-spawn/zmx/<name>},
+ * is bind-mounted at the guest's {@code ~/.zmx}: its sockets and the logs zmx
+ * keeps beside them appear on the host immediately, and the tree is the
+ * user's alone.  The host zmx dir, which can be a {@code /tmp/zmx-<uid>}
+ * another user made first, holds only a link named {@code isx-<container>}
+ * to the container's {@code isx} session socket, so it shows up in
+ * {@code zmx list} (#1821).</p>
  */
 public final class ZmxSocketForward {
 
@@ -37,8 +42,22 @@ public final class ZmxSocketForward {
 
     private static final String DEVICE_NAME = "zmx-sockets";
     private static final String CONTAINER_ZMX_DIR = "/home/agentuser/.zmx";
-    private static final String CONTAINERS_SUBDIR = "containers";
     private static final String SYMLINK_PREFIX = "isx-";
+
+    /**
+     * Where the instances' zmx directories live ({@code instances}), the host
+     * zmx dir their links go in ({@code zmx}), and the uid both must belong to.
+     */
+    record HostDirs(Path instances, Path zmx, Callable<Integer> processUid) {
+        static HostDirs of(Path zmx) {
+            return new HostDirs(Environment.vmStateDir().resolve("zmx"), zmx, OwnDirectory::processUid);
+        }
+
+        /** The instance's own directory: the device's source. */
+        Path instanceDir(String name) {
+            return instances.toAbsolutePath().resolve(name);
+        }
+    }
 
     /**
      * Resolve the host zmx socket directory using the same priority as zmx
@@ -80,52 +99,106 @@ public final class ZmxSocketForward {
     }
 
     /**
-     * Configure a disk device that shares a per-container host directory at
-     * the container's zmx socket path.  Also creates a symlink in the host
-     * zmx dir so the default {@code isx} session is visible to host zmx.
+     * Configure a disk device that shares the instance's own host directory
+     * at the container's zmx socket path, and link it from the host zmx dir
+     * so the default {@code isx} session is visible to host zmx.
      *
-     * <p>Idempotent — safe to call on every shell-in to repair a symlink
-     * that zmx may have cleaned up.</p>
+     * <p>When that directory is not the user's alone, the instance gets no
+     * device, is stamped {@link Metadata#ZMX_WITHHELD} so a later start tries
+     * again, and {@code out} is told why.</p>
      */
     public static void configure(IncusClient incus, String name, Output out) {
         var zmxDir = sharedHostZmxDir();
-        if (zmxDir != null) configure(incus, name, zmxDir, out);
+        if (zmxDir != null) configure(incus, name, HostDirs.of(zmxDir), out);
     }
 
-    static void configure(IncusClient incus, String name, Path zmxDir, Output out) {
-        var containerDir = zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name);
+    /** Whether the device was added. */
+    static boolean configure(IncusClient incus, String name, HostDirs dirs, Output out) {
+        return configure(incus, name, dirs, false, out);
+    }
+
+    /** {@code withheld}: the instance already has no device and the stamp, so a refusal writes nothing. */
+    private static boolean configure(IncusClient incus, String name, HostDirs dirs, boolean withheld, Output out) {
+        int uid;
+        Path instanceDir;
         try {
-            Files.createDirectories(containerDir);
-        } catch (IOException e) {
-            out.warn("could not create zmx directory: " + e.getMessage());
-            return;
+            uid = dirs.processUid().call();
+            instanceDir = ownInstanceDir(dirs, name, uid);
+        } catch (Exception e) {
+            // Said first, so a failed write below still leaves why
+            var why = e instanceof OwnDirectory.NotOwn ? "its directory " + e.getMessage()
+                    : "could not make its directory: " + e;
+            out.warn("'" + name + "' shares no zmx sessions with the host: " + why,
+                    "isx keeps them only in a directory nobody else can change.",
+                    "Its next start through isx shares them, once that holds.");
+            // Fails closed: a guest's sessions go nowhere others can reach
+            if (!withheld) {
+                incus.updateFresh(name, new InstanceUpdate().removeDevice(DEVICE_NAME)
+                        .config(Metadata.ZMX_WITHHELD, "true"));
+            }
+            return false;
         }
 
-        incus.devicesRemoveAll(name, java.util.List.of(DEVICE_NAME));
-        var args = new java.util.ArrayList<>(java.util.List.of(
-                "source=" + containerDir.toAbsolutePath(),
-                "path=" + CONTAINER_ZMX_DIR,
-                // The source sits on a tmpfs wiped at reboot: a start that
-                // bypasses isx (plain `incus start`, boot.autostart) must not
-                // fail on it.  isx's own starts recreate it first (#1044).
-                "required=false"));
-        HostResourceSetup.addShiftIfSupported(args, dev.incusspawn.incus.MachineType.CONTAINER);
-        incus.deviceAdd(name, DEVICE_NAME, "disk", args.toArray(String[]::new));
+        // One write: the device whole, and the stamp of an earlier refusal gone
+        incus.updateFresh(name, new InstanceUpdate().unset(Metadata.ZMX_WITHHELD).replaceDevice(DEVICE_NAME, Map.of(
+                "type", "disk",
+                "source", instanceDir.toString(),
+                "path", CONTAINER_ZMX_DIR,
+                // isx recreates a missing source before its own starts, and a
+                // start that bypasses isx (plain `incus start`, boot.autostart)
+                // must not fail on one either (#1044)
+                "required", "false",
+                // Linux only, where every container mount is shifted
+                "shift", "true")));
 
-        ensureSymlink(zmxDir, name);
+        // Quiet: the shell that follows warns of a link it cannot make (ensureSymlink)
+        try {
+            link(dirs.zmx(), name, instanceDir, uid);
+        } catch (IOException ignored) {
+        }
+        return true;
+    }
+
+    /**
+     * The instance's directory, made {@code 0700} where missing, and checked
+     * to be the user's alone, as is the directory that holds it.
+     */
+    private static Path ownInstanceDir(HostDirs dirs, String name, int uid) throws IOException {
+        var dir = dirs.instanceDir(name);
+        Files.createDirectories(dir.getParent().getParent());
+        createPrivate(dir.getParent());
+        createPrivate(dir);
+        requireOwnInstanceDir(dir, uid);
+        return dir;
+    }
+
+    /** That the instance's directory and the one holding it are the user's alone. */
+    private static void requireOwnInstanceDir(Path dir, int uid) throws IOException {
+        // A user-private group (gid == uid) may write, as umask 002 lets it
+        OwnDirectory.require(dir.getParent(), uid, uid, "isx");
+        OwnDirectory.require(dir, uid, uid, "isx");
+    }
+
+    /** {@code dir} as a new directory only its owner can enter; an existing path is left to the check that follows. */
+    private static void createPrivate(Path dir) throws IOException {
+        try {
+            Files.createDirectory(dir, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        } catch (FileAlreadyExistsException checkedNext) {
+        }
     }
 
     /**
      * Restore the host side of the {@code zmx-sockets} device before start.
      *
-     * <p>The host zmx dir normally lives under {@code XDG_RUNTIME_DIR}, a
-     * tmpfs wiped on reboot or logout, and a rename leaves the device
-     * pointing at the old (already deleted) directory.  Either way Incus
-     * refuses to start the instance with {@code Missing source path}.</p>
+     * <p>A rename, an {@code isx clean state}, or a device from before
+     * #1821, which pointed into the host zmx dir, leaves the device pointing
+     * at a directory that is gone or not the instance's own.  Incus would
+     * then refuse to start it with {@code Missing source path}, or mount
+     * whatever is there.  A device withheld by an earlier start is added
+     * once the directory is the user's alone again.</p>
      *
-     * <p>Costs a single stat while the directory is there; the repair reuses
-     * {@link #configure}, which also re-points a source left behind by a
-     * rename.</p>
+     * <p>Costs a few stats while the directory is right, and no Incus
+     * request; the repair reuses {@link #configure}.</p>
      *
      * @param instanceMetadata the instance as fetched by
      *        {@link IncusClient#instanceMetadata} — shared with the other
@@ -134,107 +207,147 @@ public final class ZmxSocketForward {
     public static void ensureHostDirForStart(IncusClient incus, String name,
                                              JqValue instanceMetadata, Output out) {
         var zmxDir = sharedHostZmxDir();
-        if (zmxDir != null) ensureHostDirForStart(incus, name, zmxDir, instanceMetadata, out);
+        if (zmxDir != null) ensureHostDirForStart(incus, name, HostDirs.of(zmxDir), instanceMetadata, out);
     }
 
-    static void ensureHostDirForStart(IncusClient incus, String name, Path zmxDir,
+    static void ensureHostDirForStart(IncusClient incus, String name, HostDirs dirs,
                                       JqValue instanceMetadata, Output out) {
         var device = instanceMetadata.path("devices").path(DEVICE_NAME);
         var source = device.path("source").asText("");
-        if (source.isEmpty()) return; // no device — nothing to repair
+        if (source.isEmpty()) {
+            if (instanceMetadata.path("config").path(Metadata.ZMX_WITHHELD).asText("").isEmpty()) return;
+            configure(incus, name, dirs, true, out);
+            return;
+        }
 
         // Healthy only if the device points at this name's directory and that
-        // directory is there: a source left over from a rename can still exist
-        // (it may belong to another instance by now), and the right directory
-        // can exist while the device points elsewhere.  A device added before
-        // it was optional (#1044) is upgraded too.  Anything else is handed
-        // to configure(), which is idempotent.
-        var containerDir = zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name).toAbsolutePath();
+        // directory is there and still the user's alone: a source left over
+        // from a rename can still exist (it may belong to another instance by
+        // now), and the right directory can exist while the device points
+        // elsewhere.  A device added before it was optional (#1044) is
+        // upgraded too.  Anything else is handed to configure(), which is
+        // idempotent and withholds the device from a directory others can change.
+        var instanceDir = dirs.instanceDir(name);
         var optional = "false".equals(device.path("required").asText(""));
-        if (optional && source.equals(containerDir.toString()) && Files.isDirectory(containerDir)) return;
+        if (optional && source.equals(instanceDir.toString())) {
+            try {
+                requireOwnInstanceDir(instanceDir, dirs.processUid().call());
+                return;
+            } catch (Exception missingOrNotOwn) {
+                // configure() makes it, or checks again and says why
+            }
+        }
 
-        configure(incus, name, zmxDir, out);
+        configure(incus, name, dirs, out);
     }
 
     /**
-     * (Re-)create the symlink from the host zmx dir to the container's
-     * {@code isx} session socket.  Cheap — no API calls.
+     * (Re-)create the link from the host zmx dir to the container's
+     * {@code isx} session socket, for an instance that shares its sessions.
+     * Cheap — no API calls.  Warns when the host zmx dir is not the user's
+     * alone: the link is not made there, and host zmx cannot see the instance.
      */
-    public static void ensureSymlink(String name) {
+    public static void ensureSymlink(String name, Output out) {
         var zmxDir = sharedHostZmxDir();
-        if (zmxDir != null) ensureSymlink(zmxDir, name);
+        if (zmxDir != null) ensureSymlink(name, HostDirs.of(zmxDir), out);
     }
 
-    private static void ensureSymlink(Path zmxDir, String name) {
-        var link = zmxDir.resolve(SYMLINK_PREFIX + name);
-        var target = Path.of(CONTAINERS_SUBDIR, name, "isx");
+    static void ensureSymlink(String name, HostDirs dirs, Output out) {
+        var instanceDir = dirs.instanceDir(name);
+        // One stat for an instance that shares no sessions
+        if (!Files.isDirectory(instanceDir, LinkOption.NOFOLLOW_LINKS)) return;
+        int uid;
         try {
-            if (Files.isSymbolicLink(link)) {
-                if (target.equals(Files.readSymbolicLink(link))) return;
-                Files.delete(link);
-            } else if (Files.exists(link)) {
-                return;
-            }
-            Files.createSymbolicLink(link, target);
-        } catch (IOException ignored) {
+            uid = dirs.processUid().call();
+            // Not into a directory others can change: its start withheld the device and said so
+            requireOwnInstanceDir(instanceDir, uid);
+        } catch (Exception withheld) {
+            return;
         }
+        try {
+            link(dirs.zmx(), name, instanceDir, uid);
+        } catch (OwnDirectory.NotOwn e) {
+            out.warn("host zmx cannot see the sessions of '" + name + "': the host zmx dir " + e.getMessage(),
+                    "isx links them only from a directory nobody else can change.",
+                    "Set ZMX_DIR to a directory of your own, or remove " + dirs.zmx() + " if it is not yours.");
+        } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * Link {@code isx-<name>} in the host zmx dir to the instance's session,
+     * by absolute path, making the dir {@code 0700} where missing.  Only in a
+     * dir that is the user's alone: anyone else could swap the link.
+     */
+    private static void link(Path zmxDir, String name, Path instanceDir, int uid) throws IOException {
+        var dir = ownDir(zmxDir, uid);
+        if (dir == null) {
+            if (zmxDir.getParent() != null) Files.createDirectories(zmxDir.getParent());
+            createPrivate(zmxDir);
+            dir = ownDir(zmxDir, uid);
+            if (dir == null) return;
+        }
+        var link = dir.resolve(SYMLINK_PREFIX + name);
+        var target = instanceDir.resolve("isx");
+        if (Files.isSymbolicLink(link)) {
+            if (target.equals(Files.readSymbolicLink(link))) return;
+            Files.delete(link);
+        } else if (Files.exists(link, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        Files.createSymbolicLink(link, target);
     }
 
     /**
      * Remove host-side artifacts after an instance is destroyed: the
-     * per-container directory, with the logs zmx keeps there, and the
-     * symlink.  The disk device itself is auto-removed by Incus on instance
-     * deletion.
+     * instance's directory, with the logs zmx keeps there, and the link.
+     * The disk device itself is auto-removed by Incus on instance deletion.
      */
     public static void cleanup(String name, Output out) {
         var zmxDir = sharedHostZmxDir();
-        if (zmxDir != null) cleanup(name, zmxDir, out);
+        if (zmxDir != null) cleanup(name, HostDirs.of(zmxDir), out);
     }
 
-    static void cleanup(String name, Path zmxDir, Output out) {
-        cleanup(name, zmxDir, out, OwnDirectory::processUid);
-    }
-
-    /** Where the walk checks ownership against {@code processUid}, which tests name. */
-    static void cleanup(String name, Path zmxDir, Output out, Callable<Integer> processUid) {
+    static void cleanup(String name, HostDirs dirs, Output out) {
+        var zmxDir = dirs.zmx();
         var link = SYMLINK_PREFIX + name;
+        var instanceDir = dirs.instanceDir(name);
         // Only a stat each: nothing of this instance's, nothing to check or say
         if (!Files.exists(zmxDir.resolve(link), LinkOption.NOFOLLOW_LINKS)
-                && !Files.exists(zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name), LinkOption.NOFOLLOW_LINKS)) {
+                && !Files.exists(instanceDir, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
-        // On the /tmp fallback another user can have made the zmx dir, or
-        // planted links in it: the recursive delete below goes only through
-        // directories nobody else can change, so none can be swapped under it
+        // The recursive delete below goes only through directories nobody
+        // else can change, so none can be swapped under it
         int uid;
         try {
-            uid = processUid.call();
+            uid = dirs.processUid().call();
         } catch (Exception e) {
             // Fails closed: no uid, no walk (id -u would fall back to a guess)
             out.warn("zmx sessions of '" + name + "' left on the host: isx cannot tell which uid it runs as: "
                     + e.getMessage());
             return;
         }
-        Path containerDir;
+        // On the /tmp fallback another user can have made the host zmx dir,
+        // or planted links in it.  deleteIfExists removes a link, never what
+        // it points to, and in a real dir of the user's nobody else can put
+        // a link in its way.
         try {
-            // deleteIfExists removes a link, never what it points to, and in a
-            // real dir of the user's nobody else can put a link in its way
             if (Files.isDirectory(zmxDir, LinkOption.NOFOLLOW_LINKS) && uid == OwnDirectory.uidOf(zmxDir)) {
                 deleteQuietly(zmxDir.resolve(link));
+            } else {
+                var dir = ownDir(zmxDir, uid);
+                if (dir != null) deleteQuietly(dir.resolve(link));
             }
-            var dir = ownDir(zmxDir, uid);
-            if (dir == null) return;
-            if (!dir.equals(zmxDir)) deleteQuietly(dir.resolve(link));
-            var containers = dir.resolve(CONTAINERS_SUBDIR);
-            containerDir = containers.resolve(name);
-            if (!Files.exists(containerDir, LinkOption.NOFOLLOW_LINKS)) return;
-            // A user-private group (gid == uid) may write, as umask 002 lets it
-            OwnDirectory.require(containers, uid, uid, "isx");
+        } catch (IOException | RuntimeException notOurs) {
+            // Not the user's to tidy: the link was never made there
+        }
+        try {
+            if (!Files.exists(instanceDir, LinkOption.NOFOLLOW_LINKS)) return;
+            OwnDirectory.require(instanceDir.getParent(), uid, uid, "isx");
         } catch (OwnDirectory.NotOwn e) {
             out.warn("zmx sessions of '" + name + "' left on the host: their directory " + e.getMessage(),
                     "isx deletes them only through directories nobody else can change.");
-            return;
-        } catch (NoSuchFileException gone) {
             return;
         } catch (IOException | RuntimeException e) {
             out.warn("zmx sessions of '" + name + "' left on the host: could not check their directory: " + e);
@@ -243,11 +356,11 @@ public final class ZmxSocketForward {
         // zmx keeps its logs/ in the shared dir, so the tree goes, and no
         // symlink a guest left in it is followed (#1772)
         try {
-            FileTrees.delete(containerDir);
+            FileTrees.delete(instanceDir);
         } catch (IOException e) {
-            out.warn("could not remove zmx directory " + containerDir + ": " + e.getMessage(),
+            out.warn("could not remove zmx directory " + instanceDir + ": " + e.getMessage(),
                     "A guest whose user is not yours on the host can leave files you cannot delete.",
-                    "Remove what is left with: sudo rm -r " + containerDir);
+                    "Remove what is left with: sudo rm -r " + instanceDir);
         }
     }
 

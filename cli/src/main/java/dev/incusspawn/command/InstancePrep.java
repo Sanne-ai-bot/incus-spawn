@@ -132,7 +132,7 @@ public class InstancePrep {
         InstanceLifecycle.ensureReady(incus, name, instance, machineType, out);
         // From the same read: what ensureReady writes is none of what the reconcile looks at
         InstanceLifecycle.reconcileAccountIdentities(incus, name, instance, out);
-        ZmxSocketForward.ensureSymlink(name);
+        ZmxSocketForward.ensureSymlink(name, out);
     }
 
     /**

@@ -2684,12 +2684,18 @@ The reasons:
   The TUI starts an instance while it still owns the terminal, where a stderr warning would be drawn over and lost, so it passes `InstancePrep.repairBeforeUse` its warning log as the sink for the start and the static-IP repair alike.
   The log announces them on the status line when the shell returns to the TUI, and keeps them for the `w` dialog.
   A plain `incus start` still fails on such a device; isx cannot intercept it.
-  The zmx device is the exception.
-  Its source sits on the `XDG_RUNTIME_DIR` tmpfs, so every reboot would leave it missing, and it is added with `required=false`.
-  A start that bypasses isx (`incus start`, `boot.autostart`) skips it, and the guest has no host-visible zmx sockets until isx itself starts the stopped instance and repairs the device first (#1044).
+  The zmx device is the exception: it is added with `required=false`.
+  A start that bypasses isx (`incus start`, `boot.autostart`) skips a missing source, and the guest has no host-visible zmx sockets until isx itself starts the stopped instance and repairs the device first (#1044).
   An instance already running, such as one `boot.autostart` brought up after a reboot, keeps running without the mount until it is stopped and started through isx.
-  Destroy and rename remove the instance's zmx directory with everything zmx wrote in it, its `logs/` included, and follow no symlink (#1772).
-  They go only through a zmx dir and `containers/` that are the user's alone (`OwnDirectory`, shared with host-route secrets), since another user can make `/tmp/zmx-<uid>` first; otherwise the directory stays and they warn.
+  The device's source is the instance's own directory, `~/.local/state/incus-spawn/zmx/<name>`, not the host zmx dir (#1821).
+  zmx's own dir falls back to `/tmp/zmx-<uid>` without `ZMX_DIR` and `XDG_RUNTIME_DIR`, and another local user can make that first.
+  So the guest's sockets and logs stay where only the user can reach them, and the source no longer follows the environment of whichever isx started the instance last.
+  isx makes `zmx/` and each `<name>` mode `0700` and requires both to be the user's alone (`OwnDirectory`, shared with host-route secrets) when it adds the device and on every start, at a few stats and no request.
+  When they are not, the instance gets no device, says why, and is stamped `user.incus-spawn.zmx-withheld`; the first start that finds the directory right adds the device back and clears the stamp.
+  The host zmx dir holds only the absolute `isx-<name>` links, so host `zmx list` and `zmx attach` need no configuration.
+  isx makes that dir `0700` when it is missing, and links only from one that is the user's alone; otherwise the shell warns and the device stays, since its directory is private.
+  Destroy and rename remove the instance's directory with everything zmx wrote in it, its `logs/` included, and follow no symlink (#1772).
+  They walk it only through a `zmx/` that is the user's alone; otherwise the directory stays and they warn.
   The pre-start repair also re-adds a device from before that change, which costs no request when the device is already optional.
 - **The attach is quiet.**
   It runs inside the "Launching…"/"Deriving…" progress line, so the per-resource "Mounted …" notes and warnings come from `applyForBuild` after start, and a DNF cache failure is returned by `attachDnfCache` and printed once the step is done.
