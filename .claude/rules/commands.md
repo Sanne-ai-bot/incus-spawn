@@ -71,7 +71,8 @@ Only the ProxyCommand `isx branch --format=json` hands out has `--start` (`SshKe
 A plain destroy of an owned instance goes through `confirmDestructive`.
 `isx list`'s `OWNER` column (`ListCommand.ownerCell`) folds in `isx mcp`'s standing; `owner`/`owner_id` are appended to its formats.
 The TUI's instance table shows the same column only when some instance is owned and the panel is at least `MainScreen.OWNER_COLUMN_MIN_WIDTH` wide (`TuiOwnerColumnTest`); the instance details always show the owner (`InstanceDetailView.ownerDetailRows`).
-`integrations/orca/isx-orca-recipe` is Orca's recipe contract over these commands, in bash and `jq`; `OrcaRecipeScriptTest` runs it against a stand-in `isx`, so a change to a command's flags or its `--format=json` fields that the script uses fails there.
+`integrations/orca/isx-orca-recipe` is Orca's recipe contract over these commands, in bash and `jq`; `OrcaRecipeScriptTest` runs it against a stand-in `isx` and pins the exact `isx` command lines it runs and the result it prints from a recorded `isx branch --format=json` output.
+The stand-in does not check that isx accepts those flags or still prints those fields, so a change to either must update the script and the recorded output together.
 
 **Output for scripts goes through `OutputFormat`.**
 A query command offers `--format=table|plain|json` (#1036) by parsing `--format` with `OutputFormat.parse` (`OutputFormat.resolve` where there is also a `--plain`), building each result once as an ordered `Map<String, Object>` (a `LinkedHashMap`; maps need no native reflection registration) in a package-private `record(s)` method, and handing it to `format.print`/`printOne`.

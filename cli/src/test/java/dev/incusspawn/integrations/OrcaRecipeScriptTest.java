@@ -135,6 +135,22 @@ class OrcaRecipeScriptTest {
         assertTrue(run.err().contains("could not read what isx branch printed"), run.err());
     }
 
+    /**
+     * A branch that fails midway (an interrupted copy, a start that failed) may have left an instance
+     * stamped for this runtime: it is taken back too, through the owner-gated destroy (review of #1827).
+     */
+    @Test
+    void aBranchThatFailsIsTakenBackThroughTheOwnerGatedDestroy() throws Exception {
+        var name = name();
+        isx(BRANCHED, "branch");
+        var run = run(Map.of("ORCA_VM_INSTANCE_ID", RUNTIME), "", "create", "--from", "tpl-orca");
+        assertNotEquals(0, run.exit());
+        assertEquals("", run.out());
+        assertEquals(List.of("destroy " + name + " --owner orca --owner-id " + RUNTIME,
+                "branch " + name + " --from tpl-orca --owner orca --owner-id " + RUNTIME + " --format=json",
+                "destroy " + name + " --owner orca --owner-id " + RUNTIME), run.isx());
+    }
+
     @Test
     void createRefusesWhatItCannotServe() throws Exception {
         isx(BRANCHED, "");
