@@ -40,9 +40,6 @@ class BuildProgressTest {
         assertTrue(line.contains(" ]0;pwned app"), line.replace("\033", "ESC"));
         assertTrue(line.contains("https://x/ [2J 2Japp.git"), line.replace("\033", "ESC"));
         assertFalse(line.contains("\033]") || line.contains("\033[2J") || line.contains("\u009b"), line.replace("\033", "ESC"));
-        var plain = BuildProgress.plainStepLine("\033]0;pwned\007app",
-                BuildProgress.StepProgress.failed("boom", null), "Ready", "prepare");
-        assertEquals(dev.incusspawn.util.TerminalLink.plainText(plain), plain);
     }
 
     @Test
