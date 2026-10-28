@@ -2,9 +2,14 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.TerminalStreams;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
+
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PrintStream;
 
 @CommandDefinition(
         name = "ssh-proxy",
@@ -24,10 +29,22 @@ public class SshProxyCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        int exitCode = incus.execBidirectional(instance, 0, 0, "/",
-                guestCommand(),
-                System.in, System.out, System.err);
-        return CommandResult.valueOf(exitCode);
+        // ssh's connection: stdin and stdout are the SSH stream, and stderr is what ssh shows its user
+        return CommandResult.valueOf(relay(incus, TerminalStreams.in(), TerminalStreams.out(), TerminalStreams.err()));
+    }
+
+    /**
+     * Runs {@link #guestCommand} with the connection on {@code in} and {@code out}, and shows its
+     * stderr on {@code err} as text: ssh passes a ProxyCommand's stderr to the terminal untouched,
+     * and whatever runs in the instance decides it.
+     */
+    int relay(dev.incusspawn.incus.IncusClient incus, InputStream in, OutputStream out, PrintStream err) {
+        var guestErr = new GuestStderr(err);
+        try {
+            return incus.execBidirectional(instance, 0, 0, "/", guestCommand(), in, out, guestErr);
+        } finally {
+            guestErr.close();  // a last line without a break, even when the exec fails
+        }
     }
 
     /** A socket listening on port 22 (hex {@code 0016}), as a line of {@code /proc/net/tcp} or {@code tcp6} shows it. */
