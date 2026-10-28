@@ -369,7 +369,7 @@ public class GuestProvisioning {
 
         var content = AgentContextGenerator.generate(canonicalName, toolNames, repos, notes);
         container.writeFile(ClaudeSetup.MANAGED_MEMORY_PATH, content);
-        var paths = new java.util.LinkedHashSet<String>();
+        var paths = new LinkedHashSet<String>();
         for (var resolved : allTools) {
             var path = resolved.setup().environmentContextPath();
             if (path != null && paths.add(path)) {
