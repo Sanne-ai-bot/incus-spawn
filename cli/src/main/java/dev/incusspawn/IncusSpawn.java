@@ -22,7 +22,7 @@ public class IncusSpawn implements QuarkusApplication {
     public static final Set<String> HIDDEN_COMMANDS = Set.of(
             "git-remote-helper", "ssh-proxy"
     );
-    private static final Pattern ANSI_ESCAPE = Pattern.compile("\033\\[[^m]*m");
+    private static final Pattern ANSI_ESCAPE = Pattern.compile("\033\\[[^m]*m"); // raw ANSI: matches escapes, writes none
 
     @Override
     public int run(String... args) {
