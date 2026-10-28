@@ -3,7 +3,6 @@
 
 
 
-
         ╔ Branch from 'tpl-dev' ═══════════════════════════════════════╗
         ║ Name:                                                        ║
         ║ dev-1                                                        ║
@@ -13,6 +12,7 @@
         ║    [ ] GUI passthrough                                       ║
         ║    [ ] KVM passthrough                                       ║
         ║    Network < Full internet >                                 ║
+        ║    [ ] MCP control (isx mcp)                                 ║
         ║    [ ] Inbox /path/to/dir                                    ║
         ║  Enter Confirm   Esc Cancel   ↑↓/Tab Navigate   Space Toggle ║
         ╚══════════════════════════════════════════════════════════════╝

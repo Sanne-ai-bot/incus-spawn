@@ -86,10 +86,16 @@ class McpClientRegistrationStartTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> env = ArgumentCaptor.forClass(Map.class);
         doReturn(true).when(incus).pollUntilReady(eq("copy"), anyInt(), env.capture(), any(String[].class));
+        // Airgapped, so no proxy is needed. Preflight refuses the grant there (#1811), so it checks
+        // the request without it, and create gets the one asked for: what it does with the stamp.
         var request = new BranchFlow.Request(NAME, "copy", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), true, Map.of());
+        var checked = BranchFlow.preflight(incus, request, Map.of());
+        var asked = new BranchFlow.Request(NAME, "copy", false, false, NetworkMode.AIRGAP,
                 null, null, null, null, List.of(), true, extraConfig);
 
-        BranchFlow.create(incus, BranchFlow.preflight(incus, request, Map.of()));
+        BranchFlow.create(incus, new BranchFlow.Preflight(asked, checked.defs(), checked.accounts(),
+                checked.accountOrigins(), checked.sourceInstance(), checked.template()));
 
         return env.getValue();
     }

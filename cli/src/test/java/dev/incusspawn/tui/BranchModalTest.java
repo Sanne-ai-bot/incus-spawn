@@ -2,6 +2,7 @@ package dev.incusspawn.tui;
 
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.MachineType;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
@@ -61,6 +62,44 @@ class BranchModalTest {
         assertEquals(NetworkMode.values()[1], request.networkMode());
         assertNull(request.inbox());
         assertNull(request.kvm(), "an untouched box leaves KVM to the default, so create() says why it is off (#1254)");
+    }
+
+    /** Tab from the name to a container dialog's MCP control box: past GUI, KVM and the network. */
+    private static final KeyEvent[] TO_MCP_CONTROL = {KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB),
+            KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB)};
+
+    @Test
+    void mcpControlIsOffUntilTicked() {
+        assertEquals(java.util.Map.of(), dialog(MachineType.CONTAINER).request("dev-2").extraConfig(),
+                "no default ever grants MCP control");
+    }
+
+    @Test
+    void tickedMcpControlStampsTheGrantIsxBranchMcpClientStamps() {
+        var dialog = dialog(MachineType.CONTAINER);
+        press(dialog, TO_MCP_CONTROL);
+        press(dialog, KeyEvent.ofChar(' '));
+        var config = dialog.request("dev-2").extraConfig();
+        assertEquals(java.util.Set.of(Metadata.MCP_CALLER), config.keySet());
+        assertTrue(Metadata.isMcpCaller(config), "a well-formed grant: " + config);
+    }
+
+    @Test
+    void anAirgappedBranchGetsNoMcpControl() {
+        var dialog = dialog(MachineType.CONTAINER);
+        // Ticked, then the network cycled to Airgapped: Full, Proxy only, Airgapped
+        press(dialog, TO_MCP_CONTROL);
+        press(dialog, KeyEvent.ofChar(' '), KeyEvent.ofKey(KeyCode.UP), KeyEvent.ofChar(' '), KeyEvent.ofChar(' '));
+        assertEquals(NetworkMode.AIRGAP, dialog.branchNetworkMode());
+        assertEquals(java.util.Map.of(), dialog.request("dev-2").extraConfig(),
+                "an airgapped instance cannot reach the endpoint, so it gets no grant");
+        TuiSnapshot.assertMatches("branch-modal-airgapped-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+        // Tab skips the disabled row, so Space ticks the inbox, not MCP control; Up skips it back
+        press(dialog, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar(' '));
+        // Cycled on to Full, the box comes back unticked: passing Airgapped cleared it
+        press(dialog, KeyEvent.ofKey(KeyCode.UP), KeyEvent.ofChar(' '));
+        assertEquals(NetworkMode.FULL, dialog.branchNetworkMode());
+        assertEquals(java.util.Map.of(), dialog.request("dev-2").extraConfig());
     }
 
     @Test

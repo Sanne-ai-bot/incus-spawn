@@ -4,11 +4,9 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
-import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.lifecycle.TemplateLock;
-import dev.incusspawn.proxy.McpClientCheck;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.util.BuildOutput;
@@ -164,13 +162,13 @@ public class BranchCommand extends BaseCommand {
             BuildOutput.error("--airgap and --proxy-only are mutually exclusive.");
             return null;
         }
-        if (airgap && mcpClient) {
-            BuildOutput.error("an --airgap instance cannot reach " + ProxyConfig.MCP_DOMAIN
-                    + "; --mcp-client needs --proxy-only or full network.");
-            return null;
-        }
         var networkMode = airgap ? NetworkMode.AIRGAP
                 : proxyOnly ? NetworkMode.PROXY_ONLY : NetworkMode.FULL;
+        var unreachable = mcpClient ? BranchFlow.mcpClientUnreachable(networkMode) : null;
+        if (unreachable != null) {
+            BuildOutput.error(unreachable + "; --mcp-client needs --proxy-only or full network.");
+            return null;
+        }
         if (gui && noGui) {
             BuildOutput.error("--gui and --no-gui are mutually exclusive.");
             return null;
@@ -179,7 +177,7 @@ public class BranchCommand extends BaseCommand {
         Boolean kvmChoice = kvm ? Boolean.TRUE : noKvm ? Boolean.FALSE : null;
         var request = new BranchFlow.Request(resolvedSource, name, guiChoice, kvmChoice, networkMode,
                 inbox, cpuLimit, memoryLimit, diskLimit, accounts, !noStart,
-                mcpClient ? Map.of(Metadata.MCP_CALLER, Metadata.newMcpCallerGrant()) : Map.of());
+                McpClientGrant.extraConfig(mcpClient));
 
         BranchFlow.Preflight preflight;
         RuntimeSetup.RuntimeConfig prefetched;
@@ -191,13 +189,7 @@ public class BranchCommand extends BaseCommand {
             return null;
         }
 
-        if (mcpClient && !noStart) {
-            // Asked the way the instance's Claude Code will ask, while the user is here to see it
-            BuildOutput.stepStart("Checking isx mcp from " + name + "...");
-            var reached = McpClientCheck.run(incus, name);
-            if (reached.ok()) BuildOutput.stepDone("isx " + OutputFormat.oneLine(reached.version()) + ", " + reached.tools() + " tools");
-            else BuildOutput.stepFail(BuildOutput.STEP_INDENT + "Warning: " + reached.describe(name));
-        }
+        if (mcpClient && !noStart) McpClientGrant.check(incus, name);
         BuildOutput.success(name + " is ready.");
         return new Created(resolvedSource, preflight, prefetched);
     }

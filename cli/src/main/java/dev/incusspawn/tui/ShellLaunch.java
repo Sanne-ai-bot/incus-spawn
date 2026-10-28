@@ -1,7 +1,9 @@
 package dev.incusspawn.tui;
 
 import dev.incusspawn.command.InstancePrep;
+import dev.incusspawn.command.McpClientGrant;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.GuiPassthrough;
@@ -85,6 +87,8 @@ final class ShellLaunch {
             prefetched = BranchFlow.create(tui.incus, preflight);
         }
 
+        // As isx branch --mcp-client does: the terminal is released, so the user sees what it found
+        if (Metadata.isMcpCaller(request.extraConfig())) McpClientGrant.check(tui.incus, name);
         BuildOutput.success(name + " is ready.");
         var shellPrep = prefetched.toShellPrep();
         var defaultCmd = new ActionResolver(tui.incus, tui.toolDefLoader, tui.cdiTools, preflight.defs())

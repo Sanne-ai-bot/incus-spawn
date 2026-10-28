@@ -3749,6 +3749,9 @@ The pieces, and why each is the way it is:
 
 - *Who may call: a stamp the user sets.*
   `isx branch --mcp-client` stamps `user.incus-spawn.mcp-caller` on the branch it makes (`mcp-client` was the name proposed, but that key already holds the client's display name).
+  The TUI's branch dialog has the same grant as its MCP control box (#1811), off until ticked and not offered on an Airgapped network: a person at the TUI is the one who would type the flag, so it needs no gate of its own.
+  Both build the stamp and run the check below through `McpClientGrant`, so the two cannot drift.
+  `BranchFlow.preflight` refuses the stamp on an airgapped branch (`mcpClientUnreachable`) before any Incus request, so no caller can make a coordinator that cannot reach its endpoint.
   It is an `mcp-` key, so `configureBranch` drops it from every copy: `isx branch --from coord` makes an ordinary instance, and so does an agent's fork.
   The MCP create path refuses it outright (`IncusInstanceBackend.branch`), so a coordinator cannot make another one.
   Like account pins it is the user's act, never an agent's: a guest can read its own `user.*` keys, never write them.
@@ -3803,7 +3806,7 @@ The pieces, and why each is the way it is:
   A reachable endpoint with no registration is the very failure #1182 was filed for.
   What the guest returns (curl's errors, the server's version) passes through `OutputFormat.oneLine` before it is printed.
   It is a warning, never a failure: the branch is made either way, and the user sees a coordinator that cannot work while still there to fix it.
-  One exec, only for `--mcp-client` branches.
+  One exec, only for `--mcp-client` branches, the dialog's included.
 
 The tool contract is the stdio one, unchanged: the same tools, approved templates, `mcp.yaml` limits and audit log, the session's host-side stamps (`mcp-cwd`, `mcp-client-pid`) simply absent.
 Out of scope: gating outward actions such as pushes at the proxy (the complement to this), and reaching Incus on another host.

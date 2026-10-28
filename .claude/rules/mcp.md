@@ -7,6 +7,7 @@ paths:
   - common/src/main/java/dev/incusspawn/config/McpConfig.java
   - proxy/src/main/java/dev/incusspawn/proxy/McpBridge.java
   - common/src/main/java/dev/incusspawn/proxy/McpClient*.java
+  - cli/src/main/java/dev/incusspawn/command/McpClientGrant.java
 ---
 
 # MCP server (`isx mcp`)
@@ -155,7 +156,9 @@ An instance whose watch exec failed (stopped, unreachable) is skipped until the 
 Tests run rounds themselves (`autoPoll = false`), never on the timer.
 
 **A coordinator in an instance (#915).**
-`isx branch --mcp-client` stamps `Metadata.MCP_CALLER` (`mcp-caller`); being an `mcp-` key, `configureBranch` drops it from every copy, and `IncusInstanceBackend.branch` refuses it from the MCP path -- no agent makes a coordinator.
+`isx branch --mcp-client`, or the TUI branch dialog's MCP control box (#1811), stamps `Metadata.MCP_CALLER` (`mcp-caller`) through `McpClientGrant`, which both use for the grant and the post-branch check.
+`BranchFlow.preflight` refuses the stamp on an airgapped branch (`mcpClientUnreachable`), whoever asks.
+Being an `mcp-` key, `configureBranch` drops it from every copy, and `IncusInstanceBackend.branch` refuses it from the MCP path -- no agent makes a coordinator.
 The proxy serves `https://mcp.isx.internal/mcp` (`ProxyConfig.MCP_DOMAIN`, a built-in intercepted domain answered by `McpBridge`, never relayed) to a caller `InstanceRegistry.identifyWithLineage()` identifies with `mcpCaller()` set: address, per-start secret (`X-Isx-Instance-Secret`) and stamp, before any body is read; on macOS, where the address names no instance, the secret alone and the stamp (#1583).
 Each session is a host `isx mcp --caller-instance <name>` bridged over stdio (Streamable HTTP: POST answered as an event stream with keepalive comments, notifications on GET, DELETE ends; 404 means initialize again); one per instance, a new `initialize` ending the previous process before the next starts, or two registries would each count only their own instances against `max-instances`.
 The child re-checks the stamp.
