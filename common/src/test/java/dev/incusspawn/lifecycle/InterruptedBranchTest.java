@@ -64,6 +64,46 @@ class InterruptedBranchTest {
     }
 
     @Test
+    void aCopyNeverCarriesItsSourcesExternalOwnerEvenBeforeItIsConfigured() {
+        // An orchestrator's instance (#1720): a user's branch of it is the user's, from the copy on,
+        // or the orchestrator's destroy would find the copy stamped as its own.
+        var daemon = new FakeIncusDaemon()
+                .container("orca-ws", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
+                        Metadata.OWNER, "orca", Metadata.OWNER_ID, "rt-1"))
+                .refuseWritesContaining("limits.memory");
+        var request = new BranchFlow.Request("orca-ws", "dev-1", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of());
+
+        assertThrows(RuntimeException.class,
+                () -> BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of())));
+
+        var config = daemon.instance("dev-1").path("config");
+        assertFalse(config.has(Metadata.OWNER), config.toString());
+        assertFalse(config.has(Metadata.OWNER_ID), config.toString());
+        assertEquals("orca", daemon.instance("orca-ws").path("config").path(Metadata.OWNER).asText());
+    }
+
+    @Test
+    void aConfiguredCopyKeepsOnlyTheOwnerItsCallerStamps() {
+        var daemon = new FakeIncusDaemon()
+                .container("orca-ws", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
+                        Metadata.OWNER, "orca", Metadata.OWNER_ID, "rt-1"));
+        var mine = new BranchFlow.Request("orca-ws", "dev-1", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of());
+        BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), mine, Map.of()));
+        var theirs = new BranchFlow.Request("orca-ws", "dev-2", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of(Metadata.OWNER, "herdr"));
+        BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), theirs, Map.of()));
+
+        var config = daemon.instance("dev-1").path("config");
+        assertFalse(config.has(Metadata.OWNER), config.toString());
+        assertFalse(config.has(Metadata.OWNER_ID), config.toString());
+        var stamped = daemon.instance("dev-2").path("config");
+        assertEquals("herdr", stamped.path(Metadata.OWNER).asText(), stamped.toString());
+        assertFalse(stamped.has(Metadata.OWNER_ID), "an id the caller did not give is not the source's");
+    }
+
+    @Test
     void aBranchOfAFailedBuildIsUntrustedFromItsCopyEvenIfTheBuildPredatesTheStamp() {
         // #936: a failed build promoted by an older isx carries no taint, and its copy request is the
         // one moment a branch of it must get one, before anything could give it a secret

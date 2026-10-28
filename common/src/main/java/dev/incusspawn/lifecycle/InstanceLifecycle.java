@@ -160,13 +160,13 @@ public final class InstanceLifecycle {
                     AccountSelection.fromConfig(instance.path("config"))));
         }
         if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
-        // A copy carries its source's MCP ownership stamps. A branch of an agent's instance
+        // A copy carries its source's ownership stamps, isx mcp's and an external owner's. A branch of an agent's instance
         // (say, one it handed over with keep_instance) belongs to whoever made the branch, and
         // must not be mistaken for the dead session's orphan and reaped.
         var branchConfig = instance.path("config");
         if (branchConfig instanceof io.hyperfoil.tools.jjq.value.JqObject branchObject) {
             branchObject.forEach((key, value) -> {
-                if (Metadata.isMcpKey(key) && !settings.extraConfig().containsKey(key)) update.unset(key);
+                if (Metadata.isOwnershipKey(key) && !settings.extraConfig().containsKey(key)) update.unset(key);
             });
         }
         update.config(settings.extraConfig());

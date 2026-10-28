@@ -374,7 +374,7 @@ public final class BranchFlow {
         // An instance from the copy on, not its template's base: a branch interrupted before
         // configureBranch would otherwise pass for a template, which isx list -q never shows.
         copyConfig.put(Metadata.TYPE, Metadata.TYPE_CLONE);
-        // Nor its source's isx mcp ownership: configureBranch drops what the caller did not
+        // Nor its source's ownership, isx mcp's or an external owner's (#1720): configureBranch drops what the caller did not
         // stamp, but the copy is listed before that, and an agent's idempotency key would make it
         // answer for its source's create meanwhile (#1011). An empty value unsets.
         var sourceConfig = sourceInstance.path("config");
@@ -398,7 +398,7 @@ public final class BranchFlow {
         if (!untrusted.isEmpty()) copyConfig.put(Metadata.UNTRUSTED_LINEAGE, untrusted);
         if (sourceConfig instanceof io.hyperfoil.tools.jjq.value.JqObject sourceObj) {
             sourceObj.keys().forEach(key -> {
-                if (Metadata.isMcpKey(key)) copyConfig.putIfAbsent(key, "");
+                if (Metadata.isOwnershipKey(key)) copyConfig.putIfAbsent(key, "");
             });
         }
         BuildOutput.stepStart("Copying from template...");
