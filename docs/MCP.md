@@ -2,7 +2,8 @@
 
 An agent on your host, such as Claude Code, can use isx itself: create disposable instances from templates you approved, run builds and tests in them, and hand whole tasks to Claude Code or Codex inside an instance.
 `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio.
-This page covers setup, the tools, and routes to a program of your own.
+
+This page covers setup, the tools, running the coordinating agent in an instance of its own, and routes to a program of your own.
 
 ## Setting it up
 
@@ -18,6 +19,9 @@ To register it with Claude Code by hand instead:
 ```shell
 claude mcp add --scope user isx -- ~/.local/bin/isx mcp
 ```
+
+To run the coordinating agent in an instance instead of on your host, branch that instance with `isx branch --mcp-client`, as [A coordinator in an instance](#a-coordinator-in-an-instance) describes.
+You still approve its templates in `mcp.yaml` on the host, as below.
 
 ## Approving templates: `mcp.yaml`
 
