@@ -1007,9 +1007,10 @@ A branch interrupted before `configureBranch` (Ctrl-C, a failed write) is still 
 Incus instances isx did not create (no isx metadata) are not listed.
 `-q`/`--quiet` prints names only, and `--status=running|stopped` filters.
 
-**`isx instances` is deprecated.**
+**`isx instances` is removed** (#1802).
 It listed every Incus instance not named `tpl-*`, which disagreed with `isx list` both ways.
-Completion scripts installed by older releases call it by name, so it stays, hidden, as an alias for `isx list -q` until a later release removes it; the scripts this release generates call `isx list -q`.
+It was deprecated, hidden, as an alias for `isx list -q` (#1036), kept for completion scripts installed by older releases, which call it by name.
+Those scripts now offer no instance names until regenerated (docs/dev/MIGRATIONS.md); the scripts isx generates call `isx list -q`.
 
 **Commands that act need clean stdout, not a format** (#1037).
 `BuildOutput` writes colour only when `BuildOutput.ansi()` says so, which is `TerminalProgress.isAnsiTerminal()`: false without a console, for `TERM=dumb`, and when `NO_COLOR` is set to anything non-empty (no-color.org), so the live spinner also falls back to `label... done.` lines.

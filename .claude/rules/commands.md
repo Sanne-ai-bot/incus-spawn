@@ -50,7 +50,7 @@ Claude's and GitHub's steps name their own namespace (`SpawnConfig.ClaudeConfig.
 **`isx mcp`** is a normal (visible) command, but it is started by an agent, not typed: it serves MCP on stdin/stdout until end of input.
 See `.claude/rules/mcp.md`.
 
-**Hidden (internal) commands**: Some commands are plumbing not meant for direct user invocation: `completion` (setup utility), `instances` (deprecated alias for `isx list -q`, kept only because completion scripts installed by older releases call it), `git-remote-helper` (invoked by git), `ssh-proxy` (SSH ProxyCommand).
+**Hidden (internal) commands**: Some commands are plumbing not meant for direct user invocation: `completion` (setup utility), `git-remote-helper` (invoked by git), `ssh-proxy` (SSH ProxyCommand).
 These remain in `groupCommands` (so they're still executable) but are hidden from `isx --help` and shell tab-completion.
 `IncusSpawn.HIDDEN_COMMANDS` is the single source of truth for the help filter; `IncusSpawn.filterHiddenCommands()` intercepts `isx --help`/`-h` before aesh and strips matching lines from the rendered help via `LazyHelp.render()`.
 The completion scripts in `CompletionCommand` must be kept in sync manually (remove the command from suggestion lists, case dispatch, and any dedicated helper functions).

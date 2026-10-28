@@ -161,9 +161,6 @@ It lists no templates: `isx templates` lists those.
 On macOS it starts the VM if it is stopped, except with `-q`, which shell completion runs.
 See [Scripting isx](#scripting-isx) for the `plain` and `json` formats and the fields.
 
-`isx instances` is deprecated and runs `isx list -q`; a later release removes it.
-The shell completion scripts do not call it.
-
 ## `isx update-base`
 
 Check for base image updates and install them.
