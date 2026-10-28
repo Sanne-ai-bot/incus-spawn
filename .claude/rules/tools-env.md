@@ -3,6 +3,7 @@ paths:
   - "common/src/main/java/dev/incusspawn/tool/**"
   - "common/src/main/resources/tools/**"
   - "common/src/main/java/dev/incusspawn/config/Env*.java"
+  - "common/src/main/java/dev/incusspawn/lifecycle/*Integration*.java"
 ---
 
 # Tool System
@@ -157,3 +158,15 @@ Called after `runToolSetup()` in both `buildFromScratch` and `buildFromParent`.
 A prime that fails with an untrusted-certificate symptom (`GuestProvisioning.untrustedCertificate`) gets `runTrustHelper` and one more run of that command (in a list, the commands before it do not run again), in a build and `isx update-all --prime` alike (`RepoCloner.runPrime`, #1746): a runtime the prime downloads and uses at once beats the path units.
 The path units watch the same two tables, so a new landing directory is one line there; each costs one inotify instance per running instance (`IncusDiagnostics.INOTIFY_INSTANCES_PER_CONTAINER`).
 `TRUST_ENV` is the table of convention variables (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, ...) that `writeEnvFile()` exports `setIfUnset`; add a runtime by adding a line, and list the deviation in `docs/FEDORA.md`, "What differs from a stock Fedora install".
+
+# Host integrations
+
+A tool may have a host half: what isx does on the host for an instance whose build installed it (#1720), such as the `herdr` tool adding each instance to the host's herdr as an SSH machine.
+It is a `HostIntegration` (`common/lifecycle`), built-in Java only and listed in `HostIntegration.BUILT_IN`, never declared by a definition: a tool a cloned repository ships must not make isx run host commands.
+An instance whose build used a project-local definition, or whose lineage is untrusted, gets none (`HostIntegration.trusted`), since a project-local tool may share a built-in's name.
+`started` runs at the end of a branch's start (`BranchFlow.create`) and in `InstancePrep.readyForUse`, so every start for use reaches it; `done(name)` is asked first and must cost nothing once done.
+herdr's is a host-side record per instance name (`Environment.herdrMachinesDir()`): the machine id isx added, or `-` when it added none (an untrusted build, a failed add), so nothing is retried or said again on every start.
+`destroyed` removes only the recorded id, so a machine the user added for a real host of the same name survives, and a destroy with no record runs nothing.
+`destroyed` runs from `InstanceLifecycle.removeHostIntegration` on every delete, a TUI rename's old name included.
+Host programs go through `HostCommands` (`HostPath.isOnPath`, and a run bounded in time, its output read included, so a daemon it leaves holding the pipe cannot hold isx), which tests replace.
+

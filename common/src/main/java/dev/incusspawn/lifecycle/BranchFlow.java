@@ -485,6 +485,11 @@ public final class BranchFlow {
             // read before the start: nothing since has written a pin or a stamp.
             InstanceLifecycle.reconcileAccountIdentities(incus, name, prefetched.instance(), BuildOutput.bound());
         }
+        // Once it is up and reachable over SSH: the host halves of its tools (#1720), from the read
+        // before the start, which holds the branch's build and stamps. Here as well as in
+        // readyForUse: a branch opens its shell without it, and an orchestrator's create
+        // (isx branch --format=json) would not reach it until a later start
+        HostIntegration.startedAll(incus, name, prefetched.instance(), BuildOutput.bound());
         return prefetched;
     }
 

@@ -328,7 +328,7 @@ It signs in through the proxy with an account you configured in `isx init`:
 ## Tools
 
 Templates are made of tools.
-`gh`, `maven-3`, `podman`, `sshd`, the VS Code and IntelliJ remote backends, `tmux` and `zmx` ship with isx; `isx tools list -v` lists them all.
+`gh`, `herdr`, `maven-3`, `podman`, `sshd`, the VS Code and IntelliJ remote backends, `tmux` and `zmx` ship with isx; `isx tools list -v` lists them all.
 Your own are YAML files in `~/.config/incus-spawn/tools/` or a project's `.incus-spawn/tools/`: packages, commands, environment variables, TUI actions, and credentials the proxy adds for a service of yours.
 See [Tools](docs/TOOLS.md).
 

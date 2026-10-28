@@ -1018,6 +1018,7 @@ public final class InstanceLifecycle {
         AutoRemoteService.removeRemotes(name, Output.diagnosticsTo(out::warn));
         SshKeyManager.cleanupInstance(name);
         ZmxSocketForward.cleanup(name, out);
+        HostIntegration.destroyedAll(name, out);
     }
 
     /**

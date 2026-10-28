@@ -5301,6 +5301,19 @@ The TUI's instance table shows the same `OWNER` column from a 100-column termina
 Each row carries the owner cell, and the table draws as many cells as it has columns, so the choice is made per frame, on a resize too, with no rebuild.
 Whether any instance is owned is read from every instance, not the search's matches, so the column does not come and go while typing a search.
 
+**Orchestrators with no hooks: a tool's host half.**
+herdr keeps a list of SSH machines and has no lifecycle hooks, so nothing in it can call isx.
+isx tells it instead: the `herdr` tool installs herdr in the template, and its host half (`HerdrIntegration`, a `HostIntegration`) runs `herdr machine add <name>` on the instance's first start and `herdr machine remove` when it is destroyed, when the host has `herdr`.
+Installed in the template, herdr's first connection finds it and starts its server; without it herdr offers to install itself over SSH, which is the step Sanne did not want.
+`herdr machine add` runs without a terminal (checked against herdr 0.9.5: about a second, the remote server started and the machine saved).
+The target is the instance's name, which its Host block in isx's managed SSH config resolves.
+What isx did is recorded on the host, one file per instance name: the id of the machine it added, or `-` when it added none.
+So later starts check one file and run nothing, a copy or a renamed instance gets a record of its own, and a failed add or an untrusted build is not retried or reported again on every start.
+A destroy removes only the recorded machine: herdr may hold a machine the user added for a real host that shares the instance's name, which a match on the SSH target alone would have removed.
+A stamp on the instance was the first version: a copy carries it, it is gone once the instance is, and writing it cost a request on the start path.
+A host half is built-in Java, never a definition's: a cloned repository's tool must not make isx run host commands, and an instance built from a project-local definition gets none, since such a tool may share a built-in's name.
+zmx's host-side socket sharing predates the seam and could move onto it.
+
 **Alternatives.**
 A dedicated `isx sandbox create|suspend|resume|destroy` group with its own JSON contract would be a second lifecycle surface to keep in step with `branch` and `destroy`.
 A built-in `isx orca` (the contributor's branch) ties the surface to one tool's contract and a Java package per orchestrator; its generic pieces are what this takes.

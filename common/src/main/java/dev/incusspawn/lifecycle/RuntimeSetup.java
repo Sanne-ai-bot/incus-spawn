@@ -404,9 +404,6 @@ public final class RuntimeSetup {
     }
 
     static boolean hasSshdTool(String buildSourceJson) {
-        // Parsed only when it can name the tool: the start path asks this of every instance
-        if (buildSourceJson == null || !buildSourceJson.contains("sshd")) return false;
-        var bs = BuildSource.fromJson(buildSourceJson);
-        return bs != null && bs.getTools().containsKey("sshd");
+        return BuildSource.installs(buildSourceJson, "sshd");
     }
 }

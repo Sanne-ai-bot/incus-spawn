@@ -42,6 +42,7 @@ public class ToolDefLoader {
     public static final List<String> BUILTIN_TOOLS = List.of(
             "atlassian-mcp.yaml",
             "headroom.yaml",
+            "herdr.yaml",
             "perf.yaml",
             "podman.yaml",
             "maven-3.yaml",

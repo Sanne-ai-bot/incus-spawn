@@ -10,6 +10,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
+import dev.incusspawn.lifecycle.HostIntegration;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
@@ -133,6 +134,8 @@ public class InstancePrep {
         // From the same read: what ensureReady writes is none of what the reconcile looks at
         InstanceLifecycle.reconcileAccountIdentities(incus, name, instance, out);
         ZmxSocketForward.ensureSymlink(name, out);
+        // The host halves of its tools (#1720): nothing to run once done, read from this instance
+        HostIntegration.startedAll(incus, name, instance, out);
     }
 
     /**
