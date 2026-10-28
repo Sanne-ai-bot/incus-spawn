@@ -15,6 +15,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
@@ -202,5 +204,18 @@ class ZmxSocketForwardTest {
         var args = ArgumentCaptor.forClass(String[].class);
         verify(incus).deviceAdd(eq(NAME), eq(DEVICE), eq("disk"), args.capture());
         return List.of(args.getValue());
+    }
+
+    /** The host dir resolves as zmx 0.6.0 and 0.8.1 resolve their socket dir, {@code $TMPDIR/zmx-<uid>} included. */
+    @Test
+    void hostZmxDirResolvesAsZmxDoes() {
+        Supplier<String> uid = () -> "1000";
+        var all = Map.of("ZMX_DIR", "/z", "XDG_RUNTIME_DIR", "/run/user/1000", "TMPDIR", "/tmp/td");
+        assertEquals(Path.of("/z"), ZmxSocketForward.hostZmxDir(all::get, uid));
+        var blankZmxDir = Map.of("ZMX_DIR", " ", "XDG_RUNTIME_DIR", "/run/user/1000", "TMPDIR", "/tmp/td");
+        assertEquals(Path.of("/run/user/1000", "zmx"), ZmxSocketForward.hostZmxDir(blankZmxDir::get, uid));
+        var tmpdirOnly = Map.of("TMPDIR", "/tmp/td");
+        assertEquals(Path.of("/tmp/td", "zmx-1000"), ZmxSocketForward.hostZmxDir(tmpdirOnly::get, uid));
+        assertEquals(Path.of("/tmp", "zmx-1000"), ZmxSocketForward.hostZmxDir(Map.<String, String>of()::get, uid));
     }
 }

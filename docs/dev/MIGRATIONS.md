@@ -161,3 +161,17 @@ incus exec <name> -- systemctl disable --now isx-network-watchdog.timer  # stop 
 ```
 
 Then rebuild the template from a current base image and branch again.
+
+## zmx sockets shared under `$TMPDIR/zmx`
+
+On a host with `TMPDIR` set and neither `ZMX_DIR` nor `XDG_RUNTIME_DIR`, isx used to share instance zmx sockets under `$TMPDIR/zmx` (issue 1771).
+Host zmx looks in `$TMPDIR/zmx-<uid>`, so `zmx attach isx-<name>` found nothing there.
+isx now uses `$TMPDIR/zmx-<uid>`, and each instance's `zmx-sockets` device is moved there the next time isx starts it.
+A running instance keeps the old source until then, so stop it and open a shell on it again.
+The old directory is no longer read or cleaned up by isx.
+
+```shell
+ls "${TMPDIR:?}/zmx/containers"  # instances shared under the old directory
+incus stop <name> && isx shell <name>
+rm -rf "${TMPDIR:?}/zmx"        # once no instance's device names it
+```
