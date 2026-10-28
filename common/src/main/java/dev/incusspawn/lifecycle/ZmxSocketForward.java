@@ -99,8 +99,7 @@ public final class ZmxSocketForward {
     }
 
     public static boolean isZmxInstalled(String buildSourceJson) {
-        var bs = BuildSource.fromJson(buildSourceJson);
-        return bs != null && bs.getTools().containsKey("zmx");
+        return BuildSource.installs(buildSourceJson, "zmx");
     }
 
     /**

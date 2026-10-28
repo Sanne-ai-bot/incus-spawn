@@ -203,6 +203,14 @@ public final class Environment {
         return stateLogFile("console-logs", "Instance", instance);
     }
 
+    /**
+     * Where isx records, per instance, the host herdr machine it added for it ({@code HerdrIntegration},
+     * #1720): one file per instance name.
+     */
+    public static Path herdrMachinesDir() {
+        return home().resolve(".local/state/incus-spawn/herdr-machines");
+    }
+
     /** {@code <name>.log} in {@code subdir} of the state directory, refusing a name that escapes it. */
     private static Path stateLogFile(String subdir, String what, String name) {
         var dir = home().resolve(".local/state/incus-spawn").resolve(subdir);

@@ -1,0 +1,139 @@
+package dev.incusspawn.lifecycle;
+
+import dev.incusspawn.config.Jjq;
+import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.util.HostLock;
+import dev.incusspawn.util.Output;
+import dev.incusspawn.util.OutputFormat;
+import io.hyperfoil.tools.jjq.value.JqValue;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.function.Supplier;
+
+/**
+ * The host half of the {@code herdr} tool (#1720): an instance whose template installs herdr is
+ * added to the host's herdr as an SSH machine on its first start, and removed when it is
+ * destroyed, so the user never runs {@code herdr machine add} and herdr never installs itself
+ * over SSH (the tool did). Only when the host has {@code herdr} on its {@code PATH}.
+ *
+ * <p>The machine's SSH target is the instance's name, which its Host block in isx's managed SSH
+ * config resolves. What isx did is recorded on the host, one file per instance name in
+ * {@code records}: the id of the machine it added, or {@link #NOT_ADDED} when it decided not to
+ * (an untrusted build) or could not (a failed add, whose warning says how to add it by hand). So a
+ * later start reads one file and runs nothing, a copy or a renamed instance (another name) gets
+ * its own, and a destroy removes only the machine isx added: never one the user added for a real
+ * host that happens to share the instance's name. A destroy with no record runs nothing.
+ */
+public final class HerdrIntegration implements HostIntegration {
+
+    static final String TOOL = "herdr";
+    /** Recorded when isx added no machine for the instance, so it neither retries nor removes one. */
+    static final String NOT_ADDED = "-";
+    /** Its first connection starts herdr's server in the instance, about a second when it works. */
+    static final Duration ADD_TIMEOUT = Duration.ofSeconds(30);
+    static final Duration QUICK = Duration.ofSeconds(10);
+    private static final String HERDR_ID = "[0-9a-f]{32}";
+
+    private final HostCommands host;
+    private final Supplier<Path> records;
+
+    public HerdrIntegration(HostCommands host, Supplier<Path> records) {
+        this.host = host;
+        this.records = records;
+    }
+
+    @Override
+    public String tool() {
+        return TOOL;
+    }
+
+    @Override
+    public boolean done(String name) {
+        return Files.exists(record(name));
+    }
+
+    @Override
+    public void started(IncusClient incus, String name, JqValue instance, Output out) {
+        if (!host.onPath(TOOL)) return;
+        var shown = OutputFormat.oneLine(name);
+        // One first start at a time: a branch and an orchestrator's start must not both add it
+        try (var lock = HostLock.acquire(records.get().resolve(".lock"), "adding " + shown + " to herdr", out::step)) {
+            if (done(name)) return;
+            if (!HostIntegration.trusted(instance)) {
+                out.step("Not adding " + shown + " to herdr: its template is project-local or untrusted.");
+                record(name, NOT_ADDED);
+                return;
+            }
+            var added = host.run(ADD_TIMEOUT, List.of(TOOL, "machine", "add", name, "--label", name));
+            var id = added.ok() ? addedId(added.output()) : null;
+            if (id == null) {
+                out.warn("could not add " + shown + " to herdr: " + lastLine(added.output()),
+                        "Add it yourself: herdr machine add " + shown);
+                record(name, NOT_ADDED);
+                return;
+            }
+            record(name, id);
+            out.step("Added " + shown + " to herdr.");
+        } catch (HostLock.HostLockException | IOException e) {
+            out.warn("could not add " + shown + " to herdr: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void destroyed(String name, Output out) {
+        var record = record(name);
+        if (!Files.exists(record)) return;
+        var shown = OutputFormat.oneLine(name);
+        try {
+            var id = Files.readString(record).strip();
+            if (id.matches(HERDR_ID) && host.onPath(TOOL) && listed(id)) {
+                var removed = host.run(QUICK, List.of(TOOL, "machine", "remove", id));
+                if (!removed.ok()) {
+                    out.warn("could not remove " + shown + " from herdr: " + lastLine(removed.output()),
+                            "Remove it yourself: herdr machine remove " + id);
+                    return;
+                }
+            }
+            Files.deleteIfExists(record);
+        } catch (IOException | RuntimeException e) {
+            out.warn("could not remove " + shown + " from herdr: " + e.getMessage());
+        }
+    }
+
+    /** The machine id herdr printed for the one it saved: {@code Saved SSH machine <id>.} */
+    static String addedId(String output) {
+        var matcher = java.util.regex.Pattern.compile("\\b(" + HERDR_ID + ")\\b").matcher(output);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    /** Whether the host's herdr still has machine {@code id}: the user may have removed it by hand. */
+    private boolean listed(String id) {
+        var listed = host.run(QUICK, List.of(TOOL, "machine", "list", "--json"));
+        if (!listed.ok()) throw new IllegalStateException("herdr machine list: " + lastLine(listed.output()));
+        return Jjq.parseForeign(listed.output(), "herdr machine list --json").asList().stream()
+                .anyMatch(machine -> id.equals(machine.pathText("id", "")));
+    }
+
+    private Path record(String name) {
+        var dir = records.get();
+        var file = dir.resolve(name).normalize();
+        // Incus validates instance names, so this only guards against a caller's mistake
+        if (!file.getParent().equals(dir)) throw new IllegalArgumentException("not an instance name: " + name);
+        return file;
+    }
+
+    private void record(String name, String value) throws IOException {
+        var file = record(name);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, value + "\n");
+    }
+
+    private static String lastLine(String output) {
+        var lines = output.strip().lines().toList();
+        return lines.isEmpty() ? "(no output)" : OutputFormat.oneLine(lines.getLast());
+    }
+}

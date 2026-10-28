@@ -1,0 +1,21 @@
+name: herdr
+description: herdr 0.9.5 – terminal workspace manager for agents, reached from the host's herdr over SSH
+requires:
+  - sshd
+
+# Installed in the template, so the host's herdr finds it and never offers to install one over SSH.
+# The host half (registering each instance as a herdr machine) is built into isx: HerdrIntegration.
+# Checksums: the sha256 GitHub records for each asset of the v0.9.5 release (herdrdev/herdr).
+downloads:
+  - url: https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-x86_64
+    sha256: 14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
+    destination_file: /tmp/herdr-dl/herdr
+    arch: x86_64
+  - url: https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-aarch64
+    sha256: 17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c
+    destination_file: /tmp/herdr-dl/herdr
+    arch: aarch64
+run:
+  - install -m 755 /tmp/herdr-dl/herdr /usr/local/bin/herdr
+  - rm -rf /tmp/herdr-dl
+verify: herdr --version

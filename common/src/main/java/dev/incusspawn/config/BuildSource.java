@@ -110,6 +110,16 @@ public class BuildSource {
         return root != null ? root.toString() : null;
     }
 
+    /**
+     * Whether the build recorded in {@code json} installed {@code tool}. The start path asks this
+     * of every instance, so the JSON is parsed only when it can name the tool.
+     */
+    public static boolean installs(String json, String tool) {
+        if (json == null || !json.contains(tool)) return false;
+        var source = fromJson(json);
+        return source != null && source.getTools().containsKey(tool);
+    }
+
     /** Whether any definition this image was built from was project-local. */
     public boolean usedProjectLocal() {
         return definitions.values().stream().anyMatch(def -> def.getProjectRoot() != null);

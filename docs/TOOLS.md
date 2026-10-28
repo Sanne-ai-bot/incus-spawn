@@ -28,6 +28,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `starship` | Starship cross-shell prompt with incus-spawn indicator |
 | `tmux` | Terminal multiplexer with incus-spawn session integration |
 | `zmx` | zmx: session attach/detach for the terminal |
+| `herdr` | herdr terminal workspace manager, with each instance added to the host's herdr |
 | `headroom` | Headroom context optimization for Claude Code |
 
 Run `isx tools list -v` to see all available tools, including user-defined and project-local definitions.
@@ -480,6 +481,24 @@ tools:
 ```
 
 Claude Code must be installed first, in a parent template or earlier in the list, or the build fails.
+
+### Agents from the host's herdr
+
+[herdr](https://herdr.dev) runs coding agents in terminal workspaces, on your machine or on SSH machines it lists.
+The `herdr` tool installs herdr in the template, so the host's herdr never offers to install it over SSH.
+It also adds `sshd`, which herdr connects through.
+
+```yaml
+name: tpl-herdr
+parent: tpl-minimal
+tools:
+  - herdr
+```
+
+When `herdr` is installed on the host too, isx adds each instance of such a template to it as a machine, on the instance's first start.
+isx removes the machine again when it destroys the instance.
+herdr then lists the instance by its name, and `herdr --machine <name> agent list` reaches it.
+A template built from project-local definitions is never added.
 
 ### Terminal Session Persistence (zmx)
 
