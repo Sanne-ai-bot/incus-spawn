@@ -60,6 +60,19 @@ public final class ProofToken {
 
     private static final Pattern PREFIX = Pattern.compile("[A-Za-z0-9._-]*");
 
+    /**
+     * The part of every proof {@link Placeholder#tokenFor} mints that proves anything, whatever the
+     * prefix its namespace declares: the marker and the digest, so a new kind of proof is matched
+     * without being listed. What a scrub of untrusted text removes ({@code SecretRedactor}), since
+     * a build's own temporary proofs reach the login environment of the commands it records
+     * (#1742). The prefix is public and left in place: a pattern that also took it would start
+     * with an open-ended run, whose search takes quadratic time over a long line of such characters.
+     * Nothing may follow the digest either: a proof printed straight before more hex digits
+     * ({@code $GH_TOKEN$(date +%s)}) is a proof all the same.
+     */
+    public static final Pattern ANY_PROOF = Pattern.compile(Pattern.quote(MARKER)
+            + "[0-9a-f]{" + DIGEST_HEX_CHARS + "}");
+
     private ProofToken() {}
 
     /**

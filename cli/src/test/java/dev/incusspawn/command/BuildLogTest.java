@@ -42,6 +42,19 @@ class BuildLogTest {
     }
 
     @Test
+    void anEntryKeepsNoneOfTheBuildsOwnProofs() {
+        // A prime's login shell sources /run/isx/proof-tokens, so `env` prints the build's proofs
+        var gh = "gho_isx_" + "0123456789abcdef".repeat(2);
+        var vertex = "ya29.isx_" + "fedcba9876543210".repeat(2);
+        var entry = BuildLog.entry("repo 'app' prime", "env",
+                new IncusClient.ExecResult(0, "GH_TOKEN=" + gh + "\nCLOUDSDK_AUTH_ACCESS_TOKEN=" + vertex + "\n", ""),
+                Duration.ZERO);
+        assertFalse(entry.contains(gh) || entry.contains(vertex), entry);
+        assertTrue(entry.contains("GH_TOKEN=gho_<isx:redacted:isx-proof>"), entry);
+        assertTrue(entry.contains("CLOUDSDK_AUTH_ACCESS_TOKEN=ya29.<isx:redacted:isx-proof>"), entry);
+    }
+
+    @Test
     void theLogIsWrittenAsEachCommandEndsAndReplacesTheLastBuilds(@TempDir Path tmp) throws Exception {
         var file = tmp.resolve("build-logs/tpl-app.log");
         try (var old = BuildLog.open(file, "tpl-app", false)) {
