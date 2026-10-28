@@ -17,8 +17,12 @@ import static org.junit.jupiter.api.Assertions.*;
 class BranchMcpClientTest {
 
     private static BranchFlow.Request request(NetworkMode network) {
+        return request(network, Metadata.newMcpCallerGrant());
+    }
+
+    private static BranchFlow.Request request(NetworkMode network, String grant) {
         return new BranchFlow.Request("tpl-dev", "coord", null, null, network, null, null, null, null,
-                List.of(), false, Map.of(Metadata.MCP_CALLER, Metadata.newMcpCallerGrant()));
+                List.of(), false, Map.of(Metadata.MCP_CALLER, grant));
     }
 
     @Test
@@ -27,6 +31,15 @@ class BranchMcpClientTest {
         var e = assertThrows(BranchFlow.BranchException.class,
                 () -> BranchFlow.preflight(daemon.client(), request(NetworkMode.AIRGAP), Map.of()));
         assertEquals("an airgapped instance cannot reach mcp.isx.internal.", e.getMessage());
+        assertEquals(List.of(), daemon.requests());
+    }
+
+    @Test
+    void anyValueOfTheStampIsRefusedWhenAirgapped() {
+        // Not a well-formed grant, so it would grant nothing; still, no airgapped branch is stamped
+        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of());
+        assertThrows(BranchFlow.BranchException.class,
+                () -> BranchFlow.preflight(daemon.client(), request(NetworkMode.AIRGAP, "not-a-grant"), Map.of()));
         assertEquals(List.of(), daemon.requests());
     }
 

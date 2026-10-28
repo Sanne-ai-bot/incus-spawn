@@ -451,7 +451,7 @@ final class BranchModal {
         var request = new BranchFlow.Request(source, name, gui,
                 kvm, branchNetworkMode(),
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
-                cpu, memory, disk, branchAccounts.overrides(), true, McpClientGrant.extraConfig(branchMcpCheck.isChecked()));
+                cpu, memory, disk, branchAccounts.overrides(), true, McpClientGrant.extraConfig(branchMcpCheck.isChecked() && mcpClientReachable()));
         return request;
     }
 

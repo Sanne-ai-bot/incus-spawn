@@ -95,7 +95,10 @@ class BranchModalTest {
                 "an airgapped instance cannot reach the endpoint, so it gets no grant");
         TuiSnapshot.assertMatches("branch-modal-airgapped-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
         // Tab skips the disabled row, so Space ticks the inbox, not MCP control; Up skips it back
-        press(dialog, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar(' '));
+        press(dialog, KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar(' '), KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofChar('x'));
+        assertEquals(java.nio.file.Path.of("x"), dialog.request("dev-2").inbox(),
+                "Tab from the network lands on the inbox while Airgapped");
+        press(dialog, KeyEvent.ofKey(KeyCode.UP));
         // Cycled on to Full, the box comes back unticked: passing Airgapped cleared it
         press(dialog, KeyEvent.ofKey(KeyCode.UP), KeyEvent.ofChar(' '));
         assertEquals(NetworkMode.FULL, dialog.branchNetworkMode());

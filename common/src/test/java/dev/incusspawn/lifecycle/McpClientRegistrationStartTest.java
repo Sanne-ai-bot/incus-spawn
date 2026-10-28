@@ -32,7 +32,7 @@ import static org.mockito.Mockito.*;
  * {@code isx mcp} in its Claude Code on "1" and removes it on anything else, so a coordinator
  * keeps its registration and a copy loses it on its first start.
  */
-@ExtendWith(TempHome.class)
+@ExtendWith({TempHome.class, LinuxBranching.class})
 class McpClientRegistrationStartTest {
 
     private static final String NAME = "coord";
@@ -86,16 +86,19 @@ class McpClientRegistrationStartTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> env = ArgumentCaptor.forClass(Map.class);
         doReturn(true).when(incus).pollUntilReady(eq("copy"), anyInt(), env.capture(), any(String[].class));
-        // Airgapped, so no proxy is needed. Preflight refuses the grant there (#1811), so it checks
-        // the request without it, and create gets the one asked for: what it does with the stamp.
-        var request = new BranchFlow.Request(NAME, "copy", false, false, NetworkMode.AIRGAP,
-                null, null, null, null, List.of(), true, Map.of());
-        var checked = BranchFlow.preflight(incus, request, Map.of());
-        var asked = new BranchFlow.Request(NAME, "copy", false, false, NetworkMode.AIRGAP,
+        // The networked start's repairs (resolv.conf, the CA) exec in a guest the fake does not run
+        doReturn(new IncusClient.ExecResult(0, "", "")).when(incus).shellExec(eq("copy"), any(String[].class));
+        // Proxy only, as a coordinator is branched: the host's proxy is checked first, and this
+        // host may not run one
+        var request = new BranchFlow.Request(NAME, "copy", false, false, NetworkMode.PROXY_ONLY,
                 null, null, null, null, List.of(), true, extraConfig);
-
-        BranchFlow.create(incus, new BranchFlow.Preflight(asked, checked.defs(), checked.accounts(),
-                checked.accountOrigins(), checked.sourceInstance(), checked.template()));
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = i -> true;
+        try {
+            BranchFlow.create(incus, BranchFlow.preflight(incus, request, Map.of()));
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
 
         return env.getValue();
     }
