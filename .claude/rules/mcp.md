@@ -173,7 +173,7 @@ The coordination playbook is the `coordinate` MCP prompt (`McpPrompt`, `prompts/
 Every start path's bit is pinned both ways, `1` for a coordinator and `0` otherwise (`McpClientRegistrationStartTest`, `InstanceListingMcpCallerTest` for the TUI listing).
 
 **Set up by `isx init`.**
-The "Agent Access over MCP (experimental)" step (`InitCommand.setupMcp`, default off, skipped without a host `claude` or a console) registers the server with `claude mcp add --scope user isx -- <isx> mcp` and asks, per template whose chain installs `claude` or `codex`, whether to approve it.
+The "Agent Access over MCP" step (`InitCommand.setupMcp`, default off, skipped without a host `claude` or a console) registers the server with `claude mcp add --scope user isx -- <isx> mcp` and asks, per template whose chain installs `claude` or `codex`, whether to approve it.
 Templates approved by hand that it does not ask about are kept.
 Once registered with approved templates, a re-run asks one menu question instead (#1292): `t` runs the per-template questions, `n` prints how to remove it, Enter or end of input keeps everything.
 It names the templates installing `claude` that are not approved, so a new one is not missed.

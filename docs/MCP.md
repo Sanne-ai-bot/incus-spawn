@@ -7,7 +7,7 @@ This page covers setup, the tools, running the coordinating agent in an instance
 
 ## Setting it up
 
-`isx init` offers to set this up; it is experimental, so off by default.
+`isx init` offers to set this up; it is off by default, since it lets an agent on your host create and run instances.
 It registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code or Codex, whether agents may use it.
 
 The step needs Claude Code installed on the host and a terminal to ask from; without either, `isx init` skips it and says so.

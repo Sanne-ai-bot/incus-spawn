@@ -97,7 +97,7 @@ These are the priorities, in order: each stage unblocks the next.
    Proxy-derived monitoring of agent status, activity and spend, surfaced in the TUI: the first visible slice of mission control ([#322](https://github.com/Sanne/incus-spawn/issues/322)).
 4. **Dispatch and review.**
    Task dispatch onto fresh branches, and an in-TUI review lane: diff review and accept or reject from the TUI ([#322](https://github.com/Sanne/incus-spawn/issues/322)).
-   Dispatch is also coming to agents themselves, through the experimental `isx mcp` server ([#859](https://github.com/Sanne/incus-spawn/issues/859)).
+   Agents dispatch work themselves too, through the `isx mcp` server ([#859](https://github.com/Sanne/incus-spawn/issues/859)).
    - A coordinating agent on your host creates instances from templates you approved, runs commands, builds and tests in them, delegates whole tasks to the agents inside, and reads back their diffs.
    - What a coordinator further needs, including proxy-derived activity per instance, is tracked in [#898](https://github.com/Sanne/incus-spawn/issues/898).
 5. **Policy.**
