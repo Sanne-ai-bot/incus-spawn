@@ -218,4 +218,11 @@ class ZmxSocketForwardTest {
         assertEquals(Path.of("/tmp/td", "zmx-1000"), ZmxSocketForward.hostZmxDir(tmpdirOnly::get, uid));
         assertEquals(Path.of("/tmp", "zmx-1000"), ZmxSocketForward.hostZmxDir(Map.<String, String>of()::get, uid));
     }
+
+    /** macOS shares no zmx sockets, so it must not resolve the dir, which can fork {@code id -u}. */
+    @Test
+    void sharedHostZmxDirResolvesNothingOnMacOS() {
+        assertNull(ZmxSocketForward.sharedHostZmxDir(true, () -> fail("host zmx dir resolved on macOS")));
+        assertEquals(zmxDir, ZmxSocketForward.sharedHostZmxDir(false, () -> zmxDir));
+    }
 }

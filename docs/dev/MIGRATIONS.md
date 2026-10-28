@@ -173,5 +173,6 @@ The old directory is no longer read or cleaned up by isx.
 ```shell
 ls "${TMPDIR:?}/zmx/containers"  # instances shared under the old directory
 incus stop <name> && isx shell <name>
+incus config device get <name> zmx-sockets source   # must no longer name $TMPDIR/zmx
 rm -rf "${TMPDIR:?}/zmx"        # once no instance's device names it
 ```

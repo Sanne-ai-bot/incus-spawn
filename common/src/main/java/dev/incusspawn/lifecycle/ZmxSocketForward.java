@@ -54,6 +54,21 @@ public final class ZmxSocketForward {
         return Path.of("/tmp", "zmx-" + uid.get());
     }
 
+    /**
+     * The host zmx dir where isx shares zmx sockets, or null on macOS, which
+     * shares none.  The platform is checked first because resolving the dir
+     * forks {@code id -u} on the {@code TMPDIR} and {@code /tmp} fallbacks,
+     * and macOS sets {@code TMPDIR} without {@code XDG_RUNTIME_DIR}: every
+     * shell would pay for a process it has no use for.
+     */
+    private static Path sharedHostZmxDir() {
+        return sharedHostZmxDir(Platform.isMacOS(), ZmxSocketForward::hostZmxDir);
+    }
+
+    static Path sharedHostZmxDir(boolean macOS, Supplier<Path> hostZmxDir) {
+        return macOS ? null : hostZmxDir.get();
+    }
+
     public static boolean isZmxInstalled(String buildSourceJson) {
         var bs = BuildSource.fromJson(buildSourceJson);
         return bs != null && bs.getTools().containsKey("zmx");
@@ -68,12 +83,11 @@ public final class ZmxSocketForward {
      * that zmx may have cleaned up.</p>
      */
     public static void configure(IncusClient incus, String name, Output out) {
-        configure(incus, name, hostZmxDir(), out);
+        var zmxDir = sharedHostZmxDir();
+        if (zmxDir != null) configure(incus, name, zmxDir, out);
     }
 
     static void configure(IncusClient incus, String name, Path zmxDir, Output out) {
-        if (Platform.isMacOS()) return;
-
         var containerDir = zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name);
         try {
             Files.createDirectories(containerDir);
@@ -114,13 +128,12 @@ public final class ZmxSocketForward {
      */
     public static void ensureHostDirForStart(IncusClient incus, String name,
                                              JqValue instanceMetadata, Output out) {
-        ensureHostDirForStart(incus, name, hostZmxDir(), instanceMetadata, out);
+        var zmxDir = sharedHostZmxDir();
+        if (zmxDir != null) ensureHostDirForStart(incus, name, zmxDir, instanceMetadata, out);
     }
 
     static void ensureHostDirForStart(IncusClient incus, String name, Path zmxDir,
                                       JqValue instanceMetadata, Output out) {
-        if (Platform.isMacOS()) return;
-
         var device = instanceMetadata.path("devices").path(DEVICE_NAME);
         var source = device.path("source").asText("");
         if (source.isEmpty()) return; // no device — nothing to repair
@@ -143,7 +156,8 @@ public final class ZmxSocketForward {
      * {@code isx} session socket.  Cheap — no API calls.
      */
     public static void ensureSymlink(String name) {
-        ensureSymlink(hostZmxDir(), name);
+        var zmxDir = sharedHostZmxDir();
+        if (zmxDir != null) ensureSymlink(zmxDir, name);
     }
 
     private static void ensureSymlink(Path zmxDir, String name) {
@@ -167,7 +181,8 @@ public final class ZmxSocketForward {
      * is auto-removed by Incus on instance deletion.
      */
     public static void cleanup(String name) {
-        var zmxDir = hostZmxDir();
+        var zmxDir = sharedHostZmxDir();
+        if (zmxDir == null) return;
         try {
             Files.deleteIfExists(zmxDir.resolve(SYMLINK_PREFIX + name));
         } catch (IOException ignored) {
