@@ -60,6 +60,14 @@ public final class OwnDirectory {
                 + link + " that directory";
     }
 
+    /**
+     * The uid this process runs as, from the owner of {@code /proc/self}: no
+     * fork, and an error rather than a guess where it cannot be read (Linux only).
+     */
+    public static int processUid() throws IOException {
+        return (Integer) Files.getAttribute(Path.of("/proc/self"), "unix:uid");
+    }
+
     public static int uidOf(Path path) throws IOException {
         return (Integer) Files.getAttribute(path, "unix:uid", LinkOption.NOFOLLOW_LINKS);
     }

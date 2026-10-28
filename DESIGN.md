@@ -2677,6 +2677,8 @@ The reasons:
   Its source sits on the `XDG_RUNTIME_DIR` tmpfs, so every reboot would leave it missing, and it is added with `required=false`.
   A start that bypasses isx (`incus start`, `boot.autostart`) skips it, and the guest has no host-visible zmx sockets until isx itself starts the stopped instance and repairs the device first (#1044).
   An instance already running, such as one `boot.autostart` brought up after a reboot, keeps running without the mount until it is stopped and started through isx.
+  Destroy and rename remove the instance's zmx directory with everything zmx wrote in it, its `logs/` included, and follow no symlink (#1772).
+  They go only through a zmx dir and `containers/` that are the user's alone (`OwnDirectory`, shared with host-route secrets), since another user can make `/tmp/zmx-<uid>` first; otherwise the directory stays and they warn.
   The pre-start repair also re-adds a device from before that change, which costs no request when the device is already optional.
 - **The attach is quiet.**
   It runs inside the "Launching…"/"Deriving…" progress line, so the per-resource "Mounted …" notes and warnings come from `applyForBuild` after start, and a DNF cache failure is returned by `attachDnfCache` and printed once the step is done.

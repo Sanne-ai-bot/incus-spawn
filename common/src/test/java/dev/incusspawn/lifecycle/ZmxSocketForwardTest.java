@@ -3,6 +3,7 @@ package dev.incusspawn.lifecycle;
 import dev.incusspawn.util.RecordingOutput;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
+import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -242,10 +244,113 @@ class ZmxSocketForwardTest {
         Files.createSymbolicLink(containerDir().resolve("escape"), outside);
         Files.createSymbolicLink(symlink(), Path.of("containers", NAME, "isx"));
 
-        ZmxSocketForward.cleanup(NAME, zmxDir);
+        var out = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, zmxDir, out);
 
+        assertEquals(List.of(), out.warnings());
         assertFalse(Files.exists(containerDir(), LinkOption.NOFOLLOW_LINKS), "container dir left behind");
         assertFalse(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS), "session symlink left behind");
         assertTrue(Files.exists(kept), "cleanup followed a symlink out of the container dir");
+    }
+
+    /** A user's ZMX_DIR may be a link of theirs, and cleanup still goes through it. */
+    @Test
+    void cleanupGoesThroughTheUsersOwnLink(@TempDir Path elsewhere) throws IOException {
+        var logs = Files.createDirectories(containerDir().resolve("logs"));
+        Files.writeString(logs.resolve("zmx.log"), "log");
+        var link = Files.createSymbolicLink(elsewhere.resolve("zmx"), zmxDir);
+
+        var out = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, link, out);
+
+        assertEquals(List.of(), out.warnings());
+        assertFalse(Files.exists(containerDir()), "container dir left behind");
+    }
+
+    /**
+     * A {@code containers} that resolves somewhere else is not walked: on the
+     * {@code /tmp} fallback another user can have planted it, and a link of
+     * the user's own is not something isx made.
+     */
+    @Test
+    void cleanupDoesNotWalkAContainersLink(@TempDir Path elsewhere) throws IOException {
+        var victim = Files.createDirectories(elsewhere.resolve(NAME));
+        var kept = Files.writeString(victim.resolve("kept"), "x");
+        Files.createSymbolicLink(zmxDir.resolve("containers"), elsewhere);
+
+        var out = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, zmxDir, out);
+
+        assertTrue(Files.exists(kept), "cleanup deleted through a containers link");
+        assertTrue(out.warnings().getFirst().contains("which is a link (to "), out.warnings().toString());
+    }
+
+    /**
+     * A zmx dir others can write to is not walked either: they could swap
+     * {@code containers} for a link between the check and the delete.  The
+     * session link still goes: the dir is the user's, so nobody else can put
+     * a link in its way.
+     */
+    @Test
+    void cleanupDoesNotWalkAZmxDirOthersCanWrite() throws IOException {
+        var logs = Files.createDirectories(containerDir().resolve("logs"));
+        Files.writeString(logs.resolve("zmx.log"), "log");
+        Files.createSymbolicLink(symlink(), Path.of("containers", NAME, "isx"));
+        Files.setPosixFilePermissions(zmxDir, PosixFilePermissions.fromString("rwxrwxrwx"));
+
+        var out = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, zmxDir, out);
+
+        assertTrue(Files.exists(logs.resolve("zmx.log")), "cleanup walked a zmx dir others can write to");
+        assertFalse(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS), "session symlink left behind");
+        assertTrue(out.warnings().getFirst().contains("which others can write to"), out.warnings().toString());
+    }
+
+    /** An instance that never shared zmx sockets has nothing to warn of, whatever the dir is like. */
+    @Test
+    void cleanupSaysNothingOfAnInstanceWithoutZmxSessions() throws IOException {
+        Files.createDirectories(zmxDir.resolve("containers").resolve("other"));
+        Files.setPosixFilePermissions(zmxDir, PosixFilePermissions.fromString("rwxrwxrwx"));
+
+        var out = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, zmxDir, out);
+
+        assertEquals(List.of(), out.warnings());
+    }
+
+    /** Nor a {@code containers} others can write to, where they could swap the instance's dir for a link. */
+    @Test
+    void cleanupDoesNotWalkAContainersDirOthersCanWrite() throws IOException {
+        var logs = Files.createDirectories(containerDir().resolve("logs"));
+        Files.writeString(logs.resolve("zmx.log"), "log");
+        Files.setPosixFilePermissions(zmxDir.resolve("containers"), PosixFilePermissions.fromString("rwxrwxrwx"));
+
+        var out = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, zmxDir, out);
+
+        assertTrue(Files.exists(logs.resolve("zmx.log")), "cleanup walked a containers dir others can write to");
+        assertTrue(out.warnings().getFirst().contains("which others can write to"), out.warnings().toString());
+    }
+
+    /**
+     * Ownership is checked against the uid isx runs as, never a guess: a uid
+     * that cannot be read walks nothing, and a dir of another uid's (as
+     * {@code /tmp/zmx-1000} would be, named by {@code id -u}'s fallback) is refused.
+     */
+    @Test
+    void cleanupWalksNothingWithoutTheProcessUid() throws IOException {
+        var logs = Files.createDirectories(containerDir().resolve("logs"));
+        Files.writeString(logs.resolve("zmx.log"), "log");
+        Files.createSymbolicLink(symlink(), Path.of("containers", NAME, "isx"));
+
+        var unreadable = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, zmxDir, unreadable, () -> { throw new IOException("no /proc"); });
+        var another = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, zmxDir, another, () -> OwnDirectory.processUid() + 1);
+
+        assertTrue(Files.exists(logs.resolve("zmx.log")), "cleanup walked a dir without knowing whose it is");
+        assertTrue(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS), "session symlink removed from another uid's dir");
+        assertTrue(unreadable.warnings().getFirst().contains("cannot tell which uid"), unreadable.warnings().toString());
+        assertTrue(another.warnings().getFirst().contains("which belongs to uid"), another.warnings().toString());
     }
 }

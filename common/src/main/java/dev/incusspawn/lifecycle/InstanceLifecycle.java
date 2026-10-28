@@ -1009,7 +1009,7 @@ public final class InstanceLifecycle {
             if (msg.strip().regionMatches(true, 0, "Warning:", 0, "Warning:".length())) out.warn(msg);
         });
         SshKeyManager.cleanupInstance(name);
-        ZmxSocketForward.cleanup(name);
+        ZmxSocketForward.cleanup(name, out);
     }
 
     /**
