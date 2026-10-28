@@ -504,8 +504,17 @@ class ToolDefValidatorTest {
 
     /** Every tool isx ships, YAML or Java, already has such a name, as do the names other tools use. */
     @Test
-    void toolNameAcceptsEveryBuiltInName() {
-        var names = new java.util.TreeSet<>(new ToolDefLoader().allToolSetups().keySet());
+    void toolNameAcceptsEveryBuiltInName(@TempDir Path home) {
+        // Only the built-ins: an empty home and no search paths, so no tool of the developer's own is read
+        var previous = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        java.util.Set<String> builtIns;
+        try {
+            builtIns = new ToolDefLoader(List.of()).allToolSetups().keySet();
+        } finally {
+            System.setProperty("user.home", previous);
+        }
+        var names = new java.util.TreeSet<>(builtIns);
         names.addAll(List.of("maven-3", "gemini-cli", "idea-backend", "openjdk-primer", "my_tool", "corp.tool", "Tool2"));
         for (var name : names) {
             var def = new ToolDef();

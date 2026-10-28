@@ -176,3 +176,34 @@ incus stop <name> && isx shell <name>
 incus config device get <name> zmx-sockets source   # must no longer name $TMPDIR/zmx
 rm -rf "${TMPDIR:?}/zmx"        # once no instance's device names it
 ```
+
+## A user tool whose name is not an identifier
+
+Since issue 1778, isx refuses a tool whose `name:` is not letters, digits, `.`, `-` and `_`, starting with a letter or digit.
+That covers user tools in `~/.config/incus-spawn/tools/` and a search path's `tools/`, as well as project-local ones.
+Such a tool used to load, so a host may hold one that worked: `c++`, `_internal`, `node@20` or a name with a space.
+Every built-in tool and every template in incus-spawn-templates already has such a name.
+
+### How to tell
+
+Any isx command that loads definitions warns once per refused file, and `isx build` refuses until it is fixed.
+This section is for a warning that names the `tool name`; one that names `config-namespace` is the namespace rule, which predates it.
+
+```text
+⚠ cpp.yaml: tool name 'c++' is not an identifier (letters, digits, '.', '-' and '_', starting with a letter or digit); it is skipped, and isx build refuses until it is fixed
+```
+
+```shell
+isx tools list >/dev/null      # the warnings go to stderr
+```
+
+### Migration
+
+Rename the tool's `name:`, for example `c++` to `cpp`, and the same name in every template's `tools:` entry and every tool's `requires:` entry that names it.
+If the tool declares a proxy credential, its accounts live under its `config-namespace`, which the rename does not change.
+Then rebuild the templates that use it with `isx build <template>`.
+A template built before the rename stored the tool under its old name, and isx skips that stored definition too, so rebuild it rather than wait.
+
+### How to verify
+
+`isx tools list` prints the new name and no warning, and `isx build <template>` runs.

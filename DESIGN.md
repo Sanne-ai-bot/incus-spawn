@@ -370,6 +370,9 @@ Every built-in tool already has such a name.
 Bash completion feeds `isx tools list` to the completion script, and `compgen -W` expands its word list, so a cloned repository's tool named `$(...)` ran on TAB.
 Refusing the name at load keeps it out of every listing, as for a template; a template's stored definitions are skipped under a refused name too.
 The bash script is the second layer: it offers what isx prints through `_isx_reply`, a literal prefix match, and gives `compgen -W` only words it spells out itself.
+`_isx_reply` inserts each candidate quoted with `printf %q`, because readline puts it on the command line as is, where a `$(...)` would run on Enter.
+An account's typed `<namespace>=` is dropped before quoting, because `%q` writes a name holding a character such as U+2028 as one `$'...'` word, where the prefix is no longer at the front.
+A host with a user tool named outside the rule renames it (docs/dev/MIGRATIONS.md, "A user tool whose name is not an identifier").
 A tool definition is refused the same way with a bare key under `parameters:` or `proxy.configuration:` (`flavour:` with nothing under it; `ToolDefValidator.bareKeys`, #1475): a bare key has no meaning of its own, and isx does not imply a default for it.
 
 ### Tool System

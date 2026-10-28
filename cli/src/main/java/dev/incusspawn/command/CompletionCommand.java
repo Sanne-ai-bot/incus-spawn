@@ -523,15 +523,33 @@ public class CompletionCommand extends BaseCommand {
             # Offer each line of stdin, then each argument, that starts with what is typed. Never
             # give compgen what isx prints: it expands a -W word list, so a $(...) in a name
             # would run on TAB. The names are checked where isx loads them; this is the second layer.
+            # Readline inserts a candidate as is, so each is quoted (%q) to stay one literal word.
             _isx_reply() {
-              local candidate
+              _isx_reply_after "" "$@"
+            }
+
+            # _isx_reply, offering each name without $1, a prefix already on the line. It is
+            # dropped before quoting: %q may write the whole name as one $'...' word.
+            _isx_reply_after() {
+              local typed=$1 candidate
+              shift
               COMPREPLY=()
               while IFS= read -r candidate || [[ -n "$candidate" ]]; do
-                [[ -n "$candidate" && "$candidate" == "$cur"* ]] && COMPREPLY+=("$candidate")
+                [[ -n "$candidate" ]] && _isx_offer "$candidate" "$typed"
               done
-              for candidate in "$@"; do
-                [[ "$candidate" == "$cur"* ]] && COMPREPLY+=("$candidate")
-              done
+              for candidate in "$@"; do _isx_offer "$candidate" "$typed"; done
+            }
+
+            # Offer $1 without the prefix $2, which it must start with, when what is typed starts
+            # the name as it is or quoted whole.
+            _isx_offer() {
+              [[ "$1" == "$2"* ]] || return 0
+              local inserted quoted
+              printf -v inserted %q "${1#"$2"}"
+              quoted=$inserted
+              [[ -n "$2" ]] && printf -v quoted %q "$1"
+              [[ "$1" == "$cur"* || "$quoted" == "$cur"* ]] || return 0
+              COMPREPLY+=("$inserted")
             }
 
             _isx_list_instances() {
@@ -559,13 +577,13 @@ public class CompletionCommand extends BaseCommand {
                 # A namespace is typed: offer only its accounts, not the bare <namespace>= again.
                 candidates=$(grep -v '=$' <<< "$candidates")
               fi
-              _isx_reply <<< "$candidates"
               # _init_completion -s keeps the "=" in $cur, but readline replaces only what follows
               # the last "=" (COMP_WORDBREAKS): drop the typed <namespace>= from each candidate.
+              local typed=""
               if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
-                local i
-                for i in "${!COMPREPLY[@]}"; do COMPREPLY[i]=${COMPREPLY[i]#"${cur%"${cur##*=}"}"}; done
+                typed=${cur%"${cur##*=}"}
               fi
+              _isx_reply_after "$typed" <<< "$candidates"
             }
 
             _isx_list_templates() {

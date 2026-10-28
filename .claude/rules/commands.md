@@ -25,6 +25,9 @@ It skips names holding a control character.
 It prints only names `ToolDefValidator.isNamespace` accepts, though the loader already refuses a tool whose name is not one (#1778).
 Bash's `compgen -W` expands its word list, so a cloned repository's tool named `$(...)` ran on TAB after `isx tools show`.
 So the bash script never gives `compgen -W` what isx prints: `_isx_reply` offers each line of a source, and each word it is given, by literal prefix (`CompletionCommandTest.bashNeverExpandsWhatIsxPrints`).
+It offers each candidate quoted (`printf %q`), since readline inserts a candidate as is and a `$(...)` would otherwise run on Enter; a typed prefix matches the name or its quoted form.
+The typed `<namespace>=` an account loses (readline replaces only what follows it) is dropped from the name before quoting (`_isx_reply_after`, which takes it as an argument), since `%q` may write the whole word as `$'...'`; a candidate in another namespace is never offered.
+The same test fails a `COMPREPLY=( $(...) )` that is not `compgen -W` over literal words, and a `commands` or `*_subcmds` list that is not a literal string.
 A new dynamic source goes through `_isx_reply` too.
 The hostile-name tests (`noSourceIsExpanded*` in the three shells' completion tests) reach every source at least once, the bash one at every place that offers one.
 Keep both free of Incus and secrets: they run on every TAB.
