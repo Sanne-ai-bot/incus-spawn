@@ -246,6 +246,25 @@ class HelpChatModalTest {
                 TuiSnapshot.render(120, 40, f -> modal.render(f, f.area())));
     }
 
+    /** Why the answer ended early shows under it, in the warning colour, apart from the model's text. */
+    @Test
+    void whyTheAnswerEndedEarlyShowsUnderIt() {
+        var note = "The answer was cut off at its length limit.";
+        var modal = modal((t, q, a) -> new AiResponse("Run isx branch", USAGE, note));
+        type(modal, "?");
+        modal.handleKey(CTRL_S);
+        var text = TuiSnapshot.toText(TuiSnapshot.render(80, 24, f -> modal.render(f, f.area())));
+        int answer = text.indexOf("Run isx branch");
+        assertTrue(answer >= 0, text);
+        assertTrue(text.indexOf(note) > answer, text);
+
+        var refused = modal((t, q, a) -> new AiResponse("", USAGE, "The model declined to answer this question."));
+        type(refused, "?");
+        refused.handleKey(CTRL_S);
+        assertTrue(TuiSnapshot.toText(TuiSnapshot.render(80, 24, f -> refused.render(f, f.area())))
+                .contains("The model declined to answer this question."));
+    }
+
     @Test
     void longAnswerScrolls() {
         var longAnswer = String.join("\n", java.util.stream.IntStream.rangeClosed(1, 60)
