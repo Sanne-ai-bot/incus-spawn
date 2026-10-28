@@ -8,6 +8,9 @@ paths:
   - "common/src/main/java/dev/incusspawn/tool/**"
   - "cli/src/main/java/dev/incusspawn/command/BuildProgress.java"
   - "cli/src/main/java/dev/incusspawn/command/RepoCloner.java"
+  - "common/src/main/java/dev/incusspawn/Warnings.java"
+  - "cli/src/test/java/dev/incusspawn/RawOutputGateTest.java"
+  - "cli/src/test/java/dev/incusspawn/StreamSwapGateTest.java"
 ---
 
 # Terminal Output
@@ -20,6 +23,20 @@ This centralizes ANSI constants and step patterns -- individual commands should 
 `BuildOutput`'s printing methods delegate to the bound `Output` (#1703); the printing itself, with the indent depth and the live step, lives in `TerminalOutput`.
 A change to how a line looks goes there; a new kind of message is a method on `Output`, with a default for outputs that are not terminals.
 Key helpers: `section()` for a block of work at column 0, `header()` (bold bullet) / `buildHeader()` / `branchHeader()`, `group(title, detail)` (try-with-resources; `▸ Title  detail`, children one level deeper, a blank line on close -- used for Packages, Tools, Skills, Repositories) with `list()` for a wrapping comma-separated list, `step()` for complete lines, `ok()` for a `✓` result line, `stepStart()`/`stepDone()`/`stepDone(detail)`/`stepBreak()` for slow operations, `stepProgress(detail)` for the live phase, `stepNote()`/`stepWarn()` for detail one level under the step above, `note()`, `warn()` (both warnings end with a blank line, which a closing group does not repeat), `error()` (why a command failed: red `Error:` on stderr, no blank line), `warnBanner()`, `success()`.
+
+**The seam (#1703).**
+`BuildOutput` is the one way out: its static methods hand every message to the bound `Output`, a `TerminalOutput` unless the owner of the terminal bound another with `BuildOutput.bind`.
+Only owners bind: the TUI binds `Output.diagnosticsTo(warningLog::add)` while it draws or reloads, and `Output.copying(terminal, drawing)` around every action it lends the terminal to.
+`PreTuiOutput` binds `Output.holding`, `isx mcp` binds `TerminalOutput.stderrOnly()` (`StdioGuard`), and the proxy binds `Output.logTo(ProxyLog::info, ProxyLog::trace, ProxyLog::warn)`: progress as info, notes (a request's debug line) on stderr alone, warnings as warnings.
+An output that is not a terminal drops progress and notes, and still receives every diagnostic: `error`, `warnAside`, `stepWarn`, `warnBanner` and `stepFail` default to `warn`.
+Bindings nest, and closing one out of order throws.
+Shared code takes an `Output` from its caller (`InstanceLifecycle.startForUse(..., out)`, `ensureReady(..., out)`, `StaticIpAllocator.claim`): the CLI passes `BuildOutput.bound()`, the TUI its `drawing` log from code it runs while it draws, background threads included.
+Code the TUI runs once it has released the terminal (the `pendingAction` switch, `ShellLaunch.shellInto`, a branch) reports through `BuildOutput`, and the copying binding keeps its warnings in the log (#1646); a failed step is not copied, since the status line reports it.
+Code with no caller to take a sink from (a definition loader built several layers down, as `ToolProxyResolver` builds `ToolDefLoader`s) reports through `Warnings.warn()`: to the bound output, on stderr alone on a terminal (`Output.warnAside`, so a query's stdout holds only results), each distinct message once per destination.
+A long-running process that re-reads definitions calls `Warnings.forgetReported()`, as the proxy does on each reload.
+`common/lifecycle`, `common/config`, `common/vm` and `common/proxy` report through the caller's output or `BuildOutput` alone (#1690): GUI and KVM passthrough return why they could not (`Unavailable`), and the branch warns of it once, the cause with its advice and what it does instead.
+Before the TUI opens, bare `isx` holds `Warnings` for the TUI's log and waits for Enter if anything else was printed (`PreTuiOutput`, #1154), so a pre-TUI notice is a `Warnings.warn`.
+The proxy daemon's own lines go through `ProxyLog`, its one gate: `stdout` for its help, version and start banner, the levels (`info`, `warn`, `error`, with advice lines) for what its lifecycle log keeps, and `trace` for a request's line, on stderr alone.
 
 **Clean off a terminal (#1037).**
 Every escape `BuildOutput` writes goes through `styled()`/`ansi()`, which is `TerminalProgress.isAnsiTerminal()`: false without a console, for `TERM=dumb`, and under a non-empty `NO_COLOR`.
@@ -49,13 +66,15 @@ A long output shows its last 40 lines (`BuildOutput.lastOf`), after one saying h
 The exception thrown carries all of it (`Container.failed`, `withStepOutput`), so the build's failure report keeps what the warning leaves out.
 `VmAgentFailure` quotes a VM's console lines through it too, since whatever runs in the guest can write its console.
 `AnsiEscapeGateTest` fails on any raw CSI/OSC literal (`\033[`, `\033]`) whose line lacks a `// raw ANSI: <why>` comment, apart from the gates, `TerminalProgress` and `ShellStatusBar` (#1082).
-`RawOutputGateTest` fails on raw stream use or replacement (`System.setOut`/`setErr`), console or `printStackTrace()` use and on a print literal that starts with spaces, outside the gate classes (#1703).
+`RawOutputGateTest` fails on raw stream use or replacement (`System.setOut`/`setErr`), console or `printStackTrace()` use and on a print literal that starts with spaces, outside the gate classes (#1703): its `EXEMPT` map, each with why, and the build-time `graal/*Feature` classes.
+An exemption whose file no longer writes fails too, and a static import of a stream fails in any file.
+Progress or a diagnostic that needs an indent goes in a `group`, whose children sit one level deeper; a result is content and lays out its own fields (`ProxyCommand.Status.field`).
 Code that hands the terminal over or draws on it whole (an interactive guest command's inherited output, an interactive shell's raw bytes and its status bar, `TerminalProgress`, `isx git-remote-helper`'s and `isx ssh-proxy`'s protocol streams) takes the process's streams and console from the gate `TerminalStreams` (`common/util`), so a stray print in the same file is still caught.
 A window title is no such thing: `InteractiveShell` sets and resets it through `BuildOutput.windowTitle`; its reconnect notice is one `warn` per lost connection, each retry after it a `note`, and a session that stayed up past the longest wait (10 s) and dropped counts its retries afresh, while one that drops at once is a retry.
 `TerminalStreams.terminal()` also holds the one copy of the JDK 22 to 24 check that stdin and stdout are a terminal, which `Prompts.terminal()` calls, and `BuildInterrupt.atTerminal()` through it.
 Only the files `RawOutputGateTest.MAY_USE_TERMINAL_STREAMS` names may call it, a method reference included, and an entry that no longer calls it fails.
-Older offenders are counted per file in `cli/src/test/resources/raw-output-baseline.txt`: a file may not exceed its count, and a count it no longer reaches must be lowered.
-Tests assert on `RecordingOutput`'s typed events (common test-jar) instead of swapping streams; `StreamSwapGateTest` allows a swap only in the test classes its `MAY_SWAP` map lists, for output still printed raw or for the streams themselves (`BuildOutputTest`, `OutputBindingTest`, the pre-TUI hold).
+Tests assert on `RecordingOutput`'s typed events (common test-jar) instead of swapping streams: bind it (`BuildOutput.bind`, `RecordingOutput.during`) or hand it to code that takes an `Output`.
+`StreamSwapGateTest` allows a swap only in the test classes its `MAY_SWAP` map lists, where the streams themselves are what they test (`BuildOutputTest`, `OutputBindingTest`, the pre-TUI hold, the proxy's `ProxyLog` lines).
 Escapes follow stdout: `System.console()` never looks at stderr, so `2>log` alone keeps colour (documented, not fixable without native code).
 A warning's closing blank line goes to stdout, so stdout's flow keeps its layout when stderr is redirected.
 A styled string is never a `static final` (it would be decided when the native image is built): `InitCommand`'s borders are methods for that reason.

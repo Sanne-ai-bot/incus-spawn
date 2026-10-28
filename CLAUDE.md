@@ -221,34 +221,16 @@ The question is shown by the same `Prompts` (`ask`, `say`; `BaseCommand.askYesNo
 A new prompt follows the same shape and gets a flow test.
 See `.claude/rules/commands.md` and DESIGN.md "Testing".
 
-**Never print straight to stdout/stderr from code the TUI can reach.**
-While the TUI renders it owns the terminal: a `System.out`/`System.err` line is drawn over and lost, and scrambles the screen.
-Shared code (`common`, especially `lifecycle/` and `incus/`) that reports progress or warnings takes an `Output` (`common/util`) from its caller instead (`InstanceLifecycle.startForUse(..., out)`, `ensureReady(..., out)`, `StaticIpAllocator.claim`): a step is a `step`, a warning a `warn` with its advice as details, never a `Warning:`-prefixed line.
-Each caller routes it: the CLI passes `BuildOutput.bound()` (whoever owns the terminal), the TUI its `drawing` log from code it runs while it draws, background threads included.
-`lifecycle/` takes no `Consumer<String>` to report through.
-Code the TUI runs once it has released the terminal (the `pendingAction` switch, e.g. `ShellLaunch.shellInto`) reports through `BuildOutput` too: the TUI's copying binding prints it and keeps its warnings in the log.
-**`BuildOutput` is the one output seam** (#1703): its static methods hand every message to the bound `Output` (`common/util`), a `TerminalOutput` unless the owner of the terminal bound another with `BuildOutput.bind`.
-Only owners bind: the TUI binds `Output.diagnosticsTo(warningLog::add)` while it draws or reloads, and `Output.copying(terminal, drawing)` around every action it lends the terminal to.
-`PreTuiOutput` binds `Output.holding`, `isx mcp` binds `TerminalOutput.stderrOnly()` (`StdioGuard`), and the proxy binds `Output.logTo(ProxyLog::info, ProxyLog::trace, ProxyLog::warn)`: progress as info, notes (a request's debug line) on stderr alone, warnings as warnings.
-An output that is not a terminal drops progress and notes, and still receives every diagnostic: `error`, `warnAside`, `stepWarn`, `warnBanner` and `stepFail` default to `warn`.
-Why a command failed is an `error` (red `Error:` on stderr, no closing blank line), never a warning.
-Bindings nest, and closing one out of order throws.
-Code with no caller to take a sink from -- e.g. a definition loader built several layers down, as `ToolProxyResolver` builds `ToolDefLoader`s -- reports through `Warnings.warn()` (`common`): to the bound output, on stderr alone on a terminal (`Output.warnAside`, so a query's stdout holds only results), each distinct message once per destination, so a TUI build does not re-log what the log holds (a long-running process that re-reads definitions calls `Warnings.forgetReported()`, as the proxy does on each reload).
-In the TUI, a warning sink is `warningLog::add`, never the status line directly: the status line holds one message until the next key, so warnings from several operations would overwrite each other.
-A TUI branch runs on the released terminal, and the shell after it draws over that, so the TUI's copying binding keeps every warning in the log, as for a build (a failed step is not copied; the status line reports it): branch-path code warns through `BuildOutput` or a sink, never a bare `System.err` (#1646).
-`common/lifecycle`, `common/config`, `common/vm` and `common/proxy` print nothing raw (#1690): GUI and KVM passthrough return why they could not (`Unavailable`), and the branch warns of it once, the cause with its advice and what it does instead.
-Neither does `isx init`'s flow (`InitCommand`, `HostSetup`, `CredentialSetup`): it reports through `BuildOutput` and asks through `Prompts`.
-The proxy daemon's own lines go through `ProxyLog`, its one gate: `stdout` for its help, version and start banner, the levels (`info`, `warn`, `error`, with advice lines) for what its lifecycle log keeps, and `trace` for a request's line, on stderr alone.
-The same holds before the TUI opens.
-Bare `isx` holds `Warnings` raised while it gets ready (VM start, init) for the TUI's log, and waits for Enter before opening the TUI if anything else was printed (`PreTuiOutput`, #1154).
-So a pre-TUI notice is a `Warnings.warn`, not a bare print.
-`RawOutputGateTest` (`cli`) enforces this, and bans indenting a print literal by hand (#1703).
-Only its gate classes may write the raw streams: the `EXEMPT` map and the build-time `graal/*Feature` classes.
-Code that predates it is counted per file in `raw-output-baseline.txt`, whose counts only shrink.
-Route new output through `BuildOutput` or a caller's sink; never add a baseline line or raise a count.
-A moved or renamed file takes its line along.
-Tests read what code reported from `RecordingOutput` (common test-jar), never from a swapped `System.out`/`System.err`: bind it (`BuildOutput.bind`, `RecordingOutput.during`) or hand it to code that takes an `Output`, and assert on its typed events.
-`StreamSwapGateTest` (`cli`) lets only the test classes in its `MAY_SWAP` map swap a stream, each with why, and that list only shrinks too.
+**Never print straight to stdout/stderr: all output goes through one seam (#1703).**
+While the TUI renders it owns the terminal, so a raw `System.out`/`System.err` line is drawn over and lost, and scrambles the screen.
+`BuildOutput`'s static methods hand every message to the bound `Output` (`common/util`), a `TerminalOutput` unless the owner of the terminal bound another (the TUI, `PreTuiOutput`, `isx mcp`, the proxy).
+Say what kind a message is: a `step`, a `warn` with its advice as details (never a `Warning:`-prefixed line), why a command failed as an `error`, a query's answer on `BuildOutput.results()`.
+Indent with `group`, never with leading spaces.
+Shared code the TUI runs while it draws (`lifecycle/`, `incus/`) takes an `Output` from its caller, never a `Consumer<String>`; code with no caller to ask, such as a definition loader, reports through `Warnings.warn()`.
+`RawOutputGateTest` (`cli`) enforces it: only its gate classes (`EXEMPT` and the build-time `graal/*Feature` classes) touch the raw streams, the console or `printStackTrace()`, and no print literal is indented by hand.
+Code that hands the terminal over or draws on it whole takes the streams from `TerminalStreams`, and only the files the test names may.
+Tests assert on `RecordingOutput`'s typed events (common test-jar), never on a swapped stream; `StreamSwapGateTest` names the few that may swap, each with why.
+The bindings and every kind of message are in `.claude/rules/terminal-output.md`; the rationale is DESIGN.md "One output seam".
 
 **Output a script reads is a contract.**
 `--format=plain|json` (on `isx list` and every other query command, and `isx branch`) goes through `OutputFormat` (`common/util`): one ordered map per record feeds both formats.
