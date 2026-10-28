@@ -180,7 +180,7 @@ final class AboutModal {
         var keyStr = key != null ? key : "";
         var descStr = desc != null ? desc : "";
         spans.add(Span.styled(String.format("  %-8s", keyStr), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
-        spans.add(Span.styled(String.format("%-18s", descStr), Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+        spans.add(Span.styled(String.format("%-20s", descStr), Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
         if (shiftKey != null) {
             spans.add(Span.styled(String.format("%-9s", shiftKey), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
             spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
