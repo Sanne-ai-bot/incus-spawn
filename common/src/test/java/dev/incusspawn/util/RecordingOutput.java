@@ -145,7 +145,8 @@ public final class RecordingOutput implements Output {
     @Override public void note(String msg) { record(Kind.NOTE, msg); }
     @Override public void header(String msg, String detail) { record(Kind.HEADER, msg, optional(detail)); }
     @Override public void buildHeader(String name, int index, int total) {
-        record(Kind.BUILD_HEADER, name, String.valueOf(index), String.valueOf(total));
+        // A terminal shows the name as one line of text (TerminalOutput.buildHeader)
+        record(Kind.BUILD_HEADER, OutputFormat.oneLine(name), String.valueOf(index), String.valueOf(total));
     }
     @Override public void branchHeader(String name, String source) { record(Kind.BRANCH_HEADER, name, source); }
     @Override public void section(String msg) { record(Kind.SECTION, msg); }

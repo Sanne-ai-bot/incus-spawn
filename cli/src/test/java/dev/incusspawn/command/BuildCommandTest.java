@@ -2434,21 +2434,9 @@ class BuildCommandTest {
         return out;
     }
 
-    /** What {@code body} prints to stdout and stderr, in one, as a terminal shows them. */
+    /** What {@code body} reports, every kind of message, one per line, as a terminal shows them. */
     private static String bothStreams(Runnable body) {
-        var originalOut = System.out;
-        var originalErr = System.err;
-        var out = new java.io.ByteArrayOutputStream();
-        var sink = new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8);
-        System.setOut(sink);
-        System.setErr(sink);
-        try {
-            body.run();
-        } finally {
-            System.setOut(originalOut);
-            System.setErr(originalErr);
-        }
-        return out.toString(java.nio.charset.StandardCharsets.UTF_8);
+        return String.join("\n", dev.incusspawn.util.RecordingOutput.during(body::run).lines());
     }
 
     /** Nothing a terminal acts on, and every line break isx's own. */
@@ -2691,5 +2679,14 @@ class BuildCommandTest {
         var incus = mock(IncusClient.class);
         assertFalse(BuildCommand.reportNoVmSupport(incus, "tpl-isx", MachineType.CONTAINER, false));
         verify(incus, never()).supportsVirtualMachines();
+    }
+
+    /** A run that left templates unbuilt ends on one error naming them, which a recorder sees (#1703). */
+    @Test
+    void theClosingListOfFailedTemplatesIsAnError() {
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                () -> BuildCommand.failIfAny(List.of("tpl-a", "tpl-b"))));
+        assertEquals(List.of(new dev.incusspawn.util.RecordingOutput.Event(dev.incusspawn.util.RecordingOutput.Kind.ERROR,
+                "Some templates failed to build: tpl-a, tpl-b")), recorded.events());
     }
 }

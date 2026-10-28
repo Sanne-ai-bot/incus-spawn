@@ -16,9 +16,6 @@ import dev.incusspawn.RuntimeConstants;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -101,7 +98,6 @@ class BuildCommandBatchTest {
             }
         }
         cmd.names = names.isEmpty() ? null : names;
-        var err = new ByteArrayOutputStream();
         var recorder = new RecordingOutput();
         doAnswer(i -> {
             if (warningsBeforeBuild == null) warningsBeforeBuild = recorder.warnings();
@@ -115,17 +111,14 @@ class BuildCommandBatchTest {
             return null;
         }).when(cmd).buildSingleImage(any(), any());
 
-        // The swap is for what BuildCommand still prints raw (#1703's step for cli/command); what
-        // goes through BuildOutput is recorded
-        var originalErr = System.err;
-        System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
         try (var bound = BuildOutput.bind(recorder)) {
             var defs = tree();
             defs.putAll(extraDefs);
             return cmd.dispatch(defs).getResultValue();
         } finally {
-            System.setErr(originalErr);
-            stderr = err.toString(StandardCharsets.UTF_8);
+            // What a terminal shows on stderr: diagnostics, each with its details, and notes
+            stderr = String.join("\n", recorder.events().stream()
+                    .filter(e -> RecordingOutput.onStderr(e.kind())).map(RecordingOutput.Event::text).toList());
             warnings = recorder.warnings();
         }
     }
