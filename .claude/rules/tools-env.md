@@ -166,7 +166,8 @@ It is a `HostIntegration` (`common/lifecycle`), built-in Java only and listed in
 An instance whose build used a project-local definition, or whose lineage is untrusted, gets none (`HostIntegration.trusted`), since a project-local tool may share a built-in's name.
 `started` runs at the end of a branch's start (`BranchFlow.create`) and in `InstancePrep.readyForUse`, so every start for use reaches it; `done(name)` is asked first and must cost nothing once done.
 herdr's is a host-side record per instance name (`Environment.herdrMachinesDir()`): the machine id isx added, or `-` when it added none (an untrusted build, a failed add), so nothing is retried or said again on every start.
-`destroyed` removes only the recorded id, so a machine the user added for a real host of the same name survives, and a destroy with no record runs nothing.
+herdr is asked only when `ssh <name>` reaches the instance through isx's SSH config (`SshKeyManager.hasHostEntry` for its static address and `hasSshConfigInclude`); until then nothing is recorded.
+`destroyed` removes only the recorded id, so a machine the user added for a real host of the same name survives, and a destroy with no record runs nothing; without herdr on the PATH the record is kept and a warning says how to remove the machine.
 `destroyed` runs from `InstanceLifecycle.removeHostIntegration` on every delete, a TUI rename's old name included.
 Host programs go through `HostCommands` (`HostPath.isOnPath`, and a run bounded in time, its output read included, so a daemon it leaves holding the pipe cannot hold isx), which tests replace.
 

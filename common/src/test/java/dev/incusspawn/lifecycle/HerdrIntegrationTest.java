@@ -60,7 +60,7 @@ class HerdrIntegrationTest {
     }
 
     private HerdrIntegration herdr(FakeHost host) {
-        return new HerdrIntegration(host, () -> records);
+        return new HerdrIntegration(host, () -> records, (name, ip) -> true);
     }
 
     private static String buildWith(String tool, boolean projectLocal) {
@@ -136,6 +136,31 @@ class HerdrIntegrationTest {
         }
     }
 
+    /**
+     * Until ssh &lt;name&gt; reaches the instance through isx's SSH config (its Host block for its
+     * address, and the Include in ~/.ssh/config), herdr is not asked: it would resolve the name as
+     * any host, a real machine of that name included, and install and start its server there.
+     * Nothing is recorded, so a later start adds it (review of #1823).
+     */
+    @Test
+    void anInstanceSshDoesNotReachThroughIsxIsNotAddedYet() throws Exception {
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false), Metadata.STATIC_IP, "10.166.11.20"));
+        var host = new FakeHost(true);
+        var asked = new ArrayList<String>();
+        var notYet = new HerdrIntegration(host, () -> records, (name, ip) -> { asked.add(name + "@" + ip); return false; });
+
+        var recorded = started(notYet, daemon, "ws");
+
+        assertEquals(List.of(), host.ran, "herdr is never asked");
+        assertEquals(List.of("ws@10.166.11.20"), asked);
+        assertFalse(Files.exists(records.resolve("ws")), "nothing recorded, so a later start retries");
+        assertEquals(List.of("Not adding ws to herdr yet: ssh ws does not reach it through isx's SSH config."),
+                recorded.events(RecordingOutput.Kind.STEP).stream().map(RecordingOutput.Event::msg).toList());
+
+        started(herdr(host), daemon, "ws");
+        assertEquals(List.of("herdr machine add ws --label ws"), host.ran, "added once the alias resolves");
+    }
+
     @Test
     void aFailedAddIsOneWarningWithTheCommandAndIsNotRetriedOnEveryStart() throws Exception {
         var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
@@ -168,6 +193,19 @@ class HerdrIntegrationTest {
         host.answers.put("herdr machine list --json", new HostCommands.Result(0, "[{\"id\":\"" + USERS + "\",\"target\":\"dev\"}]"));
         herdr(host).destroyed("dev", BuildOutput.bound());
         assertEquals(List.of(), host.ran);
+    }
+
+    /** Without herdr on the PATH, the machine cannot be removed: the record stays, and the warning says how (review of #1823). */
+    @Test
+    void aDestroyWithoutHerdrKeepsTheRecordAndSaysHowToRemoveIt() throws Exception {
+        var host = new FakeHost(false);
+        Files.writeString(records.resolve("ws"), ID + "\n");
+        var recorded = RecordingOutput.during(() -> herdr(host).destroyed("ws", BuildOutput.bound()));
+        assertEquals(List.of(), host.ran);
+        assertTrue(Files.exists(records.resolve("ws")), "kept");
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
+                "could not remove ws from herdr: herdr is not on the PATH.", "Remove it yourself: herdr machine remove " + ID)),
+                recorded.events(RecordingOutput.Kind.WARN));
     }
 
     /** A machine the user already removed by hand, or one isx never added, is only forgotten. */

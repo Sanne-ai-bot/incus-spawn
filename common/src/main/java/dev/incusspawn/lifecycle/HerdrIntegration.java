@@ -2,6 +2,8 @@ package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
@@ -40,10 +42,29 @@ public final class HerdrIntegration implements HostIntegration {
 
     private final HostCommands host;
     private final Supplier<Path> records;
+    private final SshAlias alias;
+
+    /**
+     * Whether {@code ssh <name>} on this host reaches the instance: the managed config holds its Host
+     * block for its static address, and ~/.ssh/config includes that config. Without both, herdr
+     * would resolve the name as any host, possibly a real machine of that name, and install and
+     * start its server there.
+     */
+    @FunctionalInterface
+    public interface SshAlias {
+        boolean resolves(String name, String staticIp);
+
+        SshAlias MANAGED = (name, ip) -> SshKeyManager.hasSshConfigInclude() && SshKeyManager.hasHostEntry(name, ip);
+    }
 
     public HerdrIntegration(HostCommands host, Supplier<Path> records) {
+        this(host, records, SshAlias.MANAGED);
+    }
+
+    HerdrIntegration(HostCommands host, Supplier<Path> records, SshAlias alias) {
         this.host = host;
         this.records = records;
+        this.alias = alias;
     }
 
     @Override
@@ -68,6 +89,11 @@ public final class HerdrIntegration implements HostIntegration {
                 record(name, NOT_ADDED);
                 return;
             }
+            // Nothing recorded, so a later start, once the alias is in place, adds it
+            if (!alias.resolves(name, instance.path("config").pathText(Metadata.STATIC_IP, ""))) {
+                out.step("Not adding " + shown + " to herdr yet: ssh " + shown + " does not reach it through isx's SSH config.");
+                return;
+            }
             var added = host.run(ADD_TIMEOUT, List.of(TOOL, "machine", "add", name, "--label", name));
             var id = added.ok() ? addedId(added.output()) : null;
             if (id == null) {
@@ -90,7 +116,13 @@ public final class HerdrIntegration implements HostIntegration {
         var shown = OutputFormat.oneLine(name);
         try {
             var id = Files.readString(record).strip();
-            if (id.matches(HERDR_ID) && host.onPath(TOOL) && listed(id)) {
+            if (id.matches(HERDR_ID) && !host.onPath(TOOL)) {
+                // The record is what lets isx remove it later: kept, and said
+                out.warn("could not remove " + shown + " from herdr: herdr is not on the PATH.",
+                        "Remove it yourself: herdr machine remove " + id);
+                return;
+            }
+            if (id.matches(HERDR_ID) && listed(id)) {
                 var removed = host.run(QUICK, List.of(TOOL, "machine", "remove", id));
                 if (!removed.ok()) {
                     out.warn("could not remove " + shown + " from herdr: " + lastLine(removed.output()),

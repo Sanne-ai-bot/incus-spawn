@@ -335,4 +335,17 @@ class SshKeyManagerTest {
         assertEquals(1, warnings.size(), "the TUI's warning log, not stderr, must get it: " + warnings);
         assertTrue(warnings.getFirst().startsWith("Failed to update ~/.ssh/config"), warnings.getFirst());
     }
+
+    /** Read only: whether ~/.ssh/config includes isx's managed config before any Host block (#1720). */
+    @Test
+    void theIncludeIsCheckedWithoutWritingIt() throws IOException {
+        var config = tempDir.resolve(".ssh/config");
+        assertFalse(SshKeyManager.hasSshConfigInclude());
+        assertFalse(Files.exists(config), "nothing written");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, "Host other\n    User x\nInclude ~/.config/incus-spawn/ssh/config\n");
+        assertFalse(SshKeyManager.hasSshConfigInclude(), "after a Host block it does not apply");
+        Files.writeString(config, "# mine\n\nInclude ~/.config/incus-spawn/ssh/config\n\nHost other\n");
+        assertTrue(SshKeyManager.hasSshConfigInclude());
+    }
 }
