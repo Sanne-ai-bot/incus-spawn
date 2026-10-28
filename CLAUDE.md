@@ -307,6 +307,12 @@ See `.claude/rules/mcp.md` and DESIGN.md "MCP server".
 Managed delegation selects `claude` or `codex`, exposes installed agents through `list_templates.delegate_agents`, and persists the selected agent with each task.
 See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation.
 
+**External orchestrators drive isx through ordinary commands (#1720).**
+`isx branch --owner <name> [--owner-id <id>]` stamps who controls an instance; like `isx mcp`'s stamps these are ownership keys (`Metadata.isOwnershipKey`) that no copy inherits.
+`isx branch --format=json` adds the SSH target and `project_root`, while `plain` stays the new name alone for `name=$(...)`.
+`isx start` and `isx stop` reuse `isx shell`'s preparation and the marked stop, and `isx ssh-proxy --start` lets an orchestrator's reconnect start a stopped instance; the Host block a plain `ssh` reads never starts one.
+See `.claude/rules/commands.md` and DESIGN.md "External orchestrators: owners, start and stop".
+
 **Native image: host paths belong in the run-time-initialized classes.**
 Quarkus initializes application classes at image-build time unless they are listed in `--initialize-at-run-time`, and Linux native builds run as **root inside the GraalVM builder container**.
 So a field holding an `Environment` path bakes the builder's `/root/...` into the binary (that regression shipped: see DESIGN.md "Build-time initialization must not capture host paths").

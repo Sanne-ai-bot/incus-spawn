@@ -78,8 +78,10 @@ isx branch <name> [options]
 | `--no-start` | Do not start the instance after creation |
 | `--shell` | Open a plain shell instead of running the default action |
 | `--account <ns>=<account>` | Use this [credential account](CONFIGURATION.md#credential-accounts) instead of the template's or the default; repeatable |
+| `--owner <name>` | Mark the instance as controlled by an external tool, such as `orca`. A lowercase name; `mcp` is reserved. Its copies never inherit it |
+| `--owner-id <id>` | The owner's own handle for the instance, such as an orchestrator's workspace id. Needs `--owner` |
 | `--mcp-client` | Let the instance drive isx over MCP at `https://mcp.isx.internal/mcp`, as a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). Its copies never inherit it |
-| `--format=<format>` | `table` (the default), or `plain` or `json` to print only the new name, with progress on stderr and no shell opened. See [Scripting isx](#isx-branch-fields) |
+| `--format=<format>` | `table` (the default), `plain` to print only the new name, or `json` to add how to reach it, with progress on stderr and no shell opened. See [Scripting isx](#isx-branch-fields) |
 
 ## `isx shell`
 
@@ -111,6 +113,30 @@ Enable it with:
 features:
   - shell-status-bar
 ```
+
+## `isx start`
+
+Start an instance and make it ready for use, without opening a shell.
+
+```shell
+isx start <instance>
+```
+
+isx prepares it as `isx shell` would, so it receives this start's credential proofs.
+An instance already running is checked and left running.
+If another isx process is starting or stopping it, `isx start` waits for that first, for up to two minutes.
+
+## `isx stop`
+
+Stop a running instance.
+
+```shell
+isx stop <instance>
+```
+
+Stopping an instance that is already stopped succeeds, so a script can repeat it.
+A frozen instance cannot shut down, so `isx stop` refuses it with an error.
+If another isx process is starting or stopping it, `isx stop` waits for that first, for up to two minutes.
 
 ## `isx run`
 
@@ -800,8 +826,27 @@ That alone says nothing about its age.
 
 #### `isx branch` fields
 
-`isx branch <name>` prints `name`.
+`isx branch <name> --format=plain` prints `name` alone.
 Progress goes to stderr and no shell is opened, so `name=$(isx branch my-box --from tpl-java --format=plain)` captures it.
+That is why `plain` never gains a field.
+
+`--format=json` adds the fields a program needs to reach the instance:
+
+| Field | Meaning |
+|-------|---------|
+| `name` | The new instance |
+| `owner` | The `--owner` given, or `null` |
+| `owner_id` | The `--owner-id` given, or `null` |
+| `ssh_host` | The host to give `ssh`, or `null` when the template has no SSH server |
+| `ssh_user` | The user to log in as |
+| `ssh_port` | The port, always 22 |
+| `ssh_identity_file` | The private key isx manages for its instances |
+| `ssh_proxy_command` | The `ProxyCommand` that reaches the instance, starting it first if it is stopped |
+| `project_root` | The directory a shell opens in |
+
+The SSH fields are `null` when the template does not install `sshd`, or when isx cannot create its SSH key.
+isx creates the key before printing it, and authorizes it in the instance when the instance starts, so a `--no-start` branch is reachable once started.
+A plain `ssh <name>` uses the instance's own Host block, which never starts a stopped instance.
 
 ### Exit codes
 

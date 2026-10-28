@@ -839,6 +839,17 @@ public final class InstanceLifecycle {
         return instance.pathText("last_used_at", "");
     }
 
+    /**
+     * Whether running {@code instance}, as already read, can be used as it is: a container whose
+     * boot is stamped as holding the secret isx gave it, as {@link #ensureReady} judges. A VM's can
+     * only be asked of the guest, so it never can (#1720: {@code isx ssh-proxy --start}'s fast path).
+     * After a host reboot Incus restores a running instance with an empty {@code /run/isx}, and its
+     * new boot has no stamp.
+     */
+    public static boolean readyForThisBoot(JqValue instance) {
+        return IncusClient.machineType(instance) == MachineType.CONTAINER && secretRecordedForBoot(instance);
+    }
+
     /** Whether container {@code instance}'s boot is stamped as holding the secret isx gave it, or unknown. */
     private static boolean secretRecordedForBoot(JqValue instance) {
         var bootedAt = bootOf(instance);

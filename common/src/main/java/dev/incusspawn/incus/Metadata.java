@@ -145,8 +145,7 @@ public final class Metadata {
     /**
      * The external tool that controls this instance's lifecycle ({@code isx branch --owner}, #1720):
      * an orchestrator such as Orca that creates an instance per task and deletes it when done. A
-     * name, never a credential; {@code drivers:} in {@code config.yaml} says what that tool may do.
-     * Like every ownership key ({@link #isOwnershipKey}), no copy carries it.
+     * name, never a credential. Like every ownership key ({@link #isOwnershipKey}), no copy carries it.
      */
     public static final String OWNER = PREFIX + "owner";
     /** The owner's own handle for the instance ({@code --owner-id}), such as an Orca runtime id. */
@@ -155,7 +154,7 @@ public final class Metadata {
     public static final java.util.regex.Pattern OWNER_NAME = java.util.regex.Pattern.compile("[a-z0-9][a-z0-9-]{0,31}");
     /** What an {@link #OWNER_ID} looks like: an opaque handle, with nothing a shell or a terminal reads. */
     public static final java.util.regex.Pattern OWNER_HANDLE = java.util.regex.Pattern.compile("[A-Za-z0-9._:-]{1,128}");
-    /** The owner name isx shows for an instance an {@code isx mcp} session made, so no tool may take it. */
+    /** Reserved: {@code isx mcp}'s own instances are told apart by its stamps, and no tool may pass for it. */
     public static final String OWNER_MCP = "mcp";
 
     /**
@@ -261,6 +260,7 @@ public final class Metadata {
                 ? "branched from an instance named *-" + TYPE_FAILED_BUILD : "";
     }
 
+    public static final String OP_STARTING = "starting";
     public static final String OP_STOPPING = "stopping";
     public static final String OP_RESTARTING = "restarting";
     public static final String OP_DELETING = "deleting";

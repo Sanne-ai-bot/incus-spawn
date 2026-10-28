@@ -388,7 +388,7 @@ public final class RuntimeSetup {
     }
 
     /** {@link #hasSshCapability(String, String)} from the instance the caller already read; false for null. */
-    static boolean hasSshCapability(JqValue instance) {
+    public static boolean hasSshCapability(JqValue instance) {
         if (instance == null) return false;
         var config = instance.path("config");
         return hasSshCapability(config.pathText(Metadata.SSH_SETUP, ""), config.pathText(Metadata.BUILD_SOURCE, ""));

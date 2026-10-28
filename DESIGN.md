@@ -984,6 +984,8 @@ Maps rather than records are what jjq serializes without a mapping or reflection
 A list value (`tools show`'s `packages`, `account list`'s `pinned_by`) is a JSON array and, in `plain`, its elements joined by `,`, so a record stays one line.
 
 Every query command takes it (#1038): `templates`, `tools list`/`show`, `account list`/`show`, `proxy status`, `doctor`, `vm status`, `update-base --list`, and `branch`, whose record is the new name alone so that `$(isx branch ... --format=plain)` captures it.
+`branch` is the one exception to one map for both formats (#1720): its `plain` record stays the name alone, which that capture relies on, and only `json` gains fields (who owns the instance and how a program reaches it over SSH).
+Appending them to `plain` would have been the usual rule and would have broken every script that captures the name.
 The bare group commands (`isx templates`, `isx tools`, `isx account`) run their `list` and take its `--format`.
 A command whose work prints progress on the way (`doctor`'s checks, `branch`'s flow) runs it under `BaseCommand.withStdoutOnStderr`, so stdout holds only the result whatever the code underneath prints.
 The machine formats never prompt: `doctor` offers no remediation and `branch` opens no shell.
@@ -5238,6 +5240,40 @@ The MITM TLS proxy provides credential isolation:
 3. The proxy terminates TLS, replaces placeholder auth with real credentials, and forwards to real upstream over TLS
 4. Placeholder values cannot authenticate against any service — they only bypass local tool checks
 5. In proxy-only mode, an Incus network ACL on the instance's NIC, enforced on the host, blocks all egress except the proxy (443), its health check and DNS on the gateway
+
+### External orchestrators: owners, start and stop
+
+Tools that orchestrate coding agents (Orca, herdr, Coder Mux and others) want a disposable machine per task (#1720).
+They fall in two kinds, decided by what the tool can do, never by the user.
+One has lifecycle hooks: it runs a command to create a machine and another to destroy it, and isx must be drivable from outside.
+The other only keeps a list of SSH machines, and isx must register its instances there; that half is a tool's host integration, a later change.
+
+The first kind needs four operations and an SSH target, and isx already had every piece except the commands.
+`isx branch --owner <name> [--owner-id <id>]` stamps `user.incus-spawn.owner` and `owner-id` on the copy request.
+They are ownership keys (`Metadata.isOwnershipKey`), as `isx mcp`'s are: the copy request unsets them and `configureBranch` drops them, so a user's branch of an orchestrator's instance is the user's from its copy on.
+The name is a short lowercase word (`mcp` is reserved for `isx mcp`'s own), the id an opaque handle of a fixed charset, so neither carries anything a shell or a terminal reads.
+`isx branch --format=json` then says how to reach the instance: the managed key, `agentuser`, and the ProxyCommand with `--start`, read from the source preflight already read, so it costs no request.
+
+`isx start` and `isx stop` existed only as side effects (`isx shell`) and as MCP tools.
+A start is `isx shell`'s preparation (`InstancePrep.prepare`), never a bare Incus start: that would leave the guest without this start's secret and credential proofs, and an agent in it with empty placeholders.
+It runs under the instance's `starting` lock, as `start_instance` does, and waits up to two minutes for another holder rather than failing: an orchestrator resuming a workspace while a connection starts it should not see an error.
+It then prepares the instance itself instead of taking `Running` for ready, since an instance is running before its start has delivered the proofs.
+A stop is `stop_instance`'s, through the one helper they share (`InstanceDestroyer.stopMarkedIf`): under the lock and the `stopping` mark, and a stopped instance is success, so a repeated suspend is harmless.
+
+`isx ssh-proxy --start` starts a stopped instance the same way before connecting.
+Every connection of an orchestrator runs it, `git` and `scp` included, so a running container that no isx process holds, and whose boot is stamped as holding its secret (`InstanceLifecycle.readyForThisBoot`), is used as it is, for one read.
+One that Incus restored running after a host reboot has an empty `/run/isx`, so it is prepared like a stopped one, as is a running VM, whose secret only its guest can answer for.
+Only a stopped one, or one another isx process is starting or stopping, pays for the preparation.
+A connection that waited out a stop does not undo it: an instance that was up when it came and is down once it may act is refused, never started again.
+An orchestrator records a workspace as awake until it suspends it, and reconnects on its own after a host restart.
+Only the ProxyCommand handed to a program carries `--start`; the Host block a plain `ssh <name>` reads never does, so typing `ssh` never starts anything.
+With `--start`, `ssh-proxy` installs `StdioGuard`, as `isx mcp` does, and relays the guard's stdin and stdout, because they are the SSH connection and a start prints progress.
+
+**Alternatives.**
+A dedicated `isx sandbox create|suspend|resume|destroy` group with its own JSON contract would be a second lifecycle surface to keep in step with `branch` and `destroy`.
+A built-in `isx orca` (the contributor's branch) ties the surface to one tool's contract and a Java package per orchestrator; its generic pieces are what this takes.
+MCP as the integration API would leave out every user and orchestrator that does not want MCP.
+A plugin system loaded at run time is not trivial in a native image, and nothing here needs code outside isx.
 
 ### Agents driving isx over MCP
 

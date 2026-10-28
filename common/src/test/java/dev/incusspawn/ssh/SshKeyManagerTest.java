@@ -89,6 +89,16 @@ class SshKeyManagerTest {
     }
 
     @Test
+    void onlyTheProxyCommandHandedToProgramsStartsAStoppedInstance() {
+        assertEquals("\"/usr/bin/isx\" ssh-proxy dev", SshKeyManager.proxyCommand("/usr/bin/isx", "dev", false));
+        assertEquals("\"/usr/bin/isx\" ssh-proxy --start dev", SshKeyManager.proxyCommand("/usr/bin/isx", "dev", true));
+        SshKeyManager.addHostEntry("test-instance");
+        var content = assertDoesNotThrow(() -> Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config")));
+        assertTrue(content.contains("ssh-proxy test-instance"), content);
+        assertFalse(content.contains("--start"), "a plain ssh never starts an instance");
+    }
+
+    @Test
     void aHostnameAfterTheBlockEndsIsNotTheBlocks() throws IOException {
         // An unindented line ends a Host block, as removing one reads it: a later top-level
         // Hostname (or anything under a Match) is not this instance's address

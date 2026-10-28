@@ -4,11 +4,14 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.ProxyConfig;
+import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionResolver;
+import dev.incusspawn.tool.ShellMenu;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.OutputFormat;
@@ -78,6 +81,14 @@ public class BranchCommand extends BaseCommand {
             hasValue = false)
     boolean mcpClient;
 
+    @Option(name = "owner", description = "The external tool that controls this instance's lifecycle,"
+            + " such as orca. Never inherited by its copies.")
+    String owner;
+
+    @Option(name = "owner-id", description = "The owner's own handle for this instance, such as an"
+            + " orchestrator's workspace id (needs --owner)")
+    String ownerId;
+
     @OptionList(name = "account",
             description = "Credential account to use, as <namespace>=<account> "
                     + "(e.g. claude=work). Repeatable; overrides the template's choice.")
@@ -85,7 +96,7 @@ public class BranchCommand extends BaseCommand {
 
     // Output for scripts (#1036): see OutputFormat for what plain and json promise.
     @Option(name = "format", description = "Output format: table (default), or plain or json to print"
-            + " only the new instance's name (progress to stderr, no shell opened)")
+            + " only the new instance's name, json with how to reach it (progress to stderr, no shell opened)")
     String format;
 
     private IncusClient incus;
@@ -103,7 +114,10 @@ public class BranchCommand extends BaseCommand {
             // A script captures the new name, so stdout holds only that, and no shell is opened.
             var created = withStdoutOnStderr(this::create);
             if (created == null) return CommandResult.valueOf(1);
-            outputFormat.printOne(BuildOutput.results(), record(name));
+            // plain stays the name alone, which name=$(isx branch ... --format=plain) captures
+            outputFormat.printOne(BuildOutput.results(), outputFormat == OutputFormat.JSON
+                    ? record(name, owner, ownerId, reach(name, created.preflight().sourceInstance()))
+                    : record(name));
             return CommandResult.SUCCESS;
         }
 
@@ -141,8 +155,91 @@ public class BranchCommand extends BaseCommand {
         return record;
     }
 
+    /**
+     * The fields of {@code isx branch --format=json}: {@link #record(String)}'s, then who controls
+     * the instance and how a program reaches it over SSH (#1720), so one call gives an
+     * orchestrator what it needs. Add to the end, never rename.
+     */
+    static Map<String, Object> record(String name, String owner, String ownerId, Reach reach) {
+        var record = record(name);
+        record.put("owner", owner);
+        record.put("owner_id", ownerId);
+        var ssh = reach.ssh();
+        record.put("ssh_host", ssh == null ? null : name);
+        record.put("ssh_user", ssh == null ? null : SshKeyManager.USER);
+        record.put("ssh_port", ssh == null ? null : 22);
+        record.put("ssh_identity_file", ssh == null ? null : ssh.identityFile());
+        record.put("ssh_proxy_command", ssh == null ? null : ssh.proxyCommand());
+        record.put("project_root", reach.projectRoot());
+        return record;
+    }
+
+    /**
+     * How a program reaches a branch of {@code source}: over SSH when its template set up sshd (the
+     * key is made on the first start of such an instance, a --no-start branch's included), through
+     * the ProxyCommand that starts a stopped instance first, and
+     * in the directory a shell opens in. Read from the source as preflight read it, which the copy
+     * carries: no request of its own.
+     */
+    record Reach(Ssh ssh, String projectRoot) {}
+
+    /** The SSH half of {@link Reach}: null when the instance cannot be reached over SSH. */
+    record Ssh(String identityFile, String proxyCommand) {}
+
+    static Reach reach(String name, io.hyperfoil.tools.jjq.value.JqValue source) {
+        return reach(name, source, BranchCommand::ensureSshKey);
+    }
+
+    /** {@link #reach(String, io.hyperfoil.tools.jjq.value.JqValue)}, with what makes the managed key exist. */
+    static Reach reach(String name, io.hyperfoil.tools.jjq.value.JqValue source, java.util.function.BooleanSupplier keyExists) {
+        // The key named is the one a start authorizes in the instance; it must exist when it is named,
+        // a --no-start branch's included, or the field would point at nothing
+        var ssh = RuntimeSetup.hasSshCapability(source) && keyExists.getAsBoolean()
+                ? new Ssh(dev.incusspawn.Environment.sshKeyFile().toString(), SshKeyManager.proxyCommand(name, true))
+                : null;
+        var workdir = source.path("config").pathText(Metadata.WORKDIR, "");
+        return new Reach(ssh, workdir.isBlank() ? ShellMenu.DEFAULT_WORKDIR : workdir);
+    }
+
+    /** Make isx's SSH key exist; false, said as a warning, when it cannot be made. */
+    private static boolean ensureSshKey() {
+        try {
+            SshKeyManager.ensureKeyPairExists();
+            return true;
+        } catch (RuntimeException e) {
+            BuildOutput.warn("no SSH fields in the output: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Why {@code --owner}/{@code --owner-id} cannot be stamped, or null when they can. */
+    static String ownerProblem(String owner, String ownerId) {
+        if (owner == null) return ownerId == null ? null : "--owner-id needs --owner.";
+        if (!Metadata.OWNER_NAME.matcher(owner).matches()) {
+            return "--owner must be a lowercase name of letters, digits and '-', at most 32 long.";
+        }
+        if (Metadata.OWNER_MCP.equals(owner)) return "--owner mcp is reserved for instances isx mcp makes.";
+        if (ownerId != null && !Metadata.OWNER_HANDLE.matcher(ownerId).matches()) {
+            return "--owner-id must be 1 to 128 of letters, digits and . _ : -";
+        }
+        return null;
+    }
+
+    /** What the copy request stamps for {@code --mcp-client}, {@code --owner} and {@code --owner-id}. */
+    private Map<String, String> stamps() {
+        var stamps = new LinkedHashMap<String, String>(McpClientGrant.extraConfig(mcpClient));
+        if (owner != null) stamps.put(Metadata.OWNER, owner);
+        if (ownerId != null) stamps.put(Metadata.OWNER_ID, ownerId);
+        return stamps;
+    }
+
     /** Create (and unless {@code --no-start}, start) the branch; {@code null} once the error is reported. */
     private Created create() {
+        var ownerProblem = ownerProblem(owner, ownerId);
+        if (ownerProblem != null) {
+            BuildOutput.error(ownerProblem);
+            return null;
+        }
         var named = source != null ? source : detectSource();
         if (named == null) return null;
         // From the lookup through the branch's start, so a rebuild cannot swap the template away meanwhile (#1212)
@@ -177,7 +274,7 @@ public class BranchCommand extends BaseCommand {
         Boolean kvmChoice = kvm ? Boolean.TRUE : noKvm ? Boolean.FALSE : null;
         var request = new BranchFlow.Request(resolvedSource, name, guiChoice, kvmChoice, networkMode,
                 inbox, cpuLimit, memoryLimit, diskLimit, accounts, !noStart,
-                McpClientGrant.extraConfig(mcpClient));
+                stamps());
 
         BranchFlow.Preflight preflight;
         RuntimeSetup.RuntimeConfig prefetched;
