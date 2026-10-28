@@ -25,6 +25,8 @@ On Linux the builder is **root inside the GraalVM builder container** (`install.
 
 `Environment` is on the list too and stays **method-based** on purpose: that is what lets tests point `user.home` at a temp dir.
 `Platform` is deliberately *not* on it — its `os.name` lookup is meant to be constant-folded so platform branches die at build time.
+`NativeImageInitializationTest` fails if it is listed: deferred, it would read `os.name` when the binary runs, where `-Dos.name` sets it.
+An `os.name` claiming macOS stands only where `/System/Library/CoreServices/SystemVersion.plist` exists and `/proc/sys/kernel/ostype` is not Linux (otherwise Linux, or isx refuses to start), so `-Dos.name` or `JAVA_TOOL_OPTIONS` cannot put the released uber-jars in macOS's role either (#1800).
 
 Anywhere else: call the `Environment` method, never store its result.
 
@@ -65,5 +67,8 @@ Registered via `--features=` in both modules' `application.properties`, comma-es
   It now prints `??  INCONCLUSIVE` per target rather than a reassuring `ok`.
   Fixing it means targeting the concrete subclasses *and* adding the allowed list its javadoc promises.
   The CLI legitimately reads `user.home` and `user.name` at runtime, so a working version fails the build on correct code until those are allowed with a rationale.
+- **`PlatformRoleFeature`** — aborts the build unless `Platform.isMacOS()` and `isLinux()` match the image's target OS (`org.graalvm.nativeimage.Platform`).
+  The role decides whether the proxy keeps the Linux address check, so a Linux binary in macOS's role would drop it (#1800).
+  It catches an `os.name` given to the builder and a `Platform` other than the one compiled from `common`, such as the macOS-role test build's.
 
-Both print a `[isx-…-guard]` report to stderr during the build; check it when touching either.
+All three print a `[isx-…-guard]` report to stderr during the build; check it when touching one.

@@ -1,6 +1,7 @@
 package dev.incusspawn;
 
 import dev.incusspawn.graal.BakedHostStateFeature;
+import dev.incusspawn.graal.PlatformRoleFeature;
 import dev.incusspawn.graal.SyscallReachabilityFeature;
 import org.junit.jupiter.api.Test;
 
@@ -45,7 +46,7 @@ class NativeImageInitializationTest {
                     "native.pgo.args");
 
     private static final List<Class<?>> GUARDS =
-            List.of(SyscallReachabilityFeature.class, BakedHostStateFeature.class);
+            List.of(SyscallReachabilityFeature.class, BakedHostStateFeature.class, PlatformRoleFeature.class);
 
     @Test
     void everyDeclarationDefersTheRightClassesRunsBothGuardsAndKeepsTheEnvironmentSanitized() throws IOException {
@@ -65,6 +66,11 @@ class NativeImageInitializationTest {
                                 + " would otherwise run (and constant-fold) at image build time."
                                 + " Found: " + runtimeInit);
             }
+            // Deferred, Platform would read os.name when the binary runs, where -Dos.name sets it,
+            // and PlatformRoleFeature would check a role the binary does not keep (#1800).
+            assertFalse(List.of(runtimeInit.substring(runtimeInit.indexOf('=') + 1).split("[\\\\,]+")).contains(Platform.class.getName()),
+                    Platform.class.getName() + " must stay initialized at build time in " + path
+                            + ", so its platform role is fixed when the image is built. Found: " + runtimeInit);
 
             var features = argument(arguments, "--features=", path);
             for (var guard : GUARDS) {
