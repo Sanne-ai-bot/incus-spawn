@@ -99,7 +99,7 @@ public final class InstanceDetailView {
         // so a narrow view does not cut them off.
         int maxLineWidth = ModalRenderer.hintWidth(hintSpans);
         for (var line : contentLines) {
-            int w = line.spans().stream().mapToInt(s -> s.content().length()).sum();
+            int w = line.width();
             if (w > maxLineWidth) maxLineWidth = w;
         }
         int modalWidth = Math.min(maxLineWidth + 4, screen.width() - 4);

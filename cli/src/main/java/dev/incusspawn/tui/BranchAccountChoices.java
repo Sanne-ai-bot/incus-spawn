@@ -242,7 +242,7 @@ final class BranchAccountChoices {
             lines.add(entry(k + 1, option.account(), optionDetail(row, option), option.usable(), nameWidth));
         }
 
-        int contentWidth = lines.stream().mapToInt(l -> l.spans().stream().mapToInt(s -> s.content().length()).sum())
+        int contentWidth = lines.stream().mapToInt(Line::width)
                 .max().orElse(20);
         int width = Math.min(screen.width() - 2, contentWidth + 4);
         int height = Math.min(screen.height() - 2, lines.size() + 2);

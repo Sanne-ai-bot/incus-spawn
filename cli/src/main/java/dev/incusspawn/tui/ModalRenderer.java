@@ -237,7 +237,7 @@ final class ModalRenderer {
                                     String title, String message, Color borderColor,
                                     String confirmLabel, String confirmKey) {
         var wrappedLines = confirmLines(message, screen);
-        int textWidth = wrappedLines.stream().mapToInt(String::length).max().orElse(0);
+        int textWidth = wrappedLines.stream().mapToInt(CharWidth::of).max().orElse(0);
         var modalArea = centerRect(screen, Math.max(CONFIRM_TEXT_WIDTH, textWidth) + 6, confirmModalHeight(wrappedLines.size()));
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
@@ -286,7 +286,7 @@ final class ModalRenderer {
      */
     static List<String> confirmLines(String message, Rect screen) {
         var lines = wrapText(message, CONFIRM_TEXT_WIDTH);
-        int widest = lines.stream().mapToInt(String::length).max().orElse(0);
+        int widest = lines.stream().mapToInt(CharWidth::of).max().orElse(0);
         int widestAllowed = screen.width() - 10;   // the frame and padding, and a margin each side
         if ((widest > CONFIRM_TEXT_WIDTH || confirmModalHeight(lines.size()) > screen.height())
                 && widestAllowed > CONFIRM_TEXT_WIDTH) {
@@ -377,7 +377,7 @@ final class ModalRenderer {
     void renderErrorModal(Frame frame, Rect screen, String message) {
         var lines = message.lines().toList();
         int height = lines.size() + 5;
-        int width = Math.min(lines.stream().mapToInt(String::length).max().orElse(30) + 6, screen.width() - 4);
+        int width = Math.min(lines.stream().mapToInt(CharWidth::of).max().orElse(30) + 6, screen.width() - 4);
         var modalArea = centerRect(screen, Math.max(width, 40), height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
@@ -403,7 +403,7 @@ final class ModalRenderer {
     }
 
     void renderProgressOverlay(Frame frame, Rect screen, String message) {
-        int width = Math.min(message.length() + 8, screen.width() - 4);
+        int width = Math.min(CharWidth.of(message) + 8, screen.width() - 4);
         var modalArea = centerRect(screen, width, 3);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
