@@ -116,6 +116,14 @@ public final class TerminalLink {
                     int textPos = 0;
                     while (textPos < text.length()) {
                         int remaining = width - col;
+                        if (remaining <= 0 && col > 0) {
+                            // A link filled the line or overran it: the text starts the next one.
+                            result.add(currentLine);
+                            currentLine = new ArrayList<>();
+                            col = 0;
+                            if (text.charAt(textPos) == ' ') textPos++;
+                            continue;
+                        }
                         if (textPos + remaining >= text.length()) {
                             currentLine.add(new Segment.Text(text.substring(textPos)));
                             col += text.length() - textPos;
