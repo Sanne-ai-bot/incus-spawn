@@ -254,7 +254,11 @@ public final class BuildOutput {
     /** Tests set this to exercise the animated rendering without a console; null means detect. */
     static volatile Boolean forceAnsi;
 
-    /** {@code "Installing foo..."} reads as a pending action in a log line; on a ✓ line it is noise. */
+    /**
+     * A label without the ellipsis a call site still writes: a label is bare in source, and the
+     * terminal decorates it ({@link TerminalOutput}), so a decorated one prints alike until the
+     * last is gone ({@code StepLabelGateTest}).
+     */
     static String trimEllipsis(String msg) {
         var s = msg.stripTrailing();
         if (s.endsWith("...")) return s.substring(0, s.length() - 3).stripTrailing();
@@ -264,9 +268,9 @@ public final class BuildOutput {
 
     /**
      * Start a slow step. On an ANSI terminal the line animates until {@link #stepDone} (or
-     * {@link #stepBreak} on failure); otherwise it is printed without a newline for
-     * {@code stepDone} to complete. A trailing {@code "..."} in {@code msg} is dropped from the
-     * animated line.
+     * {@link #stepBreak} on failure); otherwise it is printed {@code "label..."} without a newline
+     * for {@code stepDone} to complete. {@code msg} is a bare label: the terminal adds the ellipsis
+     * or the spinner.
      */
     public static void stepStart(String msg) {
         bound.stepStart(msg);
@@ -277,6 +281,14 @@ public final class BuildOutput {
      * Ignored without a terminal or when no step is live.
      */
     public static void stepProgress(String detail) {
+        bound.stepProgress(() -> detail);
+    }
+
+    /**
+     * Show what a live step is doing, read again on every frame ({@link Output#stepProgress}): for
+     * a value that keeps changing, such as a download's rate.
+     */
+    public static void stepProgress(java.util.function.Supplier<String> detail) {
         bound.stepProgress(detail);
     }
 
@@ -308,9 +320,8 @@ public final class BuildOutput {
     }
 
     /**
-     * Fail a slow step started by {@link #stepStart}: close the dangling line, then
-     * write {@code msg} to stderr. Centralizes the "terminate the step line before any
-     * stderr output" contract so callers don't each have to remember it.
+     * Fail a slow step started by {@link #stepStart}: its line ends in {@code ✗ label}, and
+     * {@code msg} is a warning under it, on stderr ({@link #stepBreak} then {@link #stepWarn}).
      */
     public static void stepFail(String msg) {
         bound.stepFail(msg);
@@ -446,7 +457,10 @@ public final class BuildOutput {
         bound.note(msg);
     }
 
-    /** Print a green checkmark success line. */
+    /**
+     * The line that closes a block: a green ✓ and the bold message at the header's column, after
+     * a blank line, worded like any ✓ line ({@code "tpl-dev built"}, no period).
+     */
     public static void success(String msg) {
         bound.success(msg);
     }

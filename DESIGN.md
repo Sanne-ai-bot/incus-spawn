@@ -884,6 +884,21 @@ All output helpers live there; individual commands should not define their own A
 Beyond build/branch, this governs the other lifecycle commands too — `vm` (start/stop/resize), `destroy`, `update-all`, `update-base`, and `project` — plus the shared `VmManager`.
 (`isx init`'s large interactive first-run flow is the one deliberate exception, kept in its own style for now: its boxed, numbered headers stay, but the lines under them report outcomes rather than attempts, its `[n/N]` counter is counted from the list of steps rather than written down, and host commands show their output only when they fail (#906; the rules are in `.claude/rules/commands.md`, "Init output").)
 
+**Every line under a header is one of five kinds, picked without judgement** (#1791):
+
+1. Work that was done is a **live step** (`stepStart`/`stepDone`, or `ok(label)` when it was already complete when reported).
+2. Work that was skipped is a **note** (dim): `Base image 'fedora-44-base' is up to date (fedora-44-20261021)`.
+3. The command's own answer is a plain **step**.
+4. Detail about the step above is a **step detail** (`stepNote`, `stepWarn`).
+5. The block's closing line is the **success** line, drawn at the header's column.
+
+**Labels are bare, and the terminal decorates them.**
+A label in source is a bare phrase with no `...` and no period: `stepStart("Masking unnecessary services")`.
+`TerminalOutput` adds the ellipsis on a plain terminal (`Masking unnecessary services... done.`) and the spinner and the `✓` on an ANSI one.
+A decorated label (`"Launching x..."`) is right for neither: the ✓ line has to undecorate it again (`trimEllipsis`), and the label reads as a pending action when it is not.
+`StepLabelGateTest` holds it: the last string literal of a `step`, `stepStart`, `ok`, `success` or `note` call may not end in `...` or `…`, nor in a period for `stepStart`, `ok` and `success`, whose text is a label while a step or a note can be a sentence of advice.
+The labels that predate the gate are counted per file in `cli/src/test/resources/step-label-baseline.txt`, which only shrinks; `trimEllipsis` and the baseline go once it is empty.
+
 **Structure:**
 
 - **Section** (column 0): `Refreshing 8 host repos:` or `Updating 6 template(s).` via `section(msg)`.
@@ -896,21 +911,23 @@ Beyond build/branch, this governs the other lifecycle commands too — `vm` (sta
   Frames a batch of steps that belong together (packages, tools, skills, repositories); closing it leaves a blank line so the next top-level step does not read as part of it.
   `list(items)` prints a wrapping comma-separated list at the current indent (the packages being installed).
   `header()` resets the nesting, so a group an exception left open cannot skew the next operation.
-- **Step** (4-space indent, deeper inside a group): `    Configuring network...` — a complete line for fast or informational actions.
-  `ok(msg)` prints a finished result as `✓ msg` without a live step.
+- **Step** (4-space indent, deeper inside a group): `    All templates are up to date` — a complete line, for the command's own answer.
+  `ok(msg)` prints work that was already complete when reported as `✓ msg`, without a live step.
 - **Live step** (`stepStart` / `stepDone`): on an ANSI terminal the line animates a braille spinner, with an optional dim detail set by `stepProgress()` (`verifying: mx version`), and turns into `✓ label` when done, with the elapsed time once it passes two seconds (`✓ Installing packages and dependencies  41s`).
   `stepDone(detail)` adds a result — `✓ Extracting root disk (4.0G)`.
-  `stepBreak()` ends it as `✗ label` before an error.
+  `stepProgress` takes a `Supplier<String>` that is read again on every frame, so a value that keeps changing, such as a download's rate and time left, needs no call per change.
+  `stepBreak()` ends it as `✗ label` before an error; `stepFail(msg)` is `stepBreak()` and then `msg` as a `stepWarn` under the cross.
   Without a terminal the same calls print `Starting container... done.` for logs.
   The step is not done until *all* its work is: each tool's `verify` is its own step under `▸ Verifying`, because a line saying "done" while a first `mx version` takes seconds reads as a hang.
   Never print a `Doing X...` line whose result lands on a separate line.
 - **Step detail** (`stepNote`, `stepWarn`): dim or yellow lines one level under the step they describe — a tool's verified version, or why its verify failed.
   A warning (`stepWarn`, `warn`) is followed by a blank line, separating it from the regular flow; a group closing right after it does not add a second one.
-- **Note** (dim, 4-space indent): informational messages that should be visible but not alarming — e.g. `    Parent 'tpl-dev' already up-to-date, skipping.` Uses ANSI dim (`\e[2m`).
+- **Note** (dim, 4-space indent, stderr): work that was skipped, and other messages that should be visible but not alarming — e.g. `    Parent 'tpl-dev' already up-to-date, skipping`, in ANSI dim (`\e[2m`).
 - **Warning banner** (yellow borders, stderr): `warnBanner(title, lines...)` for diagnostic warnings that need to stand out — subnet conflicts, CA mismatches, firewall issues.
   Title is bold yellow, body lines are plain.
   Distinct from `warn()` which is a single inline yellow line within step output.
-- **Success** (green checkmark): `    ✓ my-branch is ready.` — final confirmation, preceded by a blank line.
+- **Success** (green checkmark, bold, at the header's column): `  ✓ tpl-dev built` — the line that closes the block, preceded by a blank line.
+  The header opens a block at column 2 with `●`, so its close belongs at column 2 with `✓`, worded like every ✓ line: no period, no "successfully".
 
 **Headers live in commands, steps in shared helpers.**
 A shared operation that runs both standalone and nested (e.g. `VmManager.start()`/`stop()`, called both by `isx vm start` and as sub-steps of `isx vm resize`) emits only steps/notes and never its own header.
@@ -934,7 +951,7 @@ This prevents leaked output (e.g. systemd's "Created symlink" lines) from breaki
 `runInteractive` is reserved for commands that genuinely need live terminal output (e.g. interactive shells).
 
 **Adding new output:** use `BuildOutput.section()` to introduce a block of work, `header()` to frame a named multi-step operation within it, `group()` for a batch of related steps, `step()`/`ok()` for quick actions, `stepStart()`/`stepDone()`/ `stepDone(detail)` for slow ones (with `stepProgress()` when a phase can take a while), `stepNote()`/`stepWarn()` for detail about the step above, `note()` for informational dim messages, `warnBanner()` for bordered stderr warnings, and `success()` for the final confirmation.
-Never print to the raw streams or indent a line with leading spaces (a `group` indents its children), and do not leave a `Doing X...` line dangling.
+Never print to the raw streams or indent a line with leading spaces (a `group` indents its children), and write labels bare: a `Doing X` that did work is a live step, never a `Doing X...` step left dangling.
 Pure reports/tables and interactive prompts (e.g. `proxy` status, `clean` summaries, the TUI) are not step sequences and stay as plain output.
 
 ### Output for scripts: `--format=table|plain|json`

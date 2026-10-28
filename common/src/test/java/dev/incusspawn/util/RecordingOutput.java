@@ -169,7 +169,8 @@ public final class RecordingOutput implements Output {
     @Override public void prompt(String question) { record(Kind.PROMPT, question); }
     @Override public void windowTitle(String title) { record(Kind.WINDOW_TITLE, title); }
     @Override public void stepStart(String msg) { record(Kind.STEP_START, msg); }
-    @Override public void stepProgress(String detail) { record(Kind.STEP_PROGRESS, detail); }
+    /** The detail as it reads when it is given: a test sets the value before the call. */
+    @Override public void stepProgress(java.util.function.Supplier<String> detail) { record(Kind.STEP_PROGRESS, detail.get()); }
     @Override public void stepDone(String detail) { record(Kind.STEP_DONE, detail); }
     @Override public void stepBreak() { record(Kind.STEP_BREAK, null); }
     @Override public void releaseTerminal() { record(Kind.RELEASE_TERMINAL, null); }

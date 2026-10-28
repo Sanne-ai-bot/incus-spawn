@@ -31,7 +31,8 @@ import static dev.incusspawn.util.BuildOutput.styled;
  * {@link #stepDone}: on an ANSI terminal the step line animates a spinner until it is done
  * and then turns into a green ✓ (with the elapsed time once that is worth reading), so a
  * step that is still busy never looks finished. Without a terminal the line is printed
- * {@code "label... done."}, as a log would want it. {@link #step} prints a complete line.
+ * {@code "label... done."}, as a log would want it. A label is bare in source: the ellipsis and
+ * the glyphs are this class's. {@link #step} prints a complete line.
  *
  * <p>While a step is live, anything else written to {@code System.out} or {@code System.err}
  * first freezes the step line and moves below it, so a warning or error printed mid-step is
@@ -47,6 +48,8 @@ import static dev.incusspawn.util.BuildOutput.styled;
 public final class TerminalOutput implements Output {
 
     private static final String GROUP_INDENT = "  ";
+    /** The column a block opens at with its header, and closes at with its success line. */
+    private static final String HEADER_INDENT = "  ";
 
     /** Steps longer than this show their elapsed time on the ✓ line. */
     private static final long SHOW_ELAPSED_MS = 2000;
@@ -131,7 +134,11 @@ public final class TerminalOutput implements Output {
     @Override
     public void stepWarn(String msg) {
         if (msg == null || msg.isBlank()) return;
-        err.get().println(indent() + GROUP_INDENT + styled(YELLOW, "⚠ " + safeLines(msg)));
+        // Each line under the step: a failed step's reason can carry its output's last lines
+        var lines = safeLines(msg).split("\n", -1);
+        var at = indent() + GROUP_INDENT;
+        err.get().println(at + styled(YELLOW, "⚠ " + lines[0]));
+        for (int i = 1; i < lines.length; i++) err.get().println(at + "  " + styled(YELLOW, lines[i]));
         endWithBlankLine();
     }
 
@@ -218,7 +225,6 @@ public final class TerminalOutput implements Output {
     private ScheduledExecutorService ticker;
 
     private static final class LiveStep {
-        final String msg;
         final String label;
         final String indent;
         final long startNanos = System.nanoTime();
@@ -229,7 +235,7 @@ public final class TerminalOutput implements Output {
         PrintStream guardedOut;
         PrintStream guardedErr;
         ScheduledFuture<?> animation;
-        volatile String detail;
+        volatile Supplier<String> detail;
         /** Terminal width, measured by the spinner thread on its first frame; -1 until then. */
         int width = -1;
         /** Whether the terminal cursor still sits on this step's line. */
@@ -237,7 +243,6 @@ public final class TerminalOutput implements Output {
         int frame;
 
         LiveStep(String msg, String indent, boolean ansi, PrintStream raw) {
-            this.msg = msg;
             this.label = BuildOutput.trimEllipsis(msg);
             this.indent = indent;
             this.ansi = ansi;
@@ -246,11 +251,15 @@ public final class TerminalOutput implements Output {
             this.previousErr = System.err;
         }
 
-        String runningLine(int width) {
+        /** The line a plain terminal prints while the step runs. */
+        String plainLine() {
+            return indent + label + "...";
+        }
+
+        String runningLine(int width, String d) {
             var sb = new StringBuilder(indent)
                     .append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
                     .append(' ').append(label);
-            var d = detail;
             if (d != null && !d.isEmpty()) sb.append("  ").append(DIM).append(d).append(RESET);
             return TerminalProgress.truncateToWidth(sb.toString(), width);
         }
@@ -277,7 +286,7 @@ public final class TerminalOutput implements Output {
             var ansi = BuildOutput.ansi();
             var step = new LiveStep(msg, indent(), ansi, out.get());
             if (!ansi) {
-                step.raw.print(step.indent + msg);
+                step.raw.print(step.plainLine());
                 step.raw.flush();
             }
             // An animated line is first drawn by the spinner thread: finding the terminal width
@@ -295,7 +304,7 @@ public final class TerminalOutput implements Output {
     }
 
     @Override
-    public void stepProgress(String detail) {
+    public void stepProgress(Supplier<String> detail) {
         synchronized (lock) {
             if (live != null) live.detail = detail;
         }
@@ -309,12 +318,6 @@ public final class TerminalOutput implements Output {
     @Override
     public void stepBreak() {
         finish(null, false);
-    }
-
-    @Override
-    public void stepFail(String msg) {
-        stepBreak();
-        err.get().println(safeLines(msg));
     }
 
     @Override
@@ -368,7 +371,7 @@ public final class TerminalOutput implements Output {
             raw.print((step.onLine ? "\r\033[2K" : "") + text + "\n");
         } else if (outcome != null) {
             var done = outcome.detail() == null ? " done." : " done (" + outcome.detail() + ").";
-            raw.println(step.onLine ? done : step.indent + step.msg + done);
+            raw.println(step.onLine ? done : step.plainLine() + done);
         } else if (step.onLine) {
             raw.println();
         }
@@ -390,11 +393,27 @@ public final class TerminalOutput implements Output {
 
     private void redraw(LiveStep step) {
         int width = width(step); // outside the lock: measuring runs `stty`
+        var text = detail(step); // outside the lock too: the caller's code
         synchronized (lock) {
             if (live != step || !step.onLine) return;
-            step.raw.print("\r\033[2K" + step.runningLine(width));
+            step.raw.print("\r\033[2K" + step.runningLine(width, text));
             step.raw.flush();
             step.frame++;
+        }
+    }
+
+    /**
+     * The live step's detail as it reads now, as one safe line. A supplier that throws shows none
+     * this frame: an exception would end the spinner's schedule for good, and the step would look hung.
+     */
+    private static String detail(LiveStep step) {
+        var detail = step.detail;
+        if (detail == null) return null;
+        try {
+            var text = detail.get();
+            return text == null ? null : OutputFormat.oneLine(text);
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 
@@ -418,7 +437,7 @@ public final class TerminalOutput implements Output {
     public void header(String msg, String detail) {
         depth = 0;
         blankLine();
-        var line = "  " + styled(BOLD, "● " + msg);
+        var line = HEADER_INDENT + styled(BOLD, "● " + msg);
         out.get().println(detail == null ? line : line + " " + styled(DIM, detail));
     }
 
@@ -431,7 +450,7 @@ public final class TerminalOutput implements Output {
             var counter = "[" + index + "/" + total + "]";
             var label = "Building " + name;
             int gap = Math.max(2, 62 - 4 - label.length() - counter.length());
-            out.get().println("  " + styled(BOLD, "● " + label)
+            out.get().println(HEADER_INDENT + styled(BOLD, "● " + label)
                     + " ".repeat(gap) + styled(DIM, counter));
         } else {
             header("Building " + name, null);
@@ -442,7 +461,7 @@ public final class TerminalOutput implements Output {
     public void branchHeader(String name, String source) {
         depth = 0;
         blankLine();
-        out.get().println("  " + styled(BOLD, "● " + name) + " " + styled(DIM, "← " + source));
+        out.get().println(HEADER_INDENT + styled(BOLD, "● " + name) + " " + styled(DIM, "← " + source));
     }
 
     @Override
@@ -499,7 +518,7 @@ public final class TerminalOutput implements Output {
     @Override
     public void success(String msg) {
         blankLine();
-        out.get().println(STEP_INDENT + styled(GREEN, "✓") + " " + msg);
+        out.get().println(HEADER_INDENT + styled(GREEN, "✓") + " " + styled(BOLD, msg));
     }
 
     @Override

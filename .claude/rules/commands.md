@@ -151,6 +151,7 @@ The host-setup confirmations (Incus install, subid, CoW pool) ask through the sa
 
 **Init output** (#906).
 Init keeps its own frame -- the boxed, numbered step headers and the `┃` hint bar -- but the lines under a header follow these rules.
+Which kind each line is (live step, note, step, step detail, success) and that its label is bare are the rules of `.claude/rules/terminal-output.md`, "Five kinds, and bare labels".
 *The step counter is derived, never written down*: `runSteps(setup, finish)` counts its lists, Credential Setup and the credentials chosen there, so `[n/N]` adds up on every path (credentials or none, Linux or macOS) and the last step reads `[N/N]`.
 Each `Step` shows exactly one header, so a new step goes into a list, never a bare `startStep` call between them.
 *Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded.
