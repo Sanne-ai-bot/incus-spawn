@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -11,6 +13,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class SshProxyCommandTest {
 
@@ -134,5 +138,21 @@ class SshProxyCommandTest {
                 .redirectErrorStream(true).start();
         p.getInputStream().readAllBytes();
         return p.waitFor();
+    }
+
+    /**
+     * A stopped instance is one error, with how to start it, which a recorder sees; stdout, the
+     * connection's stream, gets nothing (#1703).
+     */
+    @Test
+    void aStoppedInstanceIsAnErrorWithItsRemedy() {
+        var incus = mock(IncusClient.class);
+        when(incus.getInstanceStatus("box")).thenReturn("Stopped");
+        var command = new SshProxyCommand();
+        command.instance = "box";
+        var recorded = RecordingOutput.during(() -> assertFalse(command.checkInstanceRunning(incus)));
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
+                        "instance 'box' is not running (status: Stopped).", "Start it first: isx shell box")),
+                recorded.events());
     }
 }
