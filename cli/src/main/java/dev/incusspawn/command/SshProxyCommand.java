@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -55,20 +57,26 @@ public class SshProxyCommand extends BaseCommand {
                         + " exec nc localhost 22"};
     }
 
-    private boolean checkInstanceRunning(dev.incusspawn.incus.IncusClient incus) {
+    /**
+     * Whether the instance runs, saying why not as an error: ssh shows the ProxyCommand's stderr,
+     * and an error writes nothing to stdout, which is the connection's stream.
+     */
+    boolean checkInstanceRunning(dev.incusspawn.incus.IncusClient incus) {
+        var shown = OutputFormat.oneLine(instance);
         try {
             var status = incus.getInstanceStatus(instance);
             if (status.isEmpty()) {
-                System.err.println("Error: instance '" + instance + "' not found or not accessible.");
+                BuildOutput.error("instance '" + shown + "' not found or not accessible.");
                 return false;
             }
             if (!"Running".equalsIgnoreCase(status)) {
-                System.err.println("Error: instance '" + instance + "' is not running (status: " + status + ").");
+                BuildOutput.error("instance '" + shown + "' is not running (status: " + OutputFormat.oneLine(status) + ").",
+                        "Start it first: isx shell " + shown);
                 return false;
             }
             return true;
         } catch (Exception e) {
-            System.err.println("Error: could not check instance status: " + e.getMessage());
+            BuildOutput.error("could not check instance status: " + OutputFormat.oneLine(failure(e)));
             return false;
         }
     }
