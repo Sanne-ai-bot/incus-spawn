@@ -7,6 +7,8 @@ import java.util.List;
 public final class StandInTui extends Tui {
     public final List<String> events = new ArrayList<>();
     public List<String> warningsAtStart;
+    /** Thrown from the run loop, which the TUI reports as why it failed. */
+    public RuntimeException failure;
 
     @Override
     void waitForUser() {
@@ -17,5 +19,6 @@ public final class StandInTui extends Tui {
     void runTuiLoop() {
         events.add("draw");
         warningsAtStart = warningMessages();
+        if (failure != null) throw failure;
     }
 }

@@ -93,8 +93,7 @@ public class IncusSpawn implements QuarkusApplication {
         // by the TUI: hold the warnings for its log, and let it wait for anything else (#1154).
         try (var preTui = PreTuiOutput.begin()) {
             if (!ready.getAsBoolean()) return false;
-            tui.get().run(preTui);
-            return true;
+            return tui.get().run(preTui);
         }
     }
 

@@ -311,10 +311,19 @@ public class Tui {
     static final int STORAGE_WARN_PERCENT = 75;
     volatile ProxyHealthCheck.ProxyInfo proxyInfo;
     volatile String applianceSkewMessage;
-    /** Bare {@code isx}: takes over the terminal until the user quits. */
-    public void run(PreTuiOutput preTui) {
+    /**
+     * Bare {@code isx}: takes over the terminal until the user quits.
+     * Returns false when it failed, having reported why, so the command exits non-zero (#1785).
+     */
+    public boolean run(PreTuiOutput preTui) {
         this.preTui = preTui;
-        try { open(); } catch (Exception e) { BuildOutput.error(BaseCommand.failure(e)); }
+        try {
+            open();
+            return true;
+        } catch (Exception e) {
+            BuildOutput.error(BaseCommand.failure(e));
+            return false;
+        }
     }
 
     private void open() {
