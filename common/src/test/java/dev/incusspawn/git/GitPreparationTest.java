@@ -13,6 +13,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -914,6 +915,7 @@ class GitPreparationTest {
             while (!Files.exists(signal) && process.isAlive() && System.nanoTime() < deadline) Thread.sleep(20);
             assertTrue(Files.exists(signal), Files.readString(tmp.resolve("reader.log")));
             var active = Path.of(Files.readString(signal));
+            assertTrue(active.isAbsolute(), "the reader published no lease path: " + active);
             try (var result = prepare(null, null)) {
                 assertTrue(Files.isDirectory(active));
                 sameObjects(remote, active);
@@ -930,7 +932,10 @@ class GitPreparationTest {
         public static void main(String[] args) throws Exception {
             try (var result = new GitPreparation(Path.of(args[0]), GitCacheConfig.DEFAULT, GitTransferConfig.DEFAULT)
                     .prepare(new GitPreparation.Request(args[1], null, null), s -> {})) {
-                Files.writeString(Path.of(args[2]), result.repository().toString());
+                // The test reads the signal as soon as it exists, so it must never see it empty (#1844)
+                var signal = Path.of(args[2]);
+                var partial = Files.writeString(signal.resolveSibling(signal.getFileName() + ".partial"), result.repository().toString());
+                Files.move(partial, signal, StandardCopyOption.ATOMIC_MOVE);
                 Thread.sleep(TimeUnit.MINUTES.toMillis(1));
             }
         }
