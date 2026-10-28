@@ -6,9 +6,7 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.tool.GhSetup;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -27,16 +25,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(IsolatedHome.class)
 class InstancePrepTest {
 
-    /**
-     * Unique, and cleaned up after each test: readyForUse creates the host zmx symlink, in a
-     * directory IsolatedHome does not redirect.
-     */
     private static final String NAME = "prep-" + UUID.randomUUID();
-
-    @AfterEach
-    void removeZmxSymlink() {
-        ZmxSocketForward.cleanup(NAME, new RecordingOutput());
-    }
 
     private static final String WITH_TOKEN = """
             github:

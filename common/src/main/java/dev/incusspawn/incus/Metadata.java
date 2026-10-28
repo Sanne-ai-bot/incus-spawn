@@ -108,6 +108,11 @@ public final class Metadata {
      * directory was gone; the first start that finds the directory back mounts it again (#1139).
      */
     public static final String INBOX_SOURCE = PREFIX + "inbox-source";
+    /**
+     * Set when isx removed or never added the {@code zmx-sockets} device because the instance's zmx
+     * directory was not the user's alone; the first start that finds it so adds the device again (#1821).
+     */
+    public static final String ZMX_WITHHELD = PREFIX + "zmx-withheld";
     /** Prefix of the per-namespace credential account selection; see {@link #accountKey}. */
     public static final String ACCOUNT_PREFIX = PREFIX + "account.";
     /** Prefix of who chose each namespace's pinned account; see {@link #accountOriginKey}. */

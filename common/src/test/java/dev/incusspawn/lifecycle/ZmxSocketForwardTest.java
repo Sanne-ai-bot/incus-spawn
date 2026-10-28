@@ -5,12 +5,12 @@ import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.Platform;
+import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.mockito.ArgumentCaptor;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -23,14 +23,14 @@ import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Host-side repair of the {@code zmx-sockets} disk device.  The device source
- * lives on a tmpfs that disappears on reboot/logout, and Incus refuses to
- * start an instance whose disk source is missing, so the repair has to happen
- * before every start — without slowing the common case down.
+ * Host side of the {@code zmx-sockets} disk device.  Its source is the
+ * instance's own directory, which nobody else can change; the host zmx dir,
+ * which another user can have made first, holds only links (#1821).  Incus
+ * refuses to start an instance whose disk source is missing, so the repair
+ * has to happen before every start — without slowing the common case down.
  */
 class ZmxSocketForwardTest {
 
@@ -38,17 +38,27 @@ class ZmxSocketForwardTest {
     private static final String NAME = "demo";
     @TempDir
     Path zmxDir;
+    @TempDir
+    Path stateDir;
 
+    private FakeIncusDaemon daemon;
     private IncusClient incus;
+    private ZmxSocketForward.HostDirs dirs;
 
     @BeforeEach
     void setUp() {
         assumeFalse(Platform.isMacOS(), "host socket sharing is Linux-only");
-        incus = mock(IncusClient.class);
+        daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        incus = daemon.client();
+        dirs = new ZmxSocketForward.HostDirs(stateDir.resolve("zmx"), zmxDir, OwnDirectory::processUid);
     }
 
     private Path containerDir() {
-        return zmxDir.resolve("containers").resolve(NAME);
+        return dirs.instances().resolve(NAME);
+    }
+
+    private Path sessionTarget() {
+        return containerDir().resolve("isx");
     }
 
     private Path symlink() {
@@ -75,12 +85,12 @@ class ZmxSocketForwardTest {
     void ensureHostDirForStart_directoryPresent_touchesNothing() throws IOException {
         Files.createDirectories(containerDir());
 
-        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs,
                 instanceWithZmxDevice(containerDir().toAbsolutePath().toString()), RecordingOutput.FAIL_ON_WARN);
 
-        // The healthy path must cost a single stat and no Incus call at all,
+        // The healthy path must cost a few stats and no Incus call at all,
         // or every start pays for the repair.
-        verifyNoInteractions(incus);
+        assertEquals(List.of(), daemon.requests());
     }
 
     /**
@@ -92,44 +102,42 @@ class ZmxSocketForwardTest {
     void ensureHostDirForStart_requiredDevice_upgradesToOptional() throws IOException {
         Files.createDirectories(containerDir());
 
-        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs,
                 legacyInstanceWithZmxDevice(containerDir().toAbsolutePath().toString()), RecordingOutput.FAIL_ON_WARN);
 
-        verify(incus).devicesRemoveAll(NAME, List.of(DEVICE));
-        assertTrue(deviceAddArgs().contains("required=false"));
+        assertEquals("false", device().get("required"));
     }
 
     @Test
     void ensureHostDirForStart_noZmxDevice_createsNothing() {
-        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir, JqObject.builder(0).build(), RecordingOutput.FAIL_ON_WARN);
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs, JqObject.builder(0).build(), RecordingOutput.FAIL_ON_WARN);
 
         assertFalse(Files.exists(containerDir()),
                 "instances without the device must not get a stray directory");
         assertFalse(Files.exists(symlink()));
-        verifyNoInteractions(incus);
+        assertEquals(List.of(), daemon.requests());
     }
 
     @Test
-    void ensureHostDirForStart_wipedTmpfs_recreatesDirectoryAndSymlink() throws IOException {
-        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
+    void ensureHostDirForStart_missingDirectory_recreatesDirectoryAndSymlink() throws IOException {
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs,
                 instanceWithZmxDevice(containerDir().toAbsolutePath().toString()), RecordingOutput.FAIL_ON_WARN);
 
         assertTrue(Files.isDirectory(containerDir()));
         assertTrue(Files.isSymbolicLink(symlink()));
-        assertEquals(Path.of("containers", NAME, "isx"), Files.readSymbolicLink(symlink()));
-        assertEquals("source=" + containerDir().toAbsolutePath(), deviceAddArgs().get(0));
+        assertEquals(sessionTarget(), Files.readSymbolicLink(symlink()));
+        assertEquals(containerDir().toString(), device().get("source"));
     }
 
     @Test
     void ensureHostDirForStart_staleSourceAfterRename_repointsDevice() {
-        var oldDir = zmxDir.resolve("containers").resolve("previous-name");
+        var oldDir = dirs.instances().resolve("previous-name");
 
-        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs,
                 instanceWithZmxDevice(oldDir.toString()), RecordingOutput.FAIL_ON_WARN);
 
         assertTrue(Files.isDirectory(containerDir()));
-        verify(incus).devicesRemoveAll(NAME, List.of(DEVICE));
-        assertEquals("source=" + containerDir().toAbsolutePath(), deviceAddArgs().get(0));
+        assertEquals(containerDir().toString(), device().get("source"));
     }
 
     /**
@@ -140,12 +148,12 @@ class ZmxSocketForwardTest {
     @Test
     void ensureHostDirForStart_rightDirectoryWrongSource_repointsDevice() throws IOException {
         Files.createDirectories(containerDir());
-        var oldDir = zmxDir.resolve("containers").resolve("previous-name");
+        var oldDir = dirs.instances().resolve("previous-name");
 
-        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs,
                 instanceWithZmxDevice(oldDir.toString()), RecordingOutput.FAIL_ON_WARN);
 
-        assertEquals("source=" + containerDir().toAbsolutePath(), deviceAddArgs().get(0));
+        assertEquals(containerDir().toString(), device().get("source"));
     }
 
     /**
@@ -155,31 +163,30 @@ class ZmxSocketForwardTest {
      */
     @Test
     void ensureHostDirForStart_staleSourceStillOnDisk_repointsDevice() throws IOException {
-        var oldDir = zmxDir.resolve("containers").resolve("previous-name");
+        var oldDir = dirs.instances().resolve("previous-name");
         Files.createDirectories(oldDir);
 
-        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs,
                 instanceWithZmxDevice(oldDir.toString()), RecordingOutput.FAIL_ON_WARN);
 
         assertTrue(Files.isDirectory(containerDir()));
-        assertEquals("source=" + containerDir().toAbsolutePath(), deviceAddArgs().get(0));
+        assertEquals(containerDir().toString(), device().get("source"));
     }
 
     @Test
     void configure_addsDiskDeviceForContainerZmxDir() throws IOException {
-        ZmxSocketForward.configure(incus, NAME, zmxDir, RecordingOutput.FAIL_ON_WARN);
+        ZmxSocketForward.configure(incus, NAME, dirs, RecordingOutput.FAIL_ON_WARN);
 
         assertTrue(Files.isDirectory(containerDir()));
-        assertEquals(Path.of("containers", NAME, "isx"), Files.readSymbolicLink(symlink()));
-        verify(incus).devicesRemoveAll(NAME, List.of(DEVICE));
+        assertEquals(sessionTarget(), Files.readSymbolicLink(symlink()));
         assertEquals(
-                List.of("source=" + containerDir().toAbsolutePath(),
-                        "path=/home/agentuser/.zmx",
-                        // The source sits on a tmpfs: a start that bypasses isx
-                        // after a reboot must not fail on it (#1044).
-                        "required=false",
-                        "shift=true"),
-                deviceAddArgs());
+                Map.of("type", "disk",
+                        "source", containerDir().toString(),
+                        "path", "/home/agentuser/.zmx",
+                        // A start that bypasses isx must not fail on a missing source (#1044)
+                        "required", "false",
+                        "shift", "true"),
+                device());
     }
 
     /**
@@ -195,6 +202,7 @@ class ZmxSocketForwardTest {
         var instance = JqObject.builder(1)
                 .put("config", JqObject.builder(1).put(Metadata.HOST_RESOURCES, "").build())
                 .build();
+        var incus = mock(IncusClient.class);
         when(incus.instanceMetadata(name)).thenReturn(instance);
 
         InstanceLifecycle.prepareForStart(incus, name);
@@ -203,10 +211,8 @@ class ZmxSocketForwardTest {
         verifyNoMoreInteractions(incus);
     }
 
-    private List<String> deviceAddArgs() {
-        var args = ArgumentCaptor.forClass(String[].class);
-        verify(incus).deviceAdd(eq(NAME), eq(DEVICE), eq("disk"), args.capture());
-        return List.of(args.getValue());
+    private Map<String, String> device() {
+        return daemon.instanceDevices(NAME).get(DEVICE);
     }
 
     /** The host dir resolves as zmx 0.6.0 and 0.8.1 resolve their socket dir, {@code $TMPDIR/zmx-<uid>} included. */
@@ -230,22 +236,21 @@ class ZmxSocketForwardTest {
     }
 
     /**
-     * zmx writes {@code logs/} under its dir, the shared directory, after any
-     * session, so cleanup has to remove it recursively, and through no
+     * zmx writes {@code logs/} under its dir, the instance's directory, after
+     * any session, so cleanup has to remove it recursively, and through no
      * symlink a guest left there (#1772).
      */
     @Test
-    void cleanupRemovesTheSessionLogsWithoutFollowingSymlinks() throws IOException {
-        var outside = Files.createDirectories(zmxDir.resolve("outside"));
+    void cleanupRemovesTheSessionLogsWithoutFollowingSymlinks(@TempDir Path outside) throws IOException {
         var kept = Files.writeString(outside.resolve("kept"), "x");
         var logs = Files.createDirectories(containerDir().resolve("logs"));
         Files.writeString(logs.resolve("zmx.log"), "log");
         Files.writeString(logs.resolve("isx.log"), "log");
         Files.createSymbolicLink(containerDir().resolve("escape"), outside);
-        Files.createSymbolicLink(symlink(), Path.of("containers", NAME, "isx"));
+        Files.createSymbolicLink(symlink(), sessionTarget());
 
         var out = new RecordingOutput();
-        ZmxSocketForward.cleanup(NAME, zmxDir, out);
+        ZmxSocketForward.cleanup(NAME, dirs, out);
 
         assertEquals(List.of(), out.warnings());
         assertFalse(Files.exists(containerDir(), LinkOption.NOFOLLOW_LINKS), "container dir left behind");
@@ -253,104 +258,218 @@ class ZmxSocketForwardTest {
         assertTrue(Files.exists(kept), "cleanup followed a symlink out of the container dir");
     }
 
-    /** A user's ZMX_DIR may be a link of theirs, and cleanup still goes through it. */
+    /** A user's ZMX_DIR may be a link of theirs, and cleanup still removes the session link through it. */
     @Test
     void cleanupGoesThroughTheUsersOwnLink(@TempDir Path elsewhere) throws IOException {
-        var logs = Files.createDirectories(containerDir().resolve("logs"));
-        Files.writeString(logs.resolve("zmx.log"), "log");
+        Files.createDirectories(containerDir());
+        Files.createSymbolicLink(symlink(), sessionTarget());
         var link = Files.createSymbolicLink(elsewhere.resolve("zmx"), zmxDir);
 
         var out = new RecordingOutput();
-        ZmxSocketForward.cleanup(NAME, link, out);
+        ZmxSocketForward.cleanup(NAME, new ZmxSocketForward.HostDirs(dirs.instances(), link, OwnDirectory::processUid), out);
 
         assertEquals(List.of(), out.warnings());
+        assertFalse(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS), "session symlink left behind");
         assertFalse(Files.exists(containerDir()), "container dir left behind");
     }
 
     /**
-     * A {@code containers} that resolves somewhere else is not walked: on the
-     * {@code /tmp} fallback another user can have planted it, and a link of
-     * the user's own is not something isx made.
+     * A host zmx dir another user made is not tidied, and does not stop the
+     * instance's own directory from going: the two are separate (#1821).
      */
     @Test
-    void cleanupDoesNotWalkAContainersLink(@TempDir Path elsewhere) throws IOException {
-        var victim = Files.createDirectories(elsewhere.resolve(NAME));
-        var kept = Files.writeString(victim.resolve("kept"), "x");
-        Files.createSymbolicLink(zmxDir.resolve("containers"), elsewhere);
-
-        var out = new RecordingOutput();
-        ZmxSocketForward.cleanup(NAME, zmxDir, out);
-
-        assertTrue(Files.exists(kept), "cleanup deleted through a containers link");
-        assertTrue(out.warnings().getFirst().contains("which is a link (to "), out.warnings().toString());
-    }
-
-    /**
-     * A zmx dir others can write to is not walked either: they could swap
-     * {@code containers} for a link between the check and the delete.  The
-     * session link still goes: the dir is the user's, so nobody else can put
-     * a link in its way.
-     */
-    @Test
-    void cleanupDoesNotWalkAZmxDirOthersCanWrite() throws IOException {
-        var logs = Files.createDirectories(containerDir().resolve("logs"));
-        Files.writeString(logs.resolve("zmx.log"), "log");
-        Files.createSymbolicLink(symlink(), Path.of("containers", NAME, "isx"));
+    void cleanupRemovesTheInstanceDirWhateverTheHostZmxDirIs() throws IOException {
+        Files.createDirectories(containerDir().resolve("logs"));
+        Files.createSymbolicLink(symlink(), sessionTarget());
         Files.setPosixFilePermissions(zmxDir, PosixFilePermissions.fromString("rwxrwxrwx"));
 
         var out = new RecordingOutput();
-        ZmxSocketForward.cleanup(NAME, zmxDir, out);
+        ZmxSocketForward.cleanup(NAME, dirs, out);
 
-        assertTrue(Files.exists(logs.resolve("zmx.log")), "cleanup walked a zmx dir others can write to");
+        assertEquals(List.of(), out.warnings());
+        assertFalse(Files.exists(containerDir()), "container dir left behind");
+        // The dir is the user's, so nobody else can have put the link in its way
         assertFalse(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS), "session symlink left behind");
-        assertTrue(out.warnings().getFirst().contains("which others can write to"), out.warnings().toString());
     }
 
-    /** An instance that never shared zmx sockets has nothing to warn of, whatever the dir is like. */
+    /** An instance that never shared zmx sessions has nothing to warn of, whatever the dirs are like. */
     @Test
     void cleanupSaysNothingOfAnInstanceWithoutZmxSessions() throws IOException {
-        Files.createDirectories(zmxDir.resolve("containers").resolve("other"));
-        Files.setPosixFilePermissions(zmxDir, PosixFilePermissions.fromString("rwxrwxrwx"));
+        Files.createDirectories(dirs.instances().resolve("other"));
+        Files.setPosixFilePermissions(dirs.instances(), PosixFilePermissions.fromString("rwxrwxrwx"));
 
         var out = new RecordingOutput();
-        ZmxSocketForward.cleanup(NAME, zmxDir, out);
+        ZmxSocketForward.cleanup(NAME, dirs, out);
 
         assertEquals(List.of(), out.warnings());
     }
 
-    /** Nor a {@code containers} others can write to, where they could swap the instance's dir for a link. */
+    /** Nor through a directory of instances others can write to, where they could swap the instance's dir for a link. */
     @Test
-    void cleanupDoesNotWalkAContainersDirOthersCanWrite() throws IOException {
+    void cleanupDoesNotWalkAnInstancesDirOthersCanWrite() throws IOException {
         var logs = Files.createDirectories(containerDir().resolve("logs"));
         Files.writeString(logs.resolve("zmx.log"), "log");
-        Files.setPosixFilePermissions(zmxDir.resolve("containers"), PosixFilePermissions.fromString("rwxrwxrwx"));
+        Files.setPosixFilePermissions(dirs.instances(), PosixFilePermissions.fromString("rwxrwxrwx"));
 
         var out = new RecordingOutput();
-        ZmxSocketForward.cleanup(NAME, zmxDir, out);
+        ZmxSocketForward.cleanup(NAME, dirs, out);
 
-        assertTrue(Files.exists(logs.resolve("zmx.log")), "cleanup walked a containers dir others can write to");
+        assertTrue(Files.exists(logs.resolve("zmx.log")), "cleanup walked an instances dir others can write to");
         assertTrue(out.warnings().getFirst().contains("which others can write to"), out.warnings().toString());
+    }
+
+    /** Nor one that is a link, which isx did not make. */
+    @Test
+    void cleanupDoesNotWalkAnInstancesLink(@TempDir Path elsewhere) throws IOException {
+        var kept = Files.writeString(Files.createDirectories(elsewhere.resolve(NAME)).resolve("kept"), "x");
+        Files.createSymbolicLink(dirs.instances(), elsewhere);
+
+        var out = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, dirs, out);
+
+        assertTrue(Files.exists(kept), "cleanup deleted through a link");
+        assertTrue(out.warnings().getFirst().contains("which is a link (to "), out.warnings().toString());
     }
 
     /**
      * Ownership is checked against the uid isx runs as, never a guess: a uid
-     * that cannot be read walks nothing, and a dir of another uid's (as
-     * {@code /tmp/zmx-1000} would be, named by {@code id -u}'s fallback) is refused.
+     * that cannot be read walks nothing, and a dir of another uid's is refused.
      */
     @Test
     void cleanupWalksNothingWithoutTheProcessUid() throws IOException {
         var logs = Files.createDirectories(containerDir().resolve("logs"));
         Files.writeString(logs.resolve("zmx.log"), "log");
-        Files.createSymbolicLink(symlink(), Path.of("containers", NAME, "isx"));
+        Files.createSymbolicLink(symlink(), sessionTarget());
 
         var unreadable = new RecordingOutput();
-        ZmxSocketForward.cleanup(NAME, zmxDir, unreadable, () -> { throw new IOException("no /proc"); });
+        ZmxSocketForward.cleanup(NAME, withUid(() -> { throw new IOException("no /proc"); }), unreadable);
         var another = new RecordingOutput();
-        ZmxSocketForward.cleanup(NAME, zmxDir, another, () -> OwnDirectory.processUid() + 1);
+        ZmxSocketForward.cleanup(NAME, withUid(() -> OwnDirectory.processUid() + 1), another);
 
         assertTrue(Files.exists(logs.resolve("zmx.log")), "cleanup walked a dir without knowing whose it is");
         assertTrue(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS), "session symlink removed from another uid's dir");
         assertTrue(unreadable.warnings().getFirst().contains("cannot tell which uid"), unreadable.warnings().toString());
         assertTrue(another.warnings().getFirst().contains("which belongs to uid"), another.warnings().toString());
+    }
+
+    private ZmxSocketForward.HostDirs withUid(java.util.concurrent.Callable<Integer> uid) {
+        return new ZmxSocketForward.HostDirs(dirs.instances(), zmxDir, uid);
+    }
+
+    /**
+     * #1821: on the {@code /tmp/zmx-<uid>} fallback another user can make the
+     * host zmx dir first.  The guest's sessions never go there: the device
+     * stays, mounting the instance's own directory, and no link is made in a
+     * dir someone else can change, which the shell says.
+     */
+    @Test
+    void aHostZmxDirOthersCanWriteKeepsTheDeviceButGetsNoLink() throws IOException {
+        Files.setPosixFilePermissions(zmxDir, PosixFilePermissions.fromString("rwxrwxrwx"));
+
+        assertTrue(ZmxSocketForward.configure(incus, NAME, dirs, RecordingOutput.FAIL_ON_WARN));
+        var out = new RecordingOutput();
+        ZmxSocketForward.ensureSymlink(NAME, dirs, out);
+
+        assertEquals(containerDir().toString(), device().get("source"));
+        assertFalse(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS), "linked from a dir others can write to");
+        assertTrue(out.warnings().getFirst().contains("host zmx cannot see the sessions of 'demo'"), out.warnings().toString());
+        assertTrue(out.warnings().getFirst().contains("which others can write to"), out.warnings().toString());
+    }
+
+    /** The instances' directory and each instance's are made private, and a missing host zmx dir too. */
+    @Test
+    void configureMakesEveryDirectoryItCreatesPrivate() throws IOException {
+        Files.delete(zmxDir);
+
+        ZmxSocketForward.configure(incus, NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+
+        for (var dir : List.of(dirs.instances(), containerDir(), zmxDir)) {
+            assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(dir)), dir.toString());
+        }
+        assertEquals(sessionTarget(), Files.readSymbolicLink(symlink()));
+    }
+
+    /** An instance that shares no sessions gets no link, and its shell creates nothing. */
+    @Test
+    void ensureSymlinkLeavesAnInstanceWithoutZmxAlone() throws IOException {
+        Files.delete(zmxDir);
+
+        ZmxSocketForward.ensureSymlink(NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+
+        assertFalse(Files.exists(zmxDir, LinkOption.NOFOLLOW_LINKS));
+    }
+
+    /** A device from before #1821 points into the host zmx dir, and the next start moves it to the instance's own. */
+    @Test
+    void ensureHostDirForStart_deviceInTheHostZmxDir_movesToTheInstancesOwn() {
+        var legacy = zmxDir.resolve("containers").resolve(NAME);
+
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs,
+                instanceWithZmxDevice(legacy.toString()), RecordingOutput.FAIL_ON_WARN);
+
+        assertEquals(containerDir().toString(), device().get("source"));
+    }
+
+    /**
+     * When the instance's own directory is not the user's alone either, it is
+     * option (a) of #1821: the start goes ahead without the device, and says
+     * why.  The stamp lets the first start that finds the directory right add
+     * it back, and a start that still finds it wrong writes nothing.
+     */
+    @Test
+    void anInstanceDirOthersCanWriteWithholdsTheDeviceUntilItIsFixed() throws IOException {
+        Files.createDirectories(containerDir());
+        daemon.device(NAME, DEVICE, Map.of("type", "disk", "source", containerDir().toString(),
+                "path", "/home/agentuser/.zmx", "required", "false"));
+        var instances = dirs.instances();
+        Files.setPosixFilePermissions(instances, PosixFilePermissions.fromString("rwxrwxrwx"));
+
+        var refused = new RecordingOutput();
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs, incus.instanceMetadata(NAME), refused);
+
+        assertFalse(daemon.instanceDevices(NAME).containsKey(DEVICE), "device mounted from a dir others can write to");
+        assertEquals("true", daemon.instance(NAME).path("config").path("user.incus-spawn.zmx-withheld").asText(""));
+        assertTrue(refused.warnings().getFirst().contains("'demo' shares no zmx sessions with the host"),
+                refused.warnings().toString());
+        assertTrue(refused.warnings().getFirst().contains("which others can write to"), refused.warnings().toString());
+
+        daemon.clearRequests();
+        var again = new RecordingOutput();
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs, incus.instanceMetadata(NAME), again);
+        assertFalse(again.warnings().isEmpty());
+        assertTrue(daemon.requests().stream().noneMatch(r -> r.startsWith("PUT") || r.startsWith("PATCH")),
+                daemon.requests().toString());
+
+        Files.setPosixFilePermissions(instances, PosixFilePermissions.fromString("rwx------"));
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs, incus.instanceMetadata(NAME), RecordingOutput.FAIL_ON_WARN);
+
+        assertEquals(containerDir().toString(), daemon.instanceDevices(NAME).get(DEVICE).get("source"));
+        assertEquals("", daemon.instance(NAME).path("config").path("user.incus-spawn.zmx-withheld").asText(""));
+    }
+
+    /** A withheld instance's directory is not linked either: others can change what it holds. */
+    @Test
+    void ensureSymlinkDoesNotLinkIntoAnInstanceDirOthersCanWrite() throws IOException {
+        Files.createDirectories(containerDir());
+        Files.setPosixFilePermissions(containerDir(), PosixFilePermissions.fromString("rwxrwxrwx"));
+
+        ZmxSocketForward.ensureSymlink(NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+
+        assertFalse(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS));
+    }
+
+    /** An instance of the user's own that someone else could change is not mounted either, even on the healthy path. */
+    @Test
+    void ensureHostDirForStart_healthyLookingDirOthersCanWrite_withholdsTheDevice() throws IOException {
+        Files.createDirectories(containerDir());
+        Files.setPosixFilePermissions(containerDir(), PosixFilePermissions.fromString("rwxrwxrwx"));
+        daemon.device(NAME, DEVICE, Map.of("type", "disk", "source", containerDir().toString(),
+                "path", "/home/agentuser/.zmx", "required", "false"));
+
+        var out = new RecordingOutput();
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs, incus.instanceMetadata(NAME), out);
+
+        assertFalse(daemon.instanceDevices(NAME).containsKey(DEVICE));
+        assertTrue(out.warnings().getFirst().contains("which others can write to"), out.warnings().toString());
     }
 }

@@ -503,6 +503,7 @@ tools:
 ```
 
 On Linux, isx shares the instance's zmx socket directory with the host through a disk device.
+That directory is yours alone, under `~/.local/state/incus-spawn/zmx`.
 Instance sessions appear in your native zmx socket directory with an `isx-` prefix, with no configuration needed:
 
 ```bash
@@ -515,6 +516,9 @@ zmx run isx-my-branch git status      # run a command in the container's session
 All zmx commands work natively, including interactive `zmx attach`.
 On macOS, where Incus runs inside a VM, host-side socket sharing is not available.
 zmx sessions still work inside instances: `isx shell` (or Enter in the TUI) auto-attaches, and sessions persist across disconnections.
+
+isx links a session only from a zmx directory nobody else can change, and warns otherwise.
+That can happen when `/tmp/zmx-<uid>` was made by another user; set `ZMX_DIR` to a directory of your own.
 
 ### Context Optimization (headroom)
 
