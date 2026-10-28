@@ -109,8 +109,16 @@ class AiHelpClientTest {
     }
 
     @Test
+    void bothClaudeTargetsAskSonnet55() {
+        // The Claude API and Vertex name the model alike from 5.5 on, but have diverged
+        // before, so each pin is checked on its own (#1675).
+        assertEquals("claude-sonnet-5-5", AiHelpClient.ANTHROPIC_MODEL);
+        assertEquals("claude-sonnet-5-5", AiHelpClient.VERTEX_MODEL);
+    }
+
+    @Test
     void labelsNameTheAccountUnlessItIsTheLegacyOne() {
-        var named = new AiHelpClient.Target(AiHelpClient.Provider.VERTEX, "redhat", "claude-sonnet-5");
+        var named = new AiHelpClient.Target(AiHelpClient.Provider.VERTEX, "redhat", AiHelpClient.VERTEX_MODEL);
         assertEquals("redhat (Vertex AI)", named.label());
 
         var config = config();

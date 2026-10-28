@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.ai.AiHelpClient.AiResponse;
 import dev.incusspawn.ai.AiHelpClient.Provider;
 import dev.incusspawn.ai.AiHelpClient.Usage;
@@ -30,8 +31,8 @@ class HelpChatModalTest {
 
             See https://github.com/Sanne/incus-spawn#branching for details.""";
 
-    private static final Target API_KEY = new Target(Provider.ANTHROPIC, "work", "claude-sonnet-5");
-    private static final Target VERTEX = new Target(Provider.VERTEX, "gcp", "claude-sonnet-5");
+    private static final Target API_KEY = new Target(Provider.ANTHROPIC, "work", AiHelpClient.ANTHROPIC_MODEL);
+    private static final Target VERTEX = new Target(Provider.VERTEX, "gcp", AiHelpClient.VERTEX_MODEL);
     private static final Target OPENAI = new Target(Provider.OPENAI, "", "gpt-4o-mini");
 
     /** A follow-up question: the documentation read from the cache. */

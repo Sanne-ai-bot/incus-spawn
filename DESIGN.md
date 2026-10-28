@@ -2511,7 +2511,10 @@ Both lines follow from what the flag names, not from how far a layer is trusted:
 `HelpContext.definitions()` is built once per opening of the dialog, so the size shown is exactly what gets sent.
 **Prompt caching:** every question carries the whole README, the `docs/` pages and DESIGN.md (~725 KB, the bulk of the cost; kept because answers are markedly less complete without the design rationale).
 So `HelpContext.systemBlocks()` returns the prompt as two blocks -- the fixed documentation, then the attached definitions -- and `AiHelpClient.cachedSystem()` puts a 5-minute `cache_control` breakpoint on each for Anthropic and Vertex.
-A follow-up question within five minutes then reads the documentation from the cache at ~0.1x the input price (the first question pays 1.25x to write it; OpenAI caches the same stable prefix on its own).
+A follow-up question within five minutes then reads the documentation from the cache at 0.05x the input price (the first question pays 1.25x to write it; OpenAI caches the same stable prefix on its own).
+Both Claude targets pin `claude-sonnet-5-5`, whose cache reads cost half Sonnet 5's at the same input and output prices (#1675).
+The Claude API and Vertex name it alike, but each has its own constant because the two have diverged before.
+Caches are scoped per model, so a change of pin pays one fresh write.
 The attachment has its own breakpoint so ticking it still reuses the cached documentation, and its content is sorted so it is byte-identical between questions.
 Anything that varies per request must never enter the first block: a single changed byte turns every question back into a full-price write, and nothing fails -- the bill just rises.
 The AI Help answer view shows the provider-reported token split (`51.2k tokens in (51.2k from cache) · 312 out`) as the visible check that caching still works.
