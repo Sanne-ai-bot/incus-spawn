@@ -88,10 +88,6 @@ import static dev.incusspawn.command.GuestProvisioning.warnDnfCacheUnavailable;
 import static dev.incusspawn.command.GuestProvisioning.writeAgentContext;
 import static dev.incusspawn.command.GuestProvisioning.writeEnvFile;
 import static dev.incusspawn.command.SkillInstaller.installSkills;
-import static dev.incusspawn.util.BuildOutput.BOLD;
-import static dev.incusspawn.util.BuildOutput.RED;
-import static dev.incusspawn.util.BuildOutput.YELLOW;
-import static dev.incusspawn.util.BuildOutput.styled;
 
 
 @CommandDefinition(
@@ -163,7 +159,7 @@ public class BuildCommand extends BaseCommand {
     static boolean reportNameTooLong(String name) {
         if (name.length() <= MAX_TEMPLATE_NAME_LENGTH) return false;
         var shown = shown(name);
-        System.err.println("Error: '" + shown + "' is too long to build: it is built as '" + shown + REBUILDING_SUFFIX
+        BuildOutput.error("'" + shown + "' is too long to build: it is built as '" + shown + REBUILDING_SUFFIX
                 + "' first, and Incus allows " + InstanceNames.MAX_LENGTH
                 + " characters, so a template name may have at most " + MAX_TEMPLATE_NAME_LENGTH + ".");
         return true;
@@ -176,7 +172,7 @@ public class BuildCommand extends BaseCommand {
     static boolean reportParentCycle(ImageDef imageDef, Map<String, ImageDef> defs) {
         var cycle = ImageDef.parentCycle(imageDef, defs);
         if (cycle == null) return false;
-        System.err.println("Error: cannot build '" + shown(imageDef.getName()) + "': its chain runs into a "
+        BuildOutput.error("cannot build '" + shown(imageDef.getName()) + "': its chain runs into a "
                 + shown(cycle) + ". Fix the 'parent:' in one of their definition files; one that has none was"
                 + " brought back from its earlier build, so restore its file or destroy that template.");
         return true;
@@ -239,15 +235,17 @@ public class BuildCommand extends BaseCommand {
         var loaded = ImageDef.loadAllWithConflicts();
         var toolConflicts = toolDefLoader.conflicts();
         if (!loaded.conflicts().isEmpty() || !toolConflicts.isEmpty()) {
-            System.err.println("Cannot build: definitions have conflicting names.");
+            // A blank detail between conflicts, as the blank line between them was
+            var messages = new ArrayList<String>();
             for (var conflict : loaded.conflicts()) {
-                System.err.println();
-                System.err.println(conflict.message());
+                if (!messages.isEmpty()) messages.add("");
+                messages.addAll(conflict.message().lines().toList());
             }
             for (var conflict : toolConflicts) {
-                System.err.println();
-                System.err.println(conflict.message());
+                if (!messages.isEmpty()) messages.add("");
+                messages.addAll(conflict.message().lines().toList());
             }
+            BuildOutput.error("Cannot build: definitions have conflicting names.", messages.toArray(String[]::new));
             return CommandResult.valueOf(1);
         }
         // A definition that failed to parse, or whose name or parent no instance can have, was
@@ -259,7 +257,7 @@ public class BuildCommand extends BaseCommand {
         unparsable.addAll(toolDefLoader.parseFailures());
         var parseError = unparsableDefinitionsError(unparsable);
         if (parseError != null) {
-            System.err.println(parseError);
+            errorOfLines(parseError);
             return CommandResult.valueOf(1);
         }
         var defs = loaded.defs();
@@ -283,7 +281,7 @@ public class BuildCommand extends BaseCommand {
         if (withParents || withDescendants) {
             var flag = withParents ? "--with-parents" : "--with-descendants";
             if (names.isEmpty()) {
-                System.err.println("Usage: isx build <template-name>... " + flag);
+                BuildOutput.error(flag + " needs a template to start from.", "Usage: isx build <template-name>... " + flag);
                 return CommandResult.valueOf(1);
             }
             var targets = definitionsOf(names, defs);
@@ -306,8 +304,8 @@ public class BuildCommand extends BaseCommand {
         }
 
         if (names.isEmpty()) {
-            System.err.println("Usage: isx build <image-name>...  or  isx build --all");
-            System.err.println("Available images: " + String.join(", ", defs.keySet()));
+            BuildOutput.error("name a template to build.", "Usage: isx build <image-name>...  or  isx build --all",
+                    "Available images: " + String.join(", ", defs.keySet()));
             return CommandResult.valueOf(1);
         }
 
@@ -361,9 +359,8 @@ public class BuildCommand extends BaseCommand {
     private static List<ImageDef> definitionsOf(List<String> names, Map<String, ImageDef> defs) {
         var unknown = names.stream().filter(n -> !defs.containsKey(n)).toList();
         if (unknown.isEmpty()) return names.stream().map(defs::get).toList();
-        System.err.println((unknown.size() == 1 ? "Unknown image: " : "Unknown images: ")
-                + String.join(", ", unknown));
-        System.err.println("Available images: " + String.join(", ", defs.keySet()));
+        BuildOutput.error((unknown.size() == 1 ? "Unknown image: " : "Unknown images: ") + shown(String.join(", ", unknown)),
+                "Available images: " + String.join(", ", defs.keySet()));
         return null;
     }
 
@@ -377,7 +374,7 @@ public class BuildCommand extends BaseCommand {
                 .append(" (see the error above):\n");
         for (var file : files) {
             // A cloned repository names the files in its .incus-spawn/ (#1228).
-            sb.append("  • ").append(shown(file.toString())).append('\n');
+            sb.append("• ").append(shown(file.toString())).append('\n');
         }
         return sb.append("Fix the file, or move it out of the definitions directory.").toString();
     }
@@ -452,7 +449,7 @@ public class BuildCommand extends BaseCommand {
                 buildIndex++;
                 var imageDef = defs.get(templateName);
                 if (imageDef == null) {
-                    System.err.println("Template definition not found: " + templateName);
+                    BuildOutput.error("template definition not found: " + shown(templateName));
                     failedBuilds.add(templateName);
                     continue;
                 }
@@ -484,8 +481,7 @@ public class BuildCommand extends BaseCommand {
     /** End a run that left templates unbuilt by naming them, as a failed build. */
     static void failIfAny(Collection<String> failed) {
         if (failed.isEmpty()) return;
-        System.err.println("\n" + styled(BOLD + RED, "Some templates failed to build: "
-                + shown(String.join(", ", failed))));
+        BuildOutput.error("Some templates failed to build: " + shown(String.join(", ", failed)));
         throw new BuildFailedException();
     }
 
@@ -679,7 +675,8 @@ public class BuildCommand extends BaseCommand {
                     failedInRun.add(target.getName());
                 }
             }
-            System.out.println();
+            // A built target's header opens with a blank line of its own; a skipped one's line
+            // follows the output before it, as one more line of the run
         }
     }
 
@@ -720,8 +717,8 @@ public class BuildCommand extends BaseCommand {
             child = parentDef;
         }
         if (!child.isRoot() && !defs.containsKey(child.getParent())) {
-            System.err.println("Parent image '" + child.getParent() + "' not found in definitions.");
-            System.exit(1);
+            BuildOutput.error("parent image '" + shown(child.getParent()) + "' not found in definitions.");
+            throw new BuildFailedException();
         }
         chain.addAll(parents.reversed());
     }
@@ -774,7 +771,7 @@ public class BuildCommand extends BaseCommand {
                  | HostResourceSetup.ForbiddenMountTargetException e) {
             // Built with the template's text quoted safely; each line is made safe again as it
             // is printed, so nothing added to these messages later can slip through (#1228).
-            e.getMessage().lines().forEach(line -> System.err.println(shown(line)));
+            errorOfLines(e.getMessage());
             throw new BuildFailedException(canonicalName);
         }
 
@@ -856,9 +853,10 @@ public class BuildCommand extends BaseCommand {
             }
         }
         if (problems.isEmpty()) return false;
-        System.err.println("Cannot build " + shown(canonicalName) + ":");
-        problems.forEach(p -> System.err.println("  - " + shown(p)));
-        System.err.println("Run 'isx doctor' to inspect the storage pool.");
+        var details = new ArrayList<String>();
+        problems.forEach(p -> details.add("- " + shown(p)));
+        details.add("Run 'isx doctor' to inspect the storage pool.");
+        BuildOutput.error("Cannot build " + shown(canonicalName) + ":", details.toArray(String[]::new));
         return true;
     }
 
@@ -879,11 +877,11 @@ public class BuildCommand extends BaseCommand {
                 ? " (the isx VM on macOS has no nested virtualization)."
                 : " (no KVM where Incus runs: check that /dev/kvm exists there and virtualization is enabled).";
         if (vmByOption) {
-            System.err.println("Cannot build " + shown(canonicalName) + " as a VM (--type vm): this Incus cannot run VMs" + why);
-            System.err.println("Leave out --type vm to build it as a container.");
+            BuildOutput.error("Cannot build " + shown(canonicalName) + " as a VM (--type vm): this Incus cannot run VMs" + why,
+                    "Leave out --type vm to build it as a container.");
         } else {
-            System.err.println("Cannot build " + shown(canonicalName) + ": it is a VM template, and this Incus cannot run VMs" + why);
-            System.err.println("Use a container template instead.");
+            BuildOutput.error("Cannot build " + shown(canonicalName) + ": it is a VM template, and this Incus cannot run VMs" + why,
+                    "Use a container template instead.");
         }
         return true;
     }
@@ -1069,9 +1067,11 @@ public class BuildCommand extends BaseCommand {
                         var hint = Platform.isMacOS()
                                 ? " or 'isx vm resize' to grow the appliance disk"
                                 : "";
-                        appendDiag(diag, "  " + styled(BOLD, "Likely cause: storage pool is "
-                                + poolUsage.percent() + "% full"
-                                + " — run 'isx clean pool' to reclaim space" + hint));
+                        // The cause, not one more measurement: a warning, as the report's other lines are notes
+                        var cause = "Likely cause: storage pool is " + poolUsage.percent() + "% full"
+                                + " — run 'isx clean pool' to reclaim space" + hint;
+                        BuildOutput.warn(cause);
+                        diag.append("  ").append(cause).append('\n');
                     }
                 }
             }
@@ -1104,9 +1104,24 @@ public class BuildCommand extends BaseCommand {
         return diag.toString();
     }
 
+    /**
+     * A line of the diagnostics: a note as it is found, since a later probe may hang, its nesting
+     * kept, and in the report.
+     */
     private static void appendDiag(StringBuilder diag, String line) {
-        System.err.println(line);
-        diag.append(BuildOutput.stripAnsi(line)).append('\n');
+        var text = BuildOutput.stripAnsi(line);
+        BuildOutput.note(text.stripTrailing());
+        diag.append(text).append('\n');
+    }
+
+    /**
+     * A multi-line message as one error: its first line, shown as text, and the rest as details,
+     * since each line is made safe as it is reported (#1228); nothing for an empty one.
+     */
+    private static void errorOfLines(String text) {
+        var lines = text == null ? List.<String>of() : text.lines().map(BuildCommand::shown).toList();
+        if (lines.isEmpty()) return;
+        BuildOutput.error(lines.getFirst(), lines.subList(1, lines.size()).toArray(String[]::new));
     }
 
     static String diagnoseCrashCause(String dmesg) {
@@ -1195,11 +1210,12 @@ public class BuildCommand extends BaseCommand {
             var hint = savedHostReport
                     ? " — see " + Environment.buildFailureLogFile(canonicalName)
                     : (savedFailureSummary ? " — see ~/inbox/BUILD_FAILURE.txt inside the instance" : "");
-            System.err.println(styled(BOLD, "Container promoted to instance '" + shown(promotedName)
-                    + "' for inspection" + shown(hint) + "."));
+            // A warning, like the failure it follows: the instance to inspect is where to look next
+            BuildOutput.warn("Container promoted to instance '" + shown(promotedName)
+                    + "' for inspection" + shown(hint) + ".");
         } catch (Exception promoteError) {
-            System.err.println("Failed to promote container: " + shown(promoteError.getMessage()));
-            System.err.println("Container '" + shown(buildName) + "' may still exist for manual cleanup.");
+            BuildOutput.warn("Could not promote the container: " + shown(BaseCommand.failure(promoteError)),
+                    "Container '" + shown(buildName) + "' may still exist for manual cleanup.");
         }
     }
 
@@ -1218,10 +1234,9 @@ public class BuildCommand extends BaseCommand {
     }
 
     boolean reportBuildFailure(String buildName, String canonicalName, String errorLine, Exception cause) {
-        System.err.println("\n" + styled(YELLOW, "─".repeat(60)));
         // The message can quote what a template chose, and only isx's own line breaks are kept:
-        // each line is made safe as it is printed (#1228).
-        errorLine.lines().forEach(line -> System.err.println(styled(BOLD, shown(line))));
+        // each line is made safe as it is reported (#1228). Why the build failed is an error.
+        errorOfLines(errorLine);
 
         var stepOutput = cause instanceof IncusException ie && ie.stepOutput() != null
                 ? ie.stepOutput() : "";
@@ -1232,7 +1247,7 @@ public class BuildCommand extends BaseCommand {
         try {
             hostLog = Environment.buildFailureLogFile(canonicalName);
         } catch (Exception e) {
-            System.err.println("Could not resolve host failure log path: " + shown(e.getMessage()));
+            BuildOutput.warn("Could not resolve the host failure log path: " + shown(BaseCommand.failure(e)));
             hostLog = null;
         }
 
@@ -1246,7 +1261,7 @@ public class BuildCommand extends BaseCommand {
                         : errorLine + "\n\n" + stepOutput;
                 Files.writeString(hostLog, earlyReport);
             } catch (Exception e) {
-                System.err.println("Could not save failure report to " + shown(hostLog) + ": " + shown(e.getMessage()));
+                BuildOutput.warn("Could not save the failure report to " + shown(hostLog) + ": " + shown(BaseCommand.failure(e)));
             }
         }
 
@@ -1266,9 +1281,10 @@ public class BuildCommand extends BaseCommand {
                 Files.writeString(tmp, report);
                 Files.move(tmp, hostLog, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 savedHostReport = true;
-                System.err.println("Failure report saved to " + shown(hostLog) + ".");
+                // A warning, so the TUI's log and every output keep where to look
+                BuildOutput.warn("Failure report saved to " + shown(hostLog) + ".");
             } catch (Exception e) {
-                System.err.println("Could not save failure report to " + shown(hostLog) + ": " + shown(e.getMessage()));
+                BuildOutput.warn("Could not save the failure report to " + shown(hostLog) + ": " + shown(BaseCommand.failure(e)));
                 try { Files.deleteIfExists(tmp); } catch (Exception ignored) {}
             }
         }
@@ -1280,8 +1296,8 @@ public class BuildCommand extends BaseCommand {
             new Container(incus, buildName).writeFile(INBOX_FAILURE_PATH, report);
             savedFailureSummary = true;
         } catch (Exception e) {
-            System.err.println("Could not write " + INBOX_FAILURE_PATH + " inside the container: "
-                    + shown(e.getMessage()));
+            BuildOutput.warn("Could not write " + INBOX_FAILURE_PATH + " inside the container: "
+                    + shown(BaseCommand.failure(e)));
         }
         return true;
     }
@@ -2279,7 +2295,7 @@ public class BuildCommand extends BaseCommand {
     private static void requireValidAccounts(Collection<String> templates, Map<String, ImageDef> defs) {
         var accountError = validateTemplateAccounts(templates, defs);
         if (accountError != null) {
-            System.err.println("Cannot build: " + accountError);
+            BuildOutput.error("Cannot build: " + accountError);
             throw new BuildFailedException();
         }
     }
@@ -2289,7 +2305,7 @@ public class BuildCommand extends BaseCommand {
         for (var name : templates) {
             var conflict = ImageDef.repoConflict(defs.get(name), defs);
             if (conflict != null) {
-                System.err.println("Cannot build: " + conflict);
+                BuildOutput.error("Cannot build: " + conflict);
                 throw new BuildFailedException();
             }
         }
@@ -2471,7 +2487,7 @@ public class BuildCommand extends BaseCommand {
         try {
             instances = incus.listJsonConfig();
         } catch (IncusException e) {
-            System.err.println("Warning: could not sync default-action onto templates: " + e.getMessage());
+            BuildOutput.warn("Could not sync default-action onto templates: " + BaseCommand.failure(e));
             return;
         }
         for (var instance : instances.asList()) {
@@ -2495,7 +2511,7 @@ public class BuildCommand extends BaseCommand {
                     incus.configUnset(name, Metadata.DEFAULT_ACTION);
                 }
             } catch (RuntimeException e) {
-                System.err.println("Warning: could not sync default-action onto " + name + ": " + e.getMessage());
+                BuildOutput.warn("Could not sync default-action onto " + name + ": " + BaseCommand.failure(e));
             }
         }
     }
@@ -2575,7 +2591,7 @@ public class BuildCommand extends BaseCommand {
             }
         }
         if (!allTools.contains(toolName)) {
-            System.err.println("Warning: default-action '" + ref
+            BuildOutput.warn("default-action '" + ref
                     + "' references tool '" + toolName
                     + "' which is not in the tools list. "
                     + "Add it to tools: [" + toolName + "] or remove default-action.");
