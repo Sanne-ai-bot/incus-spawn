@@ -7,7 +7,6 @@
 5 0 cli/src/main/java/dev/incusspawn/command/BuildTools.java
 2 0 cli/src/main/java/dev/incusspawn/command/GitRemoteHelperCommand.java
 3 0 cli/src/main/java/dev/incusspawn/command/GuestProvisioning.java
-6 0 cli/src/main/java/dev/incusspawn/command/RepoCloner.java
 2 0 cli/src/main/java/dev/incusspawn/command/SshProxyCommand.java
 2 0 cli/src/main/java/dev/incusspawn/command/UpdateAllCommand.java
 9 0 cli/src/main/java/dev/incusspawn/tui/PreTuiOutput.java

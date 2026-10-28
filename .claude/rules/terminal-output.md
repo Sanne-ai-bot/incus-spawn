@@ -65,5 +65,7 @@ While a step is live, `System.out`/`System.err` are wrapped so any other write f
 Anything that hands the terminal to a child directly (inherited IO, a `sudo` that may prompt on the tty) must call `BuildOutput.releaseTerminal()` first -- the wrap cannot see that output.
 Host commands run inside a step should capture output rather than inherit it.
 `TerminalProgress`-based spinners (dnf, base-image download, repo clones) render at `BuildOutput.indent()` and finish with the same `✓`/`✗` glyphs (`BuildOutput.CHECK`/`CROSS`).
+Off an ANSI terminal `RepoCloner`'s parallel block reports each repository as it ends, from its state (`TerminalProgress.run` with `plainDone`): a step when ready, a warning when it failed.
+On any terminal the start of a failed repository's command and the end of its log are one warning (#1703).
 Headers live in command classes; shared helpers like `VmManager` emit only steps so they nest correctly under whichever header the caller prints.
 See DESIGN.md "Terminal Output Visual Language" for the full spec.

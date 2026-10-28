@@ -29,11 +29,8 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 import static dev.incusspawn.command.BuildProgress.combinedOutput;
 import static dev.incusspawn.command.BuildProgress.formatStepLine;
 import static dev.incusspawn.command.BuildProgress.lastNonEmptyLine;
-import static dev.incusspawn.command.BuildProgress.plainStepLine;
 import static dev.incusspawn.command.GuestProvisioning.expandHome;
 import static dev.incusspawn.incus.Container.shellQuote;
-import static dev.incusspawn.util.BuildOutput.BOLD;
-import static dev.incusspawn.util.BuildOutput.styled;
 
 /**
  * Prepares and clones a template's repositories, then primes them after raw host references are detached.
@@ -186,7 +183,7 @@ class RepoCloner {
                 for (int idx : attached) releasePrepared(idx);
                 attached.clear();
             } catch (Exception e) {
-                System.err.println("Warning: failed to remove reference device: " + e.getMessage());
+                BuildOutput.warn("Could not remove the reference device: " + e.getMessage());
             }
         }
     }
@@ -334,8 +331,7 @@ class RepoCloner {
                                 limiter, referencesDetached, mounts, accessChecked),
                         (idx, frame) -> formatStepLine(labels.get(idx),
                                 repos.get(idx).sourceDescription(), states.get(idx), frame, "Ready"),
-                        idx -> plainStepLine(labels.get(idx), states.get(idx), "Ready", "prepare"),
-                        System.out::println);
+                        idx -> reportPlain(labels.get(idx), states.get(idx)));
             } finally {
                 // Phase 3 (serial): remove any reference a worker could not detach.
                 mounts.removeLeftovers();
@@ -790,9 +786,11 @@ class RepoCloner {
                 var command = progress.command() == null ? ""
                         : "$ " + progress.command().strip().replace("\n", "\n> ") + "\n";
                 var log = progress.log() == null ? "" : progress.log();
-                System.err.println(styled(BOLD, header));
-                System.err.println((command + log).strip());
-                System.err.println(styled(BOLD, footer));
+                // The command's start, then the end of its log as a guest's lines, under one warning;
+                // the report keeps more.
+                var shownLines = new ArrayList<>(firstOf(command.strip().lines().toList()));
+                shownLines.addAll(List.of(BuildOutput.lastOf(BuildOutput.guestLines(log))));
+                BuildOutput.warn(step + " output: " + name, shownLines.toArray(String[]::new));
                 output.append(header).append('\n');
                 output.append((command + BuildOutput.lastLines(log, 100)).strip()).append('\n');
                 output.append(footer).append("\n\n");
@@ -802,6 +800,33 @@ class RepoCloner {
             throw new IncusException("Failed to " + verb + " " + errors.size()
                     + " repo(s):\n  " + String.join("\n  ", errors))
                     .withStepOutput(output.toString());
+        }
+    }
+
+    /** How many lines of a failed prime's command its warning shows: the report keeps it whole. */
+    private static final int SHOWN_COMMAND_LINES = 10;
+
+    /** The first {@link #SHOWN_COMMAND_LINES} of {@code lines}, then a line saying how many more there are. */
+    private static List<String> firstOf(List<String> lines) {
+        // One line more is shown whole: the marker would take its place and save nothing
+        if (lines.size() <= SHOWN_COMMAND_LINES + 1) return lines;
+        var kept = new ArrayList<>(lines.subList(0, SHOWN_COMMAND_LINES));
+        kept.add("(" + (lines.size() - SHOWN_COMMAND_LINES) + " more lines of the command not shown)");
+        return kept;
+    }
+
+    /**
+     * Off an ANSI terminal, how one repository's preparation ended, as it ends: a step when it is
+     * ready, a warning, with why, when it failed; why the batch failed is reported once it is over.
+     */
+    private static void reportPlain(String label, StepProgress progress) {
+        if (progress != null && progress.state() == StepState.DONE) {
+            BuildOutput.step("Ready " + label + (progress.note() != null && !progress.note().isEmpty()
+                    ? " (" + progress.note() + ")" : ""));
+        } else {
+            var detail = progress == null || progress.detail() == null || progress.detail().isEmpty()
+                    ? "" : ": " + progress.detail();
+            BuildOutput.warn("Preparing " + label + " failed" + detail);
         }
     }
 
@@ -1065,7 +1090,7 @@ class RepoCloner {
                     hostPath == null ? null : HostResourceSetup.translateForVm(hostPath.toString()), null,
                     new GitPreparation.Request(cloneUrl, null, hostPath), null);
         } catch (Exception e) {
-            System.err.println("Warning: could not set up repo reference: " + e.getMessage());
+            BuildOutput.warn("Could not set up the repo reference: " + e.getMessage());
             return null;
         }
     }

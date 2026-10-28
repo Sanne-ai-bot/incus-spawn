@@ -6,12 +6,15 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.RecordingOutput;
 import dev.incusspawn.util.TerminalLink;
 
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -62,27 +65,15 @@ class RepoClonerTest {
         var def = new ImageDef();
         def.setName("tpl-test");
         def.setRepos(List.of(repo, other));
-        var output = new java.io.ByteArrayOutputStream();
-        var originalOut = System.out;
-        var originalErr = System.err;
-        try {
-            System.setOut(new java.io.PrintStream(output, true));
-            System.setErr(new java.io.PrintStream(output, true));
-            cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER);
-            String first = output.toString();
-            assertTrue(first.contains("via " + (reference ? "host reference" : "remote") + " (shallow, depth 1)"), first);
-            assertTrue(first.matches("(?s).*releases: attach=[0-9]+ms, guest=[0-9]+ms.*"), first);
-            assertTrue(first.matches("(?s).*other: attach=[0-9]+ms, guest=[0-9]+ms.*"), first);
-            if (reference) assertTrue(first.matches("(?s).*releases: attach=[0-9]+ms, guest=[0-9]+ms, detach=[0-9]+ms.*"), first);
-            output.reset();
-            def.setRepos(List.of(repo));
-            cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER);
-            assertTrue(output.toString().contains("releases: attach="), output.toString());
-            assertFalse(output.toString().contains("other:"), "timings must not leak across builds");
-        } finally {
-            System.setOut(originalOut);
-            System.setErr(originalErr);
-        }
+        String first = shown(() -> cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(first.contains("via " + (reference ? "host reference" : "remote") + " (shallow, depth 1)"), first);
+        assertTrue(first.matches("(?s).*releases: attach=[0-9]+ms, guest=[0-9]+ms.*"), first);
+        assertTrue(first.matches("(?s).*other: attach=[0-9]+ms, guest=[0-9]+ms.*"), first);
+        if (reference) assertTrue(first.matches("(?s).*releases: attach=[0-9]+ms, guest=[0-9]+ms, detach=[0-9]+ms.*"), first);
+        def.setRepos(List.of(repo));
+        String second = shown(() -> cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(second.contains("releases: attach="), second);
+        assertFalse(second.contains("other:"), "timings must not leak across builds");
     }
 
     @Test
@@ -783,24 +774,15 @@ class RepoClonerTest {
         imageDef.setName("tpl-app");
         imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "exit 1")));
 
-        // Both streams: off a terminal the failure line, with the prime's last line, goes to stdout.
-        var output = new java.io.ByteArrayOutputStream();
-        var originalOut = System.out;
-        var originalErr = System.err;
-        IncusException ex;
-        try {
-            System.setOut(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
-            System.setErr(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
-            ex = assertThrows(IncusException.class,
-                    () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
-        } finally {
-            System.setOut(originalOut);
-            System.setErr(originalErr);
-        }
-        var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        // Off a terminal the failure line, with the prime's last line, is a warning, and so is its log.
+        var thrown = new IncusException[1];
+        var shown = shown(() -> thrown[0] = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER)));
+        var ex = thrown[0];
         assertTrue(shown.contains("red"), shown);
-        assertTrue(shown.contains("tail\tend"), "tabs are kept: " + shown);
-        assertTrue(shown.contains("for app: prime `exit 1` failed: tail"), "the last line is on the failure line: " + shown);
+        // The log is a warning's lines now, made safe as a terminal prints them, a tab as a space
+        assertTrue(shown.contains("tail end"), shown);
+        assertTrue(shown.contains("Preparing app failed: prime `exit 1` failed: tail"), "the last line is on the failure line: " + shown);
         assertEquals(TerminalLink.plainText(shown).replace("\033", "ESC"), shown.replace("\033", "ESC"),
                 "the prime's escapes must not reach the terminal");
         // The failure report a person is pointed to and may cat.
@@ -822,20 +804,10 @@ class RepoClonerTest {
         imageDef.setName("tpl-app");
         imageDef.setRepos(List.of(repo("https://github.com/owner/\033]0;pwned\007\033[2Japp.git", "~/app", "exit 1")));
 
-        var output = new java.io.ByteArrayOutputStream();
-        var originalOut = System.out;
-        var originalErr = System.err;
-        IncusException ex;
-        try {
-            System.setOut(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
-            System.setErr(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
-            ex = assertThrows(IncusException.class,
-                    () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
-        } finally {
-            System.setOut(originalOut);
-            System.setErr(originalErr);
-        }
-        var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        var thrown = new IncusException[1];
+        var shown = shown(() -> thrown[0] = assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER)));
+        var ex = thrown[0];
         assertTrue(shown.contains("prime output:  ]0;pwned  [2Japp"), shown);
         assertEquals(TerminalLink.plainText(shown).replace("\033", "ESC"), shown.replace("\033", "ESC"),
                 "the label's escapes must not reach the terminal");
@@ -1111,5 +1083,71 @@ class RepoClonerTest {
         // The device that would not detach still holds its slot: repo1 runs out, and must give up, not wait.
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
                 () -> assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.VM)));
+    }
+
+    /**
+     * Off a terminal a failed prime is a warning saying so, as it ends, and its log one warning,
+     * which the TUI's log and a recorder keep, where it was raw stderr between two rules (#1703).
+     */
+    @Test
+    void aFailedPrimesLogIsOneWarning() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(OK)  // clone
+                .thenReturn(OK)  // refspec restore
+                .thenReturn(new IncusClient.ExecResult(1, "building\nboom", ""));
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", "exit 1")));
+
+        var recorded = RecordingOutput.during(() -> assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER)));
+
+        assertTrue(recorded.events(RecordingOutput.Kind.STEP).stream()
+                .noneMatch(e -> e.msg().startsWith("Preparing app failed")), "a failure is no progress line");
+        assertTrue(recorded.events(RecordingOutput.Kind.WARN).stream()
+                .anyMatch(e -> e.msg().equals("Preparing app failed: prime `exit 1` failed: boom")), recorded.events().toString());
+        assertEquals(List.of(List.of("$ exit 1", "building", "boom")), recorded.events(RecordingOutput.Kind.WARN)
+                .stream().filter(e -> e.msg().equals("prime output: app")).map(RecordingOutput.Event::details).toList());
+    }
+
+    /**
+     * A progress bar's {@code \r} frames are one line in a failed prime's warning, its last frame,
+     * so they cannot push why it failed out of the lines shown; a long command shows its start.
+     */
+    @Test
+    void aFailedPrimesWarningShowsTheLastFrameAndTheCommandsStart() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var bar = new StringBuilder();
+        for (int i = 0; i <= 100; i++) bar.append("\rReceiving objects: ").append(i).append('%');
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(OK)  // clone
+                .thenReturn(OK)  // refspec restore
+                .thenReturn(new IncusClient.ExecResult(1, bar + "\nboom", ""));
+        var command = new StringBuilder("true");
+        for (int i = 1; i <= 15; i++) command.append("\necho ").append(i);
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo("https://github.com/owner/app.git", "~/app", command.toString())));
+
+        var recorded = RecordingOutput.during(() -> assertThrows(IncusException.class,
+                () -> cloner(incus).cloneRepos(container, imageDef, Map.of(), MachineType.CONTAINER)));
+
+        var details = recorded.events(RecordingOutput.Kind.WARN).stream()
+                .filter(e -> e.msg().equals("prime output: app")).map(RecordingOutput.Event::details)
+                .findFirst().orElseThrow(() -> new AssertionError(recorded.events().toString()));
+        var expected = new ArrayList<>(List.of("$ true"));
+        for (int i = 1; i <= 9; i++) expected.add("> echo " + i);
+        expected.add("(6 more lines of the command not shown)");
+        expected.add("Receiving objects: 100%");
+        expected.add("boom");
+        assertEquals(expected, details);
+    }
+
+    /** What {@code work} reported, every kind of message, one per line. */
+    static String shown(RecordingOutput.Work work) {
+        return String.join("\n", RecordingOutput.during(work).lines());
     }
 }
