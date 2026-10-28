@@ -2569,6 +2569,9 @@ Both lines follow from what the flag names, not from how far a layer is trusted:
 So `HelpContext.systemBlocks()` returns the prompt as two blocks -- the fixed documentation, then the attached definitions -- and `AiHelpClient.cachedSystem()` puts a 5-minute `cache_control` breakpoint on each for Anthropic and Vertex.
 A follow-up question within five minutes then reads the documentation from the cache at 0.05x the input price (the first question pays 1.25x to write it; OpenAI caches the same stable prefix on its own).
 Both Claude targets pin `claude-sonnet-5-5`, whose cache reads cost half Sonnet 5's at the same input and output prices (#1675).
+Both also ask at `output_config.effort: low` (`AiHelpClient.EFFORT`): at its default, `high`, Sonnet 5.5 thinks before every answer.
+Measured on #1675, `low` reached the first text in 2.6 s at the median, against 7.4 s at the default and 2.8 s for Haiku 5.5.
+Its answers stayed about as accurate as at the default, while Haiku invented a claim in most of its answers.
 The Claude API and Vertex name it alike, but each has its own constant because the two have diverged before.
 Caches are scoped per model, so a change of pin pays one fresh write.
 The attachment has its own breakpoint so ticking it still reuses the cached documentation, and its content is sorted so it is byte-identical between questions.
