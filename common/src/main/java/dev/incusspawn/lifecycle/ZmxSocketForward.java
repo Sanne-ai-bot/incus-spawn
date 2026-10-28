@@ -17,8 +17,11 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -43,6 +46,7 @@ public final class ZmxSocketForward {
     private static final String DEVICE_NAME = "zmx-sockets";
     private static final String CONTAINER_ZMX_DIR = "/home/agentuser/.zmx";
     private static final String SYMLINK_PREFIX = "isx-";
+    private static final Set<PosixFilePermission> OWNER_ONLY = PosixFilePermissions.fromString("rwx------");
 
     /**
      * Where the instances' zmx directories live ({@code instances}), the host
@@ -168,21 +172,37 @@ public final class ZmxSocketForward {
         Files.createDirectories(dir.getParent().getParent());
         createPrivate(dir.getParent());
         createPrivate(dir);
-        requireOwnInstanceDir(dir, uid);
+        secureInstanceDir(dir, uid);
         return dir;
     }
 
-    /** That the instance's directory and the one holding it are the user's alone. */
-    private static void requireOwnInstanceDir(Path dir, int uid) throws IOException {
-        // A user-private group (gid == uid) may write, as umask 002 lets it
-        OwnDirectory.require(dir.getParent(), uid, uid, "isx");
+    /**
+     * That the instance's directory and the one holding it are the user's
+     * alone, making the one holding it {@code 0700} again if it was opened
+     * up, wherever this runs: adding the device, every start, every shell.  The guest owns its own directory through the shifted
+     * mount and can open that to anyone, so {@code zmx/} is what keeps
+     * other users out of its sessions and logs.
+     */
+    private static void secureInstanceDir(Path dir, int uid) throws IOException {
+        var instances = dir.getParent();
+        // A user-private group (gid == uid) may write, as umask 002 lets it;
+        // for zmx/ that only spares a refusal, as it is closed right after
+        OwnDirectory.require(instances, uid, uid, "isx");
+        closeToOthers(instances);
         OwnDirectory.require(dir, uid, uid, "isx");
+    }
+
+    /** {@code dir}, just found to be a real directory of the user's, made {@code 0700} if group or others have any access. */
+    private static void closeToOthers(Path dir) throws IOException {
+        var view = Files.getFileAttributeView(dir, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        if (view == null) return;
+        if (!view.readAttributes().permissions().equals(OWNER_ONLY)) view.setPermissions(OWNER_ONLY);
     }
 
     /** {@code dir} as a new directory only its owner can enter; an existing path is left to the check that follows. */
     private static void createPrivate(Path dir) throws IOException {
         try {
-            Files.createDirectory(dir, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+            Files.createDirectory(dir, PosixFilePermissions.asFileAttribute(OWNER_ONLY));
         } catch (FileAlreadyExistsException checkedNext) {
         }
     }
@@ -231,7 +251,7 @@ public final class ZmxSocketForward {
         var optional = "false".equals(device.path("required").asText(""));
         if (optional && source.equals(instanceDir.toString())) {
             try {
-                requireOwnInstanceDir(instanceDir, dirs.processUid().call());
+                secureInstanceDir(instanceDir, dirs.processUid().call());
                 return;
             } catch (Exception missingOrNotOwn) {
                 // configure() makes it, or checks again and says why
@@ -260,7 +280,7 @@ public final class ZmxSocketForward {
         try {
             uid = dirs.processUid().call();
             // Not into a directory others can change: its start withheld the device and said so
-            requireOwnInstanceDir(instanceDir, uid);
+            secureInstanceDir(instanceDir, uid);
         } catch (Exception withheld) {
             return;
         }
