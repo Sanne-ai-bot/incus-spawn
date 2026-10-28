@@ -9,10 +9,18 @@ public final class StandInTui extends Tui {
     public List<String> warningsAtStart;
     /** Thrown from the run loop, which the TUI reports as why it failed. */
     public RuntimeException failure;
+    /** Thrown where the TUI loads its services, after the warnings were handed over. */
+    public RuntimeException servicesFailure;
 
     @Override
     void waitForUser() {
         events.add("wait");
+    }
+
+    @Override
+    void loadServices() {
+        if (servicesFailure != null) throw servicesFailure;
+        super.loadServices();
     }
 
     @Override

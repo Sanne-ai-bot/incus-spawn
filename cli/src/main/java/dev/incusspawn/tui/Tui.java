@@ -333,12 +333,23 @@ public class Tui {
             preTui.handOver(warning -> Warnings.warn(drawing, warning), this::waitForUser);
             preTui = null;
         }
+        try {
+            loadServices();
+        } catch (RuntimeException e) {
+            // The hand-over moved the held warnings into the log, which nobody will now see
+            printUnreadWarnings();
+            throw e;
+        }
+        runTuiLoop();
+    }
+
+    /** Overridable so a test can fail here, after the hand-over and before the loop. */
+    void loadServices() {
         this.incus = RuntimeServices.incus();
         this.toolDefLoader = RuntimeServices.toolDefLoader();
         this.cdiTools = RuntimeServices.toolSetups();
         this.backgroundTasks = RuntimeServices.backgroundTasks();
         this.lockManager = RuntimeServices.lockManager();
-        runTuiLoop();
     }
 
     // --- TUI lifecycle ---
