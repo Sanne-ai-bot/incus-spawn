@@ -2884,9 +2884,13 @@ public class Tui {
         templatesOutOfSync = outOfSync;
     }
 
+    /** Whether any instance is owned, by an isx mcp session or another tool (#1720): then the table may show OWNER. */
+    volatile boolean anyOwner;
+
     private void buildRowData() {
         tableRows = new ArrayList<>();
         rowToEntry = new ArrayList<>();
+        anyOwner = entries.stream().anyMatch(e -> e.mcp() != null || e.owner() != null);
 
         // Sort: running first, then stopped, alphabetically within each group
         var sorted = new ArrayList<>(entries);
@@ -2916,8 +2920,11 @@ public class Tui {
                 }
             }
 
+            // OWNER last: the table draws it only when the panel has room (MainScreen), and draws
+            // as many cells as it has columns
             tableRows.add(Row.from(entry.name(), entry.status(), entry.ipv4(),
-                    parent, entry.runtime(), age, diskCell(entry.diskUsage())).style(statusStyle));
+                    parent, entry.runtime(), age, diskCell(entry.diskUsage()),
+                    dev.incusspawn.command.ListCommand.ownerCell(entry)).style(statusStyle));
             rowToEntry.add(entry);
         }
     }

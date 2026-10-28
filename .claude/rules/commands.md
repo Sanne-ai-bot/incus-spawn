@@ -68,7 +68,8 @@ Only the ProxyCommand `isx branch --format=json` hands out has `--start` (`SshKe
 `isx branch --format=plain` stays the name alone; its new fields are in `json` only (`BranchCommand.record(name, owner, ownerId, reach)`).
 `isx destroy --owner` (`DestroyCommand.destroyOwned`) fails closed on `drivers:` (`Drivers`, config.yaml only), then deletes through `deleteHeldIf` on the owner stamps; a missing instance is success.
 A plain destroy of an owned instance goes through `confirmDestructive`.
-`isx list`'s `OWNER` column (`ListCommand.ownerCell`) folds in `isx mcp`'s standing; `owner`/`owner_id` are appended to its formats, and the TUI shows them in the instance details (`InstanceDetailView.ownerDetailRows`).
+`isx list`'s `OWNER` column (`ListCommand.ownerCell`) folds in `isx mcp`'s standing; `owner`/`owner_id` are appended to its formats.
+The TUI's instance table shows the same column only when some instance is owned and the panel is at least `MainScreen.OWNER_COLUMN_MIN_WIDTH` wide (`TuiOwnerColumnTest`); the instance details always show the owner (`InstanceDetailView.ownerDetailRows`).
 
 **Output for scripts goes through `OutputFormat`.**
 A query command offers `--format=table|plain|json` (#1036) by parsing `--format` with `OutputFormat.parse` (`OutputFormat.resolve` where there is also a `--plain`), building each result once as an ordered `Map<String, Object>` (a `LinkedHashMap`; maps need no native reflection registration) in a package-private `record(s)` method, and handing it to `format.print`/`printOne`.

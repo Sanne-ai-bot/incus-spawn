@@ -303,6 +303,13 @@ final class MainScreen {
                 Span.styled(" ".repeat(padding) + text, style))), area);
     }
 
+    /**
+     * The narrowest table that shows OWNER (#1720): the other columns' minimums, their spacing and
+     * the selection marker, plus OWNER's own. Narrower, the column is left out; the instance details
+     * show the owner either way.
+     */
+    static final int OWNER_COLUMN_MIN_WIDTH = 82;
+
     void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                       TableState tableState) {
         boolean focused = tui.focusedPanel == Tui.Panel.INSTANCES;
@@ -348,13 +355,15 @@ final class MainScreen {
             scrollArea = null;
         }
 
+        var widths = new java.util.ArrayList<>(List.of(Constraint.min(10), Constraint.min(7),
+                Constraint.min(11), Constraint.min(10),
+                Constraint.length(10), Constraint.min(8), Constraint.length(6)));
+        if (tui.anyOwner && actualArea.width() >= OWNER_COLUMN_MIN_WIDTH) widths.add(Constraint.min(9));
         var tableBuilder = Table.builder()
-                .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK")
+                .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK", "OWNER")
                         .style(Style.EMPTY.bold().fg(focused ? tui.theme.panelBorderFocused() : tui.theme.panelBorderUnfocused())))
                 .rows(tui.tableRows)
-                .widths(Constraint.min(10), Constraint.min(7),
-                        Constraint.min(11), Constraint.min(10),
-                        Constraint.length(10), Constraint.min(8), Constraint.length(6))
+                .widths(widths)
                 .highlightSymbol(focused ? "\u25b8 " : "  ")
                 // Always reserved, so renderMarks can draw into it
                 .highlightSpacing(Table.HighlightSpacing.ALWAYS);
