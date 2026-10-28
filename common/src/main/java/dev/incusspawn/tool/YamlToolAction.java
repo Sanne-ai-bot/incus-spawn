@@ -332,7 +332,8 @@ public class YamlToolAction implements ToolAction {
                         "The VS Code 'Remote - SSH' extension is required for this action but is not installed.");
                 // EOF is nobody confirming: open nothing (#1786)
                 if (ask.apply("Press Enter to open VS Code and install it...") == null) return notInstalled;
-                probe.open("vscode:extension/ms-vscode-remote.remote-ssh");
+                // Nothing opened is no installation to wait for
+                if (!probe.open("vscode:extension/ms-vscode-remote.remote-ssh")) return notInstalled;
                 return ActionResult.error(
                         "Please retry this action after the extension installation completes.");
             }
