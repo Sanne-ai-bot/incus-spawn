@@ -167,6 +167,11 @@ isx destroy --all-instances      # destroy all instances
 | `--all-templates` | Destroy all built templates (reverse order, derived first) |
 | `--all-instances` | Destroy all instances |
 | `--skip-confirmation` | Skip the confirmation prompt |
+| `--owner <name>` | Destroy the instance only if this external tool owns it, for that tool. `drivers:` in `config.yaml` must let the tool destroy, and an instance already gone is success |
+| `--owner-id <id>` | Destroy it only if the owner's handle for it is this one. Needs `--owner` |
+
+Destroying an instance an external tool owns without `--owner` asks first.
+Without a terminal, a script must pass `--skip-confirmation`.
 
 ## `isx list`
 
@@ -681,7 +686,7 @@ For a clean log, redirect both streams or set `NO_COLOR=1`.
 
 ### Fields of `isx list`
 
-`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state`, `mcp_purpose` and `base_image`, in that order.
+`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state`, `mcp_purpose`, `base_image`, `owner` and `owner_id`, in that order.
 `mcp_state` and `mcp_purpose` are `null` (`-`) unless an [`isx mcp`](MCP.md#delegating-from-an-agent-on-your-host-mcp) session made the instance.
 `mcp_purpose` is then what the agent said the instance is for, or `null`, and `mcp_state` is one of:
 
@@ -694,6 +699,9 @@ For a clean log, redirect both streams or set `NO_COLOR=1`.
 `base_image` is the base image release the instance was built from, such as `fedora-44-20261001`.
 It is `null` when Incus recorded none, as for an instance built from an image of your own.
 A fix in a base image reaches only instances built after it, and `isx doctor` names the ones a rebuild would move to a newer release.
+
+`owner` and `owner_id` are the external tool that controls the instance and its handle for it, as `isx branch --owner` and `--owner-id` stamped them, or `null`.
+The table shows the owner in its `OWNER` column, beside how an `isx mcp` session holds its instances.
 
 For names alone, use `isx list -q`:
 

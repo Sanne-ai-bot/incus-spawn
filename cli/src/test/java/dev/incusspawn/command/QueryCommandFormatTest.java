@@ -578,15 +578,15 @@ class QueryCommandFormatTest {
 
     @Test
     void anOwnerIsANameAndAnIdNeedsOne() {
-        assertNull(BranchCommand.ownerProblem(null, null));
-        assertNull(BranchCommand.ownerProblem("orca", "rt-1:a.b_c"));
-        assertEquals("--owner-id needs --owner.", BranchCommand.ownerProblem(null, "rt-1"));
-        assertEquals("--owner mcp is reserved for instances isx mcp makes.", BranchCommand.ownerProblem("mcp", null));
+        assertNull(dev.incusspawn.incus.Metadata.ownerProblem(null, null));
+        assertNull(dev.incusspawn.incus.Metadata.ownerProblem("orca", "rt-1:a.b_c"));
+        assertEquals("--owner-id needs --owner.", dev.incusspawn.incus.Metadata.ownerProblem(null, "rt-1"));
+        assertEquals("--owner: the owner name mcp is reserved for instances isx mcp makes.", dev.incusspawn.incus.Metadata.ownerProblem("mcp", null));
         for (var bad : List.of("Orca", "-x", "a b", "x".repeat(33), "\u001b[31m")) {
-            assertNotNull(BranchCommand.ownerProblem(bad, null), bad);
+            assertNotNull(dev.incusspawn.incus.Metadata.ownerProblem(bad, null), bad);
         }
         for (var bad : List.of("", "a b", "$(id)", "x".repeat(129))) {
-            assertNotNull(BranchCommand.ownerProblem("orca", bad), bad);
+            assertNotNull(dev.incusspawn.incus.Metadata.ownerProblem("orca", bad), bad);
         }
     }
 

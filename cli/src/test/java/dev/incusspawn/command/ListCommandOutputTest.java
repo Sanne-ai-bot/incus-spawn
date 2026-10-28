@@ -80,9 +80,9 @@ class ListCommandOutputTest {
     @Test
     void plainIsOneTabSeparatedRecordPerInstance() {
         assertEquals("""
-                dev-1\trunning\t10.166.11.20\ttpl-java\tcontainer\t2026-10-05T10:15:30+02:00\t-\t-\tfedora-44-20261001
-                dev-2\tstopped\t-\ttpl-java\tvirtual-machine\t2026-09-01\t-\t-\t-
-                tpl-scratch\tstopped\t-\tdev-1\tcontainer\t2026-10-05T11:00:00+02:00\t-\t-\t-
+                dev-1\trunning\t10.166.11.20\ttpl-java\tcontainer\t2026-10-05T10:15:30+02:00\t-\t-\tfedora-44-20261001\t-\t-
+                dev-2\tstopped\t-\ttpl-java\tvirtual-machine\t2026-09-01\t-\t-\t-\t-\t-
+                tpl-scratch\tstopped\t-\tdev-1\tcontainer\t2026-10-05T11:00:00+02:00\t-\t-\t-\t-\t-
                 """, list(cmd("plain")));
     }
 
@@ -99,10 +99,10 @@ class ListCommandOutputTest {
         assertEquals(3, listing.arrayValue().size());
         var first = (io.hyperfoil.tools.jjq.value.JqObject) listing.arrayValue().get(0);
         assertEquals(List.of("name", "status", "ipv4", "parent", "runtime", "created", "mcp_state", "mcp_purpose",
-                        "base_image"),
+                        "base_image", "owner", "owner_id"),
                 List.copyOf(first.keys()));
         assertEquals(Arrays.asList("dev-1", "running", "10.166.11.20", "tpl-java", "container",
-                "2026-10-05T10:15:30+02:00", null, null, "fedora-44-20261001"),
+                "2026-10-05T10:15:30+02:00", null, null, "fedora-44-20261001", null, null),
                 new ArrayList<>(first.keys().stream().map(key -> {
                     var v = first.get(key);
                     return v == null || v.isNull() ? null : v.asText();
@@ -219,7 +219,7 @@ class ListCommandOutputTest {
     void aCreatedStampThatCannotBeReadIsNull() throws Exception {
         var daemon = new FakeIncusDaemon().container("odd", Map.of(
                 Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.CREATED, "sometime"));
-        assertEquals("odd\tstopped\t-\t-\tcontainer\t-\t-\t-\t-\n", list(cmd("plain"), daemon));
+        assertEquals("odd\tstopped\t-\t-\tcontainer\t-\t-\t-\t-\t-\t-\n", list(cmd("plain"), daemon));
         var created = io.hyperfoil.tools.jjq.value.JqValues.parse(list(cmd("json"), daemon));
         var createdAt = ((io.hyperfoil.tools.jjq.value.JqObject) created.arrayValue().get(0)).get("created");
         assertTrue(createdAt == null || createdAt.isNull());
@@ -263,11 +263,11 @@ class ListCommandOutputTest {
         var mcp = mcpDaemon();
         // Fields at the end only: what a script reads by position stays where it was.
         assertEquals("""
-                coord\tstopped\t-\ttpl-java\tcontainer\t-\t-\t-\t-
-                worker\tstopped\t-\ttpl-java\tcontainer\t-\theld\t#870 implement\t-
-                stray\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\t-\t-
-                released\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\treview #12\t-
-                mine-now\tstopped\t-\ttpl-java\tcontainer\t-\tkept\tspike\t-
+                coord\tstopped\t-\ttpl-java\tcontainer\t-\t-\t-\t-\t-\t-
+                worker\tstopped\t-\ttpl-java\tcontainer\t-\theld\t#870 implement\t-\t-\t-
+                stray\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\t-\t-\t-\t-
+                released\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\treview #12\t-\t-\t-
+                mine-now\tstopped\t-\ttpl-java\tcontainer\t-\tkept\tspike\t-\t-\t-
                 """, list(cmd("plain"), mcp));
         var stated = io.hyperfoil.tools.jjq.value.JqValues.parse(list(cmd("json"), mcp));
         var first = (io.hyperfoil.tools.jjq.value.JqObject) stated.arrayValue().get(0);
@@ -288,14 +288,39 @@ class ListCommandOutputTest {
     }
 
     @Test
-    void theTableShowsAnMcpColumnOnlyWhenAnInstanceHasOne() {
+    void theTableShowsAnOwnerColumnOnlyWhenAnInstanceHasOne() {
         var table = list(cmd(null), mcpDaemon());
         var header = table.lines().filter(l -> l.contains("NAME")).findFirst().orElseThrow();
-        assertTrue(header.strip().endsWith("MCP"), table);
-        assertTrue(table.lines().anyMatch(l -> l.contains("worker") && l.endsWith("held: #870 implement")), table);
-        assertTrue(table.lines().anyMatch(l -> l.contains("stray") && l.endsWith("orphaned")), table);
-        assertTrue(table.lines().anyMatch(l -> l.contains("mine-now") && l.endsWith("kept: spike")), table);
-        assertFalse(list(cmd(null)).contains("MCP"), "nobody using isx mcp sees no column for it");
+        assertTrue(header.strip().endsWith("OWNER"), table);
+        assertTrue(table.lines().anyMatch(l -> l.contains("worker") && l.endsWith("mcp held: #870 implement")), table);
+        assertTrue(table.lines().anyMatch(l -> l.contains("stray") && l.endsWith("mcp orphaned")), table);
+        assertTrue(table.lines().anyMatch(l -> l.contains("mine-now") && l.endsWith("mcp kept: spike")), table);
+        assertFalse(list(cmd(null)).contains("OWNER"), "nobody with an owned instance sees no column for it");
+    }
+
+    /** An instance an external tool made (#1720): its name in the column, and both stamps in the formats. */
+    @Test
+    void anExternalOwnerIsShownInTheColumnAndTheFormats() throws Exception {
+        var daemon = new FakeIncusDaemon()
+                .container("ws", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-orca",
+                        Metadata.OWNER, "orca", Metadata.OWNER_ID, "rt-1"))
+                .container("mine", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-orca"));
+        assertEquals("""
+                ws\tstopped\t-\ttpl-orca\tcontainer\t-\t-\t-\t-\torca\trt-1
+                mine\tstopped\t-\ttpl-orca\tcontainer\t-\t-\t-\t-\t-\t-
+                """, list(cmd("plain"), daemon));
+        var table = list(cmd(null), daemon);
+        assertTrue(table.lines().anyMatch(l -> l.contains("ws") && l.endsWith("orca")), table);
+        assertTrue(table.lines().anyMatch(l -> l.contains("mine") && l.strip().endsWith("-")), table);
+        var parsed = io.hyperfoil.tools.jjq.value.JqValues.parse(list(cmd("json"), daemon));
+        var first = (io.hyperfoil.tools.jjq.value.JqObject) parsed.arrayValue().get(0);
+        assertEquals("orca", first.pathText("owner", ""));
+        assertEquals("rt-1", first.pathText("owner_id", ""));
+        var entry = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
+        assertEquals(List.of("Owner:|orca (rt-1)",
+                        "null|that tool made it; drivers: in config.yaml says whether it may destroy it",
+                        "null|a branch of it is yours, not the tool's"),
+                rows(InstanceDetailView.ownerDetailRows(entry.owner(), entry.ownerId())));
     }
 
     @Test
@@ -314,7 +339,7 @@ class ListCommandOutputTest {
         var purpose = "\u001b[2J\u009b2Jhi";
         var daemon = new FakeIncusDaemon().container("w", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
                 Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, "garbled", Metadata.MCP_PURPOSE, purpose));
-        assertEquals("w\tstopped\t-\t-\tcontainer\t-\theld\t [2J 2Jhi\t-\n", list(cmd("plain"), daemon));
+        assertEquals("w\tstopped\t-\t-\tcontainer\t-\theld\t [2J 2Jhi\t-\t-\t-\n", list(cmd("plain"), daemon));
         var table = list(cmd(null), daemon);
         assertFalse(table.contains("\u009b"), table);
         assertTrue(table.contains("held:  [2J 2Jhi"), table);

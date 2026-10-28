@@ -163,6 +163,31 @@ public final class Metadata {
     public static final String OWNER_MCP = "mcp";
 
     /**
+     * Why {@code owner} cannot name an external owner, or null when it can: the one rule for
+     * {@code isx branch --owner}, {@code isx destroy --owner} and a {@code drivers:} key.
+     */
+    public static String ownerNameProblem(String owner) {
+        if (owner == null || !OWNER_NAME.matcher(owner).matches()) {
+            return "an owner is a lowercase name of letters, digits and '-', at most 32 long";
+        }
+        return OWNER_MCP.equals(owner) ? "the owner name mcp is reserved for instances isx mcp makes" : null;
+    }
+
+    /**
+     * Why {@code --owner}/{@code --owner-id} cannot be used, or null when they can (neither given
+     * included): {@code isx branch} stamps them and {@code isx destroy} checks them.
+     */
+    public static String ownerProblem(String owner, String ownerId) {
+        if (owner == null) return ownerId == null ? null : "--owner-id needs --owner.";
+        var nameProblem = ownerNameProblem(owner);
+        if (nameProblem != null) return "--owner: " + nameProblem + ".";
+        if (ownerId != null && !OWNER_HANDLE.matcher(ownerId).matches()) {
+            return "--owner-id must be 1 to 128 of letters, digits and . _ : -";
+        }
+        return null;
+    }
+
+    /**
      * MCP ownership (see {@code isx mcp}). An instance belongs to the host user in
      * {@link #MCP_OWNER}, and is held by one session at a time: {@link #MCP_SESSION} is
      * {@code <pid>-<processStartMillis>} of the {@code isx mcp} process holding it, which tells

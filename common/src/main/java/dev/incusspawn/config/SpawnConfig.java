@@ -82,6 +82,11 @@ public class SpawnConfig {
     @JqName("host-routes")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object hostRoutes;
+    // What an external tool that drives isx may do to its instances (Drivers, #1720). Raw like
+    // host-routes, so a mistyped section loads and is written back as it was.
+    @JqName("drivers")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object drivers;
     // Whether host CA anchors are propagated into instances (HostCaConfig). Raw like
     // artifact-cache, so a mistyped section loads and is written back as it was.
     @JqName("host-ca")
@@ -644,6 +649,9 @@ public class SpawnConfig {
     /** The {@code host-routes:} section; it has no routes when there is none. */
     public HostRoutes hostRoutes() { return HostRoutes.of(hostRoutes); }
 
+    /** The {@code drivers:} section; it grants nothing when there is none. */
+    public Drivers drivers() { return Drivers.of(drivers); }
+
     /** The {@code host-ca:} section, or its defaults (disabled) when absent. */
     public HostCaConfig hostCa() { return HostCaConfig.of(hostCa); }
 
@@ -800,6 +808,7 @@ public class SpawnConfig {
         this.gitTransfer = other.gitTransfer;
         this.readyTimeouts = other.readyTimeouts;
         this.hostRoutes = other.hostRoutes;
+        this.drivers = other.drivers;
         this.hostCa = other.hostCa;
         this.extras = other.extras;
     }

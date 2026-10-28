@@ -5,7 +5,7 @@ This page says where they live, how a credential gets several accounts that temp
 
 | File | What it holds |
 | --- | --- |
-| `~/.config/incus-spawn/config.yaml` | Auth credentials and global settings, including `host-routes:` |
+| `~/.config/incus-spawn/config.yaml` | Auth credentials and global settings, including `host-routes:` and `drivers:` |
 | `~/.config/incus-spawn/mcp.yaml` | What `isx mcp` lets agents do (see [Delegating from an agent](MCP.md#delegating-from-an-agent-on-your-host-mcp)) |
 | `~/.config/incus-spawn/ssh/` | The managed SSH key pair and the per-instance SSH config |
 | `~/.config/incus-spawn/images/*.yaml` | User-level template definitions |
@@ -221,6 +221,25 @@ Resolution order, later sources overriding earlier ones with the same name:
 2. User (`~/.config/incus-spawn/`)
 3. Search paths (in listed order)
 4. Project-local (`.incus-spawn/`)
+
+## External tools that drive isx
+
+`drivers:` says what a tool that creates instances for you, such as an orchestrator, may do to the instances it owns.
+A tool owns an instance it branched with `isx branch --owner <name>`.
+Nothing is granted unless you list it here:
+
+```yaml
+drivers:
+  orca:
+    destroy: true    # isx destroy --owner orca may delete orca's instances
+```
+
+| Key | Default | What it does |
+|-----|---------|--------------|
+| `destroy` | `false` | Lets `isx destroy --owner <name>` delete the instances that tool owns |
+
+A tool never destroys an instance it does not own, such as your own branch of one of its instances.
+An entry isx cannot read grants nothing, and isx says which entry and why.
 
 ## Host CA propagation
 

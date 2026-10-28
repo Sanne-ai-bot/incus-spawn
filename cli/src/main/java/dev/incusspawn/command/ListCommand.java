@@ -8,7 +8,6 @@ import dev.incusspawn.command.InstanceListing.InstanceInfo;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.mcp.McpStanding;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
@@ -158,6 +157,9 @@ public class ListCommand extends BaseCommand {
             record.put("mcp_purpose", i.mcp() == null ? null : i.mcp().purpose());
             // #1657: the base image release it runs, which a rebuild from a newer one would change.
             record.put("base_image", BaseImageAge.tag(i.metadata()));
+            // #1720: the external tool that controls it, and that tool's handle for it.
+            record.put("owner", i.owner());
+            record.put("owner_id", i.ownerId());
             records.add(record);
         }
         return records;
@@ -165,30 +167,36 @@ public class ListCommand extends BaseCommand {
 
     public static void printTable(List<InstanceInfo> items, java.io.PrintStream out) {
         var nameWidth = Math.max(20, items.stream().mapToInt(e -> e.name().length()).max().orElse(20));
-        // The MCP column only for someone who uses isx mcp: without it, the format has no
-        // conversion for the last argument, which printf ignores. AGE is padded when MCP follows.
-        var mcp = items.stream().anyMatch(e -> e.mcp() != null);
-        var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  " + (mcp ? "%-13s  %s%n" : "%s%n");
+        // The OWNER column only for someone whose instances have one, an isx mcp session or another
+        // tool (#1720): without it, the format has no conversion for the last argument, which
+        // printf ignores. AGE is padded when OWNER follows.
+        var owned = items.stream().anyMatch(e -> e.mcp() != null || e.owner() != null);
+        var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  " + (owned ? "%-13s  %s%n" : "%s%n");
 
-        out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "MCP");
+        out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "OWNER");
         out.printf(fmt, "-".repeat(nameWidth), "----------", "---------------",
                 "--------------------", "----------", "---", "---");
         for (var entry : items) {
             var age = entry.created().isEmpty() ? "-" : Metadata.ageDescription(entry.created());
             var parent = entry.parent().isEmpty() ? "-" : OutputFormat.oneLine(entry.parent());
             var ip = entry.ipv4().isEmpty() ? "-" : entry.ipv4();
-            out.printf(fmt, entry.name(), entry.status(), ip, parent, entry.runtime(), age, mcpCell(entry.mcp()));
+            out.printf(fmt, entry.name(), entry.status(), ip, parent, entry.runtime(), age, ownerCell(entry));
         }
         out.println();
     }
 
     /**
-     * {@code held: #870 implement}: how an isx mcp instance stands, and what it is for.
-     * A stamp is shown through {@link OutputFormat#oneLine}: isx mcp refuses control characters
-     * in a purpose, but a stamp can be set by hand, escape sequence and all.
+     * Who controls the instance: {@code mcp held: #870 implement} for an isx mcp instance, how it
+     * stands and what it is for, or the external tool's name ({@code orca}). A stamp is shown
+     * through {@link OutputFormat#oneLine}: isx refuses control characters in both, but a stamp
+     * can be set by hand, escape sequence and all.
      */
-    private static String mcpCell(McpStanding mcp) {
-        if (mcp == null) return "-";
-        return mcp.state().label() + (mcp.purpose() == null ? "" : ": " + OutputFormat.oneLine(mcp.purpose()));
+    private static String ownerCell(InstanceInfo entry) {
+        var mcp = entry.mcp();
+        if (mcp != null) {
+            return Metadata.OWNER_MCP + " " + mcp.state().label()
+                    + (mcp.purpose() == null ? "" : ": " + OutputFormat.oneLine(mcp.purpose()));
+        }
+        return entry.owner() == null ? "-" : OutputFormat.oneLine(entry.owner());
     }
 }

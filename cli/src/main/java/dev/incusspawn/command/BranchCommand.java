@@ -212,19 +212,6 @@ public class BranchCommand extends BaseCommand {
         }
     }
 
-    /** Why {@code --owner}/{@code --owner-id} cannot be stamped, or null when they can. */
-    static String ownerProblem(String owner, String ownerId) {
-        if (owner == null) return ownerId == null ? null : "--owner-id needs --owner.";
-        if (!Metadata.OWNER_NAME.matcher(owner).matches()) {
-            return "--owner must be a lowercase name of letters, digits and '-', at most 32 long.";
-        }
-        if (Metadata.OWNER_MCP.equals(owner)) return "--owner mcp is reserved for instances isx mcp makes.";
-        if (ownerId != null && !Metadata.OWNER_HANDLE.matcher(ownerId).matches()) {
-            return "--owner-id must be 1 to 128 of letters, digits and . _ : -";
-        }
-        return null;
-    }
-
     /** What the copy request stamps for {@code --mcp-client}, {@code --owner} and {@code --owner-id}. */
     private Map<String, String> stamps() {
         var stamps = new LinkedHashMap<String, String>(McpClientGrant.extraConfig(mcpClient));
@@ -235,7 +222,7 @@ public class BranchCommand extends BaseCommand {
 
     /** Create (and unless {@code --no-start}, start) the branch; {@code null} once the error is reported. */
     private Created create() {
-        var ownerProblem = ownerProblem(owner, ownerId);
+        var ownerProblem = Metadata.ownerProblem(owner, ownerId);
         if (ownerProblem != null) {
             BuildOutput.error(ownerProblem);
             return null;

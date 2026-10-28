@@ -5249,7 +5249,7 @@ The MITM TLS proxy provides credential isolation:
 4. Placeholder values cannot authenticate against any service — they only bypass local tool checks
 5. In proxy-only mode, an Incus network ACL on the instance's NIC, enforced on the host, blocks all egress except the proxy (443), its health check and DNS on the gateway
 
-### External orchestrators: owners, start and stop
+### External orchestrators: owners, start, stop and destroy
 
 Tools that orchestrate coding agents (Orca, herdr, Coder Mux and others) want a disposable machine per task (#1720).
 They fall in two kinds, decided by what the tool can do, never by the user.
@@ -5276,6 +5276,18 @@ A connection that waited out a stop does not undo it: an instance that was up wh
 An orchestrator records a workspace as awake until it suspends it, and reconnects on its own after a host restart.
 Only the ProxyCommand handed to a program carries `--start`; the Host block a plain `ssh <name>` reads never does, so typing `ssh` never starts anything.
 With `--start`, `ssh-proxy` installs `StdioGuard`, as `isx mcp` does, and relays the guard's stdin and stdout, because they are the SSH connection and a start prints progress.
+
+**Who may destroy.**
+`isx mcp` never destroys what it does not control, and an external tool may destroy only what the user let it.
+`isx destroy <name> --owner <tool>` deletes only for a tool listed under `drivers:` in `config.yaml` with `destroy: true`, and only while the instance still carries that owner (and `--owner-id`'s handle), checked under the deleting mark (`InstanceDestroyer.deleteHeldIf`).
+The grant lives in the user's file, as `isx mcp`'s approval lives in `mcp.yaml`, so no process grants itself the right to delete; a flag the tool passes would have been exactly that.
+A missing instance is success, since an orchestrator repeats a destroy that failed after the delete.
+A plain `isx destroy` of an owned instance asks, and refuses without a terminal unless `--skip-confirmation`: deleting it under the tool breaks the tool's view of it.
+`drivers:` is a raw section like `host-routes:`, and an entry isx cannot read grants nothing.
+
+**Who owns what is one column.**
+`isx list` has one `OWNER` column, into which `isx mcp`'s standing folds (`mcp held: <purpose>`) beside a tool's name, and its formats append `owner` and `owner_id`.
+The TUI's instance table has no width to spare, so its instance details show the owner, as they show `isx mcp`'s standing.
 
 **Alternatives.**
 A dedicated `isx sandbox create|suspend|resume|destroy` group with its own JSON contract would be a second lifecycle surface to keep in step with `branch` and `destroy`.
