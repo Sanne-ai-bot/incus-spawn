@@ -275,4 +275,80 @@ class CodexSetupTest {
         assertTrue(command.contains(".codex/sessions"), "Should detect sessions in ~/.codex/sessions");
         assertTrue(actions.getFirst().isAutoReturn());
     }
+    /** Outside the user's ~/.codex, which stays theirs; rendered, since Codex reads TOML there. */
+    @Test
+    void readsTheInstructionsFromItsSystemRequirements() {
+        var codex = new CodexSetup();
+        assertEquals("/etc/codex/requirements.toml", codex.environmentContextPath());
+        assertEquals(CodexSetup.requirementsToml("# incus-spawn environment\nhi"),
+                codex.renderEnvironmentContext("# incus-spawn environment\nhi"));
+    }
+
+    @Test
+    void requirementsHoldTheInstructionsAsOneMultiLineString() {
+        var toml = CodexSetup.requirementsToml("# incus-spawn environment\n\n- a `tool`\n");
+
+        assertEquals("""
+                # incus-spawn environment
+                # Written by isx at each build: the environment instructions, as Codex's managed developer instructions
+                additional_developer_instructions = \"""
+                # incus-spawn environment
+
+                - a `tool`
+                \"""
+                """, toml);
+    }
+
+    /** Agent notes are template-authored: no quote, backslash or control character ends the string early. */
+    @Test
+    void requirementsEscapeWhatWouldEndOrBreakTheString() {
+        var instructions = "# incus-spawn environment\nsay \"\"\"hi\"\"\" C:\\dir\u0001\r\tend \u00e9\uD83D\uDE00";
+
+        var toml = CodexSetup.requirementsToml(instructions);
+
+        var opener = "additional_developer_instructions = \"\"\"\n";
+        var body = toml.substring(toml.indexOf(opener) + opener.length());
+        assertTrue(body.endsWith("\n\"\"\"\n"), toml);
+        body = body.substring(0, body.length() - "\n\"\"\"\n".length());
+        assertFalse(body.contains("\"\"\""), "no closing delimiter inside: " + body);
+        assertTrue(body.chars().noneMatch(c -> c < 0x20 && c != '\n' && c != '\t'), body);
+        assertEquals(instructions, unescape(body));
+    }
+
+    @Test
+    void aLoneSurrogateBecomesTheReplacementCharacter() {
+        var toml = CodexSetup.requirementsToml("# incus-spawn environment\nbad \uD83D here");
+
+        assertTrue(toml.contains("bad \\uFFFD here\n"), toml);
+    }
+
+    @Test
+    void instructionsCodexWouldRefuseFailTheBuild() {
+        var instructions = "# incus-spawn environment\n" + "x".repeat(CodexSetup.MAX_INSTRUCTIONS_BYTES);
+
+        var e = assertThrows(IllegalStateException.class, () -> CodexSetup.requirementsToml(instructions));
+        assertTrue(e.getMessage().contains("agent notes"), e.getMessage());
+    }
+
+    /** TOML basic-string unescaping, for the escapes {@link CodexSetup#requirementsToml} writes. */
+    private static String unescape(String body) {
+        var out = new StringBuilder();
+        for (int i = 0; i < body.length(); i++) {
+            var c = body.charAt(i);
+            if (c != '\\') {
+                out.append(c);
+                continue;
+            }
+            var next = body.charAt(++i);
+            switch (next) {
+                case '\\', '"' -> out.append(next);
+                case 'u' -> {
+                    out.append((char) Integer.parseInt(body.substring(i + 1, i + 5), 16));
+                    i += 4;
+                }
+                default -> fail("unexpected escape \\" + next);
+            }
+        }
+        return out.toString();
+    }
 }

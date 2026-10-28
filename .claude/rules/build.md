@@ -125,6 +125,8 @@ This file is build-owned and regenerated for each child template, including when
 Project context files are untouched and `context.fileName` stays unset.
 When they include `pi`, `/AGENTS.md` is a link to the store, with or without the `claude` tool.
 Pi loads the `AGENTS.md` of every ancestor of its working directory, so the root's reaches every session and `~/.pi/agent/AGENTS.md` stays the user's.
+When they include `codex`, `/etc/codex/requirements.toml` is a file of its own: `CodexSetup` renders the instructions into it with `ToolSetup.renderEnvironmentContext` (#1783).
+A rendered file starts with the heading, so stale cleanup knows it; a non-empty one with any other first line is the template's and is kept, which `AgentInstructions.install` reports as a warning.
 
 That path is Claude Code's **managed policy** memory layer: it loads ahead of `~/.claude/CLAUDE.md` and any project `CLAUDE.md`, layers concatenate rather than override, and it can't be suppressed via `claudeMdExcludes`.
 So isx never merges with or overwrites a file a user or template owns -- no marker blocks, no read-modify-write.

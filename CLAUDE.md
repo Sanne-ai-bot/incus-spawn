@@ -80,6 +80,7 @@ The policy applies to direct launches as well as the action, excludes plan mode,
 Each build writes the resolved template environment instructions to `~/.gemini/GEMINI.md` when Gemini is installed, leaving `context.fileName` unset.
 With `pi` they go to `/AGENTS.md`, which Pi reads from every working directory, so the user's `~/.pi/agent/AGENTS.md` stays theirs.
 They are stored once in `/etc/isx/agent-instructions.md`; Claude's `/etc/claude-code/CLAUDE.md` (only with the `claude` tool) and Pi's `/AGENTS.md` are hardlinks to it, a location in the home is a copy (`ToolSetup.environmentContextPath`, `AgentInstructions`).
+Codex gets them rendered as `additional_developer_instructions` in `/etc/codex/requirements.toml` (`ToolSetup.renderEnvironmentContext`), never `~/.codex/AGENTS.md`.
 Gemini API keys stay in host-side `gemini` accounts; the guest's `GEMINI_API_KEY` carries that namespace's proof, verified before the proxy injects `x-goog-api-key` at `generativelanguage.googleapis.com`.
 Google OAuth and Vertex are outside this integration; see `.claude/rules/tools-env.md`.
 

@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Platform;
+import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
@@ -552,6 +553,34 @@ class GuestProvisioningTest {
         assertTrue(shellCalls(incus).stream().noneMatch(call -> call.contains("/.pi/")),
                 "the user's own Pi files are not touched");
         assertFalse(shellCalls(incus).getLast().contains("isx_copy '" + dev.incusspawn.tool.GeminiSetup.MEMORY_PATH));
+    }
+
+    /**
+     * Codex reads no Markdown outside the user's own {@code ~/.codex/AGENTS.md}: it gets the
+     * instructions as managed developer instructions in its system requirements (#1783).
+     */
+    @Test
+    void codexGetsTheInstructionsInItsRequirements() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), any(String[].class))).thenReturn(OK);
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-codex");
+        imageDef.setAgentNote("codex environment instructions");
+        var tools = List.of(new BuildTools.ResolvedTool("codex", new dev.incusspawn.tool.CodexSetup(), Map.of()));
+
+        GuestProvisioning.writeAgentContext(new Container(incus, "test"), imageDef, Map.of(), tools, "tpl-codex");
+
+        var script = shellCalls(incus).getLast();
+        var opener = "isx_render '/etc/codex/requirements.toml' << '";
+        assertTrue(script.contains(opener), script);
+        var requirements = script.substring(script.indexOf('\n', script.indexOf(opener)) + 1);
+        assertTrue(requirements.startsWith(AgentContextGenerator.HEADING + "\n"), requirements);
+        assertTrue(requirements.contains("additional_developer_instructions = \"\"\"\n" + AgentContextGenerator.HEADING),
+                requirements);
+        assertTrue(requirements.contains("built from the `tpl-codex` template"));
+        assertTrue(requirements.contains("codex environment instructions"));
+        assertTrue(shellCalls(incus).stream().noneMatch(call -> call.contains("/.codex/AGENTS.md")),
+                "the user's own AGENTS.md is theirs");
     }
 
     @Test

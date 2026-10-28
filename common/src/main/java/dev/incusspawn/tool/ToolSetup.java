@@ -37,6 +37,14 @@ public interface ToolSetup {
     default String environmentContextPath() { return null; }
 
     /**
+     * The file at {@link #environmentContextPath} for an agent that does not read the
+     * instructions as Markdown: them, rendered in the format it reads, written in place rather
+     * than linked. It starts with the generator's heading, so a later build knows the file as
+     * its own. Null, the default, for an agent that reads the stored copy as it is.
+     */
+    default String renderEnvironmentContext(String instructions) { return null; }
+
+    /**
      * Skills this tool ships, installed when the tool is. Use these for the procedures
      * that drive the tool — they load on demand, unlike {@link #agentNote()}, which is
      * in context for every session. Bare skill names resolve against this definition's

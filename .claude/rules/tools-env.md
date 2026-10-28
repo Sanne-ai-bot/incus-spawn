@@ -35,6 +35,7 @@ It writes `~/.gemini/policies/isx-auto-approve.toml`, a priority-zero allow-all 
 The policy also applies to direct and headless launches, excludes plan mode, and permits higher-priority user overrides.
 At the end of either build path, `GuestProvisioning.writeAgentContext()` copies the resolved environment instructions to the build-owned `~/.gemini/GEMINI.md` as `agentuser`.
 It reads that path from `ToolSetup.environmentContextPath`, which `PiSetup` (`/AGENTS.md`) and `ClaudeSetup` (`/etc/claude-code/CLAUDE.md`) declare too; theirs are hardlinks to one stored copy (`AgentInstructions`).
+`CodexSetup` declares `/etc/codex/requirements.toml` and renders the instructions into it as TOML (`renderEnvironmentContext`).
 The tool leaves `context.fileName` unset.
 It selects `security.auth.selectedType: gemini-api-key` and exports only `GEMINI_API_KEY=gemini-placeholder` at build time.
 Its `proxy.placeholders` declaration fills that variable with the stable `gemini` namespace proof at login; Gemini reads it when launched, without a credential file or wrapper.
