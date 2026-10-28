@@ -165,7 +165,7 @@ public class GhSetup implements ToolSetup {
     @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams,
                         java.util.Map<String, String> accountSelection) {
-        BuildOutput.stepStart("Installing GitHub CLI...");
+        BuildOutput.stepStart("Installing GitHub CLI");
         // Loaded once and threaded down: every lookup below used to re-read and re-serialize
         // config.yaml, so a single install parsed it three times over.
         var config = SpawnConfig.load();

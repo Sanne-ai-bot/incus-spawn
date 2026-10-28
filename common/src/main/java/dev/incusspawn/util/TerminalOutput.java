@@ -243,7 +243,7 @@ public final class TerminalOutput implements Output {
         int frame;
 
         LiveStep(String msg, String indent, boolean ansi, PrintStream raw) {
-            this.label = BuildOutput.trimEllipsis(msg);
+            this.label = msg;
             this.indent = indent;
             this.ansi = ansi;
             this.raw = raw;
@@ -370,7 +370,10 @@ public final class TerminalOutput implements Output {
             }
             raw.print((step.onLine ? "\r\033[2K" : "") + text + "\n");
         } else if (outcome != null) {
-            var done = outcome.detail() == null ? " done." : " done (" + outcome.detail() + ").";
+            // The elapsed time too, as the ✓ line has it: a log is where a slow step is looked for
+            var ms = step.elapsedMillis();
+            var done = " done" + (outcome.detail() == null ? "" : " (" + outcome.detail() + ")")
+                    + (ms >= SHOW_ELAPSED_MS ? " in " + BuildOutput.formatElapsed(ms) : "") + ".";
             raw.println(step.onLine ? done : step.plainLine() + done);
         } else if (step.onLine) {
             raw.println();

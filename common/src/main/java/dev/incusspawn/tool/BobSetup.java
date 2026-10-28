@@ -144,7 +144,7 @@ public class BobSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        BuildOutput.stepStart("Installing Bob Shell...");
+        BuildOutput.stepStart("Installing Bob Shell");
 
         try {
             var version = Files.readString(
@@ -171,7 +171,7 @@ public class BobSetup implements ToolSetup {
     }
 
     void configureSettings(Container c, Map<String, String> resolvedParams) {
-        BuildOutput.stepStart("Configuring Bob Shell...");
+        BuildOutput.stepStart("Configuring Bob Shell");
         var bobConfig = SpawnConfig.load().getBob();
 
         var userSettings = new StringBuilder();

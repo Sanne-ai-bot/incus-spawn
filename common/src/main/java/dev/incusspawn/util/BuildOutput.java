@@ -255,18 +255,6 @@ public final class BuildOutput {
     static volatile Boolean forceAnsi;
 
     /**
-     * A label without the ellipsis a call site still writes: a label is bare in source, and the
-     * terminal decorates it ({@link TerminalOutput}), so a decorated one prints alike until the
-     * last is gone ({@code StepLabelGateTest}).
-     */
-    static String trimEllipsis(String msg) {
-        var s = msg.stripTrailing();
-        if (s.endsWith("...")) return s.substring(0, s.length() - 3).stripTrailing();
-        if (s.endsWith("…")) return s.substring(0, s.length() - 1).stripTrailing();
-        return s;
-    }
-
-    /**
      * Start a slow step. On an ANSI terminal the line animates until {@link #stepDone} (or
      * {@link #stepBreak} on failure); otherwise it is printed {@code "label..."} without a newline
      * for {@code stepDone} to complete. {@code msg} is a bare label: the terminal adds the ellipsis

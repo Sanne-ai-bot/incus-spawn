@@ -32,7 +32,6 @@ Every line under a header is picked without judgement: work that was done is a l
 `BuildOutput.liveStep(label, work)` runs work that starts no step of its own as a live step: a ✓ when it returns true, a ✗ when it returns false or throws, and what the work prints meanwhile freezes the line and is shown below it.
 A label is a bare phrase in source, with no `...` and no period: `TerminalOutput` prints `label... done.` on a plain terminal and the spinner and `✓ label` on an ANSI one.
 `StepLabelGateTest` fails on a `step`, `stepStart`, `liveStep`, `ok`, `success`, `note` or `stepFail` call whose last string literal (a `liveStep`'s first argument's) ends in `...` or `…`, or in a period for `stepStart`, `liveStep`, `ok` and `success`.
-The labels that predate it are counted per file in `cli/src/test/resources/step-label-baseline.txt`, which only shrinks; until it is empty, `BuildOutput.trimEllipsis` makes a decorated label print like a bare one.
 
 **The seam (#1703).**
 `BuildOutput` is the one way out: its static methods hand every message to the bound `Output`, a `TerminalOutput` unless the owner of the terminal bound another with `BuildOutput.bind`.
@@ -66,8 +65,8 @@ Output captured from a guest command is someone else's text too (#1588).
 Its one pattern ends a control string at the next escape or introducer, as a terminal does, so a guest's long line costs linear time, never a stall.
 A build step's `StepProgress` cleans its detail and log through it as it is made, the detail also through `OutputFormat.oneLine`, since a prime is code the repository controls.
 So the live line, the plain failure line, the log's warning and the saved failure report all show it as text, and the failure line is the last one with text left.
-Off an ANSI terminal a one-task step that is done is a step (`BuildProgress.reportPlain`), and a failed one is one indented warning line with its detail, the end of its log under it (`finishSpinner`).
-On an ANSI terminal the failed step's line is drawn, and its log is a warning under it; either way the exception carries all of the log for the failure report (#1703).
+A build's single steps (`BuildProgress.runDnf`, `runWithSpinner`, `runLiveStep`) are the seam's live step, drawn by the renderer every step uses (#1791): a failed one ends in its ✗ (a plain terminal ends its `label...` line), then, when it captured a log, one warning, `label failed` with the detail when the log does not end on it, the end of the log under it.
+The exception carries all of the log for the failure report (#1703).
 A failed prime also names its step and command (#1742), its carriage returns turned to spaces before `guestText`, so one cannot draw over the step's name: the failure line reads ``prime `<command>` failed`` with the command's first line cut to 40 characters, so the reason after it survives the terminal's width.
 Its output's heading reads `prime output`, and the whole command leads that output as a shell shows it (`$ `, then `> ` per continued line), so a report trimmed to the last 100 lines keeps it.
 The failure report holds only the command that failed, so each build also keeps a log of every command its definitions declared (`BuildLog`, `Environment.buildLogFile`): tools' `run`, `run_as_user` and `verify`, repositories' `prime`.
@@ -103,12 +102,12 @@ A styled string is never a `static final` (it would be decided when the native i
 
 **Live steps.**
 On an ANSI terminal `stepStart` animates a spinner (plus the `stepProgress` detail) until `stepDone`, which rewrites it as `✓ label` (elapsed time appended past 2s); `stepBreak` gives `✗ label`.
-Without a terminal the same calls print `label... done.`.
+Without a terminal the same calls print `label... done.` (`done in 41s.` past 2s).
 A step must cover *all* of its work -- e.g. `ToolVerifier` gives each `verify` its own step and reports it only after the command returns, since a slow verify after "done" looks like a hang.
 While a step is live, `System.out`/`System.err` are wrapped so any other write first freezes the line (`… label`) and stops the spinner; `BaseCommand` calls `abandonStep()` after every command so an exception cannot leave the wrap installed.
 Anything that hands the terminal to a child directly (inherited IO, a `sudo` that may prompt on the tty) must call `BuildOutput.releaseTerminal()` first -- the wrap cannot see that output.
 Host commands run inside a step should capture output rather than inherit it.
-`TerminalProgress`-based spinners (dnf, base-image download, repo clones) render at `BuildOutput.indent()` and finish with the same `✓`/`✗` glyphs (`BuildOutput.CHECK`/`CROSS`).
+`TerminalProgress`-based blocks (repo clones, host repo refresh: N live lines at once) render at `BuildOutput.indent()` and finish with the same `✓`/`✗` glyphs (`BuildOutput.CHECK`/`CROSS`).
 Off an ANSI terminal `RepoCloner`'s parallel block reports each repository as it ends, from its state (`TerminalProgress.run` with `plainDone`): a step when ready, a warning when it failed.
 On any terminal the start of a failed repository's command and the end of its log are one warning (#1703).
 Headers live in command classes; shared helpers like `VmManager` emit only steps so they nest correctly under whichever header the caller prints.

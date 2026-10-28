@@ -87,17 +87,16 @@ Either way only the tag is taken as given: every checksum comes from the release
 `verify-base-image-checksums.yml` checks `minimal.yaml`'s four checksums against the release on every PR that changes it.
 This tracking behavior is unrelated to `INIT_VERSION`.
 
-**DNF output and parallelism**: dnf steps render a single animated `TerminalProgress` spinner line instead of flooding the terminal -- so isx's own warnings stay visible.
-Install/upgrade go through `runDnf`, which **streams** dnf's output through a parser (`onDnfLine` + the `DNF_STEP` regex) rather than echoing it: dnf5's non-TTY output prints one `[N/M] <action> <package>` line per completed step (both the download and transaction phases), so the spinner shows live "N/M -- current package" feedback (`formatDnfLine`).
+**DNF output and parallelism**: dnf steps are one live step of the output seam (`BuildProgress.runStep`, #1791) instead of flooding the terminal -- so isx's own warnings stay visible.
+Install/upgrade go through `runDnf`, which **streams** dnf's output through a parser (`onDnfLine` + the `DNF_STEP` regex) rather than echoing it: dnf5's non-TTY output prints one `[N/M] <action> <package>` line per completed step (both the download and transaction phases), so the step's detail shows live "N/M -- current package" feedback, read on every frame.
 dnf's non-TTY column truncates the version/arch tail off each NEVRA (and it can't be widened -- `COLUMNS`/`terminal_width` are ignored without a TTY, and a PTY only trades the clean per-line format for concurrent ANSI progress-bar redraws), so `shortenNevra` reduces each `name-epoch:ver-rel.arch` to its bare package name for the display detail.
 Streaming without terminal echo is provided by `Container.execLines` -> `IncusClient.shellExecStreaming` -> `util/LineOutputStream` (UTF-8 line splitter).
 COPR-enable and VM rootfs-expansion use `runWithSpinner` (captured exec, no live detail -- they're single/short ops).
-Its `runSpinnerWork` wrapper (and `dnfWork`) convert a thrown exception into a recorded `failed` state, because `TerminalProgress` swallows task exceptions.
-Otherwise the step would stay RUNNING and `finishSpinner` would throw a generic message with no cause.
+`runStep` turns a thrown exception into a failure with its stack trace as the log, so the failure report keeps the cause.
 Before the first `dnf copr enable`, `ensureCoprPlugin` installs the copr plugin of the guest's own dnf through `runDnf` when `rpm -q --whatprovides` misses it: `dnf5-command(copr)` when `dnf5` is on the path, `dnf-command(copr)` otherwise, since a dnf5 guest can hold dnf4's plugin and still lack `dnf copr`.
 isx's base images ship dnf5 without its plugins (#1736).
 The VM rootfs dependency install goes through `dnfCommand(...)` too, and is skipped when the resize tools are already present (the prebaked VM image ships them); `dnf copr enable`/`dnf clean` run plain `dnf` (the download/cache flags don't apply).
-Full dnf output is printed to stderr only on failure, after the animated line, via the shared `finishSpinner`.
+On failure the step ends in its ✗, the end of dnf's output is one warning under it, and the exception carries all of it for the failure report.
 `runDnf` still retries once with `--refresh` on failure (the spinner shows "retrying with --refresh"). dnf has no built-in single-line progress mode -- `-q` would suppress the very lines we parse -- so consuming its native `[N/M]` output is the approach.
 Shared dnf flags live in `DNF_BASE_OPTS` (built via `dnfCommand(...)`): `keepcache`, `metadata_expire`, `tsflags=nodocs`, and `max_parallel_downloads` (scaled to `CpuInfo.logicalCores()`, capped at dnf's practical max of 20) to speed the download phase; the rpm transaction itself is serial.
 
@@ -239,7 +238,7 @@ A retry after a body broke off resumes it with `Range`/`If-Range` when the `200`
 Errors name the failing hop's host.
 `file://` goes only through `downloadAllowingLocalFile()`, which only base images use; see DESIGN.md "Host-side downloads reach only remote hosts".
 A `DownloadCache.Listener` observes a download (cache verification, bytes against `Content-Length`, checksum).
-Base images pass `BuildProgress.TransferProgress`, which the `runLiveStep` spinner formats on each frame into percentage, size, rate and time left.
+Base images pass `BuildProgress.TransferProgress`, which the `runLiveStep` step's detail formats on each frame into percentage, size, rate and time left (`stepProgress(Supplier)`); the ✓ line then gives the size and time, or `cached`.
 The Incus import that follows is a separate spinner showing elapsed time.
 YAML tool downloads may be exposed as a file via `destination_file`, extracted, or both.
 Containers receive files directly and host-extracted archive contents recursively; VMs use temporary read-only mounts and copy locally to avoid slow incus-agent file transfers over vsock.

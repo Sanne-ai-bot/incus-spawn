@@ -1933,10 +1933,13 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
 
-        cmd.downloadAndAliasImage("proj-base", "https://example.com/img.tar.xz", null, "v1",
-                projectLocal("tpl-proj", Path.of("/work/repo")));
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> cmd.downloadAndAliasImage("proj-base",
+                "https://example.com/img.tar.xz", null, "v1", projectLocal("tpl-proj", Path.of("/work/repo"))));
         verify(incus, never()).deleteImage(any());
         verify(cmd, never()).newDownloadCache();
+        // Work skipped is a note (#1791), dim beside the steps that did work
+        assertEquals(List.of(new dev.incusspawn.util.RecordingOutput.Event(dev.incusspawn.util.RecordingOutput.Kind.NOTE,
+                "Base image 'proj-base' is up to date (v1)")), recorded.events());
     }
 
     @Test

@@ -137,7 +137,8 @@ public class YamlToolSetup implements ToolSetup {
     @Override
     public void install(Container container, java.util.Map<String, String> resolvedParams) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();
-        BuildOutput.stepStart("Installing " + label + "...");
+        // A description is definition text, and may end as a sentence: the label is bare
+        BuildOutput.stepStart("Installing " + label.replaceFirst("[.…\\s]+$", ""));
 
         // Packages are installed in bulk by BuildCommand before tool.install() is called.
 

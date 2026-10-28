@@ -91,7 +91,7 @@ public class GeminiSetup implements ToolSetup {
 
     @Override
     public void install(Container c, Map<String, String> resolvedParams) {
-        BuildOutput.stepStart("Installing Gemini CLI...");
+        BuildOutput.stepStart("Installing Gemini CLI");
         NpmGlobalInstall.install(c, "Gemini CLI", "@google/gemini-cli");
         BuildOutput.stepDone();
         configureSettings(c, resolvedParams);
@@ -136,7 +136,7 @@ public class GeminiSetup implements ToolSetup {
     public String environmentContextPath() { return MEMORY_PATH; }
 
     private void configureSettings(Container c, Map<String, String> resolvedParams) {
-        BuildOutput.stepStart("Configuring Gemini CLI...");
+        BuildOutput.stepStart("Configuring Gemini CLI");
         removeLoginNotice(c);
         c.sh("mkdir -p /home/agentuser/.gemini/policies");
         c.writeFile(CONFIG_PATH, settingsJson(resolvedParams));
