@@ -159,7 +159,7 @@ class SshProxyCommandTest {
         command.instance = "box";
         var recorded = RecordingOutput.during(() -> assertFalse(command.checkInstanceRunning(incus)));
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
-                        "instance 'box' is not running (status: Stopped).", "Start it first: isx shell box")),
+                        "instance 'box' is not running (status: Stopped).", "Start it first: isx start box")),
                 recorded.events());
     }
 
@@ -187,5 +187,132 @@ class SshProxyCommandTest {
                 new PrintStream(err, true, StandardCharsets.UTF_8)));
         assertEquals("SSH-2.0-OpenSSH\033]0;raw\007", out.toString(StandardCharsets.UTF_8));
         assertEquals("nc: refused\nlast\n", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /** {@code --start} prepares a stopped instance under its lock, as {@code isx start} does (#1720). */
+    @Test
+    void withStartAStoppedInstanceIsPreparedFirst() throws Exception {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().container("box", java.util.Map.of());
+        var locks = new StartStopCommandTest.Locks();
+        var prepared = new ArrayList<String>();
+        var command = new SshProxyCommand();
+        command.instance = "box";
+        command.start = true;
+        command.preparer = (incus, name, out) -> prepared.add(name);
+
+        var recorded = RecordingOutput.during(() -> assertTrue(
+                assertDoesNotThrow(() -> command.ensureRunning(daemon.client(), locks))));
+
+        assertEquals(List.of("box"), prepared);
+        assertEquals(List.of("box:starting"), locks.taken);
+        assertEquals(List.of(), recorded.events(RecordingOutput.Kind.ERROR));
+    }
+
+    /**
+     * A running instance no isx process holds is used as it is: every connection of an orchestrator,
+     * git and scp included, runs this ProxyCommand, and must not pay a whole preparation each time.
+     * One held (a start delivering its proofs) is waited for and prepared.
+     */
+    @Test
+    void withStartARunningInstanceIsPreparedOnlyWhileAnotherIsxHoldsIt() throws Exception {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("box", "container", "Running", java.util.Map.of());
+        var prepared = new ArrayList<String>();
+        var command = new SshProxyCommand();
+        command.instance = "box";
+        command.start = true;
+        command.preparer = (incus, name, out) -> prepared.add(name);
+        var locks = new StartStopCommandTest.Locks();
+
+        daemon.clearRequests();
+        RecordingOutput.during(() -> assertTrue(assertDoesNotThrow(() -> command.ensureRunning(daemon.client(), locks))));
+        assertEquals(List.of(), prepared);
+        assertEquals(List.of("GET /1.0/instances/box"), daemon.requests(), "one read per connection");
+
+        locks.held.add("box");
+        var release = new Thread(() -> {
+            try { Thread.sleep(300); } catch (InterruptedException e) { return; }
+            synchronized (locks) { locks.held.remove("box"); }
+        });
+        release.start();
+        RecordingOutput.during(() -> assertTrue(assertDoesNotThrow(() -> command.ensureRunning(daemon.client(), locks))));
+        release.join();
+        assertEquals(List.of("box"), prepared);
+    }
+
+    /**
+     * After a host reboot Incus restores an instance running, with an empty /run/isx: its boot is
+     * not the one its secret was stamped for, so the connection prepares it rather than reaching an
+     * agent with no secret or credential proofs (#1720, review of #1815).
+     */
+    @Test
+    void withStartARunningInstanceWhoseBootHasNoSecretIsPrepared() throws Exception {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("box", "container", "Running", java.util.Map.of(
+                dev.incusspawn.incus.Metadata.INSTANCE_SECRET_BOOT, "2026-10-27T09:00:00Z"))
+                .lastUsedAt("box", "2026-10-28T08:00:00Z");
+        var prepared = new ArrayList<String>();
+        var command = new SshProxyCommand();
+        command.instance = "box";
+        command.start = true;
+        command.preparer = (incus, name, out) -> prepared.add(name);
+
+        RecordingOutput.during(() -> assertTrue(assertDoesNotThrow(
+                () -> command.ensureRunning(daemon.client(), new StartStopCommandTest.Locks()))));
+
+        assertEquals(List.of("box"), prepared);
+    }
+
+    /** Without {@code --start}, the ProxyCommand a plain {@code ssh} runs, nothing is started. */
+    @Test
+    void withoutStartAStoppedInstanceIsNeverPrepared() throws Exception {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().container("box", java.util.Map.of());
+        var command = new SshProxyCommand();
+        command.instance = "box";
+        command.preparer = (incus, name, out) -> fail("a plain ssh never starts an instance");
+
+        RecordingOutput.during(() -> assertFalse(
+                assertDoesNotThrow(() -> command.ensureRunning(daemon.client(), new StartStopCommandTest.Locks()))));
+    }
+
+    @Test
+    void withStartAMissingInstanceIsAnError() {
+        var command = new SshProxyCommand();
+        command.instance = "gone";
+        command.start = true;
+        command.preparer = (incus, name, out) -> fail("nothing to prepare");
+
+        var recorded = RecordingOutput.during(() -> assertFalse(assertDoesNotThrow(() ->
+                command.ensureRunning(new dev.incusspawn.incus.FakeIncusDaemon().client(), new StartStopCommandTest.Locks()))));
+
+        assertEquals(List.of("instance 'gone' not found or not accessible."),
+                recorded.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList());
+    }
+
+    /**
+     * A connection that waited out a stop must not undo it: an instance up when the connection came
+     * and down once it may act is refused, never started again (#1720).
+     */
+    @Test
+    void withStartAConnectionThatWaitedOutAStopDoesNotUndoIt() throws Exception {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("box", "container", "Running", java.util.Map.of());
+        var locks = new StartStopCommandTest.Locks();
+        locks.held.add("box");
+        var command = new SshProxyCommand();
+        command.instance = "box";
+        command.start = true;
+        command.preparer = (incus, name, out) -> fail("a stopped instance is not started again");
+        var stopper = new Thread(() -> {
+            try { Thread.sleep(300); } catch (InterruptedException e) { return; }
+            daemon.client().stop("box");
+            synchronized (locks) { locks.held.remove("box"); }
+        });
+        stopper.start();
+
+        var recorded = RecordingOutput.during(() -> assertFalse(
+                assertDoesNotThrow(() -> command.ensureRunning(daemon.client(), locks))));
+        stopper.join();
+
+        assertEquals("Stopped", daemon.instance("box").path("status").asText());
+        assertEquals(List.of("'box' was stopped while this connection waited for it."),
+                recorded.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList());
     }
 }

@@ -200,6 +200,8 @@ public class CompletionCommand extends BaseCommand {
                 '--disk=[Disk size limit]:size' \\
                 '--no-start[Don'"'"'t start the instance after creation]' \\
                 '*--account=[Credential account as <namespace>=<account>]:selection:_isx_accounts' \\
+                '--owner=[External tool that controls this instance'"'"'s lifecycle]:owner' \\
+                '--owner-id=[The owner'"'"'s own handle for this instance]:id' \\
                 '1:new instance name'
             }
 
@@ -246,6 +248,12 @@ public class CompletionCommand extends BaseCommand {
                 '--task[Join a delegated task'"'"'s agent conversation]' \\
                 '1:clone name:_isx_instances' \\
                 '2::task id:'
+            }
+
+            _isx_instance_arg() {
+              _arguments \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '1:instance name:_isx_instances'
             }
 
             _isx_run() {
@@ -467,6 +475,8 @@ public class CompletionCommand extends BaseCommand {
                     'project:manage project templates'
                     'branch:create a new instance from an existing one'
                     'shell:open a shell in an existing clone'
+                    'start:start an instance and make it ready for use, without a shell'
+                    'stop:stop a running instance'
                     'run:run the default action or a specific action on an instance'
                     'list:list all incus-spawn environments'
                     'destroy:destroy a clone environment'
@@ -500,6 +510,7 @@ public class CompletionCommand extends BaseCommand {
                     help)       _arguments '(-h --help)'{-h,--help}'[Show help]' '--with-templates[Include template definitions in AI context]' '*:question' ;;
                     list)       _isx_list ;;
                     shell)      _isx_shell ;;
+                    start|stop) _isx_instance_arg ;;
                     run)        _isx_run ;;
                     project)    _isx_project ;;
                     proxy)      _isx_proxy ;;
@@ -600,14 +611,14 @@ public class CompletionCommand extends BaseCommand {
               # complete values in both the --opt value and the --opt=value forms.
               _init_completion -s || return
 
-              local commands="init build clean project branch shell run list destroy reset update-all update-base proxy templates account mcp tools vm doctor help"
+              local commands="init build clean project branch shell start stop run list destroy reset update-all update-base proxy templates account mcp tools vm doctor help"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|account|mcp|tools|vm|doctor|help)
+                  init|build|clean|project|branch|shell|start|stop|run|list|destroy|reset|update-all|update-base|proxy|templates|account|mcp|tools|vm|doctor|help)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -635,12 +646,12 @@ public class CompletionCommand extends BaseCommand {
                     --inbox)
                       _filedir -d
                       return ;;
-                    --cpu|--memory|--disk) return ;;
+                    --cpu|--memory|--disk|--owner|--owner-id) return ;;
                     --account)
                       _isx_complete_accounts
                       return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help --from --gui --no-gui --kvm --no-kvm --airgap --proxy-only --inbox --cpu --memory --disk --no-start --account" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help --from --gui --no-gui --kvm --no-kvm --airgap --proxy-only --inbox --cpu --memory --disk --no-start --account --owner --owner-id" -- "$cur") )
                   ;;
                 build)
                   case "$prev" in
@@ -697,6 +708,14 @@ public class CompletionCommand extends BaseCommand {
                       return ;;
                   esac
                   COMPREPLY=( $(compgen -W "--help --task" -- "$cur") )
+                  ;;
+                start|stop)
+                  case "$prev" in
+                    start|stop)
+                      _isx_reply --help < <(_isx_list_instances)
+                      return ;;
+                  esac
+                  COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
                 run)
                   case "$prev" in
@@ -912,7 +931,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|account|mcp|tools|vm|doctor|help)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|start|stop|run|list|destroy|reset|update-all|update-base|proxy|templates|account|mcp|tools|vm|doctor|help)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -928,6 +947,8 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n __isx_no_subcommand -a project      -d 'Manage project templates'
             complete -c isx -f -n __isx_no_subcommand -a branch       -d 'Create a new instance from an existing one'
             complete -c isx -f -n __isx_no_subcommand -a shell        -d 'Open a shell in an existing clone'
+            complete -c isx -f -n __isx_no_subcommand -a start        -d 'Start an instance and make it ready for use, without a shell'
+            complete -c isx -f -n __isx_no_subcommand -a stop         -d 'Stop a running instance'
             complete -c isx -f -n __isx_no_subcommand -a run          -d 'Run the default action or a specific action on an instance'
             complete -c isx -f -n __isx_no_subcommand -a list         -d 'List all incus-spawn environments'
             complete -c isx -f -n __isx_no_subcommand -a destroy      -d 'Destroy a clone environment'
@@ -962,6 +983,8 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand branch' -l disk        -d 'Disk size limit'
             complete -c isx -f -n '__isx_using_subcommand branch' -l no-start    -d "Don't start the instance after creation"
             complete -c isx -f -n '__isx_using_subcommand branch' -l account     -d 'Credential account as <namespace>=<account>' -x -a '(__isx_accounts)'
+            complete -c isx -f -n '__isx_using_subcommand branch' -l owner       -d "External tool that controls this instance's lifecycle" -x
+            complete -c isx -f -n '__isx_using_subcommand branch' -l owner-id    -d "The owner's own handle for this instance" -x
 
             # ── build ────────────────────────────────────────────────────────────────────
 
@@ -1008,6 +1031,11 @@ public class CompletionCommand extends BaseCommand {
 
             complete -c isx -f -n '__isx_using_subcommand shell' -a '(__isx_instances)' -d 'Clone name'
             complete -c isx -f -n '__isx_using_subcommand shell' -l task -d "Join a delegated task's agent conversation"
+
+            # ── start / stop ────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand start' -a '(__isx_instances)' -d 'Instance name'
+            complete -c isx -f -n '__isx_using_subcommand stop' -a '(__isx_instances)' -d 'Instance name'
 
             # ── run ─────────────────────────────────────────────────────────────────────
 

@@ -20,18 +20,21 @@ import java.io.PrintStream;
  * the MCP client logs -- and {@code System.in} becomes empty, so nothing but the transport can
  * consume the client's messages. isx's own messages are bound to stderr outright
  * ({@link TerminalOutput#stderrOnly}), and {@link Headless} stops animations and prompts.
+ *
+ * <p>{@code isx ssh-proxy} installs it too: its stdin and stdout are the SSH connection, and
+ * {@code --start} prints a start's progress.
  */
-final class StdioGuard {
+public final class StdioGuard {
 
-    final InputStream protocolIn;
-    final OutputStream protocolOut;
+    public final InputStream protocolIn;
+    public final OutputStream protocolOut;
 
     private StdioGuard(InputStream in, OutputStream out) {
         this.protocolIn = in;
         this.protocolOut = out;
     }
 
-    static StdioGuard install() {
+    public static StdioGuard install() {
         var guard = new StdioGuard(new FileInputStream(FileDescriptor.in),
                 new FileOutputStream(FileDescriptor.out));
         System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.err), true));

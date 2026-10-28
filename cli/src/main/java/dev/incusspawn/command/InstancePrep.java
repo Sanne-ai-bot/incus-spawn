@@ -46,7 +46,7 @@ public class InstancePrep {
     }
 
     /** A refusal's first line as the error, and the lines under it as its advice. */
-    private static void reportRefusal(String message) {
+    static void reportRefusal(String message) {
         var lines = message.lines().toList();
         if (lines.isEmpty()) {
             BuildOutput.error("the instance could not be prepared.");

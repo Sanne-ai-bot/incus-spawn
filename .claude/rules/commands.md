@@ -58,6 +58,15 @@ The completion scripts in `CompletionCommand` must be kept in sync manually (rem
 `completion` is listed in `isx --help`, the one place a user finds it before completion is installed, but the completion scripts do not offer it: nobody tab-completes the command that sets up tab completion (#1802).
 When hiding a new command: add it to `HIDDEN_COMMANDS` (which `NOT_OFFERED` is built from), remove it from all three completion scripts, update `stripVmCommand()` if it changes `vm`'s neighbors, and run both tests.
 
+**`isx start`, `isx stop` and owners are for programs that drive isx (#1720).**
+`isx start` is `isx shell`'s preparation without the shell (`InstanceStart`, shared with `isx ssh-proxy --start`): `InstancePrep.prepare` under the `starting` lock, waiting up to two minutes for another holder, never a bare Incus start.
+`isx stop` stops under the lock and the `stopping` mark (`InstanceDestroyer.stopMarkedIf`, shared with `isx mcp`'s held stop), and a stopped instance is success.
+`isx ssh-proxy --start` uses a running container no isx process holds as it is only when its boot holds its secret (`InstanceLifecycle.readyForThisBoot`, one read per connection), and prepares any other.
+`isx branch --owner <name> [--owner-id <id>]` stamps `Metadata.OWNER`/`OWNER_ID`, ownership keys no copy inherits (`Metadata.isOwnershipKey`, used where copies drop `mcp-*`); `BranchCommand.ownerProblem` validates both before anything is made.
+Only the ProxyCommand `isx branch --format=json` hands out has `--start` (`SshKeyManager.proxyCommand`); the Host block never does.
+`isx ssh-proxy --start` installs `StdioGuard` and relays the guard's stdin and stdout, since a start prints progress and stdout is the SSH stream; without `--start` it relays `TerminalStreams` as before.
+`isx branch --format=plain` stays the name alone; its new fields are in `json` only (`BranchCommand.record(name, owner, ownerId, reach)`).
+
 **Output for scripts goes through `OutputFormat`.**
 A query command offers `--format=table|plain|json` (#1036) by parsing `--format` with `OutputFormat.parse` (`OutputFormat.resolve` where there is also a `--plain`), building each result once as an ordered `Map<String, Object>` (a `LinkedHashMap`; maps need no native reflection registration) in a package-private `record(s)` method, and handing it to `format.print`/`printOne`.
 `table` stays the command's own human output.

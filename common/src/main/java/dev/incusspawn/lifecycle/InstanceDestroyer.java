@@ -68,6 +68,28 @@ public final class InstanceDestroyer {
         return wanted;
     }
 
+    /**
+     * Stop the instance under the {@link Metadata#OP_STOPPING} mark if {@code stillWanted} holds once
+     * it is marked ({@link #markIf}), clearing the mark after; the caller holds the instance's lock.
+     * {@code beforeStop} runs under the mark first, and {@code onFailure} after a stop that failed,
+     * before the mark is cleared and the failure rethrown. Returns whether it stopped: {@code isx
+     * stop} and {@code isx mcp}'s stop of a held instance share it.
+     */
+    public static boolean stopMarkedIf(IncusClient incus, String name, Predicate<JqValue> stillWanted,
+                                       Runnable beforeStop, Runnable onFailure) {
+        if (!markIf(incus, name, Metadata.OP_STOPPING, stillWanted)) return false;
+        try {
+            beforeStop.run();
+            incus.stop(name);
+        } catch (RuntimeException e) {
+            onFailure.run();
+            incus.clearPendingOperation(name);
+            throw e;
+        }
+        incus.configUnset(name, Metadata.PENDING_OP);
+        return true;
+    }
+
     private static void deleteMarked(IncusClient incus, String name) {
         try {
             incus.delete(name, true);

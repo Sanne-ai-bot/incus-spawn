@@ -405,6 +405,8 @@ Shell completions are available for bash, zsh and fish via `isx completion <shel
 | [`isx build`](docs/CLI.md#isx-build) | Build or rebuild template images |
 | [`isx branch`](docs/CLI.md#isx-branch) | Create a CoW clone from a template or instance |
 | [`isx shell`](docs/CLI.md#isx-shell) | Open a shell in an instance |
+| [`isx start`](docs/CLI.md#isx-start) | Start an instance without opening a shell |
+| [`isx stop`](docs/CLI.md#isx-stop) | Stop a running instance |
 | [`isx run`](docs/CLI.md#isx-run) | Run an action on an instance |
 | [`isx destroy`](docs/CLI.md#isx-destroy) | Destroy an instance |
 | [`isx list`](docs/CLI.md#isx-list) | List instances, for people or for scripts |

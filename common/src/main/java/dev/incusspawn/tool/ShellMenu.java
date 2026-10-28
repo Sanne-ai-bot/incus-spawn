@@ -17,7 +17,8 @@ public record ShellMenu(List<ToolAction> actions, ActionContext context) {
     public static final String FEATURE = "shell-status-bar";
     public static final ShellMenu NONE = new ShellMenu(List.of(), null);
 
-    private static final String DEFAULT_WORKDIR = "/home/agentuser";
+    /** Where a shell opens when the template names no {@code workdir}. */
+    public static final String DEFAULT_WORKDIR = "/home/agentuser";
 
     public static boolean enabled() {
         return SpawnConfig.load().isFeatureEnabled(FEATURE);

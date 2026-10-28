@@ -202,22 +202,12 @@ final class IncusInstanceBackend implements InstanceBackend {
         if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process.");
         try (var held = lock.get()) {
             // Under the mark, so an adoption stamping meanwhile is seen here or sees the mark.
-            if (!InstanceDestroyer.markIf(incus, name, Metadata.OP_STOPPING,
+            return InstanceDestroyer.stopMarkedIf(incus, name,
                     instance -> session.equals(instance.path("config").path(Metadata.MCP_SESSION).asText(null))
-                            && "Running".equals(instance.path("status").asText()))) {
-                return false;
-            }
-            try {
-                // Stamped first: stopped without it, the next sweep would destroy it as any stopped orphan.
-                incus.configUpdate(name, new java.util.HashMap<String, Object>(stamps));
-                incus.stop(name);
-            } catch (RuntimeException e) {
-                unstampIfRunning(name, stamps);
-                incus.clearPendingOperation(name);
-                throw e;
-            }
-            incus.configUnset(name, Metadata.PENDING_OP);
-            return true;
+                            && "Running".equals(instance.path("status").asText()),
+                    // Stamped first: stopped without it, the next sweep would destroy it as any stopped orphan.
+                    () -> incus.configUpdate(name, new java.util.HashMap<String, Object>(stamps)),
+                    () -> unstampIfRunning(name, stamps));
         } catch (IncusException e) {
             throw new ToolError(ToolError.Code.UNAVAILABLE, "could not stop '" + name + "': " + e.getMessage());
         }
@@ -264,7 +254,7 @@ final class IncusInstanceBackend implements InstanceBackend {
 
     @Override
     public void start(String name) {
-        var lock = locks.tryAcquire(name, "starting");
+        var lock = locks.tryAcquire(name, Metadata.OP_STARTING);
         if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process; try again.");
         try (var held = lock.get()) {
             InstancePrep.prepare(incus, name, dev.incusspawn.util.BuildOutput.bound());

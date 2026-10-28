@@ -525,6 +525,71 @@ class QueryCommandFormatTest {
                 """, json(BranchCommand.record("dev-2")));
     }
 
+    /** {@code --format=json} says who controls the instance and how a program reaches it (#1720). */
+    @Test
+    void branchJsonSaysHowToReachTheInstance() {
+        var reach = new BranchCommand.Reach(new BranchCommand.Ssh("/home/u/.config/incus-spawn/ssh/id_ed25519",
+                "\"/usr/bin/isx\" ssh-proxy --start dev-2"), "/home/agentuser/app");
+        assertEquals("""
+                {
+                  "name" : "dev-2",
+                  "owner" : "orca",
+                  "owner_id" : "rt-1",
+                  "ssh_host" : "dev-2",
+                  "ssh_user" : "agentuser",
+                  "ssh_port" : 22,
+                  "ssh_identity_file" : "/home/u/.config/incus-spawn/ssh/id_ed25519",
+                  "ssh_proxy_command" : "\\"/usr/bin/isx\\" ssh-proxy --start dev-2",
+                  "project_root" : "/home/agentuser/app"
+                }
+                """, json(BranchCommand.record("dev-2", "orca", "rt-1", reach)));
+        var noSsh = new BranchCommand.Reach(null, "/home/agentuser");
+        assertEquals("""
+                {
+                  "name" : "dev-2",
+                  "owner" : null,
+                  "owner_id" : null,
+                  "ssh_host" : null,
+                  "ssh_user" : null,
+                  "ssh_port" : null,
+                  "ssh_identity_file" : null,
+                  "ssh_proxy_command" : null,
+                  "project_root" : "/home/agentuser"
+                }
+                """, json(BranchCommand.record("dev-2", null, null, noSsh)));
+    }
+
+    /**
+     * The key {@code ssh_identity_file} names exists by the time it is printed, a --no-start branch's
+     * included (review of #1815); without it, there are no SSH fields rather than a path to nothing.
+     */
+    @Test
+    void theSshFieldsNameOnlyAKeyThatExists() {
+        var sshd = io.hyperfoil.tools.jjq.value.JqValues.parse(
+                "{\"config\":{\"user.incus-spawn.ssh-setup\":\"done\"}}");
+        var made = new int[1];
+        var reach = BranchCommand.reach("dev-2", sshd, () -> { made[0]++; return true; });
+        assertNotNull(reach.ssh());
+        assertEquals(1, made[0], "the key is made before it is named");
+        assertNull(BranchCommand.reach("dev-2", sshd, () -> false).ssh());
+        var none = io.hyperfoil.tools.jjq.value.JqValues.parse("{\"config\":{}}");
+        assertNull(BranchCommand.reach("dev-2", none, () -> fail("no key for a template without sshd")).ssh());
+    }
+
+    @Test
+    void anOwnerIsANameAndAnIdNeedsOne() {
+        assertNull(BranchCommand.ownerProblem(null, null));
+        assertNull(BranchCommand.ownerProblem("orca", "rt-1:a.b_c"));
+        assertEquals("--owner-id needs --owner.", BranchCommand.ownerProblem(null, "rt-1"));
+        assertEquals("--owner mcp is reserved for instances isx mcp makes.", BranchCommand.ownerProblem("mcp", null));
+        for (var bad : List.of("Orca", "-x", "a b", "x".repeat(33), "\u001b[31m")) {
+            assertNotNull(BranchCommand.ownerProblem(bad, null), bad);
+        }
+        for (var bad : List.of("", "a b", "$(id)", "x".repeat(129))) {
+            assertNotNull(BranchCommand.ownerProblem("orca", bad), bad);
+        }
+    }
+
     private static dev.incusspawn.proxy.ProxyActivity activity() {
         var at = java.time.Instant.parse("2026-10-11T10:00:00Z");
         var traffic = new dev.incusspawn.proxy.ProxyActivity.Traffic(
