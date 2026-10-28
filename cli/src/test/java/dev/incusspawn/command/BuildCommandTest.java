@@ -362,6 +362,38 @@ class BuildCommandTest {
     }
 
     @Test
+    void theFailureReportKeepsNoProofTheFailedCommandPrinted(@TempDir Path tmp) {
+        // A prime's login shell sources the build's proofs; the report is scrubbed like the build log
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.instanceMetadataOrThrow("tpl-dev-rebuilding")).thenReturn(instance("container", Map.of()));
+            var written = new java.util.ArrayList<String>();
+            when(incus.shellExec(eq("tpl-dev-rebuilding"), any(String[].class))).thenAnswer(inv -> {
+                written.add(String.join(" ", java.util.Arrays.copyOfRange(inv.getArguments(), 1, inv.getArguments().length, String[].class)));
+                return new IncusClient.ExecResult(0, "", "");
+            });
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            var proof = "gho_isx_" + "0123456789abcdef".repeat(2);
+            // The diagnostics quote the guest too (the LXC log, dmesg)
+            var lxcProof = "ya29.isx_" + "fedcba9876543210".repeat(2);
+            doReturn("  LXC log: CLOUDSDK_AUTH_ACCESS_TOKEN=" + lxcProof + "\n").when(cmd).printBuildDiagnostics(anyString(), anyBoolean());
+            var cause = new IncusException("prime failed")
+                    .withStepOutput("─── prime output: app ───\n$ env\nGH_TOKEN=" + proof + "\n─── end prime output: app ───\n\n");
+
+            cmd.reportBuildFailure("tpl-dev-rebuilding", "tpl-dev", "Build failed for tpl-dev: prime failed", cause);
+
+            var report = assertDoesNotThrow(() -> Files.readString(Environment.buildFailureLogFile("tpl-dev")));
+            assertFalse(report.contains(proof) || report.contains(lxcProof), report);
+            assertTrue(report.contains("GH_TOKEN=gho_<isx:redacted:isx-proof>"), report);
+            assertTrue(written.stream().noneMatch(w -> w.contains(proof) || w.contains(lxcProof)), "the inbox copy too: " + written);
+            // Only its owner reads it, as the build log: it holds what the failed command printed
+            assertEquals("rw-------", java.nio.file.attribute.PosixFilePermissions.toString(assertDoesNotThrow(
+                    () -> Files.getPosixFilePermissions(Environment.buildFailureLogFile("tpl-dev")))));
+        });
+    }
+
+    @Test
     void stepOutputIncludedInEarlyHostReport(@TempDir Path tmp) {
         InitCommandTest.withHome(tmp, () -> {
             var incus = mock(IncusClient.class);

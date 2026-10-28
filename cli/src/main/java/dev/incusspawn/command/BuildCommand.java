@@ -10,6 +10,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.CredentialCheck;
+import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.CommandLog;
 import dev.incusspawn.incus.Container;
@@ -1268,6 +1269,10 @@ public class BuildCommand extends BaseCommand {
         return OutputFormat.oneLine(String.valueOf(value));
     }
 
+    private static String scrubbed(String text) {
+        return SecretRedactor.scrubText(text, Map.of()).text();
+    }
+
     /** Whether the build's container exists: only then is there one to report on and to promote. */
     boolean reportBuildFailure(String buildName, String canonicalName, String errorLine) {
         return reportBuildFailure(buildName, canonicalName, errorLine, null);
@@ -1278,8 +1283,11 @@ public class BuildCommand extends BaseCommand {
         // each line is made safe as it is reported (#1228). Why the build failed is an error.
         errorOfLines(errorLine);
 
+        // The saved copies are scrubbed as the build log is: a failed command's output can hold the
+        // build's own proofs, which a login shell exports
         var stepOutput = cause instanceof IncusException ie && ie.stepOutput() != null
-                ? ie.stepOutput() : "";
+                ? scrubbed(ie.stepOutput()) : "";
+        errorLine = scrubbed(errorLine);
 
         // Resolve the host log path first; the path-traversal guard in buildFailureLogFile can
         // throw for a malformed template name, and that must not abort failure handling.
@@ -1299,6 +1307,7 @@ public class BuildCommand extends BaseCommand {
                 Files.createDirectories(hostLog.getParent());
                 var earlyReport = stepOutput.isEmpty() ? errorLine + "\n"
                         : errorLine + "\n\n" + stepOutput;
+                BuildLog.ownerOnly(hostLog);
                 Files.writeString(hostLog, earlyReport);
             } catch (Exception e) {
                 BuildOutput.warn("Could not save the failure report to " + shown(hostLog) + ": " + shown(BaseCommand.failure(e)));
@@ -1307,7 +1316,8 @@ public class BuildCommand extends BaseCommand {
 
         // Asked only now: Incus may be what failed, and the host report must exist before it is asked
         boolean created = buildContainerExists(buildName);
-        var diagnostics = printBuildDiagnostics(buildName, created);
+        // Scrubbed as the step output is: the LXC log and dmesg tails quote the guest
+        var diagnostics = scrubbed(printBuildDiagnostics(buildName, created));
         var report = stepOutput.isEmpty()
                 ? errorLine + "\n\n" + diagnostics
                 : errorLine + "\n\n" + stepOutput + diagnostics;
@@ -1323,6 +1333,7 @@ public class BuildCommand extends BaseCommand {
         if (hostLog != null) {
             var tmp = hostLog.resolveSibling(hostLog.getFileName() + ".tmp");
             try {
+                BuildLog.ownerOnly(tmp);
                 Files.writeString(tmp, hostReport);
                 Files.move(tmp, hostLog, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 savedHostReport = true;
