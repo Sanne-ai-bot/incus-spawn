@@ -75,12 +75,8 @@ final class BuildProgress {
                 (idx, frame) -> formatLiveStepLine(label, state.get(0), detail, frame),
                 PLAIN_BY_KIND, line -> {});
         // A DONE note is the whole completion line, the label having been said up front
-        var ended = state.get(0);
-        if (!TerminalProgress.isAnsiTerminal()) {
-            if (ended.state() != StepState.DONE) BuildOutput.stepFail(label + " failed");
-            else if (ended.note() != null && !ended.note().isEmpty()) BuildOutput.step(ended.note());
-        }
-        finishSpinner(label, failureMessage, state);
+        reportPlain(state.get(0), null);
+        finishSpinner(label, label + " failed", failureMessage, state);
     }
 
     static String formatLiveStepLine(String label, StepProgress p, java.util.function.Supplier<String> detail,
@@ -252,10 +248,8 @@ final class BuildProgress {
                 (idx, frame) -> formatDnfLine(label, state.get(0), frame,
                         (System.nanoTime() - started) / 1_000_000),
                 PLAIN_BY_KIND, line -> {});
-        if (!TerminalProgress.isAnsiTerminal()) {
-            reportPlain(state.get(0), label + "... done.", label + " failed");
-        }
-        finishSpinner(label, failureMessage, state);
+        reportPlain(state.get(0), label + "... done.");
+        finishSpinner(label, label + " failed", failureMessage, state);
     }
 
     /** The install/retry work for {@link #runDnf}, recording progress in {@code state[0]}.
@@ -341,20 +335,22 @@ final class BuildProgress {
 
     /**
      * A one-task step's plain renderer: none, since off an ANSI terminal its outcome is reported
-     * once the task ends, by kind ({@link #reportPlain}), not as a pre-rendered line.
+     * once the task ends, by kind ({@link #reportPlain}, {@link #finishSpinner}), not as a
+     * pre-rendered line.
      */
     private static final java.util.function.IntFunction<String> PLAIN_BY_KIND = idx -> null;
 
     /**
-     * Off an ANSI terminal, a finished one-task step: {@code done} as a step, with its note, or
-     * {@code failed} as a failed step, which the TUI does not copy into its log, since its status
-     * line reports the failure; the detail is the exception's, which finishSpinner throws.
+     * Off an ANSI terminal, a one-task step that is done: {@code done} as a step, with its note, or
+     * the note alone when {@code done} is null. A failed one is {@link #finishSpinner}'s to report.
      */
-    private static void reportPlain(StepProgress p, String done, String failed) {
-        if (p.state() == StepState.DONE) {
-            BuildOutput.step(p.note() != null && !p.note().isEmpty() ? done + " (" + p.note() + ")" : done);
+    private static void reportPlain(StepProgress p, String done) {
+        if (TerminalProgress.isAnsiTerminal() || p == null || p.state() != StepState.DONE) return;
+        var note = p.note() == null || p.note().isEmpty() ? null : p.note();
+        if (done == null) {
+            if (note != null) BuildOutput.step(note);
         } else {
-            BuildOutput.stepFail(failed);
+            BuildOutput.step(note != null ? done + " (" + note + ")" : done);
         }
     }
 
@@ -375,10 +371,8 @@ final class BuildProgress {
                 idx -> runSpinnerWork(work, state),
                 (idx, frame) -> formatStepLine(label, null, state.get(0), frame, "Done"),
                 PLAIN_BY_KIND, line -> {});
-        if (!TerminalProgress.isAnsiTerminal()) {
-            reportPlain(state.get(0), "Done " + label, activity + " failed for " + label);
-        }
-        finishSpinner(label, failureMessage, state);
+        reportPlain(state.get(0), "Done " + label);
+        finishSpinner(label, activity + " failed for " + label, failureMessage, state);
     }
 
     /** Run a {@link #runWithSpinner} task, converting a thrown exception into a recorded
@@ -401,10 +395,14 @@ final class BuildProgress {
         return sw.toString();
     }
 
-    /** After a one-task spinner completes, surface a non-DONE result: the end of the
-     *  captured log (if any) as a warning, after the step's line, and {@code failureMessage}
-     *  thrown with all of the log for the failure report. */
-    private static void finishSpinner(String label, String failureMessage,
+    /**
+     * After a one-task spinner completes, surface a non-DONE result and throw
+     * {@code failureMessage} with all of the captured log for the failure report. On an ANSI
+     * terminal the step's line already shows it failed, so the end of the log (if any) is a
+     * warning under it. Off one nothing showed the step, so {@code failed} and the detail are the
+     * one warning, a single indented line, with the end of the log under it when there is one.
+     */
+    private static void finishSpinner(String label, String failed, String failureMessage,
                                       AtomicReferenceArray<StepProgress> state) {
         var progress = state.get(0);
         if (progress != null && progress.state() == StepState.DONE) return;
@@ -412,11 +410,21 @@ final class BuildProgress {
         var detail = progress != null && progress.detail() != null && !progress.detail().isEmpty()
                 ? ": " + progress.detail() : "";
         var failure = new IncusException(failureMessage + detail);
-        if (progress == null || progress.log() == null || progress.log().isBlank()) throw failure;
-        // The end of the captured log under a warning, after the step's line; all of it for the
-        // failure report, which keeps what the warning leaves out. It is guest text, made safe already.
+        var hasLog = progress != null && progress.log() != null && !progress.log().isBlank();
+        // The log is guest text, made safe already; the report keeps what the warning leaves out.
         // The kind #1791's design gives it: the step's failure, the end of its log under it
-        BuildOutput.warn(label + " failed", BuildOutput.lastOf(BuildOutput.guestLines(progress.log())));
+        var tail = hasLog ? BuildOutput.lastOf(BuildOutput.guestLines(progress.log())) : new String[0];
+        if (TerminalProgress.isAnsiTerminal()) {
+            if (hasLog) BuildOutput.warn(label + " failed", tail);
+        } else if (hasLog) {
+            // A detail that is the log's last line is said once, under the header
+            var last = tail.length == 0 ? "" : tail[tail.length - 1].strip();
+            BuildOutput.warn(last.equals(progress.detail()) ? failed : failed + detail, tail);
+        } else {
+            // One line on stderr, with no closing blank line on stdout, as the old plain line had none
+            BuildOutput.warnAside(failed + detail);
+        }
+        if (!hasLog) throw failure;
         throw failure.withStepOutput(label + " failed:\n" + progress.log().strip() + "\n\n");
     }
 

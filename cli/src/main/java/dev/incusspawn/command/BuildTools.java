@@ -6,6 +6,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -59,7 +60,7 @@ public final class BuildTools {
         for (var toolRef : imageDef.getTools()) {
             resolveWithDeps(toolRef.getName(), toolRef.getParams(), resolved,
                 new LinkedHashSet<>(), explicit, explicitlyResolved, true,
-                toolDefLoader, cdiTools, quiet);
+                toolDefLoader, cdiTools, quiet ? null : java.util.Objects.toString(imageDef.getName(), ""));
         }
         return new ArrayList<>(resolved.values());
     }
@@ -69,10 +70,26 @@ public final class BuildTools {
                                   LinkedHashSet<String> visiting, Set<String> explicit,
                                   Set<String> explicitlyResolved, boolean isExplicit,
                                   ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, boolean quiet) {
+        resolveWithDeps(name, params, resolved, visiting, explicit, explicitlyResolved, isExplicit,
+                toolDefLoader, cdiTools, quiet ? null : "");
+    }
+
+    /**
+     * {@code template} names the template being resolved in each warning (empty: unnamed), or is
+     * null for a quiet resolution: {@link Warnings#warn} says a message once, so without the name a second
+     * template's unknown tool would go unreported in a build of several.
+     */
+    private static void resolveWithDeps(String name, Map<String, String> params,
+                                  LinkedHashMap<String, ResolvedTool> resolved,
+                                  LinkedHashSet<String> visiting, Set<String> explicit,
+                                  Set<String> explicitlyResolved, boolean isExplicit,
+                                  ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, String template) {
+        var quiet = template == null;
+        var in = quiet || template.isEmpty() ? "" : " in template '" + OutputFormat.oneLine(template) + "'";
         if (!visiting.add(name)) {
             if (!quiet) {
                 Warnings.warn("Dependency cycle detected: " +
-                        String.join(" -> ", visiting) + " -> " + name + ", skipping.");
+                        String.join(" -> ", visiting) + " -> " + name + in + ", skipping.");
             }
             return;
         }
@@ -81,10 +98,10 @@ public final class BuildTools {
             if (!quiet) {
                 var ungated = findToolUngated(name, toolDefLoader, cdiTools);
                 if (ungated != null) {
-                    Warnings.warn("Tool '" + name + "' requires feature '"
+                    Warnings.warn("Tool '" + name + "'" + in + " requires feature '"
                             + ungated.feature() + "' — add it to the features list in config.yaml to enable.");
                 } else {
-                    Warnings.warn("Unknown tool '" + name + "', skipping.");
+                    Warnings.warn("Unknown tool '" + name + "'" + in + ", skipping.");
                 }
             }
             visiting.remove(name);
@@ -117,8 +134,8 @@ public final class BuildTools {
                 if (!isExplicit && explicit.contains(name)) {
                     // Transitive dep for a tool the user explicitly configured — skip
                     if (!quiet && params != null && !params.isEmpty()) {
-                        Warnings.warn("Tool '" + name +
-                            "' is explicitly configured, overriding parameters from a transitive dependency.");
+                        Warnings.warn("Tool '" + name + "'" + in +
+                            " is explicitly configured, overriding parameters from a transitive dependency.");
                     }
                 } else if (isExplicit && !explicitlyResolved.contains(name)) {
                     // Explicit config replaces a prior transitive-dep resolution
@@ -127,8 +144,8 @@ public final class BuildTools {
                             tool.parameters(), Map.of());
                         if (defaultOnly.hasErrors() ||
                                 !defaultOnly.resolvedValues().equals(existing.parameters())) {
-                            Warnings.warn("Tool '" + name +
-                                "' is explicitly configured, overriding parameters from a transitive dependency.");
+                            Warnings.warn("Tool '" + name + "'" + in +
+                                " is explicitly configured, overriding parameters from a transitive dependency.");
                         }
                     }
                     resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
@@ -151,14 +168,14 @@ public final class BuildTools {
                 if (!quiet && !explicit.contains(depRef.getName())) {
                     BuildOutput.note("Auto-adding dependency: " + depRef.getName() + " (required by " + name + ")");
                 }
-                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, quiet);
+                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, template);
             }
         } else {
             for (var dep : tool.requires()) {
                 if (!quiet && !explicit.contains(dep)) {
                     BuildOutput.note("Auto-adding dependency: " + dep + " (required by " + name + ")");
                 }
-                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, quiet);
+                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, template);
             }
         }
 

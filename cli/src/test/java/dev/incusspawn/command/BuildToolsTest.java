@@ -411,6 +411,28 @@ class BuildToolsTest {
             "Explicit params should win over YAML transitive dep params");
     }
 
+    /**
+     * A warning is said once per destination, so it names its template: otherwise a build of
+     * several templates warns of the first one's unknown tool and skips the second's silently.
+     */
+    @Test
+    void anUnknownToolIsReportedForEachTemplateThatNamesIt() {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        var first = new ImageDef();
+        first.setName("tpl-one");
+        first.setTools(List.of(new ToolDef.ToolRef("nonesuch")));
+        var second = new ImageDef();
+        second.setName("tpl-two");
+        second.setTools(List.of(new ToolDef.ToolRef("nonesuch")));
+
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> {
+            assertTrue(BuildTools.resolveTools(first, toolDefLoader, false).isEmpty());
+            assertTrue(BuildTools.resolveTools(second, toolDefLoader, false).isEmpty());
+        });
+        assertEquals(List.of("Unknown tool 'nonesuch' in template 'tpl-one', skipping.",
+                "Unknown tool 'nonesuch' in template 'tpl-two', skipping."), recorded.warnings());
+    }
+
     @Test
     void resolveToolsWarnsWhenExplicitOverridesTransitiveDepWithParams() {
         var modelParam = new ToolDef.ParameterDef();
