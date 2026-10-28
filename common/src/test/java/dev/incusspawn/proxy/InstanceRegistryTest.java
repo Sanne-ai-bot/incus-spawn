@@ -165,6 +165,26 @@ class InstanceRegistryTest {
                 "owners of an address only, an empty value where the listing has none");
     }
 
+    /**
+     * A refused caller takes the next listing's number and is answered by a listing that started
+     * after it, never by one under way when it was refused, which may predate its secret (#1800).
+     */
+    @Test
+    void aListingTakenBeforeTheMarkDoesNotAnswerIt() {
+        var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
+            @Override
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                return io.hyperfoil.tools.jjq.value.JqValues.parse("[]");
+            }
+        });
+        registry.refresh();
+        var wanted = registry.nextListing();
+        assertFalse(registry.listedFrom(wanted), "the listing before the mark is not the answer");
+        registry.refreshFrom(wanted, 5_000);
+        assertTrue(registry.listedFrom(wanted));
+        assertEquals(wanted + 1, registry.nextListing());
+    }
+
     @Test
     void resolvesACallerToItsInstanceAndIncarnationTogether() {
         var fail = new java.util.concurrent.atomic.AtomicBoolean();

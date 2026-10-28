@@ -2210,6 +2210,8 @@ A stopped start goes through `InstanceLifecycle.startForUse` -- `isx shell`/`isx
 The proxy is not signalled: on Linux that costs every start a bridge read, a `/health` call and a fork, and has the proxy list every instance while this one boots.
 Nothing needs it sooner -- the previous secret went with the guest's `/run` -- and `identify()` documents that a refusal right after a start is worth one refresh and a retry, throttled by `wantsMissRefresh()` as a lookup miss is.
 A guest can present wrong secrets at will, and each refresh lists every instance.
+A refusal inside the throttle's interval waits for it to pass and is asked again, not refused from that snapshot (`CallerCheck.identify`, #1800).
+A branch signals the proxy just before it starts the instance, so the instance's first call meets a snapshot that young, from before its secret: every `--mcp-client` branch on a fast host warned it could not reach `isx mcp`.
 Template builds get none, so no image carries one.
 The write is best-effort: a box left without its secret is refused by whatever checks it, which is the safe way for this to fail, and must not fail the start it rides on.
 It waits (up to 3 s) for the tmpfs on `/run`, and skips the write without one.

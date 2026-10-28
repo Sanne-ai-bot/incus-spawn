@@ -480,9 +480,31 @@ public final class InstanceRegistry {
      * the answer: that is what {@link #refresh}'s single flight would otherwise return.
      */
     public void refreshAfterNow(long timeoutMillis) {
-        // Any listing numbered this or later started after this call: whoever runs it, it answers
-        // every caller waiting for it, so a burst of refused callers costs one listing, not one each
-        var wanted = listingsStarted.get() + 1;
+        refreshFrom(nextListing(), timeoutMillis);
+    }
+
+    /**
+     * The number of the next listing to start: any listing numbered this or later started after
+     * this call. Non-blocking.
+     */
+    public long nextListing() {
+        return listingsStarted.get() + 1;
+    }
+
+    /** Whether a listing numbered {@code wanted} or later has ended, listed or failed. Non-blocking. */
+    public boolean listedFrom(long wanted) {
+        synchronized (listed) {
+            return listedThrough >= wanted;
+        }
+    }
+
+    /**
+     * {@link #refreshAfterNow} for a caller that took {@link #nextListing} earlier: a listing
+     * numbered {@code wanted} or later answers it. <strong>Blocks</strong>, up to {@code timeoutMillis}.
+     */
+    public void refreshFrom(long wanted, long timeoutMillis) {
+        // Whoever runs the listing, it answers every caller waiting for it, so a burst of refused
+        // callers costs one listing, not one each
         var deadline = System.nanoTime() + timeoutMillis * 1_000_000;
         long number;
         synchronized (listed) {
