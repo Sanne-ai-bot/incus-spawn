@@ -304,11 +304,13 @@ final class MainScreen {
     }
 
     /**
-     * The narrowest table that shows OWNER (#1720): the other columns' minimums, their spacing and
-     * the selection marker, plus OWNER's own. Narrower, the column is left out; the instance details
-     * show the owner either way.
+     * The narrowest table that shows OWNER (#1720), the inner width of a 100-column terminal. The
+     * bare fit of every column's minimum is 80, but there OWNER takes the other columns' slack and
+     * clips them (PARENT showed {@code tpl-minima} at 84 to 90); from 100 nothing a default
+     * listing holds is clipped (Sanne, review of #1820). Narrower, the column is left out; the
+     * instance details show the owner either way.
      */
-    static final int OWNER_COLUMN_MIN_WIDTH = 82;
+    static final int OWNER_COLUMN_MIN_WIDTH = 98;
 
     void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                       TableState tableState) {
