@@ -58,7 +58,13 @@ public interface HostCommands {
                     process.descendants().forEach(ProcessHandle::destroyForcibly);
                     process.destroyForcibly();
                     reader.join(1000);
-                    return new Result(-1, "timed out after " + timeout.toSeconds() + " seconds");
+                    // What it said before it hung says why, often
+                    String said;
+                    synchronized (output) {
+                        var lines = output.toString().strip().lines().toList();
+                        said = lines.isEmpty() ? "" : lines.getLast();
+                    }
+                    return new Result(-1, said + (said.isEmpty() ? "" : "\n") + "timed out after " + timeout.toSeconds() + " seconds");
                 }
                 // A daemon it left behind may hold the pipe open: the output is read within the same time
                 if (!reader.join(Duration.ofNanos(Math.max(deadline - System.nanoTime(), 0)).plusSeconds(1))) {

@@ -23,8 +23,9 @@ class HostCommandsTest {
     @Test
     void aCommandPastItsTimeIsKilled() {
         var start = System.nanoTime();
-        var result = HostCommands.SYSTEM.run(Duration.ofSeconds(1), List.of("sleep", "30"));
+        var result = HostCommands.SYSTEM.run(Duration.ofSeconds(1), List.of("sh", "-c", "echo connecting to ws; sleep 30"));
         assertEquals(-1, result.exit());
+        assertTrue(result.output().startsWith("connecting to ws\ntimed out after 1 seconds"), "says what it said: " + result.output());
         assertTrue(Duration.ofNanos(System.nanoTime() - start).toSeconds() < 10);
     }
 
