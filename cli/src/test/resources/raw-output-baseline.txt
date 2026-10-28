@@ -4,4 +4,3 @@
 # A file that is moved or renamed takes its line along, with the same counts or lower.
 2 0 cli/src/main/java/dev/incusspawn/command/SshProxyCommand.java
 2 0 cli/src/main/java/dev/incusspawn/command/UpdateAllCommand.java
-6 0 common/src/main/java/dev/incusspawn/incus/InteractiveShell.java

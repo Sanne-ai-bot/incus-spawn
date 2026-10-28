@@ -1051,8 +1051,8 @@ A following header then neither repeats it on a terminal nor loses it in `>out.l
 So a line that is the command's result, such as `clean --dry-run`'s "Would delete ...", is a step, not a note.
 A status command's report is its result whatever it says.
 `isx proxy status` prints it on stdout in every state and tells them apart by exit code (1 not running, 2 stale DNS overrides, 3 stale bridge address), and `isx vm status` exits 1, the reason on stderr, when Incus is unreachable.
-Every other styled line (`isx init`, the proxy banners, build failure reports) goes through the same `BuildOutput.styled()` (#1082); only what is drawn on a terminal alone (live steps, `TerminalProgress` formatters, window titles behind `hasTerminal()`) writes escapes directly.
-A title set from the TUI's shell goes through `Output.windowTitle`, which `TerminalOutput` writes only on a terminal (not a colour, so `NO_COLOR` keeps it), as one line.
+Every other styled line (`isx init`, the proxy banners, build failure reports) goes through the same `BuildOutput.styled()` (#1082); only what is drawn on a terminal alone (live steps, `TerminalProgress` formatters) writes escapes directly.
+Every window title, the shell's `isx:<name>` and its reset as well as the TUI shell's auth-error one, goes through `Output.windowTitle`, which `TerminalOutput` writes only on a terminal (not a colour, so `NO_COLOR` keeps it), as one line.
 `AnsiEscapeGateTest` fails on any raw CSI or OSC literal unless its line carries a `// raw ANSI: <why>` comment (on that line, so a marker never covers another).
 Only the two gates, `TerminalProgress` and the shell status bar are exempt as whole files, so a new escape on an ordinary path in `BuildCommand` still fails.
 `RawOutputGateTest` does the same for the raw streams (#1703): `System.out`, `System.err`, `System.setOut`/`setErr`, `System.console()`, `FileDescriptor.out`/`err` and `printStackTrace()`, and a print literal indented by hand.

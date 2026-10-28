@@ -2,6 +2,8 @@ package dev.incusspawn.incus;
 
 import dev.incusspawn.incus.IncusClient.ShellPrep;
 import dev.incusspawn.tool.ShellMenu;
+import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.TerminalStreams;
 
 import java.io.IOException;
 import java.util.List;
@@ -35,15 +37,24 @@ final class InteractiveShell {
 
     public void interactiveShell(String container, String user, ShellPrep prep, ShellMenu menu) {
         if (!IncusClient.hasTerminal()) throw new NoTerminalForShellException(container);
-        System.out.print("\033]0;isx:" + container + "\007"); // raw ANSI: window title, behind hasTerminal()
-        System.out.flush();
+        session(container, user, prep, menu, System.getenv("TMUX") != null);
+    }
+
+    /**
+     * The session on the terminal {@link #interactiveShell} checked is there; a seam for tests,
+     * which pass {@code inTmux} so a test run in tmux does not rename its window. The title and the
+     * reconnect notice go through the bound output, whose terminal writes the title only on a
+     * terminal; the status bar draws on the terminal's own stdout, which the guest is handed.
+     */
+    void session(String container, String user, ShellPrep prep, ShellMenu menu, boolean inTmux) {
+        var title = "isx:" + container;
+        BuildOutput.windowTitle(title);
 
         String savedWindowName = null;
         String savedStatusRight = null;
-        boolean inTmux = System.getenv("TMUX") != null;
         if (inTmux) {
             savedWindowName = hostExecCapture("tmux", "display-message", "-p", "#W");
-            hostExecQuiet("tmux", "rename-window", "isx:" + container);
+            hostExecQuiet("tmux", "rename-window", title);
             if (prep.subnetDiagnostic() != null) {
                 savedStatusRight = hostExecCapture("tmux", "show-option", "-v", "status-right");
                 if (savedStatusRight == null) savedStatusRight = "";
@@ -98,7 +109,7 @@ final class InteractiveShell {
 
             ShellStatusBar statusBar = null;
             if (ShellMenu.enabled()) {
-                statusBar = new ShellStatusBar(container, System.out);
+                statusBar = new ShellStatusBar(container, TerminalStreams.out());
                 statusBar.setMenuActions(menu.actions(), menu.context());
             }
 
@@ -112,9 +123,12 @@ final class InteractiveShell {
                     if (!hasIOExceptionCause(e) || reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) throw e;
                 }
                 long delay = Math.min(1000L * (1 << reconnectAttempt), 10_000L);
-                System.err.println("\n" + dev.incusspawn.util.BuildOutput.styled(
-                        dev.incusspawn.util.BuildOutput.BOLD + dev.incusspawn.util.BuildOutput.YELLOW,
-                        "Connection lost — reconnecting..."));
+                // The guest's last line may be unfinished: start the notice on a line of its own
+                TerminalStreams.out().println();
+                // A warning once, which a TUI shell's log keeps; a retry is a note, so a flaky
+                // link does not fill the log with ten copies of one event
+                if (reconnectAttempt == 0) BuildOutput.warn("Connection lost — reconnecting...");
+                else BuildOutput.note("Still reconnecting (attempt " + (reconnectAttempt + 1) + " of " + MAX_RECONNECT_ATTEMPTS + ")...");
                 try { Thread.sleep(delay); } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;
@@ -131,8 +145,7 @@ final class InteractiveShell {
                     hostExecQuiet("tmux", "set-option", "status-right", savedStatusRight);
                 }
             }
-            System.out.print("\033]0;\007"); // raw ANSI: window title, behind hasTerminal()
-            System.out.flush();
+            BuildOutput.windowTitle("");
         }
     }
 

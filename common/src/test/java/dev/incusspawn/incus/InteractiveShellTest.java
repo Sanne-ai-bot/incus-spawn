@@ -1,12 +1,20 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.lifecycle.TempHome;
 import dev.incusspawn.tool.GeminiSetup;
+import dev.incusspawn.tool.ShellMenu;
+import dev.incusspawn.util.RecordingOutput;
+import dev.incusspawn.util.RecordingOutput.Event;
+import dev.incusspawn.util.RecordingOutput.Kind;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -49,5 +57,21 @@ class InteractiveShellTest {
         } finally {
             process.destroyForcibly();
         }
+    }
+
+    /**
+     * The session sets the terminal's title through the bound output, and resets it however the
+     * session ends (#1703): here a daemon that serves no exec, so the session fails at once.
+     */
+    @Test
+    // An empty home: the status bar's feature is off, as on a fresh host
+    @ExtendWith(TempHome.class)
+    void theTitleIsSetAndResetThroughTheBoundOutput() {
+        var daemon = new FakeIncusDaemon().container("dev", Map.of());
+        var prep = IncusClient.ShellPrep.fromPrefetched(null, null, null, null, true, null);
+        var said = RecordingOutput.during(() -> assertThrows(RuntimeException.class,
+                () -> new InteractiveShell(daemon.client()).session("dev", "agentuser", prep, ShellMenu.NONE, false)));
+        assertEquals(List.of(new Event(Kind.WINDOW_TITLE, "isx:dev"), new Event(Kind.WINDOW_TITLE, "")),
+                said.events());
     }
 }
