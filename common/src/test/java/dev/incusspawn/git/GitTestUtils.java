@@ -1,5 +1,7 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.FileTrees;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -55,11 +57,27 @@ public final class GitTestUtils {
      */
     public static Path releasesFixture(Path parent) throws IOException, InterruptedException {
         var repo = parent.resolve("releases");
+        PreparationCache.copyTree(releasesTemplate(), repo, false);
+        return repo;
+    }
+
+    private static Path releasesTemplateRepo;
+
+    /**
+     * The releases repository, built once per JVM and copied for each test: building it takes
+     * fifteen Git processes, and a slow macOS runner spends most of a test class on spawning them (#1839).
+     */
+    private static synchronized Path releasesTemplate() throws IOException, InterruptedException {
+        if (releasesTemplateRepo != null) return releasesTemplateRepo;
+        var parent = Files.createTempDirectory("isx-releases-fixture");
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> FileTrees.deleteQuietly(parent)));
+        var repo = parent.resolve("releases");
         runGit(parent, "init", "-q", "-b", "main", repo.toString());
         for (int i = 1; i <= 5; i++) commitBinary(repo, "release " + i);
         runGit(repo, "checkout", "-q", "-b", "stable");
         commitBinary(repo, "stable release");
         runGit(repo, "checkout", "-q", "main");
+        releasesTemplateRepo = repo;
         return repo;
     }
 
