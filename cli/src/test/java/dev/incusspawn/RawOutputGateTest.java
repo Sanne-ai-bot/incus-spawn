@@ -55,7 +55,8 @@ class RawOutputGateTest {
             "cli/src/main/java/dev/incusspawn/mcp/StdioGuard.java", "moves stdout off the MCP protocol stream",
             "cli/src/main/java/dev/incusspawn/command/Prompts.java", "owns the console",
             "common/src/main/java/dev/incusspawn/proxy/ProxyLog.java", "the proxy's log, silent while the TUI draws",
-            "cli/src/main/java/dev/incusspawn/mcp/McpLog.java", "isx mcp's log on stderr, its client's log, beside the protocol on stdout");
+            "cli/src/main/java/dev/incusspawn/mcp/McpLog.java", "isx mcp's log on stderr, its client's log, beside the protocol on stdout",
+            "cli/src/main/java/dev/incusspawn/tui/StreamWatch.java", "notes what anything prints before the TUI opens, so the hand-over waits for it to be read");
 
     /** {@code graal/*Feature} classes run inside native-image at build time, so they print to its log. */
     private static final Pattern BUILD_TIME_FEATURE =

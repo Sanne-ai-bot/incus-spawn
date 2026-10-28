@@ -246,6 +246,11 @@ public final class BuildOutput {
         bound.prompt(question);
     }
 
+    /** Set the terminal window's title ({@link Output#windowTitle}): only on a terminal. */
+    public static void windowTitle(String title) {
+        bound.windowTitle(title);
+    }
+
     /** Tests set this to exercise the animated rendering without a console; null means detect. */
     static volatile Boolean forceAnsi;
 

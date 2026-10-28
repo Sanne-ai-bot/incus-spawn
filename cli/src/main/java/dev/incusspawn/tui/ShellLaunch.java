@@ -45,9 +45,9 @@ final class ShellLaunch {
                     var info = ProxyHealthCheck.fetchProxyInfo(healthAddr, 500);
                     boolean isError = info != null && info.hasAuthError();
                     if (isError && !wasError) {
-                        setTerminalTitle("⚠ " + info.authRemediationHint() + " — " + baseTitle);
+                        BuildOutput.windowTitle("⚠ " + info.authRemediationHint() + " — " + baseTitle);
                     } else if (!isError && wasError) {
-                        setTerminalTitle(baseTitle);
+                        BuildOutput.windowTitle(baseTitle);
                     }
                     wasError = isError;
                 } catch (Exception ignored) {}
@@ -56,11 +56,6 @@ final class ShellLaunch {
         thread.setDaemon(true);
         thread.start();
         return thread;
-    }
-
-    private static void setTerminalTitle(String title) {
-        System.out.print("\033]0;" + title + "\007"); // raw ANSI: window title, set while the TUI owns the terminal
-        System.out.flush();
     }
 
     private ShellMenu shellMenu(String instanceName, IncusClient.ShellPrep prep) {
@@ -98,7 +93,6 @@ final class ShellLaunch {
             shellPrep = shellPrep.withActionCommand(defaultCmd);
         }
         tui.incus.interactiveShell(name, "agentuser", shellPrep, shellMenu(name, shellPrep));
-        System.out.println();
     }
 
     /**
@@ -142,7 +136,7 @@ final class ShellLaunch {
         // under the shell.
         InstancePrep.readyForUse(tui.incus, name, instance, machineType, BuildOutput.bound());
         checkGuiHealth(name);
-        System.out.println("Connecting to " + name + "...\n");
+        BuildOutput.step("Connecting to " + name + "...");
         var titleMonitor = startAuthTitleMonitor(name);
         try {
             var prep = IncusClient.ShellPrep.from(tui.incus, name);
@@ -151,7 +145,6 @@ final class ShellLaunch {
         } finally {
             titleMonitor.interrupt();
         }
-        System.out.println();
     }
 
     private void checkGuiHealth(String name) {

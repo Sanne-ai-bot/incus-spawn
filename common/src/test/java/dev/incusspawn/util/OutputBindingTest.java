@@ -48,13 +48,14 @@ class OutputBindingTest {
         var log = new ArrayList<String>();
         try (var ignored = BuildOutput.bind(Output.copying(terminal, Output.diagnosticsTo(log::add)))) {
             reportEveryKind();
+            BuildOutput.windowTitle("isx:dev-1");
         }
 
         assertEquals(List.of("a warning\nwhat to do", "a step's warning", "CA mismatch\nrebuild the template",
                 "a definition's warning"), log);
         assertEquals(List.of("step Copying", "warn a warning", "stepWarn a step's warning",
                 "warnBanner CA mismatch", "stepFail a failed step", "note a note",
-                "warnAside a definition's warning"), kinds(terminal));
+                "warnAside a definition's warning", "windowTitle isx:dev-1"), kinds(terminal));
     }
 
     /** While the TUI draws, a line on the terminal is drawn over: every warning goes to its log, the rest nowhere. */
@@ -74,7 +75,10 @@ class OutputBindingTest {
                 BuildOutput.stepDone();
             }
             reportEveryKind();
+            BuildOutput.forceAnsi = true;
+            BuildOutput.windowTitle("isx:dev-1");
         } finally {
+            BuildOutput.forceAnsi = null;
             System.setOut(previousOut);
             System.setErr(previousErr);
         }

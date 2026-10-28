@@ -10,7 +10,4 @@
 6 0 cli/src/main/java/dev/incusspawn/command/RepoCloner.java
 2 0 cli/src/main/java/dev/incusspawn/command/SshProxyCommand.java
 2 0 cli/src/main/java/dev/incusspawn/command/UpdateAllCommand.java
-9 0 cli/src/main/java/dev/incusspawn/tui/PreTuiOutput.java
-5 0 cli/src/main/java/dev/incusspawn/tui/ShellLaunch.java
-5 0 cli/src/main/java/dev/incusspawn/tui/Tui.java
 6 0 common/src/main/java/dev/incusspawn/incus/InteractiveShell.java

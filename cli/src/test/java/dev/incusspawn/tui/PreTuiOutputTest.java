@@ -1,6 +1,10 @@
 package dev.incusspawn.tui;
 
 import dev.incusspawn.Warnings;
+import dev.incusspawn.command.Prompts;
+import dev.incusspawn.util.RecordingOutput;
+import dev.incusspawn.util.RecordingOutput.Event;
+import dev.incusspawn.util.RecordingOutput.Kind;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -92,6 +96,29 @@ class PreTuiOutputTest {
         var stdin = new java.io.ByteArrayInputStream("\n\n".getBytes(StandardCharsets.UTF_8));
         PreTuiOutput.discardTypeahead(stdin);
         assertEquals(-1, stdin.read(), "the typed-ahead Enters are gone before the prompt reads");
+    }
+
+    @Test
+    void thePauseAsksThroughTheTerminalsPrompts() {
+        var reads = new AtomicInteger();
+        var prompts = new Prompts() {
+            @Override
+            public String readLine() {
+                reads.incrementAndGet();
+                return "";
+            }
+
+            @Override
+            public char[] readPassword() {
+                throw new AssertionError("the pause reads no secret");
+            }
+        };
+        var said = RecordingOutput.during(() -> PreTuiOutput.waitForEnter(prompts, "Press Enter to continue to isx... "));
+        assertEquals(List.of(new Event(Kind.PROMPT, "Press Enter to continue to isx... ")), said.events());
+        assertEquals(1, reads.get(), "it waits for one line");
+
+        assertEquals(List.of(), RecordingOutput.during(() -> PreTuiOutput.waitForEnter(null, "Press Enter to continue to isx... ")).events(),
+                "with no terminal there is nothing to wait on");
     }
 
     @Test

@@ -133,7 +133,7 @@ public class RunCommand extends BaseCommand {
     }
 
     /** What an action that ran directly did: a step, or why it failed as an error. Returns whether it succeeded. */
-    static boolean report(ActionResult result) {
+    public static boolean report(ActionResult result) {
         if (result.success()) BuildOutput.step(result.message());
         else BuildOutput.error(result.message() == null || result.message().isBlank() ? "the action failed." : result.message());
         return result.success();

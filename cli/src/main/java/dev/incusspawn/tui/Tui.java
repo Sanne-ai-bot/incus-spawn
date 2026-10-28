@@ -1,5 +1,7 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.command.BaseCommand;
+import dev.incusspawn.command.RunCommand;
 import dev.incusspawn.command.BaseImageAge;
 import dev.incusspawn.command.TemplateStaleness;
 import dev.incusspawn.command.ListCommand;
@@ -312,7 +314,7 @@ public class Tui {
     /** Bare {@code isx}: takes over the terminal until the user quits. */
     public void run(PreTuiOutput preTui) {
         this.preTui = preTui;
-        try { open(); } catch (Exception e) { System.err.println("Error: " + e.getMessage()); }
+        try { open(); } catch (Exception e) { BuildOutput.error(BaseCommand.failure(e)); }
     }
 
     private void open() {
@@ -457,8 +459,9 @@ public class Tui {
                  var runner = openRunner(runnerConfig().backend(new PanamaBackend()).build())) {
                 runner.run(this::handleEvent, this::render);
             } catch (Exception e) {
-                System.err.println("TUI unavailable: " + e.getMessage());
-                ListCommand.printTable(entries, System.out);
+                // The runner is closed and the drawing binding with it: this reaches the terminal
+                BuildOutput.warn("TUI unavailable: " + BaseCommand.failure(e));
+                ListCommand.printTable(entries, BuildOutput.results());
                 return;
             } finally {
                 ProxyLog.setSuppressStderr(false);
@@ -546,10 +549,11 @@ public class Tui {
                         } catch (Exception e) { statusMessage = "Edit failed: " + e.getMessage(); }
                     }
                     case EXECUTE_ACTION -> {
-                        var result = pendingToolAction.execute(pendingActionTarget);
-                        System.out.println(result.message());
+                        // As isx run reports it: a failure is an error, which the log keeps too
+                        RunCommand.report(pendingToolAction.execute(pendingActionTarget));
                         if (pendingToolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
-                            waitForKeypress();
+                            // Its output stays on screen until the user is ready
+                            PreTuiOutput.waitForEnter("Press Enter to continue...");
                         }
                     }
                     case NONE -> { return; }
@@ -619,14 +623,6 @@ public class Tui {
             selectFirstDataRow(instanceTableState);
             focusedPanel = Panel.TEMPLATES;
         }
-    }
-
-    /** Pause after a suspended-TUI subcommand so its output stays on screen until the user is ready. */
-    private static void waitForKeypress() {
-        System.out.println("\nPress any key to continue...");
-        try {
-            System.in.read();
-        } catch (java.io.IOException ignored) {}
     }
 
     void publishRows() {

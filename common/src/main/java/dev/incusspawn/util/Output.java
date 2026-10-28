@@ -101,6 +101,13 @@ public interface Output {
     default void prompt(String question) {}
 
     /**
+     * The terminal window's title, set by an escape: only on a terminal, where {@code NO_COLOR}
+     * does not stop it, since a title is no colour. It is written as one line
+     * ({@link OutputFormat#oneLine}), so nothing in it can end the escape early.
+     */
+    default void windowTitle(String title) {}
+
+    /**
      * Where the command's answer goes: a status report, a table, a script's records
      * ({@link OutputFormat}), each line as given. A terminal's is its stdout, which holds results
      * alone; an output that is not a terminal has none, so by default what is written is dropped.
