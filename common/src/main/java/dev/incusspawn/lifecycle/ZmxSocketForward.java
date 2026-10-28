@@ -6,12 +6,16 @@ import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.FileTrees;
+import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.Output;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.util.concurrent.Callable;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
@@ -182,18 +186,91 @@ public final class ZmxSocketForward {
      * symlink.  The disk device itself is auto-removed by Incus on instance
      * deletion.
      */
-    public static void cleanup(String name) {
+    public static void cleanup(String name, Output out) {
         var zmxDir = sharedHostZmxDir();
-        if (zmxDir != null) cleanup(name, zmxDir);
+        if (zmxDir != null) cleanup(name, zmxDir, out);
     }
 
-    static void cleanup(String name, Path zmxDir) {
+    static void cleanup(String name, Path zmxDir, Output out) {
+        cleanup(name, zmxDir, out, OwnDirectory::processUid);
+    }
+
+    /** Where the walk checks ownership against {@code processUid}, which tests name. */
+    static void cleanup(String name, Path zmxDir, Output out, Callable<Integer> processUid) {
+        var link = SYMLINK_PREFIX + name;
+        // Only a stat each: nothing of this instance's, nothing to check or say
+        if (!Files.exists(zmxDir.resolve(link), LinkOption.NOFOLLOW_LINKS)
+                && !Files.exists(zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name), LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        // On the /tmp fallback another user can have made the zmx dir, or
+        // planted links in it: the recursive delete below goes only through
+        // directories nobody else can change, so none can be swapped under it
+        int uid;
         try {
-            Files.deleteIfExists(zmxDir.resolve(SYMLINK_PREFIX + name));
-        } catch (IOException ignored) {
+            uid = processUid.call();
+        } catch (Exception e) {
+            // Fails closed: no uid, no walk (id -u would fall back to a guess)
+            out.warn("zmx sessions of '" + name + "' left on the host: isx cannot tell which uid it runs as: "
+                    + e.getMessage());
+            return;
+        }
+        Path containerDir;
+        try {
+            // deleteIfExists removes a link, never what it points to, and in a
+            // real dir of the user's nobody else can put a link in its way
+            if (Files.isDirectory(zmxDir, LinkOption.NOFOLLOW_LINKS) && uid == OwnDirectory.uidOf(zmxDir)) {
+                deleteQuietly(zmxDir.resolve(link));
+            }
+            var dir = ownDir(zmxDir, uid);
+            if (dir == null) return;
+            if (!dir.equals(zmxDir)) deleteQuietly(dir.resolve(link));
+            var containers = dir.resolve(CONTAINERS_SUBDIR);
+            containerDir = containers.resolve(name);
+            if (!Files.exists(containerDir, LinkOption.NOFOLLOW_LINKS)) return;
+            // A user-private group (gid == uid) may write, as umask 002 lets it
+            OwnDirectory.require(containers, uid, uid, "isx");
+        } catch (OwnDirectory.NotOwn e) {
+            out.warn("zmx sessions of '" + name + "' left on the host: their directory " + e.getMessage(),
+                    "isx deletes them only through directories nobody else can change.");
+            return;
+        } catch (NoSuchFileException gone) {
+            return;
+        } catch (IOException | RuntimeException e) {
+            out.warn("zmx sessions of '" + name + "' left on the host: could not check their directory: " + e);
+            return;
         }
         // zmx keeps its logs/ in the shared dir, so the tree goes, and no
         // symlink a guest left in it is followed (#1772)
-        FileTrees.deleteQuietly(zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name));
+        try {
+            FileTrees.delete(containerDir);
+        } catch (IOException e) {
+            out.warn("could not remove zmx directory " + containerDir + ": " + e.getMessage(),
+                    "A guest whose user is not yours on the host can leave files you cannot delete.",
+                    "Remove what is left with: sudo rm -r " + containerDir);
+        }
+    }
+
+    private static void deleteQuietly(Path link) {
+        try {
+            Files.deleteIfExists(link);
+        } catch (IOException ignored) {
+        }
+    }
+
+    /**
+     * The zmx dir as a real directory that is the user's alone, or null when
+     * there is none.  A user's {@code ZMX_DIR} may be a link of their own, to
+     * such a directory; a link of anyone else's is refused.
+     */
+    private static Path ownDir(Path zmxDir, int uid) throws IOException {
+        if (!Files.exists(zmxDir, LinkOption.NOFOLLOW_LINKS)) return null;
+        var dir = zmxDir;
+        if (Files.isSymbolicLink(zmxDir) && uid == OwnDirectory.uidOf(zmxDir)) {
+            if (!Files.exists(zmxDir)) return null;
+            dir = zmxDir.toRealPath();
+        }
+        OwnDirectory.require(dir, uid, uid, "isx");
+        return dir;
     }
 }

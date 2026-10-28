@@ -35,7 +35,7 @@ class InstancePrepTest {
 
     @AfterEach
     void removeZmxSymlink() {
-        ZmxSocketForward.cleanup(NAME);
+        ZmxSocketForward.cleanup(NAME, new RecordingOutput());
     }
 
     private static final String WITH_TOKEN = """
