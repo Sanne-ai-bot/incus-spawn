@@ -35,6 +35,7 @@ Anything printed to stdout/stderr still shows, and makes isx print the held warn
 `StreamWatch` notes those writes on the raw streams, so a write that bypasses the bound output counts too; it is the TUI's one gate class in `RawOutputGateTest`.
 A notice meant for the TUI belongs on `Warnings`, so it costs no keypress.
 `TuiLaunchHandOverTest` drives `IncusSpawn.launchTui(ready, tui)` with a `StandInTui` (test scope, overriding `runTuiLoop`/`waitForUser`, reading `warningMessages()`) and fails if either end of the window is unwired.
+A failure escaping `open()` is reported as an `error`, and `Tui.run` returns false, so bare `isx` exits non-zero (#1785).
 
 `Tui` is the TUI implementation using Tamboui widgets.
 It lives in `dev.incusspawn.tui` with every class it is made of: `MainScreen`, `ListingLoader`, `ShellLaunch`, `InstanceActions`, the disk model and formatting, and one class per dialog.

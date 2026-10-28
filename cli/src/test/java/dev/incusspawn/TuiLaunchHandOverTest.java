@@ -87,4 +87,13 @@ class TuiLaunchHandOverTest {
         }, () -> fail("no TUI when isx is not ready")));
         assertTrue(terminal().contains("⚠ " + SKEW));
     }
+
+    @Test
+    void aTuiThatFailsToOpenReportsWhyAndFailsTheCommand() {
+        var tui = new StandInTui();
+        tui.failure = new IllegalStateException("the terminal went away");
+        assertFalse(IncusSpawn.launchTui(() -> true, () -> tui),
+                "bare isx exits non-zero after the TUI reports why it failed (#1785)");
+        assertTrue(terminal().contains("Error: the terminal went away"), terminal());
+    }
 }
