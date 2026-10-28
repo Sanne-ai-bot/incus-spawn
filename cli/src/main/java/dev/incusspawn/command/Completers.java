@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.IncusSpawn;
+import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
@@ -18,7 +19,11 @@ import org.aesh.command.impl.registry.AeshCommandRegistryBuilder;
 import org.aesh.complete.AeshCompleteOperation;
 import org.aesh.console.DefaultAeshContext;
 
+import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -48,11 +53,13 @@ public final class Completers {
     /**
      * Answers {@code isx --aesh-complete -- <words>}: one candidate per line, followed by a TAB
      * and its description when it is a command or an option. The last word is the one being
-     * completed, empty after a space.
+     * completed, empty after a space. Words and candidates are plain values, never quoted or
+     * escaped for a shell: the script quotes what it inserts. A candidate holding a control
+     * character is dropped, since a newline or TAB in it would split the line.
      * <p>
      * This replaces aesh's own handler, which in 3.18 hands completers no working directory (so a
      * path option threw) and told the shell to add files after every command without a
-     * positional argument. Paths are completed here, by the path options' own completer.
+     * positional argument. Paths come from {@link HostPath}, unescaped.
      */
     public static void answer(Class<? extends Command> topCommand, List<String> words, PrintStream out) {
         try {
@@ -62,7 +69,8 @@ public final class Completers {
             for (var word : words) buffer.append(' ').append(escape(word));
             if (words.isEmpty()) buffer.append(' ');
             var line = buffer.toString();
-            var operation = new AeshCompleteOperation(new DefaultAeshContext(), line, line.length());
+            var request = new Request();
+            var operation = new AeshCompleteOperation(request, line, line.length());
             AeshCommandRuntimeBuilder.builder().commandRegistry(registry).build().complete(operation);
 
             var scope = scope(registry.getCommand(top, "").getParser(), words);
@@ -73,8 +81,11 @@ public final class Completers {
             var kept = operation.isIgnoreOffset() || operation.getOffset() < wordStart || operation.getOffset() > line.length()
                     ? "" : unescape(line.substring(wordStart, operation.getOffset()));
             boolean topLevel = words.size() <= 1;
-            operation.getCompletionCandidates().stream()
-                    .map(candidate -> wholeWord(typed, kept, candidate.getCharacters()))
+            var candidates = request.pathValue != null
+                    ? request.paths.stream().map(path -> pathWord(typed, request.pathValue, path))
+                    : operation.getCompletionCandidates().stream().map(candidate -> wholeWord(typed, kept, candidate.getCharacters()));
+            candidates
+                    .filter(candidate -> candidate.chars().noneMatch(Character::isISOControl))
                     .filter(candidate -> !(topLevel && IncusSpawn.NOT_COMPLETED.contains(candidate)))
                     .distinct()
                     .sorted()
@@ -95,6 +106,14 @@ public final class Completers {
     static String wholeWord(String typed, String kept, String candidate) {
         var value = candidate.strip();
         return value.isEmpty() ? typed : kept + value;
+    }
+
+    /**
+     * A path candidate as the whole word: what the word holds before the value ({@code --inbox=}),
+     * then the path, unescaped.
+     */
+    static String pathWord(String typed, String value, String path) {
+        return typed.endsWith(value) ? typed.substring(0, typed.length() - value.length()) + path : path;
     }
 
     /** A word as aesh's parser reads it back: a backslash keeps a space, quote or backslash literal. */
@@ -129,6 +148,43 @@ public final class Completers {
 
     private static String oneLine(String text) {
         return text == null ? "" : text.replaceAll("\\s+", " ").strip();
+    }
+
+    /** The context of one request, through which {@link HostPath} hands {@link #answer} its paths. */
+    private static final class Request extends DefaultAeshContext {
+        String pathValue;
+        final List<String> paths = new ArrayList<>();
+    }
+
+    /**
+     * A host path, as {@code --inbox} and {@code project --config} take.
+     * <p>
+     * aesh's own file completer escapes a lone candidate for its readline (a backslash before each
+     * space and double quote, but not before a leading space), a form no other shell reads back and
+     * that cannot be undone exactly. So the paths are listed here and reach {@link #answer} as they
+     * are, through its {@link Request}; quoting them is each shell script's job. A leading
+     * {@code ~/} is offered as the home directory, which reads the same quoted or not.
+     */
+    public static class HostPath implements OptionCompleter<CompleterInvocation> {
+        @Override
+        public void complete(CompleterInvocation invocation) {
+            if (!(invocation.getAeshContext() instanceof Request request)) return;
+            var value = invocation.getGivenCompleteValue() == null ? "" : invocation.getGivenCompleteValue();
+            request.pathValue = value;
+            if (value.equals("~")) value = "~/";
+            var typedDir = value.substring(0, value.lastIndexOf('/') + 1);
+            var prefix = value.substring(typedDir.length());
+            var dir = typedDir.startsWith("~/") ? Environment.home() + typedDir.substring(1) : typedDir;
+            try (var entries = Files.list(Path.of(dir.isEmpty() ? "." : dir))) {
+                entries.forEach(entry -> {
+                    var name = entry.getFileName().toString();
+                    if (!name.startsWith(prefix) || (name.startsWith(".") && !prefix.startsWith("."))) return;
+                    request.paths.add(dir + name + (Files.isDirectory(entry) ? "/" : ""));
+                });
+            } catch (IOException | RuntimeException e) {
+                // An unreadable or missing directory offers nothing.
+            }
+        }
     }
 
     /** A completer offering, of its names, each that starts with what was typed. */

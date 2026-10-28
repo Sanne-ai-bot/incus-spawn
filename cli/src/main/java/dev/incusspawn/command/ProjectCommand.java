@@ -63,7 +63,7 @@ public class ProjectCommand extends BaseCommand {
         @Argument(required = true, description = "Name of the project template")
         String name;
 
-        @Option(name = "config", description = "Path to incus-spawn.yaml (default: auto-detect from cwd)")
+        @Option(name = "config", completer = Completers.HostPath.class, description = "Path to incus-spawn.yaml (default: auto-detect from cwd)")
         Path configPath;
 
         @Override
@@ -207,7 +207,7 @@ public class ProjectCommand extends BaseCommand {
         @Argument(required = true, completer = Completers.Project.class, description = "Name of the project template to update")
         String name;
 
-        @Option(name = "config", description = "Path to incus-spawn.yaml")
+        @Option(name = "config", completer = Completers.HostPath.class, description = "Path to incus-spawn.yaml")
         Path configPath;
 
         @Override

@@ -21,7 +21,9 @@ When adding a *shared* command, add it to **both** command lists -- `IncusSpawnC
 When adding another macOS-only command, add it to `IncusSpawnCommand` only and extend the completion strip.
 
 **Dynamic completion** (#1744): `isx --aesh-complete -- <words>` answers a TAB from the running binary's command tree, which `IncusSpawn.run` hands to `Completers.answer` before aesh sees it.
-The PowerShell script (`isx completion pwsh`, aesh's dynamic script) uses it; bash, zsh and fish are still hand-written.
+The PowerShell script (`isx completion pwsh`, `CompletionCommand.PWSH_COMPLETION`) uses it; bash, zsh and fish are still hand-written.
+The request's words and candidates are plain values: the script sends a quoted word's value and single-quotes a candidate PowerShell would split, expand or glob.
+`answer` drops a candidate holding a control character, and path options complete through `Completers.HostPath`, never aesh's file completer, which escapes a lone candidate for its own readline.
 A value comes from a completer on the argument or option itself (`completer = Completers.Instance.class` and its siblings), so a new instance, template, tool or account argument names one.
 A completer offers names only, never starts a VM, costs at most one Incus request, and offers nothing when its source fails.
 `answer` writes each candidate as the whole word (`--format=json`) and a command's or option's description after a TAB; `CompletersTest` pins both.

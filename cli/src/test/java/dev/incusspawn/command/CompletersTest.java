@@ -138,9 +138,27 @@ class CompletersTest {
     }
 
     @Test
+    void pathsAreWholePlainWordsWhateverTheyHold(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        java.nio.file.Files.createDirectories(dir.resolve("my dir"));
+        java.nio.file.Files.createFile(dir.resolve("my dir").resolve("inner"));
+        java.nio.file.Files.createDirectory(dir.resolve("it's \"q\""));
+        java.nio.file.Files.createFile(dir.resolve("tab\tname"));
+        // A lone candidate: aesh's own file completer answered "my\ dir/", which no shell but aesh's reads back.
+        assertEquals(List.of(dir + "/my dir/"), linux("branch", "x", "--inbox", dir + "/my"));
+        assertEquals(List.of("--inbox=" + dir + "/my dir/"), linux("branch", "x", "--inbox=" + dir + "/my"));
+        assertEquals(List.of(dir + "/my dir/inner"), linux("branch", "x", "--inbox", dir + "/my dir/in"));
+        // Several, and quotes: still the plain path. A TAB in a name would split the line, so it is not offered.
+        assertEquals(List.of(dir + "/it's \"q\"/", dir + "/my dir/"), linux("branch", "x", "--inbox", dir + "/"));
+        assertEquals(List.of(dir + "/my dir/"), linux("project", "update", "--config", dir + "/m"));
+    }
+
+    @Test
     void powerShellScriptAsksIsxOnEveryTab() {
         var script = CompletionCommand.rawScript(CompletionCommand.Shell.pwsh);
         assertTrue(script.contains("Register-ArgumentCompleter -Native -CommandName 'isx'"), script);
         assertTrue(script.contains("--aesh-complete -- @cmdArgs"), script);
+        // A word's value goes to isx without its quotes, and a candidate PowerShell would split comes back quoted.
+        assertTrue(script.contains("$cmdArgs += $elem.Value"), script);
+        assertTrue(script.contains("$insert = \"'\" + ($text -replace"), script);
     }
 }
