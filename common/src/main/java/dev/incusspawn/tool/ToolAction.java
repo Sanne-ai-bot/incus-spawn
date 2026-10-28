@@ -1,5 +1,7 @@
 package dev.incusspawn.tool;
 
+import java.util.function.UnaryOperator;
+
 /**
  * A runtime action contributed by a tool that can be performed on a live instance.
  * Actions are discovered by the TUI/CLI and presented to the user when the
@@ -71,7 +73,8 @@ public interface ToolAction {
     }
 
     /**
-     * Execute the action. Returns a result indicating what happened.
+     * Execute the action. Returns a result indicating what happened. Nothing may be asked here;
+     * {@link #execute(ActionContext, UnaryOperator)} is the form that can ask.
      *
      * @param context runtime information about the instance
      * @return result describing outcome (message to display, or URL opened)
@@ -79,9 +82,18 @@ public interface ToolAction {
     ActionResult execute(ActionContext context);
 
     /**
+     * {@link #execute}, asking what it must through {@code ask}, which shows a question and returns
+     * its answer ({@code null} at EOF), as {@code Prompts::ask} does. A null {@code ask} means there
+     * is nobody to answer, and the action then returns an error rather than proceed unconfirmed.
+     */
+    default ActionResult execute(ActionContext context, UnaryOperator<String> ask) {
+        return execute(context);
+    }
+
+    /**
      * Execute the action without ever reading the terminal or printing to it, for a caller that
      * does not own the terminal -- the shell status bar's menu runs while the session holds it in
-     * raw mode, and the TUI's actions menu while the TUI draws. Where {@link #execute} would ask
+     * raw mode, and the TUI's actions menu while the TUI draws. Where {@link #execute(ActionContext, UnaryOperator)} would ask
      * the user something, this returns an error saying what to do instead. Refuses unless an implementation knows it never prompts: falling back to
      * {@link #execute} would make that guarantee depend on every future action remembering it.
      */

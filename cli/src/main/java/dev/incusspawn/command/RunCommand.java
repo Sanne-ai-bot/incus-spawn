@@ -119,13 +119,13 @@ public class RunCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
-        // Action executes directly (e.g., opens URL, copies to clipboard)
-        var result = toolAction.execute(context);
+        // Action executes directly (e.g., opens URL, copies to clipboard); it may ask only a terminal
+        var prompts = Prompts.terminal();
+        var result = toolAction.execute(context, prompts == null ? null : prompts::ask);
         var succeeded = report(result);
 
         // For YAML actions with auto_return: false, wait for keypress (only in interactive terminals)
         if (toolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
-            var prompts = Prompts.terminal();
             if (prompts != null) prompts.ask("Press Enter to continue...");
         }
 
