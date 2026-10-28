@@ -2693,6 +2693,7 @@ The reasons:
   zmx's own dir falls back to `/tmp/zmx-<uid>` without `ZMX_DIR` and `XDG_RUNTIME_DIR`, and another local user can make that first.
   So the guest's sockets and logs stay where only the user can reach them, and the source no longer follows the environment of whichever isx started the instance last.
   isx makes `zmx/` and each `<name>` mode `0700` and requires both to be the user's alone (`OwnDirectory`, shared with host-route secrets) when it adds the device and on every start, at a few stats and no request.
+  A `zmx/` that grants group or others any access is set back to `0700` at the same points and on every shell: the guest owns `<name>` through the shifted mount and can open it to anyone, so `zmx/` is what keeps other users out of its sessions and logs.
   When they are not, the instance gets no device, says why, and is stamped `user.incus-spawn.zmx-withheld`; the first start that finds the directory right adds the device back and clears the stamp.
   The host zmx dir holds only the absolute `isx-<name>` links, so host `zmx list` and `zmx attach` need no configuration.
   isx makes that dir `0700` when it is missing, and links only from one that is the user's alone; otherwise the shell warns and the device stays, since its directory is private.

@@ -389,6 +389,32 @@ class ZmxSocketForwardTest {
         assertEquals(sessionTarget(), Files.readSymbolicLink(symlink()));
     }
 
+    /**
+     * The guest owns its directory through the shifted mount and can open it
+     * to anyone, so {@code zmx/} has to stay closed: one that grants others
+     * any access is made {@code 0700} again, on the start's healthy path
+     * too, where it costs no Incus request.
+     */
+    @Test
+    void aReadableInstancesDirIsClosedAgain() throws IOException {
+        Files.createDirectories(containerDir());
+        Files.setPosixFilePermissions(containerDir(), PosixFilePermissions.fromString("rwxr-xr-x"));
+        Files.setPosixFilePermissions(dirs.instances(), PosixFilePermissions.fromString("rwxr-xr-x"));
+
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, dirs,
+                instanceWithZmxDevice(containerDir().toString()), RecordingOutput.FAIL_ON_WARN);
+
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(dirs.instances())));
+        assertEquals(List.of(), daemon.requests());
+
+        // Group access alone, which the ownership check lets through, is closed too
+        Files.setPosixFilePermissions(dirs.instances(), PosixFilePermissions.fromString("rwxr-x---"));
+        ZmxSocketForward.configure(incus, NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+
+        assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(dirs.instances())));
+        assertEquals(containerDir().toString(), device().get("source"));
+    }
+
     /** An instance that shares no sessions gets no link, and its shell creates nothing. */
     @Test
     void ensureSymlinkLeavesAnInstanceWithoutZmxAlone() throws IOException {
