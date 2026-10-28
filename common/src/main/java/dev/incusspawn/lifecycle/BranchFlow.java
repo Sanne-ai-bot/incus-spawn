@@ -269,7 +269,8 @@ public final class BranchFlow {
         // Before any Incus request: the request alone says it asks for KVM
         var refusal = kvmUnsupportedOnMacOs(Boolean.TRUE.equals(req.kvm()));
         if (refusal != null) throw new BranchException(refusal);
-        if (Metadata.isMcpCaller(req.extraConfig())) {
+        // Any value of the key, not only a well-formed grant: no airgapped branch is stamped at all
+        if (req.extraConfig().containsKey(Metadata.MCP_CALLER)) {
             refusal = mcpClientUnreachable(req.networkMode());
             if (refusal != null) throw new BranchException(refusal + ".");
         }
