@@ -68,20 +68,27 @@ final class BuildLog implements CommandLog, AutoCloseable {
     static BuildLog open(Path file, String template, boolean keep) {
         try {
             Files.createDirectories(file.getParent());
-            // Owner-only from its creation, as it holds all that each command printed; the last
-            // build's file is made so before it is opened, so no failure here leaves a writer open
-            var ownerOnly = PosixFilePermissions.fromString("rw-------");
-            try {
-                Files.createFile(file, PosixFilePermissions.asFileAttribute(ownerOnly));
-            } catch (FileAlreadyExistsException e) {
-                Files.setPosixFilePermissions(file, ownerOnly);
-            }
+            // Before it is opened, so no failure here leaves a writer open
+            ownerOnly(file);
             var writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8);
             var log = new BuildLog(file, keep, writer, null);
             log.write("isx build " + OutputFormat.oneLine(template) + ", started " + Instant.now() + "\n\n");
             return log;
         } catch (IOException | RuntimeException e) {
             return new BuildLog(file, keep, null, BaseCommand.failure(e));
+        }
+    }
+
+    /**
+     * Makes {@code file} owner-only, creating it so when it does not exist: it is about to hold
+     * what a build's commands printed (this log, or a failure report).
+     */
+    static void ownerOnly(Path file) throws IOException {
+        var ownerOnly = PosixFilePermissions.fromString("rw-------");
+        try {
+            Files.createFile(file, PosixFilePermissions.asFileAttribute(ownerOnly));
+        } catch (FileAlreadyExistsException e) {
+            Files.setPosixFilePermissions(file, ownerOnly);
         }
     }
 
