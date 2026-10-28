@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
@@ -365,7 +366,11 @@ public final class ZmxSocketForward {
         try {
             if (!Files.exists(instanceDir, LinkOption.NOFOLLOW_LINKS)) return;
             OwnDirectory.require(instanceDir.getParent(), uid, uid, "isx");
+        } catch (NoSuchFileException gone) {
+            return;
         } catch (OwnDirectory.NotOwn e) {
+            // zmx/ gone since the stat above, as by a second cleanup: nothing left to say
+            if (!Files.exists(instanceDir.getParent(), LinkOption.NOFOLLOW_LINKS)) return;
             out.warn("zmx sessions of '" + name + "' left on the host: their directory " + e.getMessage(),
                     "isx deletes them only through directories nobody else can change.");
             return;
