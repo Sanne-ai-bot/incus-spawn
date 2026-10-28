@@ -50,29 +50,34 @@ public class AskCommand extends BaseCommand {
         var label = "Asking " + target.label() + (withTemplates ? " (with templates)" : "") + "...";
         var systemBlocks = HelpContext.systemBlocks(withTemplates);
         answer(label,
-                chunks -> AiHelpClient.askStreaming(question, systemBlocks, config, target, chunks));
+                chunks -> AiHelpClient.askStreaming(question, systemBlocks, config, target, chunks).note());
         return CommandResult.SUCCESS;
     }
 
-    /** A streamed answer: hands each chunk to its consumer as it comes. */
+    /**
+     * A streamed answer: hands each chunk to its consumer as it comes, then returns why the
+     * answer ended early ({@link AiHelpClient.StreamEnd#note()}), or null when it is whole.
+     */
     @FunctionalInterface
     interface Answer {
-        void stream(Consumer<String> chunks) throws Exception;
+        String stream(Consumer<String> chunks) throws Exception;
     }
 
     /**
      * Asks, as a live step that ends when the first chunk comes, then prints the answer as the
      * command's result (#1703). The step goes to stderr, so stdout holds only the answer, as for
      * any query. A stream that fails part way still shows what came, on a line of its own; one
-     * that fails before anything came breaks the step, and the error follows it.
+     * that fails before anything came breaks the step, and the error follows it. Why an answer
+     * ended early is isx's word, not the answer's, so it is a warning after it, on stderr.
      */
     static void answer(String label, Answer answer) throws Exception {
         // Taken before the progress moves to stderr: the answer is what stdout is for
         var streamed = new Streamed(BuildOutput.results(), BuildOutput.ansi());
         withStdoutOnStderr(() -> {
             BuildOutput.stepStart(label);
+            String note;
             try {
-                answer.stream(streamed);
+                note = answer.stream(streamed);
             } catch (Exception e) {
                 if (!streamed.started()) BuildOutput.stepBreak();
                 throw e;
@@ -80,6 +85,7 @@ public class AskCommand extends BaseCommand {
                 streamed.finish();
             }
             if (!streamed.started()) BuildOutput.stepDone("no answer");
+            if (note != null) BuildOutput.warn(note);
             return null;
         });
     }

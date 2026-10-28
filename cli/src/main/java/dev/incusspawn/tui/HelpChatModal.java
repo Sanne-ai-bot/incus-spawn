@@ -76,6 +76,8 @@ final class HelpChatModal {
     private Thread thread;
     private volatile List<String> responseLines;
     private volatile Usage usage = Usage.NONE;
+    /** Why the answer ended early, shown under it apart from the model's text; null when whole. */
+    private volatile String endNote;
     private volatile String error;
     private int scrollOffset;
 
@@ -142,6 +144,7 @@ final class HelpChatModal {
                 input = new TextAreaState();
                 responseLines = null;
                 usage = Usage.NONE;
+                endNote = null;
                 error = null;
                 scrollOffset = 0;
                 field = Field.QUESTION;
@@ -220,6 +223,7 @@ final class HelpChatModal {
                 thread = null;
                 if (response != null) {
                     usage = response.usage();
+                    endNote = response.note();
                     responseLines = response.content().lines().toList();
                 } else {
                     error = failure;
@@ -494,6 +498,13 @@ final class HelpChatModal {
                     lines.add(lineFromSegments(wrappedSegs));
                 }
             }
+        }
+        var note = endNote;
+        if (note != null) {
+            // isx's word on the answer, set apart from what the model wrote
+            if (!lines.isEmpty()) lines.add(Line.styled("", Style.EMPTY.bg(modal.bg())));
+            var style = Style.EMPTY.fg(modal.warn()).bg(modal.bg());
+            for (var l : ModalRenderer.wrapText(note, wrapWidth)) lines.add(Line.styled(l, style));
         }
         return lines;
     }

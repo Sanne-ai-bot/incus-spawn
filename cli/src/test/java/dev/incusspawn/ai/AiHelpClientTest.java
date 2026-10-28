@@ -151,10 +151,45 @@ class AiHelpClientTest {
                 {"type":"message_stop"}
                 """);
         var text = new StringBuilder();
-        var usage = AiHelpClient.processStream(stream, text::append);
+        var end = AiHelpClient.processStream(stream, text::append);
         assertEquals("Hello there", text.toString());
+        assertNull(end.note());
+        var usage = end.usage();
         assertEquals(new AiHelpClient.Usage(12, 48000, 3100, 312), usage);
         assertEquals(51112, usage.totalInputTokens());
+    }
+
+    @Test
+    void messagesStreamSaysWhyAnAnswerEndedEarly() throws Exception {
+        // A refusal or the length limit ends the stream like a finished answer; without a
+        // word the reader sees an empty or cut-off answer and cannot tell why. The word is
+        // isx's, not the model's, so it comes back beside the answer, never inside it.
+        var refused = new StringBuilder();
+        var refusal = AiHelpClient.processStream(sse("""
+                {"type":"message_start","message":{"usage":{"input_tokens":12,"output_tokens":1}}}
+                {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+                {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":""}}
+                {"type":"content_block_stop","index":0}
+                {"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":3}}
+                {"type":"message_stop"}
+                """), refused::append);
+        assertEquals("", refused.toString());
+        assertEquals(AiHelpClient.REFUSAL_NOTE, refusal.note());
+        assertEquals(new AiHelpClient.Usage(12, 0, 0, 3), refusal.usage());
+
+        // The context window can end an answer too; the API asks to treat it like max_tokens.
+        for (var reason : List.of("max_tokens", "model_context_window_exceeded")) {
+            var truncated = new StringBuilder();
+            var cutOff = AiHelpClient.processStream(sse("""
+                    {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+                    {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Run isx"}}
+                    {"type":"content_block_stop","index":0}
+                    {"type":"message_delta","delta":{"stop_reason":"%s"},"usage":{"output_tokens":4096}}
+                    {"type":"message_stop"}
+                    """.formatted(reason)), truncated::append);
+            assertEquals("Run isx", truncated.toString(), reason);
+            assertEquals(AiHelpClient.TRUNCATED_NOTE, cutOff.note(), reason);
+        }
     }
 
     @Test
@@ -164,7 +199,7 @@ class AiHelpClientTest {
                 {"choices":[],"usage":{"prompt_tokens":50000,"completion_tokens":200,"prompt_tokens_details":{"cached_tokens":49000}}}
                 """);
         var text = new StringBuilder();
-        var usage = AiHelpClient.processOpenAiStream(stream, text::append);
+        var usage = AiHelpClient.processOpenAiStream(stream, text::append).usage();
         assertEquals("Hi", text.toString());
         assertEquals(new AiHelpClient.Usage(1000, 49000, 0, 200), usage);
     }

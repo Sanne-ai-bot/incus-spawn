@@ -2499,6 +2499,8 @@ Max and Team plans include monthly API credits for a key, so that second account
 So when `isx init` saves an `oauth` account and nothing can answer here, `CredentialSetup.offerApiKeyForAiHelp` names the credits and offers to add an `api-key` account beside it, leaving the subscription the default.
 This is the one place isx calls a model API on its own behalf; everywhere else (`ProxyCredentials`, `ClaudeSetup`, `PiSetup`) credentials are only forwarded into instances.
 Because providers answer errors with varying usefulness, `describeError()` reports the HTTP status, the error `type` and the `request_id` alongside the message.
+A stream that ends in a refusal, at `max_tokens` or at the context window reads like a finished answer, so `processStream()` returns a note saying which (`StreamEnd`).
+The note is isx's word, not the model's, so it never joins the answer: `isx ask` warns with it on stderr, keeping stdout to what the model wrote, and the TUI shows it under the answer in the warning colour.
 `isx ask` always uses that first one.
 But the TUI's AI Help dialog makes the account explicit, offering every target as a selector -- a fixed line when there is only one -- because which credentials are billed should be visible rather than implied.
 `subscriptionAccounts()` names the Pro/Max accounts so the dialog can show them as unavailable with the reason, instead of leaving a subscriber to wonder why their account is missing.

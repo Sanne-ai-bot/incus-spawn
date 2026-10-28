@@ -53,7 +53,23 @@ public class AiHelpClient {
         public String credentialKind() { return credentialKind; }
     }
 
-    public record AiResponse(String content, Usage usage) {}
+    /** An answer, what it cost, and {@link StreamEnd#note() why it ended early}, if it did. */
+    public record AiResponse(String content, Usage usage, String note) {
+        public AiResponse(String content, Usage usage) {
+            this(content, usage, null);
+        }
+    }
+
+    /**
+     * How a streamed answer ended: what it cost, and isx's note when the answer is not whole
+     * ({@link #REFUSAL_NOTE}, {@link #TRUNCATED_NOTE}), else null. The note is isx's own
+     * word, so it is reported beside the answer and never streamed as part of it.
+     */
+    public record StreamEnd(Usage usage, String note) {
+        StreamEnd(Usage usage) {
+            this(usage, null);
+        }
+    }
 
     /**
      * Input tokens split by how they were billed, as the provider reported them: the uncached
@@ -71,6 +87,10 @@ public class AiHelpClient {
     public static final String ANTHROPIC_MODEL = "claude-sonnet-5-5";
     public static final String VERTEX_MODEL = "claude-sonnet-5-5";
     public static final String OPENAI_MODEL = "gpt-4o-mini";
+    /** Why an answer is empty or stops short: the model declined to give it. */
+    static final String REFUSAL_NOTE = "The model declined to answer this question.";
+    /** Why an answer stops short: {@code max_tokens} or the context window cut it off. */
+    static final String TRUNCATED_NOTE = "The answer was cut off at its length limit.";
     /** Where Anthropic explains the API credits Max and Team plans include, which can pay for this (#1674). */
     public static final String API_CREDITS_URL =
             "https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers";
@@ -187,12 +207,12 @@ public class AiHelpClient {
     public static AiResponse ask(String question, List<String> systemBlocks, SpawnConfig config,
                                  Target target) throws IOException {
         var sb = new StringBuilder();
-        var usage = askStreaming(question, systemBlocks, config, target, sb::append);
-        return new AiResponse(sb.toString(), usage);
+        var end = askStreaming(question, systemBlocks, config, target, sb::append);
+        return new AiResponse(sb.toString(), end.usage(), end.note());
     }
 
     /** Like {@link #ask}, handing the answer to {@code onChunk} as it arrives. */
-    public static Usage askStreaming(String question, List<String> systemBlocks, SpawnConfig config,
+    public static StreamEnd askStreaming(String question, List<String> systemBlocks, SpawnConfig config,
                                      Target target, Consumer<String> onChunk) throws IOException {
         return switch (target.provider()) {
             case ANTHROPIC -> streamAnthropic(question, systemBlocks, target.model(),
@@ -232,7 +252,7 @@ public class AiHelpClient {
         return account;
     }
 
-    private static Usage streamAnthropic(String question, List<String> systemBlocks, String model,
+    private static StreamEnd streamAnthropic(String question, List<String> systemBlocks, String model,
                                          SpawnConfig.ClaudeAccount account,
                                          Consumer<String> onChunk) throws IOException {
         var body = JqObject.builder(5)
@@ -257,7 +277,7 @@ public class AiHelpClient {
         return processStream(sendStream(builder.build()), onChunk);
     }
 
-    private static Usage streamVertex(String question, List<String> systemBlocks, String model,
+    private static StreamEnd streamVertex(String question, List<String> systemBlocks, String model,
                                       SpawnConfig.ClaudeAccount account,
                                       Consumer<String> onChunk) throws IOException {
         var gcpToken = getGcloudAccessToken();
@@ -290,7 +310,7 @@ public class AiHelpClient {
         return processStream(sendStream(request), onChunk);
     }
 
-    private static Usage streamOpenAI(String question, String systemPrompt, String model,
+    private static StreamEnd streamOpenAI(String question, String systemPrompt, String model,
                                       SpawnConfig.OpenaiConfig openai,
                                       Consumer<String> onChunk) throws IOException {
         var body = JqObject.builder(4)
@@ -315,7 +335,7 @@ public class AiHelpClient {
         return processOpenAiStream(sendStream(request), onChunk);
     }
 
-    static Usage processOpenAiStream(InputStream is, Consumer<String> onChunk) throws IOException {
+    static StreamEnd processOpenAiStream(InputStream is, Consumer<String> onChunk) throws IOException {
         var usage = Usage.NONE;
         try (var reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
             String line;
@@ -334,11 +354,12 @@ public class AiHelpClient {
                 }
             }
         }
-        return usage;
+        return new StreamEnd(usage);
     }
 
-    static Usage processStream(InputStream is, Consumer<String> onChunk) throws IOException {
+    static StreamEnd processStream(InputStream is, Consumer<String> onChunk) throws IOException {
         boolean inTextBlock = false;
+        String stopReason = "";
         var usage = Usage.NONE;
         try (var reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
             String line;
@@ -356,6 +377,7 @@ public class AiHelpClient {
                         break;
                     case "message_delta":
                         usage = withUsage(usage, node.getField("usage"));
+                        stopReason = node.getField("delta").pathText("stop_reason", stopReason);
                         break;
                     case "content_block_start":
                         inTextBlock = "text".equals(
@@ -376,7 +398,11 @@ public class AiHelpClient {
                 }
             }
         }
-        return usage;
+        return new StreamEnd(usage, switch (stopReason) {
+            case "refusal" -> REFUSAL_NOTE;
+            case "max_tokens", "model_context_window_exceeded" -> TRUNCATED_NOTE;
+            default -> null;
+        });
     }
 
     /**

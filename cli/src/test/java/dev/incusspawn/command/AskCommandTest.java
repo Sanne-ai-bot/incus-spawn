@@ -45,12 +45,35 @@ class AskCommandTest {
         var recorded = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks -> {
             chunks.accept("Use isx ");
             chunks.accept("branch.\nDone.");
+            return null;
         }));
         assertEquals(List.of(RecordingOutput.Kind.STEP_START, RecordingOutput.Kind.STEP_DONE, RecordingOutput.Kind.FRAME),
                 recorded.events().stream().map(RecordingOutput.Event::kind)
                         .filter(k -> k != RecordingOutput.Kind.RESULT).toList());
         assertEquals("Asking Claude...", recorded.events().getFirst().msg());
         assertEquals(List.of("Use isx branch.", "Done."), recorded.resultLines());
+    }
+
+    /**
+     * Why an answer ended early is isx's word, so it is a warning after the answer, on stderr,
+     * and a script's capture of stdout holds only what the model wrote.
+     */
+    @Test
+    void whyAnAnswerEndedEarlyIsAWarningBesideIt() {
+        var recorded = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks -> {
+            chunks.accept("Run isx");
+            return "The answer was cut off at its length limit.";
+        }));
+        assertEquals(List.of("Run isx"), recorded.resultLines());
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
+                        "The answer was cut off at its length limit.")),
+                recorded.events(RecordingOutput.Kind.WARN));
+
+        var refused = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks ->
+                "The model declined to answer this question."));
+        assertEquals(List.of(), refused.resultLines());
+        assertEquals(List.of(RecordingOutput.Kind.STEP_START, RecordingOutput.Kind.STEP_DONE, RecordingOutput.Kind.WARN),
+                refused.events().stream().map(RecordingOutput.Event::kind).toList());
     }
 
     /** A stream that fails before anything came breaks the step, so the error follows a closed line. */
