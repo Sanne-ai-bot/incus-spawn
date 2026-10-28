@@ -37,6 +37,7 @@ So a new credential is made known to every secret-aware consumer by declaring it
 The same declaration that makes the proxy inject it makes the redactor remove it.
 `SecretRedactor` is the first consumer (`isx doctor --bundle`: structural redaction of the config, then value/pattern scrubbing of logs, marker `<isx:redacted:<path>>`); a pluggable secrets backend would be the second.
 The split is deliberate: `SecretRegistry` knows *where declared secrets live*, `SecretRedactor` knows *what a credential looks like* -- its `looksSecret()` whole-word name heuristic (a backstop for undeclared keys landing in `SpawnConfig.extras`; keep it whole-word, since substring matching blanks out unrelated diagnostics like `monkey` and `keyboardLayout`; and the nearest key name governs — a secret-named *list* is redacted whole, a secret-named *object* is not, since its fields have their own names and an `auth: {endpoint, timeoutMs}` block is ordinary config) and its token-shape patterns.
+Its first pattern is `ProofToken.ANY_PROOF`, the marker and digest of every proof isx mints, so a proof is scrubbed even where its prefix borrows no known token shape (`gho_isx_`, `ya29.isx_`).
 See DESIGN.md "Support bundles: redaction by construction".
 
 **Credential accounts**: each credential namespace may hold `accounts:` (a named map) and `default:`.

@@ -348,6 +348,8 @@ public final class SecretRedactor {
     }
 
     private static final List<ScrubPattern> PATTERNS = List.of(
+            // First, so an isx proof is named as one whatever the token shape its prefix borrows
+            new ScrubPattern("isx-proof", dev.incusspawn.proxy.ProofToken.ANY_PROOF, marker("isx-proof")),
             ScrubPattern.whole("private-key",
                     "(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----"),
             ScrubPattern.whole("anthropic-key", "sk-ant-[A-Za-z0-9_-]{8,}"),
