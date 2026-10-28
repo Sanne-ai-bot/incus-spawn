@@ -8,6 +8,7 @@ import dev.incusspawn.tool.ShellMenu;
 import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.YamlToolAction;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.TerminalLink;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -132,10 +133,18 @@ public class RunCommand extends BaseCommand {
         return succeeded ? CommandResult.SUCCESS : CommandResult.valueOf(1);
     }
 
-    /** What an action that ran directly did: a step, or why it failed as an error. Returns whether it succeeded. */
+    /**
+     * What an action that ran directly did: a step, or why it failed as an error. Returns whether it
+     * succeeded. A success may quote the action's own text (a copy-to-clipboard action without a
+     * clipboard shows it), which a tool's YAML chooses, so nothing in it may drive the terminal
+     * ({@link TerminalLink#plainText}); its tabs and line breaks stay, since it is there to be copied.
+     */
     public static boolean report(ActionResult result) {
-        if (result.success()) BuildOutput.step(result.message());
-        else BuildOutput.error(result.message() == null || result.message().isBlank() ? "the action failed." : result.message());
+        var message = result.message();
+        if (result.success()) {
+            if (message != null && !message.isBlank()) BuildOutput.step(TerminalLink.plainText(message));
+        }
+        else BuildOutput.error(message == null || message.isBlank() ? "the action failed." : message);
         return result.success();
     }
 
