@@ -465,18 +465,6 @@ final class BuildProgress {
         return sb.toString();
     }
 
-    static String plainStepLine(String label, StepProgress progress, String doneWord, String verb) {
-        label = OutputFormat.oneLine(label);
-        if (progress.state() == StepState.DONE) {
-            var line = BuildOutput.indent() + doneWord + " " + label;
-            if (progress.note() != null && !progress.note().isEmpty()) line += " (" + progress.note() + ")";
-            return line;
-        }
-        var msg = BuildOutput.indent() + "Warning: " + verb + " failed for " + label;
-        if (progress.detail() != null && !progress.detail().isEmpty()) msg += ": " + progress.detail();
-        return msg;
-    }
-
     private static String padStatus(String word) {
         return word.length() >= 8 ? word : word + " ".repeat(8 - word.length());
     }
