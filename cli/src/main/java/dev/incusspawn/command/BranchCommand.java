@@ -58,7 +58,7 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "proxy-only", description = "Restrict network to host proxy only (Claude + GitHub via proxy)", hasValue = false)
     boolean proxyOnly;
 
-    @Option(name = "inbox", description = "Host directory to mount read-only at /home/agentuser/inbox")
+    @Option(name = "inbox", completer = Completers.HostPath.class, description = "Host directory to mount read-only at /home/agentuser/inbox")
     Path inbox;
 
     @Option(name = "cpu", description = "CPU core limit (default: none for containers; for VMs host CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores)")

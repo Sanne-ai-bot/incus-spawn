@@ -6,7 +6,6 @@ import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
-import org.aesh.util.completer.ShellCompletionGenerator;
 
 @CommandDefinition(
         name = "completion",
@@ -47,7 +46,7 @@ public class CompletionCommand extends BaseCommand {
             case bash -> BASH_COMPLETION;
             case fish -> FISH_COMPLETION;
             // Asks isx itself on every TAB, so it already follows this platform's command tree.
-            case pwsh -> ShellCompletionGenerator.forShell(ShellCompletionGenerator.ShellType.PWSH).generateDynamic(null, "isx");
+            case pwsh -> PWSH_COMPLETION;
         };
     }
 
@@ -109,6 +108,53 @@ public class CompletionCommand extends BaseCommand {
                 #   isx completion pwsh | Out-String | Invoke-Expression
                 """);
     }
+
+    // ── PowerShell completion ───────────────────────────────────────────────────
+
+    /**
+     * Asks isx itself on every TAB ({@link Completers#answer}), so it follows this platform's
+     * command tree. Not aesh's generated script: that one hands isx a quoted word with its quotes
+     * and inserts each candidate as is, so a path with a space became two arguments. This one
+     * sends each word's value and single-quotes a candidate PowerShell would otherwise split or
+     * expand.
+     */
+    private static final String PWSH_COMPLETION = """
+            # PowerShell completion for isx: every TAB asks isx itself.
+            Register-ArgumentCompleter -Native -CommandName 'isx' -ScriptBlock {
+                param($wordToComplete, $commandAst, $cursorPosition)
+
+                # The words before the cursor as isx receives them: a quoted word's value, without its quotes.
+                $cmdArgs = @()
+                $last = $null
+                foreach ($elem in $commandAst.CommandElements | Select-Object -Skip 1) {
+                    if ($elem.Extent.StartOffset -ge $cursorPosition) { break }
+                    $last = $elem
+                    if ($elem -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                        $cmdArgs += $elem.Value
+                    } else {
+                        $cmdArgs += $elem.Extent.Text
+                    }
+                }
+                # Past the last word, the word being completed is a new, empty one.
+                $newWord = $null -eq $last -or $cursorPosition -gt $last.Extent.EndOffset
+                if ($newWord) { $cmdArgs += '' }
+                # PowerShell reads a bare a,b as a list and replaces only its last item.
+                $listItem = -not $newWord -and $last -is [System.Management.Automation.Language.ArrayLiteralAst]
+
+                & 'isx' --aesh-complete -- @cmdArgs 2>$null | ForEach-Object {
+                    $text, $desc = $_ -split "`t", 2
+                    if ($listItem) { $text = $text.Substring($text.LastIndexOf(',') + 1) }
+                    if (-not $text) { return }
+                    $insert = $text
+                    # Quoted: what PowerShell splits on, expands, or globs for a native command.
+                    if ($text -match '[\\s''"`$;,(){}@#|&<>*?\\[\\]\\u2018-\\u201E]') {
+                        $insert = "'" + ($text -replace '([''\\u2018-\\u201B])', '$1$1') + "'"
+                    }
+                    if (-not $desc) { $desc = $text }
+                    [System.Management.Automation.CompletionResult]::new($insert, $text, 'ParameterValue', $desc)
+                }
+            }
+            """;
 
     // ── Zsh completion ──────────────────────────────────────────────────────────
 

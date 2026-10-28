@@ -1111,6 +1111,12 @@ The values come from aesh completers on the commands' own arguments and options 
 They follow the same rules as the hand-written scripts' sources: names only, never a credential, nothing that starts a VM, and nothing at all when the source fails, since an error would be drawn over the line being typed.
 `Completers.answer` replaces aesh's own `--aesh-complete` handler, which in aesh 3.18 gave completers no working directory (a `Path` option threw) and asked the shell for files after every command without a positional argument.
 It answers each candidate as the whole word it replaces (`--format=json`, not `json`), and a command or option with its description after a TAB.
+Words and candidates are plain values, so the request stays the same for every shell and each script quotes for its own.
+The PowerShell script is isx's, not aesh's generated one, which sent a quoted word with its quotes and inserted a path with a space as two arguments.
+It sends each word's value and single-quotes a candidate PowerShell would otherwise split, expand or glob.
+PowerShell reads a bare `a,b` as a list and replaces only its last item, so there the script inserts only that item.
+Paths come from `Completers.HostPath` rather than aesh's file completer, whose escaping of a lone candidate (`my\ dir/`) only aesh's readline reads back, and which cannot be undone exactly.
+A candidate holding a control character is dropped, since a newline or TAB would split its line.
 It never offers `git-remote-helper`, `ssh-proxy` or `completion` (`IncusSpawn.NOT_COMPLETED`), which stay runnable.
 bash, zsh and fish keep their hand-written scripts for now; they ask isx only for values, through the `--completion` helpers and `isx list -q`.
 
