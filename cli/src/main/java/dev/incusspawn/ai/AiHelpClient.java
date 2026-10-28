@@ -57,7 +57,7 @@ public class AiHelpClient {
 
     /**
      * Input tokens split by how they were billed, as the provider reported them: the uncached
-     * remainder, those read from the prompt cache (~0.1x), and those written to it (~1.25x).
+     * remainder, those read from the prompt cache (0.05x on Sonnet 5.5), and those written to it (~1.25x).
      * OpenAI caches on its own and reports no writes.
      */
     public record Usage(long inputTokens, long cacheReadTokens, long cacheWriteTokens, long outputTokens) {
@@ -68,8 +68,8 @@ public class AiHelpClient {
         }
     }
 
-    public static final String ANTHROPIC_MODEL = "claude-sonnet-5";
-    public static final String VERTEX_MODEL = "claude-sonnet-5";
+    public static final String ANTHROPIC_MODEL = "claude-sonnet-5-5";
+    public static final String VERTEX_MODEL = "claude-sonnet-5-5";
     public static final String OPENAI_MODEL = "gpt-4o-mini";
     /** Where Anthropic explains the API credits Max and Team plans include, which can pay for this (#1674). */
     public static final String API_CREDITS_URL =
@@ -207,9 +207,9 @@ public class AiHelpClient {
     /**
      * The Messages API {@code system} field as text blocks, each ending in a cache breakpoint.
      * The documentation is the same for every question, so after the first one it is read from
-     * the cache at a tenth of the price. The default 5-minute lifetime fits help traffic: a
-     * cache read renews it, so follow-ups keep it warm, while the 1-hour lifetime doubles the
-     * write cost for questions too sparse to repay it.
+     * the cache at a twentieth of the input price on Sonnet 5.5. The default 5-minute lifetime
+     * fits help traffic: a cache read renews it, so follow-ups keep it warm, while the 1-hour
+     * lifetime doubles the write cost for questions too sparse to repay it.
      */
     static JqArray cachedSystem(List<String> systemBlocks) {
         var system = JqArray.arrayBuilder();
