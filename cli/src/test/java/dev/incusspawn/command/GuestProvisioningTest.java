@@ -435,13 +435,16 @@ class GuestProvisioningTest {
         return captor.getAllValues();
     }
 
-    /** Pull the heredoc body out of the last writeFile call that targeted {@code path}. */
+    /** Pull the first heredoc body out of the last script that names {@code path}. */
     private static String capturedWrite(IncusClient incus, String path) {
         String written = null;
         for (var call : shellCalls(incus)) {
             if (call.contains(path)) {
                 var start = call.indexOf('\n') + 1;
-                var end = call.lastIndexOf("\nINCUS_EOF");
+                var opener = call.substring(0, Math.max(start - 1, 0));
+                var marker = opener.contains("<< '") ? opener.substring(opener.lastIndexOf("<< '") + 4, opener.length() - 1) : "INCUS_EOF";
+                var end = call.indexOf("\n" + marker + "\n", start);
+                if (end < 0 && call.endsWith("\n" + marker)) end = call.length() - marker.length() - 1;
                 if (start > 0 && end > start) {
                     written = call.substring(start, end);
                 }
@@ -450,8 +453,37 @@ class GuestProvisioningTest {
         return written;
     }
 
+    /**
+     * Claude Code's managed policy is Claude's: a template without the claude tool gets no
+     * {@code /etc/claude-code/CLAUDE.md}, and one with it gets a link to the one stored copy.
+     */
     @Test
-    void writeAgentContextWritesManagedPolicyPath() {
+    void managedPolicyOnlyWithClaudeTool() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), any(String[].class))).thenReturn(OK);
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-pi");
+        var pi = new BuildTools.ResolvedTool("pi", new dev.incusspawn.tool.PiSetup(), Map.of());
+
+        GuestProvisioning.writeAgentContext(new Container(incus, "test"), imageDef, Map.of(), List.of(pi), "tpl-pi");
+
+        assertTrue(shellCalls(incus).stream().noneMatch(call -> call.contains("cat > '/etc/claude-code/CLAUDE.md'")
+                        || call.contains("isx_link '/etc/claude-code/CLAUDE.md'")),
+                "a template without claude gets no managed policy");
+        assertTrue(shellCalls(incus).stream().anyMatch(call -> call.contains("isx_link '/AGENTS.md'")));
+
+        var withClaude = mock(IncusClient.class);
+        when(withClaude.shellExec(eq("test"), any(String[].class))).thenReturn(OK);
+        var claude = new BuildTools.ResolvedTool("claude", new dev.incusspawn.tool.ClaudeSetup(), Map.of());
+        GuestProvisioning.writeAgentContext(new Container(withClaude, "test"), imageDef, Map.of(),
+                List.of(claude, pi), "tpl-pi");
+        assertTrue(shellCalls(withClaude).stream().anyMatch(call -> call.contains("isx_link '/etc/claude-code/CLAUDE.md'")
+                && call.contains("isx_link '/AGENTS.md'")), "both are links to the one stored copy");
+    }
+
+    /** With no agent installed the instructions are still stored once, and placed nowhere. */
+    @Test
+    void writeAgentContextStoresInstructionsOnce() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(eq("test"), eq("sh"), eq("-c"), anyString())).thenReturn(OK);
         var container = new Container(incus, "test");
@@ -461,10 +493,13 @@ class GuestProvisioningTest {
 
         GuestProvisioning.writeAgentContext(container, imageDef, Map.of(), List.of(), "tpl-solo");
 
-        var written = capturedWrite(incus, "/etc/claude-code/CLAUDE.md");
-        assertNotNull(written, "should write to the managed policy location");
+        var written = capturedWrite(incus, AgentInstructions.STORE);
+        assertNotNull(written, "should store the instructions");
         assertTrue(written.contains("built from the `tpl-solo` template"));
-        assertNull(capturedWrite(incus, "/home/agentuser/.gemini/GEMINI.md"));
+        var script = shellCalls(incus).getLast();
+        assertFalse(script.contains("isx_link '") || script.contains("isx_copy '"), script);
+        // An older build's managed policy is checked, and goes if isx wrote it (AgentInstructionsTest).
+        assertTrue(script.contains("printf '%s\\n' '/etc/claude-code/CLAUDE.md' '/AGENTS.md'"), script);
     }
 
     @Test
@@ -486,13 +521,13 @@ class GuestProvisioningTest {
                 Map.of("tpl-parent", parent), tools, "tpl-child");
 
         var path = dev.incusspawn.tool.GeminiSetup.MEMORY_PATH;
-        var gemini = capturedWrite(incus, path);
-        assertEquals(capturedWrite(incus, "/etc/claude-code/CLAUDE.md"), gemini);
+        var gemini = capturedWrite(incus, AgentInstructions.STORE);
         assertNotNull(gemini);
         assertTrue(gemini.contains("built from the `tpl-child` template"));
         assertTrue(gemini.contains("parent environment instructions"));
         assertTrue(gemini.contains("child environment instructions"));
-        verify(incus).shellExec("test", "chown", "-R", "agentuser:agentuser", path);
+        // In the user's home: agentuser's own copy, never a link to the root-owned store.
+        assertTrue(shellCalls(incus).getLast().contains("isx_copy '" + path + "'"));
     }
 
     /** Pi alone, no claude tool: it still gets the instructions, in the root AGENTS.md it reads from every directory. */
@@ -509,15 +544,14 @@ class GuestProvisioningTest {
 
         // The root's AGENTS.md, which Pi loads from every working directory, owned by root:
         // the user's own ~/.pi/agent/AGENTS.md is left to them.
-        var pi = capturedWrite(incus, "cat > '/AGENTS.md'");
+        var pi = capturedWrite(incus, AgentInstructions.STORE);
         assertNotNull(pi, "pi should get its own context file");
-        assertEquals(capturedWrite(incus, "/etc/claude-code/CLAUDE.md"), pi);
         assertTrue(pi.contains("built from the `tpl-pi` template"));
         assertTrue(pi.contains("pi environment instructions"));
-        verify(incus, never()).shellExec("test", "chown", "-R", "agentuser:agentuser", "/AGENTS.md");
+        assertTrue(shellCalls(incus).getLast().contains("isx_link '/AGENTS.md'"));
         assertTrue(shellCalls(incus).stream().noneMatch(call -> call.contains("/.pi/")),
                 "the user's own Pi files are not touched");
-        assertNull(capturedWrite(incus, dev.incusspawn.tool.GeminiSetup.MEMORY_PATH));
+        assertFalse(shellCalls(incus).getLast().contains("isx_copy '" + dev.incusspawn.tool.GeminiSetup.MEMORY_PATH));
     }
 
     @Test
@@ -541,7 +575,7 @@ class GuestProvisioningTest {
         GuestProvisioning.writeAgentContext(container, child,
                 Map.of("tpl-parent", parent, "tpl-child", child), tools, "tpl-child");
 
-        var written = capturedWrite(incus, "/etc/claude-code/CLAUDE.md");
+        var written = capturedWrite(incus, AgentInstructions.STORE);
         assertNotNull(written);
         // Root-first: ancestors, then the image, then tools.
         assertTrue(written.indexOf("parent-level note") < written.indexOf("child-level note"));
@@ -572,7 +606,7 @@ class GuestProvisioningTest {
         GuestProvisioning.writeAgentContext(container, child,
                 Map.of("tpl-parent", parent, "tpl-child", child), List.of(), "tpl-child");
 
-        var written = capturedWrite(incus, "/etc/claude-code/CLAUDE.md");
+        var written = capturedWrite(incus, AgentInstructions.STORE);
         assertNotNull(written);
         assertTrue(written.contains("Already cloned, work in these rather than cloning again:"));
         assertTrue(written.contains("- https://github.com/openjdk/jdk.git is checked out at `~/jdk`"));
@@ -601,7 +635,7 @@ class GuestProvisioningTest {
 
         GuestProvisioning.writeAgentContext(container, imageDef, Map.of(), List.of(), "tpl-x");
 
-        var written = capturedWrite(incus, "/etc/claude-code/CLAUDE.md");
+        var written = capturedWrite(incus, AgentInstructions.STORE);
         assertNotNull(written);
         assertTrue(written.contains("`~/quarkus`"), "path should be derived from the url");
         assertFalse(written.contains("null"), "an unclonable entry must not be listed");

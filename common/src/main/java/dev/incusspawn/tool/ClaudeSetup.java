@@ -398,6 +398,9 @@ public class ClaudeSetup implements ToolSetup {
      * {@code /etc/claude-code}.
      */
     public static final String MANAGED_MEMORY_PATH = "/etc/claude-code/CLAUDE.md";
+
+    @Override
+    public String environmentContextPath() { return MANAGED_MEMORY_PATH; }
     static final String USER_SETTINGS_PATH = "/home/agentuser/.claude/settings.json";
     public static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
     private static final String API_KEY_RESPONSES = "customApiKeyResponses";

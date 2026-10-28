@@ -221,9 +221,8 @@ public class PiSetup implements ToolSetup {
     }
 
     /**
-     * A copy of its own, as Gemini CLI gets, not a link to Claude Code's managed policy file:
-     * Pi then depends on neither the claude tool nor where Claude Code keeps its files.
-     * Rendered alike with or without the claude tool, so there is one path to test.
+     * A hardlink to the build's one stored copy, like Claude Code's managed policy: Pi depends
+     * neither on the claude tool nor on where Claude Code keeps its files. Pi never writes it.
      */
     @Override
     public String environmentContextPath() { return CONTEXT_PATH; }

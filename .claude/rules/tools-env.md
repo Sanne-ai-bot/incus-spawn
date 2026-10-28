@@ -33,8 +33,8 @@ paths:
 It disables telemetry, usage statistics, self-updates and notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and inner sandboxing.
 It writes `~/.gemini/policies/isx-auto-approve.toml`, a priority-zero allow-all user policy for default, auto-edit, and YOLO modes.
 The policy also applies to direct and headless launches, excludes plan mode, and permits higher-priority user overrides.
-At the end of either build path, `GuestProvisioning.writeAgentContext()` writes the resolved environment instructions to the build-owned `~/.gemini/GEMINI.md` as `agentuser`.
-It reads that path from `ToolSetup.environmentContextPath`, which `PiSetup` declares too, as `/AGENTS.md`, without needing the `claude` tool.
+At the end of either build path, `GuestProvisioning.writeAgentContext()` copies the resolved environment instructions to the build-owned `~/.gemini/GEMINI.md` as `agentuser`.
+It reads that path from `ToolSetup.environmentContextPath`, which `PiSetup` (`/AGENTS.md`) and `ClaudeSetup` (`/etc/claude-code/CLAUDE.md`) declare too; theirs are hardlinks to one stored copy (`AgentInstructions`).
 The tool leaves `context.fileName` unset.
 It selects `security.auth.selectedType: gemini-api-key` and exports only `GEMINI_API_KEY=gemini-placeholder` at build time.
 Its `proxy.placeholders` declaration fills that variable with the stable `gemini` namespace proof at login; Gemini reads it when launched, without a credential file or wrapper.
@@ -46,7 +46,7 @@ Existing instances need a template rebuild and a new branch; the action keeps `b
 Google OAuth and Vertex remain outside this API-key integration (#1114).
 
 Tools can declare an `agent_note:` (exposed uniformly via `ToolSetup.agentNote()`, overridden in `YamlToolSetup`; Java tools may override it too).
-It is an always-true fact that must be known *before* the first relevant action, rendered by the build into `/etc/claude-code/CLAUDE.md` (see `.claude/rules/build.md`).
+It is an always-true fact that must be known *before* the first relevant action, rendered by the build into the agent instructions (see `.claude/rules/build.md`).
 It travels with the tool, so every template installing it inherits the note.
 Unlike `description` it **is** part of `contentFingerprint()`, so editing one rebuilds -- and mind the blast radius: a tool note marks **every template installing that tool** out of sync, not just one.
 A note costs tokens in every session and the agent follows it in every session, including tasks it wasn't written for, so add one only when leaving it out would cause a wrong action.

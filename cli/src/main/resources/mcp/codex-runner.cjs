@@ -60,7 +60,9 @@ try {
   if (input.bytes > LIMIT) throw new Error('Codex task input exceeds 1 MiB');
   let prompt = input.text;
   if (run === '1') {
-    const primer = read('/etc/claude-code/CLAUDE.md', 65536, true).text
+    // The build's one stored copy (#1788); an image built before it has the managed policy.
+    const primer = read('/etc/isx/agent-instructions.md', 65536, true).text
+      || read('/etc/claude-code/CLAUDE.md', 65536, true).text
       || 'You are in a disposable isx instance. Passwordless sudo is available. Credentials are injected by the host proxy; do not search for API keys.';
     prompt = primer + '\n\n' + read(path.join(dir, 'brief.md'), 16384).text + '\n\n' + prompt;
   }

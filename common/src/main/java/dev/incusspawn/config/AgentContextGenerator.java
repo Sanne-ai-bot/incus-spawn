@@ -4,11 +4,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Generates the managed-policy CLAUDE.md written to {@code /etc/claude-code/CLAUDE.md}
- * at the end of every template build, and to the global context file of each installed agent that
- * reads its own ({@code ~/.gemini/GEMINI.md} for Gemini CLI, {@code /AGENTS.md} for Pi).
+ * Generates the agent instructions every template build stores once, in
+ * {@code /etc/isx/agent-instructions.md}, and puts where each installed agent reads them:
+ * {@code /etc/claude-code/CLAUDE.md} with Claude Code, {@code /AGENTS.md} with Pi (both hardlinks),
+ * {@code ~/.gemini/GEMINI.md} with Gemini CLI (a copy).
  *
- * <p>Claude Code loads that path as its <em>managed policy</em> memory layer: it is read
+ * <p>Claude Code loads its path as its <em>managed policy</em> memory layer: it is read
  * before the user layer ({@code ~/.claude/CLAUDE.md}) and the project layer
  * ({@code ./CLAUDE.md}), all layers are concatenated rather than overriding each other,
  * and it cannot be suppressed via {@code claudeMdExcludes}. Writing there means isx never
@@ -31,6 +32,12 @@ import java.util.List;
 public final class AgentContextGenerator {
 
     /**
+     * The first line of every generated file, which is how a build recognises a file isx wrote
+     * when cleaning up a location no tool declares any more.
+     */
+    public static final String HEADING = "# incus-spawn environment";
+
+    /**
      * The fixed part of the file, the same in every image. Each bullet earns its place
      * by preventing a specific wrong action, so nothing here is decorative.
      *
@@ -38,7 +45,7 @@ public final class AgentContextGenerator {
      * {@code /etc/sudoers.d/agentuser} NOPASSWD rule during {@code buildFromScratch}.
      * The autonomy bullet deliberately does not name {@code bypassPermissions}: that
      * mode comes from {@code ClaudeSetup}'s managed settings and only when the
-     * {@code claude} tool is installed, whereas this file is written for every image.
+     * {@code claude} tool is installed, whereas these instructions reach every installed agent.
      */
     private static final String PREAMBLE = """
             # incus-spawn environment

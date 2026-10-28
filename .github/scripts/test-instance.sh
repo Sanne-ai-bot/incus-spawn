@@ -139,15 +139,24 @@ assert "ISX_CONTAINER is set (matches hostname)" \
 echo ""
 
 # --- 6b. Agent context file ---
-# The build writes Claude Code's managed-policy memory layer. It must exist, and
-# it must NOT have created or clobbered the user layer, which stays user-owned.
+# The build stores the generated instructions once; each installed agent's location
+# is a hardlink to that file (#1788). EXPECT_AGENT_LINKS names the locations this
+# template's agents declare (none by default): each must be a link, the others absent.
+# The user layer must NOT be created or clobbered.
 echo "[6b] Agent Context File"
-assert "managed CLAUDE.md exists" \
-    test -f /etc/claude-code/CLAUDE.md
-assert "managed CLAUDE.md carries the generated preamble" \
-    grep -q '^# incus-spawn environment' /etc/claude-code/CLAUDE.md
-assert "managed CLAUDE.md names the template" \
-    grep -q 'built from the .* template' /etc/claude-code/CLAUDE.md
+STORE=/etc/isx/agent-instructions.md
+assert "agent instructions are stored" \
+    test -f "$STORE"
+assert "stored instructions carry the generated preamble" \
+    grep -q '^# incus-spawn environment' "$STORE"
+assert "stored instructions name the template" \
+    grep -q 'built from the .* template' "$STORE"
+for location in /etc/claude-code/CLAUDE.md /AGENTS.md; do
+    case " ${EXPECT_AGENT_LINKS:-} " in
+        *" $location "*) assert "$location is a link to the stored copy" test "$location" -ef "$STORE" ;;
+        *) assert "no agent declares $location, so it is absent" bash -c "! test -e $location" ;;
+    esac
+done
 assert "user-layer CLAUDE.md was not created by the build" \
     bash -c '! test -e /home/agentuser/.claude/CLAUDE.md'
 echo ""

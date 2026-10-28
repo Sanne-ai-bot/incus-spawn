@@ -21,17 +21,18 @@ public interface ToolSetup {
 
     /**
      * Always-true fact about this tool that an agent must know <em>before</em> acting,
-     * rendered into {@code /etc/claude-code/CLAUDE.md} by the build. Null for most tools.
+     * rendered into the build's agent instructions. Null for most tools.
      * Reserve it for things that cause a wrong action if unknown; procedural how-to
      * content belongs in a skill, which loads on demand instead of every session.
      */
     default String agentNote() { return null; }
 
     /**
-     * Where this tool's agent reads its own global context file, which the build fills with the
-     * content of {@code /etc/claude-code/CLAUDE.md}: owned by agentuser in their home, by root
-     * elsewhere. Prefer a path outside the home, so the user's own file stays theirs. Null for a
-     * tool that is not an agent, or one that reads Claude Code's file itself.
+     * Where this tool's agent reads the build's generated instructions: outside agentuser's
+     * home, a hardlink to the one stored copy, root-owned; inside it, agentuser's own copy.
+     * Prefer a path outside the home, so the user's own file stays theirs, and one the tool
+     * never writes, since a write would reach every agent's link. Null for a tool that is not
+     * an agent.
      */
     default String environmentContextPath() { return null; }
 

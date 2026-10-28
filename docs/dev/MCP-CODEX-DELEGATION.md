@@ -129,7 +129,8 @@ Codex and its command children must inherit the marker so cancellation still rea
 The first Codex input includes the shared delegation brief and the existing isx environment primer before the coordinator's instruction.
 Deliver those as task input rather than overwriting user or project `AGENTS.md` files or Codex's configured developer instructions.
 Keep the brief in the conversation; subsequent runs send the follow-up message.
-The primer can be read from the existing build-generated file with bounded regular-file reads, with the fixed isx preamble as the fallback for older images.
+The primer is read from the build's stored copy, `/etc/isx/agent-instructions.md`, with bounded regular-file reads.
+An image built before it falls back to `/etc/claude-code/CLAUDE.md`, then to the fixed isx preamble.
 This avoids requiring Claude to be installed merely to explain the environment.
 
 Preserve Claude's `/<skill> <args>` translation.
