@@ -8,7 +8,6 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.incus.Container;
 import dev.incusspawn.lifecycle.BuildAccounts;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.InstanceSecret;
@@ -43,7 +42,11 @@ public class UpdateAllCommand extends BaseCommand {
     @Override
     protected CommandResult doExecute() throws Exception {
         if (!InitCommand.requireInit()) return CommandResult.valueOf(1);
-        var incus = RuntimeServices.incus();
+        return CommandResult.valueOf(updateAll(RuntimeServices.incus()));
+    }
+
+    /** Refreshes the host repos the templates use, updates every template and returns the command's exit code. */
+    int updateAll(IncusClient incus) {
         var instances = incus.list();
         var templates = new ArrayList<String>();
 
@@ -59,8 +62,8 @@ public class UpdateAllCommand extends BaseCommand {
         }
 
         if (templates.isEmpty()) {
-            System.out.println("No templates found. Run 'isx build' first.");
-            return CommandResult.valueOf(1);
+            BuildOutput.error("No templates found. Run 'isx build' first.");
+            return 1;
         }
 
         var defs = ImageDef.loadAll();
@@ -73,7 +76,7 @@ public class UpdateAllCommand extends BaseCommand {
 
         refreshHostRepos(resolved, defs);
 
-        return CommandResult.valueOf(updateTemplates(incus, resolved));
+        return updateTemplates(incus, resolved);
     }
 
     /** Updates each template in {@code resolved} and returns the command's exit code. */
@@ -116,7 +119,7 @@ public class UpdateAllCommand extends BaseCommand {
         }
         if (repos.isEmpty()) return;
 
-        HostRepoRefresh.refresh(repos, HostRepoRefresh.hostDepths(defs), config, System.out::println);
+        HostRepoRefresh.refresh(repos, HostRepoRefresh.hostDepths(defs), config);
     }
 
     private record PrimeResult(boolean skipped, boolean failed) {

@@ -224,6 +224,17 @@ class UpdateAllCommandTest {
         verify(incus, never()).execInContainer(eq(NAME), eq("agentuser"), anyString());
     }
 
+    /** With no template to update, why the command failed is an error, never a raw print the TUI would lose (#1703). */
+    @Test
+    void noTemplatesIsAnError() {
+        var incus = new FakeIncusDaemon().client();
+
+        var said = RecordingOutput.during(() -> assertEquals(1, new UpdateAllCommand().updateAll(incus)));
+
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
+                "No templates found. Run 'isx build' first.")), said.events());
+    }
+
     /** A revocation Incus refuses fails the update, saying so, and the template is still stopped. */
     @Test
     void aRevocationThatFailsFailsTheUpdate() {
