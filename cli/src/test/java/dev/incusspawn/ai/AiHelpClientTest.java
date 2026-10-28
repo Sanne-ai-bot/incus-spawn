@@ -1,5 +1,6 @@
 package dev.incusspawn.ai;
 
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 
@@ -137,6 +138,22 @@ class AiHelpClientTest {
             assertTrue(system.get(i).path("cache_control").path("ttl").isMissingNode());
         }
         assertEquals("docs", system.get(0).path("text").asText());
+    }
+
+    /** Sonnet 5.5 answers at effort low, on the Claude API and Vertex alike (#1675). */
+    @Test
+    void claudeIsAskedAtEffortLow() {
+        var anthropic = AiHelpClient.messagesBody("model", AiHelpClient.ANTHROPIC_MODEL, "q", List.of("docs"));
+        var vertex = AiHelpClient.messagesBody("anthropic_version", AiHelpClient.VERTEX_VERSION, "q", List.of("docs"));
+        assertEquals("claude-sonnet-5-5", anthropic.pathText("model", null));
+        assertEquals("vertex-2023-10-16", vertex.pathText("anthropic_version", null));
+        for (var body : List.of(anthropic, vertex)) {
+            assertEquals("low", body.getField("output_config").pathText("effort", null));
+            assertEquals(4096L, Jjq.longOr(body.getField("max_tokens"), 0));
+            assertEquals("true", body.getField("stream").toJsonString());
+            assertEquals("docs", body.getField("system").getElement(0).pathText("text", null));
+            assertEquals("q", body.getField("messages").getElement(0).pathText("content", null));
+        }
     }
 
     @Test

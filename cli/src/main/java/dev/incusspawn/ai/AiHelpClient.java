@@ -87,6 +87,10 @@ public class AiHelpClient {
     public static final String ANTHROPIC_MODEL = "claude-sonnet-5-5";
     public static final String VERTEX_MODEL = "claude-sonnet-5-5";
     public static final String OPENAI_MODEL = "gpt-4o-mini";
+    /** How hard Claude thinks before answering, on the Claude API and Vertex alike (see {@link #messagesBody}). */
+    static final String EFFORT = "low";
+    /** The Messages API version a Vertex request names in its body. */
+    static final String VERTEX_VERSION = "vertex-2023-10-16";
     /** Why an answer is empty or stops short: the model declined to give it. */
     static final String REFUSAL_NOTE = "The model declined to answer this question.";
     /** Why an answer stops short: {@code max_tokens} or the context window cut it off. */
@@ -243,6 +247,24 @@ public class AiHelpClient {
         return system.build();
     }
 
+    /**
+     * A Messages API request for one question, on the Claude API ({@code model}) or Vertex
+     * ({@code anthropic_version}, the model being in the URL), at {@link #EFFORT}: at its default
+     * Sonnet 5.5 thinks before every answer (DESIGN.md "AI help credentials" has the measurement).
+     */
+    static JqObject messagesBody(String versionKey, String version, String question, List<String> systemBlocks) {
+        return JqObject.builder(6)
+                .put(versionKey, version)
+                .put("max_tokens", 4096L)
+                .put("stream", true)
+                .put("output_config", JqObject.builder(1).put("effort", EFFORT).build())
+                .put("system", cachedSystem(systemBlocks))
+                .put("messages", JqArray.arrayBuilder()
+                        .add(JqObject.builder(2).put("role", "user").put("content", question).build())
+                        .build())
+                .build();
+    }
+
     private static SpawnConfig.ClaudeAccount claudeAccount(SpawnConfig config, Target target) throws IOException {
         var account = config.getClaude().effectiveAccounts().get(target.accountName());
         if (account == null || !account.servesDirectApi()) {
@@ -255,15 +277,7 @@ public class AiHelpClient {
     private static StreamEnd streamAnthropic(String question, List<String> systemBlocks, String model,
                                          SpawnConfig.ClaudeAccount account,
                                          Consumer<String> onChunk) throws IOException {
-        var body = JqObject.builder(5)
-                .put("model", model)
-                .put("max_tokens", 4096L)
-                .put("stream", true)
-                .put("system", cachedSystem(systemBlocks))
-                .put("messages", JqArray.arrayBuilder()
-                        .add(JqObject.builder(2).put("role", "user").put("content", question).build())
-                        .build())
-                .build();
+        var body = messagesBody("model", model, question, systemBlocks);
 
         var builder = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.anthropic.com/v1/messages"))
@@ -282,15 +296,7 @@ public class AiHelpClient {
                                       Consumer<String> onChunk) throws IOException {
         var gcpToken = getGcloudAccessToken();
 
-        var body = JqObject.builder(5)
-                .put("anthropic_version", "vertex-2023-10-16")
-                .put("max_tokens", 4096L)
-                .put("stream", true)
-                .put("system", cachedSystem(systemBlocks))
-                .put("messages", JqArray.arrayBuilder()
-                        .add(JqObject.builder(2).put("role", "user").put("content", question).build())
-                        .build())
-                .build();
+        var body = messagesBody("anthropic_version", VERTEX_VERSION, question, systemBlocks);
 
         var region = account.getCloudMlRegion();
         var project = account.getVertexProjectId();
