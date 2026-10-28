@@ -26,7 +26,9 @@ class HostRepoRefreshCloneOutputTest {
         config.setHostPaths(List.of(tmp.toString()));
         config.setAutoCloneRepos("always");
         var repo = new ImageDef.RepoEntry();
-        // A reserved name that never resolves: it fails before any server, proxy or credential is asked
+        // A reserved name that never resolves, so no server or credential is asked. The clone is the
+        // host's own Git, which reads the host's Git config (a configured http.proxy would be asked),
+        // and HostRepoRefresh has no seam to isolate it as HermeticGit does a test's own process.
         repo.setUrl("https://isx-hermetic.invalid/none.git");
 
         var recorded = RecordingOutput.during(() ->

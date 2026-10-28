@@ -1001,7 +1001,8 @@ Only the two gates, `TerminalProgress` and the shell status bar are exempt as wh
 The rule against printing from code the TUI can reach was prose for five rounds of fixes, and nothing failed when the next site was added.
 Over 1,300 such uses predate the gate, so it ratchets: `raw-output-baseline.txt` counts them per file, a file may not exceed its count, and a count it no longer reaches fails until it is lowered.
 A static import of a stream is refused outright, since it would hide every bare `out.println` after it, and an exemption whose file no longer writes fails as well.
-Code that must reach the terminal itself, to hand it to an interactive guest command or draw on it whole, takes the streams from the gate `TerminalStreams` rather than being exempted file by file, so a stray print beside it is still caught; only the files the gate test names may call it.
+Code that must reach the terminal itself, to hand it to an interactive guest command or draw on it whole, takes the streams from the gate `TerminalStreams` rather than being exempted file by file, so a stray print beside it is still caught; only the files the gate test names may call it, a method reference included, and a named file that no longer calls it fails.
+Its `terminal()` holds the one copy of the JDK 22 to 24 check that stdin and stdout are a terminal, which `Prompts.terminal()` reuses.
 The counts are totals, so a new print in a baselined file still needs a reviewer's eye when an old one goes in the same change.
 It is a source scan rather than forbiddenapis, which reads Java 25 class files as of 3.9 but keeps no per-file counts and cannot see an indentation literal.
 A styled string is never a `static final`: it would be decided when the native image is built.

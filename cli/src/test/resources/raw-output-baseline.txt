@@ -3,7 +3,6 @@
 # or deleted, so this list only shrinks. Never add a line or raise a count: route the output instead.
 # A file that is moved or renamed takes its line along, with the same counts or lower.
 41 1 cli/src/main/java/dev/incusspawn/command/BuildCommand.java
-1 0 cli/src/main/java/dev/incusspawn/command/BuildInterrupt.java
 6 0 cli/src/main/java/dev/incusspawn/command/BuildProgress.java
 5 0 cli/src/main/java/dev/incusspawn/command/BuildTools.java
 2 0 cli/src/main/java/dev/incusspawn/command/GitRemoteHelperCommand.java

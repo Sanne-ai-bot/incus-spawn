@@ -1,7 +1,6 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.util.BuildOutput;
-import dev.incusspawn.util.Headless;
 import sun.misc.Signal;
 import sun.misc.SignalHandler;
 
@@ -48,9 +47,7 @@ final class BuildInterrupt implements SignalHandler {
 
     /** Whether a person at a terminal is running isx, whose Ctrl+C may be a copy. */
     static boolean atTerminal() {
-        // Since JDK 22 System.console() can be non-null with stdin redirected; isTerminal() says which.
-        var console = System.console();
-        return !Headless.active() && console != null && console.isTerminal();
+        return Prompts.terminal() != null;
     }
 
     /**

@@ -111,7 +111,7 @@ class RawOutputGateTest {
                 .append(allowed).append(" allowed, at lines ").append(lines).append('\n');
     }
 
-    private static final Pattern TERMINAL_STREAMS = Pattern.compile("\\bTerminalStreams\\s*\\.");
+    private static final Pattern TERMINAL_STREAMS = Pattern.compile("\\bTerminalStreams\\s*(?:\\.|::)");
 
     /**
      * Who may take the terminal's own streams from {@code TerminalStreams}, each with why: the gate
@@ -121,7 +121,8 @@ class RawOutputGateTest {
             "common/src/main/java/dev/incusspawn/incus/IncusClient.java", "hands the terminal to an interactive guest command",
             "common/src/main/java/dev/incusspawn/incus/IncusApi.java", "writes an interactive shell's raw bytes",
             "common/src/main/java/dev/incusspawn/util/TerminalProgress.java", "the live renderer, which draws on the terminal whole",
-            "common/src/main/java/dev/incusspawn/git/HostRepoRefresh.java", "asks on the console, where Prompts cannot reach");
+            "common/src/main/java/dev/incusspawn/git/HostRepoRefresh.java", "asks on the console, where Prompts cannot reach",
+            "cli/src/main/java/dev/incusspawn/command/Prompts.java", "its terminal() asks only when stdin and stdout are a terminal");
 
     @Test
     void onlyTheNamedPassthroughsTakeTheTerminalsStreams() throws IOException {
@@ -137,16 +138,45 @@ class RawOutputGateTest {
     }
 
     @Test
+    void everyTerminalStreamsCallerStillCallsIt() throws IOException {
+        assertEquals("", unneeded(MAY_USE_TERMINAL_STREAMS, TERMINAL_STREAMS),
+                "drop these from MAY_USE_TERMINAL_STREAMS: they no longer call TerminalStreams");
+    }
+
+    @Test
+    void findsTerminalStreamsCallsAndMethodReferences() {
+        var source = """
+                class A {
+                    // TerminalStreams.out().println("comment");
+                    String s = "TerminalStreams.err()";
+                    var o = TerminalStreams.out();
+                    Supplier<PrintStream> e = TerminalStreams::err;
+                    Supplier<PrintStream> f = dev.incusspawn.util.TerminalStreams :: out;
+                    var c = TerminalStreams . terminal();
+                }
+                import static dev.incusspawn.util.TerminalStreams.out;
+                import dev.incusspawn.util.TerminalStreams;
+                """;
+        assertEquals(List.of(4, 5, 6, 7, 9), lines(TERMINAL_STREAMS, blank(source)));
+    }
+
+    @Test
     void everyExemptionIsStillNeeded() throws IOException {
+        assertEquals("", unneeded(EXEMPT, RAW_STREAM),
+                "drop these from EXEMPT: they write no raw output, and the gate should say so");
+    }
+
+    /** The paths in {@code listed} that are gone or no longer match {@code pattern}, one per line. */
+    private static String unneeded(Map<String, String> listed, Pattern pattern) throws IOException {
         var repo = repo();
         var unneeded = new StringBuilder();
-        for (var path : new TreeMap<>(EXEMPT).keySet()) {
+        for (var path : new TreeMap<>(listed).keySet()) {
             var file = repo.resolve(path);
-            if (!Files.exists(file) || lines(RAW_STREAM, blank(Files.readString(file))).isEmpty()) {
+            if (!Files.exists(file) || lines(pattern, blank(Files.readString(file))).isEmpty()) {
                 unneeded.append(path).append('\n');
             }
         }
-        assertEquals("", unneeded.toString(), "drop these from EXEMPT: they write no raw output, and the gate should say so");
+        return unneeded.toString();
     }
 
     private static Path repo() {

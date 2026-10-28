@@ -7,7 +7,8 @@ import java.io.PrintStream;
  * The process's own streams and console, for the code that hands the terminal over or draws on
  * it whole (#1703): an interactive guest command's inherited output ({@code IncusClient}), an
  * interactive shell's raw bytes ({@code IncusApi}), the live renderer ({@code TerminalProgress}),
- * and a question asked where {@code Prompts} cannot reach ({@code HostRepoRefresh}). A gate of
+ * and a question asked where {@code Prompts} cannot reach ({@code HostRepoRefresh}); and the one
+ * check of whether a person is at a terminal ({@code Prompts}). A gate of
  * {@code RawOutputGateTest}, which also lets only those files call it: anything else reports
  * through {@link BuildOutput} or a caller's {@link Output}.
  */
