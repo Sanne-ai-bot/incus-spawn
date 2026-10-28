@@ -38,6 +38,10 @@ class SshProxyCommandTest {
     }
 
     private List<String> runGuestCommand(int readyAfter, String systemState, String stdin) throws Exception {
+        return runGuestCommand(readyAfter, systemState, stdin, true);
+    }
+
+    private List<String> runGuestCommand(int readyAfter, String systemState, String stdin, boolean withSystemctl) throws Exception {
         var bin = Files.createDirectories(dir.resolve("bin"));
         stub(bin, "grep", """
                 n=$(($(cat "$STATE/probes" 2>/dev/null || echo 0) + 1)); echo $n > "$STATE/probes"
@@ -45,7 +49,7 @@ class SshProxyCommandTest {
                 [ $n -ge %d ] && touch "$STATE/ready"
                 [ -e "$STATE/ready" ]
                 """.formatted(readyAfter));
-        stub(bin, "systemctl", "echo " + systemState);
+        if (withSystemctl) stub(bin, "systemctl", "echo " + systemState);
         stub(bin, "date", """
                 t=$(($(cat "$STATE/clock" 2>/dev/null || echo 0) + 1)); echo $t > "$STATE/clock"
                 echo $t
@@ -108,7 +112,7 @@ class SshProxyCommandTest {
     @Test
     void doesNotWaitOnceTheGuestHasBooted() throws Exception {
         // sshd stopped or failed after boot will not come: refused at once, as before the wait.
-        for (var state : List.of("running", "degraded", "")) {
+        for (var state : List.of("running", "degraded")) {
             Files.deleteIfExists(dir.resolve("log"));
             Files.deleteIfExists(dir.resolve("probes"));
             var log = runGuestCommand(Integer.MAX_VALUE, state, "");
@@ -116,6 +120,28 @@ class SshProxyCommandTest {
             assertEquals(List.of("grep -qs " + SshProxyCommand.SSHD_LISTENING
                     + " /proc/net/tcp6 /proc/net/tcp", "nc refused"), log, state);
         }
+    }
+
+    /**
+     * Right after a start {@code systemctl} cannot reach the system bus yet and prints nothing: the
+     * guest is still starting, so the connection waits for sshd rather than being refused. Seen with
+     * {@code isx ssh-proxy --start}, whose connection meets every instance it starts at that moment.
+     */
+    @Test
+    void waitsWhileSystemctlCannotReachTheBusYet() throws Exception {
+        var log = runGuestCommand(3, "", "SSH-2.0-OpenSSH_9.9");
+
+        assertFalse(log.contains("nc refused"), log::toString);
+        assertEquals("nc localhost 22 got SSH-2.0-OpenSSH_9.9", log.getLast(), log::toString);
+    }
+
+    /** A guest without systemctl has nothing to wait for: refused at once, as before the wait. */
+    @Test
+    void doesNotWaitForAGuestWithoutSystemctl() throws Exception {
+        var log = runGuestCommand(Integer.MAX_VALUE, "", "", false);
+
+        assertEquals(List.of("grep -qs " + SshProxyCommand.SSHD_LISTENING
+                + " /proc/net/tcp6 /proc/net/tcp", "nc refused"), log);
     }
 
     @Test
