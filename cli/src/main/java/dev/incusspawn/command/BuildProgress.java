@@ -73,7 +73,7 @@ final class BuildProgress {
         TerminalProgress.run(1, 1,
                 idx -> runSpinnerWork(work, state),
                 (idx, frame) -> formatLiveStepLine(label, state.get(0), detail, frame),
-                PLAIN_BY_KIND, line -> {});
+                idx -> {});
         // A DONE note is the whole completion line, the label having been said up front
         reportPlain(state.get(0), null);
         finishSpinner(label, label + " failed", failureMessage, state);
@@ -247,7 +247,7 @@ final class BuildProgress {
                 idx -> dnfWork(container, args, state),
                 (idx, frame) -> formatDnfLine(label, state.get(0), frame,
                         (System.nanoTime() - started) / 1_000_000),
-                PLAIN_BY_KIND, line -> {});
+                idx -> {});
         reportPlain(state.get(0), label + "... done.");
         finishSpinner(label, label + " failed", failureMessage, state);
     }
@@ -334,13 +334,6 @@ final class BuildProgress {
     }
 
     /**
-     * A one-task step's plain renderer: none, since off an ANSI terminal its outcome is reported
-     * once the task ends, by kind ({@link #reportPlain}, {@link #finishSpinner}), not as a
-     * pre-rendered line.
-     */
-    private static final java.util.function.IntFunction<String> PLAIN_BY_KIND = idx -> null;
-
-    /**
      * Off an ANSI terminal, a one-task step that is done: {@code done} as a step, with its note, or
      * the note alone when {@code done} is null. A failed one is {@link #finishSpinner}'s to report.
      */
@@ -370,7 +363,7 @@ final class BuildProgress {
         TerminalProgress.run(1, 1,
                 idx -> runSpinnerWork(work, state),
                 (idx, frame) -> formatStepLine(label, null, state.get(0), frame, "Done"),
-                PLAIN_BY_KIND, line -> {});
+                idx -> {});
         reportPlain(state.get(0), "Done " + label);
         finishSpinner(label, activity + " failed for " + label, failureMessage, state);
     }

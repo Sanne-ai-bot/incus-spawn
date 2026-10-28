@@ -7,21 +7,18 @@ import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
-import java.util.function.Consumer;
 import java.util.function.IntConsumer;
-import java.util.function.IntFunction;
 import java.util.function.UnaryOperator;
 
 /**
  * Runs a batch of independent tasks concurrently while rendering per-task
  * progress. On an ANSI terminal each task gets a line with an animated braille
  * spinner that turns into a green ✓ or red ✗ as it completes, making the
- * parallelism visible; otherwise it falls back to plain log lines (one per task,
- * emitted as each finishes).
+ * parallelism visible; otherwise the caller reports each task as it finishes.
  *
  * <p>The caller owns the task state (typically an {@code AtomicReferenceArray}):
  * {@code task} performs the work for index {@code i} and mutates that state,
- * while {@code animatedLine}/{@code plainLine} render it. Concurrency is bounded
+ * while {@code animatedLine} renders it and {@code plainDone} reports it. Concurrency is bounded
  * to {@code maxConcurrency}.
  */
 public final class TerminalProgress {
@@ -81,29 +78,9 @@ public final class TerminalProgress {
     }
 
     /**
-     * Run {@code taskCount} tasks, at most {@code maxConcurrency} at a time.
-     *
-     * @param task         performs work for a task index and updates shared state
-     * @param animatedLine renders task {@code i} at spinner {@code frame} (ANSI mode)
-     * @param plainLine    renders the final line for task {@code i}, or {@code null} to
-     *                     emit nothing (non-ANSI mode)
-     * @param plainSink    where plain-mode lines are written (e.g. a step's output)
-     */
-    public static void run(int taskCount, int maxConcurrency,
-                           IntConsumer task,
-                           BiFunction<Integer, Integer, String> animatedLine,
-                           IntFunction<String> plainLine,
-                           Consumer<String> plainSink) {
-        if (taskCount == 0) return;
-        if (isAnsiTerminal()) {
-            animate(taskCount, maxConcurrency, task, animatedLine);
-        } else {
-            plain(taskCount, maxConcurrency, task, plainLine, plainSink);
-        }
-    }
-
-    /**
-     * {@link #run} whose plain mode reports each task as it ends, one at a time, through
+     * Run {@code taskCount} tasks, at most {@code maxConcurrency} at a time: animated on an ANSI
+     * terminal, each line rendered by {@code animatedLine} for task {@code i} at spinner
+     * {@code frame}. Off one, each task is reported as it ends, one at a time, through
      * {@code plainDone}, given the task's index: so a caller says how it ended by kind from its
      * state, rather than as a pre-rendered line.
      */
@@ -181,20 +158,6 @@ public final class TerminalProgress {
         }
         out.print(sb);
         out.flush();
-    }
-
-    private static void plain(int taskCount, int maxConcurrency, IntConsumer task,
-                              IntFunction<String> line, Consumer<String> sink) {
-        var printLock = new Object();
-        awaitAll(taskCount, maxConcurrency, i -> {
-            task.accept(i);
-            if (line != null) {
-                var text = line.apply(i);
-                if (text != null) {
-                    synchronized (printLock) { sink.accept(text); }
-                }
-            }
-        });
     }
 
     private static void awaitAll(int taskCount, int maxConcurrency, IntConsumer task) {

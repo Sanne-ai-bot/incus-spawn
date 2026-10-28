@@ -3,7 +3,6 @@ package dev.incusspawn.util;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,17 +30,16 @@ class TerminalProgressTest {
     @Test
     void runExecutesEveryTask() {
         var ran = Collections.synchronizedSet(new java.util.HashSet<Integer>());
-        TerminalProgress.run(5, 2, ran::add, (i, f) -> "", i -> null, s -> {});
+        TerminalProgress.run(5, 2, ran::add, (i, f) -> "", i -> {});
         assertEquals(java.util.Set.of(0, 1, 2, 3, 4), ran);
     }
 
     @Test
-    void runEmitsPlainLinesToSink() {
-        var lines = new CopyOnWriteArrayList<String>();
-        TerminalProgress.run(3, 3, i -> {}, (i, f) -> "", i -> "done " + i, lines::add);
-        assertEquals(3, lines.size());
-        assertTrue(lines.contains("done 0"));
-        assertTrue(lines.contains("done 2"));
+    void runReportsEachTaskOnceItEnds() {
+        var done = new CopyOnWriteArrayList<Integer>();
+        TerminalProgress.run(3, 3, i -> {}, (i, f) -> "", done::add);
+        assertEquals(java.util.Set.of(0, 1, 2), java.util.Set.copyOf(done));
+        assertEquals(3, done.size());
     }
 
     @Test
@@ -54,26 +52,18 @@ class TerminalProgressTest {
             peak.accumulateAndGet(now, Math::max);
             try { Thread.sleep(5); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             inFlight.decrementAndGet();
-        }, (i, f) -> "", i -> null, s -> {});
+        }, (i, f) -> "", i -> {});
         assertTrue(peak.get() <= maxConcurrency,
                 "concurrency peaked at " + peak.get() + ", expected <= " + maxConcurrency);
     }
 
     @Test
     void runWithZeroTasksDoesNothing() {
-        var lines = new CopyOnWriteArrayList<String>();
+        var done = new CopyOnWriteArrayList<Integer>();
         assertDoesNotThrow(() -> TerminalProgress.run(0, 4, i -> {
             throw new IllegalStateException("should not run");
-        }, (i, f) -> "", i -> "x", lines::add));
-        assertTrue(lines.isEmpty());
-    }
-
-    @Test
-    void runSuppressesNullPlainLines() {
-        var lines = new CopyOnWriteArrayList<String>();
-        TerminalProgress.run(3, 3, i -> {}, (i, f) -> "",
-                i -> i == 1 ? "only one" : null, lines::add);
-        assertEquals(List.of("only one"), lines);
+        }, (i, f) -> "", done::add));
+        assertTrue(done.isEmpty());
     }
 
     @Test
