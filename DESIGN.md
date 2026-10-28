@@ -4373,6 +4373,16 @@ A test that leans on GNU tools or Linux kernel behaviour fails on a Mac, and wit
 A test that genuinely needs Linux skips with `assumeTrue(Platform.isLinux())` and a reason.
 Intel Macs are not covered: arm64 is what Mac users run, and macOS runners are scarce and, where billed, cost several times Linux ones (#974).
 
+**The Git tests are paced by process starts on macOS.**
+`GitPreparationTest` ran some 4,500 Git processes, which came to about 27 ms each on a macOS runner, 83 ms on a slow one and 8 ms on Linux.
+On the slow runner it took 373 s instead of 122 s, and `unit-tests-macos` overran its 20-minute timeout with every test passed (#1839).
+So `GitTestUtils.releasesFixture` builds its repository once per JVM and copies it, which saves fifteen Git processes per test.
+`GitPreparationTest` also runs its tests concurrently (`@Execution(CONCURRENT)`): each owns its directories, cache root and Git server, and the process-wide lease and lock maps it reaches are keyed by path.
+`common`'s surefire configuration enables JUnit's parallel execution for that, with every other class still running one test at a time.
+`GitTestServer` holds its listening socket and serves each connection with `git daemon --inetd`, since a port released for a daemon to bind could be taken by a concurrent test first.
+Four run at a time, and on three CPUs the class takes 10 s instead of 36 s, so the timeout stays at 20 minutes.
+A class added to the concurrent set must share no state between its tests: no bound `Output`, system property or fixed port.
+
 **An artifact upload that other jobs need is retried once.**
 A hosted runner now and then times out reaching GitHub's artifact service (`CreateArtifact: ETIMEDOUT`), failing a job whose build had passed, and every job downloading its artifact with it (#1672).
 `actions/upload-artifact` has no retry input, and its client does not retry a network error such as `ETIMEDOUT`.

@@ -23,6 +23,7 @@ Key jobs:
 
 - **`unit-tests`**: `mvn package` (no Incus required), with zsh installed so `ZshCompletionTest` runs rather than skips
 - **`unit-tests-macos`**: `mvn test` on `macos-15` (a standard arm64 runner), so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970). arm64 only, by decision (#974); the reasoning is in DESIGN.md "Testing".
+  Its Git tests are paced by process starts there: `GitPreparationTest` runs its tests concurrently and `releasesFixture` is built once per JVM, which keep the job inside its 20-minute timeout (#1839).
   It sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`, which enables `KeychainTrustMacTest`: it adds CAs to the runner's System keychain, which only a discarded runner may do (#1467).
   Test failures are counted from the surefire reports after the run, so a failure in `common` does not skip `cli` and `proxy` (`-fae` would: they depend on it), and the reports are uploaded when it fails, since few contributors have a Mac to reproduce on
 - **Test JVM flags**: the root pom's `argLine` property keeps `com.sun.crypto.provider.AESCrypt::makeSessionKey` out of the JIT, a GraalVM 25 JIT bug that made the proxy tests flake with `bad_record_mac` (#940, upstream: [oracle/graal#14599](https://github.com/oracle/graal/issues/14599), DESIGN.md "Testing").
