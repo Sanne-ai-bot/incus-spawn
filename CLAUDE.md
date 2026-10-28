@@ -168,6 +168,7 @@ A per-start secret (`InstanceSecret`, #934) adds a second check for host-side se
 On macOS, behind the same gate as a proof, a non-host caller at an unknown address is the running instance whose secret it presents (#1583).
 Its consumers are `isx mcp` for a coordinator in an instance and the host routes of `config.yaml` (`host-routes:`, #936), which forward a name to a loopback controller with the caller's identity stamped by the proxy and a per-route secret the controller checks, which no guest ever holds (`HostRouteSecret`, DESIGN.md "Host routes").
 Only its hash is recorded on the host, and every isx start rotates it, for one PATCH on a stopped start and none on a branch (`InstanceLifecycle.startForUse`).
+Rotating and delivering it are serialized per instance across isx processes by a `HostLock` (`InstanceLifecycle.secretLock`, #1065), and one that waited re-checks rather than rotating again.
 A container start, a branch's included, then records its boot (`last_used_at`, read once the guest answers and handed on to the CA check, so the stamp's write is the one request it adds), so `ensureReady` replaces a secret lost to a reboot isx did not do at no cost on the shell path.
 A VM's agent probe asks the guest instead (#1024).
 Each start fills credential placeholders with stable per-instance namespace proofs (`CredentialProof`, `ProofToken`).

@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
 import io.hyperfoil.tools.jjq.value.JqValue;
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
@@ -21,6 +22,7 @@ import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.Output;
 
 import java.nio.file.Files;
@@ -469,7 +471,7 @@ public final class InstanceLifecycle {
         } else if (machineType == MachineType.VM) {
             // QEMU may reboot a VM in place, which changes nothing the host can see: only the
             // guest can tell, so the agent probe asks it on the way, for no request of its own
-            var probe = probeAgent(incus, name, instance.path("config").pathText(Metadata.INSTANCE_PROOF_ID, ""));
+            var probe = probeAgent(incus, name, instance);
             if (probe == null) {
                 VmAgentRecovery.restartForAgent(incus, name, out);
             } else if (InstanceSecret.missingIn(probe)) {
@@ -477,10 +479,8 @@ public final class InstanceLifecycle {
             }
         } else {
             // Every container reboot is a start: the instance already read says which boot it is
-            var bootedAt = bootOf(instance);
-            if (!bootedAt.isEmpty()
-                    && !secretBootStamp(bootedAt, instance.path("config").pathText(Metadata.INSTANCE_PROOF_ID, "")).equals(instance.path("config").path(Metadata.INSTANCE_SECRET_BOOT).asText(""))) {
-                giveSecretToThisBoot(incus, name, instance, bootedAt, Metadata.isMcpCaller(instance), out);
+            if (!secretRecordedForBoot(instance)) {
+                giveSecretToThisBoot(incus, name, instance, bootOf(instance), Metadata.isMcpCaller(instance), out);
             }
         }
         // Only a VM is ever marked
@@ -499,17 +499,117 @@ public final class InstanceLifecycle {
      * Code registration its {@code mcp-caller} grant calls for (#1182), read from the instance
      * the device repairs read: neither costs a request of its own.
      *
+     * <p>Held under the instance's {@link #secretLock}, so another isx process starting it at the
+     * same time waits, and then finds it running rather than giving it a second secret (#1065).
+     *
      * @return the instance as read once it answered ({@link #recordSecretBoot}), for the caller
      *         to reuse rather than read again; null when there is none
      */
     public static JqValue startForUse(IncusClient incus, String name, MachineType machineType,
                                        Output out) {
-        return startForUse(incus, name, incus.instanceMetadata(name), machineType, out);
+        try (var ignored = secretLock(incus, name, machineType, "starting " + name, out)) {
+            // Read under the lock, so a start another isx made while this one waited is seen
+            var instance = incus.instanceMetadata(name);
+            return isRunning(instance) ? alreadyRunning(incus, name, instance, machineType, out)
+                    : startHeld(incus, name, instance, machineType, out);
+        }
     }
 
     /** {@link #startForUse(IncusClient, String, MachineType, Output)}, with the stopped instance already read. */
     static JqValue startForUse(IncusClient incus, String name, JqValue instance, MachineType machineType,
                                 Output out) {
+        try (var lock = secretLock(incus, name, machineType, "starting " + name, out)) {
+            // The read predates the wait: the holder may have started it, and a second start
+            // would replace the secret it just delivered, then fail on a running instance
+            if (lock.waited()) {
+                instance = incus.instanceMetadata(name);
+                if (isRunning(instance)) return alreadyRunning(incus, name, instance, machineType, out);
+            }
+            return startHeld(incus, name, instance, machineType, out);
+        }
+    }
+
+    /**
+     * An instance another isx started while this one waited, or that runs already: whoever started
+     * it may have failed before its guest took the secret, so give it one if this boot still lacks
+     * it, as {@link #ensureReady} would. Free for a container that holds it, one probe for a VM.
+     *
+     * @return {@code instance}, for the caller to reuse
+     */
+    private static JqValue alreadyRunning(IncusClient incus, String name, JqValue instance, MachineType machineType,
+                                          Output out) {
+        giveSecretIfStillNeeded(incus, name, instance, machineType, out);
+        return instance;
+    }
+
+    /**
+     * With the {@link #secretLock} held: give running {@code instance} a new secret if its boot has
+     * none, for a container from its boot stamp, for a VM from the guest. A VM whose agent does not
+     * answer is left to the next shell, which recovers it.
+     */
+    private static void giveSecretIfStillNeeded(IncusClient incus, String name, JqValue instance,
+                                                MachineType machineType, Output out) {
+        if (!isRunning(instance)) return;
+        if (machineType == MachineType.VM) {
+            var probe = probeAgent(incus, name, instance);
+            if (probe != null && InstanceSecret.missingIn(probe)) {
+                giveSecretHeld(incus, name, instance, null, Metadata.isMcpCaller(instance), out);
+            }
+        } else if (!secretRecordedForBoot(instance)) {
+            giveSecretHeld(incus, name, instance, bootOf(instance), Metadata.isMcpCaller(instance), out);
+        }
+    }
+
+    private static boolean isRunning(JqValue instance) {
+        return instance != null && "Running".equalsIgnoreCase(instance.pathText("status", ""));
+    }
+
+    /**
+     * Whether a start that failed left the instance running all the same: another isx started it
+     * since the caller's read, which the lock cannot see when it was free by then (#1065), or
+     * Incus started it but its answer was lost. The hash just recorded has replaced the one its
+     * guest holds, and a VM's probe would never tell, so the start goes on as if it had made it:
+     * the readiness probe delivers the secret, and the boot is recorded. One read, only when a
+     * start fails; a read that fails too leaves the start's own error to report.
+     */
+    private static boolean runsAnyway(IncusClient incus, String name, RuntimeException startFailure) {
+        try {
+            return isRunning(incus.instanceMetadata(name));
+        } catch (RuntimeException readFailure) {
+            startFailure.addSuppressed(readFailure);
+            return false;
+        }
+    }
+
+    /**
+     * Serializes giving an instance a new secret with delivering it, across every isx process of
+     * this user (#1065): rotating records the hash and delivering hands the guest the secret,
+     * and two of them interleaved can leave the guest holding one and the host recording the
+     * other, with the boot stamped as holding it. Taken around a whole start, which the waiter
+     * may have to sit out, so its bound is the instance's ready timeout, what Incus is given to
+     * stop or restart it and then start it ({@link #STATE_CHANGES}), the usual stuck-holder
+     * margin, and for a VM the graceful stop {@link VmAgentRecovery} tries before forcing one. Not reentrant: code under it calls the
+     * {@code *Held} variants.
+     *
+     * <p>A lock file per instance name, never deleted, under its own directory, so it can never be
+     * the TUI's {@code <instance>.lock}. Uncontended it costs no Incus request.
+     */
+    static HostLock secretLock(IncusClient incus, String name, MachineType machineType, String activity, Output out) {
+        return HostLock.acquire(Environment.lockDir().resolve("instance-secret").resolve(name + ".lock"),
+                activity, out::step, incus.readyTimeout(machineType).plus(HostLock.TIMEOUT).plus(STATE_CHANGES)
+                        .plusSeconds(machineType == MachineType.VM ? VmAgentRecovery.GRACEFUL_STOP_SECONDS : 0));
+    }
+
+    /**
+     * What a {@link #secretLock} holder may give Incus besides the ready wait: 30 s to stop or
+     * restart ({@link IncusClient#stop(String)}, {@link IncusClient#restart}, a forced stop), then
+     * 30 s to start ({@link IncusClient#start}).
+     */
+    private static final java.time.Duration STATE_CHANGES = java.time.Duration.ofSeconds(60);
+
+    /** {@link #startForUse}, with its {@link #secretLock} held. */
+    private static JqValue startHeld(IncusClient incus, String name, JqValue instance, MachineType machineType,
+                                     Output out) {
         var placeholders = ProofToken.declaredInBackground();
         var secret = ProxyOnlyAcl.explaining(incus, name, instance, () -> {
             prepareForStart(incus, name, instance, out);
@@ -518,7 +618,11 @@ public final class InstanceLifecycle {
             var delivery = rotateInstanceSecret(incus, name, instance, machineType == MachineType.VM
                     && !"false".equals(instance.path("config").path(SECURE_BOOT).asText())
                     ? Map.of(SECURE_BOOT, "false") : Map.of(), placeholders.join());
-            startInstance(incus, name, out);
+            try {
+                startInstance(incus, name, out);
+            } catch (RuntimeException e) {
+                if (!runsAnyway(incus, name, e)) throw e;
+            }
             return delivery;
         });
         // The SSH keys ride in the same probe, and the Host entry is a local file (#1640): a
@@ -608,6 +712,19 @@ public final class InstanceLifecycle {
     /** Reuses the TUI's listing, including its proof generation and verifiers. */
     public static void restartForUse(IncusClient incus, String name, MachineType machineType,
                                      boolean mcpCaller, JqValue instance, Output out) {
+        // A restart is asked for: no re-check after a wait, just not in the middle of another's delivery
+        try (var lock = secretLock(incus, name, machineType, "restarting " + name, out)) {
+            // Still restarted, but from what the holder left rather than the listing from before it
+            if (lock.waited()) {
+                instance = incus.instanceMetadataOrThrow(name);
+                mcpCaller = Metadata.isMcpCaller(instance);
+            }
+            restartHeld(incus, name, machineType, mcpCaller, instance, out);
+        }
+    }
+
+    private static void restartHeld(IncusClient incus, String name, MachineType machineType,
+                                    boolean mcpCaller, JqValue instance, Output out) {
         if (NetworkMode.isAirgapped(instance)) {
             // Stopped and started as any start for use, from a read after the stop rather than the
             // listing: a network device a profile gained is masked while the instance is down, which
@@ -615,7 +732,7 @@ public final class InstanceLifecycle {
             // one restart buys little here.
             AirgapGuard.refusePassthrough(name, instance);
             incus.stop(name);
-            startForUse(incus, name, incus.instanceMetadata(name), machineType, out);
+            startHeld(incus, name, incus.instanceMetadata(name), machineType, out);
             return;
         }
         // Before, not after: once the restart returns the guest is booting, when Incus API calls
@@ -722,6 +839,14 @@ public final class InstanceLifecycle {
         return instance.pathText("last_used_at", "");
     }
 
+    /** Whether container {@code instance}'s boot is stamped as holding the secret isx gave it, or unknown. */
+    private static boolean secretRecordedForBoot(JqValue instance) {
+        var bootedAt = bootOf(instance);
+        var config = instance.path("config");
+        return bootedAt.isEmpty() || secretBootStamp(bootedAt, config.pathText(Metadata.INSTANCE_PROOF_ID, ""))
+                .equals(config.pathText(Metadata.INSTANCE_SECRET_BOOT, ""));
+    }
+
     /**
      * Record which boot of container {@code name} its new secret went to, once the guest
      * answers, so that {@link #ensureReady} can tell a later reboot from it at no cost
@@ -759,9 +884,28 @@ public final class InstanceLifecycle {
      * its hash recorded first -- with {@code bootedAt}, the container boot it goes to, when
      * there is one -- then put in place by the script every start runs. Best-effort, like every
      * delivery: a box left without its secret is refused, and the shell must still open.
+     *
+     * <p>Under the instance's {@link #secretLock}. After waiting for another isx, it asks again
+     * whether this boot still needs a secret, since the holder may have given it one.
      */
     private static void giveSecretToThisBoot(IncusClient incus, String name, JqValue instance, String bootedAt,
                                              boolean mcpCaller, Output out) {
+        var machineType = bootedAt == null ? MachineType.VM : MachineType.CONTAINER;
+        try (var lock = secretLock(incus, name, machineType, "giving " + name + " a new secret", out)) {
+            if (lock.waited()) {
+                giveSecretIfStillNeeded(incus, name, incus.instanceMetadataOrThrow(name), machineType, out);
+            } else {
+                giveSecretHeld(incus, name, instance, bootedAt, mcpCaller, out);
+            }
+        } catch (HostLock.HostLockException | IncusException e) {
+            // The wait or the re-read after it; a nesting bug (already held by this thread) still throws
+            out.warn("could not give " + name + " a new instance secret: " + e.getMessage());
+        }
+    }
+
+    /** {@link #giveSecretToThisBoot}, with its {@link #secretLock} held. Never throws. */
+    static void giveSecretHeld(IncusClient incus, String name, JqValue instance, String bootedAt,
+                               boolean mcpCaller, Output out) {
         String failure;
         try {
             var placeholders = ProofToken.declaredInBackground();
@@ -793,7 +937,7 @@ public final class InstanceLifecycle {
                 // Then the box stays without a secret until isx starts it: refused, which is safe
             }
         }
-        out.warn("could not give " + name + " a new instance secret after its reboot: " + failure);
+        out.warn("could not give " + name + " a new instance secret: " + failure);
     }
 
     /**
@@ -801,7 +945,8 @@ public final class InstanceLifecycle {
      * secret ({@link InstanceSecret#GUEST_CHECK}): what the guest printed, or null if the agent
      * does not answer.
      */
-    private static String probeAgent(IncusClient incus, String name, String generation) {
+    static String probeAgent(IncusClient incus, String name, JqValue instance) {
+        var generation = instance.path("config").pathText(Metadata.INSTANCE_PROOF_ID, "");
         try {
             var result = incus.shellExec(name, "sh", "-c", InstanceSecret.GUEST_CHECK + "\n" + InstanceSecret.generationCheck(generation));
             return result != null && result.success() ? result.stdout() : null;

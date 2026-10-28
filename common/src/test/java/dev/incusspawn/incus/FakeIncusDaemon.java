@@ -825,6 +825,10 @@ public final class FakeIncusDaemon implements IncusTransport {
             boolean force = request.path("force").asBoolean(false);
             stateActions.add(name + " " + action + (force ? " force" : ""));
             if (action.equals("stop") && !force && shutdownIgnored.contains(name)) return badRequest();
+            // As Incus refuses it: a second start is how two isx processes collide on one box (#1065)
+            if (action.equals("start") && "Running".equals(instance.path("status").asText(""))) {
+                return badRequest("The instance is already running");
+            }
             if (action.equals("start") || action.equals("restart")) {
                 var aclRefusal = keptAclRefusal(instance, JqObject.EMPTY, "Failed start validation");
                 if (aclRefusal != null) return badRequest(aclRefusal);

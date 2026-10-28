@@ -329,6 +329,11 @@ public class IncusClient {
         this.readyTimeouts = timeouts;
     }
 
+    /** How long {@link #waitForReady} waits for an instance of {@code type}. */
+    public Duration readyTimeout(MachineType type) {
+        return type == MachineType.VM ? readyTimeouts.vm() : readyTimeouts.container();
+    }
+
     /**
      * Wait until {@code name} answers exec. For a VM that means its incus-agent is up, so a
      * failure names the agent and quotes whatever its console log says about it (#844).
@@ -364,7 +369,7 @@ public class IncusClient {
     public void waitForReady(String name, MachineType type, String guestScript, Map<String, String> env) {
         var t = readyTimeouts;
         long start = System.nanoTime();
-        long deadline = start + (type == MachineType.VM ? t.vm() : t.container()).toNanos();
+        long deadline = start + readyTimeout(type).toNanos();
         boolean vm = type == MachineType.VM;
         // A VM is not probed with exec while its state says the agent is not connected (#954)
         boolean execGateOpen = !vm;
@@ -400,7 +405,7 @@ public class IncusClient {
                 if (!vm && machineType(instance) == MachineType.VM) {
                     vm = true;
                     execGateOpen = false;
-                    deadline = start + t.vm().toNanos();
+                    deadline = start + readyTimeout(MachineType.VM).toNanos();
                 }
                 failIfDied(name, instance);
             }
