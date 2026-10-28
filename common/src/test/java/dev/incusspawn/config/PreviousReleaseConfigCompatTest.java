@@ -58,6 +58,9 @@ class PreviousReleaseConfigCompatTest {
     /** Releases users are on whose files must keep working. Add one per format-changing release. */
     private static final List<String> RELEASES = List.of("v0.3.7", "v0.3.8", "v0.3.12", "v0.4.0");
 
+    /** The releases whose {@code full} fixture sets {@code auto-clone-repos}, retired after them (#1789). */
+    private static final List<String> WROTE_AUTO_CLONE_REPOS = List.of("v0.3.7", "v0.3.8", "v0.3.12", "v0.4.0");
+
     /** The fixtures every release has, as the generator names them. */
     private static final List<String> FIXTURES =
             List.of("full", "oauth", "vertex", "vertex-incomplete", "host-path", "empty");
@@ -247,7 +250,8 @@ class PreviousReleaseConfigCompatTest {
         assertEquals(List.of("~/my-templates"), config.getSearchPaths());
         assertEquals(Map.of("quarkus", "~/quarkus"), config.getRepoPaths());
         assertEquals("10.0.0.1", config.getIncusBridgeGateway());
-        assertEquals("always", config.getAutoCloneRepos());
+        // Retired (#1789): it loads as a key kept on save and never read.
+        if (WROTE_AUTO_CLONE_REPOS.contains(release)) assertEquals("always", config.getExtras().get("auto-clone-repos"));
         assertTrue(config.isFeatureEnabled("openai"));
         assertTrue(config.getBob().isLicenseConsent());
     }

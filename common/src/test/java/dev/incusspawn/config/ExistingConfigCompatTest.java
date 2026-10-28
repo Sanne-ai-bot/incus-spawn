@@ -75,7 +75,7 @@ class ExistingConfigCompatTest {
         assertEquals(List.of("openai"), config.getFeatures());
         assertEquals(List.of("~/my-templates"), config.getSearchPaths());
         assertEquals("10.0.0.1", config.getIncusBridgeGateway());
-        assertEquals("always", config.getAutoCloneRepos());
+        assertEquals("always", config.getExtras().get("auto-clone-repos"));
     }
 
     /** Saving such a file must not lose anything, whatever else it reshapes. */
@@ -112,7 +112,21 @@ class ExistingConfigCompatTest {
         assertEquals(List.of("~/src"), config.getHostPaths());
         assertEquals("~/quarkus", config.getRepoPaths().get("quarkus"));
         assertEquals("10.0.0.1", config.getIncusBridgeGateway());
-        assertEquals("always", config.getAutoCloneRepos());
+        assertEquals("always", config.getExtras().get("auto-clone-repos"));
+    }
+
+    /**
+     * {@code auto-clone-repos} is retired (#1789): isx no longer clones host checkouts, so nothing
+     * reads it. Any value a file holds, even one the old string field would have refused, loads,
+     * and a save keeps it as written.
+     */
+    @Test
+    void theRetiredAutoCloneReposKeyLoadsInAnyShapeAndSurvivesASave() throws Exception {
+        var config = parse("auto-clone-repos:\n  - never\nincus-bridge-gateway: \"10.0.0.1\"\n");
+        assertEquals(List.of("never"), config.getExtras().get("auto-clone-repos"));
+        assertEquals("10.0.0.1", config.getIncusBridgeGateway());
+        var saved = dump(config);
+        assertEquals(List.of("never"), parse(saved).getExtras().get("auto-clone-repos"), saved);
     }
 
     /**

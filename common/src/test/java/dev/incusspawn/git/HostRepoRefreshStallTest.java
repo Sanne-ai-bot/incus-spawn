@@ -39,7 +39,7 @@ class HostRepoRefreshStallTest {
             var output = new ArrayList<String>();
 
             assertTimeoutPreemptively(Duration.ofSeconds(30), () ->
-                    HostRepoRefresh.refresh(List.of(repo), Map.of(), config, false, output::add));
+                    HostRepoRefresh.refresh(List.of(repo), Map.of(), config, output::add));
 
             assertTrue(output.stream().anyMatch(l -> l.contains("fetch failed for releases") && l.contains("stalled")),
                     "warning names the stall: " + output);

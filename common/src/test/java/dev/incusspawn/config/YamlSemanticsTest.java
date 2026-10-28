@@ -179,9 +179,9 @@ class YamlSemanticsTest {
         assertEquals("x.yaml:1: the file must be a mapping of settings, but is a list", friendly(top));
         var commented = assertThrows(java.io.IOException.class, () -> ImageDef.parseYaml("# note\n- a\n"));
         assertEquals("x.yaml:2: the file must be a mapping of settings, but is a list", friendly(commented));
-        var hyphen = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("auto-clone-repos:\n  - a\n"));
+        var hyphen = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig("incus-bridge-gateway:\n  - a\n"));
         var message = YamlErrors.friendly("config.yaml", hyphen);
-        assertTrue(message.contains("'auto-clone-repos' expects a single value"), message);
+        assertTrue(message.contains("'incus-bridge-gateway' expects a single value"), message);
         assertFalse(message.contains("$"), message);
     }
 

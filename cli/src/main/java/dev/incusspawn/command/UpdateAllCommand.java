@@ -116,7 +116,7 @@ public class UpdateAllCommand extends BaseCommand {
         }
         if (repos.isEmpty()) return;
 
-        HostRepoRefresh.refresh(repos, HostRepoRefresh.hostDepths(defs), config, false, System.out::println);
+        HostRepoRefresh.refresh(repos, HostRepoRefresh.hostDepths(defs), config, System.out::println);
     }
 
     private record PrimeResult(boolean skipped, boolean failed) {

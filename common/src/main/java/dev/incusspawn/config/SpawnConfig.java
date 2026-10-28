@@ -56,8 +56,6 @@ public class SpawnConfig {
     private Map<String, String> repoPaths = Map.of();
     @JqName("incus-bridge-gateway")
     private String incusBridgeGateway = "";
-    @JqName("auto-clone-repos")
-    private String autoCloneRepos = "";
     // Escape hatch for the TUI's live refresh (Incus event subscription plus its polling
     // fallback). Null means the default, on, and is never written back, so saving a config
     // doesn't pin today's default into every user's file.
@@ -631,7 +629,6 @@ public class SpawnConfig {
     public void setRepoPaths(Map<String, String> repoPaths) { this.repoPaths = repoPaths == null ? Map.of() : repoPaths; }
     public String getIncusBridgeGateway() { return incusBridgeGateway; }
     public void setIncusBridgeGateway(String incusBridgeGateway) { this.incusBridgeGateway = incusBridgeGateway == null ? "" : incusBridgeGateway; }
-    public String getAutoCloneRepos() { return autoCloneRepos; }
 
     // Deliberately not a bean getter: Jackson would serialize its boolean, writing the default out.
     public boolean tuiLiveRefreshEnabled() { return tuiLiveRefresh == null || tuiLiveRefresh; }
@@ -659,7 +656,6 @@ public class SpawnConfig {
         var section = extras.get("mcp");
         return section != null && !(section instanceof Map<?, ?> map && map.isEmpty());
     }
-    public void setAutoCloneRepos(String autoCloneRepos) { this.autoCloneRepos = autoCloneRepos == null ? "" : autoCloneRepos; }
     @JqAnySetter
     public void setExtra(String key, Object value) { extras.put(key, value); }
 
@@ -798,7 +794,6 @@ public class SpawnConfig {
         this.hostPaths = other.hostPaths;
         this.repoPaths = other.repoPaths;
         this.incusBridgeGateway = other.incusBridgeGateway;
-        this.autoCloneRepos = other.autoCloneRepos;
         this.tuiLiveRefresh = other.tuiLiveRefresh;
         this.artifactCache = other.artifactCache;
         this.gitCache = other.gitCache;
