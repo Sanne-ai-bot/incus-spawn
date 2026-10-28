@@ -19,7 +19,6 @@ It turns the same characters into spaces in the answer text around a link, line 
 
 | Priority | Opportunity | Application code and reason |
 | --- | --- | --- |
-| High | Use terminal column widths throughout custom wrapping (#1412) | `ModalRenderer.wrapWords` and `TerminalLink.displayLength` / `wrapSegments` count UTF-16 units with `String.length()` and split by string indices; CJK widths and surrogate pairs can still cause clipping or splitting despite upstream widget fixes. |
 | Medium | Use Paragraph's new hanging indentation for plain wrapped content | `ModalRenderer.wrapText` maintains its own indentation and wrapping; evaluate replacing it with widget wrapping where the measured height and scrolling remain consistent. |
 | Medium | Use monotonic animation timing | `HelpChatModal.renderLoading` selects spinner frames with `System.currentTimeMillis()`; an accumulated `RenderClock.tick()` duration would avoid jumps when the system clock changes. |
 | Medium | Add deterministic terminal input scenarios | Upstream tape playback now supports function keys, modifiers, and screen-text waits; evaluate it for TUI smoke tests involving F-keys, Shift+Tab, Ctrl+S, modal navigation, and paste. |
@@ -36,3 +35,4 @@ Golden files are not regenerated to accept changes.
 That test fails on 0.5.0.
 It also checks that a wrapped question of CJK, ZWJ-sequence and flag emoji renders every character and that Backspace deletes a whole emoji.
 That one passes on 0.5.0 as well: none of the 0.6.0 Unicode fixes changes what the AI Help input shows, so it guards the upgrade rather than proving it.
+Our own wrapping now measures terminal cells with `CharWidth` too (#1412): `HelpChatModalTest` checks that a wide answer and link label keep every character, and `SegmentWrapTest` that no break splits an emoji.

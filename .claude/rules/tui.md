@@ -230,4 +230,6 @@ A dialog is easier to test on its own once it has its own class.
 `HelpChatModal` is the pattern: it owns its state, key handling (`handleKey` returns false to close) and `render(frame, screen)`, and takes its side effects (the `Asker`, an `Executor`, an on-answer callback) as constructor arguments so tests can answer synchronously.
 When touching another modal, prefer extracting it the same way and adding a snapshot at 80×24, plus another size only where it shows something 80×24 cannot.
 `ModalRenderer.renderScrollableContent` is the shared scroll-with-scrollbar helper.
+Text the TUI wraps itself is measured in terminal cells, never `String.length()` (#1412): `ModalRenderer.wrapText` and the AI Help answer's `SegmentWrap` use TamboUI's `CharWidth`.
+`SegmentWrap` breaks a word wider than the line between grapheme clusters, so an emoji is never split; `wrapText` breaks only at whitespace and leaves such a word whole, as a confirm dialog widens for one.
 

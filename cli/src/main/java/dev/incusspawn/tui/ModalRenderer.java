@@ -11,6 +11,7 @@ import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -337,24 +338,32 @@ final class ModalRenderer {
         return result;
     }
 
+    /** Measured in terminal cells (#1412): a CJK ideograph or an emoji takes two. */
     private static List<String> wrapWords(String paragraph, int width) {
         var result = new ArrayList<String>();
         var words = paragraph.split("\\s+");
         var line = new StringBuilder();
+        int lineWidth = 0;
         for (var word : words) {
-            if (line.length() + word.length() + (line.length() > 0 ? 1 : 0) > width) {
+            int wordWidth = CharWidth.of(word);
+            if (lineWidth + wordWidth + (line.length() > 0 ? 1 : 0) > width) {
                 if (line.length() > 0) {
                     result.add(line.toString());
                     line = new StringBuilder();
+                    lineWidth = 0;
                 }
                 // If a single word is longer than width, add it anyway
-                if (word.length() > width) {
+                if (wordWidth > width) {
                     result.add(word);
                     continue;
                 }
             }
-            if (line.length() > 0) line.append(" ");
+            if (line.length() > 0) {
+                line.append(" ");
+                lineWidth++;
+            }
             line.append(word);
+            lineWidth += wordWidth;
         }
         if (line.length() > 0) {
             result.add(line.toString());

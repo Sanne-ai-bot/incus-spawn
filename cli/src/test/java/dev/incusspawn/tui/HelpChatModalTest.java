@@ -141,6 +141,27 @@ class HelpChatModalTest {
         assertEquals(List.of(question.substring(0, question.length() - " 🙂".length())), questions);
     }
 
+    @Test
+    void wideAnswerWrapsByCellsAndKeepsEveryCharacter() {
+        // #1412: 30 ideographs fit a 40-column modal by UTF-16 units but take 60 cells, and so does
+        // a link label of 9 that takes 18.
+        var answer = "日本語の回答は答えの欄の幅を超えて折り返されますが一文字も欠けません。"
+                + "詳しくは[日本語ドキュメント](https://example.com/ja)を参照してください🙂";
+        var modal = answering(answer);
+        type(modal, "?");
+        modal.handleKey(CTRL_S);
+        for (int width : new int[] {40, 80}) {
+            var buffer = TuiSnapshot.render(width, 24, f -> modal.render(f, f.area()));
+            var text = TuiSnapshot.toText(buffer);
+            int first = rowOf(text, "日本語の回答");
+            int last = rowOf(text, "🙂");
+            assertTrue(first >= 0 && last > first, text);
+            var expected = answer.replace("[", "").replace("](https://example.com/ja)", "");
+            assertEquals(expected, questionRows(text, first, last), text);
+            assertTrue(buffer.toAnsiString().contains("\u001b]8;;https://example.com/ja"), text);
+        }
+    }
+
     private static int rowOf(String text, String needle) {
         var rows = text.split("\n");
         for (int i = 0; i < rows.length; i++) if (rows[i].contains(needle)) return i;

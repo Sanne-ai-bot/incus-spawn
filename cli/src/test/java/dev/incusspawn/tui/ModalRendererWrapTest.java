@@ -23,4 +23,10 @@ class ModalRendererWrapTest {
     void blankLinesStay() {
         assertEquals(List.of("a", "", "b"), ModalRenderer.wrapText("a\n\nb", 10));
     }
+
+    @Test
+    void wideWordsWrapByTheCellsTheyTake() {
+        // Each word is 3 ideographs, 6 cells: two and a space take 13 of 14 cells, three take 20.
+        assertEquals(List.of("日本語 日本語", "日本語"), ModalRenderer.wrapText("日本語 日本語 日本語", 14));
+    }
 }
