@@ -13,7 +13,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 
 import static dev.incusspawn.git.GitTestUtils.runGit;
@@ -79,7 +78,7 @@ class AutoRemoteServiceTest {
                 .thenReturn(instance("tpl-incus-spawn", ""));
 
         // Call AutoRemoteService.addRemotes - this should add the remote despite origin not matching
-        AutoRemoteService.addRemotes(incus, "test-instance", message -> {}, warning -> {});
+        AutoRemoteService.addRemotes(incus, "test-instance", RecordingOutput.QUIET);
 
         // Verify: remote was added because upstream (not origin) matches the template repo
         var remotes = runGit(repoDir, "remote", "-v");
@@ -124,8 +123,9 @@ class AutoRemoteServiceTest {
         var incus = mock(IncusClient.class);
         when(incus.instanceMetadataOrThrow("my-fix")).thenReturn(instance("tpl-cxf", ""));
 
-        var messages = new ArrayList<String>();
-        AutoRemoteService.addRemotes(incus, "my-fix", messages::add, warning -> {});
+        var said = new RecordingOutput();
+        AutoRemoteService.addRemotes(incus, "my-fix", said);
+        var messages = said.events(RecordingOutput.Kind.STEP);
 
         // All three host repos should have gotten the remote
         assertThat(messages).hasSize(3);
@@ -167,8 +167,9 @@ class AutoRemoteServiceTest {
         var incus = mock(IncusClient.class);
         when(incus.instanceMetadataOrThrow("my-branch")).thenReturn(instance("tpl-cq", ""));
 
-        var messages = new ArrayList<String>();
-        AutoRemoteService.addRemotes(incus, "my-branch", messages::add, warning -> {});
+        var said = new RecordingOutput();
+        AutoRemoteService.addRemotes(incus, "my-branch", said);
+        var messages = said.events(RecordingOutput.Kind.STEP);
 
         assertThat(messages).hasSize(1);
         var remotes = runGit(repoDir, "remote", "-v");
@@ -184,13 +185,13 @@ class AutoRemoteServiceTest {
         var incus = mock(IncusClient.class);
         when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("tpl-app", ""));
 
-        var output = new ArrayList<String>();
-        var warnings = new ArrayList<String>();
+        var said = new RecordingOutput();
         // Only there: nothing reaches the bound output, the terminal under the TUI
-        var bound = RecordingOutput.during(() -> AutoRemoteService.addRemotes(incus, "work", output::add, warnings::add));
+        var bound = RecordingOutput.during(() -> AutoRemoteService.addRemotes(incus, "work", said));
+        var warnings = said.warnings();
 
         assertThat(bound.events()).isEmpty();
-        assertThat(output).isEmpty();
+        assertThat(said.events(RecordingOutput.Kind.STEP)).isEmpty();
         assertThat(warnings).containsExactly("remote 'work' already exists in " + repoDir
                 + "; to add it manually: git -C " + repoDir + " remote add <name> isx://work//home/agentuser/app");
     }
@@ -202,8 +203,9 @@ class AutoRemoteServiceTest {
         var incus = mock(IncusClient.class);
         when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("tpl-app", ""));
 
-        var warnings = new ArrayList<String>();
-        AutoRemoteService.addRemotes(incus, "work", message -> {}, warnings::add);
+        var said = new RecordingOutput();
+        AutoRemoteService.addRemotes(incus, "work", said);
+        var warnings = said.warnings();
 
         assertThat(warnings).hasSize(1);
         assertThat(warnings.getFirst()).endsWith("isx://work//home/agentuser/ ]0;pwned  [2Japp");
@@ -243,9 +245,24 @@ class AutoRemoteServiceTest {
         configDir.toFile().mkdirs();
         Files.writeString(configDir.resolve("config.yaml"), "host-path: \"" + tempDir + "\"");
 
-        AutoRemoteService.removeRemotes("old-inst", message -> {});
+        AutoRemoteService.removeRemotes("old-inst", RecordingOutput.QUIET);
 
         assertThat(runGit(host, "remote").strip().lines().toList()).containsExactly("origin");
+    }
+
+    /** A cleanup that fails says so on its warning sink, unmarked, and its progress stays progress (#1703). */
+    @Test
+    void aFailedCleanupWarnsOnItsOwnSink() throws Exception {
+        // A directory where the cleanup record should be cannot be read as one
+        Files.createDirectories(HostRepoSources.cleanupFile("old-inst"));
+        assertThat(HostRepoSources.cleanupFile("old-inst")).startsWith(tempDir);
+        var said = new RecordingOutput();
+
+        AutoRemoteService.removeRemotes("old-inst", said);
+
+        assertThat(said.events()).hasSize(1);
+        assertThat(said.events().getFirst().kind()).isEqualTo(RecordingOutput.Kind.WARN);
+        assertThat(said.events().getFirst().msg()).startsWith("could not read host-source remote cleanup record: ");
     }
 
     private static io.hyperfoil.tools.jjq.value.JqValue instance(String template, String sources) {
@@ -264,13 +281,13 @@ class AutoRemoteServiceTest {
         var incus = mock(IncusClient.class);
         var sources = io.hyperfoil.tools.jjq.value.JqValues.serialize(io.hyperfoil.tools.jjq.value.JqValues.fromJavaObject(java.util.Map.of("/home/agentuser/private", host.toString())));
         when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("missing-template", sources));
-        AutoRemoteService.addRemotes(incus, "work", message -> {}, warning -> {});
+        AutoRemoteService.addRemotes(incus, "work", RecordingOutput.QUIET);
         assertThat(runGit(host, "remote", "get-url", "work")).contains("isx://work//home/agentuser/private");
         // Cleanup follows the URL even if the user renamed the remote, and preserves other instances.
         runGit(host, "remote", "rename", "work", "renamed");
         runGit(host, "remote", "add", "other", "isx://other//home/agentuser/private");
         // Cleanup receives only the name, after Incus has already destroyed the instance.
-        AutoRemoteService.removeRemotes("work", message -> {});
+        AutoRemoteService.removeRemotes("work", RecordingOutput.QUIET);
         assertThat(runGit(host, "remote").strip().lines().toList()).containsExactly("origin", "other");
         assertThat(HostRepoSources.cleanupFile("work")).doesNotExist();
         assertThat(runGit(host, "remote", "get-url", "origin")).contains("corporate.invalid");
