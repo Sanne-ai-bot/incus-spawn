@@ -11,6 +11,8 @@ import dev.incusspawn.util.Output;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
 /**
  * Shares the container's zmx socket directory with the host via an Incus
@@ -36,16 +38,20 @@ public final class ZmxSocketForward {
     /**
      * Resolve the host zmx socket directory using the same priority as zmx
      * itself: {@code ZMX_DIR} > {@code XDG_RUNTIME_DIR/zmx} >
-     * {@code TMPDIR/zmx} > {@code /tmp/zmx-<uid>}.
+     * {@code TMPDIR/zmx-<uid>} > {@code /tmp/zmx-<uid>}.
      */
     static Path hostZmxDir() {
-        var zmxDir = System.getenv("ZMX_DIR");
+        return hostZmxDir(System::getenv, InstanceLifecycle::getUid);
+    }
+
+    static Path hostZmxDir(UnaryOperator<String> env, Supplier<String> uid) {
+        var zmxDir = env.apply("ZMX_DIR");
         if (zmxDir != null && !zmxDir.isBlank()) return Path.of(zmxDir);
-        var xdgRuntime = System.getenv("XDG_RUNTIME_DIR");
+        var xdgRuntime = env.apply("XDG_RUNTIME_DIR");
         if (xdgRuntime != null && !xdgRuntime.isBlank()) return Path.of(xdgRuntime, "zmx");
-        var tmpdir = System.getenv("TMPDIR");
-        if (tmpdir != null && !tmpdir.isBlank()) return Path.of(tmpdir, "zmx");
-        return Path.of("/tmp", "zmx-" + InstanceLifecycle.getUid());
+        var tmpdir = env.apply("TMPDIR");
+        if (tmpdir != null && !tmpdir.isBlank()) return Path.of(tmpdir, "zmx-" + uid.get());
+        return Path.of("/tmp", "zmx-" + uid.get());
     }
 
     public static boolean isZmxInstalled(String buildSourceJson) {
