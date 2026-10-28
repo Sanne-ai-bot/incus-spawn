@@ -30,9 +30,15 @@ class BashAccountCompletionTest {
     /** What the fake {@code isx account add --completion} prints. */
     private Path addNames;
 
+    /** What the fake {@code isx list -q}, {@code isx templates} and {@code isx tools list} print. */
+    private Path instances, templates, toolNames;
+
     @org.junit.jupiter.api.BeforeEach
     void writeAddNames() throws Exception {
         addNames = Files.writeString(dir.resolve("add-names.txt"), "claude\ngh\ngithub\n");
+        instances = Files.writeString(dir.resolve("instances.txt"), "box1\n");
+        templates = Files.writeString(dir.resolve("templates.txt"), "tpl-dev\n");
+        toolNames = Files.writeString(dir.resolve("tools.txt"), "podman\ntmux\n");
     }
 
     /** Completes {@code line}; the cursor is at its end. Returns the line after readline applies each candidate. */
@@ -50,9 +56,11 @@ class BashAccountCompletionTest {
                 #!/bin/bash
                 [ "$1 $2 $3" = "account list --completion" ] && printf '%s'
                 [ "$1 $2 $3" = "account add --completion" ] && cat %s
-                [ "$1 $2" = "list -q" ] && echo box1
+                [ "$1 $2" = "list -q" ] && cat %s
+                [ "$1" = "templates" ] && cat %s
+                [ "$1 $2" = "tools list" ] && cat %s
                 exit 0
-                """.formatted(accounts, addNames));
+                """.formatted(accounts, addNames, instances, templates, toolNames));
         isx.toFile().setExecutable(true);
         var script = dir.resolve("isx.bash");
         Files.writeString(script, CompletionCommand.rawScript(CompletionCommand.Shell.bash));
@@ -150,10 +158,66 @@ class BashAccountCompletionTest {
     void addNeverRunsAHostileToolName() throws Exception {
         var marker = dir.resolve("pwned");
         var hostile = "$(touch " + marker + ")";
-        var tools = AccountCompletionTest.toolsWithCredentialStep(hostile);
-        assertTrue(tools.containsKey(hostile), "the hostile tool loads: " + tools.keySet());
+        var tools = AccountCompletionTest.withHostileTool(hostile);
         Files.writeString(addNames, String.join("\n", AccountCommand.addCompletionLines(tools)) + "\n");
         complete("isx account add ");
         assertFalse(Files.exists(marker), "completion ran the tool's name as a command");
+    }
+
+    @Test
+    void toolsShowCompletesToolNames() throws Exception {
+        assertEquals(List.of("isx tools show podman"), complete("isx tools show po"));
+    }
+
+    /**
+     * The issue's reproduction (#1778): a tool named like a command substitution, loaded and
+     * listed as {@code isx tools list} prints it, never runs on TAB after {@code isx tools show}.
+     * The loader refuses the name, so this holds with either layer; {@link #noSourceIsExpandedOnTab}
+     * covers the script on its own.
+     */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(IsolatedHome.class)
+    void toolsShowNeverRunsAHostileToolName() throws Exception {
+        var marker = dir.resolve("pwned");
+        var tools = Files.createDirectories(dev.incusspawn.Environment.configDir().resolve("tools"));
+        Files.writeString(tools.resolve("evil.yaml"), """
+                name: "$(touch %s)"
+                description: x
+                """.formatted(marker));
+        var loader = new dev.incusspawn.tool.ToolDefLoader();
+        var listed = new java.io.ByteArrayOutputStream();
+        ToolsCommand.ListSub.printTable(new java.io.PrintStream(listed, true), new java.util.TreeMap<>(loader.allToolSetups()),
+                loader::getSource, false);
+        Files.writeString(toolNames, listed.toString());
+        complete("isx tools show ");
+        assertFalse(Files.exists(marker), "completion ran the tool's name as a command");
+    }
+
+    /**
+     * No dynamic source is expanded by the script, whatever a future source lets through: each
+     * one here prints a command substitution, and TAB at every place that offers it runs none.
+     */
+    @Test
+    void noSourceIsExpandedOnTab() throws Exception {
+        var marker = dir.resolve("pwned");
+        var hostile = "$(touch " + marker + ")\n`touch " + marker + "`\n";
+        for (var source : List.of(addNames, instances, templates, toolNames)) {
+            Files.writeString(source, hostile);
+        }
+        var accounts = "x\\n$(touch " + marker + ")\\nx=$(touch " + marker + ")\\n";
+        for (var line : List.of("isx tools show ", "isx account add ", "isx account show ", "isx account unset box1 ",
+                "isx account set box1 ", "isx branch x --account ", "isx branch x --from ", "isx build ",
+                "isx destroy ", "isx shell ", "isx run ", "isx templates ", "isx templates edit ",
+                "isx project update ", "isx clean ")) {
+            complete(line, accounts);
+            assertFalse(Files.exists(marker), "completion of '" + line + "' ran a candidate as a command");
+        }
+    }
+
+    /** A candidate that is a glob is offered as typed, not expanded to the files in the current directory. */
+    @Test
+    void aGlobCandidateIsNotExpanded() throws Exception {
+        Files.writeString(toolNames, "*\n");
+        assertEquals(List.of("isx tools show *", "isx tools show --help"), complete("isx tools show "));
     }
 }

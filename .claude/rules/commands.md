@@ -22,8 +22,11 @@ When adding another macOS-only command, add it to `IncusSpawnCommand` only and e
 Account values: `isx account list --completion` (names only, never credentials) prints every namespace on its own line for `account unset`, then `ns=` / `ns=account` lines for the usable accounts (default marked after a TAB) for `--account` and `account set`, in all three scripts.
 It skips names holding a control character.
 `account add`'s positional completes from `isx account add --completion` instead (`CredentialCheck.acceptedNames`): each credential step's namespace and its tool's name, as `credentialTool` resolves them for `addCredential`, so `gh` is offered beside `github`.
-It prints only names `ToolDefValidator.isNamespace` accepts: a tool's name is unconstrained, and bash's `compgen -W` expands its word list, so a cloned repository's tool named `$(...)` would run on TAB.
-A tool whose name is not an identifier still works with `isx account add`, but is not offered.
+It prints only names `ToolDefValidator.isNamespace` accepts, though the loader already refuses a tool whose name is not one (#1778).
+Bash's `compgen -W` expands its word list, so a cloned repository's tool named `$(...)` ran on TAB after `isx tools show`.
+So the bash script never gives `compgen -W` what isx prints: `_isx_reply` offers each line of a source, and each word it is given, by literal prefix (`CompletionCommandTest.bashNeverExpandsWhatIsxPrints`).
+A new dynamic source goes through `_isx_reply` too.
+The hostile-name tests (`noSourceIsExpanded*` in the three shells' completion tests) reach every source at least once, the bash one at every place that offers one.
 Keep both free of Incus and secrets: they run on every TAB.
 `BashAccountCompletionTest` and `FishAccountCompletionTest` run the generated script in a real shell with a fake `isx`, and skip without the shell.
 

@@ -483,6 +483,39 @@ class ToolDefValidatorTest {
         }
     }
 
+    /**
+     * A tool's name is an identifier too: bash completion feeds the names to compgen -W, which
+     * runs a command substitution in one, and a cloned repository's tool named {@code $(...)}
+     * ran it on TAB (#1778).
+     */
+    @Test
+    void toolNameMustBeAnIdentifier() {
+        for (var bad : List.of("$(touch pwned)", "`id`", "${HOME}", "\u001b]0;x\u0007", "two\nlines", "rtl\u202eok",
+                "-lead", ".hidden", "has space", "a;b", "*")) {
+            var def = new ToolDef();
+            def.setName(bad);
+            var errors = new ArrayList<String>();
+            ToolDefValidator.validateDef(def, errors, new ArrayList<>());
+            assertTrue(errors.stream().anyMatch(e -> e.contains("tool name")), bad + ": " + errors);
+            assertTrue(errors.stream().allMatch(e -> e.chars().noneMatch(c -> Character.isISOControl(c) || c == 0x202e)),
+                    "printed raw: " + errors);
+        }
+    }
+
+    /** Every tool isx ships, YAML or Java, already has such a name, as do the names other tools use. */
+    @Test
+    void toolNameAcceptsEveryBuiltInName() {
+        var names = new java.util.TreeSet<>(new ToolDefLoader().allToolSetups().keySet());
+        names.addAll(List.of("maven-3", "gemini-cli", "idea-backend", "openjdk-primer", "my_tool", "corp.tool", "Tool2"));
+        for (var name : names) {
+            var def = new ToolDef();
+            def.setName(name);
+            var errors = new ArrayList<String>();
+            ToolDefValidator.validateDef(def, errors, new ArrayList<>());
+            assertTrue(errors.stream().noneMatch(e -> e.contains("tool name")), name + ": " + errors);
+        }
+    }
+
     /** A tool borrowing another namespace names it in config-path, which is checked the same way. */
     @Test
     void borrowedNamespaceMustBeAnIdentifier() {

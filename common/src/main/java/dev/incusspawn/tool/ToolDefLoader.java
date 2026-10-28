@@ -198,14 +198,16 @@ public class ToolDefLoader {
     /**
      * Register stored tool definitions as fallbacks. Tools already
      * in scope (from the normal resolution chain) are not overridden. A stored definition
-     * the loader would refuse is skipped too: a template built before #1266 or #1475 may hold one.
+     * the loader would refuse is skipped too: a template built before #1266, #1475 or #1778 may
+     * hold one. The name it is stored under is checked as well, since that is the name listed.
      */
     public void addFallbacks(Map<String, ToolDef> fallbacks) {
         if (fallbacks == null || fallbacks.isEmpty()) return;
         var map = load().defs();
         for (var entry : fallbacks.entrySet()) {
             if (entry.getKey() == null || entry.getValue() == null || map.containsKey(entry.getKey())) continue;
-            var refused = ToolDefValidator.refusal(entry.getValue());
+            var refused = ToolDefValidator.invalidName(entry.getKey());
+            if (refused == null) refused = ToolDefValidator.refusal(entry.getValue());
             if (refused == null) {
                 map.put(entry.getKey(), new YamlToolSetup(entry.getValue()));
             } else {

@@ -32,9 +32,14 @@ class FishAccountCompletionTest {
             """;
 
     private List<String> complete(String line) throws Exception {
+        return complete(line, FAKE_ISX);
+    }
+
+    /** {@code fakeIsx} is the script the fake {@code isx} runs. */
+    private List<String> complete(String line, String fakeIsx) throws Exception {
         var bin = Files.createDirectories(dir.resolve("bin"));
         var isx = bin.resolve("isx");
-        Files.writeString(isx, FAKE_ISX);
+        Files.writeString(isx, fakeIsx);
         isx.toFile().setExecutable(true);
         var script = dir.resolve("isx.fish");
         Files.writeString(script, CompletionCommand.rawScript(CompletionCommand.Shell.fish));
@@ -71,6 +76,22 @@ class FishAccountCompletionTest {
     @Test
     void unsetStillOffersOnlyNamespaces() throws Exception {
         assertEquals(List.of("claude", "github"), complete("isx account unset box1 "));
+    }
+
+    /** A name isx printed is offered as typed and never run: each source here prints a command substitution (#1778). */
+    @Test
+    void noSourceIsExpanded() throws Exception {
+        var marker = dir.resolve("pwned");
+        var hostile = """
+                #!/bin/bash
+                printf '%%s\\n' '$(touch %s)' '(touch %s)' '`touch %s`'
+                """.formatted(marker, marker, marker);
+        assertTrue(complete("isx tools show ", hostile).contains("$(touch " + marker + ")"), "offered as typed");
+        for (var line : List.of("isx tools show ", "isx account add ", "isx account unset box1 ",
+                "isx account set box1 ", "isx branch x --account ", "isx build ", "isx destroy ", "isx shell ")) {
+            complete(line, hostile);
+            assertFalse(Files.exists(marker), "completion of '" + line + "' ran a candidate as a command");
+        }
     }
 
     private static String readQuietly(Path file) {

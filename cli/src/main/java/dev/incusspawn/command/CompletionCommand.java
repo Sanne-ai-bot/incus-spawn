@@ -520,6 +520,20 @@ public class CompletionCommand extends BaseCommand {
     private static final String BASH_COMPLETION = """
             # bash completion for isx (incus-spawn)
 
+            # Offer each line of stdin, then each argument, that starts with what is typed. Never
+            # give compgen what isx prints: it expands a -W word list, so a $(...) in a name
+            # would run on TAB. The names are checked where isx loads them; this is the second layer.
+            _isx_reply() {
+              local candidate
+              COMPREPLY=()
+              while IFS= read -r candidate || [[ -n "$candidate" ]]; do
+                [[ -n "$candidate" && "$candidate" == "$cur"* ]] && COMPREPLY+=("$candidate")
+              done
+              for candidate in "$@"; do
+                [[ "$candidate" == "$cur"* ]] && COMPREPLY+=("$candidate")
+              done
+            }
+
             _isx_list_instances() {
               isx list -q 2>/dev/null
             }
@@ -545,7 +559,7 @@ public class CompletionCommand extends BaseCommand {
                 # A namespace is typed: offer only its accounts, not the bare <namespace>= again.
                 candidates=$(grep -v '=$' <<< "$candidates")
               fi
-              COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
+              _isx_reply <<< "$candidates"
               # _init_completion -s keeps the "=" in $cur, but readline replaces only what follows
               # the last "=" (COMP_WORDBREAKS): drop the typed <namespace>= from each candidate.
               if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
@@ -598,7 +612,7 @@ public class CompletionCommand extends BaseCommand {
                 branch)
                   case "$prev" in
                     --from)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_instances)" -- "$cur") )
+                      _isx_reply < <(_isx_list_instances)
                       return ;;
                     --inbox)
                       _filedir -d
@@ -613,13 +627,13 @@ public class CompletionCommand extends BaseCommand {
                 build)
                   case "$prev" in
                     build)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes" -- "$cur") )
+                      _isx_reply --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes < <(_isx_list_templates)
                       return ;;
                     --type)
                       COMPREPLY=( $(compgen -W "container vm kvm" -- "$cur") )
                       return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes" -- "$cur") )
+                  _isx_reply --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes < <(_isx_list_templates)
                   ;;
                 clean)
                   local clean_subcmds="cache state config pool dnf all"
@@ -639,7 +653,7 @@ public class CompletionCommand extends BaseCommand {
                 destroy)
                   case "$prev" in
                     destroy)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help --all-templates --all-instances --skip-confirmation" -- "$cur") )
+                      _isx_reply --help --all-templates --all-instances --skip-confirmation < <(_isx_list_instances)
                       return ;;
                   esac
                   COMPREPLY=( $(compgen -W "--help --all-templates --all-instances --skip-confirmation" -- "$cur") )
@@ -661,7 +675,7 @@ public class CompletionCommand extends BaseCommand {
                 shell)
                   case "$prev" in
                     shell)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help --task" -- "$cur") )
+                      _isx_reply --help --task < <(_isx_list_instances)
                       return ;;
                   esac
                   COMPREPLY=( $(compgen -W "--help --task" -- "$cur") )
@@ -669,7 +683,7 @@ public class CompletionCommand extends BaseCommand {
                 run)
                   case "$prev" in
                     run)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help --action" -- "$cur") )
+                      _isx_reply --help --action < <(_isx_list_instances)
                       return ;;
                     --action) return ;;
                   esac
@@ -687,16 +701,16 @@ public class CompletionCommand extends BaseCommand {
                     "") COMPREPLY=( $(compgen -W "list add show set unset reset-proofs --help" -- "$cur") ) ;;
                     add)
                       if [[ "$prev" == add ]]; then
-                        COMPREPLY=( $(compgen -W "$(_isx_list_account_add_names) --help" -- "$cur") )
+                        _isx_reply --help < <(_isx_list_account_add_names)
                       fi
                       ;;
                     show|set|unset|reset-proofs)
                       if [[ "$prev" == "$acct_cmd" ]]; then
-                        COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
+                        _isx_reply --help < <(_isx_list_instances)
                       elif [[ "$acct_cmd" == set ]]; then
                         _isx_complete_accounts
                       elif [[ "$acct_cmd" == unset ]]; then
-                        COMPREPLY=( $(compgen -W "$(_isx_list_account_namespaces)" -- "$cur") )
+                        _isx_reply < <(_isx_list_account_namespaces)
                       fi
                       ;;
                     *) COMPREPLY=( $(compgen -W "--help" -- "$cur") ) ;;
@@ -719,7 +733,7 @@ public class CompletionCommand extends BaseCommand {
                       update)
                         case "$prev" in
                           update)
-                            COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help --config" -- "$cur") )
+                            _isx_reply --help --config < <(_isx_list_instances)
                             return ;;
                         esac
                         COMPREPLY=( $(compgen -W "--help --config" -- "$cur") )
@@ -756,14 +770,14 @@ public class CompletionCommand extends BaseCommand {
                     esac
                   done
                   if [[ -z "$tpl_cmd" ]]; then
-                    COMPREPLY=( $(compgen -W "$tpl_subcmds $(_isx_list_templates) --help" -- "$cur") )
+                    _isx_reply $tpl_subcmds --help < <(_isx_list_templates)
                   else
                     case "$tpl_cmd" in
                       list) COMPREPLY=( $(compgen -W "--help --verbose -v" -- "$cur") ) ;;
                       edit)
                         case "$prev" in
                           edit)
-                            COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help" -- "$cur") )
+                            _isx_reply --help < <(_isx_list_templates)
                             return ;;
                         esac
                         COMPREPLY=( $(compgen -W "--help" -- "$cur") )
@@ -789,7 +803,7 @@ public class CompletionCommand extends BaseCommand {
                       show)
                         case "$prev" in
                           show)
-                            COMPREPLY=( $(compgen -W "$(_isx_list_tools) --help" -- "$cur") )
+                            _isx_reply --help < <(_isx_list_tools)
                             return ;;
                         esac
                         COMPREPLY=( $(compgen -W "--help" -- "$cur") )

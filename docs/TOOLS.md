@@ -103,7 +103,7 @@ It then runs as root in root's own environment (`HOME=/root`, the default `PATH`
 isx ignores a key it does not know, here or in an entry, with a warning when the tool loads.
 The warning names where the key is (`downloads[0].sha265`) and the key it probably meant.
 
-isx skips a tool file without `name:`, or with a blank one, with a warning.
+isx skips a tool file with a warning when its `name:` is missing or blank, holds anything but letters, digits, `.`, `-` and `_`, or starts with `.`, `-` or `_`.
 `isx build` refuses until it is fixed, since the file may have been meant to replace a tool of the same name from another layer.
 
 #### Download entry fields

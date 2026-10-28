@@ -175,7 +175,31 @@ class CompletionCommandTest {
             assertTrue(linux(shell).contains("isx account add --completion"), shell + " must call add's helper");
         }
         assertTrue(linux(CompletionCommand.Shell.zsh).contains("add) _arguments '1:credential:_isx_account_add_names' ;;"));
-        assertTrue(linux(CompletionCommand.Shell.bash).contains("$(_isx_list_account_add_names) --help"));
+        assertTrue(linux(CompletionCommand.Shell.bash).contains("_isx_reply --help < <(_isx_list_account_add_names)"));
         assertTrue(linux(CompletionCommand.Shell.fish).contains("'__isx_account_args add 0' -a '(__isx_account_add_names)'"));
+    }
+
+    /**
+     * compgen -W expands its words, so a $(...) in a name isx printed would run on TAB: the bash
+     * script gives it only words it spells out itself, and offers what isx prints through
+     * {@code _isx_reply} (#1778).
+     */
+    @Test
+    void bashNeverExpandsWhatIsxPrints() {
+        // Only literal words and the script's own constant lists, named $commands or $<cmd>_subcmds
+        var allowed = java.util.regex.Pattern.compile("(\\$(commands|[a-z]+_subcmds)|[A-Za-z0-9-]+)");
+        var script = linux(CompletionCommand.Shell.bash);
+        // Every word list is double-quoted, so the check below sees all of it
+        assertEquals(script.split("compgen -W ", -1).length - 1, script.split("compgen -W \"", -1).length - 1,
+                "a compgen -W whose word list is not double-quoted");
+        var lists = java.util.regex.Pattern.compile("compgen -W \"([^\"]*)\"").matcher(script);
+        int seen = 0;
+        while (lists.find()) {
+            seen++;
+            for (var word : lists.group(1).split(" +")) {
+                assertTrue(allowed.matcher(word).matches(), "compgen -W is given '" + word + "' in: " + lists.group());
+            }
+        }
+        assertTrue(seen > 0, "the bash script still completes static words with compgen -W");
     }
 }
