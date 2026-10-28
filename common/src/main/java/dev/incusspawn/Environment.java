@@ -196,6 +196,14 @@ public final class Environment {
     }
 
     /**
+     * Every command a template's last build ran from its definitions, with what each printed
+     * (#1742): beside the failure reports, and written on success too.
+     */
+    public static Path buildLogFile(String template) {
+        return stateLogFile("build-logs", "Template", template);
+    }
+
+    /**
      * Host-side copy of a VM's console log, saved when its incus-agent does not come up so the
      * message can point at it: the macOS host has no {@code incus console} to show it (#1139).
      */

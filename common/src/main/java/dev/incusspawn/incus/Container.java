@@ -3,6 +3,9 @@ package dev.incusspawn.incus;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
 
+import java.time.Duration;
+import java.util.function.Supplier;
+
 /**
  * A handle to a specific Incus container, providing a convenient API
  * for running commands and managing files inside it.
@@ -12,6 +15,7 @@ public class Container {
     private final IncusClient incus;
     private final String name;
     private final Output out;
+    private final CommandLog log;
     private String architecture;
     private MachineType machineType;
 
@@ -22,9 +26,15 @@ public class Container {
 
     /** A container whose failed commands' output is reported to {@code out}. */
     public Container(IncusClient incus, String name, Output out) {
+        this(incus, name, out, CommandLog.NONE);
+    }
+
+    /** A build's container, which keeps the commands its definitions declared in {@code log}. */
+    public Container(IncusClient incus, String name, Output out, CommandLog log) {
         this.incus = incus;
         this.name = name;
         this.out = out;
+        this.log = log;
     }
 
     /** Where this container reports what a failed command printed. */
@@ -99,10 +109,60 @@ public class Container {
 
     /** Run a command as root, suppressing output. On failure, reports the captured output before throwing. */
     public void runQuiet(String failureMessage, String... command) {
-        var result = incus.shellExec(name, command);
+        requireSuccess(incus.shellExec(name, command), failureMessage);
+    }
+
+    /** Throws {@link #failed} for a result that did not succeed. */
+    private void requireSuccess(IncusClient.ExecResult result, String failureMessage) {
         if (!result.success()) {
             throw failed(out, "The failed command printed:", failureMessage + " (exit code " + result.exitCode() + ")", result);
         }
+    }
+
+    /**
+     * Run {@code script}, which a definition declared for {@code step}, as root, and record it with
+     * what it printed in this container's {@link CommandLog} (#1742). On failure, reports the
+     * captured output before throwing, as {@link #runQuiet}.
+     */
+    public void runDeclared(String step, String script, String failureMessage) {
+        requireSuccess(declared(step, script, () -> sh(script)), failureMessage);
+    }
+
+    /** {@link #runDeclared}, in {@code user}'s login shell, as {@link #runAsUserQuiet}. */
+    public void runDeclaredAsUser(String step, String user, String script, String failureMessage) {
+        requireSuccess(shDeclaredAsUser(step, user, script), failureMessage);
+    }
+
+    /** {@link #shAsUser} of a command a definition declared, recorded as {@link #runDeclared} records it. */
+    public IncusClient.ExecResult shDeclaredAsUser(String step, String user, String script) {
+        return declared(step, script, () -> shAsUser(user, script));
+    }
+
+    /**
+     * The result of {@code run}, which runs {@code script} a definition declared for {@code step},
+     * recorded in this container's {@link CommandLog}. One that throws is recorded too, as exit
+     * status -1 with why, since it may be the command the build failed on.
+     */
+    public IncusClient.ExecResult declared(String step, String script, Supplier<IncusClient.ExecResult> run) {
+        long start = System.nanoTime();
+        IncusClient.ExecResult result;
+        try {
+            result = run.get();
+        } catch (RuntimeException e) {
+            // What it printed before it failed, when the exception carries that, then why
+            var printed = e instanceof IncusException ie && ie.stepOutput() != null ? ie.stepOutput() : "";
+            var why = e.getMessage() == null ? e.getClass().getName() : e.getMessage();
+            try {
+                log.record(step, script, new IncusClient.ExecResult(-1, "", printed + "isx could not run it: " + why),
+                        Duration.ofNanos(System.nanoTime() - start));
+            } catch (RuntimeException recording) {
+                // The exec's failure is the one to report
+                e.addSuppressed(recording);
+            }
+            throw e;
+        }
+        log.record(step, script, result, Duration.ofNanos(System.nanoTime() - start));
+        return result;
     }
 
     /**
@@ -132,10 +192,7 @@ public class Container {
 
     /** Run a shell snippet as a specific user, suppressing output. On failure, reports the captured output before throwing. */
     public void runAsUserQuiet(String user, String script, String failureMessage) {
-        var result = incus.execInContainer(name, user, script);
-        if (!result.success()) {
-            throw failed(out, "The failed command printed:", failureMessage + " (exit code " + result.exitCode() + ")", result);
-        }
+        requireSuccess(incus.execInContainer(name, user, script), failureMessage);
     }
 
     /** Install packages via dnf. */

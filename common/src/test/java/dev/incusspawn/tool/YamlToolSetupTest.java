@@ -92,11 +92,11 @@ class YamlToolSetupTest {
 
         // Packages are installed in bulk by BuildCommand, not by install().
 
-        // 1. run -> runQuiet -> shellExec with sh -c
+        // 1. run -> runDeclared -> shellExec with sh -c
         order.verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), eq("echo root-step"));
 
-        // 2. run_as_user -> runAsUserQuiet -> execInContainer (su - user -c)
+        // 2. run_as_user -> runDeclaredAsUser -> execInContainer (su - user -c)
         order.verify(incus).execInContainer(eq(CONTAINER),
                 eq("agentuser"), eq("echo user-step"));
 
@@ -113,6 +113,31 @@ class YamlToolSetupTest {
         // 6. verify is not run by install() -- ToolVerifier runs it once isx-env.sh exists
         verify(incus, never()).shellExec(eq(CONTAINER), eq("test-tool"), eq("--version"));
         verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("test-tool"));
+    }
+
+    @Test
+    void runStepsAreRecordedInTheBuildsCommandLogAndNothingElseIs() {
+        // #1742: a tool's run and run_as_user steps, as substituted, with what they printed;
+        // the file it writes is isx's own command, not one the definition wrote
+        var incus = mockIncusWithArch();
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.shellExec(CONTAINER, "sh", "-c", "echo root 21")).thenReturn(new IncusClient.ExecResult(0, "root 21\n", ""));
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(new IncusClient.ExecResult(0, "", "user\n"));
+        var def = new ToolDef();
+        def.setName("jdk");
+        def.setRun(List.of("echo root ${param_version}"));
+        def.setRunAsUser(List.of("echo user"));
+        var file = new ToolDef.FileEntry();
+        file.setPath("/etc/jdk.conf");
+        file.setContent("content");
+        def.setFiles(List.of(file));
+        var recorded = new java.util.ArrayList<String>();
+        var container = new Container(incus, CONTAINER, dev.incusspawn.util.RecordingOutput.QUIET,
+                (step, command, result, took) -> recorded.add(step + " | " + command + " | " + result.stdout() + result.stderr()));
+
+        new YamlToolSetup(def).install(container, Map.of("version", "21"));
+
+        assertEquals(List.of("tool 'jdk' run | echo root 21 | root 21\n", "tool 'jdk' run_as_user | echo user | user\n"), recorded);
     }
 
     @Test

@@ -234,6 +234,8 @@ A list runs its commands in turn, and the first that fails stops the rest and fa
 Each command runs in its own shell, so a variable one exports is gone in the next.
 The build failure names the prime command that failed, and the failure report shows it above that command's output.
 
+The build's log keeps every prime command that ran, and the output of each (`isx build --verbose` shows it).
+
 `depth` is for repositories that store release binaries in their history.
 Omit it for development repositories, which get the full history.
 In the instance, `git fetch --unshallow && git remote set-branches origin '*' && git fetch` gets all of it.
