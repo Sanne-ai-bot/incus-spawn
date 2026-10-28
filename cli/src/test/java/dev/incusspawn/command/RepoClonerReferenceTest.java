@@ -9,9 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -121,19 +119,9 @@ class RepoClonerReferenceTest {
             return RepoClonerTest.reference(ref.deviceName(), ref.containerPath(), ref.source(), null);
         }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any());
         doReturn(count).when(cmd).repoConcurrency(anyInt()); // every clone at once: the most slot pressure
-        var out = new ByteArrayOutputStream();
-        var originalOut = System.out;
-        var originalErr = System.err;
-        System.setOut(new PrintStream(out, true));
-        System.setErr(new PrintStream(out, true));
-        try {
-            assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
-                    () -> cmd.cloneRepos(new Container(incus, VM), imageDef, java.util.Map.of(), MachineType.VM));
-        } finally {
-            System.setOut(originalOut);
-            System.setErr(originalErr);
-        }
-        return new Build(daemon, clones, primes, primesWhileAttached, out.toString(), deviceNames);
+        var shown = RepoClonerTest.shown(() -> assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
+                () -> cmd.cloneRepos(new Container(incus, VM), imageDef, java.util.Map.of(), MachineType.VM)));
+        return new Build(daemon, clones, primes, primesWhileAttached, shown, deviceNames);
     }
 
     @Test

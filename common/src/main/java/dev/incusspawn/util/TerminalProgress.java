@@ -102,6 +102,36 @@ public final class TerminalProgress {
         }
     }
 
+    /**
+     * {@link #run} whose plain mode reports each task as it ends, one at a time, through
+     * {@code plainDone}, given the task's index: so a caller says how it ended by kind from its
+     * state, rather than as a pre-rendered line.
+     */
+    public static void run(int taskCount, int maxConcurrency,
+                           IntConsumer task,
+                           BiFunction<Integer, Integer, String> animatedLine,
+                           IntConsumer plainDone) {
+        if (taskCount == 0) return;
+        if (isAnsiTerminal()) {
+            animate(taskCount, maxConcurrency, task, animatedLine);
+        } else {
+            plainEach(taskCount, maxConcurrency, task, plainDone);
+        }
+    }
+
+    /** Plain mode: each task, then {@code done} with its index, one at a time, even if it threw. */
+    private static void plainEach(int taskCount, int maxConcurrency, IntConsumer task, IntConsumer done) {
+        var lock = new Object();
+        awaitAll(taskCount, maxConcurrency, i -> {
+            try {
+                task.accept(i);
+            } finally {
+                // Also for a task that threw: its state says how it ended
+                synchronized (lock) { done.accept(i); }
+            }
+        });
+    }
+
     private static void animate(int taskCount, int maxConcurrency,
                                 IntConsumer task,
                                 BiFunction<Integer, Integer, String> line) {
