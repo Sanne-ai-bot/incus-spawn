@@ -63,7 +63,7 @@ final class GitProcess {
      */
     static final double BUSY_CPU_SHARE = 0.05;
     private static final long READER_MILLIS = 2_000;
-    private static final Pattern CSI = Pattern.compile("\u001B\\[[0-9;?]*[ -/]*[@-~]");
+    private static final Pattern CSI = Pattern.compile("\u001B\\[[0-9;?]*[ -/]*[@-~]"); // raw ANSI: matches escapes, writes none
 
     /**
      * Runs {@code builder} on {@code repo} (null when none), with SSH as

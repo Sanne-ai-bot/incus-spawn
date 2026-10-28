@@ -228,6 +228,7 @@ Say what kind a message is: a `step`, a `warn` with its advice as details (never
 Indent with `group`, never with leading spaces.
 Shared code the TUI runs while it draws (`lifecycle/`, `incus/`) takes an `Output` from its caller, never a `Consumer<String>`; code with no caller to ask, such as a definition loader, reports through `Warnings.warn()`.
 `RawOutputGateTest` (`cli`) enforces it: only its gate classes (`EXEMPT` and the build-time `graal/*Feature` classes) touch the raw streams, the console or `printStackTrace()`, and no print literal is indented by hand.
+It counts a logger, `Thread.dumpStack()` and reflection on `System` as raw stream use, and lets only named files hand a child process the terminal or open `/dev/tty`.
 Code that hands the terminal over or draws on it whole takes the streams from `TerminalStreams`, and only the files the test names may.
 Tests assert on `RecordingOutput`'s typed events (common test-jar), never on a swapped stream; `StreamSwapGateTest` names the few that may swap, each with why.
 The bindings and every kind of message are in `.claude/rules/terminal-output.md`; the rationale is DESIGN.md "One output seam".

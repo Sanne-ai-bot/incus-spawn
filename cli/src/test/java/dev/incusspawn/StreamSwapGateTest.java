@@ -48,11 +48,7 @@ class StreamSwapGateTest {
         var sources = RawOutputGateTest.sources("src/test/java");
         var swapping = new TreeSet<String>();
         sources.forEach((path, source) -> {
-            // Only a source that names one can swap one; blanking the rest would change nothing
-            if ((source.contains("setOut") || source.contains("setErr"))
-                    && SWAP.matcher(RawOutputGateTest.blank(source)).find()) {
-                swapping.add(path);
-            }
+            if (SWAP.matcher(RawOutputGateTest.blank(source)).find()) swapping.add(path);
         });
         // A class that calls a swapping class's static helper (InitStepOutputTest.capture) swaps too;
         // with no swapping class, an empty alternation would match every static call
