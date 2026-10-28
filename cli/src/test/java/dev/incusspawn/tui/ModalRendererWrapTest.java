@@ -29,4 +29,13 @@ class ModalRendererWrapTest {
         // Each word is 3 ideographs, 6 cells: two and a space take 13 of 14 cells, three take 20.
         assertEquals(List.of("日本語 日本語", "日本語"), ModalRenderer.wrapText("日本語 日本語 日本語", 14));
     }
+
+    @Test
+    void theAccountsErrorAndTemplateDetailsWrapByCellsToo() {
+        var wrapped = List.of("日本語 日本語", "日本語");
+        assertEquals(wrapped, AccountsModal.wrap("日本語 日本語 日本語", 14));
+        assertEquals(wrapped, TemplateDetailView.wrap("日本語 日本語 日本語", 14));
+        assertEquals(List.of("jdk     25"), TemplateDetailView.wrap("jdk     25", 14));
+        assertEquals(List.of("a b c"), TemplateDetailView.wrap("a b c", 0));
+    }
 }

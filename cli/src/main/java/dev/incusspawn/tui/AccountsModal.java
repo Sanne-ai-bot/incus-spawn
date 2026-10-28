@@ -217,18 +217,7 @@ final class AccountsModal {
     }
 
     static List<String> wrap(String text, int width) {
-        var out = new ArrayList<String>();
-        var line = new StringBuilder();
-        for (var word : text.split("\\s+")) {
-            if (line.length() > 0 && line.length() + 1 + word.length() > width) {
-                out.add(line.toString());
-                line.setLength(0);
-            }
-            if (line.length() > 0) line.append(' ');
-            line.append(word);
-        }
-        if (line.length() > 0) out.add(line.toString());
-        return out;
+        return ModalRenderer.wrapWords(text, width);
     }
 
     /** Under a row: what the selected account is -- its type, or whose identity. */

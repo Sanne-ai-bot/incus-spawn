@@ -19,6 +19,7 @@ import dev.tamboui.layout.Padding;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
+import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.tui.event.KeyCode;
@@ -631,8 +632,13 @@ final class TemplateDetailView {
         };
     }
 
-    /** Greedy word wrap; a word longer than {@code width} is left whole for the view to clip. */
+    /**
+     * Greedy word wrap in terminal cells ({@link ModalRenderer#wrapText}); text that fits, or a
+     * {@code width} too small to wrap to, is kept as written, and a word longer than {@code width}
+     * is left whole for the view to clip.
+     */
     static List<String> wrap(String text, int width) {
-        return OutputFormat.wrap(text, width);
+        if (width <= 0 || CharWidth.of(text) <= width) return List.of(text);
+        return ModalRenderer.wrapText(text, width);
     }
 }
