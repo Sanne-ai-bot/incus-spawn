@@ -217,6 +217,12 @@ jobs:
           cp cli/target/incus-spawn-*-runner.jar dist-jars/incus-spawn-runner.jar
           cp proxy/target/incus-spawn-proxy-*-runner.jar dist-jars/isx-proxy-runner.jar
 
+      # A released jar takes the role of the OS it runs on: its Platform is the one this build
+      # compiled, not the macOS-role test build's, and -Dos.name cannot change its role (#1800)
+      - name: Check uber-jars' platform role
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: scripts/check-platform-role.sh dist-jars/incus-spawn-runner.jar dist-jars/isx-proxy-runner.jar
+
       - name: Build native image (Linux)
         if: matrix.os == 'linux'
         run: |

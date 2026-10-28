@@ -190,6 +190,22 @@ jobs:
           fi
           echo "$OUTPUT" | grep -q "jbang app install isx-proxy@Sanne/incus-spawn"
 
+      # What release.yml checks before it uploads them: each uber-jar's Platform is the one this build
+      # compiled, and -Dos.name cannot put it in macOS's role on Linux (#1800)
+      - name: Check uber-jars' platform role
+        run: |
+          scripts/check-platform-role.sh cli/target/incus-spawn-*-runner.jar proxy/target/incus-spawn-proxy-*-runner.jar
+
+      # For macos-role, which makes its test build from these rather than building again
+      - name: Upload uber-jars
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: uber-jars
+          path: |
+            cli/target/incus-spawn-*-runner.jar
+            proxy/target/incus-spawn-proxy-*-runner.jar
+          retention-days: 1
+
   cancel-on-unit-failure:
     needs: [unit-tests]
     if: failure()
@@ -488,6 +504,93 @@ jobs:
             vm-console.log
             vm-console-remote.log
           if-no-files-found: ignore
+          retention-days: 7
+
+  # isx and isx-proxy in their macOS roles, on Linux (#1800): the macOS-role test build
+  # (scripts/macos-role-build.sh, never released) against the appliance booted as isx boots it on
+  # macOS, with stand-ins for vfkit, its NAT, the DHCP leases and the Keychain. A template build
+  # that runs gh, a pinned branch, refused proofs and --mcp-client, through the macOS code paths
+  # (appliance/test-macos-role.sh). Its own job, off the critical path: it starts once the uber-jars
+  # are built and ends before the slower integration jobs.
+  macos-role:
+    needs: [uber-jar-smoke, build_appliance]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Oracle GraalVM 25.4
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.4'
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Download uber-jars
+        uses: actions/download-artifact@v6
+        with:
+          name: uber-jars
+          path: uber-jars/
+
+      - name: Restore appliance image
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: appliance/build/
+          key: ${{ needs.build_appliance.outputs.cache_key_x86_64 }}
+          fail-on-cache-miss: false
+
+      - name: Download appliance artifact (fallback)
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v6
+        with:
+          name: appliance-x86_64
+          path: appliance/build/
+
+      - name: Install QEMU and the stand-ins' tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 socat dnsmasq-base \
+            incus-client net-tools btrfs-progs zstd
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          echo 'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666", OPTIONS+="static_node=vhost-vsock"' \
+            | sudo tee /etc/udev/rules.d/99-vhost-vsock4all.rules
+          sudo udevadm control --reload-rules
+          sudo modprobe vhost_vsock
+          sudo udevadm trigger --name-match=kvm || true
+          sudo udevadm settle
+          sudo chmod 666 /dev/kvm /dev/vhost-vsock
+
+      - name: Create disk image from rootfs tarball
+        run: |
+          truncate -s 4G appliance/build/disk.img
+          LOOP=$(sudo losetup --find --show appliance/build/disk.img)
+          sudo mkfs.btrfs -q -L isxroot "$LOOP"
+          sudo mkdir -p /mnt/appliance
+          sudo mount "$LOOP" /mnt/appliance
+          zstd -d appliance/build/rootfs.tar.zst --stdout | sudo tar xf - -C /mnt/appliance
+          sudo chmod 755 /mnt/appliance
+          sudo umount /mnt/appliance
+          sudo losetup -d "$LOOP"
+
+      - name: Make the macOS-role test build
+        run: |
+          scripts/macos-role-build.sh uber-jars/cli/target/incus-spawn-*-runner.jar \
+            uber-jars/proxy/target/incus-spawn-proxy-*-runner.jar "$RUNNER_TEMP/macos-role"
+
+      - name: isx and isx-proxy in their macOS roles
+        run: |
+          sudo env RUN_AS="$USER" KEEP_LOGS="$PWD/macos-role-logs" PATH="$PATH" \
+            appliance/test-macos-role.sh appliance/build \
+            "$RUNNER_TEMP/macos-role/isx-macos-role-test.jar" "$RUNNER_TEMP/macos-role/isx-proxy-macos-role-test.jar"
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: macos-role-logs
+          path: macos-role-logs/
           retention-days: 7
 
   isx-integration-tests-native:

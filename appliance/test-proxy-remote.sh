@@ -11,9 +11,8 @@ set -uo pipefail
 # host's MITM port stands in for isx-proxy. It answers every connection with the address it came
 # from and the first line it read, which is what the proxy has to identify a caller by.
 #
-# This proves the guest half of the macOS path, not isx-proxy's macOS build: that build decides
-# it is on macOS when it is compiled, so it cannot run here. Its caller identification is covered
-# by unit tests (MitmProxy.proofMayIdentify, CredentialProofProxyTest).
+# This proves the guest half of the macOS path. The real isx-proxy, in its macOS role, is
+# test-macos-role.sh's (#1800).
 #
 # Needs root (tap device, DHCP server), qemu-system-<arch>, socat, dnsmasq, the incus client,
 # a statically linked busybox (busybox-static on Ubuntu, busybox on Fedora) and /dev/vhost-vsock.

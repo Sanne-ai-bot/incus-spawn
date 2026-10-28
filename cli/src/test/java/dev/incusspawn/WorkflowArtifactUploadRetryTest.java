@@ -31,7 +31,7 @@ class WorkflowArtifactUploadRetryTest {
     }
 
     /** Only a step that runs on nothing but {@code always()} or {@code failure()} counts as diagnostic. */
-    private static boolean isDiagnostic(JqValue step) {
+    static boolean isDiagnostic(JqValue step) {
         return DIAGNOSTIC.matcher(step.pathText("if", "")).matches();
     }
 
