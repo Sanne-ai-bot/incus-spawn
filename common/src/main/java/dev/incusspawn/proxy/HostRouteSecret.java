@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.OwnDirectory;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -126,7 +127,7 @@ public final class HostRouteSecret {
             Files.createDirectories(configDir);
             var probe = Files.createTempFile(configDir, ".uid-", ".tmp");
             try {
-                uid = uidOf(probe);
+                uid = OwnDirectory.uidOf(probe);
             } finally {
                 Files.deleteIfExists(probe);
             }
@@ -139,50 +140,17 @@ public final class HostRouteSecret {
         return path.getFileSystem().supportedFileAttributeViews().contains("unix");
     }
 
-    private static int uidOf(Path path) throws IOException {
-        return (Integer) Files.getAttribute(path, "unix:uid", LinkOption.NOFOLLOW_LINKS);
-    }
-
-    /**
-     * That {@code path} is a directory of {@code uid}'s that nobody else can write to. Group write
-     * is accepted only when the directory's group is {@code privateGroup}, by number; null accepts
-     * none.
-     */
+    /** {@link OwnDirectory#require}, refused as a secret is. */
     private static void requireOwnDirectory(Path path, Integer uid, Integer privateGroup) throws IOException {
-        if (Files.isSymbolicLink(path)) {
-            throw new Unusable("is under " + isALink(path));
-        }
-        if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
-            throw new Unusable("is not in a directory: " + path + " is something else");
-        }
-        if (uid != null && uidOf(path) != uid) {
-            throw new Unusable("is in " + path + ", which belongs to uid " + uidOf(path) + ", not to uid " + uid
-                    + ", whom the proxy runs as (chown it)");
-        }
-        if (isPosix(path)) {
-            var permissions = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
-            var groupWrite = permissions.contains(PosixFilePermission.GROUP_WRITE)
-                    && (privateGroup == null || !privateGroup.equals(gidOf(path)));
-            if (groupWrite || permissions.contains(PosixFilePermission.OTHERS_WRITE)) {
-                throw new Unusable("is in " + path + ", which others can write to (chmod go-w it)");
-            }
-        }
-    }
-
-    /** That {@code link} is one, and what to do. Never toRealPath: a dangling link gets this too. */
-    private static String isALink(Path link) {
-        String target;
         try {
-            target = String.valueOf(Files.readSymbolicLink(link));
-        } catch (IOException e) {
-            target = "an unreadable target";
+            OwnDirectory.require(path, uid, privateGroup, "the proxy");
+        } catch (OwnDirectory.NotOwn e) {
+            throw new Unusable(e.getMessage());
         }
-        return link + ", which is a link (to " + target + "): the proxy checks the real directory only, so make "
-                + link + " that directory";
     }
 
-    private static int gidOf(Path path) throws IOException {
-        return (Integer) Files.getAttribute(path, "unix:gid", LinkOption.NOFOLLOW_LINKS);
+    private static String isALink(Path link) {
+        return OwnDirectory.isALink(link, "the proxy");
     }
 
     /**
@@ -261,8 +229,8 @@ public final class HostRouteSecret {
     static String read(Path file, Integer uid) throws IOException {
         if (Files.isSymbolicLink(file)) throw new Unusable("is a link, not a regular file");
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new Unusable("is not a regular file");
-        if (uid != null && uidOf(file) != uid) {
-            throw new Unusable("belongs to uid " + uidOf(file) + ", not to uid " + uid + ", whom the proxy runs as (chown it)");
+        if (uid != null && OwnDirectory.uidOf(file) != uid) {
+            throw new Unusable("belongs to uid " + OwnDirectory.uidOf(file) + ", not to uid " + uid + ", whom the proxy runs as (chown it)");
         }
         if (isPosix(file)) {
             var permissions = Files.getPosixFilePermissions(file, LinkOption.NOFOLLOW_LINKS);
