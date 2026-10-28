@@ -35,6 +35,7 @@ class HostCommandsTest {
         var result = HostCommands.SYSTEM.run(Duration.ofSeconds(2), List.of("sh", "-c", "sleep 30 & echo started"));
         assertEquals(0, result.exit());
         assertTrue(Duration.ofNanos(System.nanoTime() - start).toSeconds() < 10, "bounded by its timeout");
+        assertTrue(result.output().contains("started"), "what it printed before is kept: " + result.output());
     }
 
     @Test

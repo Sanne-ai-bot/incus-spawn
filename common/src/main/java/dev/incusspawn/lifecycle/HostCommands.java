@@ -41,10 +41,13 @@ public interface HostCommands {
                 // Read while it runs, so a chatty command cannot fill the pipe and stall
                 var output = new StringBuilder();
                 var reader = Thread.ofVirtual().start(() -> {
-                    try (var in = process.getInputStream()) {
-                        var text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                        synchronized (output) {
-                            output.append(text);
+                    // Appended as it is read, so what came before a daemon kept the pipe open is kept
+                    try (var in = new java.io.InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)) {
+                        var chunk = new char[4096];
+                        for (int n; (n = in.read(chunk)) >= 0; ) {
+                            synchronized (output) {
+                                output.append(chunk, 0, n);
+                            }
                         }
                     } catch (IOException ignored) {
                         // The exit status says what happened

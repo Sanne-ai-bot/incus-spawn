@@ -5307,6 +5307,8 @@ isx tells it instead: the `herdr` tool installs herdr in the template, and its h
 Installed in the template, herdr's first connection finds it and starts its server; without it herdr offers to install itself over SSH, which is the step Sanne did not want.
 `herdr machine add` runs without a terminal (checked against herdr 0.9.5: about a second, the remote server started and the machine saved).
 The target is the instance's name, which its Host block in isx's managed SSH config resolves.
+herdr is asked only once that holds: the managed config has the instance's block for its address, and `~/.ssh/config` includes it (`HerdrIntegration.SshAlias`).
+Otherwise herdr would resolve the name as any host, a real machine of that name included, and install and start its server there; nothing is recorded, so a later start adds it.
 What isx did is recorded on the host, one file per instance name: the id of the machine it added, or `-` when it added none.
 So later starts check one file and run nothing, a copy or a renamed instance gets a record of its own, and a failed add or an untrusted build is not retried or reported again on every start.
 A destroy removes only the recorded machine: herdr may hold a machine the user added for a real host that shares the instance's name, which a match on the SSH target alone would have removed.

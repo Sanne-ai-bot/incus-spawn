@@ -138,13 +138,7 @@ public final class SshKeyManager {
             String content = "";
             if (Files.exists(resolvedConfig)) {
                 content = Files.readString(resolvedConfig);
-                // Check if the Include is already at the top (before any Host block)
-                for (var line : content.lines().toList()) {
-                    var trimmed = line.strip();
-                    if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
-                    if (trimmed.equals(INCLUDE_LINE)) return true;
-                    break; // first non-blank, non-comment line is not our Include
-                }
+                if (includedIn(content)) return true;
             }
 
             // Prepend Include line — must come before Host blocks to take effect
@@ -153,6 +147,29 @@ public final class SshKeyManager {
             return true;
         } catch (IOException e) {
             Warnings.warn("Failed to update ~/.ssh/config: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Whether {@code content} starts, before any Host block, with the Include of isx's managed config. */
+    static boolean includedIn(String content) {
+        for (var line : content.lines().toList()) {
+            var trimmed = line.strip();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
+            return trimmed.equals(INCLUDE_LINE); // the first other line decides
+        }
+        return false;
+    }
+
+    /**
+     * Whether ~/.ssh/config already includes isx's managed config, read only: so {@code ssh <name>}
+     * reads an instance's Host block (#1720, the herdr integration checks it before naming one).
+     */
+    public static boolean hasSshConfigInclude() {
+        try {
+            var sshConfig = Environment.home().resolve(".ssh/config");
+            return Files.exists(sshConfig) && includedIn(Files.readString(sshConfig.toRealPath()));
+        } catch (IOException e) {
             return false;
         }
     }
