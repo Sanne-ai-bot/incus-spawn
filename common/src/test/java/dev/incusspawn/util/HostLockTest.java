@@ -49,16 +49,22 @@ class HostLockTest {
             // Released however the assertions go, or closing the pool waits on the holder forever
             try {
                 assertTrue(held.await(10, TimeUnit.SECONDS));
+                var log = new CopyOnWriteArrayList<String>();
                 var waiter = pool.submit(() -> {
-                    try (var lock = acquire(new ArrayList<>())) {
-                        return true;
+                    try (var lock = acquire(log)) {
+                        return lock.waited();
                     }
                 });
                 Thread.sleep(200);
                 assertFalse(waiter.isDone(), "a second thread took the lock while the first held it");
+                assertEquals(List.of(), log, "a brief wait between threads is not said");
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while (log.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+                assertEquals(List.of("Another isx operation is testing — waiting..."), log,
+                        "a longer one is, as another process's is");
                 release.countDown();
                 holder.get(10, TimeUnit.SECONDS);
-                assertTrue(waiter.get(10, TimeUnit.SECONDS));
+                assertTrue(waiter.get(10, TimeUnit.SECONDS), "says it waited, so a caller re-checks");
             } finally {
                 release.countDown();
             }
@@ -98,7 +104,7 @@ class HostLockTest {
             var log = new CopyOnWriteArrayList<String>();
             var acquired = pool.submit(() -> {
                 try (var lock = HostLock.acquire(lockFile(), "testing", log::add)) {
-                    return child.isAlive();
+                    return lock.waited();
                 }
             });
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
@@ -106,9 +112,19 @@ class HostLockTest {
             assertEquals(List.of("Another isx process is testing — waiting..."), log);
             assertFalse(acquired.isDone(), "acquired while another process held the lock");
             in.println("release");
-            acquired.get(10, TimeUnit.SECONDS);
+            assertTrue(acquired.get(10, TimeUnit.SECONDS), "says it waited, so a caller re-checks");
         } finally {
             child.destroyForcibly();
+        }
+    }
+
+    @Test
+    void anUncontendedLockSaysItDidNotWait() {
+        try (var lock = acquire(new ArrayList<>())) {
+            assertFalse(lock.waited());
+        }
+        try (var lock = acquire(new ArrayList<>())) {
+            assertFalse(lock.waited(), "a holder that has let go is not waited for");
         }
     }
 
@@ -148,7 +164,8 @@ class HostLockTest {
                 assertTrue(held.await(10, TimeUnit.SECONDS));
                 var e = assertThrows(HostLock.HostLockException.class, () -> HostLock.acquire(
                         lockFile(), "testing", s -> {}, Duration.ofMillis(100), null));
-                assertEquals("Timed out waiting for another isx process testing.", e.getMessage());
+                assertEquals("Timed out waiting for another isx operation testing.", e.getMessage(),
+                        "another thread, not another process, holds it");
             } finally {
                 release.countDown();
             }
