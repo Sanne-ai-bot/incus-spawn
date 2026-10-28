@@ -47,7 +47,7 @@ public class AskCommand extends BaseCommand {
         }
 
         var target = targets.getFirst();
-        var label = "Asking " + target.label() + (withTemplates ? " (with templates)" : "") + "...";
+        var label = "Asking " + target.label() + (withTemplates ? " (with templates)" : "");
         var systemBlocks = HelpContext.systemBlocks(withTemplates);
         answer(label,
                 chunks -> AiHelpClient.askStreaming(question, systemBlocks, config, target, chunks).note());

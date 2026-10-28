@@ -297,6 +297,8 @@ public final class InstanceLifecycle {
     static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance, SpawnConfig config,
                                            Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
                                            Output out) {
+        // Whether this method has a step live: a failure before one started leaves the caller's alone
+        var live = new boolean[1];
         try {
             var plan = instance != null
                     ? AccountSelection.identityReconcile(config, instance, knownSetups)
@@ -336,15 +338,18 @@ public final class InstanceLifecycle {
             stale.forEach((namespace, account) -> {
                 var setup = setups.get(namespace);
                 if (setup == null) return;
-                out.step("Updating " + namespace + " identity for account '"
-                        + account + "'...");
+                out.stepStart("Updating " + namespace + " identity for account '" + account + "'");
+                live[0] = true;
                 setup.rebakeForAccount(container, account);
+                out.stepDone(null);
+                live[0] = false;
                 updates.put(Metadata.accountIdentityKey(namespace), setup.bakedAccountIdentity(config, account));
             });
             if (!updates.isEmpty()) incus.configSetAll(name, updates);
         } catch (Exception e) {
             // Best effort: a stale identity is a wrong commit author, not a broken instance,
             // and the next use tries again because the stamp is only updated on success.
+            if (live[0]) out.abandonStep();
             out.warn("could not update credential identity for " + name
                     + ": " + e.getMessage());
         }

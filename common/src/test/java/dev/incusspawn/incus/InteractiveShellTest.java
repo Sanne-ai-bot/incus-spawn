@@ -119,7 +119,7 @@ class InteractiveShellTest {
                 () -> InteractiveShell.reconnecting(() -> true, delays::add, () -> 0L)));
         assertEquals(List.of(1000L, 2000L, 4000L, 8000L, 10_000L, 10_000L, 10_000L, 10_000L, 10_000L, 10_000L), delays);
         assertEquals(new Event(Kind.WARN, "Connection lost — reconnecting..."), said.events().getFirst());
-        assertEquals(new Event(Kind.NOTE, "Still reconnecting (attempt 10 of 10)..."), said.events().getLast());
+        assertEquals(new Event(Kind.NOTE, "Still reconnecting (attempt 10 of 10)"), said.events().getLast());
     }
 
     /** A connection that fails to come back is retried with a growing wait, as notes, then given up. */
@@ -132,7 +132,7 @@ class InteractiveShellTest {
         assertEquals(List.of(1000L, 2000L, 4000L, 8000L, 10_000L, 10_000L, 10_000L, 10_000L, 10_000L, 10_000L), delays);
         var events = said.events();
         assertEquals(new Event(Kind.WARN, "Connection lost — reconnecting..."), events.getFirst());
-        assertEquals(new Event(Kind.NOTE, "Still reconnecting (attempt 10 of 10)..."), events.getLast());
+        assertEquals(new Event(Kind.NOTE, "Still reconnecting (attempt 10 of 10)"), events.getLast());
         assertEquals(10, events.size());
     }
 }

@@ -401,7 +401,7 @@ public final class BranchFlow {
                 if (Metadata.isOwnershipKey(key)) copyConfig.putIfAbsent(key, "");
             });
         }
-        BuildOutput.stepStart("Copying from template...");
+        BuildOutput.stepStart("Copying from template");
         incus.copy(source, name, copyPlan, copyConfig);
         BuildOutput.stepDone();
         // Well before the start; a VM takes its SMBIOS UUID at every boot instead (DESIGN.md "Branching")
@@ -458,7 +458,7 @@ public final class BranchFlow {
 
         JqValue started = null;
         if (machineType == MachineType.VM) {
-            BuildOutput.stepStart("Waiting for VM agent...");
+            BuildOutput.stepStart("Waiting for VM agent");
             incus.waitForReady(name, MachineType.VM);
             BuildOutput.stepDone();
             started = InstanceNetwork.pushDeferredVmFiles(incus, name, networkMode);

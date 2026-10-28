@@ -473,6 +473,28 @@ class UnbakedGitIdentityTest {
                 daemon.instance(NAME).path("config").path(Metadata.accountIdentityKey("github")).asText());
     }
 
+    /**
+     * A re-derive is a live step that ends in its ✗ when it fails (#1791), and a failure before
+     * one started ends nothing: the step a caller has live is not this method's to fail.
+     */
+    @Test
+    void onlyTheRederiveItStartedIsEndedOnFailure() throws Exception {
+        var stamps = Map.of(Metadata.accountIdentityKey("github"), Metadata.ACCOUNT_IDENTITY_NONE);
+        var gh = new RecordingGh();
+        gh.fail = true;
+        var failed = RecordingOutput.during(() -> InstanceLifecycle.reconcileAccountIdentities(
+                readyClient(new FakeIncusDaemon().container(NAME, stamps)), NAME, withToken(), Map.of("github", gh),
+                dev.incusspawn.util.BuildOutput.bound()));
+        assertEquals(List.of(RecordingOutput.Kind.STEP_START, RecordingOutput.Kind.ABANDON_STEP, RecordingOutput.Kind.WARN),
+                failed.events().stream().map(RecordingOutput.Event::kind).toList(), failed.events()::toString);
+
+        var noAddress = RecordingOutput.during(() -> InstanceLifecycle.reconcileAccountIdentities(
+                addresslessClient(new FakeIncusDaemon().container(NAME, stamps)), NAME, withToken(),
+                Map.of("github", new RecordingGh()), dev.incusspawn.util.BuildOutput.bound()));
+        assertEquals(List.of(RecordingOutput.Kind.WARN),
+                noAddress.events().stream().map(RecordingOutput.Event::kind).toList(), noAddress.events()::toString);
+    }
+
     /** The fake serves no exec; the instance is taken to have its address already. */
     private static IncusClient readyClient(FakeIncusDaemon daemon) {
         return client(daemon, true);

@@ -324,12 +324,16 @@ public final class ProxyService {
         }
 
         BuildOutput.step("Service file written to " + Environment.proxyServiceFile());
-        BuildOutput.step("Enabling and starting proxy service...");
-        runQuiet("systemctl", "--user", "daemon-reload");
-        runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME);
+        // Whether it took is asked below, of the service itself
+        BuildOutput.stepStart("Enabling and starting proxy service");
+        if (runQuiet("systemctl", "--user", "daemon-reload")
+                & runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME)) BuildOutput.stepDone();
+        else BuildOutput.stepBreak();
 
-        BuildOutput.step("Enabling lingering for user (sudo required)...");
-        runQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"));
+        BuildOutput.stepStart("Enabling lingering for user (sudo required)");
+        if (runQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"))) BuildOutput.stepDone();
+        else BuildOutput.stepFail("The proxy stops when you log out. Run: sudo loginctl enable-linger "
+                + System.getProperty("user.name"));
 
         if (isActive()) {
             if (ProxyHealthCheck.awaitHealthy(configuredStartWaitSeconds())) {
@@ -385,16 +389,18 @@ public final class ProxyService {
             return true;
         }
 
-        BuildOutput.step("Stopping and disabling proxy service...");
+        BuildOutput.stepStart("Stopping and disabling proxy service");
         // A stop systemctl refuses for a unit that is not running (no user manager, a unit never
         // loaded) still lets its files go; a unit still running keeps them.
         runQuiet("systemctl", "--user", "stop", SERVICE_NAME);
         if (active.getAsBoolean()) {
+            BuildOutput.stepBreak();
             BuildOutput.error("Could not stop the proxy service; its files stay.",
                     "Check it with: systemctl --user status " + SERVICE_NAME);
             return false;
         }
         runQuiet("systemctl", "--user", "disable", SERVICE_NAME);
+        BuildOutput.stepDone();
 
         try {
             Files.deleteIfExists(Environment.proxyServiceFile());
@@ -474,7 +480,7 @@ public final class ProxyService {
         // Under the lock, after restartIfUnhealthy's recheck: a healthy proxy is never refused.
         if (!initComplete(out)) return false;
         ProxyLog.info("Service restarting");
-        out.note("Restarting proxy service...");
+        out.note("Restarting proxy service");
         boolean restarted;
         if (Platform.isMacOS()) {
             // Refresh a stale plist before loading it: a plist from an older build — one whose
@@ -540,12 +546,13 @@ public final class ProxyService {
 
     private static boolean stopLocked() {
         if (isActive()) {
-            BuildOutput.step("Stopping proxy service...");
             if (!Platform.isMacOS()) return stopSystemdUnit(ProxyService::isActive);
+            BuildOutput.stepStart("Stopping proxy service");
             // launchd's bootout answers as soon as the job is told to go (see LaunchdJob), so its
             // result proves nothing and is not asked
             runQuiet("launchctl", "bootout", "gui/" + getUid() + "/" + PROXY_LABEL);
-            BuildOutput.step("Proxy service stopped (re-enable with: isx proxy install).");
+            BuildOutput.stepDone();
+            BuildOutput.stepNote("Re-enable it with: isx proxy install");
             return true;
         }
 
@@ -554,10 +561,12 @@ public final class ProxyService {
 
     /** Stops the systemd unit, false with an error when {@code systemctl} refused or the unit is still {@code active} after it. */
     static boolean stopSystemdUnit(BooleanSupplier active) {
+        BuildOutput.stepStart("Stopping proxy service");
         if (runQuiet("systemctl", "--user", "stop", SERVICE_NAME) && !active.getAsBoolean()) {
-            BuildOutput.step("Proxy service stopped.");
+            BuildOutput.stepDone();
             return true;
         }
+        BuildOutput.stepBreak();
         BuildOutput.error("Could not stop the proxy service.",
                 "Check it with: systemctl --user status " + SERVICE_NAME);
         return false;
@@ -574,11 +583,12 @@ public final class ProxyService {
         if (pid <= 0) pid = pidOnPort.getAsLong();
         // The PID came over HTTP: 0 or a negative one would make `kill` signal a process group.
         if (pid > 0) {
-            BuildOutput.step("Stopping proxy (PID " + pid + ")...");
+            BuildOutput.stepStart("Stopping proxy (PID " + pid + ")");
             if (runQuiet("kill", String.valueOf(pid))) {
-                BuildOutput.step("Proxy stopped.");
+                BuildOutput.stepDone();
                 return true;
             }
+            BuildOutput.stepBreak();
             BuildOutput.error("Could not stop the proxy (PID " + pid + "); is it another user's?");
             return false;
         }
@@ -1392,7 +1402,7 @@ public final class ProxyService {
         }
 
         var uid = getUid();
-        BuildOutput.step("Installing VM service...");
+        BuildOutput.stepStart("Installing VM service");
         runQuiet("launchctl", "bootout", "gui/" + uid, vmPlistFile().toString());
         // bootout returns before launchd has actually removed the job — the same race #916 found
         // for the proxy — and bootstrapping it again in that window fails with "Input/output
@@ -1406,7 +1416,10 @@ public final class ProxyService {
             // fails the same "Input/output error" this all exists to avoid. Warn rather than fail
             // outright — the proxy agent below is unaffected and still worth installing — but say
             // so, since nothing else here would otherwise reveal that no VM login agent is loaded.
+            BuildOutput.stepBreak();
             BuildOutput.warn("VM service did not reinstall cleanly.", "Run 'isx doctor' or retry 'isx init'.");
+        } else {
+            BuildOutput.stepDone();
         }
 
         // Only the proxy agent needs the separate binary — the VM agent runs `isx vm start`, so it
@@ -1422,27 +1435,32 @@ public final class ProxyService {
         // Configure bridge DNS now (from Terminal) so the launchd proxy service
         // doesn't need to reach the Incus VM API at startup — macOS Sequoia blocks
         // local network access from ad-hoc-signed binaries under launchd.
-        BuildOutput.step("Configuring bridge DNS...");
+        BuildOutput.stepStart("Configuring bridge DNS");
         try {
             ProxyConfig.configureBridgeDns(new IncusClient(), SpawnConfig.load());
+            BuildOutput.stepDone();
         } catch (Exception e) {
+            BuildOutput.stepBreak();
             BuildOutput.warn("Could not configure bridge DNS: " + e.getMessage(),
                     "Is the VM running? The proxy will retry DNS at startup.");
         }
 
-        BuildOutput.step("Installing proxy service...");
+        BuildOutput.stepStart("Installing proxy service");
         // Written only now, right before it is loaded: restartLocked takes a plist that is
         // current on disk for the one the job runs, so the two must not be left apart by an
         // install that stops in between.
         try {
             Files.writeString(proxyPlistFile(), generateProxyPlist(proxyBin));
         } catch (IOException e) {
+            BuildOutput.stepBreak();
             BuildOutput.error("Failed to write proxy plist: " + e.getMessage());
             return false;
         }
         // A reinstall over a loaded job is a restart with a new plist, with the same teardown
         // to wait for (see LaunchdJob).
         var outcome = proxyJob().restart(true, BuildOutput.bound());
+        if (outcome.launched()) BuildOutput.stepDone();
+        else BuildOutput.stepBreak();
 
         if (outcome == LaunchdJob.Outcome.STILL_UNLOADING) {
             // Named by LaunchdJob itself, not guessed from isActive(): that alone cannot tell

@@ -245,7 +245,7 @@ public class VmCommand extends BaseCommand {
                 VmManager.stop();
             }
 
-            BuildOutput.stepStart("Growing disk image to " + targetH + " (sparse)...");
+            BuildOutput.stepStart("Growing disk image to " + targetH + " (sparse)");
             VmManager.resizeDataDisk(size);
             BuildOutput.stepDone();
 
@@ -268,7 +268,7 @@ public class VmCommand extends BaseCommand {
                     // two cleanly and is immune to that overhead.
                     if (usage.totalBytes() >= (current + target) / 2) {
                         BuildOutput.success("Storage pool is now " + VmManager.humanSize(usage.totalBytes())
-                                + " (" + usage.percent() + "% used).");
+                                + " (" + usage.percent() + "% used)");
                     } else {
                         BuildOutput.warn("The data disk image was grown, but the storage pool did not expand.",
                                 "Your appliance may predate automatic data-disk expansion.",
@@ -356,7 +356,7 @@ public class VmCommand extends BaseCommand {
                 BuildOutput.error("The VM restarted, but " + problem + ".", "Check 'isx vm status'.");
                 return CommandResult.valueOf(1);
             }
-            BuildOutput.success("Data disk reset: Incus is up and its storage pool is empty.");
+            BuildOutput.success("Data disk reset: Incus is up and its storage pool is empty");
             BuildOutput.step("Recreate your templates with: isx build --all");
             return CommandResult.SUCCESS;
         }

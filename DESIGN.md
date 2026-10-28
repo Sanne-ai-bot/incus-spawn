@@ -896,7 +896,7 @@ Beyond build/branch, this governs the other lifecycle commands too — `vm` (sta
 A label in source is a bare phrase with no `...` and no period: `stepStart("Masking unnecessary services")`.
 `TerminalOutput` adds the ellipsis on a plain terminal (`Masking unnecessary services... done.`) and the spinner and the `✓` on an ANSI one.
 A decorated label (`"Launching x..."`) is right for neither: the ✓ line has to undecorate it again (`trimEllipsis`), and the label reads as a pending action when it is not.
-`StepLabelGateTest` holds it: the last string literal of a `step`, `stepStart`, `ok`, `success` or `note` call may not end in `...` or `…`, nor in a period for `stepStart`, `ok` and `success`, whose text is a label while a step or a note can be a sentence of advice.
+`StepLabelGateTest` holds it: the last string literal of a `step`, `stepStart`, `liveStep` (in its first argument, before the work), `ok`, `success`, `note` or `stepFail` call may not end in `...` or `…`, nor in a period for `stepStart`, `liveStep`, `ok` and `success`, whose text is a label while a step, a note or a failure can be a sentence of advice.
 The labels that predate the gate are counted per file in `cli/src/test/resources/step-label-baseline.txt`, which only shrinks; `trimEllipsis` and the baseline go once it is empty.
 
 **Structure:**
@@ -917,6 +917,7 @@ The labels that predate the gate are counted per file in `cli/src/test/resources
   `stepDone(detail)` adds a result — `✓ Extracting root disk (4.0G)`.
   `stepProgress` takes a `Supplier<String>` that is read again on every frame, so a value that keeps changing, such as a download's rate and time left, needs no call per change.
   `stepBreak()` ends it as `✗ label` before an error; `stepFail(msg)` is `stepBreak()` and then `msg` as a `stepWarn` under the cross.
+  `BuildOutput.liveStep(label, work)` wraps work that starts no step of its own: a ✓ when it returns true, a ✗ when it returns false or throws, with what the work printed meanwhile below the frozen line.
   Without a terminal the same calls print `Starting container... done.` for logs.
   The step is not done until *all* its work is: each tool's `verify` is its own step under `▸ Verifying`, because a line saying "done" while a first `mx version` takes seconds reads as a hang.
   Never print a `Doing X...` line whose result lands on a separate line.
@@ -928,6 +929,8 @@ The labels that predate the gate are counted per file in `cli/src/test/resources
   Distinct from `warn()` which is a single inline yellow line within step output.
 - **Success** (green checkmark, bold, at the header's column): `  ✓ tpl-dev built` — the line that closes the block, preceded by a blank line.
   The header opens a block at column 2 with `●`, so its close belongs at column 2 with `✓`, worded like every ✓ line: no period, no "successfully".
+
+`isx init`'s host changes follow the same kinds: each is a live step (`BuildOutput.liveStep`), whose ✗ follows the output and warning of a command that failed, and `InitCommand.runHost` and a `sudo` through `runHostQuiet` release the terminal first, as `ProxyService.runQuiet` does.
 
 **Headers live in commands, steps in shared helpers.**
 A shared operation that runs both standalone and nested (e.g. `VmManager.start()`/`stop()`, called both by `isx vm start` and as sub-steps of `isx vm resize`) emits only steps/notes and never its own header.

@@ -29,8 +29,9 @@ Key helpers: `section()` for a block of work at column 0, `header()` (bold bulle
 Every line under a header is picked without judgement: work that was done is a live step (`stepStart`/`stepDone`, or `ok` when it was already complete), work that was skipped is a `note`, the command's own answer is a `step`, detail about the step above is `stepNote`/`stepWarn`, and `success` closes the block.
 `success` is drawn at the header's column, `  ✓ <bold msg>`, after a blank line, worded like any ✓ line (`tpl-dev built`, no period).
 `stepFail(msg)` is `stepBreak()` and then `msg` as a `stepWarn` under the `✗`.
+`BuildOutput.liveStep(label, work)` runs work that starts no step of its own as a live step: a ✓ when it returns true, a ✗ when it returns false or throws, and what the work prints meanwhile freezes the line and is shown below it.
 A label is a bare phrase in source, with no `...` and no period: `TerminalOutput` prints `label... done.` on a plain terminal and the spinner and `✓ label` on an ANSI one.
-`StepLabelGateTest` fails on a `step`, `stepStart`, `ok`, `success` or `note` call whose last string literal ends in `...` or `…`, or in a period for `stepStart`, `ok` and `success`.
+`StepLabelGateTest` fails on a `step`, `stepStart`, `liveStep`, `ok`, `success`, `note` or `stepFail` call whose last string literal (a `liveStep`'s first argument's) ends in `...` or `…`, or in a period for `stepStart`, `liveStep`, `ok` and `success`.
 The labels that predate it are counted per file in `cli/src/test/resources/step-label-baseline.txt`, which only shrinks; until it is empty, `BuildOutput.trimEllipsis` makes a decorated label print like a bare one.
 
 **The seam (#1703).**

@@ -59,7 +59,7 @@ class StartStopCommandTest {
         assertEquals(List.of("dev"), prepared);
         assertEquals(List.of("dev:starting"), locks.taken);
         assertFalse(locks.isHeldByOther("dev"), "released after");
-        assertEquals(List.of("dev is ready."), recorded.events(RecordingOutput.Kind.SUCCESS).stream()
+        assertEquals(List.of("dev ready"), recorded.events(RecordingOutput.Kind.SUCCESS).stream()
                 .map(RecordingOutput.Event::msg).toList());
     }
 
@@ -89,8 +89,8 @@ class StartStopCommandTest {
                     Duration.ofMillis(300)));
             assertEquals("'dev' stayed locked by another isx process for 0 seconds; try again.", refused.getMessage());
         });
-        assertEquals(List.of("Waiting for another isx process using dev..."),
-                recorded.events(RecordingOutput.Kind.STEP).stream().map(RecordingOutput.Event::msg).toList(),
+        assertEquals(List.of("Waiting for another isx process using dev"),
+                recorded.events(RecordingOutput.Kind.STEP_START).stream().map(RecordingOutput.Event::msg).toList(),
                 "said once, however long it waits");
     }
 
@@ -122,7 +122,7 @@ class StartStopCommandTest {
 
         assertEquals(List.of(), daemon.stateActions());
         assertFalse(daemon.instance("dev").path("config").has(Metadata.PENDING_OP));
-        assertEquals(List.of("dev is already stopped."), recorded.events(RecordingOutput.Kind.SUCCESS).stream()
+        assertEquals(List.of("dev is already stopped"), recorded.events(RecordingOutput.Kind.SUCCESS).stream()
                 .map(RecordingOutput.Event::msg).toList());
     }
 

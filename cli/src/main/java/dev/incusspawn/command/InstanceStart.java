@@ -61,18 +61,27 @@ final class InstanceStart {
                                                Output out, Duration wait) throws InterruptedException {
         var deadline = System.nanoTime() + wait.toNanos();
         var said = false;
-        while (true) {
-            var lock = locks.tryAcquire(name, operation);
-            if (lock.isPresent()) return lock.get();
-            if (System.nanoTime() >= deadline) {
-                throw new InstancePrep.Refused("'" + name + "' stayed locked by another isx process for "
-                        + wait.toSeconds() + " seconds; try again.", false);
+        try {
+            while (true) {
+                var lock = locks.tryAcquire(name, operation);
+                if (lock.isPresent()) {
+                    if (said) out.stepDone(null);
+                    return lock.get();
+                }
+                if (System.nanoTime() >= deadline) {
+                    throw new InstancePrep.Refused("'" + name + "' stayed locked by another isx process for "
+                            + wait.toSeconds() + " seconds; try again.", false);
+                }
+                if (!said) {
+                    out.stepStart("Waiting for another isx process using " + name);
+                    said = true;
+                }
+                Thread.sleep(POLL.toMillis());
             }
-            if (!said) {
-                out.step("Waiting for another isx process using " + name + "...");
-                said = true;
-            }
-            Thread.sleep(POLL.toMillis());
+        } catch (InterruptedException | RuntimeException e) {
+            // The wait ends with its ✗ however it ends, an interrupt included
+            if (said) out.abandonStep();
+            throw e;
         }
     }
 }

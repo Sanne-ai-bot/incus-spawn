@@ -640,7 +640,18 @@ public class CertificateAuthority {
     }
 
     private static CertificateAuthority generate() throws Exception {
-        BuildOutput.step("Generating MITM CA certificate...");
+        BuildOutput.stepStart("Generating MITM CA certificate");
+        try {
+            var ca = generateUnreported();
+            BuildOutput.stepDone();
+            return ca;
+        } catch (Exception e) {
+            BuildOutput.abandonStep();
+            throw e;
+        }
+    }
+
+    private static CertificateAuthority generateUnreported() throws Exception {
         Files.createDirectories(caKeyFile().getParent());
         // A new key pair is a real rotation, not an SKI upgrade: drop any record of a
         // superseded cert so images built against it are not mistaken for repairable.

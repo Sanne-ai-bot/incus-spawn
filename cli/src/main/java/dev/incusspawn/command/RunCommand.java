@@ -61,7 +61,7 @@ public class RunCommand extends BaseCommand {
             var noDefault = noDefaultAction(name, ref, allActions);
             if (noDefault != null) {
                 // Fall back to shell; a broken reference is a warning
-                if (ref == null) BuildOutput.step(noDefault + ", opening shell...");
+                if (ref == null) BuildOutput.step(noDefault + ", opening a shell");
                 else BuildOutput.warn(noDefault + ".", "Opening a shell instead.");
                 var prep = dev.incusspawn.incus.IncusClient.ShellPrep.fromInstance(incus, instance);
                 incus.interactiveShell(name, "agentuser", prep,
@@ -107,7 +107,7 @@ public class RunCommand extends BaseCommand {
         var cmd = toolAction.shellCommand(context);
         if (cmd.isPresent()) {
             // Action wants to run a shell command
-            BuildOutput.step("Connecting to " + name + "...");
+            BuildOutput.step("Connecting to " + name);
             var prep = dev.incusspawn.incus.IncusClient.ShellPrep.fromInstance(incus, instance);
             var shellCmd = cmd.get();
             var updatedPrep = new dev.incusspawn.incus.IncusClient.ShellPrep(

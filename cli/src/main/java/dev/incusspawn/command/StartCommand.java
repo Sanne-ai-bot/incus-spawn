@@ -41,7 +41,7 @@ public class StartCommand extends BaseCommand {
             if (!e.reported()) InstancePrep.reportRefusal(e.getMessage());
             return CommandResult.valueOf(1);
         }
-        BuildOutput.success(shown + " is ready.");
+        BuildOutput.success(shown + " ready");
         return CommandResult.SUCCESS;
     }
 }

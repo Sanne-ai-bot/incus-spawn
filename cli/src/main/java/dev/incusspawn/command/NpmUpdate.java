@@ -19,7 +19,7 @@ final class NpmUpdate {
      */
     static boolean run(IncusClient incus, String name) {
         if (!incus.shellExec(name, "which", "npm").success()) return true;
-        BuildOutput.stepStart("Updating npm packages...");
+        BuildOutput.stepStart("Updating npm packages");
         var container = new Container(incus, name);
         var update = NpmGlobalInstall.update(container);
         if (!update.success()) return GuestUpdate.finish(update, "npm update -g");

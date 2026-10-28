@@ -47,7 +47,7 @@ public class StopCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
         try (var held = InstanceStart.lock(locks, name, Metadata.OP_STOPPING, BuildOutput.bound(), wait)) {
-            BuildOutput.stepStart("Stopping " + shown + "...");
+            BuildOutput.stepStart("Stopping " + shown);
             boolean stopped;
             // The status as the marked read saw it: no request of its own
             var status = new java.util.concurrent.atomic.AtomicReference<String>("");
@@ -70,7 +70,7 @@ public class StopCommand extends BaseCommand {
             }
             BuildOutput.stepDone();
             if (!stopped) {
-                BuildOutput.success(shown + " is already stopped.");
+                BuildOutput.success(shown + " is already stopped");
                 return CommandResult.SUCCESS;
             }
         } catch (InstancePrep.Refused e) {
@@ -80,7 +80,7 @@ public class StopCommand extends BaseCommand {
             BuildOutput.error("could not lock " + shown + ": " + failure(e.getCause()));
             return CommandResult.valueOf(1);
         }
-        BuildOutput.success("Stopped " + shown + ".");
+        BuildOutput.success("Stopped " + shown);
         return CommandResult.SUCCESS;
     }
 }

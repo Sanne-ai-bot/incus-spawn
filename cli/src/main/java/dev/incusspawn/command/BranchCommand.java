@@ -274,7 +274,7 @@ public class BranchCommand extends BaseCommand {
         }
 
         if (mcpClient && !noStart) McpClientGrant.check(incus, name);
-        BuildOutput.success(name + " is ready.");
+        BuildOutput.success(name + " ready");
         return new Created(resolvedSource, preflight, prefetched);
     }
 

@@ -57,7 +57,7 @@ class DestroyOwnedTest {
         var recorded = new RecordingOutput[1];
         assertEquals(0, run(owned(GRANTED, "orca", "rt-1"), daemon, "ws", recorded));
         assertNull(daemon.instance("ws"));
-        assertEquals(List.of("Destroyed ws."), recorded[0].events(RecordingOutput.Kind.SUCCESS).stream()
+        assertEquals(List.of("Destroyed ws"), recorded[0].events(RecordingOutput.Kind.SUCCESS).stream()
                 .map(RecordingOutput.Event::msg).toList());
     }
 
@@ -65,7 +65,7 @@ class DestroyOwnedTest {
     void anInstanceAlreadyGoneIsSuccessSoADestroyCanBeRepeated() {
         var recorded = new RecordingOutput[1];
         assertEquals(0, run(owned(GRANTED, "orca", null), daemon(), "gone", recorded));
-        assertEquals(List.of("gone is already gone."), recorded[0].events(RecordingOutput.Kind.SUCCESS).stream()
+        assertEquals(List.of("gone is already gone"), recorded[0].events(RecordingOutput.Kind.SUCCESS).stream()
                 .map(RecordingOutput.Event::msg).toList());
     }
 
@@ -101,7 +101,7 @@ class DestroyOwnedTest {
         var recorded = new RecordingOutput[1];
         assertEquals(0, run(owned(GRANTED, "orca", null), daemon, "ws", recorded));
         assertNull(daemon.instance("ws"));
-        assertEquals(List.of("ws is already gone."), recorded[0].events(RecordingOutput.Kind.SUCCESS).stream()
+        assertEquals(List.of("ws is already gone"), recorded[0].events(RecordingOutput.Kind.SUCCESS).stream()
                 .map(RecordingOutput.Event::msg).toList());
         assertEquals(List.of(), errors(recorded[0]));
     }

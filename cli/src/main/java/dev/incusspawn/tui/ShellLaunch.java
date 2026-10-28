@@ -89,7 +89,7 @@ final class ShellLaunch {
 
         // As isx branch --mcp-client does: the terminal is released, so the user sees what it found
         if (Metadata.isMcpCaller(request.extraConfig())) McpClientGrant.check(tui.incus, name);
-        BuildOutput.success(name + " is ready.");
+        BuildOutput.success(name + " ready");
         var shellPrep = prefetched.toShellPrep();
         var defaultCmd = new ActionResolver(tui.incus, tui.toolDefLoader, tui.cdiTools, preflight.defs())
                 .defaultCommandForBranch(preflight.template(), preflight.sourceInstance());
@@ -140,7 +140,7 @@ final class ShellLaunch {
         // under the shell.
         InstancePrep.readyForUse(tui.incus, name, instance, machineType, BuildOutput.bound());
         checkGuiHealth(name);
-        BuildOutput.step("Connecting to " + name + "...");
+        BuildOutput.step("Connecting to " + name);
         var titleMonitor = startAuthTitleMonitor(name);
         try {
             var prep = IncusClient.ShellPrep.from(tui.incus, name);

@@ -336,7 +336,7 @@ public final class VmManager {
             BuildOutput.note("  - Network access enables connectivity for the Linux containers");
         }
 
-        BuildOutput.stepStart("Launching VM (vfkit, cpus=" + cpus + ", memory=" + memoryMiB + "M)...");
+        BuildOutput.stepStart("Launching VM (vfkit, cpus=" + cpus + ", memory=" + memoryMiB + "M)");
         try {
             Files.createDirectories(Environment.vmStateDir());
             startVfkit(cpus, memoryMiB);
@@ -348,7 +348,7 @@ public final class VmManager {
     }
 
     private static boolean awaitReady() {
-        BuildOutput.stepStart("Waiting for Incus daemon...");
+        BuildOutput.stepStart("Waiting for Incus daemon");
         if (waitUntilReady(60)) {
             BuildOutput.stepDone();
             return true;
@@ -423,7 +423,7 @@ public final class VmManager {
             return StopResult.NOT_RUNNING;
         }
 
-        BuildOutput.stepStart("Shutting down VM...");
+        BuildOutput.stepStart("Shutting down VM");
 
         // Ask the guest itself first (#881): the agent runs poweroff, so BusyBox init runs rcK,
         // which stops Incus and its instances and syncs the disks before the guest powers off
@@ -677,8 +677,13 @@ public final class VmManager {
 
         // Forwarder-layer issue or unknown layer: restart the wedged forwarder in place.
         if (restartForwarder.getAsBoolean()) {
-            BuildOutput.step("Restarted the vsock forwarder; waiting for Incus...");
-            if (waitUntilReady.test(FORWARDER_RECOVERY_WAIT_SECONDS)) return true;
+            BuildOutput.step("Restarted the vsock forwarder.");
+            BuildOutput.stepStart("Waiting for Incus");
+            if (waitUntilReady.test(FORWARDER_RECOVERY_WAIT_SECONDS)) {
+                BuildOutput.stepDone();
+                return true;
+            }
+            BuildOutput.stepBreak();
         } else {
             BuildOutput.warn("The control agent did not confirm a forwarder restart.");
         }
@@ -709,7 +714,7 @@ public final class VmManager {
                 return true;
             }
             // A step: a blip usually clears within the grace period, and the failures after it warn
-            BuildOutput.step("VM is running but Incus is not reachable; attempting recovery...");
+            BuildOutput.step("VM is running but Incus is not reachable, attempting recovery");
             return recoverReachability();
         }
 
@@ -718,7 +723,7 @@ public final class VmManager {
         if (!Files.exists(Environment.applianceKernel())
                 || (!Files.exists(Environment.applianceDiskImage())
                     && !Files.exists(Environment.vmDiskImage()))) {
-            BuildOutput.step("Downloading VM appliance artifacts...");
+            BuildOutput.step("Downloading VM appliance artifacts");
             try {
                 downloadArtifacts();
             } catch (IOException e) {
@@ -1059,7 +1064,7 @@ public final class VmManager {
                     + "\nRun 'isx init' to download appliance artifacts.");
         }
 
-        BuildOutput.stepStart("Extracting root disk...");
+        BuildOutput.stepStart("Extracting root disk");
         try {
             Files.createDirectories(Environment.vmStateDir());
             try (var gzIn = new GZIPInputStream(Files.newInputStream(compressed), 64 * 1024);
@@ -1107,7 +1112,7 @@ public final class VmManager {
 
     /** A blank sparse data disk; the appliance's rcS formats it on the next boot. */
     private static void createDataDisk(long bytes) {
-        BuildOutput.stepStart("Creating data disk (" + humanSize(bytes) + " sparse)...");
+        BuildOutput.stepStart("Creating data disk (" + humanSize(bytes) + " sparse)");
         try {
             Files.createDirectories(Environment.vmStateDir());
             try (var raf = new RandomAccessFile(Environment.vmDataImage().toFile(), "rw")) {
@@ -1144,7 +1149,7 @@ public final class VmManager {
                 // must not be replaced.
                 stopLocked(false);
             }
-            BuildOutput.stepStart("Deleting data disk...");
+            BuildOutput.stepStart("Deleting data disk");
             try {
                 Files.deleteIfExists(Environment.vmDataImage());
             } catch (IOException e) {
@@ -1299,7 +1304,7 @@ public final class VmManager {
         }
 
         if (!Files.exists(Environment.applianceDiskImage())) {
-            downloadStep(cache, "Downloading disk image (" + arch + ")...",
+            downloadStep(cache, "Downloading disk image (" + arch + ")",
                     baseUrl + "/disk-" + arch + ".img.gz", Environment.applianceDiskImage());
         }
 
@@ -1322,11 +1327,11 @@ public final class VmManager {
     private static void downloadKernel(DownloadCache cache, String baseUrl, String arch)
             throws IOException {
         try {
-            downloadStep(cache, "Downloading vmlinuz (" + arch + ")...",
+            downloadStep(cache, "Downloading vmlinuz (" + arch + ")",
                     baseUrl + "/vmlinuz-" + arch + ".gz", Environment.applianceKernel(), true);
         } catch (IOException compressed) {
             try {
-                downloadStep(cache, "Downloading vmlinuz (" + arch + ", uncompressed)...",
+                downloadStep(cache, "Downloading vmlinuz (" + arch + ", uncompressed)",
                         baseUrl + "/vmlinuz-" + arch, Environment.applianceKernel(), false);
             } catch (IOException legacy) {
                 compressed.addSuppressed(legacy);

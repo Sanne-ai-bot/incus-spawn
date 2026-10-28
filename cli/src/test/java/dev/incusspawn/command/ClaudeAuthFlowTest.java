@@ -179,7 +179,7 @@ class ClaudeAuthFlowTest {
         assertEquals(OAUTH_TOKEN, accounts.get("default").getOauthToken());
         assertEquals(API_KEY, accounts.get("api").getApiKey());
         assertEquals("default", savedClaude().accountName(), "the subscription keeps serving instances");
-        var said = out.events().stream().map(RecordingOutput.Event::text).toList();
+        var said = out.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).toList();
         assertTrue(said.stream().anyMatch(line -> line.contains("Max and Team plans include monthly API credits")), said::toString);
         assertTrue(said.stream().anyMatch(line -> line.contains(AiHelpClient.API_CREDITS_URL)), said::toString);
     }
