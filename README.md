@@ -209,6 +209,9 @@ What a branch can have, each on request:
 The TUI (`isx` with no arguments) is a Midnight Commander-style view of your templates and branches.
 It has dialogs for branching, renaming and building, F3 for an instance's details and F9 for tool actions.
 
+Without function keys, press the digit instead: 1 to 0 stand for F1 to F10, and Alt with a digit for Shift with that key.
+On macOS, Alt is Option once the terminal sends Option as Meta.
+
 A storage gauge and per-row disk usage show what is filling the pool.
 Sizes are approximate (`~`): the base template carries the shared base image, and each branch only its own data.
 Press C to reclaim space, or on macOS grow the disk with `isx vm resize <size>`.
