@@ -6,7 +6,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.Execution;
-import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -26,10 +25,12 @@ import java.util.concurrent.TimeUnit;
 
 import static dev.incusspawn.git.GitTestUtils.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.parallel.ExecutionMode.CONCURRENT;
 
 // Each test owns its directories and Git daemon, and its time goes on starting Git processes, which
-// a macOS runner does slowly: concurrently the class fits its job's timeout (#1839).
-@Execution(ExecutionMode.CONCURRENT)
+// a macOS runner does slowly: concurrently the class fits its job's timeout (#1839). The methods
+// opt in, not the class: a concurrent class runs beside every other class in the module, and its
+// forks then hold other tests' freshly written stub scripts open, failing their exec (#1846).
 class GitPreparationTest {
     @TempDir Path tmp;
     private Path remote;
@@ -58,7 +59,7 @@ class GitPreparationTest {
         return preparation.prepare(new GitPreparation.Request(server.url(remote), branch, checkout), s -> {});
     }
 
-    @Test void hostPathsAndFileUrlsCannotPublishPrivateBranches() throws Exception {
+    @Execution(CONCURRENT) @Test void hostPathsAndFileUrlsCannotPublishPrivateBranches() throws Exception {
         git(remote, "branch", "unpushed-secret");
         var preparation = new GitPreparation(tmp.resolve("blocked-cache"), GitCacheConfig.DEFAULT, GitTransferConfig.DEFAULT);
         for (var url : List.of(remote.toString(), remote.toUri().toString(), "../private", "./private", "~/private",
@@ -69,6 +70,7 @@ class GitPreparationTest {
         assertFalse(Files.exists(tmp.resolve("blocked-cache/snapshots")));
     }
 
+    @Execution(CONCURRENT)
     @ParameterizedTest
     @ValueSource(strings = {"https://example.com/repo", "ssh://git@example.com/repo", "git://localhost:9418/repo",
             "git@example.com:owner/repo", "example.com:repo", "git@[::1]:repo"})
@@ -76,13 +78,13 @@ class GitPreparationTest {
         assertTrue(GitPreparation.isRemoteUrl(url), url);
     }
 
-    @Test void fileTransportIsDeniedEvenAfterAnAllowedUrlIsRewritten() throws Exception {
+    @Execution(CONCURRENT) @Test void fileTransportIsDeniedEvenAfterAnAllowedUrlIsRewritten() throws Exception {
         git(remote, "config", "url." + remote.toUri() + ".insteadOf", "https://example.invalid/repo");
         git(remote, "config", "protocol.file.allow", "always");
         assertThrows(IOException.class, () -> PreparationGit.git(remote, "ls-remote", "https://example.invalid/repo"));
     }
 
-    @Test void sshDefaultsToBatchModeAndRespectsExplicitTransports() {
+    @Execution(CONCURRENT) @Test void sshDefaultsToBatchModeAndRespectsExplicitTransports() {
         var environment = new java.util.HashMap<String, String>();
         PreparationGit.nonInteractiveSsh(environment, null, PreparationGit.SshScope.CHECKOUT);
         assertEquals("ssh -o BatchMode=yes", environment.get("GIT_SSH_COMMAND"));
@@ -95,7 +97,7 @@ class GitPreparationTest {
         assertFalse(environment.containsKey("GIT_SSH_COMMAND"));
     }
 
-    @Test void cleanSnapshotsAreReusedWithoutChangingOrRequiringTheCheckout() throws Exception {
+    @Execution(CONCURRENT) @Test void cleanSnapshotsAreReusedWithoutChangingOrRequiringTheCheckout() throws Exception {
         start();
         var before = contents(host.resolve(".git"));
         try (var first = prepare(host, null)) {
@@ -114,7 +116,7 @@ class GitPreparationTest {
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
     }
 
-    @Test void anUnchangedRemoteWithAnotherRefEndingInHeadIsACacheHit() throws Exception {
+    @Execution(CONCURRENT) @Test void anUnchangedRemoteWithAnotherRefEndingInHeadIsACacheHit() throws Exception {
         // ls-remote's HEAD pattern also matches refs/remotes/origin/HEAD, which mirrors advertise.
         git(remote, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/stable");
         start();
@@ -122,7 +124,7 @@ class GitPreparationTest {
         try (var second = prepare(null, null)) { assertEquals("cached clean snapshot", second.strategy()); }
     }
 
-    @Test void mixedPacksExcludePrivateBranchesStashesAndUnreachableObjects() throws Exception {
+    @Execution(CONCURRENT) @Test void mixedPacksExcludePrivateBranchesStashesAndUnreachableObjects() throws Exception {
         start();
         commitBinary(host, "private commit");
         var secret = git(host, "rev-parse", "HEAD");
@@ -150,7 +152,7 @@ class GitPreparationTest {
         assertFalse(Files.exists(cache.resolve("metadata")));
     }
 
-    @Test void remoteAdvanceRewindDeletedBranchAndMovedTagsRefreshTheSnapshot() throws Exception {
+    @Execution(CONCURRENT) @Test void remoteAdvanceRewindDeletedBranchAndMovedTagsRefreshTheSnapshot() throws Exception {
         start();
         try (var result = prepare(host, null)) { assertTrue(result.strategy().startsWith("reference-seeded")); }
         commitBinary(remote, "new public commit");
@@ -167,6 +169,7 @@ class GitPreparationTest {
         }
     }
 
+    @Execution(CONCURRENT)
     @ParameterizedTest
     @ValueSource(strings = {"sha1", "sha256"})
     void incrementalGenerationsKeepOldPacksAndReadersAndProduceIndependentGuests(String format) throws Exception {
@@ -205,6 +208,7 @@ class GitPreparationTest {
         try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
     }
 
+    @Execution(CONCURRENT)
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void detachedRemoteHeadIsFetchedEvenWithoutAnyBranches(boolean removeBranch) throws Exception {
@@ -227,6 +231,7 @@ class GitPreparationTest {
         }
     }
 
+    @Execution(CONCURRENT)
     @ParameterizedTest
     @ValueSource(strings = {"merged-branch", "renamed-branch", "rewind-retained", "lightweight-tag"})
     void refsCanDisappearIncrementallyWhenTheirObjectsRemainSelected(String change) throws Exception {
@@ -252,6 +257,7 @@ class GitPreparationTest {
         }
     }
 
+    @Execution(CONCURRENT)
     @ParameterizedTest
     @ValueSource(strings = {"unmerged-branch", "rewind", "moved-tag", "deleted-tag"})
     void removedHistoryRebuildsAndExcludesFormerlySelectedObjects(String change) throws Exception {
@@ -281,6 +287,7 @@ class GitPreparationTest {
         }
     }
 
+    @Execution(CONCURRENT)
     @ParameterizedTest
     @ValueSource(strings = {"new-pack", "new-idx", "retained-pack", "retained-idx"})
     void incrementalCorruptionNeverPublishesUncheckedBytes(String damage) throws Exception {
@@ -316,7 +323,7 @@ class GitPreparationTest {
         try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
     }
 
-    @Test void failedIncrementalFetchLeavesThePublishedGenerationIntact() throws Exception {
+    @Execution(CONCURRENT) @Test void failedIncrementalFetchLeavesThePublishedGenerationIntact() throws Exception {
         start();
         try (var first = prepare(null, null)) {
             var published = PreparationGit.children(cache.resolve("snapshots")).getFirst();
@@ -337,6 +344,7 @@ class GitPreparationTest {
         assertTrue(PreparationGit.children(cache.resolve("work")).isEmpty());
     }
 
+    @Execution(CONCURRENT)
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void incrementalFetchRacingAnUpstreamChangeFallsBackToFreshSelection(boolean detachedHead) throws Exception {
@@ -359,7 +367,7 @@ class GitPreparationTest {
         try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
     }
 
-    @Test void interruptedIncrementalRefreshDoesNotRetryOrPublish() throws Exception {
+    @Execution(CONCURRENT) @Test void interruptedIncrementalRefreshDoesNotRetryOrPublish() throws Exception {
         start();
         try (var first = prepare(null, null)) { }
         var published = PreparationGit.children(cache.resolve("snapshots")).getFirst();
@@ -379,7 +387,7 @@ class GitPreparationTest {
         assertTrue(PreparationGit.children(cache.resolve("work")).isEmpty());
     }
 
-    @Test void incrementalPackGrowthEventuallyCompactsWithoutChangingReaders() throws Exception {
+    @Execution(CONCURRENT) @Test void incrementalPackGrowthEventuallyCompactsWithoutChangingReaders() throws Exception {
         remote = tmp.resolve("small");
         git(tmp, "init", "-b", "main", remote.toString());
         git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "initial");
@@ -410,7 +418,7 @@ class GitPreparationTest {
                 .filter(p -> p.toString().endsWith(".pack")).count();
     }
 
-    @Test void branchAndAnnotatedTagSelectionSurviveRemovingEverySource() throws Exception {
+    @Execution(CONCURRENT) @Test void branchAndAnnotatedTagSelectionSurviveRemovingEverySource() throws Exception {
         start();
         try (var result = prepare(host, "v1")) {
             var guest = tmp.resolve("guest");
@@ -427,14 +435,14 @@ class GitPreparationTest {
         }
     }
 
-    @Test void aPrivateBranchCannotSatisfyARequestedRemoteBranch() throws Exception {
+    @Execution(CONCURRENT) @Test void aPrivateBranchCannotSatisfyARequestedRemoteBranch() throws Exception {
         start();
         git(host, "branch", "only-here");
         assertThrows(IOException.class, () -> prepare(host, "only-here"));
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
     }
 
-    @Test void sha256RepositoriesKeepTheirObjectFormat() throws Exception {
+    @Execution(CONCURRENT) @Test void sha256RepositoriesKeepTheirObjectFormat() throws Exception {
         remote = tmp.resolve("sha256");
         git(tmp, "init", "--object-format=sha256", "-b", "main", remote.toString());
         commitBinary(remote, "sha256 fixture");
@@ -450,6 +458,7 @@ class GitPreparationTest {
         }
     }
 
+    @Execution(CONCURRENT)
     @ParameterizedTest
     @ValueSource(strings = {"remove", "corrupt", "prune"})
     void changedSourceEitherRecoversOrRetriesWithoutAReference(String mutation) throws Exception {
@@ -494,7 +503,7 @@ class GitPreparationTest {
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
     }
 
-    @Test void unavailableCheckoutDuringSelectionUsesTheRemoteDirectly() throws Exception {
+    @Execution(CONCURRENT) @Test void unavailableCheckoutDuringSelectionUsesTheRemoteDirectly() throws Exception {
         start();
         PreparationGit.delete(host);
         var phases = new ArrayList<String>();
@@ -506,7 +515,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void failedIntegrityCheckRetriesBeforePublishing() throws Exception {
+    @Execution(CONCURRENT) @Test void failedIntegrityCheckRetriesBeforePublishing() throws Exception {
         start();
         var checks = new java.util.concurrent.atomic.AtomicInteger();
         try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
@@ -528,7 +537,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void aCheckoutObjectWhoseBytesDoNotMatchItsNameIsCaughtAfterDissociation() throws Exception {
+    @Execution(CONCURRENT) @Test void aCheckoutObjectWhoseBytesDoNotMatchItsNameIsCaughtAfterDissociation() throws Exception {
         start();
         // --dissociate copies borrowed objects without rehashing them, and clone's connectivity check
         // and fsck --connectivity-only accept the result: only a check that rehashes catches this (#1548).
@@ -550,7 +559,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void aCloneWithoutAReferenceIsCheckedByTheTransferInsteadOfASeparateFsck() throws Exception {
+    @Execution(CONCURRENT) @Test void aCloneWithoutAReferenceIsCheckedByTheTransferInsteadOfASeparateFsck() throws Exception {
         start();
         var phases = new ArrayList<String>();
         try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, null), phases::add)) {
@@ -561,7 +570,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void aRemoteObjectWithBrokenStructureIsRejectedWithoutAReference() throws Exception {
+    @Execution(CONCURRENT) @Test void aRemoteObjectWithBrokenStructureIsRejectedWithoutAReference() throws Exception {
         // A tree listing the same name twice: its ID matches its bytes, so only a structural check rejects it.
         literalTreeBranch("bad", "100644", 2);
         start();
@@ -575,7 +584,7 @@ class GitPreparationTest {
         assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
     }
 
-    @Test void historyThatFsckOnlyWarnsAboutIsClonedAgainForTheFullFsck() throws Exception {
+    @Execution(CONCURRENT) @Test void historyThatFsckOnlyWarnsAboutIsClonedAgainForTheFullFsck() throws Exception {
         // --strict makes fsck's warnings fatal; fsck --full accepts a zero-padded mode, as main did.
         literalTreeBranch("old", "0100644", 1);
         start();
@@ -603,7 +612,7 @@ class GitPreparationTest {
         git(remote, "update-ref", "refs/heads/" + branch, commit);
     }
 
-    @Test void aRemoteObjectWhoseBytesDoNotMatchItsNameIsRejectedWithoutAReference() throws Exception {
+    @Execution(CONCURRENT) @Test void aRemoteObjectWhoseBytesDoNotMatchItsNameIsRejectedWithoutAReference() throws Exception {
         start();
         // The pack carries other content under the blob's name, so the tree's link to that name is missing.
         corruptLooseBlob(remote, git(remote, "rev-parse", "HEAD:isx.deb"));
@@ -614,7 +623,7 @@ class GitPreparationTest {
         assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
     }
 
-    @Test void onlyGitsOwnFsckRejectionClonesAgain() {
+    @Execution(CONCURRENT) @Test void onlyGitsOwnFsckRejectionClonesAgain() {
         var rejected = new GitCommandException("Git preparation failed: clone", null,
                 "error: object 1234: zeroPaddedFilemode: contains zero-padded file modes\n"
                         + "fatal: fsck error in packed object\nfatal: fetch-pack: invalid index-pack output\n");
@@ -627,7 +636,7 @@ class GitPreparationTest {
         assertFalse(GitPreparation.fsckRejected(sideband.details()));
     }
 
-    @Test void onlyAStrictReceiveOfEveryObjectReplacesTheSeparateFsck() {
+    @Execution(CONCURRENT) @Test void onlyAStrictReceiveOfEveryObjectReplacesTheSeparateFsck() {
         var strict = "12:00:00.000000 git.c:506               trace: built-in: git index-pack --stdin --fix-thin "
                 + "'--keep=fetch-pack 1 on box' --check-self-contained-and-connected --strict\n";
         assertEquals(1, GitPreparation.strictReceives(strict));
@@ -645,7 +654,7 @@ class GitPreparationTest {
         assertEquals(0, GitPreparation.strictReceives(strict.replace("--strict", "--strict-later")));
     }
 
-    @Test void aFailedRemoteRetryLeavesNoSnapshotOrWork() throws Exception {
+    @Execution(CONCURRENT) @Test void aFailedRemoteRetryLeavesNoSnapshotOrWork() throws Exception {
         start();
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
         assertThrows(IOException.class, () -> preparation.prepare(
@@ -662,7 +671,7 @@ class GitPreparationTest {
         assertTrue(PreparationGit.children(cache.resolve("work")).isEmpty());
     }
 
-    @Test void completedDissociationNeedsNoFurtherAccessToTheSource() throws Exception {
+    @Execution(CONCURRENT) @Test void completedDissociationNeedsNoFurtherAccessToTheSource() throws Exception {
         start();
         try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
             if (phase.equals("Verifying Git snapshot")) {
@@ -676,7 +685,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void directReferenceUsesOnlyMatchingTrackingTipsAndCanReadLooseObjects() throws Exception {
+    @Execution(CONCURRENT) @Test void directReferenceUsesOnlyMatchingTrackingTipsAndCanReadLooseObjects() throws Exception {
         start();
         git(host, "remote", "rename", "origin", "upstream");
         commitBinary(host, "private negotiation tip");
@@ -714,7 +723,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void looseOnlyCheckoutsCanSupplyAReferenceWithoutBeingPacked() throws Exception {
+    @Execution(CONCURRENT) @Test void looseOnlyCheckoutsCanSupplyAReferenceWithoutBeingPacked() throws Exception {
         start();
         PreparationGit.delete(host);
         git(tmp, "clone", "-q", "--no-hardlinks", "--", remote.toString(), host.toString());
@@ -728,7 +737,7 @@ class GitPreparationTest {
         assertEquals(before, contents(host.resolve(".git")));
     }
 
-    @Test void corruptSnapshotBytesAndMetadataAreRebuiltWithoutBorrowingThem() throws Exception {
+    @Execution(CONCURRENT) @Test void corruptSnapshotBytesAndMetadataAreRebuiltWithoutBorrowingThem() throws Exception {
         start();
         for (var damage : List.of("seal", "HEAD", "packed-refs", "config", "pack", "idx", "extra-object", "alternates")) {
             try (var ignored = prepare(host, null)) { }
@@ -755,7 +764,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void remoteHeadSwitchAndBranchTagPinsShareOnlyTheSameFullSelection() throws Exception {
+    @Execution(CONCURRENT) @Test void remoteHeadSwitchAndBranchTagPinsShareOnlyTheSameFullSelection() throws Exception {
         start();
         try (var result = prepare(host, null)) { }
         for (var pin : List.of("stable", "v1", "main")) {
@@ -773,7 +782,7 @@ class GitPreparationTest {
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
     }
 
-    @Test void aRemoteChangeBetweenAdvertisementAndCloneCannotMislabelTheSnapshot() throws Exception {
+    @Execution(CONCURRENT) @Test void aRemoteChangeBetweenAdvertisementAndCloneCannotMislabelTheSnapshot() throws Exception {
         start();
         try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
             if (phase.equals("Creating clean Git snapshot")) {
@@ -784,7 +793,7 @@ class GitPreparationTest {
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
     }
 
-    @Test void unicodeRefNamesUseTheSameOrderingForAdvertisementsAndSnapshots() throws Exception {
+    @Execution(CONCURRENT) @Test void unicodeRefNamesUseTheSameOrderingForAdvertisementsAndSnapshots() throws Exception {
         start();
         git(remote, "branch", "\uE000");
         git(remote, "branch", "\uD83D\uDE04");
@@ -792,7 +801,7 @@ class GitPreparationTest {
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
     }
 
-    @Test void cachedSnapshotsStillRequireAnAccessibleAuthoritativeRemote() throws Exception {
+    @Execution(CONCURRENT) @Test void cachedSnapshotsStillRequireAnAccessibleAuthoritativeRemote() throws Exception {
         start();
         try (var result = prepare(host, null)) { }
         PreparationGit.delete(remote);
@@ -800,7 +809,7 @@ class GitPreparationTest {
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
     }
 
-    @Test void emptyRemotesAreIndependentAndRefreshedWithoutGuessingTheUnbornHead() throws Exception {
+    @Execution(CONCURRENT) @Test void emptyRemotesAreIndependentAndRefreshedWithoutGuessingTheUnbornHead() throws Exception {
         remote = tmp.resolve("empty.git");
         git(tmp, "init", "--bare", "-b", "next", remote.toString());
         start();
@@ -820,7 +829,7 @@ class GitPreparationTest {
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
     }
 
-    @Test void snapshotsReplaceTheirSelectedClosureAndActiveReadersSurviveEviction() throws Exception {
+    @Execution(CONCURRENT) @Test void snapshotsReplaceTheirSelectedClosureAndActiveReadersSurviveEviction() throws Exception {
         start();
         try (var first = prepare(null, null)) {
             var oldObjects = allObjects(first.repository());
@@ -843,7 +852,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void aSnapshotThatIsNotKeptSaysWhyAndWhichSettingToChange() throws Exception {
+    @Execution(CONCURRENT) @Test void aSnapshotThatIsNotKeptSaysWhyAndWhichSettingToChange() throws Exception {
         start();
         try (var kept = prepare(null, null)) { assertNull(kept.notRetained()); }
         try (var hit = prepare(null, null)) { assertNull(hit.notRetained()); }
@@ -864,7 +873,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void concurrentWritersPublishCompleteGenerationsAndReadersHaveSeparateLeases() throws Exception {
+    @Execution(CONCURRENT) @Test void concurrentWritersPublishCompleteGenerationsAndReadersHaveSeparateLeases() throws Exception {
         start();
         var ready = new CountDownLatch(3);
         var release = new CountDownLatch(1);
@@ -891,7 +900,7 @@ class GitPreparationTest {
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
     }
 
-    @Test void aPublicDeltaIsReencodedWhenItsOnlyStoredBaseIsPrivate() throws Exception {
+    @Execution(CONCURRENT) @Test void aPublicDeltaIsReencodedWhenItsOnlyStoredBaseIsPrivate() throws Exception {
         start();
         var publicId = git(host, "rev-parse", "origin/main:isx.deb");
         var privateId = forcePrivateDeltaBase(host.resolve(".git"), publicId, Files.readAllBytes(remote.resolve("isx.deb")));
@@ -903,7 +912,7 @@ class GitPreparationTest {
         }
     }
 
-    @Test void readerLeaseWorksAcrossProcessesAndDeadReadersAreReclaimed() throws Exception {
+    @Execution(CONCURRENT) @Test void readerLeaseWorksAcrossProcessesAndDeadReadersAreReclaimed() throws Exception {
         start();
         var signal = tmp.resolve("ready");
         var process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin/java").toString(),
