@@ -210,7 +210,27 @@ public class Tui {
                                 IncusClient.PoolUsage poolUsage, RuntimeException error) {}
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_MARKED_STOP, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT, WARNINGS, TASK_PICKER }
+    /**
+     * What the TUI shows, and whether it reads digits itself: a text field takes them as text and the
+     * build menu as its options' numbers. Elsewhere a digit is its F-key ({@link DigitKeys}, #1824).
+     */
+    enum Mode {
+        BROWSE(false), CONFIRM_DELETE(false), CONFIRM_MARKED_STOP(false), CONFIRM_STOP_FOR_RENAME(false),
+        CONFIRM_BUILD_FOR_BRANCH(false), BUILD_MENU(true), BRANCH(true), RENAME(true), TEMPLATE_DETAIL(false),
+        INSTANCE_DETAIL(false), ACCOUNTS(false), INFO(false), ERROR(false), ACTIONS(false), NEW_TEMPLATE(true),
+        CLEAN_CONFIRM(false), CLEAN_RESULT(false), HELP_CHAT(true), WARNINGS(false), TASK_PICKER(false);
+
+        private final boolean ownsDigits;
+
+        Mode(boolean ownsDigits) {
+            this.ownsDigits = ownsDigits;
+        }
+
+        /** Whether the mode reads digits itself, so they stay digits rather than F-keys. */
+        boolean ownsDigits() {
+            return ownsDigits;
+        }
+    }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     /** The delete confirmation; set when it opens, and read again by the destroy it confirms. */
@@ -689,6 +709,7 @@ public class Tui {
             return true;
         }
         if (searchActive) return handleSearchEvent(key, tableState);
+        if (!mode.ownsDigits()) key = DigitKeys.asFunctionKey(key);
         return switch (mode) {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
             case CONFIRM_DELETE -> handleConfirmDeleteEvent(key, tui, tableState);
