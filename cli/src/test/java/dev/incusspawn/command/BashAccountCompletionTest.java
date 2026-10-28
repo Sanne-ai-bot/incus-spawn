@@ -86,6 +86,8 @@ class BashAccountCompletionTest {
                 """.formatted(BASH_COMPLETION, script));
         var pb = new ProcessBuilder("bash", "--norc", "--noprofile", driver.toString(), line);
         pb.environment().put("PATH", fake + ":" + System.getenv("PATH"));
+        // %q's $'...' form depends on the locale: octal bytes in C, which the tests expect
+        pb.environment().put("LC_ALL", "C");
         var output = dir.resolve("out.txt");
         pb.redirectErrorStream(true).redirectOutput(output.toFile());
         var p = pb.start();
@@ -208,16 +210,58 @@ class BashAccountCompletionTest {
         for (var line : List.of("isx tools show ", "isx account add ", "isx account show ", "isx account unset box1 ",
                 "isx account set box1 ", "isx branch x --account ", "isx branch x --from ", "isx build ",
                 "isx destroy ", "isx shell ", "isx run ", "isx templates ", "isx templates edit ",
-                "isx project update ", "isx clean ")) {
+                "isx project update ", "isx clean ", "isx build tpl-dev ", "isx account reset-proofs ")) {
             complete(line, accounts);
             assertFalse(Files.exists(marker), "completion of '" + line + "' ran a candidate as a command");
         }
     }
 
-    /** A candidate that is a glob is offered as typed, not expanded to the files in the current directory. */
+    /** An account is quoted after the typed namespace is dropped from it, so the namespace is not repeated. */
+    @Test
+    void anAccountIsInsertedQuotedAfterItsNamespace() throws Exception {
+        assertEquals(List.of("isx account set box1 ns=a\\,b"), complete("isx account set box1 ns=", "ns\\nns=\\nns=a,b\\n"));
+    }
+
+    /**
+     * An account %q writes as $'...' (a U+2028 in it) still loses the typed namespace: dropped
+     * from the name before quoting, not from the quoted word, where it would be missed.
+     */
+    @Test
+    void anAccountQuotedAsAnsiCLosesItsNamespaceToo() throws Exception {
+        var accounts = "ns\\nns=\\nns=a\u2028b\\n";
+        // The driver runs bash under LC_ALL=C, where %q writes the bytes in octal
+        var inserted = "isx account set box1 ns=$'a\\342\\200\\250b'";
+        assertEquals(List.of(inserted), complete("isx account set box1 ns=", accounts));
+    }
+
+    /** A typed namespace offers only its own accounts, never another namespace's after it. */
+    @Test
+    void aTypedNamespaceOffersNoOtherNamespacesAccounts() throws Exception {
+        var accounts = "claude\\ngithub\\nclaude=\\nclaude=work\\ngithub=\\ngithub=personal\\n";
+        assertEquals(List.of("isx account set box1 github=personal"), complete("isx account set box1 github=", accounts));
+        assertEquals(List.of("isx branch x --account claude=work"), complete("isx branch x --account claude=", accounts));
+    }
+
+    /** A candidate that is a glob is not expanded to the files in the current directory, and is inserted quoted. */
     @Test
     void aGlobCandidateIsNotExpanded() throws Exception {
         Files.writeString(toolNames, "*\n");
-        assertEquals(List.of("isx tools show *", "isx tools show --help"), complete("isx tools show "));
+        assertEquals(List.of("isx tools show \\*", "isx tools show --help"), complete("isx tools show "));
+    }
+
+    /**
+     * Readline inserts a candidate as is, so one holding a command substitution is quoted: it
+     * would otherwise land on the command line and run on Enter.
+     */
+    @Test
+    void aCandidateIsInsertedQuoted() throws Exception {
+        // A path %q leaves as it is: the temporary directory's name is letters, digits and '/'
+        var marker = dir.resolve("pwned");
+        Files.writeString(toolNames, "$(touch " + marker + ") y\n");
+        var inserted = "isx tools show \\$\\(touch\\ " + marker + "\\)\\ y";
+        assertEquals(List.of(inserted, "isx tools show --help"), complete("isx tools show "));
+        // What a first TAB inserted still matches when TAB is pressed again
+        assertEquals(List.of(inserted), complete("isx tools show \\$\\(to"));
+        assertFalse(Files.exists(marker));
     }
 }

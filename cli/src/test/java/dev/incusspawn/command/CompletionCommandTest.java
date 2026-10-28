@@ -201,5 +201,43 @@ class CompletionCommandTest {
             }
         }
         assertTrue(seen > 0, "the bash script still completes static words with compgen -W");
+        // A command substitution straight into COMPREPLY is split and globbed: only compgen of those lists may fill it
+        var substituted = java.util.regex.Pattern.compile("COMPREPLY\\+?=\\( *\\$\\((?!compgen -W \")").matcher(script);
+        assertFalse(substituted.find(), () -> "COMPREPLY filled from a command other than compgen -W: " + substituted.group());
+        // And the lists themselves are literal words, never what isx printed
+        var assigned = java.util.regex.Pattern.compile("(?m)\\b(commands|[a-z]+_subcmds)=(.*)$").matcher(script);
+        while (assigned.find()) {
+            assertTrue(assigned.group(2).matches("\"[a-z -]+\""), "not a literal list: " + assigned.group());
+        }
+    }
+
+    /**
+     * An allowlist of where what isx prints may go in the bash script, so a new way of reading a
+     * source (mapfile into COMPREPLY, a list variable built from it) fails here: isx runs only in
+     * a one-line {@code _isx_list_*} function, and each of those is read only through
+     * {@code _isx_reply}, or into the account candidates that it then reads (#1778).
+     */
+    @Test
+    void bashReadsWhatIsxPrintsOnlyThroughIsxReply() {
+        var header = java.util.regex.Pattern.compile("\\s*_isx_list_\\w+\\(\\) \\{");
+        var runsIsx = java.util.regex.Pattern.compile("(^|[\\s(|;&`])isx\\s+\\S");
+        var lines = linux(CompletionCommand.Shell.bash).lines().map(String::strip).toList();
+        int sources = 0;
+        for (int i = 0; i < lines.size(); i++) {
+            var line = lines.get(i);
+            if (line.startsWith("#") || line.equals("complete -F _isx isx")) continue;
+            if (runsIsx.matcher(line).find()) {
+                assertTrue(i > 0 && header.matcher(lines.get(i - 1)).matches(), "isx runs outside an _isx_list_* function: " + line);
+                assertEquals("}", lines.get(i + 1), "an _isx_list_* function is one command: " + line);
+                sources++;
+            } else if (line.contains("_isx_list_") && !header.matcher(line).matches()) {
+                assertTrue(line.matches("_isx_reply( (--[a-z-]+|\\$[a-z]+_subcmds))* < <\\(_isx_list_\\w+\\)")
+                        || line.equals("candidates=$(_isx_list_accounts)"), "a source read another way: " + line);
+            } else if (line.matches(".*\\$\\{?candidates.*")) {
+                assertTrue(line.equals("_isx_reply_after \"$typed\" <<< \"$candidates\"")
+                        || line.equals("candidates=$(grep -v '=$' <<< \"$candidates\")"), "account candidates read another way: " + line);
+            }
+        }
+        assertTrue(sources >= 6, "found the sources: " + sources);
     }
 }
