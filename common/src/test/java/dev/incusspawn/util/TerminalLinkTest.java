@@ -228,6 +228,17 @@ class TerminalLinkTest {
     }
 
     @Test
+    void wrapSegmentsStartsTextAfterALinkWiderThanTheLineOnANewLine() {
+        var url = "https://example.com/a/long/path";
+        var segments = List.<TerminalLink.Segment>of(
+                new TerminalLink.Segment.Link(url, url),
+                new TerminalLink.Segment.Text(" and then some words"));
+        var wrapped = TerminalLink.wrapSegments(segments, 10);
+        assertEquals(List.of(new TerminalLink.Segment.Link(url, url)), wrapped.getFirst());
+        assertEquals(List.of(new TerminalLink.Segment.Text("and then")), wrapped.get(1));
+    }
+
+    @Test
     void parseSegmentsHttpUrl() {
         var segments = TerminalLink.parseSegments("http://insecure.com");
         assertEquals(1, segments.size());
