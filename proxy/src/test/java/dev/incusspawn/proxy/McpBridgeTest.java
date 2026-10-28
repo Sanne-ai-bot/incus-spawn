@@ -232,6 +232,27 @@ class McpBridgeTest {
         }
     }
 
+    /**
+     * A branch signals the proxy just before it starts the instance, and the start then rotates
+     * the secret: the instance's first call comes within the refresh interval of that listing,
+     * which predates its secret. It must be asked again from a later listing, not refused from that
+     * one (#1800: every --mcp-client branch on a fast enough host warned it could not reach isx mcp).
+     */
+    @Test
+    void aSecretRotatedJustAfterAListingIsRecognized() throws Exception {
+        var rotated = "c".repeat(64);
+        instance(true);
+        listing = listing.replace(InstanceSecret.sha256(SECRET), InstanceSecret.sha256(rotated));
+        var started = System.nanoTime();
+        var reply = send(HttpMethod.POST, McpBridge.PATH, rotated, null,
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+        assertEquals(200, reply.status(), reply.body());
+        assertTrue(System.nanoTime() - started < 5_000_000_000L, "answered within a refresh interval, not a timeout");
+
+        var wrong = send(HttpMethod.POST, McpBridge.PATH, SECRET, null, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}");
+        assertEquals(403, wrong.status(), "the secret it replaced is refused");
+    }
+
     @Test
     void aCallerGetsASessionServedForItself() throws Exception {
         var session = initialize();
