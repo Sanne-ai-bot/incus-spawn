@@ -2,6 +2,8 @@ package dev.incusspawn;
 
 import dev.incusspawn.util.BuildOutput;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
@@ -16,7 +18,32 @@ public final class Platform {
 
     private Platform() {}
 
-    private static final String OS_NAME = System.getProperty("os.name").toLowerCase(Locale.ROOT);
+    // One line: scripts/macos-role-build.sh replaces it whole
+    private static final String OS_NAME = osName(System.getProperty("os.name"), Path.of("/proc/sys/kernel/ostype"), Path.of("/System/Library/CoreServices/SystemVersion.plist"));
+
+    /**
+     * The OS isx runs on, lower case: {@code os.name}, unless it claims macOS. A JVM takes
+     * {@code os.name} from its command line ({@code -Dos.name}, {@code JAVA_TOOL_OPTIONS}), and
+     * that must not put a released isx in macOS's role elsewhere, where the proxy identifies a
+     * caller by its credential proof without its address (#1800). So the claim stands only on a
+     * host with macOS's own {@code SystemVersion.plist}: a Linux kernel makes it Linux, and with
+     * neither isx refuses to start, since half the code would run as Linux and half as nothing.
+     * A native image reads none of this when it runs: this class is initialized when the image
+     * is built, and {@code PlatformRoleFeature} fails a build whose role is not its target's.
+     */
+    static String osName(String property, Path linuxOsType, Path macOsVersion) {
+        var named = property.toLowerCase(Locale.ROOT);
+        // Only a claim of macOS is worth checking, so Linux and macOS starts read little or nothing
+        if (!named.contains("mac")) return named;
+        try {
+            if (Files.readString(linuxOsType).strip().equals("Linux")) return "linux";
+        } catch (IOException | RuntimeException notLinux) {
+            // No such file is every other OS.
+        }
+        if (Files.isRegularFile(macOsVersion)) return named;
+        throw new IllegalStateException("os.name says '" + property + "', but this host is neither macOS ("
+                + macOsVersion + " is missing) nor Linux: isx refuses to guess its platform role");
+    }
 
     public static boolean isMacOS() {
         return OS_NAME.contains("mac");

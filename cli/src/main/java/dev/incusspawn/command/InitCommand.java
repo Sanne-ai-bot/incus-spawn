@@ -258,8 +258,7 @@ public class InitCommand extends BaseCommand {
      * cannot work on macOS or Windows.
      */
     public static boolean requireLinux() {
-        var os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
-        if (!os.contains("linux")) {
+        if (!Platform.isLinux()) {
             BuildOutput.error("incus-spawn requires Linux.",
                     "Incus system containers require a Linux kernel.",
                     "Detected OS: " + System.getProperty("os.name"),
