@@ -143,6 +143,22 @@ public final class Metadata {
     public static final String DISK_REFERENCED = PREFIX + "disk-referenced";
 
     /**
+     * The external tool that controls this instance's lifecycle ({@code isx branch --owner}, #1720):
+     * an orchestrator such as Orca that creates an instance per task and deletes it when done. A
+     * name, never a credential; {@code drivers:} in {@code config.yaml} says what that tool may do.
+     * Like every ownership key ({@link #isOwnershipKey}), no copy carries it.
+     */
+    public static final String OWNER = PREFIX + "owner";
+    /** The owner's own handle for the instance ({@code --owner-id}), such as an Orca runtime id. */
+    public static final String OWNER_ID = PREFIX + "owner-id";
+    /** What an {@link #OWNER} looks like: a short lowercase name, as a {@code drivers:} key. */
+    public static final java.util.regex.Pattern OWNER_NAME = java.util.regex.Pattern.compile("[a-z0-9][a-z0-9-]{0,31}");
+    /** What an {@link #OWNER_ID} looks like: an opaque handle, with nothing a shell or a terminal reads. */
+    public static final java.util.regex.Pattern OWNER_HANDLE = java.util.regex.Pattern.compile("[A-Za-z0-9._:-]{1,128}");
+    /** The owner name isx shows for an instance an {@code isx mcp} session made, so no tool may take it. */
+    public static final String OWNER_MCP = "mcp";
+
+    /**
      * MCP ownership (see {@code isx mcp}). An instance belongs to the host user in
      * {@link #MCP_OWNER}, and is held by one session at a time: {@link #MCP_SESSION} is
      * {@code <pid>-<processStartMillis>} of the {@code isx mcp} process holding it, which tells
@@ -283,6 +299,14 @@ public final class Metadata {
 
     public static boolean isMcpKey(String key) {
         return key.startsWith(MCP_PREFIX);
+    }
+
+    /**
+     * Whether {@code key} says who controls the instance: {@code isx mcp}'s stamps and an external
+     * owner's ({@link #OWNER}). A copy belongs to whoever made the copy, so it never inherits one.
+     */
+    public static boolean isOwnershipKey(String key) {
+        return isMcpKey(key) || key.equals(OWNER) || key.equals(OWNER_ID);
     }
 
     /**
