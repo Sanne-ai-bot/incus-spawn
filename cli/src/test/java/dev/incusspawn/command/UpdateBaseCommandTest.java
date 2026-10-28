@@ -340,4 +340,17 @@ class UpdateBaseCommandTest {
         });
         assertEquals("? Enter version tag: ", prompts.conversation().getLast());
     }
+
+    /** An unknown tag is an error, then the releases there are, which the TUI's log and a recorder keep (#1703). */
+    @Test
+    void anUnknownTagIsAnErrorAndTheReleasesFollow(@TempDir Path home) {
+        InitCommandTest.withHome(home, () -> {
+            var recorded = RecordingOutput.during(() -> assertEquals(1, new UpdateBaseCommand()
+                    .pinToTag("fedora-44-nope\u001b[2J", List.of(RELEASE), UpdateBaseCommand.unpinnedMinimal()).getResultValue()));
+            assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR, "release 'fedora-44-nope [2J' not found.")),
+                    recorded.events(RecordingOutput.Kind.ERROR));
+            assertEquals(List.of("Available base images"), recorded.events(RecordingOutput.Kind.GROUP).stream()
+                    .map(RecordingOutput.Event::msg).toList());
+        });
+    }
 }
