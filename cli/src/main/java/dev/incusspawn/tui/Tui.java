@@ -2890,7 +2890,9 @@ public class Tui {
     private void buildRowData() {
         tableRows = new ArrayList<>();
         rowToEntry = new ArrayList<>();
-        anyOwner = entries.stream().anyMatch(e -> e.mcp() != null || e.owner() != null);
+        // From every instance, not the search's: the column must not come and go, and every other
+        // column reflow, as a search narrows the list (review of #1820)
+        anyOwner = (allEntries != null ? allEntries : entries).stream().anyMatch(e -> e.mcp() != null || e.owner() != null);
 
         // Sort: running first, then stopped, alphabetically within each group
         var sorted = new ArrayList<>(entries);
