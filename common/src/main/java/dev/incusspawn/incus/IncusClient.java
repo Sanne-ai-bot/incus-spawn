@@ -12,6 +12,7 @@ import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.tool.ShellMenu;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.TerminalStreams;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -184,7 +185,7 @@ public class IncusClient {
      */
     public int shellExecInteractive(String container, String... command) {
         return http().execStream(container, List.of(command), 0, 0, null, Map.of(),
-                System.out, System.err);
+                TerminalStreams.out(), TerminalStreams.err());
     }
 
     /**
@@ -215,7 +216,7 @@ public class IncusClient {
     public int shellExecInteractiveAsUser(String container, String user, String script) {
         return http().execStream(container,
                 loginCommand(user, script),
-                0, 0, null, Map.of(), System.out, System.err);
+                0, 0, null, Map.of(), TerminalStreams.out(), TerminalStreams.err());
     }
 
     /**
@@ -606,9 +607,7 @@ public class IncusClient {
      * {@link NoTerminalForShellException} otherwise.
      */
     public static boolean hasTerminal() {
-        // Since JDK 22 System.console() can be non-null with stdin redirected; isTerminal() says which.
-        var console = System.console();
-        return console != null && console.isTerminal();
+        return TerminalStreams.terminal() != null;
     }
 
     public void interactiveShell(String container, String user, ShellPrep prep, ShellMenu menu) {

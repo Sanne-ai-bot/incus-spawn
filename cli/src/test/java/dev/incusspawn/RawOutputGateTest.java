@@ -50,6 +50,7 @@ class RawOutputGateTest {
     /** Repository-relative paths of the gate classes, each with why it may write. */
     private static final Map<String, String> EXEMPT = Map.of(
             "common/src/main/java/dev/incusspawn/util/TerminalOutput.java", "the terminal printer",
+            "common/src/main/java/dev/incusspawn/util/TerminalStreams.java", "the process's streams, for what hands the terminal over or draws on it whole",
             "cli/src/main/java/dev/incusspawn/command/StdoutOnStderr.java", "points stdout at stderr while a machine format gets its answer",
             "cli/src/main/java/dev/incusspawn/mcp/StdioGuard.java", "moves stdout off the MCP protocol stream",
             "cli/src/main/java/dev/incusspawn/command/Prompts.java", "owns the console",
@@ -108,6 +109,31 @@ class RawOutputGateTest {
         if (lines.size() <= allowed) return;
         failures.append(path).append(": ").append(lines.size()).append(' ').append(kind).append(", ")
                 .append(allowed).append(" allowed, at lines ").append(lines).append('\n');
+    }
+
+    private static final Pattern TERMINAL_STREAMS = Pattern.compile("\\bTerminalStreams\\s*\\.");
+
+    /**
+     * Who may take the terminal's own streams from {@code TerminalStreams}, each with why: the gate
+     * is exempt, so without this list any code could print raw through it.
+     */
+    private static final Map<String, String> MAY_USE_TERMINAL_STREAMS = Map.of(
+            "common/src/main/java/dev/incusspawn/incus/IncusClient.java", "hands the terminal to an interactive guest command",
+            "common/src/main/java/dev/incusspawn/incus/IncusApi.java", "writes an interactive shell's raw bytes",
+            "common/src/main/java/dev/incusspawn/util/TerminalProgress.java", "the live renderer, which draws on the terminal whole",
+            "common/src/main/java/dev/incusspawn/git/HostRepoRefresh.java", "asks on the console, where Prompts cannot reach");
+
+    @Test
+    void onlyTheNamedPassthroughsTakeTheTerminalsStreams() throws IOException {
+        var stray = new StringBuilder();
+        for (var source : sources("src/main/java").entrySet()) {
+            var path = source.getKey();
+            if (path.endsWith("/util/TerminalStreams.java") || MAY_USE_TERMINAL_STREAMS.containsKey(path)) continue;
+            var uses = lines(TERMINAL_STREAMS, blank(source.getValue()));
+            if (!uses.isEmpty()) stray.append(path).append(" at lines ").append(uses).append('\n');
+        }
+        assertEquals("", stray.toString(), "report through BuildOutput or a caller's Output; TerminalStreams is for"
+                + " what hands the terminal over or draws on it whole (MAY_USE_TERMINAL_STREAMS)");
     }
 
     @Test

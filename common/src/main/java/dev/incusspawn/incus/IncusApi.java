@@ -8,6 +8,7 @@ import io.hyperfoil.tools.jjq.value.JqValues;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.TerminalStreams;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -927,14 +928,15 @@ class IncusApi {
                     statusBar.setup(width, height);
                 }
                 try {
-                    // Main: WebSocket → System.out (exits when watcher closes the connection).
+                    // Main: WebSocket → the terminal's stdout (exits when watcher closes the connection).
                     byte[] payload;
+                    var stdout = TerminalStreams.out();
                     while ((payload = ws.readPayload()) != null) {
                         if (statusBar != null) {
                             statusBar.writeOutput(payload, 0, payload.length);
                         } else {
-                            System.out.write(payload);
-                            System.out.flush();
+                            stdout.write(payload);
+                            stdout.flush();
                         }
                     }
                 } catch (IOException ignored) {

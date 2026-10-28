@@ -6,6 +6,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.TerminalStreams;
 import dev.incusspawn.util.TerminalProgress;
 
 import java.io.IOException;
@@ -74,7 +75,7 @@ public final class HostRepoRefresh {
             try {
                 hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
             } catch (IllegalStateException e) {
-                System.err.println(BuildOutput.STEP_INDENT + "Warning: " + e.getMessage());
+                BuildOutput.warn(e.getMessage());
                 continue;
             }
 
@@ -186,7 +187,7 @@ public final class HostRepoRefresh {
         var policy = resolvePolicy(config);
         var limits = config.gitTransfer();
 
-        if (policy == ClonePolicy.ASK && System.console() == null) {
+        if (policy == ClonePolicy.ASK && TerminalStreams.terminal() == null) {
             BuildOutput.note("Skipping clone of " + tasks.size() + " repo(s) — set auto-clone-repos: always in config.yaml to clone automatically.");
             return;
         }
@@ -231,9 +232,9 @@ public final class HostRepoRefresh {
                 BuildOutput.stepBreak();
                 // A clone stopped part way is no checkout: never leave it for a later build to use.
                 if (!existed) deletePartialClone(task.targetDir);
-                System.err.println(BuildOutput.STEP_INDENT + "Warning: clone failed for " + GitCommandException.scrub(task.url)
-                        + (result.reason() == null ? "" : " (" + result.reason() + ")"));
-                for (var line : result.details()) System.err.println(BuildOutput.STEP_INDENT + "  " + line);
+                BuildOutput.warn("Clone failed for " + GitCommandException.scrub(task.url)
+                        + (result.reason() == null ? "" : " (" + result.reason() + ")"),
+                        result.details().toArray(String[]::new));
             }
         }
     }
@@ -242,8 +243,7 @@ public final class HostRepoRefresh {
         try {
             FileTrees.delete(dir);
         } catch (IOException e) {
-            System.err.println(BuildOutput.STEP_INDENT + "Warning: could not remove the incomplete clone at " + dir
-                    + ": " + e.getMessage());
+            BuildOutput.warn("Could not remove the incomplete clone at " + dir + ": " + e.getMessage());
         }
     }
 
@@ -255,12 +255,16 @@ public final class HostRepoRefresh {
         };
     }
 
+    /**
+     * Asked only on a terminal, at the step indent as every question is; no answer is no. The
+     * console shows the question itself, so whatever output is bound, it is seen before the read.
+     */
     private static CloneAnswer promptClone(String url, Path targetDir) {
-        var console = System.console();
+        var console = TerminalStreams.terminal();
         if (console == null) return CloneAnswer.NO;
 
-        System.out.print("Clone " + url + " into " + targetDir + "? (y/n/always/never): ");
-        var input = console.readLine();
+        var input = console.readLine("%s", BuildOutput.indent() + "Clone " + url + " into " + targetDir
+                + "? (y/n/always/never): ");
         if (input == null) return CloneAnswer.NO;
         return switch (input.strip().toLowerCase()) {
             case "y", "yes" -> CloneAnswer.YES;

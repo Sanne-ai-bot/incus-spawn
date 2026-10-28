@@ -14,8 +14,4 @@
 9 0 cli/src/main/java/dev/incusspawn/tui/PreTuiOutput.java
 5 0 cli/src/main/java/dev/incusspawn/tui/ShellLaunch.java
 5 0 cli/src/main/java/dev/incusspawn/tui/Tui.java
-7 0 common/src/main/java/dev/incusspawn/git/HostRepoRefresh.java
-2 0 common/src/main/java/dev/incusspawn/incus/IncusApi.java
-5 0 common/src/main/java/dev/incusspawn/incus/IncusClient.java
 6 0 common/src/main/java/dev/incusspawn/incus/InteractiveShell.java
-2 0 common/src/main/java/dev/incusspawn/util/TerminalProgress.java
