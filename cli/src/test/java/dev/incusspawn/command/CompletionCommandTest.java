@@ -1,8 +1,12 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.IncusSpawn;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -94,36 +98,45 @@ class CompletionCommandTest {
         assertTrue(linux.contains("container vm kvm"));
     }
 
-    // --- internal commands hidden from all shells ---
+    // --- commands no shell offers ---
+
+    /**
+     * The hidden plumbing ({@code IncusSpawn.HIDDEN_COMMANDS}), {@code completion} (listed in
+     * {@code isx --help}, but nobody tab-completes the command that sets up tab completion, #1802)
+     * and the removed {@code instances}.
+     */
+    private static final List<String> NOT_OFFERED = Stream.concat(
+            IncusSpawn.HIDDEN_COMMANDS.stream(), Stream.of("completion", "instances")).sorted().toList();
 
     @Test
-    void hiddenCommandsNotOfferedAsTopLevelCompletions() {
+    void commandsNotOfferedAsTopLevelCompletions() {
         for (var shell : CompletionCommand.Shell.values()) {
             String script = CompletionCommand.rawScript(shell);
-            switch (shell) {
-                case zsh -> {
-                    assertFalse(script.contains("'completion:"), "zsh must not suggest completion");
-                    assertFalse(script.contains("'instances:"), "zsh must not suggest instances");
-                    assertFalse(script.contains("'git-remote-helper:"), "zsh must not suggest git-remote-helper");
-                    assertFalse(script.contains("'ssh-proxy:"), "zsh must not suggest ssh-proxy");
-                }
-                case bash -> {
-                    String commands = script.lines()
-                            .filter(l -> l.stripLeading().startsWith("local commands="))
-                            .findFirst().orElseThrow();
-                    assertFalse(commands.contains("completion"), "bash must not list completion");
-                    assertFalse(commands.contains("instances"), "bash must not list instances");
-                    assertFalse(commands.contains("git-remote-helper"), "bash must not list git-remote-helper");
-                    assertFalse(commands.contains("ssh-proxy"), "bash must not list ssh-proxy");
-                }
-                case fish -> {
-                    assertFalse(script.contains("-a completion"), "fish must not suggest completion");
-                    assertFalse(script.contains("-a instances"), "fish must not suggest instances");
-                    assertFalse(script.contains("-a git-remote-helper"), "fish must not suggest git-remote-helper");
-                    assertFalse(script.contains("-a ssh-proxy"), "fish must not suggest ssh-proxy");
-                }
+            java.util.function.Predicate<String> offers = switch (shell) {
+                case zsh -> name -> script.contains("'" + name + ":");
+                case bash -> List.of(script.lines()
+                        .filter(l -> l.stripLeading().startsWith("local commands="))
+                        .findFirst()
+                        .orElseThrow(() -> new AssertionError("bash script has no 'local commands=' line"))
+                        .split("[\\s\"=]+"))::contains;
+                case fish -> fishTopLevelWords(script)::contains;
+            };
+            for (var name : NOT_OFFERED) {
+                assertFalse(offers.test(name), shell + " must not offer " + name);
             }
         }
+    }
+
+    /** Every word a fish {@code __isx_no_subcommand} line offers with {@code -a}, quoted or not. */
+    private static List<String> fishTopLevelWords(String script) {
+        var arg = Pattern.compile("-a\\s+(?:'([^']*)'|\"([^\"]*)\"|(\\S+))");
+        return script.lines()
+                .filter(l -> l.contains("__isx_no_subcommand"))
+                .flatMap(l -> arg.matcher(l).results())
+                .flatMap(m -> Stream.of(m.group(1), m.group(2), m.group(3)))
+                .filter(java.util.Objects::nonNull)
+                .flatMap(words -> Stream.of(words.split("\\s+")))
+                .toList();
     }
 
     // --- macOS scripts keep vm (and its resize and reset subcommands) ---
