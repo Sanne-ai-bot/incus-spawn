@@ -106,6 +106,24 @@ class DestroyOwnedTest {
         assertEquals(List.of(), errors(recorded[0]));
     }
 
+    /**
+     * Another process changes the owner's handle between the first read and the deleting mark (a
+     * user's adoption of the instance, say): the check under the mark sees it, nothing is deleted,
+     * the mark is taken back, and the tool is told no (review of #1820).
+     */
+    @Test
+    void anOwnerChangedBeforeTheMarkIsSeenUnderItAndNothingIsDeleted() {
+        var daemon = daemon();
+        daemon.writeAfterRead("ws", () -> daemon.client().configSet("ws", Metadata.OWNER_ID, "rt-other"));
+        var recorded = new RecordingOutput[1];
+        assertEquals(1, run(owned(GRANTED, "orca", "rt-1"), daemon, "ws", recorded));
+        assertNotNull(daemon.instance("ws"), "nothing is deleted");
+        var config = daemon.instance("ws").path("config");
+        assertFalse(config.has(Metadata.PENDING_OP), "the deleting mark is taken back: " + config);
+        assertEquals("rt-other", config.pathText(Metadata.OWNER_ID, ""));
+        assertEquals(List.of("'ws' is not orca's under the id rt-1, so isx left it."), errors(recorded[0]));
+    }
+
     /** Refusing an instance that is not the tool's costs one read, and marks nothing. */
     @Test
     void aRefusalCostsOneReadAndWritesNothing() {
