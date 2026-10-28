@@ -6,6 +6,10 @@ paths:
   - "scripts/local-incus.sh"
   # Run by release.yml on every shipped macOS binary.
   - "scripts/check-macos-minos.py"
+  # The macOS-role test build and the release check that keeps it out (#1800).
+  - "scripts/macos-role-build.sh"
+  - "scripts/check-platform-role.sh"
+  - "appliance/test-macos-role.sh"
   # Cross-cutting trigger: VmManager holds the CLI half of the release-asset
   # name contract below, so editing it must load this file too.
   - "common/src/main/java/dev/incusspawn/vm/VmManager.java"
@@ -27,7 +31,11 @@ Key jobs:
   `JitWorkaroundTest` checks it in the proxy module, where the TLS tests are.
   That the excluded method still exists is checked only on a Graal-JIT JVM (`UseJVMCICompiler`), since other JDKs need no exclude and JDK 27 has no `AESCrypt` at all (#1050)
 - **`uber-jar-smoke`**: builds `-Prelease` and runs both uber-jars on a JVM -- what JBang users get.
-  Nothing else in CI executes them, which is how the JBang channel broke unnoticed (issue #701); it also asserts that `proxy start` without an `isx-proxy` sibling exits 78 with install instructions rather than looping
+  Nothing else in CI executes them, which is how the JBang channel broke unnoticed (issue #701); it also asserts that `proxy start` without an `isx-proxy` sibling exits 78 with install instructions rather than looping.
+  It runs `scripts/check-platform-role.sh` on them, as `release.yml` does on the jars it uploads, and uploads them for `macos-role`
+- **`macos-role`**: `isx` and `isx-proxy` in their macOS roles, on Linux (#1800).
+  It makes the macOS-role test build from `uber-jar-smoke`'s jars (`scripts/macos-role-build.sh`) and runs `appliance/test-macos-role.sh` with the x86_64 appliance under KVM -- see below.
+  It uploads only its logs, on failure; `PlatformRoleBuildGuardTest` keeps it the only job that makes the test build
 - **`macos-keychain-trust.yml`** (`native-keychain-smoke`, `macos-15`): builds the native CLI on macOS weekly, by hand and on a PR touching `MacKeychainTrust`/`SystemTrust`, and runs `.github/scripts/macos-keychain-smoke.sh`, which `release.yml` also runs on each macOS binary: a CA trusted in the System keychain must appear in `isx doctor --format=json`, and one denied there must not (#1467)
 - **`build-native-cli`**: builds the CLI native image, uploads artifact
 - **`build-native-proxy`**: builds the proxy native image, uploads artifact
@@ -109,8 +117,16 @@ Two containers from a busybox image built on the runner (not images.linuxcontain
 Both must reach the host and arrive from the VM's leased address, never their own: the premise of identifying macOS callers by proof (`MitmProxy.proofMayIdentify`).
 It boots the disk with `snapshot=on`, uses its own vsock CID, and takes about 10 s under KVM.
 Its gateway, MITM port and `isx.proxy=remote` are copied from `VmManager.kernelCmdline()`, and `RemoteProxyTestCmdlineTest` fails when the two part.
-It does **not** run `isx-proxy` or `isx` in their macOS roles: both decide they are on macOS when compiled (`Platform.isMacOS()`), so a template build, an account pin and `--mcp-client` through this path stay with the Mac runner.
-The proxy's side is covered by unit tests (`CredentialProofProxyTest`).
+It does **not** run `isx-proxy` or `isx`; the `macos-role` job does.
+
+**What the macOS-role job covers** (#1800).
+Released binaries take their platform role from the OS they run on, and nothing at run time changes it, so the job runs a test-only build: the uber-jars with `Platform.class` replaced by one pinned to macOS (`scripts/macos-role-build.sh`).
+`appliance/test-macos-role.sh` boots the appliance with `VmManager.kernelCmdline()`'s command line and the VM's MAC (`RemoteProxyTestCmdlineTest` fails when they part), on a tap network with DHCP, DNS and NAT, and bridges its vsock ports onto isx's sockets.
+Stand-ins replace what only macOS has: QEMU named in `vm.pid`, the lease in `/var/db/dhcpd_leases`, a `/usr/bin/security` whose admin domain trusts one CA, and `echo-server.py` as GitHub's API, trusted only through it.
+It runs `isx init`, builds `tpl-minimal` and a template that runs `gh` on its own account, branches it plain, pinned and `--mcp-client`, and checks who was served what, that no known proof was refused, and that a forged proof and the host's own request get no credential.
+About a minute under KVM; it needs internet access for the builds.
+It does not run the native macOS binaries, vfkit or the real Keychain.
+Keeping the test build out of a release is `check-platform-role.sh` in `release.yml`, `PlatformRoleFeature` and `PlatformRoleBuildGuardTest` (DESIGN.md "The macOS roles, tested on Linux").
 
 Findings this surfaced, each fixed or documented where it lives: the forwarder's socat listen backlog (default 5) refused concurrent connects (3/16, 12/32), and one exec opens about five; incusd's local listener stalled every new connection behind one that had sent nothing (see `incus.md`; fixed by a backport in #1313); incusd closes idle keep-alive connections after 30s.
 

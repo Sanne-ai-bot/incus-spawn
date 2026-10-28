@@ -316,6 +316,13 @@ Pom profiles add platform arguments through placeholders the list includes and n
 `macos.min.args` is how every macOS build gets its minimum macOS (DESIGN.md "The minimum macOS is set by the build").
 `NativeImageInitializationTest` fails if a list stops deferring a class or registering a guard, or a pom redefines it, and `graal/BakedHostStateFeature` fails the native build if such a path reaches the image heap.
 
+**The platform role is the OS's, and no released binary can be switched (#1800).**
+On macOS the proxy identifies a caller by its credential proof without the Linux address check, so a Linux isx in macOS's role would drop that check.
+`Platform` takes macOS's role from `os.name` (which a JVM's `-Dos.name` or `JAVA_TOOL_OPTIONS` sets) only on a host with macOS's `SystemVersion.plist` and no Linux kernel (elsewhere it refuses to start), and native images fold it at build time, where `graal/PlatformRoleFeature` fails a build whose role is not its target OS's.
+CI tests the macOS roles on Linux with a test-only build instead: `scripts/macos-role-build.sh` swaps the uber-jars' `Platform.class` for one pinned to macOS, and `appliance/test-macos-role.sh` runs it against the appliance in the `macos-role` job.
+Never add a runtime switch, flag or variable for the role.
+`release.yml` and `uber-jar-smoke` run `scripts/check-platform-role.sh` on the uber-jars, and `PlatformRoleBuildGuardTest` keeps the test build out of every other job and every install channel.
+
 Detailed architecture docs are in `.claude/rules/` and load automatically when you work on related files.
 Each rule file declares `paths:` globs that trigger it.
 When adding new source packages, renaming files, or restructuring modules, check whether `.claude/rules/` path globs need updating -- stale paths silently stop loading context.
