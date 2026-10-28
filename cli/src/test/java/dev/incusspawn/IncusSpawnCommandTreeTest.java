@@ -2,6 +2,7 @@ package dev.incusspawn;
 
 import dev.incusspawn.command.VmCommand;
 import org.aesh.command.CommandDefinition;
+import org.aesh.command.impl.LazyHelp;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -41,6 +42,16 @@ class IncusSpawnCommandTreeTest {
         assertFalse(DocsListsTest.commands().contains("instances"), "isx instances must not be registered");
     }
 
+    /** {@code isx completion} is how a user finds completion before it is installed, so help lists it (#1802). */
+    @Test
+    void helpListsCompletion() {
+        for (var top : List.of(IncusSpawn.IncusSpawnCommand.class, IncusSpawn.IncusSpawnLinuxCommand.class)) {
+            var help = IncusSpawn.filterHiddenCommands(LazyHelp.render(top, new String[] {"--help"}));
+            assertTrue(help.contains("Print shell completion script"), top.getSimpleName() + " help must list isx completion");
+            assertFalse(help.contains("ssh-proxy"), top.getSimpleName() + " help must still hide ssh-proxy");
+        }
+    }
+
     @Test
     void filterHiddenCommandsStripsInternalEntries() {
         String help = """
@@ -50,13 +61,13 @@ class IncusSpawnCommandTreeTest {
                     \033[34mbuild\033[0m        Build or rebuild a template image
                     \033[34mgit-remote-helper\033[0m  Git remote helper
                     \033[34mssh-proxy\033[0m    SSH ProxyCommand
-                    \033[34mdoctor\033[0m       Run health checks and completion status
+                    \033[34mdoctor\033[0m       Run health checks and ssh-proxy status
                 """;
         String filtered = IncusSpawn.filterHiddenCommands(help);
         assertTrue(filtered.contains("init"), "visible commands survive");
         assertTrue(filtered.contains("build"), "visible commands survive");
         assertTrue(filtered.contains("doctor"), "visible commands survive");
-        assertTrue(filtered.contains("completion status"),
+        assertTrue(filtered.contains("ssh-proxy status"),
                 "description text containing a hidden command name must survive");
         for (String hidden : IncusSpawn.HIDDEN_COMMANDS) {
             boolean hasOwnLine = filtered.lines().anyMatch(line -> {

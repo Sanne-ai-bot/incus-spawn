@@ -19,8 +19,8 @@ import dev.incusspawn.util.BuildOutput;
 @QuarkusMain
 public class IncusSpawn implements QuarkusApplication {
 
-    static final Set<String> HIDDEN_COMMANDS = Set.of(
-            "completion", "git-remote-helper", "ssh-proxy"
+    public static final Set<String> HIDDEN_COMMANDS = Set.of(
+            "git-remote-helper", "ssh-proxy"
     );
     private static final Pattern ANSI_ESCAPE = Pattern.compile("\033\\[[^m]*m");
 
