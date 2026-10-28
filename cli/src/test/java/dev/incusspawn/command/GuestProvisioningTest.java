@@ -428,12 +428,17 @@ class GuestProvisioningTest {
 
     // --- writeAgentContext ---
 
-    /** Pull the heredoc body out of the last writeFile call that targeted {@code path}. */
-    private static String capturedWrite(IncusClient incus, String path) {
+    /** Every script run in the container {@code test} through {@code sh -c}, in order. */
+    private static List<String> shellCalls(IncusClient incus) {
         var captor = ArgumentCaptor.forClass(String.class);
         verify(incus, atLeastOnce()).shellExec(eq("test"), eq("sh"), eq("-c"), captor.capture());
+        return captor.getAllValues();
+    }
+
+    /** Pull the heredoc body out of the last writeFile call that targeted {@code path}. */
+    private static String capturedWrite(IncusClient incus, String path) {
         String written = null;
-        for (var call : captor.getAllValues()) {
+        for (var call : shellCalls(incus)) {
             if (call.contains(path)) {
                 var start = call.indexOf('\n') + 1;
                 var end = call.lastIndexOf("\nINCUS_EOF");
@@ -488,6 +493,31 @@ class GuestProvisioningTest {
         assertTrue(gemini.contains("parent environment instructions"));
         assertTrue(gemini.contains("child environment instructions"));
         verify(incus).shellExec("test", "chown", "-R", "agentuser:agentuser", path);
+    }
+
+    /** Pi alone, no claude tool: it still gets the instructions, in the file its agent directory reads. */
+    @Test
+    void piGetsItsOwnContextWithoutClaude() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), any(String[].class))).thenReturn(OK);
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-pi");
+        imageDef.setAgentNote("pi environment instructions");
+        var tools = List.of(new BuildTools.ResolvedTool("pi", new dev.incusspawn.tool.PiSetup(), Map.of()));
+
+        GuestProvisioning.writeAgentContext(new Container(incus, "test"), imageDef, Map.of(), tools, "tpl-pi");
+
+        // The root's AGENTS.md, which Pi loads from every working directory, owned by root:
+        // the user's own ~/.pi/agent/AGENTS.md is left to them.
+        var pi = capturedWrite(incus, "cat > '/AGENTS.md'");
+        assertNotNull(pi, "pi should get its own context file");
+        assertEquals(capturedWrite(incus, "/etc/claude-code/CLAUDE.md"), pi);
+        assertTrue(pi.contains("built from the `tpl-pi` template"));
+        assertTrue(pi.contains("pi environment instructions"));
+        verify(incus, never()).shellExec("test", "chown", "-R", "agentuser:agentuser", "/AGENTS.md");
+        assertTrue(shellCalls(incus).stream().noneMatch(call -> call.contains("/.pi/")),
+                "the user's own Pi files are not touched");
+        assertNull(capturedWrite(incus, dev.incusspawn.tool.GeminiSetup.MEMORY_PATH));
     }
 
     @Test

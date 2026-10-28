@@ -28,6 +28,14 @@ public interface ToolSetup {
     default String agentNote() { return null; }
 
     /**
+     * Where this tool's agent reads its own global context file, which the build fills with the
+     * content of {@code /etc/claude-code/CLAUDE.md}: owned by agentuser in their home, by root
+     * elsewhere. Prefer a path outside the home, so the user's own file stays theirs. Null for a
+     * tool that is not an agent, or one that reads Claude Code's file itself.
+     */
+    default String environmentContextPath() { return null; }
+
+    /**
      * Skills this tool ships, installed when the tool is. Use these for the procedures
      * that drive the tool — they load on demand, unlike {@link #agentNote()}, which is
      * in context for every session. Bare skill names resolve against this definition's

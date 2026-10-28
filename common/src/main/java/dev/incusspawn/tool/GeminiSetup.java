@@ -132,12 +132,8 @@ public class GeminiSetup implements ToolSetup {
                 .assertSuccess("Failed to remove the old Gemini login notice");
     }
 
-    /** Called after all template layers are built, so inherited notes and repositories are included. */
-    public static void writeEnvironmentContext(Container c, String content) {
-        c.sh("mkdir -p /home/agentuser/.gemini");
-        c.writeFile(MEMORY_PATH, content);
-        c.chown(MEMORY_PATH, "agentuser:agentuser");
-    }
+    @Override
+    public String environmentContextPath() { return MEMORY_PATH; }
 
     private void configureSettings(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Gemini CLI...");

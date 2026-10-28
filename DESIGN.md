@@ -647,6 +647,15 @@ Content comes from `AgentContextGenerator` (module `common`), a pure function th
 For images containing `gemini-cli`, the same content is also written to `GeminiSetup.MEMORY_PATH` (`/home/agentuser/.gemini/GEMINI.md`) and owned by `agentuser`.
 Both build paths regenerate it after resolving the whole template chain, including when Gemini is inherited without reconfiguration.
 This global Gemini context file is build-owned and replaced on rebuild; project context files are untouched and `context.fileName` stays unset.
+Images containing `pi` get the same content in `PiSetup.CONTEXT_PATH` (`/AGENTS.md`), owned by root.
+Pi has no system-wide layer like Claude Code's managed policy.
+It loads `AGENTS.md` from its agent directory (`~/.pi/agent`) and from every directory between its working directory and the root.
+So the root's file reaches every Pi session, while the user's `~/.pi/agent/AGENTS.md` stays theirs and loads before it.
+The agent directory was rejected for the same reason Claude Code's user layer was: isx would overwrite a file the user owns.
+Each tool declares its own copy's path with `ToolSetup.environmentContextPath`, which `writeAgentContext` reads for every resolved tool, so no tool is matched by name.
+A path under `/home/agentuser` is then given to `agentuser`; any other stays root's.
+Pi gets a copy, not a link to `/etc/claude-code/CLAUDE.md`, so it depends neither on the `claude` tool nor on where Claude Code keeps its managed policy.
+The copy is rendered the same way whether or not `claude` is installed, so there is one path to test.
 
 **Why the managed-policy layer.**
 That path is Claude Code's *managed policy* memory location on Linux: it loads ahead of the user layer (`~/.claude/CLAUDE.md`) and the project layer (`./CLAUDE.md`), all layers concatenate rather than override, and it cannot be suppressed via `claudeMdExcludes`.

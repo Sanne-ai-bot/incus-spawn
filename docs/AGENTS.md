@@ -124,6 +124,10 @@ The credential stays on the host, and the proxy adds it to Pi's requests as they
 To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
 With `default-action: pi` instead, the instance opens Pi resuming your most recent session in its directory.
 
+Every template build writes the generated environment instructions to `/AGENTS.md`, which Pi loads in every directory.
+Pi gets this file whether or not the template also installs Claude Code.
+Your own `~/.pi/agent/AGENTS.md` and project `AGENTS.md` files load as usual; isx never writes them.
+
 ### Parameters
 
 | Parameter | Default | What it does |
@@ -316,7 +320,7 @@ Every build writes a short primer to `/etc/claude-code/CLAUDE.md`, so Claude Cod
 The primer says that the instance is disposable, `sudo` needs no password, the proxy handles credentials, `isx-trust` fixes a runtime's own CA bundle, and outward-facing actions such as opening a PR wait until asked.
 
 It also lists the tools and repositories the template provides.
-When Gemini CLI is installed, the same text goes to `~/.gemini/GEMINI.md`.
+When Gemini CLI is installed, the same text goes to `~/.gemini/GEMINI.md`, and with Pi to `/AGENTS.md`.
 
 Your own `~/.claude/CLAUDE.md` and project `CLAUDE.md` files load as usual.
 

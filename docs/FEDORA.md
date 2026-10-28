@@ -19,6 +19,7 @@ Some come from isx at build time, some from the `tpl-minimal` template, and some
 | No documentation files, English locale only | A smaller image | base image, build-time `dnf` |
 | dnf has no plugins until a template enables a COPR repo | A smaller image; `dnf copr` comes with the first COPR repo | base image, build-time `dnf` |
 | Every instance has its own machine ID | Branches are copies of one template | `/etc/machine-id` |
+| With Pi, an `AGENTS.md` at the filesystem root | Pi reads context from every directory above its own, so isx's instructions leave `~/.pi/agent/AGENTS.md` to you | `/AGENTS.md`, from the `pi` tool |
 | A VM's `dnf` refuses kernel packages | The VM boots the image's own kernel | `/etc/dnf/libdnf5.conf.d/isx-kernel.conf` |
 
 ## Trust

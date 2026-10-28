@@ -5,7 +5,8 @@ import java.util.List;
 
 /**
  * Generates the managed-policy CLAUDE.md written to {@code /etc/claude-code/CLAUDE.md}
- * at the end of every template build, and to {@code ~/.gemini/GEMINI.md} when Gemini CLI is installed.
+ * at the end of every template build, and to the global context file of each installed agent that
+ * reads its own ({@code ~/.gemini/GEMINI.md} for Gemini CLI, {@code /AGENTS.md} for Pi).
  *
  * <p>Claude Code loads that path as its <em>managed policy</em> memory layer: it is read
  * before the user layer ({@code ~/.claude/CLAUDE.md}) and the project layer
