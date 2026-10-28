@@ -123,7 +123,8 @@ class RawOutputGateTest {
             "common/src/main/java/dev/incusspawn/incus/IncusApi.java", "writes an interactive shell's raw bytes",
             "common/src/main/java/dev/incusspawn/util/TerminalProgress.java", "the live renderer, which draws on the terminal whole",
             "common/src/main/java/dev/incusspawn/git/HostRepoRefresh.java", "asks on the console, where Prompts cannot reach",
-            "cli/src/main/java/dev/incusspawn/command/Prompts.java", "its terminal() asks only when stdin and stdout are a terminal");
+            "cli/src/main/java/dev/incusspawn/command/Prompts.java", "its terminal() asks only when stdin and stdout are a terminal",
+            "cli/src/main/java/dev/incusspawn/command/GitRemoteHelperCommand.java", "a git remote helper: stdin and stdout are git's protocol, stderr what git shows");
 
     @Test
     void onlyTheNamedPassthroughsTakeTheTerminalsStreams() throws IOException {

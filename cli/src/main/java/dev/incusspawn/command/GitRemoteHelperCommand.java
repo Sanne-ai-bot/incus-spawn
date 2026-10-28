@@ -4,6 +4,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.TerminalStreams;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.invocation.CommandInvocation;
@@ -51,11 +52,12 @@ public class GitRemoteHelperCommand extends BaseCommand {
 
         var resolvedPath = GitRemoteUtils.containerPath(path);
 
-        var stderrOut = new GuestStderr(System.err);
+        // git's protocol: stdin and stdout are git's, and stderr is what git shows its user
+        var stderrOut = new GuestStderr(TerminalStreams.err());
         int exitCode;
         try {
             exitCode = incus.execBidirectional(instance, 1000, 1000, "/home/agentuser",
-                    new String[]{service, resolvedPath}, System.in, System.out, stderrOut);
+                    new String[]{service, resolvedPath}, TerminalStreams.in(), TerminalStreams.out(), stderrOut);
         } finally {
             stderrOut.close();  // a last line without a break, even when the exec fails
         }
