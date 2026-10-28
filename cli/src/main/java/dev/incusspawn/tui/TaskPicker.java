@@ -87,7 +87,7 @@ final class TaskPicker {
         modal.addKey(hintSpans, "Esc", "Close");
 
         int width = ModalRenderer.hintWidth(hintSpans);
-        for (var line : lines) width = Math.max(width, line.spans().stream().mapToInt(s -> s.content().length()).sum());
+        for (var line : lines) width = Math.max(width, line.width());
         int modalWidth = Math.min(width + 4, screen.width() - 4);
         int modalHeight = Math.min(lines.size() + 4, screen.height() - 2);
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
