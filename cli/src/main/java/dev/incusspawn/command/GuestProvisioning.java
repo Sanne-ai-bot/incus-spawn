@@ -598,7 +598,7 @@ public class GuestProvisioning {
 
     static void warnDnfCacheUnavailable(String reason) {
         if (reason != null) {
-            System.err.println("Warning: could not mount DNF cache (builds will be slower): " + reason);
+            BuildOutput.warn("Could not mount the DNF cache (builds will be slower): " + reason);
         }
     }
 
@@ -665,7 +665,7 @@ public class GuestProvisioning {
 
         var catResult = container.exec("cat", CLAUDE_JSON_PATH);
         if (!catResult.success()) {
-            System.err.println("Warning: could not read " + CLAUDE_JSON_PATH);
+            BuildOutput.warn("Could not read " + CLAUDE_JSON_PATH);
             return;
         }
 
@@ -733,7 +733,7 @@ public class GuestProvisioning {
             container.writeFile(CLAUDE_JSON_PATH, updatedJson);
             container.chown(CLAUDE_JSON_PATH, "agentuser:agentuser");
         } catch (Exception e) {
-            System.err.println("Warning: failed to update " + CLAUDE_JSON_PATH + ": " + e.getMessage());
+            BuildOutput.warn("Could not update " + CLAUDE_JSON_PATH + ": " + BaseCommand.failure(e));
         }
     }
 
