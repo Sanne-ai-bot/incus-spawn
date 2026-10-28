@@ -218,6 +218,21 @@ class BuildCommandBatchTest {
         assertTrue(stderr.contains("Some templates failed to build: tpl-layer, tpl-isx, tpl-quarkus"), stderr);
     }
 
+    /**
+     * A target whose parent is not defined is reported and does not stop the others: the next is
+     * still built, and the run ends on the list of what failed.
+     */
+    @Test
+    void severalPlainTargetsCarryOnPastAMissingParent() {
+        extra(List.of("tpl-a", "tpl-gone"), List.of("tpl-b", ""));
+
+        assertThrows(BuildCommand.BuildFailedException.class, () -> build("tpl-a", "tpl-b"));
+
+        assertEquals(List.of("tpl-b"), built);
+        assertTrue(stderr.contains("parent image 'tpl-gone' not found in definitions."), stderr);
+        assertTrue(stderr.endsWith("Some templates failed to build: tpl-a"), stderr);
+    }
+
     /** Nothing missing is nothing to do: no proxy check, which could fail a run with no work. */
     @Test
     void missingWithNothingMissingDoesNothing() {

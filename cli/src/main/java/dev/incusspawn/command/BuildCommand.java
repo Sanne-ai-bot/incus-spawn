@@ -1033,7 +1033,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private String printBuildDiagnostics(String buildName, boolean created) {
+    String printBuildDiagnostics(String buildName, boolean created) {
         var diag = new StringBuilder();
         try {
             // Without a container only the host's state is left to report: a full pool can be
@@ -1067,10 +1067,11 @@ public class BuildCommand extends BaseCommand {
                         var hint = Platform.isMacOS()
                                 ? " or 'isx vm resize' to grow the appliance disk"
                                 : "";
-                        // The cause, not one more measurement: a warning, as the report's other lines are notes
+                        // The cause, not one more measurement: a warning, as the report's other lines are notes,
+                        // aside so it ends no paragraph between them
                         var cause = "Likely cause: storage pool is " + poolUsage.percent() + "% full"
                                 + " — run 'isx clean pool' to reclaim space" + hint;
-                        BuildOutput.warn(cause);
+                        BuildOutput.warnAside(cause);
                         diag.append("  ").append(cause).append('\n');
                     }
                 }

@@ -1708,6 +1708,23 @@ class BuildCommandTest {
         assertTrue(result.isEmpty(), "Already-seen descendant should be skipped");
     }
 
+    /** A full pool's cause is a warning among the notes, aside, so no blank line splits them. */
+    @Test
+    void aFullPoolIsReportedAsideAmongTheDiagnosticsNotes() {
+        var cmd = new BuildCommand();
+        cmd.incus = mock(IncusClient.class);
+        when(cmd.incus.findCowPool()).thenReturn("default");
+        when(cmd.incus.getPoolUsageBytes("default")).thenReturn(new IncusClient.PoolUsage(96L << 30, 100L << 30));
+
+        var recorder = RecordingOutput.during(() -> cmd.printBuildDiagnostics("tpl-x-build", false));
+
+        var cause = recorder.events().stream()
+                .filter(e -> e.msg() != null && e.msg().startsWith("Likely cause: storage pool is 96% full")).toList();
+        assertEquals(List.of(RecordingOutput.Kind.WARN_ASIDE), cause.stream().map(RecordingOutput.Event::kind).toList(),
+                recorder.events()::toString);
+        assertTrue(recorder.events(RecordingOutput.Kind.WARN).isEmpty(), recorder.events()::toString);
+    }
+
     // --- diagnoseCrashCause ---
 
     @Test
