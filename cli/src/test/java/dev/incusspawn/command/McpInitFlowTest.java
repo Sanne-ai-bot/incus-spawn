@@ -141,7 +141,7 @@ class McpInitFlowTest {
         var prompts = ScriptedPrompts.lines("y", "n", "y");
         var recorded = RecordingOutput.during(() -> run(host, prompts));
 
-        assertEquals(List.of("Enable the experimental isx MCP server? (y/N): ",
+        assertEquals(List.of("Enable the isx MCP server? (y/N): ",
                 "tpl-agent (not built yet: isx build tpl-agent)? (y/N): ",
                 "tpl-agent-java (not built yet: isx build tpl-agent-java)? (y/N): "),
                 prompts.questions().stream().map(BuildOutput::stripAnsi).toList());

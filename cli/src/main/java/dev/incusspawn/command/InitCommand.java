@@ -755,7 +755,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private void setupMcp() {
-        startStep("Agent Access over MCP (experimental)",
+        startStep("Agent Access over MCP",
                 "Lets Claude Code on this machine use isx itself: create",
                 "instances from templates you approve here, run commands",
                 "in them, and hand tasks to the Claude Code inside them.",
@@ -816,7 +816,7 @@ public class InitCommand extends BaseCommand {
             }
             proceed = choice.equals("t");
         } else {
-            proceed = askYesNo(prompts, "Enable the experimental isx MCP server?", enabled);
+            proceed = askYesNo(prompts, "Enable the isx MCP server?", enabled);
         }
         if (!proceed) {
             if (registered) {
