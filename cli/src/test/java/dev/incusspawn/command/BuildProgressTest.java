@@ -23,20 +23,10 @@ class BuildProgressTest {
     @Test
     void aStepsLabelCannotDriveTheTerminal() {
         // A label can hold definition text, such as a COPR repository's name (#1610).
-        var output = new java.io.ByteArrayOutputStream();
-        var originalOut = System.out;
-        var originalErr = System.err;
-        try {
-            System.setOut(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
-            System.setErr(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
-            assertThrows(dev.incusspawn.incus.IncusException.class,
-                    () -> BuildProgress.runWithSpinner("Enabling", "COPR repo \033]0;pwned\007x", "Failed",
-                            state -> state.set(0, BuildProgress.StepProgress.failed("boom", "log"))));
-        } finally {
-            System.setOut(originalOut);
-            System.setErr(originalErr);
-        }
-        var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> assertThrows(dev.incusspawn.incus.IncusException.class,
+                () -> BuildProgress.runWithSpinner("Enabling", "COPR repo \033]0;pwned\007x", "Failed",
+                        state -> state.set(0, BuildProgress.StepProgress.failed("boom", "log")))));
+        var shown = String.join("\n", recorded.lines());
         assertTrue(shown.contains("COPR repo  ]0;pwned x"), shown);
         assertEquals(dev.incusspawn.util.TerminalLink.plainText(shown).replace("\033", "ESC"),
                 shown.replace("\033", "ESC"), "the label's escapes must not reach the terminal");
@@ -262,5 +252,26 @@ class BuildProgressTest {
         cached.verifyingCached();
         assertEquals("verifying cached copy", cached.detail());
         assertFalse(cached.fetched());
+    }
+
+    /**
+     * A failed step's captured log is one warning, showing its end, and the exception carries all
+     * of it for the build's failure report (#1703); before, it was raw stderr between two rules.
+     */
+    @Test
+    void aFailedStepsLogIsAWarningAndTheExceptionCarriesItAll() {
+        var log = new StringBuilder();
+        for (int i = 1; i <= 60; i++) log.append("line ").append(i).append('\n');
+        var thrown = new dev.incusspawn.incus.IncusException[1];
+        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> thrown[0] = assertThrows(
+                dev.incusspawn.incus.IncusException.class,
+                () -> BuildProgress.runWithSpinner("Enabling", "COPR repo x", "Failed to enable",
+                        state -> state.set(0, BuildProgress.StepProgress.failed("boom", log.toString())))));
+        var output = recorded.events(dev.incusspawn.util.RecordingOutput.Kind.WARN).stream()
+                .filter(e -> e.msg().equals("COPR repo x failed")).toList();
+        assertEquals(1, output.size(), recorded.events().toString());
+        assertEquals("line 60", output.getFirst().details().getLast());
+        assertEquals("Failed to enable: boom", thrown[0].getMessage());
+        assertEquals("COPR repo x failed:\n" + log.toString().strip() + "\n\n", thrown[0].stepOutput());
     }
 }

@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.Warnings;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -70,7 +71,7 @@ public final class BuildTools {
                                   ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, boolean quiet) {
         if (!visiting.add(name)) {
             if (!quiet) {
-                System.err.println("Warning: dependency cycle detected: " +
+                Warnings.warn("Dependency cycle detected: " +
                         String.join(" -> ", visiting) + " -> " + name + ", skipping.");
             }
             return;
@@ -80,10 +81,10 @@ public final class BuildTools {
             if (!quiet) {
                 var ungated = findToolUngated(name, toolDefLoader, cdiTools);
                 if (ungated != null) {
-                    System.err.println("Warning: tool '" + name + "' requires feature '"
+                    Warnings.warn("Tool '" + name + "' requires feature '"
                             + ungated.feature() + "' — add it to the features list in config.yaml to enable.");
                 } else {
-                    System.err.println("Warning: unknown tool '" + name + "', skipping.");
+                    Warnings.warn("Unknown tool '" + name + "', skipping.");
                 }
             }
             visiting.remove(name);
@@ -116,7 +117,7 @@ public final class BuildTools {
                 if (!isExplicit && explicit.contains(name)) {
                     // Transitive dep for a tool the user explicitly configured — skip
                     if (!quiet && params != null && !params.isEmpty()) {
-                        System.err.println("Warning: tool '" + name +
+                        Warnings.warn("Tool '" + name +
                             "' is explicitly configured, overriding parameters from a transitive dependency.");
                     }
                 } else if (isExplicit && !explicitlyResolved.contains(name)) {
@@ -126,7 +127,7 @@ public final class BuildTools {
                             tool.parameters(), Map.of());
                         if (defaultOnly.hasErrors() ||
                                 !defaultOnly.resolvedValues().equals(existing.parameters())) {
-                            System.err.println("Warning: tool '" + name +
+                            Warnings.warn("Tool '" + name +
                                 "' is explicitly configured, overriding parameters from a transitive dependency.");
                         }
                     }

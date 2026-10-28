@@ -15,8 +15,6 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
-import static dev.incusspawn.util.BuildOutput.BOLD;
-import static dev.incusspawn.util.BuildOutput.styled;
 
 /**
  * How a build shows its steps: the one-line spinners for dnf, single operations and
@@ -32,7 +30,7 @@ final class BuildProgress {
      *  live verb shown while RUNNING (e.g. "Cloning", then "Priming"); {@code note}
      *  is a dim annotation shown on success; {@code detail} is a concise one-line
      *  error for the inline display; {@code log} is the full captured command output,
-     *  printed on failure so the diagnostic isn't reduced to the single inline line;
+     *  shown on failure so the diagnostic isn't reduced to the single inline line;
      *  {@code step} names the step that failed for that output's heading, such as "prime",
      *  when it is not the batch's own verb, and {@code command} is the command it ran.
      *  The detail and log quote what a guest command printed, such as a prime the cloned
@@ -75,9 +73,13 @@ final class BuildProgress {
         TerminalProgress.run(1, 1,
                 idx -> runSpinnerWork(work, state),
                 (idx, frame) -> formatLiveStepLine(label, state.get(0), detail, frame),
-                idx -> state.get(0).state() == StepState.DONE
-                        ? BuildOutput.indent() + state.get(0).note() : null,
-                System.out::println);
+                PLAIN_BY_KIND, line -> {});
+        // A DONE note is the whole completion line, the label having been said up front
+        var ended = state.get(0);
+        if (!TerminalProgress.isAnsiTerminal()) {
+            if (ended.state() != StepState.DONE) BuildOutput.stepFail(label + " failed");
+            else if (ended.note() != null && !ended.note().isEmpty()) BuildOutput.step(ended.note());
+        }
         finishSpinner(label, failureMessage, state);
     }
 
@@ -236,7 +238,7 @@ final class BuildProgress {
      * show live "N/M — current package" feedback from dnf's own progress lines,
      * keeping isx's warnings visible instead of buried in a flood. On failure it
      * clears metadata and retries once with {@code --refresh}; if that also fails
-     * the full captured output is printed and {@code failureMessage} thrown.
+     * the end of the captured output is a warning and {@code failureMessage} is thrown with all of it.
      *
      * @param rawLabel the full phrase for the spinner line (e.g. "Installing base packages")
      */
@@ -249,8 +251,10 @@ final class BuildProgress {
                 idx -> dnfWork(container, args, state),
                 (idx, frame) -> formatDnfLine(label, state.get(0), frame,
                         (System.nanoTime() - started) / 1_000_000),
-                idx -> plainDnfLine(label, state.get(0)),
-                System.out::println);
+                PLAIN_BY_KIND, line -> {});
+        if (!TerminalProgress.isAnsiTerminal()) {
+            reportPlain(state.get(0), label + "... done.", label + " failed");
+        }
         finishSpinner(label, failureMessage, state);
     }
 
@@ -335,16 +339,23 @@ final class BuildProgress {
         return sb.toString();
     }
 
-    /** Non-ANSI fallback line for a dnf step (emitted once, on completion). */
-    private static String plainDnfLine(String label, StepProgress p) {
+    /**
+     * A one-task step's plain renderer: none, since off an ANSI terminal its outcome is reported
+     * once the task ends, by kind ({@link #reportPlain}), not as a pre-rendered line.
+     */
+    private static final java.util.function.IntFunction<String> PLAIN_BY_KIND = idx -> null;
+
+    /**
+     * Off an ANSI terminal, a finished one-task step: {@code done} as a step, with its note, or
+     * {@code failed} as a failed step, which the TUI does not copy into its log, since its status
+     * line reports the failure; the detail is the exception's, which finishSpinner throws.
+     */
+    private static void reportPlain(StepProgress p, String done, String failed) {
         if (p.state() == StepState.DONE) {
-            var line = BuildOutput.indent() + label + "... done.";
-            if (p.note() != null && !p.note().isEmpty()) line += " (" + p.note() + ")";
-            return line;
+            BuildOutput.step(p.note() != null && !p.note().isEmpty() ? done + " (" + p.note() + ")" : done);
+        } else {
+            BuildOutput.stepFail(failed);
         }
-        var msg = BuildOutput.indent() + "Warning: " + label + " failed";
-        if (p.detail() != null && !p.detail().isEmpty()) msg += ": " + p.detail();
-        return msg;
     }
 
     /**
@@ -352,8 +363,8 @@ final class BuildProgress {
      * clone/prime display) instead of streaming its output. {@code work} performs
      * the operation with captured exec and records the terminal {@link StepProgress}
      * in {@code state[0]}; it may set an intermediate {@code running(...)} to advance
-     * the verb mid-flight. On a non-DONE result the captured log is printed to
-     * stderr and {@code failureMessage} thrown.
+     * the verb mid-flight. On a non-DONE result the end of the captured log is a
+     * warning and {@code failureMessage} is thrown with all of it.
      */
     static void runWithSpinner(String activity, String rawLabel, String failureMessage,
                                 Consumer<AtomicReferenceArray<StepProgress>> work) {
@@ -363,8 +374,10 @@ final class BuildProgress {
         TerminalProgress.run(1, 1,
                 idx -> runSpinnerWork(work, state),
                 (idx, frame) -> formatStepLine(label, null, state.get(0), frame, "Done"),
-                idx -> plainStepLine(label, state.get(0), "Done", activity.toLowerCase()),
-                System.out::println);
+                PLAIN_BY_KIND, line -> {});
+        if (!TerminalProgress.isAnsiTerminal()) {
+            reportPlain(state.get(0), "Done " + label, activity + " failed for " + label);
+        }
         finishSpinner(label, failureMessage, state);
     }
 
@@ -388,22 +401,23 @@ final class BuildProgress {
         return sw.toString();
     }
 
-    /** After a one-task spinner completes, surface a non-DONE result: print the full
-     *  captured log (if any) to stderr — after the animated line, so it doesn't
-     *  interleave with the live display — and throw {@code failureMessage}. */
+    /** After a one-task spinner completes, surface a non-DONE result: the end of the
+     *  captured log (if any) as a warning, after the step's line, and {@code failureMessage}
+     *  thrown with all of the log for the failure report. */
     private static void finishSpinner(String label, String failureMessage,
                                       AtomicReferenceArray<StepProgress> state) {
         var progress = state.get(0);
         if (progress != null && progress.state() == StepState.DONE) return;
 
-        if (progress != null && progress.log() != null && !progress.log().isBlank()) {
-            System.err.println(styled(BOLD, "─── output: " + label + " ───"));
-            System.err.println(progress.log().strip());
-            System.err.println(styled(BOLD, "─── end output: " + label + " ───"));
-        }
         var detail = progress != null && progress.detail() != null && !progress.detail().isEmpty()
                 ? ": " + progress.detail() : "";
-        throw new IncusException(failureMessage + detail);
+        var failure = new IncusException(failureMessage + detail);
+        if (progress == null || progress.log() == null || progress.log().isBlank()) throw failure;
+        // The end of the captured log under a warning, after the step's line; all of it for the
+        // failure report, which keeps what the warning leaves out. It is guest text, made safe already.
+        // The kind #1791's design gives it: the step's failure, the end of its log under it
+        BuildOutput.warn(label + " failed", BuildOutput.lastOf(BuildOutput.guestLines(progress.log())));
+        throw failure.withStepOutput(label + " failed:\n" + progress.log().strip() + "\n\n");
     }
 
     /** Turn a captured exec result into a terminal {@link StepProgress}. */
