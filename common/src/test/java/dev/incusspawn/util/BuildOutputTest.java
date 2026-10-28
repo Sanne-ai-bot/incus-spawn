@@ -48,9 +48,9 @@ class BuildOutputTest {
 
     @Test
     void plainStepCompletesItsLine() {
-        BuildOutput.stepStart("Waiting for network...");
+        BuildOutput.stepStart("Waiting for network");
         BuildOutput.stepDone();
-        BuildOutput.stepStart("Extracting root disk...");
+        BuildOutput.stepStart("Extracting root disk");
         BuildOutput.stepDone("4.0G");
         assertEquals("""
                     Waiting for network... done.
@@ -69,20 +69,27 @@ class BuildOutputTest {
         assertEquals("    before\n\n  ● Building t\n    x\n\n  ✓ t built\n", text());
     }
 
-    /** A label is bare in source: a plain terminal adds the ellipsis, and a decorated one prints alike. */
+    /** A slow step's time is in a plain terminal's log too, as on the ✓ line. */
+    @Test
+    void aPlainTerminalSaysHowLongASlowStepTook() throws Exception {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.stepStart("Importing base image");
+        Thread.sleep(2100);
+        BuildOutput.stepDone();
+        assertTrue(text().matches("    Importing base image\\.\\.\\. done in 2(\\.\\d)?s\\.\n"), text());
+    }
+
+    /** A label is bare in source, and a plain terminal adds the ellipsis. */
     @Test
     void aPlainTerminalAddsTheEllipsisToABareLabel() {
         BuildOutput.forceAnsi = false;
         BuildOutput.stepStart("Waiting");
-        BuildOutput.stepDone();
-        BuildOutput.stepStart("Waiting...");
         BuildOutput.stepDone();
         System.out.println("between");
         BuildOutput.stepStart("Waiting");
         System.err.println("mid-step");
         BuildOutput.stepDone();
         assertEquals("""
-                    Waiting... done.
                     Waiting... done.
                 between
                     Waiting...
@@ -139,7 +146,7 @@ class BuildOutputTest {
 
     @Test
     void plainOutputPrintedMidStepMovesBelowTheStepLine() {
-        BuildOutput.stepStart("Installing foo...");
+        BuildOutput.stepStart("Installing foo");
         System.err.println("    Warning: something");
         BuildOutput.stepDone();
         assertEquals("""
@@ -153,7 +160,7 @@ class BuildOutputTest {
     @Test
     void resultsArePrintedAsGivenBelowALiveStep() {
         BuildOutput.results().println("Proxy is running.");
-        BuildOutput.stepStart("Checking...");
+        BuildOutput.stepStart("Checking");
         BuildOutput.results().println("Version: 1.0");
         BuildOutput.stepDone();
         assertEquals("""
@@ -201,7 +208,7 @@ class BuildOutputTest {
     void streamsAreRestoredWhenTheStepEnds() {
         var out = System.out;
         var err = System.err;
-        BuildOutput.stepStart("Working...");
+        BuildOutput.stepStart("Working");
         assertNotSame(out, System.out, "a live step guards stdout");
         BuildOutput.stepDone();
         assertSame(out, System.out);
@@ -211,7 +218,7 @@ class BuildOutputTest {
     @Test
     void ansiStepTurnsIntoACheck() {
         BuildOutput.forceAnsi = true;
-        BuildOutput.stepStart("Deriving from parent image 'tpl-dev'...");
+        BuildOutput.stepStart("Deriving from parent image 'tpl-dev'");
         BuildOutput.stepDone();
         var lines = lastLines();
         assertEquals("    ✓ Deriving from parent image 'tpl-dev'", lines.getLast());
@@ -220,7 +227,7 @@ class BuildOutputTest {
     @Test
     void ansiFailedStepTurnsIntoACross() {
         BuildOutput.forceAnsi = true;
-        BuildOutput.stepStart("Verifying DNS resolution...");
+        BuildOutput.stepStart("Verifying DNS resolution");
         BuildOutput.stepBreak();
         assertEquals("    ✗ Verifying DNS resolution", lastLines().getLast());
     }
@@ -228,7 +235,7 @@ class BuildOutputTest {
     @Test
     void ansiOutputPrintedMidStepFreezesTheLineAndStopsDrawingIt() throws Exception {
         BuildOutput.forceAnsi = true;
-        BuildOutput.stepStart("Installing foo...");
+        BuildOutput.stepStart("Installing foo");
         System.err.println("    ⚠ careful");
         var afterWarning = text().length();
         Thread.sleep(250); // several spinner ticks
@@ -240,7 +247,7 @@ class BuildOutputTest {
     @Test
     void progressDetailShowsWhileRunning() throws Exception {
         BuildOutput.forceAnsi = true;
-        BuildOutput.stepStart("Installing mx...");
+        BuildOutput.stepStart("Installing mx");
         BuildOutput.stepProgress("verifying: mx version");
         Thread.sleep(200);
         assertTrue(BuildOutput.stripAnsi(text()).contains("Installing mx  verifying: mx version"));
@@ -453,13 +460,6 @@ class BuildOutputTest {
         assertEquals("2.5s", BuildOutput.formatElapsed(2_500));
         assertEquals("41s", BuildOutput.formatElapsed(41_000));
         assertEquals("2m05s", BuildOutput.formatElapsed(125_000));
-    }
-
-    @Test
-    void ellipsisIsTrimmedFromTheLabel() {
-        assertEquals("Installing foo", BuildOutput.trimEllipsis("Installing foo..."));
-        assertEquals("Waiting", BuildOutput.trimEllipsis("Waiting…"));
-        assertEquals("Waiting for host repo refresh", BuildOutput.trimEllipsis("Waiting for host repo refresh"));
     }
 
     /** The rendered screen: each carriage return / erase-line rewrites the current line. */

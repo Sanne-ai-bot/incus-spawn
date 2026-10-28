@@ -131,7 +131,7 @@ public class CodexSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        BuildOutput.stepStart("Installing Codex CLI...");
+        BuildOutput.stepStart("Installing Codex CLI");
         NpmGlobalInstall.install(c, NPM_CLI);
         BuildOutput.stepDone();
     }
@@ -155,7 +155,7 @@ public class CodexSetup implements ToolSetup {
      * the way the old {@code o4-mini} default did. Same reasoning as the claude tool.
      */
     private void configureSettings(Container c, Map<String, String> resolvedParams) {
-        BuildOutput.stepStart("Configuring Codex CLI...");
+        BuildOutput.stepStart("Configuring Codex CLI");
         var configToml = configToml(resolvedParams);
         var authJson = """
                 {

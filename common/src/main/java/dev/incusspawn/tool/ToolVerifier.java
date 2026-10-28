@@ -53,7 +53,7 @@ public final class ToolVerifier {
      * seconds, and a line already saying "done" would leave that time unexplained.
      */
     static void verify(Container container, Check check) {
-        BuildOutput.stepStart(check.toolName() + "...");
+        BuildOutput.stepStart(check.toolName());
         BuildOutput.stepProgress(check.command());
         // As the user through a login shell, which sources /etc/profile.d (isx-env.sh included):
         // the image as the person using it sees it. A root check gets root's own environment

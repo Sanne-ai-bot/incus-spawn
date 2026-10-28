@@ -752,14 +752,14 @@ The volume is automatically recreated by the next build.
 It runs `dnf clean metadata` to clear potentially stale repo data, then retries with `--refresh` to force fresh metadata from a (potentially different) mirror.
 This handles transient mirror issues like packages appearing in metadata before their signatures are available, without requiring manual intervention.
 
-**DNF output**: dnf steps render a single animated `TerminalProgress` spinner line — the same braille-spinner helper used for parallel repo cloning — rather than streaming dnf's verbose per-package output to the terminal, keeping isx's own warnings and caveats visible instead of scrolling off in a flood.
+**DNF output**: dnf steps are one live step (`stepStart`, a `stepProgress` detail read on every frame, `stepDone`), drawn like every other step, rather than streaming dnf's verbose per-package output to the terminal, keeping isx's own warnings and caveats visible instead of scrolling off in a flood.
 Install/upgrade (`runDnf`) stream dnf's output through a parser instead of echoing it: dnf5's non-TTY output emits one `[N/M] <action> <package>` line per completed step in both the download and transaction phases.
 So the spinner shows live "N/M — current package" feedback parsed from dnf's own progress lines.
 (dnf has no dedicated single-line progress mode; `--quiet` would suppress exactly those lines, so parsing the native output is the only way to get live feedback.) dnf's non-TTY column truncates each NEVRA's version/arch tail and the width can't be raised (`COLUMNS`/`terminal_width` are ignored without a TTY; a PTY widens it but replaces the tidy per-line output with concurrent ANSI progress-bar redraws).
 So `shortenNevra` reduces each `name-epoch:ver-rel.arch` to its bare package name for the live label.
 The streaming-without-echo path is `Container.execLines` → `IncusClient.shellExecStreaming` → `util/LineOutputStream`.
 COPR-enable and VM rootfs-expansion use `runWithSpinner` with captured exec (single/short operations that don't warrant a parser).
-On failure, the full output is printed to stderr after the animated line (so it doesn't interleave with the live display); the `--refresh` retry is surfaced as a live "retrying with --refresh" sub-line.
+On failure, the step ends in its ✗ and the end of the output is one warning under it (so it doesn't interleave with the live display); the `--refresh` retry is surfaced as a live "retrying with --refresh" detail.
 
 ### Branching
 
@@ -895,9 +895,8 @@ Beyond build/branch, this governs the other lifecycle commands too — `vm` (sta
 **Labels are bare, and the terminal decorates them.**
 A label in source is a bare phrase with no `...` and no period: `stepStart("Masking unnecessary services")`.
 `TerminalOutput` adds the ellipsis on a plain terminal (`Masking unnecessary services... done.`) and the spinner and the `✓` on an ANSI one.
-A decorated label (`"Launching x..."`) is right for neither: the ✓ line has to undecorate it again (`trimEllipsis`), and the label reads as a pending action when it is not.
+A decorated label (`"Launching x..."`) is right for neither: the ✓ line would have to undecorate it again, and the label reads as a pending action when it is not.
 `StepLabelGateTest` holds it: the last string literal of a `step`, `stepStart`, `liveStep` (in its first argument, before the work), `ok`, `success`, `note` or `stepFail` call may not end in `...` or `…`, nor in a period for `stepStart`, `liveStep`, `ok` and `success`, whose text is a label while a step, a note or a failure can be a sentence of advice.
-The labels that predate the gate are counted per file in `cli/src/test/resources/step-label-baseline.txt`, which only shrinks; `trimEllipsis` and the baseline go once it is empty.
 
 **Structure:**
 
@@ -918,7 +917,7 @@ The labels that predate the gate are counted per file in `cli/src/test/resources
   `stepProgress` takes a `Supplier<String>` that is read again on every frame, so a value that keeps changing, such as a download's rate and time left, needs no call per change.
   `stepBreak()` ends it as `✗ label` before an error; `stepFail(msg)` is `stepBreak()` and then `msg` as a `stepWarn` under the cross.
   `BuildOutput.liveStep(label, work)` wraps work that starts no step of its own: a ✓ when it returns true, a ✗ when it returns false or throws, with what the work printed meanwhile below the frozen line.
-  Without a terminal the same calls print `Starting container... done.` for logs.
+  Without a terminal the same calls print `Starting container... done.` for logs, `done in 41s.` once it passes two seconds.
   The step is not done until *all* its work is: each tool's `verify` is its own step under `▸ Verifying`, because a line saying "done" while a first `mx version` takes seconds reads as a hang.
   Never print a `Doing X...` line whose result lands on a separate line.
 - **Step detail** (`stepNote`, `stepWarn`): dim or yellow lines one level under the step they describe — a tool's verified version, or why its verify failed.
@@ -1054,8 +1053,8 @@ Output captured from a guest command is someone else's text too (#1588).
 Its one pattern ends a control string at the next escape or introducer, as a terminal does, so a guest's long line costs linear time, never a stall.
 A build step's `StepProgress` cleans its detail and log through it as it is made, the detail also through `OutputFormat.oneLine`, since a prime is code the repository controls.
 So the live line, the plain failure line, the log's warning and the saved failure report all show it as text, and the failure line is the last one with text left.
-Off an ANSI terminal a one-task step that is done is a step (`BuildProgress.reportPlain`), and a failed one is one indented warning line with its detail, the end of its log under it (`finishSpinner`).
-On an ANSI terminal the failed step's line is drawn, and its log is a warning under it; either way the exception carries all of the log for the failure report (#1703).
+A build's single steps (`BuildProgress.runDnf`, `runWithSpinner`, `runLiveStep`) are the seam's live step, drawn by the renderer every step uses (#1791): a failed one ends in its ✗ (a plain terminal ends its `label...` line), then, when it captured a log, one warning, `label failed` with the detail when the log does not end on it, the end of the log under it.
+The exception carries all of the log for the failure report (#1703).
 A failed prime also names its step and command (#1742), its carriage returns turned to spaces before `guestText`, so one cannot draw over the step's name: the failure line reads ``prime `<command>` failed`` with the command's first line cut to 40 characters, so the reason after it survives the terminal's width.
 Its output's heading reads `prime output`, and the whole command leads that output as a shell shows it (`$ `, then `> ` per continued line), so a report trimmed to the last 100 lines keeps it.
 The failure report holds only the command that failed, so each build also keeps a log of every command its definitions declared (`BuildLog`, `Environment.buildLogFile`): tools' `run`, `run_as_user` and `verify`, repositories' `prime`.

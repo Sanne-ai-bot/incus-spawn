@@ -72,7 +72,7 @@ public class CopilotSetup implements ToolSetup {
 
     @Override
     public void install(Container c, Map<String, String> resolvedParams) {
-        BuildOutput.stepStart("Installing GitHub Copilot CLI...");
+        BuildOutput.stepStart("Installing GitHub Copilot CLI");
         installCopilotCli(c);
         configureCopilotSettings(c);
         BuildOutput.stepDone();

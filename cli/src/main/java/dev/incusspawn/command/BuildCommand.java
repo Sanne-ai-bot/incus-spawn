@@ -247,7 +247,7 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void buildDone(String name) {
-        BuildOutput.success(name + " built successfully.");
+        BuildOutput.success(name + " built");
     }
 
     @Override
@@ -435,7 +435,7 @@ public class BuildCommand extends BaseCommand {
         collectTemplatesToRebuild(leaves, defs, templatesToRebuild, seen, incus, toolDefLoader, outdatedOnly);
 
         if (templatesToRebuild.isEmpty()) {
-            BuildOutput.step("All templates are up to date.");
+            BuildOutput.step("All templates are up to date");
             return;
         }
         preflight(templatesToRebuild, defs);
@@ -959,7 +959,7 @@ public class BuildCommand extends BaseCommand {
             // the template is simply left unstamped and the TUI backfills it once the flag clears.
             var status = dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(pool);
             if (status.untrusted()) {
-                BuildOutput.stepStart("Repairing disk accounting...");
+                BuildOutput.stepStart("Repairing disk accounting");
                 status = dev.incusspawn.incus.BtrfsUsage.awaitConsistent(pool, ACCOUNTING_REPAIR_WAIT);
                 if (status.untrusted()) {
                     BuildOutput.stepDone("still running, size will be recorded later");
@@ -1403,7 +1403,7 @@ public class BuildCommand extends BaseCommand {
                 BuildOutput.warn("Deriving will be a full copy, not a CoW clone: "
                         + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
             }
-            BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'...");
+            BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'");
             copyFromParent(parentSource, buildName, copyPlan);
         }
         if (machineType == MachineType.CONTAINER) {
@@ -1607,7 +1607,7 @@ public class BuildCommand extends BaseCommand {
 
         var container = new Container(incus, buildName, BuildOutput.bound(), commandLog());
 
-        BuildOutput.stepStart("Installing trust anchors...");
+        BuildOutput.stepStart("Installing trust anchors");
         try (var lock = CertificateAuthority.lockTrust(buildName)) {
             installTrustAnchors(incus, buildName, CertificateAuthority.collectTrustAnchors());
         }
@@ -1626,7 +1626,7 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
             prepareContainerForPackageInstall(container);
 
-            BuildOutput.stepStart("Restarting container...");
+            BuildOutput.stepStart("Restarting container");
             incus.stop(buildName);
             incus.deviceAdd(buildName, "tun", "unix-char",
                     "source=/dev/net/tun", "path=/dev/net/tun", "mode=0666");
@@ -1636,7 +1636,7 @@ public class BuildCommand extends BaseCommand {
             waitForIpv4(container);
         }
 
-        BuildOutput.stepStart("Configuring DNS...");
+        BuildOutput.stepStart("Configuring DNS");
         container.sh(
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
                 "rm -f /etc/resolv.conf; " +
@@ -1655,7 +1655,7 @@ public class BuildCommand extends BaseCommand {
             var installDeps = "{ command -v growpart && command -v resize2fs && command -v xfs_growfs; } "
                     + ">/dev/null 2>&1 || " + String.join(" ",
                     dnfCommand("install", "-y", "-q", "cloud-utils-growpart", "e2fsprogs", "xfsprogs"));
-            runWithSpinner("Expanding", "VM root filesystem", "Failed to expand VM root filesystem",
+            runWithSpinner("Expanding VM root filesystem", "Failed to expand VM root filesystem",
                     state -> state.set(0, stepFrom(container.sh(
                             "{ " + installDeps + "; } && " + VM_ROOT_EXPANSION))));
         }
@@ -1667,13 +1667,13 @@ public class BuildCommand extends BaseCommand {
                     dnfCommand("-y", "upgrade"));
 
             if (machineType == MachineType.VM) {
-                BuildOutput.stepStart("Regenerating initramfs for VM...");
+                BuildOutput.stepStart("Regenerating initramfs for VM");
                 container.runQuiet("Failed to regenerate initramfs",
                         "dracut", "--force", "--regenerate-all");
                 BuildOutput.stepDone();
             }
 
-            BuildOutput.stepStart("Finalizing DNS configuration...");
+            BuildOutput.stepStart("Finalizing DNS configuration");
             container.sh(
                     "systemctl disable --now systemd-resolved 2>/dev/null; " +
                     "systemctl mask systemd-resolved 2>/dev/null; " +
@@ -1685,7 +1685,7 @@ public class BuildCommand extends BaseCommand {
         }
 
         if (!prebaked || !container.exec("id", "agentuser").success()) {
-            BuildOutput.stepStart("Creating agentuser...");
+            BuildOutput.stepStart("Creating agentuser");
             container.exec("useradd", "-m", "-u", "1000", "-G", "systemd-journal", "agentuser")
                     .assertSuccess("Failed to create agentuser");
             container.sh(AGENT_HOME_OWNERSHIP)
@@ -1970,18 +1970,18 @@ public class BuildCommand extends BaseCommand {
                     : resolveImageUrl(imageUrl, tag).equals(incus.getImageProperty(existingFingerprint, IMAGE_SOURCE_PROPERTY));
             var sameRelease = expectedSha256 != null || (tag != null && tag.equals(installedTag));
             if (sameRelease && sameFile && ownerProject.equals(importedBy)) {
-                BuildOutput.step("Base image '" + localAlias + "' is up to date (" + tag + ").");
+                BuildOutput.note("Base image '" + localAlias + "' is up to date (" + tag + ")");
                 return;
             }
             if (!ownerProject.equals(importedBy)) {
-                BuildOutput.step("Base image '" + localAlias + "' was imported by a project-local template ("
-                        + importedBy + "), replacing...");
+                // Why it is replaced is a note: the download and import below are the live steps
+                BuildOutput.note("Base image '" + localAlias + "' was imported by a project-local template ("
+                        + importedBy + ")");
             } else {
-                BuildOutput.step("Base image '" + localAlias + "' is outdated"
+                BuildOutput.note("Base image '" + localAlias + "' is outdated"
                         + (installedTag == null ? ""
                                 : installedTag.equals(tag) ? " (another file of " + tag + ")"
-                                : " (" + installedTag + " -> " + tag + ")")
-                        + ", replacing...");
+                                : " (" + installedTag + " -> " + tag + ")"));
             }
             incus.deleteImageAlias(localAlias);
             incus.deleteImage(existingFingerprint);
@@ -1993,7 +1993,7 @@ public class BuildCommand extends BaseCommand {
         if (expectedSha256 != null) {
             var fingerprint = expectedSha256.toLowerCase(java.util.Locale.ROOT);
             if (incus.imageExistsOrThrow(fingerprint) && ownerProject.equals(importingProject(fingerprint))) {
-                BuildOutput.step("Base image '" + localAlias + "': the expected file is already imported, reusing it.");
+                BuildOutput.note("Base image '" + localAlias + "': the expected file is already imported, reusing it");
                 incus.createImageAlias(localAlias, fingerprint);
                 return;
             }
@@ -2046,9 +2046,7 @@ public class BuildCommand extends BaseCommand {
                 "Failed to download base image from " + OutputFormat.oneLine(url), state -> {
                     try {
                         result.set(newDownloadCache().downloadAllowingLocalFile(url, sha256, progress));
-                        state.set(0, StepProgress.done(progress.fetched()
-                                ? "Downloaded base image " + alias + " (" + progress.summary() + ")."
-                                : "Using cached download of base image " + alias + "."));
+                        state.set(0, StepProgress.done(progress.fetched() ? progress.size() : "cached"));
                     } catch (IOException e) {
                         state.set(0, StepProgress.failed(e.getMessage(), null));
                     }
@@ -2068,8 +2066,8 @@ public class BuildCommand extends BaseCommand {
                 "Failed to import base image " + alias, state -> {
                     try {
                         result.set(incus.importImage(tarball));
-                        state.set(0, StepProgress.done("Imported base image " + alias + " into Incus ("
-                                + formatDuration(System.nanoTime() - start) + ")."));
+                        // The step's line gives the time it took
+                        state.set(0, StepProgress.done(null));
                     } catch (RuntimeException e) {
                         state.set(0, StepProgress.failed(e.getMessage(), null));
                     }
@@ -2147,7 +2145,7 @@ public class BuildCommand extends BaseCommand {
      */
     <T> T launchBuildInstance(String image, String buildName, MachineType machineType, String templateName,
                               boolean reimportable, Supplier<T> prepareAndStart) {
-        var launching = "Launching " + image + (machineType == MachineType.VM ? " (VM)..." : "...");
+        var launching = "Launching " + image + (machineType == MachineType.VM ? " (VM)" : "");
         for (int attempt = 1; ; attempt++) {
             BuildOutput.stepStart(launching);
             try {
@@ -2284,12 +2282,12 @@ public class BuildCommand extends BaseCommand {
 
     /** Containers only: a VM's build has no step between its start and the mirror wait. */
     private void waitForIpv4(Container container) {
-        BuildOutput.stepStart("Waiting for network...");
+        BuildOutput.stepStart("Waiting for network");
         requireNetwork(GuestNetwork.waitForAddress(incus, container.name()));
     }
 
     private void waitForNetwork(String container) {
-        BuildOutput.stepStart("Verifying DNS resolution...");
+        BuildOutput.stepStart("Verifying DNS resolution");
         requireNetwork(GuestNetwork.waitForMirror(incus, container));
     }
 
@@ -2408,7 +2406,7 @@ public class BuildCommand extends BaseCommand {
         BuildAccounts.revoke(incus, buildName);
         ProxyService.signalAccountRefresh();
         BuildAccounts.clearGuestProofs(new Container(incus, buildName));
-        BuildOutput.stepStart("Stopping image...");
+        BuildOutput.stepStart("Stopping image");
         incus.stop(buildName);
         BuildOutput.stepDone();
         if (started.address() != null) InstanceNetwork.releaseBuildAddressOrWarn(incus, buildName, BuildOutput.bound());

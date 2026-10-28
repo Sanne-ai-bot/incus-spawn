@@ -215,7 +215,7 @@ public class PiSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        BuildOutput.stepStart("Installing Pi coding agent...");
+        BuildOutput.stepStart("Installing Pi coding agent");
         NpmGlobalInstall.install(c, "Pi coding agent", "@earendil-works/pi-coding-agent");
         BuildOutput.stepDone();
     }
@@ -228,7 +228,7 @@ public class PiSetup implements ToolSetup {
     public String environmentContextPath() { return CONTEXT_PATH; }
 
     private void configureSettings(Container c, java.util.Map<String, String> resolvedParams) {
-        BuildOutput.stepStart("Configuring Pi...");
+        BuildOutput.stepStart("Configuring Pi");
         var provider = resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER);
         var model = resolvedParams.getOrDefault("model", DEFAULT_MODEL);
         var settingsJson = """

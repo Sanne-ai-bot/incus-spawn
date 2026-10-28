@@ -273,7 +273,7 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        BuildOutput.stepStart("Installing Claude Code...");
+        BuildOutput.stepStart("Installing Claude Code");
         c.sh("mkdir -p /home/agentuser/.local/bin && " +
                 "chown -R agentuser:agentuser /home/agentuser/.local");
 
@@ -413,7 +413,7 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig, Map<String, String> params) {
-        BuildOutput.stepStart("Configuring Claude Code...");
+        BuildOutput.stepStart("Configuring Claude Code");
         var managedSettingsJson = """
                 {
                   "permissions": {

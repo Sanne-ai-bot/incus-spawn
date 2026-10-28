@@ -53,7 +53,7 @@ class ToolVerifierTest {
         // One group, its step done before the version under it; how that looks is BuildOutputTest's
         assertEquals(List.of(
                 new Event(Kind.GROUP, "Verifying", List.of("maven-3")),
-                new Event(Kind.STEP_START, "maven-3...", List.of()),
+                new Event(Kind.STEP_START, "maven-3", List.of()),
                 new Event(Kind.STEP_PROGRESS, "mvn --version", List.of()),
                 new Event(Kind.STEP_DONE, null, List.of()),
                 new Event(Kind.STEP_NOTE, "Apache Maven 3.9.16", List.of()),

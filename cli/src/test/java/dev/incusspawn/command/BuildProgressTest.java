@@ -24,7 +24,7 @@ class BuildProgressTest {
     void aStepsLabelCannotDriveTheTerminal() {
         // A label can hold definition text, such as a COPR repository's name (#1610).
         var recorded = dev.incusspawn.util.RecordingOutput.during(() -> assertThrows(dev.incusspawn.incus.IncusException.class,
-                () -> BuildProgress.runWithSpinner("Enabling", "COPR repo \033]0;pwned\007x", "Failed",
+                () -> BuildProgress.runWithSpinner("Enabling COPR repo \033]0;pwned\007x", "Failed",
                         state -> state.set(0, BuildProgress.StepProgress.failed("boom", "log")))));
         var shown = String.join("\n", recorded.lines());
         assertTrue(shown.contains("COPR repo  ]0;pwned x"), shown);
@@ -159,50 +159,33 @@ class BuildProgressTest {
         assertTrue(log.toString().contains("Running transaction"), "all lines are still logged");
     }
 
+    /** A step whose work throws (an Incus transport error) fails with the cause, its stack trace kept for the report. */
     @Test
-    void runSpinnerWorkRecordsThrownExceptionAsFailed() {
-        // TerminalProgress swallows task exceptions, so runSpinnerWork must convert a
-        // thrown exception into a FAILED state (with the cause captured) rather than let
-        // the step stay RUNNING and lose the real error.
-        var state = new java.util.concurrent.atomic.AtomicReferenceArray<BuildProgress.StepProgress>(1);
-        state.set(0, BuildProgress.StepProgress.running("Doing"));
-        BuildProgress.runSpinnerWork(s -> { throw new RuntimeException("transport boom"); }, state);
-        assertEquals(BuildProgress.StepState.FAILED, state.get(0).state(), "exception must yield a failed state");
-        assertEquals("transport boom", state.get(0).detail());
-        assertTrue(state.get(0).log() != null && state.get(0).log().contains("transport boom"),
-                "the stack trace should be captured as the failure log");
+    void aStepThatThrowsFailsWithItsCause() {
+        var failure = new dev.incusspawn.incus.IncusException[1];
+        var said = dev.incusspawn.util.RecordingOutput.during(() -> failure[0] = assertThrows(dev.incusspawn.incus.IncusException.class,
+                () -> BuildProgress.runWithSpinner("Doing x", "Failed to do x", state -> {
+                    throw new RuntimeException("transport boom");
+                })));
+        assertEquals(java.util.List.of(dev.incusspawn.util.RecordingOutput.Kind.STEP_START,
+                        dev.incusspawn.util.RecordingOutput.Kind.STEP_PROGRESS, dev.incusspawn.util.RecordingOutput.Kind.STEP_BREAK,
+                        dev.incusspawn.util.RecordingOutput.Kind.WARN),
+                said.events().stream().map(dev.incusspawn.util.RecordingOutput.Event::kind).toList(), said.events()::toString);
+        assertTrue(said.warnings().getFirst().startsWith("Doing x failed: transport boom"), said.warnings()::toString);
+        assertEquals("Failed to do x: transport boom", failure[0].getMessage());
+        assertTrue(failure[0].stepOutput().contains("RuntimeException: transport boom"), "the stack trace is the report's log");
     }
 
+    /** A step that succeeded only on dnf's retry says so beside its ✓. */
     @Test
-    void runSpinnerWorkKeepsRecordedStateOnSuccess() {
-        var state = new java.util.concurrent.atomic.AtomicReferenceArray<BuildProgress.StepProgress>(1);
-        state.set(0, BuildProgress.StepProgress.running("Doing"));
-        BuildProgress.runSpinnerWork(s -> s.set(0, BuildProgress.StepProgress.done("ok")), state);
-        assertEquals(BuildProgress.StepState.DONE, state.get(0).state());
-    }
-
-    @Test
-    void formatDnfLineShowsLabelAndLiveDetail() {
-        var p = BuildProgress.StepProgress.running("", "3/6  Installing foo");
-        var line = stripAnsi(BuildProgress.formatDnfLine("Installing base packages", p, 0));
-        assertTrue(line.contains("Installing base packages"), "shows the batch label");
-        assertTrue(line.contains("3/6  Installing foo"), "shows the live per-package detail");
-    }
-
-    @Test
-    void formatDnfLineShowsCheckWhenComplete() {
-        var line = stripAnsi(BuildProgress.formatDnfLine("Installing base packages",
-                BuildProgress.StepProgress.done(null), 0));
-        assertEquals("    ✓ Installing base packages", line,
-                "a finished step reads like every other finished step, not 'label done.'");
-    }
-
-    @Test
-    void formatDnfLineShowsElapsedOnlyForSlowSteps() {
-        var done = BuildProgress.StepProgress.done(null);
-        assertFalse(stripAnsi(BuildProgress.formatDnfLine("x", done, 0, 900)).contains("s"),
-                "a quick step shows no time");
-        assertTrue(stripAnsi(BuildProgress.formatDnfLine("x", done, 0, 41_000)).endsWith("  41s"));
+    void aDnfStepThatNeededARefreshSaysSo() {
+        var container = org.mockito.Mockito.mock(dev.incusspawn.incus.Container.class);
+        org.mockito.Mockito.when(container.execLines(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(String[].class)))
+                .thenReturn(1, 0);
+        var said = dev.incusspawn.util.RecordingOutput.during(() -> BuildProgress.runDnf(container, "Installing packages",
+                "Failed to install packages", "dnf", "install", "-y", "x"));
+        assertEquals(new dev.incusspawn.util.RecordingOutput.Event(dev.incusspawn.util.RecordingOutput.Kind.STEP_DONE,
+                "succeeded after refresh"), said.events().getLast());
     }
 
     private static String stripAnsi(String s) {
@@ -257,20 +240,56 @@ class BuildProgressTest {
      */
     @Test
     void aFailedStepsLogIsAWarningAndTheExceptionCarriesItAll() {
-        assumePlainTerminal();
         var log = new StringBuilder();
         for (int i = 1; i <= 60; i++) log.append("line ").append(i).append('\n');
         var thrown = new dev.incusspawn.incus.IncusException[1];
         var recorded = dev.incusspawn.util.RecordingOutput.during(() -> thrown[0] = assertThrows(
                 dev.incusspawn.incus.IncusException.class,
-                () -> BuildProgress.runWithSpinner("Enabling", "COPR repo x", "Failed to enable",
+                () -> BuildProgress.runWithSpinner("Enabling COPR repo x", "Failed to enable",
                         state -> state.set(0, BuildProgress.StepProgress.failed("boom", log.toString())))));
         var output = recorded.events(dev.incusspawn.util.RecordingOutput.Kind.WARN).stream()
-                .filter(e -> e.msg().equals("Enabling failed for COPR repo x: boom")).toList();
+                .filter(e -> e.msg().equals("Enabling COPR repo x failed: boom")).toList();
         assertEquals(1, output.size(), recorded.events().toString());
         assertEquals("line 60", output.getFirst().details().getLast());
         assertEquals("Failed to enable: boom", thrown[0].getMessage());
-        assertEquals("COPR repo x failed:\n" + log.toString().strip() + "\n\n", thrown[0].stepOutput());
+        assertEquals("Enabling COPR repo x failed:\n" + log.toString().strip() + "\n\n", thrown[0].stepOutput());
+    }
+
+    /** A container whose dnf prints {@code lines} and exits {@code code}. */
+    private static dev.incusspawn.incus.Container dnf(int code, String... lines) {
+        var container = org.mockito.Mockito.mock(dev.incusspawn.incus.Container.class);
+        org.mockito.Mockito.when(container.execLines(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(String[].class)))
+                .thenAnswer(call -> {
+                    java.util.function.Consumer<String> sink = call.getArgument(0);
+                    for (var line : lines) sink.accept(line);
+                    return code;
+                });
+        return container;
+    }
+
+    /**
+     * A dnf step is the seam's live step (#1791), drawn by the one renderer every step uses: its
+     * start, its progress, and its ✓, or its ✗ and then the end of its log as a warning.
+     */
+    @Test
+    void aDnfStepIsTheSeamsLiveStep() {
+        var done = dev.incusspawn.util.RecordingOutput.during(() -> BuildProgress.runDnf(
+                dnf(0, "[3/6] Installing setup-0:2.15.0-28.fc  100% | 26 MiB/s"), "Installing packages",
+                "Failed to install packages", "dnf", "install", "-y", "setup"));
+        assertEquals(java.util.List.of(dev.incusspawn.util.RecordingOutput.Kind.STEP_START,
+                        dev.incusspawn.util.RecordingOutput.Kind.STEP_PROGRESS, dev.incusspawn.util.RecordingOutput.Kind.STEP_DONE),
+                done.events().stream().map(dev.incusspawn.util.RecordingOutput.Event::kind).toList(), done.events()::toString);
+        assertEquals("Installing packages", done.events().getFirst().msg());
+
+        var failed = dev.incusspawn.util.RecordingOutput.during(() -> assertThrows(dev.incusspawn.incus.IncusException.class,
+                () -> BuildProgress.runDnf(dnf(1, "Error: Unable to find a match: nonesuch"), "Installing packages",
+                        "Failed to install packages", "dnf", "install", "-y", "nonesuch")));
+        assertEquals(java.util.List.of(dev.incusspawn.util.RecordingOutput.Kind.STEP_START,
+                        dev.incusspawn.util.RecordingOutput.Kind.STEP_PROGRESS, dev.incusspawn.util.RecordingOutput.Kind.STEP_BREAK,
+                        dev.incusspawn.util.RecordingOutput.Kind.WARN),
+                failed.events().stream().map(dev.incusspawn.util.RecordingOutput.Event::kind).toList(), failed.events()::toString);
+        assertEquals(new dev.incusspawn.util.RecordingOutput.Event(dev.incusspawn.util.RecordingOutput.Kind.WARN,
+                "Installing packages failed", "Error: Unable to find a match: nonesuch"), failed.events().getLast());
     }
 
     /** These tests read what a plain terminal shows, which a test run from a console is not. */
@@ -295,33 +314,26 @@ class BuildProgressTest {
     }
 
     /**
-     * Off an ANSI terminal a failed dnf step is one indented line, with the end of its log under
-     * it, whose last line is its detail: no stray empty line before it and no second {@code failed} line.
+     * Off an ANSI terminal a failed dnf step is its label, ended, then one warning with the end of
+     * its log under it, whose last line is its detail: no second {@code failed} line.
      */
     @Test
-    void aFailedDnfStepIsOneIndentedLineOnAPlainTerminal() {
-        var container = org.mockito.Mockito.mock(dev.incusspawn.incus.Container.class);
-        org.mockito.Mockito.when(container.execLines(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(String[].class)))
-                .thenAnswer(call -> {
-                    java.util.function.Consumer<String> sink = call.getArgument(0);
-                    sink.accept("Error: Unable to find a match: nonesuch");
-                    return 1;
-                });
-        var shown = plainTerminal(() -> BuildProgress.runDnf(container, "Installing packages",
-                "Failed to install packages", "dnf", "install", "-y", "nonesuch"));
-        assertEquals("\n", shown[0], "stdout holds only the warning's closing blank line");
+    void aFailedDnfStepIsItsLabelThenOneWarningOnAPlainTerminal() {
+        var shown = plainTerminal(() -> BuildProgress.runDnf(dnf(1, "Error: Unable to find a match: nonesuch"),
+                "Installing packages", "Failed to install packages", "dnf", "install", "-y", "nonesuch"));
+        assertEquals("    Installing packages...\n\n", shown[0], "the label, then the warning's closing blank line");
         assertEquals("""
                     ⚠ Installing packages failed
                       Error: Unable to find a match: nonesuch
                 """, shown[1]);
     }
 
-    /** A self-reporting step announces itself up front; its failure is then one indented line with its detail. */
+    /** A failed step with no log is its label, ended: the exception, which the command reports, has its detail. */
     @Test
     void aFailedLiveStepIsOneIndentedLineOnAPlainTerminal() {
         var shown = plainTerminal(() -> BuildProgress.runLiveStep("Downloading image", () -> null,
                 "Failed to download image", state -> state.set(0, BuildProgress.StepProgress.failed("HTTP 404", null))));
         assertEquals("    Downloading image...\n", shown[0]);
-        assertEquals("    ⚠ Downloading image failed: HTTP 404\n", shown[1]);
+        assertEquals("", shown[1]);
     }
 }

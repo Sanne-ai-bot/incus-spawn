@@ -54,10 +54,11 @@ public class GuestProvisioning {
     static void removePackages(Container container, ImageDef imageDef) {
         var pkgs = imageDef.getRemovePackages();
         if (pkgs.isEmpty()) return;
-        BuildOutput.step("Removing unnecessary packages...");
+        BuildOutput.stepStart("Removing unnecessary packages");
         container.sh(
                 "dnf remove -y --setopt=clean_requirements_on_remove=True " +
                 String.join(" ", pkgs) + " 2>/dev/null; true");
+        BuildOutput.stepDone();
     }
 
     static final String SELINUX_CONFIG = "/etc/selinux/config";
@@ -109,9 +110,10 @@ public class GuestProvisioning {
     static void maskServices(Container container, ImageDef imageDef) {
         var services = imageDef.getMaskServices();
         if (services.isEmpty()) return;
-        BuildOutput.step("Masking unnecessary services...");
+        BuildOutput.stepStart("Masking unnecessary services");
         container.sh(
                 "systemctl mask " + String.join(" ", services) + " 2>/dev/null; true");
+        BuildOutput.stepDone();
     }
 
     /**
@@ -215,7 +217,7 @@ public class GuestProvisioning {
             // A template, project-local included, names its repositories: shown as text (#1610).
             var shownName = OutputFormat.oneLine(key.name());
             switch (Objects.requireNonNullElse(key.type(), "")) {
-                case "copr" -> runWithSpinner("Enabling", "COPR repo " + shownName,
+                case "copr" -> runWithSpinner("Enabling COPR repo " + shownName,
                         "Failed to enable COPR repo " + shownName,
                         state -> state.set(0, stepFrom(
                                 container.exec("dnf", "copr", "enable", "-y", key.name()))));
@@ -562,7 +564,7 @@ public class GuestProvisioning {
     static final String DNF_CACHE_PATH = "/var/cache/libdnf5";
 
     void cleanCaches(String container) {
-        BuildOutput.stepStart("Cleaning up caches...");
+        BuildOutput.stepStart("Cleaning up caches");
         // If the shared cache volume is somehow still mounted, dnf clean / rm -rf would
         // wipe it for every later build, not just this image: clean only /tmp then.
         incus.shellExec(container, "sh", "-c",

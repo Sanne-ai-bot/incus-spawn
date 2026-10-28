@@ -42,6 +42,20 @@ class GuestProvisioningOutputTest {
         assertTrue(warnings.getFirst().msg().startsWith("Could not update /home/agentuser/.claude.json: "), warnings.getFirst().msg());
     }
 
+    /** Masking services is work the build did, so a live step that ends in its ✓ (#1791). */
+    @Test
+    void maskingServicesIsALiveStep() {
+        var incus = mock(IncusClient.class, call ->
+                call.getMethod().getReturnType() == IncusClient.ExecResult.class ? OK : null);
+        var imageDef = new ImageDef();
+        imageDef.setMaskServices(List.of("dnf-makecache.timer"));
+
+        var recorded = RecordingOutput.during(() -> GuestProvisioning.maskServices(new Container(incus, "test"), imageDef));
+
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP_START, "Masking unnecessary services"),
+                new RecordingOutput.Event(RecordingOutput.Kind.STEP_DONE, null)), recorded.events());
+    }
+
     /** No DNF cache to mount is a warning naming why; none when there is no reason. */
     @Test
     void anUnmountableDnfCacheIsAWarning() {

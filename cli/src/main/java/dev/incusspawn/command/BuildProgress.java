@@ -17,8 +17,8 @@ import java.util.regex.Pattern;
 
 
 /**
- * How a build shows its steps: the one-line spinners for dnf, single operations and
- * self-reporting steps such as a download, and the per-step progress state they render.
+ * How a build shows its steps: dnf, single operations and self-reporting steps such as a
+ * download as the seam's live step, and the per-step progress state the parallel block renders.
  */
 final class BuildProgress {
 
@@ -58,39 +58,62 @@ final class BuildProgress {
     }
 
     /**
-     * Run {@code work} behind a one-line spinner whose dim detail is re-read from
-     * {@code detail} on every frame, for steps that report their own progress. {@code work}
-     * records the outcome in {@code state[0]}; a DONE note is the whole completion line. On a
-     * plain (non-ANSI) terminal the label is printed up front, since nothing animates there.
+     * Run {@code work} as a live step whose dim detail is re-read from {@code detail} on every
+     * frame, for steps that report their own progress. {@code work} records the outcome in
+     * {@code state[0]}; a DONE note is shown beside the ✓ ({@code ✓ label (note)}).
      */
-    static void runLiveStep(String rawLabel, java.util.function.Supplier<String> detail,
-                                    String failureMessage,
-                                    Consumer<AtomicReferenceArray<StepProgress>> work) {
-        var label = OutputFormat.oneLine(rawLabel);  // it can hold definition text (#1610)
-        var state = new AtomicReferenceArray<StepProgress>(1);
-        state.set(0, StepProgress.running(""));
-        if (!TerminalProgress.isAnsiTerminal()) BuildOutput.step(label + "...");
-        TerminalProgress.run(1, 1,
-                idx -> runSpinnerWork(work, state),
-                (idx, frame) -> formatLiveStepLine(label, state.get(0), detail, frame),
-                idx -> {});
-        // A DONE note is the whole completion line, the label having been said up front
-        reportPlain(state.get(0), null);
-        finishSpinner(label, label + " failed", failureMessage, state);
+    static void runLiveStep(String label, java.util.function.Supplier<String> detail, String failureMessage,
+                            Consumer<AtomicReferenceArray<StepProgress>> work) {
+        runStep(label, StepProgress.running(""), detail, failureMessage, work);
     }
 
-    static String formatLiveStepLine(String label, StepProgress p, java.util.function.Supplier<String> detail,
-                                     int frame) {
-        return switch (p.state()) {
-            case RUNNING -> {
-                var line = BuildOutput.indent()
-                        + TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length] + " " + label;
-                var d = detail.get();
-                yield d == null || d.isEmpty() ? line : line + "  \033[2m" + d + "\033[0m"; // raw ANSI: animated line
-            }
-            case DONE -> BuildOutput.indent() + BuildOutput.CHECK + " " + p.note();
-            case FAILED -> formatDnfLine(label, p, frame);
-        };
+    /**
+     * The one way a build's single step runs (#1791): the seam's live step, so every one-line
+     * step is drawn by the same renderer. {@code work} runs here and records its outcome in
+     * {@code state[0]}, which starts as {@code initial}; the detail beside the label is
+     * {@code detail}'s, or the state's own when it is null. A thrown exception is a failure, with
+     * its stack trace as the log. Done,
+     * the step ends in its ✓ with the outcome's note beside it. Failed, it ends in its ✗, the end
+     * of its log, if it has one, is a warning under it, and {@code failureMessage} is thrown with
+     * the detail and all of the log for the failure report.
+     */
+    private static void runStep(String rawLabel, StepProgress initial, java.util.function.Supplier<String> detail,
+                                String failureMessage, Consumer<AtomicReferenceArray<StepProgress>> work) {
+        var label = OutputFormat.oneLine(rawLabel);  // it can hold definition text (#1610)
+        // Read on the spinner's thread while the work records its progress on this one
+        var state = new AtomicReferenceArray<StepProgress>(1);
+        state.set(0, initial);
+        BuildOutput.stepStart(label);
+        BuildOutput.stepProgress(detail != null ? detail : () -> state.get(0).detail());
+        try {
+            work.accept(state);
+        } catch (RuntimeException e) {
+            state.set(0, StepProgress.failed(e.getMessage(), stackTrace(e)));
+        } catch (Error e) {
+            BuildOutput.abandonStep();
+            throw e;
+        }
+        var progress = state.get(0);
+        if (progress.state() == StepState.DONE) {
+            BuildOutput.stepDone(blankToNull(progress.note()));
+            return;
+        }
+        BuildOutput.stepBreak();
+        var stepDetail = blankToNull(progress.detail());
+        var failure = new IncusException(failureMessage + (stepDetail == null ? "" : ": " + stepDetail));
+        var hasLog = progress.log() != null && !progress.log().isBlank();
+        // The log is guest text, made safe already; the report keeps what the warning leaves out
+        var tail = hasLog ? BuildOutput.lastOf(BuildOutput.guestLines(progress.log())) : new String[0];
+        // Without a log, the exception says all there is, and the command reports it
+        if (!hasLog) throw failure;
+        // A detail that is the log's last line is said once, under the warning
+        var last = tail[tail.length - 1].strip();
+        BuildOutput.warn(stepDetail == null || stepDetail.equals(last) ? label + " failed" : label + " failed: " + stepDetail, tail);
+        throw failure.withStepOutput(label + " failed:\n" + progress.log().strip() + "\n\n");
+    }
+
+    private static String blankToNull(String text) {
+        return text == null || text.isEmpty() ? null : text;
     }
 
     /**
@@ -99,18 +122,15 @@ final class BuildProgress {
      */
     static final class TransferProgress implements DownloadCache.Listener {
         // Set when the body starts, so re-hashing a stale cached copy and connecting do not
-        // count against the rate, the time left or the reported duration.
+        // count against the rate or the time left.
         private volatile long start;
         // Where the body started from: a resumed attempt continues bytes an earlier one fetched,
         // which the rate must not count
         private volatile long from;
-        // When the first attempt's body started: a resumed download took all its attempts
-        private volatile long began;
         private volatile String phase = "connecting";
         private volatile long bytes;
         private volatile long total = -1;
         private volatile boolean fetched;
-        private volatile long end;
 
         @Override
         public void verifyingCached() {
@@ -122,7 +142,6 @@ final class BuildProgress {
             if (start == 0) {
                 start = System.nanoTime();
                 from = bytes;
-                if (began == 0) began = start;
             }
             this.bytes = bytes;
             this.total = total;
@@ -142,7 +161,6 @@ final class BuildProgress {
 
         @Override
         public void verifying() {
-            end = System.nanoTime();
             phase = "verifying checksum";
         }
 
@@ -156,13 +174,9 @@ final class BuildProgress {
             return p != null ? p : describeTransfer(bytes, from, total, System.nanoTime() - start);
         }
 
-        /**
-         * Size and duration of a finished download, e.g. {@code 1.9 GB in 5m 12s}: from its first
-         * byte, across retries, since a resumed attempt fetched only the rest.
-         */
-        String summary() {
-            var finished = end != 0 ? end : System.nanoTime();
-            return CleanCommand.formatSize(bytes) + " in " + formatDuration(finished - began);
+        /** The size of a finished download, e.g. {@code 1.9 GB}: the step's line gives the time it took. */
+        String size() {
+            return CleanCommand.formatSize(bytes);
         }
     }
 
@@ -229,57 +243,40 @@ final class BuildProgress {
     private static final Pattern DNF_STEP = Pattern.compile("^\\[(\\d+)/(\\d+)]\\s+(.*)$");
 
     /**
-     * Run a dnf command behind an animated one-line spinner. dnf's verbose output
-     * is streamed through a parser (not echoed to the terminal) so the spinner can
-     * show live "N/M — current package" feedback from dnf's own progress lines,
+     * Run a dnf command as a live step. dnf's verbose output is streamed through a
+     * parser (not echoed to the terminal) so the step's detail can show live
+     * "N/M — current package" feedback from dnf's own progress lines,
      * keeping isx's warnings visible instead of buried in a flood. On failure it
      * clears metadata and retries once with {@code --refresh}; if that also fails
      * the end of the captured output is a warning and {@code failureMessage} is thrown with all of it.
      *
-     * @param rawLabel the full phrase for the spinner line (e.g. "Installing base packages")
+     * @param label the full phrase for the step (e.g. "Installing base packages")
      */
-    static void runDnf(Container container, String rawLabel, String failureMessage, String... args) {
-        var label = OutputFormat.oneLine(rawLabel);  // it can hold definition text (#1610)
-        var state = new AtomicReferenceArray<StepProgress>(1);
-        state.set(0, StepProgress.running("", "starting"));
-        var started = System.nanoTime();
-        TerminalProgress.run(1, 1,
-                idx -> dnfWork(container, args, state),
-                (idx, frame) -> formatDnfLine(label, state.get(0), frame,
-                        (System.nanoTime() - started) / 1_000_000),
-                idx -> {});
-        reportPlain(state.get(0), label + "... done.");
-        finishSpinner(label, label + " failed", failureMessage, state);
+    static void runDnf(Container container, String label, String failureMessage, String... args) {
+        runStep(label, StepProgress.running("", "starting"), null, failureMessage, state -> dnfWork(container, args, state));
     }
 
-    /** The install/retry work for {@link #runDnf}, recording progress in {@code state[0]}.
-     *  A thrown exception (e.g. an Incus transport error) is recorded as a failed state
-     *  rather than propagated, since {@code TerminalProgress} swallows task exceptions —
-     *  an uncaught one would leave the step stuck RUNNING and lose the real cause. */
+    /** The install/retry work for {@link #runDnf}, recording progress in {@code state[0]}. */
     private static void dnfWork(Container container, String[] args, AtomicReferenceArray<StepProgress> state) {
-        try {
-            var log = new StringBuilder();
-            int code = container.execLines(line -> onDnfLine(line, log, state), args);
-            if (code == 0) {
-                state.set(0, StepProgress.done(null));
-                return;
-            }
-            // Metadata may be stale — clear it and retry once with --refresh.
-            state.set(0, StepProgress.running("", "retrying with --refresh"));
-            container.sh("dnf clean metadata");
-            var retryArgs = new ArrayList<>(List.of(args));
-            retryArgs.add(1, "--refresh");
-            var retryLog = new StringBuilder();
-            int retryCode = container.execLines(line -> onDnfLine(line, retryLog, state),
-                    retryArgs.toArray(String[]::new));
-            if (retryCode == 0) {
-                state.set(0, StepProgress.done("succeeded after refresh"));
-            } else {
-                var out = retryLog.toString();
-                state.set(0, StepProgress.failed(lastNonEmptyLine(out), out));
-            }
-        } catch (RuntimeException e) {
-            state.set(0, StepProgress.failed(e.getMessage(), stackTrace(e)));
+        var log = new StringBuilder();
+        int code = container.execLines(line -> onDnfLine(line, log, state), args);
+        if (code == 0) {
+            state.set(0, StepProgress.done(null));
+            return;
+        }
+        // Metadata may be stale — clear it and retry once with --refresh.
+        state.set(0, StepProgress.running("", "retrying with --refresh"));
+        container.sh("dnf clean metadata");
+        var retryArgs = new ArrayList<>(List.of(args));
+        retryArgs.add(1, "--refresh");
+        var retryLog = new StringBuilder();
+        int retryCode = container.execLines(line -> onDnfLine(line, retryLog, state),
+                retryArgs.toArray(String[]::new));
+        if (retryCode == 0) {
+            state.set(0, StepProgress.done("succeeded after refresh"));
+        } else {
+            var out = retryLog.toString();
+            state.set(0, StepProgress.failed(lastNonEmptyLine(out), out));
         }
     }
 
@@ -305,80 +302,14 @@ final class BuildProgress {
         return body.replaceFirst("-\\d+:.*$", "");
     }
 
-    /** Render the dnf spinner line: {@code     ⠋ <label>  <dim live detail>}, then {@code ✓ <label>}. */
-    static String formatDnfLine(String label, StepProgress p, int frame) {
-        return formatDnfLine(label, p, frame, 0);
-    }
-
-    static String formatDnfLine(String label, StepProgress p, int frame, long elapsedMs) {
-        var sb = new StringBuilder(BuildOutput.indent());
-        switch (p.state()) {
-            case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
-                    .append(' ').append(label);
-            case DONE    -> sb.append(BuildOutput.CHECK).append(' ').append(label);
-            case FAILED  -> sb.append(BuildOutput.CROSS).append(' ').append(label);
-        }
-        if (p.state() == StepState.RUNNING && p.detail() != null && !p.detail().isEmpty()) {
-            sb.append("  \033[2m").append(p.detail()).append("\033[0m"); // raw ANSI: animated line
-        }
-        if (p.state() == StepState.DONE && p.note() != null && !p.note().isEmpty()) {
-            sb.append(" \033[2m(").append(p.note()).append(")\033[0m"); // raw ANSI: animated line
-        }
-        if (p.state() == StepState.DONE && elapsedMs >= 2000) {
-            sb.append("  \033[2m").append(BuildOutput.formatElapsed(elapsedMs)).append("\033[0m"); // raw ANSI: animated line
-        }
-        if (p.state() == StepState.FAILED && p.detail() != null && !p.detail().isEmpty()) {
-            sb.append("  \033[31m").append(p.detail()).append("\033[0m"); // raw ANSI: animated line
-        }
-        return sb.toString();
-    }
-
     /**
-     * Off an ANSI terminal, a one-task step that is done: {@code done} as a step, with its note, or
-     * the note alone when {@code done} is null. A failed one is {@link #finishSpinner}'s to report.
+     * Run a single operation as a live step, its output captured rather than streamed.
+     * {@code work} performs it and records the final {@link StepProgress} in {@code state[0]}; a
+     * {@code running(...)} detail set meanwhile shows beside the label. Failed, the end of the
+     * captured log is a warning and {@code failureMessage} is thrown with all of it.
      */
-    private static void reportPlain(StepProgress p, String done) {
-        if (TerminalProgress.isAnsiTerminal() || p == null || p.state() != StepState.DONE) return;
-        var note = p.note() == null || p.note().isEmpty() ? null : p.note();
-        if (done == null) {
-            if (note != null) BuildOutput.step(note);
-        } else {
-            BuildOutput.step(note != null ? done + " (" + note + ")" : done);
-        }
-    }
-
-    /**
-     * Run a single operation behind an animated one-line spinner (mirroring the
-     * clone/prime display) instead of streaming its output. {@code work} performs
-     * the operation with captured exec and records the terminal {@link StepProgress}
-     * in {@code state[0]}; it may set an intermediate {@code running(...)} to advance
-     * the verb mid-flight. On a non-DONE result the end of the captured log is a
-     * warning and {@code failureMessage} is thrown with all of it.
-     */
-    static void runWithSpinner(String activity, String rawLabel, String failureMessage,
-                                Consumer<AtomicReferenceArray<StepProgress>> work) {
-        var label = OutputFormat.oneLine(rawLabel);  // it can hold definition text (#1610)
-        var state = new AtomicReferenceArray<StepProgress>(1);
-        state.set(0, StepProgress.running(activity));
-        TerminalProgress.run(1, 1,
-                idx -> runSpinnerWork(work, state),
-                (idx, frame) -> formatStepLine(label, null, state.get(0), frame, "Done"),
-                idx -> {});
-        reportPlain(state.get(0), "Done " + label);
-        finishSpinner(label, activity + " failed for " + label, failureMessage, state);
-    }
-
-    /** Run a {@link #runWithSpinner} task, converting a thrown exception into a recorded
-     *  failed state. {@code TerminalProgress} swallows task exceptions, so without this the
-     *  step would stay RUNNING and {@code finishSpinner} would throw the generic failure
-     *  message with no captured cause. */
-    static void runSpinnerWork(Consumer<AtomicReferenceArray<StepProgress>> work,
-                                       AtomicReferenceArray<StepProgress> state) {
-        try {
-            work.accept(state);
-        } catch (RuntimeException e) {
-            state.set(0, StepProgress.failed(e.getMessage(), stackTrace(e)));
-        }
+    static void runWithSpinner(String label, String failureMessage, Consumer<AtomicReferenceArray<StepProgress>> work) {
+        runStep(label, StepProgress.running(""), null, failureMessage, work);
     }
 
     /** Render a throwable's stack trace to a string for a failed step's captured log. */
@@ -386,39 +317,6 @@ final class BuildProgress {
         var sw = new java.io.StringWriter();
         t.printStackTrace(new java.io.PrintWriter(sw));
         return sw.toString();
-    }
-
-    /**
-     * After a one-task spinner completes, surface a non-DONE result and throw
-     * {@code failureMessage} with all of the captured log for the failure report. On an ANSI
-     * terminal the step's line already shows it failed, so the end of the log (if any) is a
-     * warning under it. Off one nothing showed the step, so {@code failed} and the detail are the
-     * one warning, a single indented line, with the end of the log under it when there is one.
-     */
-    private static void finishSpinner(String label, String failed, String failureMessage,
-                                      AtomicReferenceArray<StepProgress> state) {
-        var progress = state.get(0);
-        if (progress != null && progress.state() == StepState.DONE) return;
-
-        var detail = progress != null && progress.detail() != null && !progress.detail().isEmpty()
-                ? ": " + progress.detail() : "";
-        var failure = new IncusException(failureMessage + detail);
-        var hasLog = progress != null && progress.log() != null && !progress.log().isBlank();
-        // The log is guest text, made safe already; the report keeps what the warning leaves out.
-        // The kind #1791's design gives it: the step's failure, the end of its log under it
-        var tail = hasLog ? BuildOutput.lastOf(BuildOutput.guestLines(progress.log())) : new String[0];
-        if (TerminalProgress.isAnsiTerminal()) {
-            if (hasLog) BuildOutput.warn(label + " failed", tail);
-        } else if (hasLog) {
-            // A detail that is the log's last line is said once, under the header
-            var last = tail.length == 0 ? "" : tail[tail.length - 1].strip();
-            BuildOutput.warn(last.equals(progress.detail()) ? failed : failed + detail, tail);
-        } else {
-            // One line on stderr, with no closing blank line on stdout, as the old plain line had none
-            BuildOutput.warnAside(failed + detail);
-        }
-        if (!hasLog) throw failure;
-        throw failure.withStepOutput(label + " failed:\n" + progress.log().strip() + "\n\n");
     }
 
     /** Turn a captured exec result into a terminal {@link StepProgress}. */
