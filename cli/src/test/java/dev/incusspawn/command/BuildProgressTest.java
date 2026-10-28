@@ -260,6 +260,7 @@ class BuildProgressTest {
      */
     @Test
     void aFailedStepsLogIsAWarningAndTheExceptionCarriesItAll() {
+        assumePlainTerminal();
         var log = new StringBuilder();
         for (int i = 1; i <= 60; i++) log.append("line ").append(i).append('\n');
         var thrown = new dev.incusspawn.incus.IncusException[1];
@@ -268,10 +269,62 @@ class BuildProgressTest {
                 () -> BuildProgress.runWithSpinner("Enabling", "COPR repo x", "Failed to enable",
                         state -> state.set(0, BuildProgress.StepProgress.failed("boom", log.toString())))));
         var output = recorded.events(dev.incusspawn.util.RecordingOutput.Kind.WARN).stream()
-                .filter(e -> e.msg().equals("COPR repo x failed")).toList();
+                .filter(e -> e.msg().equals("Enabling failed for COPR repo x: boom")).toList();
         assertEquals(1, output.size(), recorded.events().toString());
         assertEquals("line 60", output.getFirst().details().getLast());
         assertEquals("Failed to enable: boom", thrown[0].getMessage());
         assertEquals("COPR repo x failed:\n" + log.toString().strip() + "\n\n", thrown[0].stepOutput());
+    }
+
+    /** These tests read what a plain terminal shows, which a test run from a console is not. */
+    private static void assumePlainTerminal() {
+        org.junit.jupiter.api.Assumptions.assumeFalse(dev.incusspawn.util.TerminalProgress.isAnsiTerminal(),
+                "the tests' console is an ANSI terminal");
+    }
+
+    /** What a plain terminal receives from {@code work}: its stdout, then its stderr. */
+    private static String[] plainTerminal(Runnable work) {
+        assumePlainTerminal();
+        var out = new java.io.ByteArrayOutputStream();
+        var err = new java.io.ByteArrayOutputStream();
+        var terminal = dev.incusspawn.util.TerminalOutput.to(
+                new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8),
+                new java.io.PrintStream(err, true, java.nio.charset.StandardCharsets.UTF_8));
+        try (var bound = dev.incusspawn.util.BuildOutput.bind(terminal)) {
+            assertThrows(dev.incusspawn.incus.IncusException.class, work::run);
+        }
+        return new String[] {out.toString(java.nio.charset.StandardCharsets.UTF_8),
+                err.toString(java.nio.charset.StandardCharsets.UTF_8)};
+    }
+
+    /**
+     * Off an ANSI terminal a failed dnf step is one indented line, with the end of its log under
+     * it, whose last line is its detail: no stray empty line before it and no second {@code failed} line.
+     */
+    @Test
+    void aFailedDnfStepIsOneIndentedLineOnAPlainTerminal() {
+        var container = org.mockito.Mockito.mock(dev.incusspawn.incus.Container.class);
+        org.mockito.Mockito.when(container.execLines(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(String[].class)))
+                .thenAnswer(call -> {
+                    java.util.function.Consumer<String> sink = call.getArgument(0);
+                    sink.accept("Error: Unable to find a match: nonesuch");
+                    return 1;
+                });
+        var shown = plainTerminal(() -> BuildProgress.runDnf(container, "Installing packages",
+                "Failed to install packages", "dnf", "install", "-y", "nonesuch"));
+        assertEquals("\n", shown[0], "stdout holds only the warning's closing blank line");
+        assertEquals("""
+                    ⚠ Installing packages failed
+                      Error: Unable to find a match: nonesuch
+                """, shown[1]);
+    }
+
+    /** A self-reporting step announces itself up front; its failure is then one indented line with its detail. */
+    @Test
+    void aFailedLiveStepIsOneIndentedLineOnAPlainTerminal() {
+        var shown = plainTerminal(() -> BuildProgress.runLiveStep("Downloading image", () -> null,
+                "Failed to download image", state -> state.set(0, BuildProgress.StepProgress.failed("HTTP 404", null))));
+        assertEquals("    Downloading image...\n", shown[0]);
+        assertEquals("    ⚠ Downloading image failed: HTTP 404\n", shown[1]);
     }
 }

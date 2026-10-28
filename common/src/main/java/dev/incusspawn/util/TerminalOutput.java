@@ -68,6 +68,14 @@ public final class TerminalOutput implements Output {
         this.err = err;
     }
 
+    /**
+     * Results on {@code out}, diagnostics on {@code err}: what a terminal receives, for a test that
+     * reads it without swapping the process's streams. A live step still guards those streams.
+     */
+    public static TerminalOutput to(PrintStream out, PrintStream err) {
+        return new TerminalOutput(() -> out, () -> err);
+    }
+
     /** Everything on stderr: for {@code isx mcp}, whose stdout is the protocol. */
     public static TerminalOutput stderrOnly() {
         return new TerminalOutput(() -> System.err, () -> System.err);
