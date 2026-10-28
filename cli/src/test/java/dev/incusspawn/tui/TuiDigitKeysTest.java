@@ -1,5 +1,6 @@
 package dev.incusspawn.tui;
 
+import dev.incusspawn.Environment;
 import dev.incusspawn.command.InstanceListing;
 import dev.incusspawn.command.IsolatedHome;
 import dev.incusspawn.config.ImageDef;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.nio.file.Files;
 import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -101,6 +103,10 @@ class TuiDigitKeysTest {
         for (var key : keys) tui.handleEvent(key, runner);
     }
 
+    private void typeText(Tui tui, String text) {
+        for (char c : text.toCharArray()) press(tui, KeyEvent.ofChar(c));
+    }
+
     private static String screen(Tui tui) {
         return TuiSnapshot.toText(TuiSnapshot.render(80, 24, tui::render));
     }
@@ -165,13 +171,62 @@ class TuiDigitKeysTest {
     }
 
     @Test
-    void aTextFieldKeepsItsDigits() {
+    void theRenameFieldKeepsItsDigits() {
         var tui = tui();
         press(tui, TAB, DOWN, KeyEvent.ofChar('6'));
         assertEquals(Tui.Mode.RENAME, tui.mode(), "6 is F6 on the stopped gamma");
         press(tui, KeyEvent.ofChar('1'), altDigit('2'));
         assertEquals(Tui.Mode.RENAME, tui.mode());
-        assertTrue(screen(tui).contains("gamma1"), "a digit is typed into the name: " + screen(tui));
+        var screen = screen(tui);
+        assertTrue(screen.contains("gamma1") && !screen.contains("gamma12"),
+                "1 is typed into the name, Alt+2 is not: " + screen);
+    }
+
+    @Test
+    void theBranchNameKeepsItsDigits() {
+        var tui = tui();
+        press(tui, KeyEvent.ofChar('4'));
+        assertEquals(Tui.Mode.BRANCH, tui.mode());
+        typeText(tui, "-x7");
+        assertTrue(screen(tui).contains("-x7"), "7 is typed into the name: " + screen(tui));
+    }
+
+    @Test
+    void theNewTemplateNameKeepsItsDigits() {
+        var tui = tui();
+        press(tui, KeyEvent.ofChar('n'));
+        assertEquals(Tui.Mode.NEW_TEMPLATE, tui.mode());
+        typeText(tui, "tpl-x7");
+        assertTrue(screen(tui).contains("tpl-x7"), "7 is typed into the name: " + screen(tui));
+    }
+
+    @Test
+    void theAiHelpQuestionKeepsItsDigits() throws Exception {
+        var config = Environment.configDir().resolve("config.yaml");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, """
+                claude:
+                  apiKey: "test-key"
+                """);
+        var tui = tui();
+        press(tui, KeyEvent.ofChar('?'));
+        assertEquals(Tui.Mode.HELP_CHAT, tui.mode());
+        typeText(tui, "why 7");
+        assertTrue(screen(tui).contains("why 7"), "7 is typed into the question: " + screen(tui));
+        // Opening AI Help reads every definition on a virtual thread; wait for its size to show, so
+        // that read ends inside this test's isolated home rather than after it
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+        while (!screen(tui).contains("(~") && System.nanoTime() < deadline) Thread.sleep(10);
+        assertTrue(screen(tui).contains("(~"), "the definitions were read: " + screen(tui));
+    }
+
+    @Test
+    void exactlyTheModesThatReadDigitsKeepThem() {
+        var owning = java.util.EnumSet.noneOf(Tui.Mode.class);
+        for (var mode : Tui.Mode.values()) if (mode.ownsDigits()) owning.add(mode);
+        assertEquals(java.util.EnumSet.of(Tui.Mode.BUILD_MENU, Tui.Mode.BRANCH, Tui.Mode.RENAME,
+                Tui.Mode.NEW_TEMPLATE, Tui.Mode.HELP_CHAT), owning,
+                "a mode with a text field or numbered options keeps its digits; a new one is added here");
     }
 
     @Test
