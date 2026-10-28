@@ -69,7 +69,7 @@ public final class TerminalProgress {
      * not {@code dumb}, and no {@code NO_COLOR} (any non-empty value, per no-color.org).
      */
     public static boolean isAnsiTerminal() {
-        return !Headless.active() && isAnsiTerminal(System.console() != null, System::getenv);
+        return !Headless.active() && isAnsiTerminal(TerminalStreams.hasConsole(), System::getenv);
     }
 
     static boolean isAnsiTerminal(boolean console, UnaryOperator<String> env) {
@@ -87,7 +87,7 @@ public final class TerminalProgress {
      * @param animatedLine renders task {@code i} at spinner {@code frame} (ANSI mode)
      * @param plainLine    renders the final line for task {@code i}, or {@code null} to
      *                     emit nothing (non-ANSI mode)
-     * @param plainSink    where plain-mode lines are written (e.g. {@code System.out::println})
+     * @param plainSink    where plain-mode lines are written (e.g. a step's output)
      */
     public static void run(int taskCount, int maxConcurrency,
                            IntConsumer task,
@@ -105,7 +105,7 @@ public final class TerminalProgress {
     private static void animate(int taskCount, int maxConcurrency,
                                 IntConsumer task,
                                 BiFunction<Integer, Integer, String> line) {
-        var out = System.out;
+        var out = TerminalStreams.out();
         int width = terminalWidth();
         for (int i = 0; i < taskCount; i++) {
             out.println(truncateToWidth(line.apply(i, 0), width));

@@ -48,6 +48,8 @@ The exception thrown carries all of it (`Container.failed`, `withStepOutput`), s
 `VmAgentFailure` quotes a VM's console lines through it too, since whatever runs in the guest can write its console.
 `AnsiEscapeGateTest` fails on any raw CSI/OSC literal (`\033[`, `\033]`) whose line lacks a `// raw ANSI: <why>` comment, apart from the gates, `TerminalProgress` and `ShellStatusBar` (#1082).
 `RawOutputGateTest` fails on raw stream use or replacement (`System.setOut`/`setErr`), console or `printStackTrace()` use and on a print literal that starts with spaces, outside the gate classes (#1703).
+Code that hands the terminal over or draws on it whole (an interactive guest command's inherited output, an interactive shell's raw bytes, `TerminalProgress`, `HostRepoRefresh`'s clone question) takes the process's streams and console from the gate `TerminalStreams` (`common/util`), so a stray print in the same file is still caught.
+Only the files `RawOutputGateTest.MAY_USE_TERMINAL_STREAMS` names may call it.
 Older offenders are counted per file in `cli/src/test/resources/raw-output-baseline.txt`: a file may not exceed its count, and a count it no longer reaches must be lowered.
 Tests assert on `RecordingOutput`'s typed events (common test-jar) instead of swapping streams; `StreamSwapGateTest` allows a swap only in the test classes its `MAY_SWAP` map lists, for output still printed raw or for the streams themselves (`BuildOutputTest`, `OutputBindingTest`, the pre-TUI hold).
 Escapes follow stdout: `System.console()` never looks at stderr, so `2>log` alone keeps colour (documented, not fixable without native code).
