@@ -8,6 +8,7 @@ import dev.incusspawn.util.TerminalStreams;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.function.LongSupplier;
 
 /**
  * The interactive shell into an instance: the PTY session and its reconnects, the host terminal's
@@ -109,33 +110,13 @@ final class InteractiveShell {
 
             var env = Map.of("HOME", homeDir);
 
-            ShellStatusBar statusBar = null;
-            if (ShellMenu.enabled()) {
-                statusBar = new ShellStatusBar(container, TerminalStreams.out());
-                statusBar.setMenuActions(menu.actions(), menu.context());
-            }
+            var statusBar = ShellMenu.enabled() ? new ShellStatusBar(container, TerminalStreams.out()) : null;
+            if (statusBar != null) statusBar.setMenuActions(menu.actions(), menu.context());
 
-            for (int reconnectAttempt = 0; ; reconnectAttempt++) {
-                try {
-                    var size = IncusApi.terminalSize();
-                    boolean connectionLost = incus.http().execPty(container, shellArgs, 0, 0,
-                            null, env, size[0], size[1], statusBar);
-                    if (!connectionLost) return;
-                } catch (IncusException e) {
-                    if (!hasIOExceptionCause(e) || reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) throw e;
-                }
-                long delay = Math.min(1000L * (1 << reconnectAttempt), 10_000L);
-                // The guest's last line may be unfinished: start the notice on a line of its own
-                TerminalStreams.out().println();
-                // A warning once, which a TUI shell's log keeps; a retry is a note, so a flaky
-                // link does not fill the log with ten copies of one event
-                if (reconnectAttempt == 0) BuildOutput.warn("Connection lost — reconnecting...");
-                else BuildOutput.note("Still reconnecting (attempt " + (reconnectAttempt + 1) + " of " + MAX_RECONNECT_ATTEMPTS + ")...");
-                try { Thread.sleep(delay); } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
+            reconnecting(() -> {
+                var size = IncusApi.terminalSize();
+                return incus.http().execPty(container, shellArgs, 0, 0, null, env, size[0], size[1], statusBar);
+            }, InteractiveShell::pause, () -> System.nanoTime() / 1_000_000);
         } finally {
             if (inTmux && savedWindowName != null) {
                 hostExecQuiet("tmux", "rename-window", savedWindowName);
@@ -148,6 +129,65 @@ final class InteractiveShell {
                 }
             }
             BuildOutput.windowTitle("");
+        }
+    }
+
+    /** One connection to the guest's PTY: true when it was lost after the session ran, false when the session ended. */
+    @FunctionalInterface
+    interface Connection {
+        boolean run();
+    }
+
+    /** The wait before a reconnect: false when it was interrupted, which ends the shell. */
+    @FunctionalInterface
+    interface Pause {
+        boolean sleep(long millis);
+    }
+
+    /** The longest wait between reconnects; a session that stayed up longer was a working shell. */
+    static final long LONGEST_WAIT_MS = 10_000;
+
+    /**
+     * Run {@code connection} until its session ends, reconnecting after a lost connection.
+     * A connection that fails to come back, or comes back and drops again before
+     * {@link #LONGEST_WAIT_MS}, is retried with a growing wait, up to
+     * {@link #MAX_RECONNECT_ATTEMPTS} times. A session that stayed up longer and then dropped is
+     * a loss of its own, which starts the count again. Each loss is one warning, which a TUI
+     * shell's log keeps; a retry is a note, so a flaky link does not fill the log with copies of
+     * one event. {@code clock} is in milliseconds.
+     */
+    static void reconnecting(Connection connection, Pause pause, LongSupplier clock) {
+        int attempt = 0;
+        while (true) {
+            long started = clock.getAsLong();
+            try {
+                if (!connection.run()) return;
+                if (clock.getAsLong() - started >= LONGEST_WAIT_MS) attempt = 0;
+            } catch (IncusException e) {
+                if (!hasIOExceptionCause(e) || attempt >= MAX_RECONNECT_ATTEMPTS) throw e;
+            }
+            if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+                throw new IncusException("The shell's connection dropped again each time it came back");
+            }
+            if (attempt == 0) {
+                // The guest's last line may be unfinished: start the notice on a line of its own
+                TerminalStreams.out().println();
+                BuildOutput.warn("Connection lost — reconnecting...");
+            } else {
+                BuildOutput.note("Still reconnecting (attempt " + (attempt + 1) + " of " + MAX_RECONNECT_ATTEMPTS + ")...");
+            }
+            if (!pause.sleep(Math.min(1000L << attempt, LONGEST_WAIT_MS))) return;
+            attempt++;
+        }
+    }
+
+    private static boolean pause(long millis) {
+        try {
+            Thread.sleep(millis);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
