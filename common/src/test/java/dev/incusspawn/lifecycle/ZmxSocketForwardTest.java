@@ -13,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -224,5 +225,27 @@ class ZmxSocketForwardTest {
     void sharedHostZmxDirResolvesNothingOnMacOS() {
         assertNull(ZmxSocketForward.sharedHostZmxDir(true, () -> fail("host zmx dir resolved on macOS")));
         assertEquals(zmxDir, ZmxSocketForward.sharedHostZmxDir(false, () -> zmxDir));
+    }
+
+    /**
+     * zmx writes {@code logs/} under its dir, the shared directory, after any
+     * session, so cleanup has to remove it recursively, and through no
+     * symlink a guest left there (#1772).
+     */
+    @Test
+    void cleanupRemovesTheSessionLogsWithoutFollowingSymlinks() throws IOException {
+        var outside = Files.createDirectories(zmxDir.resolve("outside"));
+        var kept = Files.writeString(outside.resolve("kept"), "x");
+        var logs = Files.createDirectories(containerDir().resolve("logs"));
+        Files.writeString(logs.resolve("zmx.log"), "log");
+        Files.writeString(logs.resolve("isx.log"), "log");
+        Files.createSymbolicLink(containerDir().resolve("escape"), outside);
+        Files.createSymbolicLink(symlink(), Path.of("containers", NAME, "isx"));
+
+        ZmxSocketForward.cleanup(NAME, zmxDir);
+
+        assertFalse(Files.exists(containerDir(), LinkOption.NOFOLLOW_LINKS), "container dir left behind");
+        assertFalse(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS), "session symlink left behind");
+        assertTrue(Files.exists(kept), "cleanup followed a symlink out of the container dir");
     }
 }

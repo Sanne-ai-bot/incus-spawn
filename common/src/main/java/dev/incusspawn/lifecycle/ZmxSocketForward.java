@@ -5,6 +5,7 @@ import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.FileTrees;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.Output;
 
@@ -177,27 +178,22 @@ public final class ZmxSocketForward {
 
     /**
      * Remove host-side artifacts after an instance is destroyed: the
-     * per-container directory and the symlink.  The disk device itself
-     * is auto-removed by Incus on instance deletion.
+     * per-container directory, with the logs zmx keeps there, and the
+     * symlink.  The disk device itself is auto-removed by Incus on instance
+     * deletion.
      */
     public static void cleanup(String name) {
         var zmxDir = sharedHostZmxDir();
-        if (zmxDir == null) return;
+        if (zmxDir != null) cleanup(name, zmxDir);
+    }
+
+    static void cleanup(String name, Path zmxDir) {
         try {
             Files.deleteIfExists(zmxDir.resolve(SYMLINK_PREFIX + name));
         } catch (IOException ignored) {
         }
-        var containerDir = zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name);
-        try {
-            if (Files.isDirectory(containerDir)) {
-                try (var stream = Files.list(containerDir)) {
-                    stream.forEach(p -> {
-                        try { Files.deleteIfExists(p); } catch (IOException ignored) {}
-                    });
-                }
-                Files.deleteIfExists(containerDir);
-            }
-        } catch (IOException ignored) {
-        }
+        // zmx keeps its logs/ in the shared dir, so the tree goes, and no
+        // symlink a guest left in it is followed (#1772)
+        FileTrees.deleteQuietly(zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name));
     }
 }
