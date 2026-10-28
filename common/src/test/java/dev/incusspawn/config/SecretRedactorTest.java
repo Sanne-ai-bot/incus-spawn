@@ -495,4 +495,54 @@ class SecretRedactorTest {
         assertFalse(SecretRedactor.hasSecretShape(""));
         assertFalse(SecretRedactor.hasSecretShape(null));
     }
+
+    @Test
+    void manyKeyHeadersWithNoEndAreScrubbedInLinearTime() {
+        // Guest output reaches the scrub (a build's log): the lazy match from each header to an end
+        // that never comes made 400 KB of headers take seconds, so crafted output stalled a build
+        var headers = "-----BEGIN PRIVATE KEY-----\n".repeat(15_000);
+        var scrubbed = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(2),
+                () -> SecretRedactor.scrubText(headers, java.util.Map.of()).text());
+        // Each header with nothing after it before the next is a key cut short: redacted, all of them
+        org.junit.jupiter.api.Assertions.assertFalse(scrubbed.contains("BEGIN PRIVATE KEY"), scrubbed.substring(0, 200));
+    }
+
+    @Test
+    void aTruncatedKeyFollowedByAnotherIsScrubbedWithIt() {
+        // head -c 900 id_rsa; cat key2: the first key's body is as secret as the second's
+        // The armour is put together at run time, so a secret scanner does not take this for a key
+        var armour = "-----";
+        var text = armour + "BEGIN PRIVATE KEY" + armour + "\ntruncated\n"
+                + armour + "BEGIN RSA PRIVATE KEY" + armour + "\nMIIEsecret\n" + armour + "END RSA PRIVATE KEY" + armour + "\n";
+        var scrubbed = SecretRedactor.scrubText(text, java.util.Map.of()).text();
+        org.junit.jupiter.api.Assertions.assertFalse(scrubbed.contains("MIIEsecret"), scrubbed);
+        org.junit.jupiter.api.Assertions.assertFalse(scrubbed.contains("truncated"), scrubbed);
+        org.junit.jupiter.api.Assertions.assertEquals(2, SecretRedactor.scrubText(text, java.util.Map.of()).hits().get("private-key"));
+    }
+
+    @Test
+    void aLoneTruncatedKeyIsScrubbedToTheEndOfTheText() {
+        var armour = "-----";
+        var text = "before\n" + armour + "BEGIN OPENSSH PRIVATE KEY" + armour + "\nb3BlbnNzaC1rZXktdjEAAAAAsecret";
+        var scrubbed = SecretRedactor.scrubText(text, java.util.Map.of()).text();
+        org.junit.jupiter.api.Assertions.assertEquals("before\n<isx:redacted:private-key>", scrubbed);
+    }
+
+    @Test
+    void anotherKindOfBlockInsideAKeyDoesNotEndIt() {
+        // Only another key's header ends one early; main's .*? took all of this too
+        var armour = "-----";
+        var text = armour + "BEGIN PRIVATE KEY" + armour + "\nAAA\n" + armour + "BEGIN CERTIFICATE" + armour + "\nCCC\n"
+                + armour + "END CERTIFICATE" + armour + "\nBBBSECRET\n" + armour + "END PRIVATE KEY" + armour + "\nafter";
+        org.junit.jupiter.api.Assertions.assertEquals("<isx:redacted:private-key>\nafter",
+                SecretRedactor.scrubText(text, java.util.Map.of()).text());
+    }
+
+    @Test
+    void longRunsOfHeaderWordsStayLinear() {
+        var armour = "-----";
+        var text = (armour + "BEGIN PRIVATE KEY" + armour + "\n") + (armour + "BEGIN " + "A".repeat(5_000) + "\n").repeat(400);
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(2),
+                () -> SecretRedactor.scrubText(text, java.util.Map.of()));
+    }
 }
