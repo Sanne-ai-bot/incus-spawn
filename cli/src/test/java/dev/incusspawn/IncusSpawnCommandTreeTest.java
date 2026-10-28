@@ -35,6 +35,12 @@ class IncusSpawnCommandTreeTest {
                 "Linux command tree must equal the macOS tree minus VmCommand — a command was added to one but not the other");
     }
 
+    /** {@code isx instances}, deprecated for {@code isx list -q} since #1036, is gone (#1802). */
+    @Test
+    void theRemovedInstancesCommandIsNotRegistered() {
+        assertFalse(DocsListsTest.commands().contains("instances"), "isx instances must not be registered");
+    }
+
     @Test
     void filterHiddenCommandsStripsInternalEntries() {
         String help = """
@@ -42,7 +48,6 @@ class IncusSpawnCommandTreeTest {
                     \033[34minit\033[0m         One-time host setup
                     \033[34mcompletion\033[0m   Print shell completion script
                     \033[34mbuild\033[0m        Build or rebuild a template image
-                    \033[34minstances\033[0m    List connectable instance names
                     \033[34mgit-remote-helper\033[0m  Git remote helper
                     \033[34mssh-proxy\033[0m    SSH ProxyCommand
                     \033[34mdoctor\033[0m       Run health checks and completion status
