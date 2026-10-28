@@ -316,6 +316,7 @@ jobs:
           path: appliance/build/
 
       - name: Create disk image from rootfs tarball
+        id: disk
         run: |
           sudo apt-get install -y -qq btrfs-progs zstd
           truncate -s 4G appliance/build/disk.img
@@ -348,7 +349,8 @@ jobs:
 
       - name: Install QEMU
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ${{ matrix.qemu_pkg }} socat
+          sudo apt-get update -qq && sudo apt-get install -y -qq ${{ matrix.qemu_pkg }} socat \
+            dnsmasq-base incus-client busybox-static
           # vsock for the guest: the same transport vfkit gives the appliance on macOS.
           # Loading the module fires a udev "add" event that is handled asynchronously; a bare
           # chmod raced it, and udev resetting the node to root:kvm 0660 left QEMU with EACCES.
@@ -458,16 +460,34 @@ jobs:
           grep -q '✓ Incus reachable' doctor.out
           grep -q '✓ Storage pool cow' doctor.out
 
+      # Waits for QEMU to exit, so the next boot does not meet its lock on disk.img.
       - name: Stop VM
         if: always()
-        run: kill "$QEMU_PID" 2>/dev/null || true
+        run: |
+          kill "$QEMU_PID" 2>/dev/null || exit 0
+          for _ in $(seq 1 30); do kill -0 "$QEMU_PID" 2>/dev/null || exit 0; sleep 1; done
+          kill -9 "$QEMU_PID" 2>/dev/null || true
+
+      # The macOS data path (#1585): a second boot in remote proxy mode, on a tap network shaped
+      # like vfkit's NAT, with a listener on the host standing in for isx-proxy. A container's
+      # request to the gateway's port 443 must reach the host through the guest's DNAT, and
+      # arrive from the VM's address. It runs even if the tunnel checks failed, since it tests
+      # something else from a boot of its own, but not without a disk image.
+      - name: Test the remote proxy data path (DNAT and masquerade)
+        if: ${{ !cancelled() && steps.disk.outcome == 'success' }}
+        run: |
+          sudo env ACCEL="$ACCEL" BOOT_DEADLINE="$BOOT_DEADLINE" CONSOLE_LOG="$PWD/vm-console-remote.log" \
+            appliance/test-proxy-remote.sh appliance/build
 
       - name: Upload console log
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: vm-console-log-${{ matrix.arch }}
-          path: vm-console.log
+          path: |
+            vm-console.log
+            vm-console-remote.log
+          if-no-files-found: ignore
           retention-days: 7
 
   isx-integration-tests-native:

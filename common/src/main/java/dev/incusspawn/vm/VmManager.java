@@ -1403,7 +1403,7 @@ public final class VmManager {
 
     // --- Internal: helpers ---
 
-    private static String kernelCmdline() {
+    static String kernelCmdline() {
         // mitigations=off is compiled in (CONFIG_CPU_MITIGATIONS=n), so it is
         // not repeated here. rootfstype=btrfs avoids the kernel probing fuseblk
         // (which rejects the 'commit' rootflag) before btrfs at root mount.

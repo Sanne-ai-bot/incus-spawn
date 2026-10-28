@@ -32,7 +32,8 @@ Key jobs:
 - **`build-native-cli`**: builds the CLI native image, uploads artifact
 - **`build-native-proxy`**: builds the proxy native image, uploads artifact
 - **`integration-tests (x86_64)`, `integration-tests (aarch64)`**: a matrix.
-  Each boots its arch's appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with host `socat` (standing in for vfkit) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below
+  Each boots its arch's appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with host `socat` (standing in for vfkit) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below.
+  A second boot runs `appliance/test-proxy-remote.sh`: the macOS proxy data path (#1585)
 - **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`), then runs test scripts inside branched instances.
   `test-proxy-only.sh` is the only real check of the proxy-only boundary (#1137): branches of `tpl-minimal` (no iptables) and `tpl-test-vm` must reach the proxy and nothing else after `isx branch`, after `incus restart`, and on a `--no-start` branch first started by `incus start`.
   It needs Incus's nftables firewall driver on the runner
@@ -66,8 +67,8 @@ Both arches boot under QEMU; this is worth stating precisely, because the runner
 
 | where | what it does with the appliance |
 |---|---|
-| `test-integration.yml` → `integration-tests (x86_64)` (`ubuntu-26.04`) | boots it under `qemu-system-x86_64` with KVM and vsock; full tunnel checks, backstop, native `isx` |
-| `test-integration.yml` → `integration-tests (aarch64)` (`ubuntu-24.04-arm`) | boots it under `qemu-system-aarch64` with **TCG** (the arm64 runners expose no `/dev/kvm`) and vsock; smoke test and tunnel checks, but not the backstop (a fixed 3-minute wait that is arch-independent) or native `isx` (CI builds no arm64 CLI). vhost-vsock works under TCG, and the appliance reaches `ISX READY` in about 20s |
+| `test-integration.yml` → `integration-tests (x86_64)` (`ubuntu-26.04`) | boots it under `qemu-system-x86_64` with KVM and vsock; full tunnel checks, backstop, native `isx`; then again in `remote` proxy mode on a tap network for the DNAT data path |
+| `test-integration.yml` → `integration-tests (aarch64)` (`ubuntu-24.04-arm`) | boots it under `qemu-system-aarch64` with **TCG** (the arm64 runners expose no `/dev/kvm`) and vsock; smoke test, tunnel checks and the `remote` proxy data path, but not the backstop (a fixed 3-minute wait that is arch-independent) or native `isx` (CI builds no arm64 CLI). vhost-vsock works under TCG, and the appliance reaches `ISX READY` in about 20s |
 | `build-appliance.yml` → `build_x86_64`, `build_aarch64` (`ubuntu-26.04`, `ubuntu-24.04-arm`) | builds, checks size and embedded version, caches, uploads. Never boots it |
 | `test-integration.yml` → `unit-tests-macos` (`macos-15`) | nothing: runs `mvn test` on the host, the macOS half of the Java code only |
 | `release.yml` native matrix (`macos-15`, `macos-15-intel`) | builds the native CLI/proxy for macOS 15 (Intel is best effort: shipped, but this smoke test is all it gets; no Intel Mac verifies it, #1086) and smoke-tests the *binaries* -- `--version`, `--help`, completions, `templates list`; the release job then checks each one's recorded minimum macOS. Never starts a VM, and runs on `v*` tags and `workflow_dispatch` |
@@ -98,6 +99,18 @@ The smoke test checks the same STARTTLS behaviour in the guest, on the local soc
 The native `isx` then connects through the same socket: the runner has no native Incus, so `IncusApi.tryConnect` falls through to the vsock candidate exactly as on macOS.
 It does **not** prove vfkit itself: host socat propagates close faithfully, which is the property vfkit lacks.
 The job runs in parallel with `isx-integration-tests-native`, which is longer, so the ~3 minutes of backstop wait adds no wall-clock to the workflow.
+
+**What the remote proxy boot covers** (#1585).
+On macOS `isx-proxy` runs outside the VM, which boots with `isx.proxy=remote`: `incus-spawn-vm-init` DNATs the bridge gateway's `:443` to the VM's default gateway, and the bridge's `ipv4.nat` masquerades it.
+The Linux jobs never take that path, which is how #1582 shipped.
+`appliance/test-proxy-remote.sh` boots the appliance that way, after the tunnel checks, on a tap device standing in for vfkit's NAT: the host holds `192.168.177.1` and serves the VM a DHCP lease (`dnsmasq`), so the guest's default route is the host.
+A `socat` listener on the host's MITM port stands in for `isx-proxy` and answers each connection with the peer address and first line it saw.
+Two containers from a busybox image built on the runner (not images.linuxcontainers.org, #1558), at static addresses with `security.ipv4_filtering`, connect to the gateway's `:443`.
+Both must reach the host and arrive from the VM's leased address, never their own: the premise of identifying macOS callers by proof (`MitmProxy.proofMayIdentify`).
+It boots the disk with `snapshot=on`, uses its own vsock CID, and takes about 10 s under KVM.
+Its gateway, MITM port and `isx.proxy=remote` are copied from `VmManager.kernelCmdline()`, and `RemoteProxyTestCmdlineTest` fails when the two part.
+It does **not** run `isx-proxy` or `isx` in their macOS roles: both decide they are on macOS when compiled (`Platform.isMacOS()`), so a template build, an account pin and `--mcp-client` through this path stay with the Mac runner.
+The proxy's side is covered by unit tests (`CredentialProofProxyTest`).
 
 Findings this surfaced, each fixed or documented where it lives: the forwarder's socat listen backlog (default 5) refused concurrent connects (3/16, 12/32), and one exec opens about five; incusd's local listener stalled every new connection behind one that had sent nothing (see `incus.md`; fixed by a backport in #1313); incusd closes idle keep-alive connections after 30s.
 
