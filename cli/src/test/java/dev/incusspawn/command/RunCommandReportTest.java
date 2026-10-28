@@ -21,6 +21,25 @@ class RunCommandReportTest {
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP, "Opened http://localhost:8080")), recorded.events());
     }
 
+    /**
+     * What a copy-to-clipboard action shows without a clipboard is its YAML's text, which a
+     * project-local tool chooses: it cannot drive the host terminal (an OSC 52 write to the
+     * clipboard, a window title). Its tabs stay, since it is shown to be copied by hand.
+     */
+    @Test
+    void aSucceededActionsTextCannotDriveTheTerminal() {
+        var recorded = RecordingOutput.during(() -> RunCommand.report(
+                ActionResult.ok("Text: \u001b]52;c;cm0gLXJmIH4=\u0007\u001b]0;not isx\u0007\tall:")));
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP, "Text:  ]52;c;cm0gLXJmIH4=  ]0;not isx \tall:")),
+                recorded.events());
+    }
+
+    /** A success with nothing to say prints nothing, not "null". */
+    @Test
+    void aSucceededActionWithoutAMessageSaysNothing() {
+        assertEquals(List.of(), RecordingOutput.during(() -> RunCommand.report(ActionResult.ok(null))).events());
+    }
+
     /** A failed action is an error, and the command fails with it, never a plain line and exit 0. */
     @Test
     void aFailedActionIsAnError() {
