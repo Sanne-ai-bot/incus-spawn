@@ -70,7 +70,19 @@ class InteractiveShellTest {
         var daemon = new FakeIncusDaemon().container("dev", Map.of());
         var prep = IncusClient.ShellPrep.fromPrefetched(null, null, null, null, true, null);
         var said = RecordingOutput.during(() -> assertThrows(RuntimeException.class,
-                () -> new InteractiveShell(daemon.client()).session("dev", "agentuser", prep, ShellMenu.NONE, false)));
+                () -> new InteractiveShell(daemon.client()).session("dev", "agentuser", prep, ShellMenu.NONE, false, null)));
+        assertEquals(List.of(new Event(Kind.WINDOW_TITLE, "isx:dev"), new Event(Kind.WINDOW_TITLE, "")),
+                said.events());
+    }
+
+    /** A terminfo propagation that fails still leaves the terminal's title as it found it. */
+    @Test
+    @ExtendWith(TempHome.class)
+    void aFailedTerminfoPropagationStillResetsTheTitle() {
+        var daemon = new FakeIncusDaemon().container("dev", Map.of());
+        var prep = IncusClient.ShellPrep.fromPrefetched(null, null, null, null, false, null);
+        var said = RecordingOutput.during(() -> assertThrows(RuntimeException.class,
+                () -> new InteractiveShell(daemon.client()).session("dev", "agentuser", prep, ShellMenu.NONE, false, "xterm-kitty")));
         assertEquals(List.of(new Event(Kind.WINDOW_TITLE, "isx:dev"), new Event(Kind.WINDOW_TITLE, "")),
                 said.events());
     }
