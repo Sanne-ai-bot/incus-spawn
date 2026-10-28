@@ -153,6 +153,24 @@ public final class TerminalOutput implements Output {
         stdout.flush();
     }
 
+    @Override
+    public void windowTitle(String title) {
+        if (!onATerminal()) return;
+        var stdout = out.get();
+        stdout.print("\033]0;" + OutputFormat.oneLine(title) + "\007");
+        stdout.flush();
+    }
+
+    /**
+     * Whether stdin and stdout are a terminal, or as a test forces escapes: a title is no colour,
+     * so {@code NO_COLOR} keeps it, as the shell's own title behind {@code hasTerminal()}.
+     */
+    private static boolean onATerminal() {
+        if (BuildOutput.forceAnsi != null) return BuildOutput.forceAnsi;
+        var console = System.console();
+        return !Headless.active() && console != null && console.isTerminal();
+    }
+
     /** Its stdout, as it is now: a live step's guard included, so a result first freezes the step's line. */
     @Override
     public PrintStream results() {

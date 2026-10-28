@@ -11,7 +11,7 @@ paths:
 # TUI
 
 **No `System.out`/`System.err` while the TUI renders** (see CLAUDE.md): anything a TUI action calls reports through a sink the TUI routes to its warning log.
-Only code running after the runner has closed (the `pendingAction` switch, e.g. `ShellLaunch.shellInto`) may print, with a comment saying so.
+Code running after the runner has closed (the `pendingAction` switch, e.g. `ShellLaunch.shellInto`) prints through `BuildOutput`, which the TUI binds to a copying terminal there; the shell's auth-error title goes through `BuildOutput.windowTitle` (#1703).
 
 **The screen is cleared before the first frame and on Ctrl+L** (#1681, DESIGN.md "Terminals the TUI cannot assume").
 Open runners through `Tui.openRunner`, never `TuiRunner.create`; `TuiScreenClearTest` checks `openRunner` and Ctrl+L, not that the TUI calls it.
@@ -31,7 +31,8 @@ An action's result such as "Build failed" is never replaced, the warnings wait f
 Warnings still unread when the TUI exits are printed to stderr once the terminal is released.
 **Before the TUI opens** (#1154), bare `isx` runs inside a `PreTuiOutput` window (`IncusSpawn.launchTui()` opens it, `doExecute()` hands it over first thing, before the first reload, so a pause leaves no stale listing).
 `Warnings` raised meanwhile (the macOS VM's stale-appliance notice, `VmManager.warnOfSkew`) are held by `Output.holding`, then go into the `WarningLog` through `Warnings.warn(drawing, ...)`, so the TUI does not announce them a second time; a `BuildOutput.warn` still prints under its step.
-Anything printed to stdout/stderr still shows, and makes isx print the held warnings too and wait for Enter (`PreTuiOutput.waitForEnter`, only at a terminal, discarding an Enter typed while it got ready) before the TUI covers it.
+Anything printed to stdout/stderr still shows, and makes isx print the held warnings too and wait for Enter (`PreTuiOutput.waitForEnter`, asked through `Prompts.terminal()`, the same pause the TUI makes after an action that does not auto-return, only at a terminal, discarding an Enter typed while it got ready) before the TUI covers it.
+`StreamWatch` notes those writes on the raw streams, so a write that bypasses the bound output counts too; it is the TUI's one gate class in `RawOutputGateTest`.
 A notice meant for the TUI belongs on `Warnings`, so it costs no keypress.
 `TuiLaunchHandOverTest` drives `IncusSpawn.launchTui(ready, tui)` with a `StandInTui` (test scope, overriding `runTuiLoop`/`waitForUser`, reading `warningMessages()`) and fails if either end of the window is unwired.
 

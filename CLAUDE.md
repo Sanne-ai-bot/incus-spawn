@@ -223,7 +223,7 @@ While the TUI renders it owns the terminal: a `System.out`/`System.err` line is 
 Shared code (`common`, especially `lifecycle/` and `incus/`) that reports progress or warnings takes an `Output` (`common/util`) from its caller instead (`InstanceLifecycle.startForUse(..., out)`, `ensureReady(..., out)`, `StaticIpAllocator.claim`): a step is a `step`, a warning a `warn` with its advice as details, never a `Warning:`-prefixed line.
 Each caller routes it: the CLI passes `BuildOutput.bound()` (whoever owns the terminal), the TUI its `drawing` log from code it runs while it draws, background threads included.
 `lifecycle/` takes no `Consumer<String>` to report through.
-Pass plain stdout from the TUI only where it has provably released the terminal (e.g. `ShellLaunch.shellInto`, after the runner closes), and say so in a comment.
+Code the TUI runs once it has released the terminal (the `pendingAction` switch, e.g. `ShellLaunch.shellInto`) reports through `BuildOutput` too: the TUI's copying binding prints it and keeps its warnings in the log.
 **`BuildOutput` is the one output seam** (#1703): its static methods hand every message to the bound `Output` (`common/util`), a `TerminalOutput` unless the owner of the terminal bound another with `BuildOutput.bind`.
 Only owners bind: the TUI binds `Output.diagnosticsTo(warningLog::add)` while it draws or reloads, and `Output.copying(terminal, drawing)` around every action it lends the terminal to.
 `PreTuiOutput` binds `Output.holding`, `isx mcp` binds `TerminalOutput.stderrOnly()` (`StdioGuard`), and the proxy binds `Output.logTo(ProxyLog::info, ProxyLog::trace, ProxyLog::warn)`: progress as info, notes (a request's debug line) on stderr alone, warnings as warnings.

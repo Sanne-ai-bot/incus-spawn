@@ -1004,6 +1004,7 @@ So a line that is the command's result, such as `clean --dry-run`'s "Would delet
 A status command's report is its result whatever it says.
 `isx proxy status` prints it on stdout in every state and tells them apart by exit code (1 not running, 2 stale DNS overrides, 3 stale bridge address), and `isx vm status` exits 1, the reason on stderr, when Incus is unreachable.
 Every other styled line (`isx init`, the proxy banners, build failure reports) goes through the same `BuildOutput.styled()` (#1082); only what is drawn on a terminal alone (live steps, `TerminalProgress` formatters, window titles behind `hasTerminal()`) writes escapes directly.
+A title set from the TUI's shell goes through `Output.windowTitle`, which `TerminalOutput` writes only on a terminal (not a colour, so `NO_COLOR` keeps it), as one line.
 `AnsiEscapeGateTest` fails on any raw CSI or OSC literal unless its line carries a `// raw ANSI: <why>` comment (on that line, so a marker never covers another).
 Only the two gates, `TerminalProgress` and the shell status bar are exempt as whole files, so a new escape on an ordinary path in `BuildCommand` still fails.
 `RawOutputGateTest` does the same for the raw streams (#1703): `System.out`, `System.err`, `System.setOut`/`setErr`, `System.console()`, `FileDescriptor.out`/`err` and `printStackTrace()`, and a print literal indented by hand.
@@ -5001,6 +5002,7 @@ The stale-appliance notice reaches it this way (`VmManager.warnOfSkew`), at no c
 The header's "Appliance X — restart VM for Y" stays where the skew remains visible, and keeps skipping the first load so opening the TUI asks the VM nothing extra.
 Everything else still reaches the terminal when it is written (a VM start or init that hangs must show its progress).
 But `System.out`/`System.err` are wrapped to note that something was printed, and if anything was, isx asks for Enter before opening the TUI.
+The wrapping is `StreamWatch`, a gate class of `RawOutputGateTest` (#1703): it watches the raw streams rather than the bound output, so a print that bypasses the bound output still counts.
 The held warnings are then printed above that prompt as well, since a Ctrl-C there would otherwise lose them (the TUI that would have shown them never opens).
 An Enter typed while isx got ready is discarded so it cannot end the pause unseen.
 The window wraps `isx init` too: init's own text is exactly what the pause must not let the TUI cover.

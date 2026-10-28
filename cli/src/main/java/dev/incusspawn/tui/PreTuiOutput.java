@@ -1,12 +1,11 @@
 package dev.incusspawn.tui;
 
-import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.command.Prompts;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.PrintStream;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -23,27 +22,19 @@ import java.util.function.Consumer;
  * the status line. Everything else
  * still reaches the terminal as it is written, and is remembered: if anything was printed, the
  * hand-over waits for the user before the TUI opens. Closing without a hand-over (the TUI never
- * opened) prints the held warnings, so none is dropped.
+ * opened) prints the held warnings, so none is dropped. What was printed is noted by a
+ * {@link StreamWatch} on the process's streams, so a write that bypasses the bound output counts too.
  */
 public final class PreTuiOutput implements AutoCloseable {
 
-    private final PrintStream out;
-    private final PrintStream err;
-    private final PrintStream notingOut;
-    private final PrintStream notingErr;
+    private final StreamWatch watch;
     private final List<String> warnings = new CopyOnWriteArrayList<>();
     private final AtomicBoolean printed = new AtomicBoolean();
     private final BuildOutput.Binding holding;
     private boolean closed;
 
     private PreTuiOutput() {
-        out = System.out;
-        err = System.err;
-        var flag = printed;
-        notingOut = BuildOutput.onWrite(out, () -> flag.set(true));
-        notingErr = BuildOutput.onWrite(err, () -> flag.set(true));
-        System.setOut(notingOut);
-        System.setErr(notingErr);
+        watch = new StreamWatch(() -> printed.set(true));
         holding = BuildOutput.bind(Output.holding(BuildOutput.terminal(), Output.diagnosticsTo(warnings::add)));
     }
 
@@ -69,12 +60,25 @@ public final class PreTuiOutput implements AutoCloseable {
 
     /** Wait for Enter, when there is a terminal to wait on. */
     public static void waitForEnter() {
-        if (!IncusClient.hasTerminal()) return;
-        discardTypeahead(System.in);
-        System.console().readLine("Press Enter to continue to isx... ");
+        waitForEnter("Press Enter to continue to isx... ");
     }
 
-    /** An Enter typed while isx was getting ready must not end the pause before it is seen. */
+    /**
+     * Wait for Enter after {@code question}, when there is a terminal to wait on: before the TUI
+     * opens, and after an action it lent the terminal to, so what was printed is read first.
+     */
+    static void waitForEnter(String question) {
+        var prompts = Prompts.terminal();
+        if (prompts != null) discardTypeahead(System.in);
+        waitForEnter(prompts, question);
+    }
+
+    /** Ask {@code question} through {@code prompts}, the terminal's; no wait when there is none. */
+    static void waitForEnter(Prompts prompts, String question) {
+        if (prompts != null) prompts.ask(question);
+    }
+
+    /** An Enter typed while isx got ready, or an action ran, must not end the pause before it is seen. */
     static void discardTypeahead(InputStream in) {
         try {
             int pending = in.available();
@@ -107,11 +111,7 @@ public final class PreTuiOutput implements AutoCloseable {
     }
 
     private void restore() {
-        notingOut.flush();
-        notingErr.flush();
-        // Only our own: whatever replaced them meanwhile restores its own.
-        if (System.out == notingOut) System.setOut(out);
-        if (System.err == notingErr) System.setErr(err);
+        watch.close();
         holding.close();
     }
 }

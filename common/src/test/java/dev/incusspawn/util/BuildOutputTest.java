@@ -37,6 +37,16 @@ class BuildOutputTest {
     }
 
     @Test
+    void aWindowTitleIsOneLineInAnEscapeAndOnlyOnATerminal() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.windowTitle("isx:dev-1");
+        assertEquals("", text(), "no escape off a terminal");
+        BuildOutput.forceAnsi = true;
+        BuildOutput.windowTitle("⚠ log in\u0007\u001b]0;not isx");
+        assertEquals("\u001b]0;⚠ log in  ]0;not isx\u0007", text(), "nothing in the title ends its escape");
+    }
+
+    @Test
     void plainStepCompletesItsLine() {
         BuildOutput.stepStart("Waiting for network...");
         BuildOutput.stepDone();
