@@ -426,6 +426,50 @@ class ToolDefLoaderTest {
         }
     }
 
+    /**
+     * A tool whose name is not an identifier is refused at load like an invalid namespace, so
+     * no listing prints it: bash completion ran {@code isx tools list}'s names through compgen
+     * -W, which runs a command substitution in one (#1778).
+     */
+    @Test
+    void aToolWhoseNameIsNotAnIdentifierIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {
+        var evil = tempDir.resolve("evil.yaml");
+        Files.writeString(evil, """
+                name: "$(touch pwned)\\e]0;x\\a"
+                description: x
+                """);
+        var reported = new ArrayList<String>();
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+
+            assertTrue(loader.allToolSetups().keySet().stream().noneMatch(n -> n.contains("touch")),
+                    loader.allToolSetups().keySet().toString());
+            assertEquals(List.of(evil.toAbsolutePath().normalize()), loader.parseFailures());
+            assertEquals(1, reported.size(), reported.toString());
+            assertTrue(reported.get(0).contains("tool name"), reported.get(0));
+            assertTrue(reported.get(0).chars().noneMatch(Character::isISOControl), "printed raw: " + reported.get(0));
+        }
+    }
+
+    /** A template built before #1778 may have stored a tool by a name the loader now refuses. */
+    @Test
+    void addFallbacksSkipsANameThatIsNotAnIdentifier() {
+        var hostile = new ToolDef();
+        hostile.setName("$(touch pwned)");
+        var renamed = new ToolDef();
+        renamed.setName("fine");
+        var reported = new ArrayList<String>();
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.addFallbacks(Map.of("$(touch pwned)", hostile, "`id`", renamed));
+
+            assertTrue(loader.allToolSetups().keySet().stream().noneMatch(n -> n.contains("touch") || n.contains("id`")),
+                    loader.allToolSetups().keySet().toString());
+            assertEquals(2, reported.size(), reported.toString());
+        }
+    }
+
     /** A path scope that is not a '/'-rooted literal is refused like an invalid namespace (#1423). */
     @Test
     void aToolWithAnInvalidPathScopeIsRefusedAtLoad(@TempDir Path tempDir) throws Exception {

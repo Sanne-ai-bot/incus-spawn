@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -122,5 +123,20 @@ class ZshCompletionTest {
         assertEquals("isx account set box1 claude=work", complete("isx account set box1 "));
         assertEquals("isx account unset box1 claude", complete("isx account unset box1 "));
         assertEquals("isx account add gh", complete("isx account add "), "add takes a tool name too");
+    }
+
+    /** A name isx printed is offered as typed and never run: each source here prints a command substitution (#1778). */
+    @Test
+    void noSourceIsExpanded() throws Exception {
+        var marker = dir.resolve("pwned");
+        Files.writeString(bin.resolve("isx"), """
+                #!/bin/bash
+                printf '%%s\\n' '$(touch %s)'
+                """.formatted(marker));
+        for (var line : List.of("isx tools show ", "isx account add ", "isx account set box1 ", "isx account unset box1 ", "isx build ",
+                "isx destroy ")) {
+            complete(line);
+            assertFalse(Files.exists(marker), "completion of '" + line + "' ran a candidate as a command");
+        }
     }
 }

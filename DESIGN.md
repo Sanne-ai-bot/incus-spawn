@@ -365,6 +365,11 @@ That is its `config-namespace`, or the namespace a `config-path` borrows.
 An identifier is letters, digits, `.`, `-` and `_`, starting with a letter or digit, the rule proof tokens already used; camelCase and `.` stay allowed, because a previous release's `config.yaml` may hold such a namespace.
 The namespace names a place in `config.yaml`, and `isx init` and `isx account` print it as is.
 `ToolDefValidator.invalidNamespace` holds the rule, and `ToolDefValidator.validateDef` reports it as an error.
+A tool whose `name:` is not an identifier, by the same rule, is refused at load the same way (`ToolDefValidator.invalidName`, #1778).
+Every built-in tool already has such a name.
+Bash completion feeds `isx tools list` to the completion script, and `compgen -W` expands its word list, so a cloned repository's tool named `$(...)` ran on TAB.
+Refusing the name at load keeps it out of every listing, as for a template; a template's stored definitions are skipped under a refused name too.
+The bash script is the second layer: it offers what isx prints through `_isx_reply`, a literal prefix match, and gives `compgen -W` only words it spells out itself.
 A tool definition is refused the same way with a bare key under `parameters:` or `proxy.configuration:` (`flavour:` with nothing under it; `ToolDefValidator.bareKeys`, #1475): a bare key has no meaning of its own, and isx does not imply a default for it.
 
 ### Tool System

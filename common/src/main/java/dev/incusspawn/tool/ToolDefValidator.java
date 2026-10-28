@@ -234,6 +234,8 @@ public class ToolDefValidator {
      */
     private static List<String> refusals(ToolDef def, List<String> bareKeys) {
         var refusals = new ArrayList<>(bareKeys);
+        var invalidName = invalidName(def.getName());
+        if (invalidName != null) refusals.addFirst(invalidName);
         var invalidNamespace = invalidNamespace(def);
         if (invalidNamespace != null) refusals.add(invalidNamespace);
         refusals.addAll(invalidPathScopes(def));
@@ -330,6 +332,18 @@ public class ToolDefValidator {
     }
 
     /**
+     * Why {@code name} cannot name a tool, or null. Such a tool is refused where definitions
+     * load, so a cloned repository's tool name never reaches a listing: bash completion feeds
+     * {@code isx tools list} to {@code compgen -W}, which runs a command substitution in it
+     * (#1778), and a terminal shows any escape sequence in it.
+     */
+    public static String invalidName(String name) {
+        // The same rule as a namespace
+        if (name == null || isNamespace(name)) return null;
+        return notAnIdentifier("tool name '" + name + "'");
+    }
+
+    /**
      * Why {@code def} names a credential namespace that is not an identifier, or null: its own
      * {@code config-namespace}, or one it borrows through a {@code config-path}. Such a tool is
      * refused where definitions load, so a cloned repository's namespace, which could carry
@@ -355,8 +369,11 @@ public class ToolDefValidator {
     }
 
     private static String notAnIdentifier(ToolDef def, String what, String namespace) {
-        return OutputFormat.oneLine(what + " '" + namespace + "' in proxy for '" + def.getName()
-                + "' is not an identifier (" + NAMESPACE_RULE + ")");
+        return notAnIdentifier(what + " '" + namespace + "' in proxy for '" + def.getName() + "'");
+    }
+
+    private static String notAnIdentifier(String subject) {
+        return OutputFormat.oneLine(subject + " is not an identifier (" + NAMESPACE_RULE + ")");
     }
 
     /** Shorter values ({@code 1}, {@code true}) are settings, and would match by accident. */

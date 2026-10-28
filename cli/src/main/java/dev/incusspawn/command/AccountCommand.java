@@ -322,9 +322,9 @@ public class AccountCommand extends BaseCommand {
     /**
      * What {@code isx account add} takes, one per line, sorted: the names the command resolves
      * ({@link CredentialCheck#acceptedNames}), the identifiers among them. Names only, never a
-     * value. A tool's name is not constrained, and a cloned repository's tool named
-     * {@code $(...)} would run when bash's {@code compgen -W} expands the list on TAB, so a name
-     * that is not an identifier is left out; {@code isx account add} still takes it.
+     * value. The loader already refuses a tool whose name is not an identifier (#1778); this
+     * check stays as a backstop for a name that reaches the map another way, since a cloned
+     * repository's tool named {@code $(...)} would run if a shell expanded the list on TAB.
      */
     static List<String> addCompletionLines(Map<String, ToolSetup> tools) {
         return CredentialCheck.acceptedNames(tools).stream().filter(ToolDefValidator::isNamespace).toList();

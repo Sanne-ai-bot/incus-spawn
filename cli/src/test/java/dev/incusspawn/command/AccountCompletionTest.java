@@ -110,31 +110,48 @@ class AccountCompletionTest {
             throws java.io.IOException {
         var dir = java.nio.file.Files.createDirectories(dev.incusspawn.Environment.configDir().resolve("tools"));
         for (int i = 0; i < names.length; i++) {
-            java.nio.file.Files.writeString(dir.resolve("tool" + i + ".yaml"), """
-                    name: "%s"
-                    description: "A tool with a credential step"
-                    proxy:
-                      config-namespace: ns%d
-                      configuration:
-                        api-key:
-                          config-path: apiKey
-                          description: "API key"
-                          secret: true
-                      auth:
-                        - domains:
-                            - api.example.com
-                          type: bearer
-                          token: "${api-key}"
-                    """.formatted(names[i], i));
+            java.nio.file.Files.writeString(dir.resolve("tool" + i + ".yaml"), credentialToolYaml(names[i], i));
         }
         return new dev.incusspawn.tool.ToolDefLoader().allToolSetups();
+    }
+
+    /**
+     * {@link #toolsWithCredentialStep} with a tool named {@code hostile} added as is. The loader
+     * refuses such a name (#1778), so this is how a listing's own check is tested.
+     */
+    static java.util.Map<String, dev.incusspawn.tool.ToolSetup> withHostileTool(String hostile, String... names)
+            throws java.io.IOException {
+        var tools = new java.util.LinkedHashMap<>(toolsWithCredentialStep(names));
+        var def = dev.incusspawn.tool.ToolDef.loadFromStream(new java.io.ByteArrayInputStream(
+                credentialToolYaml(hostile, names.length).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        tools.put(hostile, new dev.incusspawn.tool.YamlToolSetup(def));
+        return tools;
+    }
+
+    private static String credentialToolYaml(String name, int i) {
+        return """
+                name: "%s"
+                description: "A tool with a credential step"
+                proxy:
+                  config-namespace: ns%d
+                  configuration:
+                    api-key:
+                      config-path: apiKey
+                      description: "API key"
+                      secret: true
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${api-key}"
+                """.formatted(name, i);
     }
 
     /** A name the shell would expand is never printed: bash's compgen -W would run it on TAB. */
     @Test
     void addCandidatesLeaveOutNamesTheShellWouldExpand() throws Exception {
-        var tools = toolsWithCredentialStep("good-tool", "$(touch pwned)");
-        assertTrue(tools.containsKey("$(touch pwned)"), "the hostile tool loads: " + tools.keySet());
+        assertFalse(toolsWithCredentialStep("$(touch pwned)").containsKey("$(touch pwned)"), "refused at load");
+        var tools = withHostileTool("$(touch pwned)", "good-tool");
         var lines = AccountCommand.addCompletionLines(tools);
         assertTrue(lines.contains("good-tool"), lines.toString());
         assertFalse(lines.stream().anyMatch(l -> l.contains("touch")), lines.toString());
