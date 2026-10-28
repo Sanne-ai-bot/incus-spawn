@@ -133,6 +133,8 @@ If an operation calls another mutating method (e.g. `restart` calls `stopLocked`
 `resetDataDisk` (`isx vm reset`) follows the same shape: stop, wait for the hypervisor to exit, replace the data disk with a blank one of the same size, start, all under one lock.
 
 **Host locks**: every cross-process mutex goes through `HostLock.acquire(file, activity, log)` (`common/.../util/`): an `fcntl` file lock behind a per-path in-process `ReentrantLock` (a second `tryLock` from one JVM throws rather than waits, and closing any channel on the file drops the process's lock), keyed by the file's real path, polling with backoff from 10 ms capped at 50 ms (`fcntl` has no queue: a waiter backed off further keeps losing to newcomers), 30 s timeout.
+`waited()` says whether another holder, thread or process, had it, so a caller whose work that holder may have done re-checks only then (the instance secret lock, #1065).
+A contended wait is logged for a process at once (`Another isx process is`) and for a thread after half a second (`Another isx operation is`), since some callers log through `Warnings::warn`.
 The lock is per user (under `$HOME`).
 `HostLock.acquireShared` takes it shared (a read-write lock in process, one shared `fcntl` lock per process released with its last holder, degrading like `acquireOrDegrade`); the template swap is its user (`TemplateLock`, see `build.md`).
 Do not open-code another `FileChannel.tryLock` loop.

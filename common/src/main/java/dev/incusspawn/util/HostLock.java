@@ -62,13 +62,24 @@ public final class HostLock implements AutoCloseable {
     private final FileLock lock;
     /** Non-null for a shared holder, which leaves the file to the last of them. */
     private final InProcess shared;
+    private final boolean waited;
     private boolean closed;
 
-    private HostLock(Lock inProcess, FileChannel channel, FileLock lock, InProcess shared) {
+    private HostLock(Lock inProcess, FileChannel channel, FileLock lock, InProcess shared, boolean waited) {
         this.inProcess = inProcess;
         this.channel = channel;
         this.lock = lock;
         this.shared = shared;
+        this.waited = waited;
+    }
+
+    /**
+     * Whether another holder, a thread of this process or another process, had the lock when this
+     * one asked for it. A caller whose work another holder may have done meanwhile re-checks
+     * only then, so an uncontended lock costs it nothing.
+     */
+    public boolean waited() {
+        return waited;
     }
 
     /**
@@ -123,11 +134,11 @@ public final class HostLock implements AutoCloseable {
         }
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         var readLock = inProcess.threads.readLock();
-        lockInProcess(readLock, TIMEOUT, activity);
-        if (key.unusable() != null) return degraded(readLock, lockFile, activity, warn, key.unusable());
+        var waited = lockInProcess(readLock, TIMEOUT, activity, log);
+        if (key.unusable() != null) return degraded(readLock, lockFile, activity, warn, key.unusable(), waited);
         try {
             // Bounded by the same deadline: another thread may be waiting for the file under it
-            lockInProcess(inProcess.guard, Duration.ofNanos(Math.max(0, deadline - System.nanoTime())), activity);
+            lockInProcess(inProcess.guard, Duration.ofNanos(Math.max(0, deadline - System.nanoTime())), activity, null);
         } catch (RuntimeException e) {
             readLock.unlock();
             throw e;
@@ -138,8 +149,9 @@ public final class HostLock implements AutoCloseable {
                     var locked = open(key.path(), true, activity, log, deadline);
                     inProcess.sharedChannel = locked.channel();
                     inProcess.sharedLock = locked.lock();
+                    waited |= locked.waited();
                 } catch (IOException e) {
-                    return degraded(readLock, lockFile, activity, warn, e);
+                    return degraded(readLock, lockFile, activity, warn, e, waited);
                 } catch (RuntimeException e) {
                     readLock.unlock();
                     throw e;
@@ -149,7 +161,7 @@ public final class HostLock implements AutoCloseable {
         } finally {
             inProcess.guard.unlock();
         }
-        return new HostLock(readLock, null, null, inProcess);
+        return new HostLock(readLock, null, null, inProcess, waited);
     }
 
     private record Key(Path path, IOException unusable) {}
@@ -164,16 +176,34 @@ public final class HostLock implements AutoCloseable {
         }
     }
 
-    private static void lockInProcess(Lock lock, Duration timeout, String activity) {
+    /**
+     * @param log where to say that another thread holds it and this one waits, or null for a lock
+     *            held only while another thread waits for the file, which says so itself
+     * @return whether another thread held it
+     */
+    private static boolean lockInProcess(Lock lock, Duration timeout, String activity, Consumer<String> log) {
+        if (lock.tryLock()) return false;
+        long deadline = System.nanoTime() + timeout.toNanos();
         try {
-            if (!lock.tryLock(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
-                throw timedOut(activity);
+            // A thread's wait can be as long as another process's, so the TUI or isx mcp says so
+            // too, once it is not one of the brief ones between threads, which some callers warn of
+            if (log != null && !lock.tryLock(Math.min(IN_PROCESS_QUIET_NANOS, timeout.toNanos()), TimeUnit.NANOSECONDS)) {
+                log.accept("Another isx operation is " + activity + " — waiting...");
+            } else if (log != null) {
+                return true;
             }
+            if (!lock.tryLock(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                throw timedOut("operation", activity);
+            }
+            return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new HostLockException("Interrupted waiting for another isx process " + activity, e);
+            throw new HostLockException("Interrupted waiting for another isx operation " + activity, e);
         }
     }
+
+    /** How long a thread waits for another of its process before saying so. */
+    private static final long IN_PROCESS_QUIET_NANOS = TimeUnit.MILLISECONDS.toNanos(500);
 
     /** @param degradeWarn non-null to degrade rather than fail on an unusable file */
     static HostLock acquire(Path lockFile, String activity, Consumer<String> log, Duration timeout,
@@ -190,13 +220,13 @@ public final class HostLock implements AutoCloseable {
         }
         long deadline = System.nanoTime() + timeout.toNanos();
         var inProcess = threads.writeLock();
-        lockInProcess(inProcess, timeout, activity);
-        if (unusable != null) return degraded(inProcess, lockFile, activity, degradeWarn, unusable);
+        var waited = lockInProcess(inProcess, timeout, activity, log);
+        if (unusable != null) return degraded(inProcess, lockFile, activity, degradeWarn, unusable, waited);
         try {
             var locked = open(key.path(), false, activity, log, deadline);
-            return new HostLock(inProcess, locked.channel(), locked.lock(), null);
+            return new HostLock(inProcess, locked.channel(), locked.lock(), null, waited || locked.waited());
         } catch (IOException e) {
-            if (degrade) return degraded(inProcess, lockFile, activity, degradeWarn, e);
+            if (degrade) return degraded(inProcess, lockFile, activity, degradeWarn, e, waited);
             inProcess.unlock();
             throw new HostLockException("Failed to lock " + lockFile + ": " + e.getMessage(), e);
         } catch (RuntimeException e) {
@@ -208,7 +238,7 @@ public final class HostLock implements AutoCloseable {
     private static final Set<Path> WARNED_UNUSABLE = ConcurrentHashMap.newKeySet();
 
     private static HostLock degraded(Lock inProcess, Path lockFile, String activity,
-                                     Consumer<String> warn, IOException cause) {
+                                     Consumer<String> warn, IOException cause, boolean waited) {
         // Once per file and process: a TUI would otherwise repeat it on every action
         if (WARNED_UNUSABLE.add(lockFile.toAbsolutePath().normalize())) {
             warn.accept("Cannot lock " + lockFile + " (" + cause.getMessage()
@@ -216,10 +246,10 @@ public final class HostLock implements AutoCloseable {
                     + " at the same time are not held off each other.");
         }
         // A degraded shared holder holds no file lock, so it has nothing to leave to the others
-        return new HostLock(inProcess, null, null, null);
+        return new HostLock(inProcess, null, null, null, waited);
     }
 
-    private record Locked(FileChannel channel, FileLock lock) {}
+    private record Locked(FileChannel channel, FileLock lock, boolean waited) {}
 
     /** Opens the file and waits for its lock; a shared one needs the channel readable. */
     private static Locked open(Path file, boolean shared, String activity, Consumer<String> log,
@@ -228,17 +258,18 @@ public final class HostLock implements AutoCloseable {
                 ? FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)
                 : FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
         try {
-            return new Locked(channel, lockFile(channel, shared, activity, log, deadline));
+            var lock = channel.tryLock(0, Long.MAX_VALUE, shared);
+            if (lock != null) return new Locked(channel, lock, false);
+            return new Locked(channel, waitForFile(channel, shared, activity, log, deadline), true);
         } catch (IOException | RuntimeException e) {
             channel.close();
             throw e;
         }
     }
 
-    private static FileLock lockFile(FileChannel channel, boolean shared, String activity,
-                                     Consumer<String> log, long deadline) throws IOException {
-        var lock = channel.tryLock(0, Long.MAX_VALUE, shared);
-        if (lock != null) return lock;
+    /** Waits for a file lock another process holds. */
+    private static FileLock waitForFile(FileChannel channel, boolean shared, String activity,
+                                        Consumer<String> log, long deadline) throws IOException {
         log.accept("Another isx process is " + activity + " — waiting...");
         // Starts short, as a lock held for a few requests frees within milliseconds
         long poll = FIRST_POLL_MILLIS;
@@ -249,15 +280,16 @@ public final class HostLock implements AutoCloseable {
                 Thread.currentThread().interrupt();
                 throw new HostLockException("Interrupted waiting for another isx process " + activity, e);
             }
-            lock = channel.tryLock(0, Long.MAX_VALUE, shared);
+            var lock = channel.tryLock(0, Long.MAX_VALUE, shared);
             if (lock != null) return lock;
             poll = Math.min(poll * 2, MAX_POLL_MILLIS);
         }
-        throw timedOut(activity);
+        throw timedOut("process", activity);
     }
 
-    private static HostLockException timedOut(String activity) {
-        return new HostLockException("Timed out waiting for another isx process " + activity + ".");
+    /** @param who "process" when another process holds the file, "operation" when another thread holds the lock */
+    private static HostLockException timedOut(String who, String activity) {
+        return new HostLockException("Timed out waiting for another isx " + who + " " + activity + ".");
     }
 
     @Override
