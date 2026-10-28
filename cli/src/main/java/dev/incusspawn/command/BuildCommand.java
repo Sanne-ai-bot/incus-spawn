@@ -1785,7 +1785,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private void checkPinnedWarning(ImageDef imageDef) {
+    static void checkPinnedWarning(ImageDef imageDef) {
         if (!imageDef.isPinned()) return;
         // A pin an isx before #1563 wrote replaces the whole built-in definition
         if (dev.incusspawn.config.BaseImagePin.isLegacyPin(imageDef)) {
@@ -1798,9 +1798,8 @@ public class BuildCommand extends BaseCommand {
         var pinnedTag = imageDef.getImageTag();
         var builtinTag = builtin.getImageTag();
         if (pinnedTag != null && isNewerRelease(builtinTag, pinnedTag)) {
-            BuildOutput.step("Warning: base image is pinned to " + pinnedTag
-                    + ", but " + builtinTag + " is available."
-                    + " Run 'isx update-base --latest' to update.");
+            BuildOutput.warn("Base image is pinned to " + OutputFormat.oneLine(pinnedTag) + ", but " + builtinTag + " is available.",
+                    "Run 'isx update-base --latest' to update.");
         }
     }
 

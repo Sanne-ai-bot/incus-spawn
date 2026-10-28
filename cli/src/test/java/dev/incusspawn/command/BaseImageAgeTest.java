@@ -5,7 +5,9 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Metadata;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
+import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -167,6 +169,22 @@ class BaseImageAgeTest {
         for (var bad : List.of("", "-", "fedora--20261001", "fedora-44-2026100", "fedora-99999999999999999999-20261010")) {
             assertNull(BaseImageAge.compareTags(bad, "fedora-44-20261021"), bad);
         }
+    }
+
+    /** A pin behind the built-in release is a warning with its remedy, never a step marked "Warning:" (#1703). */
+    @Test
+    @ExtendWith(IsolatedHome.class)
+    void aPinBehindTheBuiltInReleaseIsAWarning() {
+        var pinned = new ImageDef();
+        pinned.setName("tpl-minimal");
+        pinned.setImageTag("fedora-9-20250101");
+        pinned.setPinned(true);
+
+        var said = RecordingOutput.during(() -> BuildCommand.checkPinnedWarning(pinned));
+
+        var builtin = ImageDef.loadBuiltinByName("tpl-minimal").getImageTag();
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN, "Base image is pinned to fedora-9-20250101, but " + builtin + " is available.",
+                "Run 'isx update-base --latest' to update.")), said.events());
     }
 
     @Test
