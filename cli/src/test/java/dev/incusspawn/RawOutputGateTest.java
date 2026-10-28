@@ -121,6 +121,8 @@ class RawOutputGateTest {
     private static final Map<String, String> MAY_USE_TERMINAL_STREAMS = Map.of(
             "common/src/main/java/dev/incusspawn/incus/IncusClient.java", "hands the terminal to an interactive guest command",
             "common/src/main/java/dev/incusspawn/incus/IncusApi.java", "writes an interactive shell's raw bytes",
+            "common/src/main/java/dev/incusspawn/incus/InteractiveShell.java", "draws the shell's status bar on the terminal it hands the guest",
+            "common/src/main/java/dev/incusspawn/util/TerminalOutput.java", "writes a window title only where TerminalStreams.terminal() finds one",
             "common/src/main/java/dev/incusspawn/util/TerminalProgress.java", "the live renderer, which draws on the terminal whole",
             "common/src/main/java/dev/incusspawn/git/HostRepoRefresh.java", "asks on the console, where Prompts cannot reach",
             "cli/src/main/java/dev/incusspawn/command/Prompts.java", "its terminal() asks only when stdin and stdout are a terminal",
