@@ -43,7 +43,7 @@ class AskCommandTest {
      */
     @Test
     void theQuestionIsAStepAndTheAnswerItsResult() {
-        var recorded = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks -> {
+        var recorded = RecordingOutput.during(() -> AskCommand.answer("Asking Claude", chunks -> {
             chunks.accept("Use isx ");
             chunks.accept("branch.\nDone.");
             return null;
@@ -52,7 +52,7 @@ class AskCommandTest {
                         RecordingOutput.Kind.NOTE),
                 recorded.events().stream().map(RecordingOutput.Event::kind)
                         .filter(k -> k != RecordingOutput.Kind.RESULT).toList());
-        assertEquals("Asking Claude...", recorded.events().getFirst().msg());
+        assertEquals("Asking Claude", recorded.events().getFirst().msg());
         assertEquals(List.of("Use isx branch.", "Done."), recorded.resultLines());
     }
 
@@ -62,7 +62,7 @@ class AskCommandTest {
      */
     @Test
     void whyAnAnswerEndedEarlyIsAWarningBesideIt() {
-        var recorded = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks -> {
+        var recorded = RecordingOutput.during(() -> AskCommand.answer("Asking Claude", chunks -> {
             chunks.accept("Run isx");
             return "The answer was cut off at its length limit.";
         }));
@@ -71,7 +71,7 @@ class AskCommandTest {
                         "The answer was cut off at its length limit.")),
                 recorded.events(RecordingOutput.Kind.WARN));
 
-        var refused = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks ->
+        var refused = RecordingOutput.during(() -> AskCommand.answer("Asking Claude", chunks ->
                 "The model declined to answer this question."));
         assertEquals(List.of(), refused.resultLines());
         assertEquals(List.of(RecordingOutput.Kind.STEP_START, RecordingOutput.Kind.STEP_DONE, RecordingOutput.Kind.WARN),
@@ -84,7 +84,7 @@ class AskCommandTest {
      */
     @Test
     void anAnswerIsFollowedByTheDisclaimerOnStderr() {
-        var recorded = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks -> {
+        var recorded = RecordingOutput.during(() -> AskCommand.answer("Asking Claude", chunks -> {
             chunks.accept("Use isx branch.");
             return null;
         }));
@@ -92,12 +92,12 @@ class AskCommandTest {
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.NOTE, AiHelpClient.DISCLAIMER)),
                 recorded.events(RecordingOutput.Kind.NOTE));
 
-        var refused = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks ->
+        var refused = RecordingOutput.during(() -> AskCommand.answer("Asking Claude", chunks ->
                 "The model declined to answer this question."));
         assertEquals(List.of(), refused.events(RecordingOutput.Kind.NOTE));
 
         // Why an answer was cut off comes first, then the disclaimer on what did come
-        var cut = RecordingOutput.during(() -> AskCommand.answer("Asking Claude...", chunks -> {
+        var cut = RecordingOutput.during(() -> AskCommand.answer("Asking Claude", chunks -> {
             chunks.accept("Run isx");
             return "The answer was cut off at its length limit.";
         }));
@@ -111,7 +111,7 @@ class AskCommandTest {
     void aStreamThatFailsAtOnceBreaksTheStep() {
         var recorded = new RecordingOutput();
         try (var bound = BuildOutput.bind(recorded)) {
-            assertThrows(java.io.IOException.class, () -> AskCommand.answer("Asking Claude...", chunks -> {
+            assertThrows(java.io.IOException.class, () -> AskCommand.answer("Asking Claude", chunks -> {
                 throw new java.io.IOException("HTTP 529");
             }));
         }
@@ -124,7 +124,7 @@ class AskCommandTest {
     void aStreamThatFailsPartWayEndsWhatCameOnItsOwnLine() {
         var recorded = new RecordingOutput();
         try (var bound = BuildOutput.bind(recorded)) {
-            assertThrows(java.io.IOException.class, () -> AskCommand.answer("Asking Claude...", chunks -> {
+            assertThrows(java.io.IOException.class, () -> AskCommand.answer("Asking Claude", chunks -> {
                 chunks.accept("");
                 chunks.accept("Use isx bra");
                 throw new java.io.IOException("timed out");
@@ -146,7 +146,7 @@ class AskCommandTest {
     void onAnAnsiTerminalAPartialLineIsKeptAfterAFailure() {
         var recorded = new RecordingOutput();
         try (var ansi = ForcedAnsi.on(); var bound = BuildOutput.bind(recorded)) {
-            assertThrows(java.io.IOException.class, () -> AskCommand.answer("Asking Claude...", chunks -> {
+            assertThrows(java.io.IOException.class, () -> AskCommand.answer("Asking Claude", chunks -> {
                 chunks.accept("First line.\nSecond li");
                 throw new java.io.IOException("timed out");
             }));

@@ -100,7 +100,7 @@ public class UpdateAllCommand extends BaseCommand {
         }
         // A re-run cannot retry a stop: each template left running was warned about on its own
         if (!failedSteps.isEmpty() || leftRunning) return 1;
-        BuildOutput.success("All templates updated.");
+        BuildOutput.success("All templates updated");
         if (primesSkipped) {
             BuildOutput.note("Use --prime to re-run prime commands.");
         }
@@ -270,7 +270,7 @@ public class UpdateAllCommand extends BaseCommand {
         for (var repo : repos) {
             if (!repo.hasPrime()) continue;
             if (prime) {
-                BuildOutput.stepStart("Priming " + repo.getPath() + "...");
+                BuildOutput.stepStart("Priming " + repo.getPath());
                 var run = RepoCloner.runPrime(new Container(incus, name), repo,
                         () -> BuildOutput.stepProgress("binding new runtimes to the isx CA, priming again"));
                 if (run.success()) {

@@ -82,6 +82,29 @@ class InitFirewallOutputTest {
                 .noneMatch(e -> e.msg().startsWith("Firewall configured")), recorded.events()::toString);
     }
 
+    /**
+     * Work a step did is a live step (#1791): it ends in a ✓ once its commands succeeded, and in a
+     * ✗ after the warning naming the one that failed, never as a "Doing X..." line left dangling.
+     */
+    @Test
+    void eachFirewallChangeIsALiveStepThatEndsBeforeItsWarning() {
+        var masquerade = "Enabling masquerading (NAT) for container internet access";
+        var init = new FakeInit();
+        var done = RecordingOutput.during(() -> init.host().configureFirewalld()).events();
+        int at = done.indexOf(new RecordingOutput.Event(RecordingOutput.Kind.STEP_START, masquerade));
+        assertTrue(at >= 0, done::toString);
+        assertEquals(RecordingOutput.Kind.STEP_DONE, done.get(at + 1).kind(), done::toString);
+
+        init.failing = "--add-masquerade";
+        var failed = RecordingOutput.during(() -> init.host().configureFirewalld()).events();
+        int start = failed.indexOf(new RecordingOutput.Event(RecordingOutput.Kind.STEP_START, masquerade));
+        assertTrue(start >= 0, failed::toString);
+        assertEquals(RecordingOutput.Kind.WARN, failed.get(start + 1).kind(), failed::toString);
+        assertTrue(failed.get(start + 1).msg().contains("--add-masquerade"), failed::toString);
+        assertEquals(RecordingOutput.Kind.ABANDON_STEP, failed.get(start + 2).kind(), failed::toString);
+        assertTrue(failed.stream().noneMatch(e -> e.msg() != null && e.msg().endsWith("...")), failed::toString);
+    }
+
     @Test
     void firewalldReportsSuccessWhenEveryCommandSucceeds() throws Exception {
         var output = firewalld("");

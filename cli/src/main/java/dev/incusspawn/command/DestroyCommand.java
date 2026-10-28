@@ -111,7 +111,7 @@ public class DestroyCommand extends BaseCommand {
         // One read: gone, not the tool's, or the tool's. One that cannot be read fails, never "gone"
         var instance = incus.instanceMetadataOrThrow(target);
         if (instance == null) {
-            BuildOutput.success(shown + " is already gone.");
+            BuildOutput.success(shown + " is already gone");
             return CommandResult.SUCCESS;
         }
         if (!ownedByTheTool(instance)) return notTheTools(shown);
@@ -136,16 +136,16 @@ public class DestroyCommand extends BaseCommand {
                 if (incus.instanceMetadataOrThrow(target) != null) throw e;
                 InstanceDestroyer.refreshProxy();
                 if (judged[0]) BuildOutput.warn("Destroyed " + shown + ", but: " + failure(e));
-                BuildOutput.success(shown + (judged[0] ? " is destroyed." : " is already gone."));
+                BuildOutput.success(shown + (judged[0] ? " is destroyed" : " is already gone"));
                 return CommandResult.SUCCESS;
             }
             if (deleted) {
                 InstanceDestroyer.refreshProxy();
-                BuildOutput.success("Destroyed " + shown + ".");
+                BuildOutput.success("Destroyed " + shown);
                 return CommandResult.SUCCESS;
             }
             if (!judged[0]) {
-                BuildOutput.success(shown + " is already gone.");
+                BuildOutput.success(shown + " is already gone");
                 return CommandResult.SUCCESS;
             }
             return notTheTools(shown);
@@ -197,12 +197,12 @@ public class DestroyCommand extends BaseCommand {
                 BuildOutput.note("until you rebuild it. Existing branches are not affected.");
             }
 
-            BuildOutput.stepStart("Removing instance...");
+            BuildOutput.stepStart("Removing instance");
             InstanceDestroyer.deleteHeld(incus, target);
             InstanceDestroyer.refreshProxy();
             BuildOutput.stepDone();
 
-            BuildOutput.success("Destroyed " + target + ".");
+            BuildOutput.success("Destroyed " + target);
         }
         return CommandResult.SUCCESS;
     }
@@ -244,11 +244,12 @@ public class DestroyCommand extends BaseCommand {
      * left behind, locked or failed, fails the command.
      */
     static CommandResult summarize(DestroyResult result, String kind) {
-        var msg = new StringBuilder("Destroyed " + result.destroyed + " " + kind + "(s).");
+        var destroyed = "Destroyed " + result.destroyed + " " + kind + "(s)";
         if (result.skipped == 0 && result.failed == 0) {
-            BuildOutput.success(msg.toString());
+            BuildOutput.success(destroyed);
             return CommandResult.SUCCESS;
         }
+        var msg = new StringBuilder(destroyed).append('.');
         if (result.skipped > 0) msg.append(" ").append(result.skipped).append(" skipped (locked).");
         if (result.failed > 0) msg.append(" ").append(result.failed).append(" failed.");
         BuildOutput.error(msg.toString());
@@ -331,13 +332,13 @@ public class DestroyCommand extends BaseCommand {
                 continue;
             }
             if (lockOpt.isEmpty()) {
-                BuildOutput.stepStart("Destroying " + n + "...");
+                BuildOutput.stepStart("Destroying " + n);
                 BuildOutput.stepFail("locked by another process");
                 skipped++;
                 continue;
             }
             try (var lock = lockOpt.get()) {
-                BuildOutput.stepStart("Destroying " + n + "...");
+                BuildOutput.stepStart("Destroying " + n);
                 try {
                     InstanceDestroyer.deleteHeld(incus, n);
                     BuildOutput.stepDone();

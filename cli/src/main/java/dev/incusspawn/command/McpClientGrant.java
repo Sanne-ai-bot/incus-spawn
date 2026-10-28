@@ -28,7 +28,7 @@ public final class McpClientGrant {
      * user is here to see it, and reports what it found through {@link BuildOutput}.
      */
     public static void check(IncusClient incus, String name) {
-        BuildOutput.stepStart("Checking isx mcp from " + name + "...");
+        BuildOutput.stepStart("Checking isx mcp from " + name);
         var reached = McpClientCheck.run(incus, name);
         if (reached.ok()) BuildOutput.stepDone("isx " + OutputFormat.oneLine(reached.version()) + ", " + reached.tools() + " tools");
         else {

@@ -73,7 +73,7 @@ final class SkillInstaller {
             container.exec("mkdir", "-p", SKILLS_DIR);
 
             for (var resolved : resolvedNames) {
-                BuildOutput.stepStart(resolved + "...");
+                BuildOutput.stepStart(resolved);
                 try {
                     var skills = fetchSkills(resolved, http, cache);
                     for (var skill : skills) {

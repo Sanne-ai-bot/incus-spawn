@@ -213,10 +213,9 @@ class CredentialSetup {
 
             if (region.isBlank() || projectId.isBlank()) {
                 BuildOutput.step("CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID must both be set for verification.");
-                BuildOutput.step("Continuing with manual setup...");
+                BuildOutput.step("Continuing with manual setup");
             } else {
-                BuildOutput.step("Verifying Vertex AI configuration...");
-                var result = verifyVertexConfig(region, projectId);
+                var result = verifying("Verifying Vertex AI configuration", () -> verifyVertexConfig(region, projectId));
                 if (result.verified()) {
                     BuildOutput.ok(result.message());
                     if (askYesNo(prompts, envAccountPrompt(config, target, "Use this configuration?"), true)) {
@@ -224,9 +223,8 @@ class CredentialSetup {
                         BuildOutput.step("Claude auth configuration saved.");
                         return;
                     }
-                    BuildOutput.step("Skipping environment config. Continuing with manual setup...");
+                    BuildOutput.step("Skipping environment config, continuing with manual setup");
                 } else {
-                    BuildOutput.step(result.message());
                     if (askYesNo(prompts, "Save anyway? Press Enter to configure manually.", false)) {
                         saveVertexConfig(config, target, region, projectId);
                         BuildOutput.step("Claude auth configuration saved (unverified).");
@@ -236,23 +234,20 @@ class CredentialSetup {
             }
         } else if (!envOauthToken.isBlank()) {
             BuildOutput.step("Detected CLAUDE_CODE_OAUTH_TOKEN from environment.");
-            BuildOutput.step("Verifying OAuth token...");
-            var oauthResult = verifyOauthToken(envOauthToken);
+            var oauthResult = verifying("Verifying OAuth token", () -> verifyOauthToken(envOauthToken));
             if (oauthResult.verified()) {
                 BuildOutput.ok(oauthResult.message());
                 if (askYesNo(prompts, envAccountPrompt(config, target, "Use this token?"), true)) {
                     saveOauthConfig(config, prompts, target, envOauthToken, true);
                     return;
                 }
-                BuildOutput.step("Skipping environment token. Continuing with manual setup...");
+                BuildOutput.step("Skipping environment token, continuing with manual setup");
             } else {
-                BuildOutput.step(oauthResult.message());
-                BuildOutput.step("Continuing with manual setup...");
+                BuildOutput.step("Continuing with manual setup");
             }
         } else if (!envApiKey.isBlank()) {
             BuildOutput.step("Detected ANTHROPIC_API_KEY from environment.");
-            BuildOutput.step("Verifying API key...");
-            var result = verifyAnthropicApiKey(envApiKey);
+            var result = verifying("Verifying API key", () -> verifyAnthropicApiKey(envApiKey));
             if (result.verified()) {
                 BuildOutput.ok(result.message());
                 if (askYesNo(prompts, envAccountPrompt(config, target, "Use this key?"), true)) {
@@ -260,10 +255,9 @@ class CredentialSetup {
                     BuildOutput.step("Claude auth configuration saved.");
                     return;
                 }
-                BuildOutput.step("Skipping environment key. Continuing with manual setup...");
+                BuildOutput.step("Skipping environment key, continuing with manual setup");
             } else {
-                BuildOutput.step(result.message());
-                BuildOutput.step("Continuing with manual setup...");
+                BuildOutput.step("Continuing with manual setup");
             }
         }
 
@@ -295,15 +289,13 @@ class CredentialSetup {
                     return;
                 }
 
-                BuildOutput.step("Verifying Vertex AI configuration...");
-                var result = verifyVertexConfig(region, projectId);
+                var result = verifying("Verifying Vertex AI configuration", () -> verifyVertexConfig(region, projectId));
                 if (result.verified()) {
                     BuildOutput.ok(result.message());
                     saveVertexConfig(config, target, region, projectId);
                     BuildOutput.step("Claude auth configuration saved.");
                     break;
                 } else {
-                    BuildOutput.step(result.message());
                     switch (askVerificationFailureAction(prompts)) {
                         case SKIP -> {
                             BuildOutput.step(CLAUDE_SKIPPED);
@@ -336,15 +328,13 @@ class CredentialSetup {
             var key = askSecret(prompts, "ANTHROPIC_API_KEY (or press Enter to skip): ");
             if (key.isBlank()) return false;
 
-            BuildOutput.step("Verifying API key...");
-            var result = verifyAnthropicApiKey(key);
+            var result = verifying("Verifying API key", () -> verifyAnthropicApiKey(key));
             if (result.verified()) {
                 BuildOutput.ok(result.message());
                 saveDirectConfig(config, target, key);
                 BuildOutput.step("Claude auth configuration saved.");
                 return true;
             }
-            BuildOutput.step(result.message());
             switch (askVerificationFailureAction(prompts)) {
                 case SKIP -> {
                     return false;
@@ -504,6 +494,27 @@ class CredentialSetup {
     }
 
     record AuthResult(boolean verified, String message) {}
+
+    /**
+     * Verify under a live step: a ✓ when it verified, for the caller to report its message, or a
+     * ✗ with the message under it as a step, which keeps the hyperlink a message can hold.
+     */
+    private static AuthResult verifying(String label, java.util.function.Supplier<AuthResult> verify) {
+        BuildOutput.stepStart(label);
+        AuthResult result;
+        try {
+            result = verify.get();
+        } catch (RuntimeException e) {
+            BuildOutput.abandonStep();
+            throw e;
+        }
+        if (result.verified()) BuildOutput.stepDone();
+        else {
+            BuildOutput.stepBreak();
+            BuildOutput.step(result.message());
+        }
+        return result;
+    }
 
     enum VerificationFailureAction { RETRY, SKIP, SAVE_UNVERIFIED }
 
@@ -678,7 +689,7 @@ class CredentialSetup {
                                  boolean verified) {
         saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofOauth(oauthToken));
         if (verified) {
-            BuildOutput.ok("Claude auth configuration saved.");
+            BuildOutput.ok("Claude auth configuration saved");
         } else {
             BuildOutput.step("Claude auth configuration saved (unverified).");
         }
@@ -791,14 +802,12 @@ class CredentialSetup {
                 break;
             }
 
-            BuildOutput.step("Verifying OAuth token...");
-            var result = verifyOauthToken(token);
+            var result = verifying("Verifying OAuth token", () -> verifyOauthToken(token));
             if (result.verified()) {
                 BuildOutput.ok(result.message());
                 saveOauthConfig(config, prompts, target, token, true);
                 break;
             } else {
-                BuildOutput.step(result.message());
                 switch (askVerificationFailureAction(prompts)) {
                     case SKIP -> {
                         BuildOutput.step(CLAUDE_SKIPPED);
@@ -983,7 +992,7 @@ class CredentialSetup {
                 dev.incusspawn.config.AccountResolver.shapeOf(config, GhSetup.NAMESPACE), target, values);
         config.save();
         if (email != null) {
-            BuildOutput.ok("GitHub configuration saved.");
+            BuildOutput.ok("GitHub configuration saved");
         } else {
             // Not a clean success: the warning above says commits will have no author email
             BuildOutput.step("GitHub configuration saved (without email).");
@@ -1403,6 +1412,22 @@ class CredentialSetup {
                 public void warn(String msg, String... details) {
                     BuildOutput.warn(instance + ": " + msg, details);
                 }
+
+                // The re-derive is a live step, which the defaults would drop
+                @Override
+                public void stepStart(String msg) {
+                    BuildOutput.stepStart(instance + ": " + msg);
+                }
+
+                @Override
+                public void stepDone(String detail) {
+                    BuildOutput.stepDone(detail);
+                }
+
+                @Override
+                public void abandonStep() {
+                    BuildOutput.abandonStep();
+                }
             });
         }
     }
@@ -1559,7 +1584,7 @@ class CredentialSetup {
 
     /** @param prompts picks between several verified emails, when the account has them */
     GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts) {
-        BuildOutput.step("Testing GitHub token...");
+        BuildOutput.stepStart("Testing GitHub token");
         try {
             var client = getHttpClient();
             var request = HttpRequest.newBuilder()
@@ -1569,9 +1594,10 @@ class CredentialSetup {
                     .GET().build();
             var response = client.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
-                BuildOutput.step("Authentication failed (HTTP " + response.statusCode() + ").");
+                BuildOutput.stepFail("Authentication failed (HTTP " + response.statusCode() + ").");
                 return null;
             }
+            BuildOutput.stepDone();
 
             var json = Jjq.parseForeign(response.body(), "GitHub's user");
             var login = json.pathText("login", null);
@@ -1592,6 +1618,7 @@ class CredentialSetup {
 
             return new GitHubVerifyResult(login, email);
         } catch (Exception e) {
+            BuildOutput.abandonStep();
             BuildOutput.warn("Could not test token: " + BaseCommand.failure(e));
             return null;
         }

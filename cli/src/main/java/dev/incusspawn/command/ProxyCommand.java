@@ -542,7 +542,7 @@ public class ProxyCommand extends BaseCommand {
                     info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
                 }
                 if (ProxyService.reinstallIfChanged(incus, info)) {
-                    BuildOutput.success("Proxy service restarted with updated binary.");
+                    BuildOutput.success("Proxy service restarted with updated binary");
                 } else {
                     BuildOutput.step("Proxy service is already installed and running.");
                     // Drift it declined to restart for would otherwise go unexplained here.

@@ -501,7 +501,7 @@ public class InitCommand extends BaseCommand {
             } catch (IncusException e) {
                 if (attempt == BRIDGE_DNS_ATTEMPTS) throw e;
                 // Progress, not a problem yet: the next write usually takes
-                BuildOutput.note(e.getMessage() + "; trying again...");
+                BuildOutput.note(e.getMessage() + "; trying again");
                 try {
                     pauseBeforeBridgeDnsRetry();
                 } catch (InterruptedException ie) {
@@ -531,7 +531,7 @@ public class InitCommand extends BaseCommand {
             BuildOutput.step("MITM CA certificate already exists.");
         } else {
             CertificateAuthority.loadOrCreate();
-            BuildOutput.ok("CA certificate generated.");
+            BuildOutput.ok("CA certificate generated");
         }
     }
 
@@ -682,7 +682,7 @@ public class InitCommand extends BaseCommand {
                 SshKeyManager.ensureKeyPairExists();
             }
             if (SshKeyManager.ensureSshConfigInclude()) {
-                BuildOutput.ok("SSH configuration ready.");
+                BuildOutput.ok("SSH configuration ready");
             } else {
                 BuildOutput.warn("SSH key generated but ~/.ssh/config could not be updated.",
                         "Add manually: Include ~/.config/incus-spawn/ssh/config");
@@ -830,7 +830,7 @@ public class InitCommand extends BaseCommand {
                 BuildOutput.step("Could not find the installed isx binary; register it yourself:");
                 BuildOutput.stepNote("claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- <path to isx> mcp");
             } else if (registerClaudeMcp(isx)) {
-                BuildOutput.ok("Registered with Claude Code as '" + McpClientRegistration.SERVER_NAME + "' (all projects).");
+                BuildOutput.ok("Registered with Claude Code as '" + McpClientRegistration.SERVER_NAME + "' (all projects)");
             } else {
                 BuildOutput.step("Registering failed; register it yourself:");
                 BuildOutput.stepNote("claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- " + isx + " mcp");
@@ -860,7 +860,7 @@ public class InitCommand extends BaseCommand {
         } else {
             mcp.setTemplates(updated);
             mcp.save();
-            BuildOutput.ok("Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)) + ".");
+            BuildOutput.ok("Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)));
         }
         BuildOutput.stepNote("Keep agents to the MCP tools with Claude Code permissions: see https://isx.run/docs/mcp (docs/MCP.md).");
     }
@@ -996,14 +996,15 @@ public class InitCommand extends BaseCommand {
             return;
         }
 
-        BuildOutput.step("Forking " + TEMPLATES_UPSTREAM + "...");
+        BuildOutput.stepStart("Forking " + TEMPLATES_UPSTREAM);
         var forkResult = runHostCapturingExit("gh", "repo", "fork", TEMPLATES_UPSTREAM, "--clone=false");
         if (forkResult != 0) {
+            BuildOutput.stepBreak();
             // The URL as text: a warning's details are made safe, which a hyperlink's escapes are not
             BuildOutput.warn("Fork failed.", "You can fork it manually at: " + TEMPLATES_URL + "/fork");
             return;
         }
-        BuildOutput.ok("Forked to " + login + "/" + TEMPLATES_REPO);
+        BuildOutput.stepDone(login + "/" + TEMPLATES_REPO);
 
         var defaultPath = defaultClonePath();
         var clonePath = askClonePath(prompts, defaultPath);
@@ -1051,13 +1052,14 @@ public class InitCommand extends BaseCommand {
             }
         }
 
-        BuildOutput.step("Cloning...");
+        BuildOutput.stepStart("Cloning " + nwo);
         var result = runHostCapturingExit("gh", "repo", "clone", nwo, target.toString());
         if (result != 0) {
+            BuildOutput.stepBreak();
             BuildOutput.warn("Clone failed.", "You can clone it manually and add the path below.");
             return;
         }
-        BuildOutput.ok("Cloned to " + target);
+        BuildOutput.stepDone(target.toString());
         addToSearchPaths(target.toString());
     }
 
@@ -1195,6 +1197,8 @@ public class InitCommand extends BaseCommand {
     }
 
     static int runHost(String... command) {
+        // The command writes to the terminal itself, and sudo may ask for a password there
+        BuildOutput.releaseTerminal();
         try {
             var pb = new ProcessBuilder(command);
             pb.inheritIO();
@@ -1235,6 +1239,8 @@ public class InitCommand extends BaseCommand {
      * reports the outcome.
      */
     int runHostQuiet(String... command) {
+        // sudo may ask for a password on the tty, which a live step line would be drawn over
+        if (command.length > 0 && command[0].equals("sudo")) BuildOutput.releaseTerminal();
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);

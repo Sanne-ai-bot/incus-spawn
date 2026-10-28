@@ -67,7 +67,7 @@ public class ShellCommand extends BaseCommand {
             if (hint != null) BuildOutput.step(hint);
         }
 
-        BuildOutput.step("Connecting to " + name + "...");
+        BuildOutput.step("Connecting to " + name);
         var menu = ShellMenu.NONE;
         if (ShellMenu.enabled()) {
             menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),

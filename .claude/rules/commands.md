@@ -158,6 +158,8 @@ Each `Step` shows exactly one header, so a new step goes into a list, never a ba
 When a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.
 A step that runs several commands runs each through `ran()`, which names the one that failed, and combines the results (`ok &= ran(...)`, never short-circuiting, so the remaining rules are still applied) before choosing between its success line and a warning (#1102: the firewall and PREROUTING steps).
 *Host commands are captured*: `runHostQuiet` shows a command's output only when it fails (as `Container.runQuiet()` does in build), so firewall-cmd's `NOT_ENABLED`/`ALREADY_ENABLED` chatter on success never reaches the step.
+*Each host change is a live step* (`BuildOutput.liveStep`, #1791): a ✓ once its commands succeeded, and a ✗ when one failed, below the output and warning that command's failure printed.
+`runHost` (inherited output) and a `sudo` through `runHostQuiet` release the terminal first, since a password prompt on the tty bypasses the stream guard.
 `InitStepOutputTest` pins all three; `InitFirewallOutputTest` pins the firewall steps.
 
 **When to bump `INIT_VERSION`**: increment it when adding a new infrastructure step to init that existing installations need (new dependency, firewall rule, systemd service, config field).

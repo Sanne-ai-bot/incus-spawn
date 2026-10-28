@@ -49,7 +49,7 @@ public class ProjectCommand extends BaseCommand {
      */
     static boolean preBuild(IncusClient incus, String name, String preBuild) {
         if (preBuild == null || preBuild.isBlank()) return true;
-        BuildOutput.stepStart("Running pre-build: " + preBuild + "...");
+        BuildOutput.stepStart("Running pre-build: " + preBuild);
         return GuestUpdate.finish(incus.execInContainer(name, "agentuser", preBuild), "pre-build");
     }
 
@@ -122,7 +122,7 @@ public class ProjectCommand extends BaseCommand {
                 incus.deleteIfExists(buildName);
                 try {
                     var machineType = incus.machineType(parent);
-                    BuildOutput.stepStart("Cloning from " + parent + "...");
+                    BuildOutput.stepStart("Cloning from " + parent);
                     // Untrusted from the copy on, and for good: what a project's setup ran is never
                     // its parent template, done or not (#936)
                     incus.copy(parent, buildName, PROJECT_BUILD);
@@ -141,7 +141,7 @@ public class ProjectCommand extends BaseCommand {
                 }
             }
             if (!built) {
-                BuildOutput.stepStart("Deleting the incomplete template...");
+                BuildOutput.stepStart("Deleting the incomplete template");
                 incus.delete(buildName, true);
                 BuildOutput.stepDone();
                 BuildOutput.error("project template " + imageName + " was not "
@@ -151,7 +151,7 @@ public class ProjectCommand extends BaseCommand {
             }
             // Not deleted if this fails: by then it may be the only build there is
             TemplateLock.replace(incus, buildName, imageName, BuildOutput.bound());
-            BuildOutput.success("Project template " + imageName + " created.");
+            BuildOutput.success("Project template " + imageName + " created");
             return 0;
         }
 
@@ -167,7 +167,7 @@ public class ProjectCommand extends BaseCommand {
 
                 // Clone repos
                 for (var repo : projectConfig.getRepos()) {
-                    BuildOutput.stepStart("Cloning " + repo + "...");
+                    BuildOutput.stepStart("Cloning " + repo);
                     var cloned = incus.execInContainer(buildName, "agentuser", "git clone " + shellQuote(repo));
                     if (!GuestUpdate.finish(cloned, "git clone " + repo)) return false;
                 }
@@ -260,7 +260,7 @@ public class ProjectCommand extends BaseCommand {
                 BuildOutput.warn("Failed: " + String.join(", ", failedSteps) + ". Re-run 'isx project update " + name + "' to retry.");
                 return 1;
             }
-            BuildOutput.success("Project template " + name + " updated.");
+            BuildOutput.success("Project template " + name + " updated");
             return 0;
         }
 

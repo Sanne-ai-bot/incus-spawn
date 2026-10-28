@@ -521,7 +521,7 @@ public final class ProxyHealthCheck {
     public static boolean tryAutoRestart(IncusClient incus, Output out) {
         if (!ProxyService.isInstalled()) return false;
         var addr = healthAddress(incus);
-        out.note("Proxy is not reachable, restarting service...");
+        out.note("Proxy is not reachable, restarting service");
         // A restart refused until init runs has said why, and has nothing to wait for.
         if (!ProxyService.restartIfUnhealthy(addr, out) && !Environment.hasBeenInitialized()) return false;
         for (int i = 0; i < 30; i++) {
@@ -555,7 +555,7 @@ public final class ProxyHealthCheck {
         var result = checkHealth(addr);
         if (result.healthy() && result.dnsConfigured()) return true;
         if (!result.healthy()) return false;
-        out.note("Waiting for proxy DNS configuration...");
+        out.note("Waiting for proxy DNS configuration");
         for (int i = 0; i < 120; i++) {
             try { Thread.sleep(500); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

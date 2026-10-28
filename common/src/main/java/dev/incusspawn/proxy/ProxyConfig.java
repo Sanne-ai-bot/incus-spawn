@@ -310,22 +310,24 @@ public final class ProxyConfig {
                 return clearFirewalldRedirectPersistent();
             }
 
-            BuildOutput.step("Removing PREROUTING redirect rule (" + ip + ":443 -> " + DEFAULT_MITM_PORT + ")...");
+            BuildOutput.stepStart("Removing PREROUTING redirect rule (" + ip + ":443 -> " + DEFAULT_MITM_PORT + ")");
             if (!ProxyService.runQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
                     "-i", "incusbr0", "-d", ip, "-p", "tcp", "--dport",
                     String.valueOf(CONTAINER_FACING_PORT),
                     "-j", "REDIRECT", "--to-port",
                     String.valueOf(DEFAULT_MITM_PORT))) {
-                BuildOutput.warn("failed to remove firewalld redirect rule.");
+                BuildOutput.stepFail("failed to remove firewalld redirect rule.");
                 return false;
             }
             if (!ProxyService.runQuiet("sudo", "firewall-cmd", "--reload")) {
-                BuildOutput.warn("failed to reload firewalld.");
+                BuildOutput.stepFail("failed to reload firewalld.");
                 return false;
             }
+            BuildOutput.stepDone();
             return true;
         } catch (Exception e) {
+            BuildOutput.abandonStep();
             BuildOutput.warn("could not remove firewalld redirect rule: " + e.getMessage());
             return false;
         }
@@ -358,7 +360,7 @@ public final class ProxyConfig {
             var lines = content.lines().toList();
             if (lines.stream().noneMatch(l -> FirewalldCheck.isRedirectRule(l, DEFAULT_MITM_PORT))) return true;
 
-            BuildOutput.step("Removing persistent PREROUTING redirect rule from " + FIREWALLD_DIRECT_XML + "...");
+            BuildOutput.stepStart("Removing persistent PREROUTING redirect rule from " + FIREWALLD_DIRECT_XML);
             var filtered = lines.stream()
                     .filter(line -> !FirewalldCheck.isRedirectRule(line, DEFAULT_MITM_PORT))
                     .collect(Collectors.joining("\n")) + "\n";
@@ -368,14 +370,16 @@ public final class ProxyConfig {
                 Files.writeString(tempFile, filtered);
                 if (!ProxyService.runQuiet("sudo", "cp", tempFile.toString(),
                         FIREWALLD_DIRECT_XML.toString())) {
-                    BuildOutput.warn("failed to write cleaned " + FIREWALLD_DIRECT_XML);
+                    BuildOutput.stepFail("failed to write cleaned " + FIREWALLD_DIRECT_XML);
                     return false;
                 }
             } finally {
                 Files.deleteIfExists(tempFile);
             }
+            BuildOutput.stepDone();
             return true;
         } catch (Exception e) {
+            BuildOutput.abandonStep();
             BuildOutput.warn("could not clean persistent firewalld redirect rule: " + e.getMessage());
             return false;
         }
@@ -389,7 +393,7 @@ public final class ProxyConfig {
             var ip = UfwCheck.extractRedirectGatewayIp(beforeRules, DEFAULT_MITM_PORT);
             if (ip == null) return true;
 
-            BuildOutput.step("Removing PREROUTING redirect from UFW before.rules...");
+            BuildOutput.stepStart("Removing PREROUTING redirect from UFW before.rules");
             var subnet = UfwCheck.deriveSubnetFromNatBlock(beforeRules);
             String updated;
             if (subnet != null) {
@@ -402,18 +406,20 @@ public final class ProxyConfig {
             try {
                 Files.writeString(tempFile, updated);
                 if (!ProxyService.runQuiet("sudo", "cp", tempFile.toString(), UfwCheck.BEFORE_RULES.toString())) {
-                    BuildOutput.warn("failed to write cleaned UFW before.rules.");
+                    BuildOutput.stepFail("failed to write cleaned UFW before.rules.");
                     return false;
                 }
             } finally {
                 Files.deleteIfExists(tempFile);
             }
             if (!ProxyService.runQuiet("sudo", "ufw", "reload")) {
-                BuildOutput.warn("failed to reload UFW.");
+                BuildOutput.stepFail("failed to reload UFW.");
                 return false;
             }
+            BuildOutput.stepDone();
             return true;
         } catch (Exception e) {
+            BuildOutput.abandonStep();
             BuildOutput.warn("could not remove UFW redirect rule: " + e.getMessage());
             return false;
         }

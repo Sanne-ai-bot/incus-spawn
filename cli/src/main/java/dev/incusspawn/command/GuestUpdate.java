@@ -35,7 +35,7 @@ final class GuestUpdate {
      * lease may not be in place yet, and every later step needs the network (#1734).
      */
     static boolean network(IncusClient incus, String name, MachineType machineType) {
-        BuildOutput.stepStart("Waiting for network...");
+        BuildOutput.stepStart("Waiting for network");
         var failure = GuestNetwork.waitUntilOnline(incus, name, machineType);
         if (failure != null) {
             BuildOutput.stepFail(failure);
@@ -46,7 +46,7 @@ final class GuestUpdate {
     }
 
     static boolean system(IncusClient incus, String name) {
-        BuildOutput.stepStart("Running system updates...");
+        BuildOutput.stepStart("Running system updates");
         return finish(incus.shellExec(name, "dnf", "update", "-y"), "dnf update -y");
     }
 
@@ -67,7 +67,7 @@ final class GuestUpdate {
     }
 
     static boolean gitRepos(IncusClient incus, String name) {
-        BuildOutput.stepStart("Updating git repositories...");
+        BuildOutput.stepStart("Updating git repositories");
         return finish(incus.execInContainer(name, "agentuser", GIT_FETCH_SCRIPT), "git fetch");
     }
 

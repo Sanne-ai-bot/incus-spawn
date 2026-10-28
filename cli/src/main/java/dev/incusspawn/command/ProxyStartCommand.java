@@ -84,7 +84,7 @@ public class ProxyStartCommand extends BaseCommand {
             // to start" below follows the refusal. Already-healthy is answered above (#1048).
             if (!ProxyService.initComplete()) return CommandResult.FAILURE;
             if (serviceActive) {
-                BuildOutput.step("Proxy service is registered but not responding. Restarting...");
+                BuildOutput.step("Proxy service is registered but not responding.");
                 ProxyService.restart();
                 if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
                     return ProxyService.answeringIsTheService()
@@ -98,16 +98,21 @@ public class ProxyStartCommand extends BaseCommand {
                 }
                 return CommandResult.FAILURE;
             }
-            BuildOutput.step("Starting proxy via service manager...");
+            BuildOutput.stepStart("Starting proxy via service manager");
             if (ProxyService.startService()) {
                 if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
-                    if (!ProxyService.answeringIsTheService()) return CommandResult.FAILURE;
-                    BuildOutput.step("Proxy service started.");
+                    if (!ProxyService.answeringIsTheService()) {
+                        BuildOutput.stepBreak();
+                        return CommandResult.FAILURE;
+                    }
+                    BuildOutput.stepDone();
                     return CommandResult.SUCCESS;
                 }
+                BuildOutput.stepBreak();
                 BuildOutput.error("Proxy service started but is not responding.", ProxyService.notResponding());
                 return CommandResult.FAILURE;
             }
+            BuildOutput.stepBreak();
             BuildOutput.error("Proxy service failed to start.", ProxyService.CHECK_LOGS);
             return CommandResult.FAILURE;
         }

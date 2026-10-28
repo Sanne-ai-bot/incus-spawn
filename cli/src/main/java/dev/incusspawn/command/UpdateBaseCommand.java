@@ -84,7 +84,7 @@ public class UpdateBaseCommand extends BaseCommand {
                     + BaseImagePin.TEMPLATE + "; pinning again or --latest replaces it.");
         }
 
-        BuildOutput.stepStart("Fetching available releases...");
+        BuildOutput.stepStart("Fetching available releases");
         List<Release> available;
         try {
             available = releases.fetchReleases();
@@ -130,7 +130,7 @@ public class UpdateBaseCommand extends BaseCommand {
                     + OutputFormat.oneLine(stillPinned.getImageTag()) + "; remove it there to track the latest base image.");
             return CommandResult.SUCCESS;
         }
-        BuildOutput.success("Now tracking the latest base image.");
+        BuildOutput.success("Now tracking the latest base image");
         BuildOutput.note("The newest release (" + latestTag
                 + ") will be resolved and installed on the next 'isx build tpl-minimal'.");
         return CommandResult.SUCCESS;
@@ -166,7 +166,7 @@ public class UpdateBaseCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        BuildOutput.stepStart("Fetching checksums for " + selected.tag() + "...");
+        BuildOutput.stepStart("Fetching checksums for " + selected.tag());
         var checksums = releases.fetchChecksums(selected, current.getImageUrl(), current.getVmImageUrl());
         if (checksums == null) {
             BuildOutput.stepFail("No readable SHA256SUMS in release " + selected.tag() + ".");
@@ -183,7 +183,7 @@ public class UpdateBaseCommand extends BaseCommand {
         BuildOutput.stepDone();
 
         writePin(current, selected.tag(), checksums);
-        BuildOutput.success("Pinned base image to " + selected.tag() + ".");
+        BuildOutput.success("Pinned base image to " + selected.tag());
         BuildOutput.note("The new base image will be downloaded on the next 'isx build tpl-minimal'.");
         return CommandResult.SUCCESS;
     }
@@ -194,7 +194,7 @@ public class UpdateBaseCommand extends BaseCommand {
 
         var latest = available.get(0);
         if (latest.tag().equals(currentTag) && !isPinned) {
-            BuildOutput.success("Already tracking the latest version.");
+            BuildOutput.success("Already tracking the latest version");
             return CommandResult.SUCCESS;
         }
 

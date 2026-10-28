@@ -324,7 +324,7 @@ public class TemplatesCommand extends BaseCommand {
                 .collect(Collectors.joining(System.lineSeparator()))));
         result.warnings().forEach(w -> out.warn(cell(w)));
         if (!result.hasErrors() && !result.hasWarnings()) {
-            out.ok("Template is valid.");
+            out.ok("Template is valid");
         }
         return !result.hasErrors();
     }

@@ -174,7 +174,7 @@ final class InteractiveShell {
                 TerminalStreams.out().println();
                 BuildOutput.warn("Connection lost — reconnecting...");
             } else {
-                BuildOutput.note("Still reconnecting (attempt " + (attempt + 1) + " of " + MAX_RECONNECT_ATTEMPTS + ")...");
+                BuildOutput.note("Still reconnecting (attempt " + (attempt + 1) + " of " + MAX_RECONNECT_ATTEMPTS + ")");
             }
             if (!pause.sleep(Math.min(1000L << attempt, LONGEST_WAIT_MS))) return;
             attempt++;

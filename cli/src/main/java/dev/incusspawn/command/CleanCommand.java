@@ -211,7 +211,7 @@ public class CleanCommand extends BaseCommand {
         if (!infos.isEmpty()) {
             long total = infos.stream().mapToLong(i -> i.size).sum();
             int totalFiles = infos.stream().mapToInt(i -> i.files).sum();
-            BuildOutput.success("Freed " + formatSize(total) + " from " + totalFiles + " files.");
+            BuildOutput.success("Freed " + formatSize(total) + " from " + totalFiles + " files");
         }
         return true;
     }

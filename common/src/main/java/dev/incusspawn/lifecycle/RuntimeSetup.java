@@ -41,7 +41,7 @@ public final class RuntimeSetup {
      */
     public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, MachineType machineType) {
         var prefetched = prefetchRuntimeConfig(incus, name);
-        BuildOutput.stepStart(machineType == MachineType.VM ? "Starting VM..." : "Starting container...");
+        BuildOutput.stepStart(machineType == MachineType.VM ? "Starting VM" : "Starting container");
         // The bound output, like the rest of BranchFlow's: the TUI branches on the released terminal
         // and copies its warnings into its log, since the shell after it draws over them.
         InstanceLifecycle.startInstance(incus, name, BuildOutput.bound());
@@ -125,7 +125,7 @@ public final class RuntimeSetup {
         // seccomp_notify lock contention during container startup.
         var sshKeys = prefetched.hasSshKeys() ? sshKeysToInject() : List.<String>of();
         var setupScript = buildSetupScript(prefetched, prefetched.buildSourceJson(), networkMode, sshKeys, secret != null);
-        out.stepStart("Waiting for container...");
+        out.stepStart("Waiting for container");
         var env = secret != null ? InstanceSecret.guestEnv(secret, mcpCaller, placeholders) : Map.<String, String>of();
         if (!incus.pollUntilReady(name, 30, env, "sh", "-c", setupScript)) {
             out.stepBreak();

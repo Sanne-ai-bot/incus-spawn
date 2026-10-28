@@ -134,7 +134,7 @@ public class DoctorCommand extends BaseCommand {
             outputFormat.print(BuildOutput.results(), findingRecords(findings));
             return exitFor(findings);
         }
-        BuildOutput.step("Running incus-spawn doctor...");
+        BuildOutput.step("Running incus-spawn doctor");
 
         var findings = Platform.isLinux() ? runLinuxChecks() : runMacChecks();
 
@@ -157,7 +157,7 @@ public class DoctorCommand extends BaseCommand {
                 BuildOutput.results().println();
                 BuildOutput.step("Some checks reported issues with no automatic fix.");
             }
-            else BuildOutput.success("All checks passed.");
+            else BuildOutput.success("All checks passed");
             return exitFor(findings);
         }
 

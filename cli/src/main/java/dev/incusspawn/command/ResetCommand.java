@@ -215,7 +215,7 @@ public class ResetCommand extends BaseCommand {
                             + " — VM is still running, disk images cannot be safely deleted.");
                     continue;
                 }
-                BuildOutput.stepStart("Deleting " + info.path() + "...");
+                BuildOutput.stepStart("Deleting " + info.path());
                 try {
                     FileTrees.delete(info.path());
                     BuildOutput.stepDone();
@@ -236,7 +236,8 @@ public class ResetCommand extends BaseCommand {
             BuildOutput.error("Reset did not remove everything.",
                     "See the warnings above: some items may not have been fully removed.");
         } else {
-            BuildOutput.success("Reset complete — incus-spawn is back to a freshly-installed state. Run 'isx init' to set up again.");
+            BuildOutput.success("Reset complete: incus-spawn is back to a freshly installed state");
+            BuildOutput.note("Run 'isx init' to set up again.");
         }
 
         return failed ? CommandResult.valueOf(1) : CommandResult.SUCCESS;

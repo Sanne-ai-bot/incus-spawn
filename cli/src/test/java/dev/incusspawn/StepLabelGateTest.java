@@ -18,11 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * A label is bare in source, and the terminal decorates it (#1791).
  * {@code TerminalOutput} adds the ellipsis on a plain terminal and the spinner and the ✓ on an
  * ANSI one, so {@code "Launching x..."} is right for neither: the ✓ line has to undecorate it.
- * For each {@code .step(}, {@code .stepStart(}, {@code .ok(}, {@code .success(} and
- * {@code .note(} call in main source of the three modules, the call's last string literal may not
- * end in {@code ...} or {@code …}.
+ * For each {@code .step(}, {@code .stepStart(}, {@code .liveStep(}, {@code .ok(}, {@code .success(},
+ * {@code .note(} and {@code .stepFail(} call in main source of the three modules, the call's last
+ * string literal may not end in {@code ...} or {@code …}; for {@code liveStep}, whose work follows
+ * its label, the last literal of its first argument.
  * A live step's, an {@code ok}'s and a {@code success}'s may not end in a period either: they are
- * labels, while a step or a note can be a sentence of advice.
+ * labels, while a step, a note or a failure can be a sentence of advice.
  *
  * <p>The code that predates the gate is held by {@value #BASELINE}: per file, how many such
  * labels it still has. A file not listed may have none, a listed one may not grow, and a listed
@@ -32,9 +33,9 @@ class StepLabelGateTest {
 
     private static final String BASELINE = "step-label-baseline.txt";
 
-    private static final Pattern CALL = Pattern.compile("\\.\\s*(step|stepStart|ok|success|note)\\s*\\(");
+    private static final Pattern CALL = Pattern.compile("\\.\\s*(step|stepStart|liveStep|ok|success|note|stepFail)\\s*\\(");
     /** The calls whose label may not end in a period either. */
-    private static final Set<String> NO_PERIOD = Set.of("stepStart", "ok", "success");
+    private static final Set<String> NO_PERIOD = Set.of("stepStart", "liveStep", "ok", "success");
 
     @Test
     void labelsAreBare() throws IOException {
@@ -84,10 +85,15 @@ class StepLabelGateTest {
                                 "two lines" +
                                 "...");
                         BuildOutput.ok("x" + y.replace('.', '_'));
+                        BuildOutput.liveStep("Installing " + name + "...", () -> runHost("sudo", "dnf") == 0);
+                        BuildOutput.liveStep("Adding rules.", () -> ran("a"));
+                        BuildOutput.liveStep("Enabling it", () -> ran("x", "y..."));
+                        BuildOutput.stepFail("timed out...");
+                        BuildOutput.stepFail("Run: sudo loginctl enable-linger.");
                     }
                 }
                 """;
-        assertEquals(List.of(3, 4, 5, 6, 12, 13), find(source));
+        assertEquals(List.of(3, 4, 5, 6, 12, 13, 17, 18, 20), find(source));
     }
 
     /** One-based lines of each call whose label is decorated. */
@@ -100,7 +106,7 @@ class StepLabelGateTest {
         var matcher = CALL.matcher(code);
         while (matcher.find()) {
             int line = lines.next();
-            var label = lastLiteral(source, code, matcher.end());
+            var label = lastLiteral(source, code, matcher.end(), matcher.group(1).equals("liveStep"));
             if (label != null && decorated(label, NO_PERIOD.contains(matcher.group(1)))) found.add(line);
         }
         return found;
@@ -114,17 +120,19 @@ class StepLabelGateTest {
 
     /**
      * The contents of the last string literal between {@code open}, just after a call's opening
-     * parenthesis, and the parenthesis that closes it; null if there is none. {@code code} is
+     * parenthesis, and the parenthesis that closes it, or the comma that ends its first argument
+     * when {@code firstArgument}; null if there is none. {@code code} is
      * {@code source} {@link RawOutputGateTest#blank blanked}, offset for offset, so a parenthesis
      * or a quote in a literal or a comment is not counted.
      */
-    private static String lastLiteral(String source, String code, int open) {
+    private static String lastLiteral(String source, String code, int open, boolean firstArgument) {
         int depth = 1;
         int close = open;
         for (; close < code.length() && depth > 0; close++) {
             char c = code.charAt(close);
             if (c == '(') depth++;
             else if (c == ')') depth--;
+            else if (c == ',' && depth == 1 && firstArgument) break;
         }
         int end = code.lastIndexOf('"', close);
         if (end < open) return null;

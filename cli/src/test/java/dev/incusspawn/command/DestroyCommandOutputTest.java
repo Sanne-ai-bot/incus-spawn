@@ -33,7 +33,7 @@ class DestroyCommandOutputTest {
     /** A bulk destroy that left something behind, which fails the command, ends on an error. */
     @Test
     void aBulkDestroyThatLeftSomethingBehindEndsOnAnError() {
-        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.SUCCESS, "Destroyed 2 instance(s).")),
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.SUCCESS, "Destroyed 2 instance(s)")),
                 summarized(new DestroyCommand.DestroyResult(2, 0, 0)));
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR, "Destroyed 1 instance(s). 1 skipped (locked).")),
                 summarized(new DestroyCommand.DestroyResult(1, 1, 0)));

@@ -292,6 +292,23 @@ public final class BuildOutput {
         bound.stepProgress(detail);
     }
 
+    /**
+     * {@code label} as a live step around {@code work}: a ✓ once it returned true, a ✗ when it
+     * returned false or threw. What the work reports meanwhile freezes the step's line and is shown
+     * below it; the work must not start a step of its own, which would end this one.
+     */
+    public static boolean liveStep(String label, java.util.function.BooleanSupplier work) {
+        stepStart(label);
+        boolean ok = false;
+        try {
+            ok = work.getAsBoolean();
+        } finally {
+            if (ok) stepDone();
+            else abandonStep();
+        }
+        return ok;
+    }
+
     /** Complete the step started by {@link #stepStart}. */
     public static void stepDone() {
         bound.stepDone(null);

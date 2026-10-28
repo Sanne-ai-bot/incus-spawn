@@ -246,11 +246,11 @@ class ProxyServiceTest {
             ProxyService.replaceCommandRunner(command -> true);
             var stillActive = RecordingOutput.during(() -> assertFalse(ProxyService.stopSystemdUnit(() -> true)));
             assertEquals(1, stillActive.events(RecordingOutput.Kind.ERROR).size(), stillActive.events()::toString);
-            assertEquals(List.of(), stillActive.events(RecordingOutput.Kind.STEP), "not reported as stopped");
+            assertEquals(List.of(), stillActive.events(RecordingOutput.Kind.STEP_DONE), "not reported as stopped");
 
             var stopped = RecordingOutput.during(() -> assertTrue(ProxyService.stopSystemdUnit(() -> false)));
-            assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP, "Proxy service stopped.")),
-                    stopped.events());
+            assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP_START, "Stopping proxy service"),
+                    new RecordingOutput.Event(RecordingOutput.Kind.STEP_DONE, null)), stopped.events());
         } finally {
             ProxyService.replaceCommandRunner(saved);
         }

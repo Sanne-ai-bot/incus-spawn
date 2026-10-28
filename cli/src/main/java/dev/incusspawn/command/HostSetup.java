@@ -94,7 +94,7 @@ class HostSetup {
         if (!commandExists("btrfs"))       missing.add("btrfs-progs");
         if (missing.isEmpty()) return;
 
-        BuildOutput.step("Installing dependencies: " + String.join(", ", missing) + "...");
+        var label = "Installing dependencies: " + String.join(", ", missing);
         // zypper uses "btrfsprogs" instead of "btrfs-progs"
         if (commandExists("zypper")) {
             missing.replaceAll(p -> "btrfs-progs".equals(p) ? "btrfsprogs" : p);
@@ -111,7 +111,7 @@ class HostSetup {
         cmd.add("sudo");
         cmd.addAll(java.util.List.of(installCmd));
         cmd.addAll(missing);
-        runHost(cmd.toArray(String[]::new));
+        BuildOutput.liveStep(label, () -> runHost(cmd.toArray(String[]::new)) == 0);
     }
 
     void checkIncusInstalled() {
@@ -152,25 +152,23 @@ class HostSetup {
                 }
             }
 
-            BuildOutput.step("Installing Incus via " + installCmd[0] + " (sudo required)...");
             var fullCmd = new String[installCmd.length + 2];
             fullCmd[0] = "sudo";
             System.arraycopy(installCmd, 0, fullCmd, 1, installCmd.length);
             fullCmd[fullCmd.length - 1] = "incus";
-            runHost(fullCmd);
-            BuildOutput.step("Enabling incus service...");
-            runHost("sudo", "systemctl", "enable", "--now", "incus");
-            BuildOutput.step("Adding user to incus-admin group...");
-            runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name"));
+            BuildOutput.liveStep("Installing Incus via " + installCmd[0] + " (sudo required)", () -> runHost(fullCmd) == 0);
+            BuildOutput.liveStep("Enabling the incus service", () -> runHost("sudo", "systemctl", "enable", "--now", "incus") == 0);
+            BuildOutput.liveStep("Adding user to the incus-admin group",
+                    () -> runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0);
             BuildOutput.step("You may need to log out and back in for group membership to take effect, or run:");
             BuildOutput.stepNote("newgrp incus-admin");
         } else {
             BuildOutput.step("Incus is installed.");
             var serviceActive = runHost("systemctl", "is-active", "--quiet", "incus");
             if (serviceActive != 0) {
-                BuildOutput.step("Incus service is not running. Enabling and starting it (sudo required)...");
-                var enableResult = runHost("sudo", "systemctl", "enable", "--now", "incus");
-                if (enableResult != 0) {
+                BuildOutput.step("Incus service is not running.");
+                if (!BuildOutput.liveStep("Enabling and starting the Incus service (sudo required)",
+                        () -> runHost("sudo", "systemctl", "enable", "--now", "incus") == 0)) {
                     BuildOutput.error("Failed to start the Incus service.",
                             "Run 'sudo systemctl enable --now incus' manually, then re-run 'isx init'.");
                     System.exit(1);
@@ -186,9 +184,10 @@ class HostSetup {
             var groups = new String(process.getInputStream().readAllBytes()).strip();
             process.waitFor();
             if (!groups.contains("incus-admin")) {
-                BuildOutput.step("Adding user to incus-admin group...");
-                runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name"));
-                BuildOutput.step("Group membership updated (active after next login).");
+                if (BuildOutput.liveStep("Adding user to the incus-admin group",
+                        () -> runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0)) {
+                    BuildOutput.stepNote("Active after the next login.");
+                }
             }
         } catch (Exception e) {
             BuildOutput.warn("Could not check group membership: " + BaseCommand.failure(e));
@@ -206,17 +205,17 @@ class HostSetup {
         switch (detection) {
             case DetectionResult.UseFirewalld fwd -> {
                 if (fwd.needsStart()) {
-                    BuildOutput.step("firewalld is installed but not running. Starting and enabling it...");
-                    var startResult = runHost("sudo", "systemctl", "enable", "--now", "firewalld");
-                    if (startResult != 0) {
+                    BuildOutput.step("firewalld is installed but not running.");
+                    if (!BuildOutput.liveStep("Starting and enabling firewalld",
+                            () -> runHost("sudo", "systemctl", "enable", "--now", "firewalld") == 0)) {
                         BuildOutput.warn("Failed to start firewalld.",
                                 "Run manually: sudo systemctl enable --now firewalld", "Then re-run: isx init");
                         return;
                     }
-                    BuildOutput.step("firewalld started and enabled.");
                     if (ProxyService.isActive()) {
                         if (Environment.hasBeenInitialized()) {
-                            BuildOutput.step("Restarting proxy service so it picks up the restored firewall rules...");
+                            // Not a live step: the restart reports its own
+                            BuildOutput.step("Restarting the proxy service so it picks up the restored firewall rules");
                             restartProxyService();
                         } else {
                             // Restarted before the marker, it would refuse to start (#1048);
@@ -232,7 +231,7 @@ class HostSetup {
                 configureUfw(ProxyConfig.resolveGatewayIp(init.incus), UfwCheck.readBeforeRules());
             }
             case DetectionResult.NeitherInstalled n -> {
-                BuildOutput.step("No firewall detected. Installing firewalld...");
+                BuildOutput.step("No firewall detected.");
                 var installCmd = detectInstallCommand();
                 if (installCmd == null) {
                     BuildOutput.warn("Could not detect package manager.");
@@ -242,13 +241,11 @@ class HostSetup {
                 cmd.add("sudo");
                 cmd.addAll(java.util.List.of(installCmd));
                 cmd.add("firewalld");
-                var installResult = runHost(cmd.toArray(String[]::new));
-                if (installResult != 0) {
+                if (!BuildOutput.liveStep("Installing firewalld", () -> runHost(cmd.toArray(String[]::new)) == 0)) {
                     BuildOutput.warn("Failed to install firewalld.");
                     return;
                 }
-                var startResult = runHost("sudo", "systemctl", "enable", "--now", "firewalld");
-                if (startResult != 0) {
+                if (!BuildOutput.liveStep("Starting firewalld", () -> runHost("sudo", "systemctl", "enable", "--now", "firewalld") == 0)) {
                     BuildOutput.warn("Failed to start firewalld.");
                     return;
                 }
@@ -273,9 +270,8 @@ class HostSetup {
         }
 
         if (!hasInterface) {
-            BuildOutput.step("Adding incusbr0 to the trusted firewall zone (sudo required)...");
-            var addResult = runHostQuiet("sudo", "firewall-cmd", "--zone=trusted", "--change-interface=incusbr0", "--permanent");
-            if (addResult != 0) {
+            if (!BuildOutput.liveStep("Adding incusbr0 to the trusted firewall zone (sudo required)", () -> runHostQuiet(
+                    "sudo", "firewall-cmd", "--zone=trusted", "--change-interface=incusbr0", "--permanent") == 0)) {
                 BuildOutput.warn("Failed to add incusbr0 to trusted zone.",
                         "Containers may not have network/DNS access. You can fix this manually:",
                         "sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent",
@@ -286,22 +282,25 @@ class HostSetup {
         }
         boolean ok = true;
         if (!hasMasquerade) {
-            BuildOutput.step("Enabling masquerading (NAT) for container internet access...");
-            ok &= ran("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent");
+            ok &= BuildOutput.liveStep("Enabling masquerading (NAT) for container internet access",
+                    () -> ran("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent"));
         }
-        if (!hasForwardIn) {
-            BuildOutput.step("Adding FORWARD rules for Incus bridge (Docker coexistence)...");
-            ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
-                    "--add-rule", "ipv4", "filter", "FORWARD", "0",
-                    "-i", "incusbr0", "-j", "ACCEPT");
-        }
-        if (!hasForwardOut) {
-            if (hasForwardIn) {
-                BuildOutput.step("Adding FORWARD rules for Incus bridge (Docker coexistence)...");
-            }
-            ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
-                    "--add-rule", "ipv4", "filter", "FORWARD", "0",
-                    "-o", "incusbr0", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT");
+        if (!hasForwardIn || !hasForwardOut) {
+            ok &= BuildOutput.liveStep("Adding FORWARD rules for Incus bridge (Docker coexistence)", () -> {
+                // Both rules, even when the first fails: the step reports what it did
+                boolean added = true;
+                if (!hasForwardIn) {
+                    added &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
+                            "--add-rule", "ipv4", "filter", "FORWARD", "0",
+                            "-i", "incusbr0", "-j", "ACCEPT");
+                }
+                if (!hasForwardOut) {
+                    added &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
+                            "--add-rule", "ipv4", "filter", "FORWARD", "0",
+                            "-o", "incusbr0", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT");
+                }
+                return added;
+            });
         }
 
         var reloadResult = runHostQuiet("sudo", "firewall-cmd", "--reload");
@@ -333,23 +332,24 @@ class HostSetup {
             return;
         }
 
-        BuildOutput.step("Allowing traffic on incusbr0...");
-        boolean ok = ran("sudo", "ufw", "allow", "in", "on", "incusbr0");
+        boolean ok = BuildOutput.liveStep("Allowing traffic on incusbr0", () -> ran("sudo", "ufw", "allow", "in", "on", "incusbr0"));
 
         var content = beforeRules;
+        var adding = new ArrayList<String>();
         if (!hasMasquerade) {
-            BuildOutput.step("Adding NAT masquerading for container internet access...");
+            adding.add("NAT masquerading");
             var natBlock = UfwCheck.generateNatBlockWithoutRedirect(subnet);
             content = UfwCheck.insertNatBlock(content, natBlock);
         }
         if (!hasForward) {
-            BuildOutput.step("Adding FORWARD rules for Incus bridge...");
+            adding.add("FORWARD rules for Incus bridge");
             var filterInsert = UfwCheck.generateFilterInsert();
             content = UfwCheck.insertFilterRules(content, filterInsert);
         }
 
         if (!content.equals(beforeRules)) {
-            ok &= writeBeforeRules(content);
+            var written = content;
+            ok &= BuildOutput.liveStep("Adding " + String.join(" and ", adding) + " to UFW before.rules", () -> writeBeforeRules(written));
             var reloadResult = runHostQuiet("sudo", "ufw", "reload");
             if (reloadResult != 0) {
                 BuildOutput.warn("UFW reload failed.", "Run: sudo ufw reload");
@@ -572,29 +572,30 @@ class HostSetup {
             // Remove stale redirect rule pointing to a previous gateway IP
             var staleIp = FirewalldCheck.extractRedirectGatewayIp(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT);
             if (staleIp != null) {
-                BuildOutput.step("Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
-                ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
-                        "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
-                        "-i", "incusbr0", "-d", staleIp, "-p", "tcp", "--dport",
-                        String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
-                        "-j", "REDIRECT", "--to-port",
-                        String.valueOf(ProxyConfig.DEFAULT_MITM_PORT));
+                ok &= BuildOutput.liveStep("Removing stale PREROUTING redirect (old gateway " + staleIp + ")",
+                        () -> ran("sudo", "firewall-cmd", "--permanent", "--direct",
+                                "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
+                                "-i", "incusbr0", "-d", staleIp, "-p", "tcp", "--dport",
+                                String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
+                                "-j", "REDIRECT", "--to-port",
+                                String.valueOf(ProxyConfig.DEFAULT_MITM_PORT)));
             }
-            BuildOutput.step("Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
-                    + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0)...");
-            ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
-                    "--add-rule", "ipv4", "nat", "PREROUTING", "0",
-                    "-i", "incusbr0", "-d", gatewayIp, "-p", "tcp", "--dport",
-                    String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
-                    "-j", "REDIRECT", "--to-port",
-                    String.valueOf(ProxyConfig.DEFAULT_MITM_PORT));
-            ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
-                    "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
-                    "-i", "incusbr0", "-p", "tcp", "--dport",
-                    String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
-                    "-j", "REDIRECT", "--to-port",
-                    String.valueOf(ProxyConfig.DEFAULT_MITM_PORT));
-            ok &= ran("sudo", "firewall-cmd", "--reload");
+            // Every command runs, even after one failed (&, not &&): the step reports what it did
+            ok &= BuildOutput.liveStep("Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
+                    + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0)",
+                    () -> ran("sudo", "firewall-cmd", "--permanent", "--direct",
+                            "--add-rule", "ipv4", "nat", "PREROUTING", "0",
+                            "-i", "incusbr0", "-d", gatewayIp, "-p", "tcp", "--dport",
+                            String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
+                            "-j", "REDIRECT", "--to-port",
+                            String.valueOf(ProxyConfig.DEFAULT_MITM_PORT))
+                            & ran("sudo", "firewall-cmd", "--permanent", "--direct",
+                            "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
+                            "-i", "incusbr0", "-p", "tcp", "--dport",
+                            String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
+                            "-j", "REDIRECT", "--to-port",
+                            String.valueOf(ProxyConfig.DEFAULT_MITM_PORT))
+                            & ran("sudo", "firewall-cmd", "--reload"));
         }
         return ok;
     }
@@ -613,16 +614,16 @@ class HostSetup {
         } else {
             var staleIp = UfwCheck.extractRedirectGatewayIp(beforeRules, ProxyConfig.DEFAULT_MITM_PORT);
             if (staleIp != null) {
-                BuildOutput.step("Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
+                BuildOutput.note("Replacing the stale PREROUTING redirect (old gateway " + staleIp + ")");
             }
-            BuildOutput.step("Adding PREROUTING redirect (" + gatewayIp + ":443 -> "
-                    + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0) to UFW before.rules...");
             var subnet = CidrUtils.deriveSubnet(gatewayIp);
             var natBlock = UfwCheck.generateNatBlock(gatewayIp, subnet,
                     ProxyConfig.CONTAINER_FACING_PORT, ProxyConfig.DEFAULT_MITM_PORT);
             var content = UfwCheck.insertNatBlock(beforeRules, natBlock);
-            var written = writeBeforeRules(content);
-            return ran("sudo", "ufw", "reload") && written;
+            // The reload runs even when the write failed (&, not &&)
+            return BuildOutput.liveStep("Adding PREROUTING redirect (" + gatewayIp + ":443 -> "
+                    + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0) to UFW before.rules",
+                    () -> writeBeforeRules(content) & ran("sudo", "ufw", "reload"));
         }
         return true;
     }
@@ -640,8 +641,7 @@ class HostSetup {
             changed |= ensureSubidEntry(path, "root:1000000:1000000000", "root:1000000:65536");
         }
         if (changed) {
-            BuildOutput.step("Restarting Incus to apply idmap changes...");
-            runHost("sudo", "systemctl", "restart", "incus");
+            BuildOutput.liveStep("Restarting Incus to apply idmap changes", () -> runHost("sudo", "systemctl", "restart", "incus") == 0);
         }
         BuildOutput.step("subuid/subgid configured.");
     }
@@ -935,8 +935,11 @@ class HostSetup {
         var anyCow = cowProbe.poolName() != null;
 
         if (!anyCow) {
-            BuildOutput.step("No copy-on-write storage pool detected. Creating one...");
+            BuildOutput.step("No copy-on-write storage pool detected.");
             var hostFs = CowPoolBacking.filesystemOf(CowPoolBacking.POOLS_DIR);
+            BuildOutput.stepStart("Creating a copy-on-write storage pool");
+            // Its sudo inherits the terminal, and may ask for a password there
+            BuildOutput.releaseTerminal();
             var created = CowPoolBacking.create(CowPoolBacking::filesystemOf,
                     () -> init.incus.hasApiExtension(STORAGE_CREATE_OPTIONS_EXTENSION),
                     CowPoolBacking::runCapturingStderr,
@@ -945,6 +948,7 @@ class HostSetup {
                     (msg, details) -> BuildOutput.warn(msg, details.stream().map(BuildOutput::guestText).toArray(String[]::new)));
             var create = created.result();
             if (create.exitCode() == 0) {
+                BuildOutput.stepDone();
                 if (created.subvolume()) {
                     BuildOutput.step("Created btrfs storage pool 'cow' as a subvolume of the host filesystem.");
                     BuildOutput.step("It has no size cap of its own: it shares that filesystem's free space.");
@@ -954,6 +958,7 @@ class HostSetup {
                 }
                 BuildOutput.step("All new instances will use it automatically.");
             } else {
+                BuildOutput.abandonStep();
                 // The banner prints its lines as given, and the explanation can quote what the command printed
                 var lines = new ArrayList<String>(CowPoolBacking.failureExplanation(create.stderr()).stream()
                         .map(BuildOutput::guestText).toList());
@@ -978,9 +983,10 @@ class HostSetup {
     }
 
     private void checkBridgeSubnet() {
-        BuildOutput.step("Checking bridge subnet for VPN conflicts...");
+        BuildOutput.stepStart("Checking bridge subnet for VPN conflicts");
         try {
             var result = BridgeSubnetCheck.detectAndFix(init.incus);
+            BuildOutput.stepDone();
             if (result.conflictDetected()) {
                 BuildOutput.step("Detected subnet conflict: bridge " + result.oldSubnet()
                         + " overlaps with route: " + result.conflictingRoute());
@@ -1001,6 +1007,7 @@ class HostSetup {
                 BuildOutput.step("Bridge subnet is clear of VPN route conflicts.");
             }
         } catch (Exception e) {
+            BuildOutput.abandonStep();
             BuildOutput.warn("Could not check bridge subnet: " + BaseCommand.failure(e));
         }
     }

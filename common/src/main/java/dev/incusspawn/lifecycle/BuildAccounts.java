@@ -326,8 +326,14 @@ public final class BuildAccounts {
         var rederived = toRederive(wanted, inherited, lacking, setups);
         rederived.forEach(namespace -> {
             var account = accountFor.apply(namespace);
-            out.step("Updating " + namespace + " identity for account '" + account + "'...");
-            setups.get(namespace).rebakeForAccount(container, account);
+            out.stepStart("Updating " + namespace + " identity for account '" + account + "'");
+            try {
+                setups.get(namespace).rebakeForAccount(container, account);
+            } catch (RuntimeException e) {
+                out.abandonStep();
+                throw e;
+            }
+            out.stepDone(null);
         });
         lacking.removeAll(rederived);
         for (var namespace : lacking) {
