@@ -37,16 +37,17 @@ final class InteractiveShell {
 
     public void interactiveShell(String container, String user, ShellPrep prep, ShellMenu menu) {
         if (!IncusClient.hasTerminal()) throw new NoTerminalForShellException(container);
-        session(container, user, prep, menu, System.getenv("TMUX") != null);
+        session(container, user, prep, menu, System.getenv("TMUX") != null, System.getenv("TERM"));
     }
 
     /**
      * The session on the terminal {@link #interactiveShell} checked is there; a seam for tests,
-     * which pass {@code inTmux} so a test run in tmux does not rename its window. The title and the
+     * which pass {@code inTmux} so a test run in tmux does not rename its window, and the host's
+     * {@code term} that a guest without its terminfo is given. The title and the
      * reconnect notice go through the bound output, whose terminal writes the title only on a
      * terminal; the status bar draws on the terminal's own stdout, which the guest is handed.
      */
-    void session(String container, String user, ShellPrep prep, ShellMenu menu, boolean inTmux) {
+    void session(String container, String user, ShellPrep prep, ShellMenu menu, boolean inTmux, String term) {
         var title = "isx:" + container;
         BuildOutput.windowTitle(title);
 
@@ -63,11 +64,12 @@ final class InteractiveShell {
             }
         }
 
-        if (!prep.terminfoHandled()) {
-            propagateTerminfo(container);
-        }
-
         try {
+            // Inside the try, so a failed propagation still restores the title and tmux window
+            if (!prep.terminfoHandled()) {
+                propagateTerminfo(container, term);
+            }
+
             var homeDir = "/home/" + user;
             var targetCwd = prep.workdir() != null ? prep.workdir() : homeDir;
 
@@ -186,8 +188,7 @@ final class InteractiveShell {
         }
     }
 
-    private void propagateTerminfo(String container) {
-        String term = System.getenv("TERM");
+    private void propagateTerminfo(String container, String term) {
         if (term == null || term.isEmpty()) return;
         var check = incus.shellExec(container, "infocmp", term);
         if (check.exitCode() == 0) return;
