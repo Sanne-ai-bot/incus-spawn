@@ -6,6 +6,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.tamboui.style.Modifier;
 import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.KeyCode;
@@ -21,6 +22,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Queue;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -52,10 +54,6 @@ class TuiDigitKeysTest {
     @AfterEach
     void close() {
         runner.close();
-    }
-
-    private static KeyEvent digit(char c) {
-        return KeyEvent.ofChar(c);
     }
 
     private static KeyEvent altDigit(char c) {
@@ -110,28 +108,28 @@ class TuiDigitKeysTest {
     @Test
     void aDigitOpensWhatItsFunctionKeyOpens() {
         var tui = tui();
-        press(tui, digit('1'));
+        press(tui, KeyEvent.ofChar('1'));
         assertEquals(Tui.Mode.INFO, tui.mode(), "1 is F1");
-        press(tui, digit('1'));
+        press(tui, KeyEvent.ofChar('1'));
         assertEquals(Tui.Mode.BROWSE, tui.mode(), "and closes what F1 opened, as F1 does");
 
-        press(tui, digit('3'));
+        press(tui, KeyEvent.ofChar('3'));
         assertEquals(Tui.Mode.TEMPLATE_DETAIL, tui.mode(), "3 is F3");
         press(tui, ESC);
-        press(tui, digit('5'));
+        press(tui, KeyEvent.ofChar('5'));
         assertEquals(Tui.Mode.BUILD_MENU, tui.mode(), "5 is F5");
         press(tui, ESC);
-        press(tui, digit('4'));
+        press(tui, KeyEvent.ofChar('4'));
         assertEquals(Tui.Mode.BRANCH, tui.mode(), "4 is F4");
         press(tui, ESC);
 
-        press(tui, TAB, digit('3'));
+        press(tui, TAB, KeyEvent.ofChar('3'));
         assertEquals(Tui.Mode.INSTANCE_DETAIL, tui.mode(), "3 is F3 on the instances too");
         press(tui, ESC);
-        press(tui, digit('9'));
+        press(tui, KeyEvent.ofChar('9'));
         assertEquals(Tui.Mode.BROWSE, tui.mode());
         assertTrue(screen(tui).contains("No actions available for alpha"), "9 is F9");
-        press(tui, digit('8'));
+        press(tui, KeyEvent.ofChar('8'));
         assertEquals(Tui.Mode.CONFIRM_DELETE, tui.mode(), "8 is F8");
         assertEquals("alpha", tui.deleteConfirm().name());
     }
@@ -139,7 +137,7 @@ class TuiDigitKeysTest {
     @Test
     void sevenStopsTheRunningRowAsF7Does() {
         var tui = tui();
-        press(tui, TAB, digit('7'));
+        press(tui, TAB, KeyEvent.ofChar('7'));
         runQueued();
         assertEquals(List.of("alpha stop"), daemon.stateActions());
     }
@@ -161,7 +159,7 @@ class TuiDigitKeysTest {
     @Test
     void zeroQuits() {
         var tui = tui();
-        press(tui, digit('0'));
+        press(tui, KeyEvent.ofChar('0'));
         assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
         assertFalse(runner.isRunning(), "0 is F10");
     }
@@ -169,9 +167,9 @@ class TuiDigitKeysTest {
     @Test
     void aTextFieldKeepsItsDigits() {
         var tui = tui();
-        press(tui, TAB, DOWN, digit('6'));
+        press(tui, TAB, DOWN, KeyEvent.ofChar('6'));
         assertEquals(Tui.Mode.RENAME, tui.mode(), "6 is F6 on the stopped gamma");
-        press(tui, digit('1'), altDigit('2'));
+        press(tui, KeyEvent.ofChar('1'), altDigit('2'));
         assertEquals(Tui.Mode.RENAME, tui.mode());
         assertTrue(screen(tui).contains("gamma1"), "a digit is typed into the name: " + screen(tui));
     }
@@ -179,7 +177,7 @@ class TuiDigitKeysTest {
     @Test
     void theSearchBarKeepsItsDigits() {
         var tui = tui();
-        press(tui, KeyEvent.ofChar('/'), digit('3'));
+        press(tui, KeyEvent.ofChar('/'), KeyEvent.ofChar('3'));
         assertEquals(Tui.Mode.BROWSE, tui.mode(), "no details open while typing a search");
         assertTrue(screen(tui).contains(" / 3"), screen(tui));
     }
@@ -187,7 +185,7 @@ class TuiDigitKeysTest {
     @Test
     void theBuildMenuKeepsItsNumberedOptions() {
         var tui = tui();
-        press(tui, digit('5'), digit('1'));
+        press(tui, KeyEvent.ofChar('5'), KeyEvent.ofChar('1'));
         assertEquals(Tui.PendingAction.BUILD_TEMPLATE, tui.pendingAction(), "1 picks the menu's first option");
     }
 
@@ -203,6 +201,33 @@ class TuiDigitKeysTest {
         var tui = tui();
         press(tui, KeyEvent.ofChar('1', KeyModifiers.SHIFT));
         assertEquals(Tui.Mode.INFO, tui.mode(), "AZERTY types 1 with Shift");
+    }
+
+    @Test
+    void theKeyBarDrawsTheDigitAsTheKey() {
+        var tui = tui();
+        press(tui, TAB);
+        var buffer = TuiSnapshot.render(80, 24, tui::render);
+        var bar = TuiSnapshot.toText(buffer).split("\n")[23];
+        int f7 = bar.indexOf("F7Stop");
+        assertTrue(f7 >= 0, bar);
+        var f = buffer.get(f7, 23).style();
+        var seven = buffer.get(f7 + 1, 23).style();
+        assertEquals(Optional.of(tui.theme.barKeyFg()), seven.fg(), "the digit is in the key colour");
+        assertTrue(seven.effectiveModifiers().contains(Modifier.BOLD), "and bold");
+        assertEquals(Optional.of(tui.theme.barLabelFg()), f.fg(), "the F is in the label colour");
+        int f10 = bar.indexOf("F10Quit");
+        assertEquals(Optional.of(tui.theme.barKeyFg()), buffer.get(f10 + 2, 23).style().fg(), "F10's key is its 0");
+    }
+
+    @Test
+    void theContextLineStatesTheRuleWholeOrNotAtAll() {
+        var tui = tui();
+        press(tui, TAB);
+        var wide = TuiSnapshot.toText(TuiSnapshot.render(80, 24, tui::render)).split("\n")[22];
+        assertTrue(wide.endsWith(DigitKeys.RULE), wide);
+        var narrow = TuiSnapshot.toText(TuiSnapshot.render(60, 24, tui::render)).split("\n")[22];
+        assertFalse(narrow.contains("digit"), "a cut rule reads as another: " + narrow);
     }
 
     private void runQueued() {

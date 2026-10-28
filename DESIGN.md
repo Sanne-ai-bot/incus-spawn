@@ -5135,6 +5135,22 @@ The dark theme's dialogs lose their slight blue tint and become grey.
 It is used everywhere rather than when `COLORTERM` is unset, because SSH does not pass `COLORTERM` on, so most remote sessions would lose it anyway.
 `TuiThemeTest` fails on an RGB colour in either theme.
 
+**Keyboards without F-keys** (#1824).
+Many keyboards have no F row, or give it to media keys, as MacBooks and 60% boards do.
+So a digit is its F-key, 0 being F10, and Alt with a digit is Shift with that F-key.
+The key bar keeps its F-key labels and draws each one's digit bold, and the context line above it states the rule, `digit = F-key  Alt+digit = ⇧F-key`, whole or not at all, since half of it reads as another rule.
+The F1 dialog lists both forms of every key, and on macOS how to make Option send Alt.
+The rule is the same on every keyboard layout.
+A terminal sends a digit as the digit however the layout types it, and Alt as an Esc before it, which tamboui reports as `ALT`.
+It never reports Shift on a digit, only the layout's own symbol above it (`@` on US, `"` on UK and German), and tamboui speaks neither the Kitty keyboard protocol nor `modifyOtherKeys`, the only ways a terminal says more.
+Shift+digit as the US symbols `!@#$%^&*()` was rejected as confusing everywhere else (Sanne): on AZERTY `&` is the unshifted 1 key, and would restart a row at once.
+`Tui.handleEvent` translates the key once, before the mode dispatch (`DigitKeys`), so every F-key check in every dialog takes it and none changes.
+A mode that reads digits itself says so on its `Mode` constant, which every constant must: the text fields (branch, rename, new template, AI Help) and the build menu, whose options are numbered.
+The search bar keeps them too.
+Mnemonic letters lost because the free letters do not match the labels (`r`, `a`, `c` and `n` are taken) and the bar has no room for a second key per item.
+Esc then a digit, as Midnight Commander offers, lost because tamboui folds Esc and a key into Alt only within 50 ms, and Esc already clears the marks.
+Ctrl+digit lost because terminals send most of them as control characters such as NUL and Esc.
+
 ## VM Appliance
 
 A minimal Alpine Linux VM image with Incus pre-installed, providing CI integration testing and macOS support.

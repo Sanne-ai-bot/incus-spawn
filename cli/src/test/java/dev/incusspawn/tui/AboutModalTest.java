@@ -12,6 +12,10 @@ class AboutModalTest {
     private static final TuiTheme THEME = TuiTheme.dark();
 
     private static AboutModal dialog() {
+        return dialog(false);
+    }
+
+    private static AboutModal dialog(boolean macOS) {
         return new AboutModal(new ModalRenderer(THEME), THEME, new AboutModal.Source() {
             @Override public String version() { return "1.2.3"; }
             @Override public String gitSha() { return "0000000"; }
@@ -19,7 +23,7 @@ class AboutModalTest {
             @Override public String incusServer() { return "6.0"; }
             @Override public String runtime() { return "Java 25"; }
             @Override public String kernelInfo() { return "Linux 6.1"; }
-            @Override public boolean isMacOS() { return false; }
+            @Override public boolean isMacOS() { return macOS; }
         });
     }
 
@@ -37,5 +41,12 @@ class AboutModalTest {
     void rendersTheTop() {
         var dialog = dialog();
         TuiSnapshot.assertMatches("about-modal-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+    }
+
+    /** Every shortcut, with the digits that stand in for the F-keys and how to get Alt on macOS (#1824). */
+    @Test
+    void rendersEveryShortcutOnMacOs() {
+        var dialog = dialog(true);
+        TuiSnapshot.assertMatches("about-modal-macos-80x60", TuiSnapshot.render(80, 60, f -> dialog.render(f, f.area())));
     }
 }

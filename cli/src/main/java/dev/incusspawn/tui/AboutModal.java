@@ -54,7 +54,7 @@ final class AboutModal {
         this.source = source;
     }
 
-    /** Back at the top, as each F1 opens it. */
+    /** Back at the top, as each F1 (or 1) opens it. */
     void open() {
         infoScrollOffset = 0;
     }
@@ -124,28 +124,36 @@ final class AboutModal {
                 shortcutRow("Enter", "Default instance action", null, null),
                 shortcutRow("?", "AI Help — ask a question", null, null),
                 shortcutRow("Tab", "Switch panels", "⇧Tab", "Reverse"),
-                shortcutRow("F1", "This dialog", null, null),
-                shortcutRow("F2", "Shell into instance", "⇧F2", "Join its task"),
-                shortcutRow("F3", "View details", null, null),
-                shortcutRow("F4", "Branch", null, null),
-                shortcutRow("F5", "Build menu", null, null),
+                shortcutRow("F1/1", "This dialog", null, null),
+                shortcutRow("F2/2", "Shell into instance", "⇧F2/Alt+2", "Join its task"),
+                shortcutRow("F3/3", "View details", null, null),
+                shortcutRow("F4/4", "Branch", null, null),
+                shortcutRow("F5/5", "Build menu", null, null),
                 shortcutRow("Space", "Mark for F5/F7/F8", "Esc", "Clear marks"),
-                shortcutRow("F6", "Rename instance", null, null),
-                shortcutRow("F7", "Stop instance", "⇧F7", "Restart"),
-                shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
-                shortcutRow("F9", "Tool actions", null, null),
-                shortcutRow("F10", "Quit", null, null),
+                shortcutRow("F6/6", "Rename instance", null, null),
+                shortcutRow("F7/7", "Stop instance", "⇧F7/Alt+7", "Restart"),
+                shortcutRow("F8/8", "Destroy", "⇧F8/Alt+8", "Destroy all"),
+                shortcutRow("Del", "Destroy", "⇧Del", "Destroy all"),
+                shortcutRow("F9/9", "Tool actions", null, null),
+                shortcutRow("F10/0", "Quit", null, null),
                 shortcutRow("a", "Credential accounts", null, null),
                 shortcutRow("C", "Clean pool storage", null, null),
                 shortcutRow("r", "Refresh", null, null),
                 shortcutRow(WarningsModal.KEY, "Warnings", null, null),
                 shortcutRow("n", "New template…", null, null),
                 shortcutRow("/", "Search / filter", null, null),
-                shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom")));
+                shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom"),
+                Line.styled("", Style.EMPTY),
+                Line.styled("Without F-keys:  " + DigitKeys.RULE, Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
+                text("A digit is its F-key, 0 being F10, and Alt with a"),
+                text("digit is Shift with that F-key, on every keyboard.")));
         if (source.isMacOS()) {
             lines.add(Line.styled("", Style.EMPTY));
             lines.add(Line.styled("macOS shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
             lines.add(shortcutRow("Fn+←/→", "Home / End", "Fn+↑/↓", "PgUp / PgDn"));
+            lines.add(text("Alt is Option once the terminal sends it as Alt:"));
+            lines.add(text("\"Use Option as Meta key\" in Terminal.app, \"Esc+\""));
+            lines.add(text("for Option in iTerm2, macos-option-as-alt in Ghostty."));
         }
 
         int width = 60;
@@ -175,6 +183,10 @@ final class AboutModal {
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
+    private Line text(String text) {
+        return Line.styled(text, Style.EMPTY.fg(theme.textDim()).bg(modal.bg()));
+    }
+
     private Line shortcutRow(String key, String desc, String shiftKey, String shiftDesc) {
         var spans = new ArrayList<Span>();
         var keyStr = key != null ? key : "";
@@ -182,7 +194,7 @@ final class AboutModal {
         spans.add(Span.styled(String.format("  %-8s", keyStr), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
         spans.add(Span.styled(String.format("%-20s", descStr), Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
         if (shiftKey != null) {
-            spans.add(Span.styled(String.format("%-9s", shiftKey), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
+            spans.add(Span.styled(String.format("%-10s", shiftKey), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
             spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
         }
         return Line.from(spans);
