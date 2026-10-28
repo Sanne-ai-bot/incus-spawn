@@ -60,9 +60,10 @@ public final class ToolVerifier {
         // instead: isx-env.sh points tools into agentuser's home (zmx's ZMX_DIR), where a root
         // run leaves root-owned files. env -i also drops what the exec itself carries, such as
         // an instance's environment.* keys (GUI passthrough sets agentuser's XDG_RUNTIME_DIR).
+        var step = "tool '" + check.toolName() + "' verify";
         var result = check.asRoot()
-                ? container.exec(asRoot(check.command()))
-                : container.shAsUser(USER, check.command());
+                ? container.declared(step, check.command(), () -> container.exec(asRoot(check.command())))
+                : container.shDeclaredAsUser(step, USER, check.command());
         BuildOutput.stepDone();
         if (result.success()) {
             BuildOutput.stepNote(result.stdout().lines().findFirst().orElse(""));

@@ -60,6 +60,11 @@ Off an ANSI terminal a one-task step that is done is a step (`BuildProgress.repo
 On an ANSI terminal the failed step's line is drawn, and its log is a warning under it; either way the exception carries all of the log for the failure report (#1703).
 A failed prime also names its step and command (#1742), its carriage returns turned to spaces before `guestText`, so one cannot draw over the step's name: the failure line reads ``prime `<command>` failed`` with the command's first line cut to 40 characters, so the reason after it survives the terminal's width.
 Its output's heading reads `prime output`, and the whole command leads that output as a shell shows it (`$ `, then `> ` per continued line), so a report trimmed to the last 100 lines keeps it.
+The failure report holds only the command that failed, so each build also keeps a log of every command its definitions declared (`BuildLog`, `Environment.buildLogFile`): tools' `run`, `run_as_user` and `verify`, repositories' `prime`.
+A command whose exec throws is recorded too, as exit status -1 with why, and the file is readable by its owner alone.
+They run through `Container.runDeclared` (`runDeclaredAsUser`, `shDeclaredAsUser`), which record each into the `CommandLog` its build container was made with, as `$ <command>`, all its output and its exit status.
+Only those commands, never isx's own: those can carry an instance's proofs, and each entry is also scrubbed (`SecretRedactor.scrubText`) and shown through `guestText`.
+The log is written as each command ends, the failure report names it, and `isx build --verbose` prints it through `BuildOutput.frame` once the template's build is over, before its failure, so a live batch's lines are never interleaved with it.
 `Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` show a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
 They report it as one warning, its lines as details (`BuildOutput.guestLines`), to the container's `Output`: the caller's when it made the `Container` with one, else the bound output (#1703).
 A long output shows its last 40 lines (`BuildOutput.lastOf`), after one saying how many came before.

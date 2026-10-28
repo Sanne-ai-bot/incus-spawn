@@ -131,4 +131,19 @@ class ContainerTest {
         assertEquals("line 61", details.get(1));
         assertEquals("line 100", details.getLast());
     }
+
+    @Test
+    void aCommandThatRanIsNeverRecordedAgainAsFailedWhenRecordingThrows() {
+        // #1742 review: a log that throws after a successful exec must not record it as exit -1
+        var incus = org.mockito.Mockito.mock(IncusClient.class);
+        org.mockito.Mockito.when(incus.execInContainer("c", "agentuser", "true")).thenReturn(new IncusClient.ExecResult(0, "", ""));
+        var codes = new java.util.ArrayList<Integer>();
+        var container = new Container(incus, "c", dev.incusspawn.util.RecordingOutput.QUIET, (step, command, result, took) -> {
+            codes.add(result.exitCode());
+            throw new IllegalStateException("disk full");
+        });
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> container.shDeclaredAsUser("tool 'x' verify", "agentuser", "true"));
+        org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(0), codes);
+    }
 }

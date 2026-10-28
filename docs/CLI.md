@@ -40,6 +40,11 @@ isx build [<template>...] [options]
 | `--type <type>` | Instance type: `container`, `vm` or `kvm`, overriding the image definition. `vm` needs an Incus that runs VMs, which the macOS appliance cannot, and `kvm` passthrough is off on macOS |
 | `--yes` | Skip interactive confirmations |
 | `--skip-git-refresh` | Accepted for compatibility; builds do not refresh host checkouts |
+| `--verbose` | Show every command the definitions ran, with its output, once each template's build is over |
+
+Every build keeps the commands its definitions ran in `~/.local/state/incus-spawn/build-logs/<template>.log`, with all that each printed and its exit status.
+These are each tool's `run`, `run_as_user` and `verify` commands and each repository's `prime`.
+The log is written as each command ends, so `tail -f` follows a build, and a failure report names it.
 
 A template's name may be at most 52 characters, since isx builds it as `<name>-rebuilding` first and swaps it in once built.
 isx refuses a longer name before it builds anything, its parents included.

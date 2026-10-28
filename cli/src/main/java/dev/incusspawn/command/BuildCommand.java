@@ -11,6 +11,7 @@ import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.CommandLog;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusDiagnostics;
@@ -124,6 +125,9 @@ public class BuildCommand extends BaseCommand {
     @Option(name = "skip-git-refresh", hasValue = false, description = "Compatibility option; builds no longer refresh host checkouts")
     boolean skipGitRefresh;
 
+    @Option(name = "verbose", hasValue = false, description = "Show every command the definitions ran, with its output, once each template is built")
+    boolean verbose;
+
     IncusClient incus;
     ToolDefLoader toolDefLoader;
     Iterable<ToolSetup> toolSetups;
@@ -208,8 +212,37 @@ public class BuildCommand extends BaseCommand {
     void reportInterruptedBuild() {
         var build = activeBuild;
         if (build != null) {
+            // Read once: the hook's thread races the next template's build resetting it
+            var log = buildLog;
+            if (log != null) log.close();
             failBuild(build, "Build interrupted for " + shown(build.canonicalName()), build.cause(), () -> {});
         }
+    }
+
+    /**
+     * The running build's record of the commands its definitions declared (#1742), from the moment
+     * the build goes ahead; kept after {@link #endBuildLog} for the failure report to point at.
+     */
+    private volatile BuildLog buildLog;
+
+    /** Where a build container records the commands its definitions declared. */
+    CommandLog commandLog() {
+        return buildLog == null ? CommandLog.NONE : buildLog;
+    }
+
+    /** Closes the build's log, and with {@code --verbose} shows what it holds. */
+    private void endBuildLog() {
+        var log = buildLog;
+        if (log == null) return;
+        log.close();
+        var lines = log.lines();
+        if (lines.isEmpty()) return;
+        var shownLines = new ArrayList<String>(lines.size() + 3);
+        var saved = log.savedFile();
+        var kept = saved == null ? "" : ", also kept in " + shown(saved);
+        shownLines.addAll(List.of("", "Commands the definitions ran" + kept + ":", ""));
+        shownLines.addAll(lines);
+        BuildOutput.frame(shownLines.toArray(String[]::new));
     }
 
     private void buildDone(String name) {
@@ -758,6 +791,7 @@ public class BuildCommand extends BaseCommand {
     void buildSingleImage(ImageDef imageDef, Map<String, ImageDef> defs) {
         var canonicalName = imageDef.getName();
         var tempName = canonicalName + REBUILDING_SUFFIX;
+        buildLog = null;  // the last template's: this one's opens once its build goes ahead
         if (reportNameTooLong(canonicalName)) throw new BuildFailedException(canonicalName);
 
         BuildOutput.buildHeader(canonicalName, buildIndex, buildTotal);
@@ -794,6 +828,7 @@ public class BuildCommand extends BaseCommand {
         incus.deleteIfExists(tempName);
         var build = new ActiveBuild(tempName, canonicalName, effectiveMachineType(imageDef));
         activeBuild = build;
+        buildLog = BuildLog.open(canonicalName, verbose);
 
         long referenced;
         try {
@@ -817,6 +852,8 @@ public class BuildCommand extends BaseCommand {
             buildDone(canonicalName);
         } catch (Exception e) {
             BuildOutput.abandonStep();
+            // Before the failure, so the failure stays the last thing the build says
+            endBuildLog();
             activeBuild = new ActiveBuild(build.tempName(), build.canonicalName(), build.machineType(), e);
             failBuild(activeBuild, "Build failed for " + shown(canonicalName) + ": " + e.getMessage(), e, () -> {
                 try {
@@ -828,6 +865,8 @@ public class BuildCommand extends BaseCommand {
             throw new BuildFailedException(canonicalName);
         }
 
+        // Outside the try: the template is in place, so nothing here may fail its build
+        endBuildLog();
         stampReferencedSize(canonicalName, referenced);
     }
 
@@ -1272,6 +1311,11 @@ public class BuildCommand extends BaseCommand {
         var report = stepOutput.isEmpty()
                 ? errorLine + "\n\n" + diagnostics
                 : errorLine + "\n\n" + stepOutput + diagnostics;
+        // The failure shows the command that failed; the build's log, the ones that ran before it
+        // Only the host's copy names it: the instance's inbox cannot reach a host path
+        var log = buildLog;
+        var logLine = log == null ? "" : log.reportLine();
+        var hostReport = logLine.isEmpty() ? report : report + "\n" + logLine;
 
         // Update the host report with the full diagnostics. Write to a temp file and move so
         // a failure (e.g. disk full) after truncation cannot erase the initial error-only report.
@@ -1279,7 +1323,7 @@ public class BuildCommand extends BaseCommand {
         if (hostLog != null) {
             var tmp = hostLog.resolveSibling(hostLog.getFileName() + ".tmp");
             try {
-                Files.writeString(tmp, report);
+                Files.writeString(tmp, hostReport);
                 Files.move(tmp, hostLog, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 savedHostReport = true;
                 // A warning, so the TUI's log and every output keep where to look
@@ -1370,7 +1414,7 @@ public class BuildCommand extends BaseCommand {
         var started = startBuild(buildName, imageDef, defs);
         incus.waitForReady(buildName, machineType, dev.incusspawn.proxy.InstanceSecret.GUEST_SCRIPT, started.guestEnv());
 
-        var container = new Container(incus, buildName);
+        var container = new Container(incus, buildName, BuildOutput.bound(), commandLog());
         if (machineType == MachineType.CONTAINER) {
             prepareContainerForPackageInstall(container);
         }
@@ -1550,7 +1594,7 @@ public class BuildCommand extends BaseCommand {
         announceBuildAccounts(imageDef, defs);
         warnDnfCacheUnavailable(dnfCacheWarning);
 
-        var container = new Container(incus, buildName);
+        var container = new Container(incus, buildName, BuildOutput.bound(), commandLog());
 
         BuildOutput.stepStart("Installing trust anchors...");
         try (var lock = CertificateAuthority.lockTrust(buildName)) {

@@ -658,6 +658,30 @@ class RepoClonerTest {
     }
 
     @Test
+    void eachPrimeRunIsRecordedInTheBuildsCommandLog() {
+        // #1742: the build's log keeps every prime command that ran, a retried one twice, and
+        // none of isx's own commands around them (the clone, the trust bind)
+        var incus = mock(IncusClient.class);
+        var recorded = java.util.Collections.synchronizedList(new ArrayList<String>());
+        var container = new Container(incus, "test", RecordingOutput.QUIET,
+                (step, command, result, took) -> recorded.add(step + " | " + command + " | " + result.exitCode()));
+        primeAnswers(incus, new IncusClient.ExecResult(1, PKIX, ""), OK);
+
+        var repo = repo("https://github.com/jbangdev/jbang", "~/jbang", null);
+        repo.setPrime(List.of("mise x -- ./gradlew dependencies", "echo done"));
+        var imageDef = new ImageDef();
+        imageDef.setName("isx-jbang");
+        imageDef.setRepos(List.of(repo));
+
+        cloner(incus).cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
+
+        assertEquals(List.of(
+                "repo 'jbang' prime | cd '/home/agentuser/jbang' && mise x -- ./gradlew dependencies | 1",
+                "repo 'jbang' prime | cd '/home/agentuser/jbang' && mise x -- ./gradlew dependencies | 0",
+                "repo 'jbang' prime | cd '/home/agentuser/jbang' && echo done | 0"), recorded);
+    }
+
+    @Test
     void aBindThatThrowsKeepsWhyThePrimeFailed() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");

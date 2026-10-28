@@ -166,6 +166,72 @@ class BuildCommandTest {
         });
     }
 
+    /**
+     * #1742: the failure report shows the command that failed, but not the ones that ran before
+     * it, which may be why it failed. The build's log keeps every command its definitions ran,
+     * with all its output, and the failure report says where; {@code --verbose} shows it.
+     */
+    @Test
+    void aBuildKeepsEveryDeclaredCommandAndItsOutputInItsLog(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.shellExec(anyString(), any(String[].class))).thenReturn(new IncusClient.ExecResult(0, "", ""));
+            when(incus.shellExec("tpl-app-rebuilding", "sh", "-c", "curl -sL https://get.sdkman.io | bash"))
+                    .thenReturn(new IncusClient.ExecResult(0, "SDKMAN installed\n", ""));
+            when(incus.execInContainer("tpl-app-rebuilding", "agentuser", "cd ~/app && ./gradlew dependencies"))
+                    .thenReturn(new IncusClient.ExecResult(1, "", "ERROR: JAVA_HOME is not set\n"));
+            when(incus.instanceMetadataOrThrow("tpl-app-rebuilding")).thenReturn(instance("container", Map.of()));
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            cmd.verbose = true;
+            doAnswer(inv -> {
+                var container = new Container(incus, "tpl-app-rebuilding", BuildOutput.bound(), cmd.commandLog());
+                container.runDeclared("tool 'sdkman' run", "curl -sL https://get.sdkman.io | bash", "sdkman failed");
+                container.shDeclaredAsUser("repo 'app' prime", "agentuser", "cd ~/app && ./gradlew dependencies");
+                throw new IncusException("Failed to prepare 1 repo(s)");
+            }).when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-app");
+
+            var out = RecordingOutput.during(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-app", imageDef))));
+
+            var log = assertDoesNotThrow(() -> Files.readString(Environment.buildLogFile("tpl-app")));
+            assertTrue(log.contains("─── tool 'sdkman' run ───\n$ curl -sL https://get.sdkman.io | bash\nSDKMAN installed\n─── exit 0 after "), log);
+            assertTrue(log.contains("─── repo 'app' prime ───\n$ cd ~/app && ./gradlew dependencies\nERROR: JAVA_HOME is not set\n─── exit 1 after "), log);
+            var report = assertDoesNotThrow(() -> Files.readString(Environment.buildFailureLogFile("tpl-app")));
+            assertTrue(report.contains(Environment.buildLogFile("tpl-app").toString()), report);
+            var shown = String.join("\n", out.frameLines());
+            assertTrue(shown.contains("SDKMAN installed") && shown.contains("$ cd ~/app && ./gradlew dependencies"), shown);
+        });
+    }
+
+    @Test
+    void withoutVerboseTheBuildLogIsKeptButNotShown(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.shellExec(anyString(), any(String[].class))).thenReturn(new IncusClient.ExecResult(0, "done\n", ""));
+            when(incus.instanceMetadataOrThrow("tpl-app-rebuilding")).thenReturn(instance("container", Map.of()));
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doAnswer(inv -> {
+                new Container(incus, "tpl-app-rebuilding", BuildOutput.bound(), cmd.commandLog())
+                        .runDeclared("tool 'x' run", "echo done", "x failed");
+                throw new IncusException("a later step failed");
+            }).when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-app");
+
+            var out = RecordingOutput.during(() -> assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-app", imageDef))));
+
+            assertTrue(assertDoesNotThrow(() -> Files.readString(Environment.buildLogFile("tpl-app"))).contains("$ echo done\ndone\n"));
+            assertEquals(List.of(), out.frameLines());
+        });
+    }
+
     @Test
     void aFailedBuildIsMarkedUntrustedWhenItIsPromoted(@TempDir Path tmp) {
         // #936: the promoted container still carries its parent's template stamps, which no host

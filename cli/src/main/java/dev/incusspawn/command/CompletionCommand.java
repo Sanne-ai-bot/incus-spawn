@@ -215,6 +215,7 @@ public class CompletionCommand extends BaseCommand {
                 '--missing[Build only templates that don'"'"'t exist yet]' \\
                 '--type=[Instance type (overrides image definition)]:type:(container vm kvm)' \\
                 '--yes[Skip interactive confirmations]' \\
+                '--verbose[Show every command the definitions ran, with its output]' \\
                 '*:template name:_isx_template_names'
             }
 
@@ -658,13 +659,13 @@ public class CompletionCommand extends BaseCommand {
                 build)
                   case "$prev" in
                     build)
-                      _isx_reply --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes < <(_isx_list_templates)
+                      _isx_reply --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes --verbose < <(_isx_list_templates)
                       return ;;
                     --type)
                       COMPREPLY=( $(compgen -W "container vm kvm" -- "$cur") )
                       return ;;
                   esac
-                  _isx_reply --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes < <(_isx_list_templates)
+                  _isx_reply --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes --verbose < <(_isx_list_templates)
                   ;;
                 clean)
                   local clean_subcmds="cache state config pool dnf all"
@@ -999,6 +1000,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand build' -l missing          -d 'Build only templates that don'"'"'t exist yet'
             complete -c isx -f -n '__isx_using_subcommand build' -l type -x          -d 'Instance type: container, vm, or kvm' -a 'container vm kvm'
             complete -c isx -f -n '__isx_using_subcommand build' -l yes              -d 'Skip interactive confirmations'
+            complete -c isx -f -n '__isx_using_subcommand build' -l verbose          -d 'Show every command the definitions ran, with its output'
 
             # ── clean ────────────────────────────────────────────────────────────────
 

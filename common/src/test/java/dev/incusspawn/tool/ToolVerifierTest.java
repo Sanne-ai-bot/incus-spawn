@@ -20,6 +20,24 @@ class ToolVerifierTest {
     private static final String CONTAINER = "test-container";
 
     @Test
+    void eachVerifyIsRecordedInTheBuildsCommandLog() {
+        // #1742: a verify is a command the definition wrote, as root or as the user
+        var incus = mock(IncusClient.class);
+        when(incus.execInContainer(CONTAINER, "agentuser", "mvn --version"))
+                .thenReturn(new IncusClient.ExecResult(0, "Apache Maven 3.9.16\n", ""));
+        when(incus.shellExec(eq(CONTAINER), any(String[].class))).thenReturn(new IncusClient.ExecResult(1, "", "no zmx\n"));
+        var recorded = new java.util.ArrayList<String>();
+        var container = new Container(incus, CONTAINER, RecordingOutput.QUIET,
+                (step, command, result, took) -> recorded.add(step + " | " + command + " | " + result.exitCode()));
+
+        RecordingOutput.during(() -> ToolVerifier.verifyAll(container, List.of(
+                new ToolVerifier.Check("maven-3", "mvn --version"),
+                new ToolVerifier.Check("zmx", "zmx version", true))));
+
+        assertEquals(List.of("tool 'maven-3' verify | mvn --version | 0", "tool 'zmx' verify | zmx version | 1"), recorded);
+    }
+
+    @Test
     void verifiesInTheImageEnvironmentAndReportsTheVersion() throws Exception {
         var incus = mock(IncusClient.class);
         when(incus.execInContainer(CONTAINER, "agentuser", "mvn --version"))

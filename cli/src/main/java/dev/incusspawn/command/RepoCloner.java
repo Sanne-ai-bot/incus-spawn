@@ -675,14 +675,16 @@ class RepoCloner {
     static PrimeRun runPrime(Container container, ImageDef.RepoEntry repo, Runnable onRetry) {
         var dir = shellQuote(expandHome(repo.getPath()));
         for (var command : repo.getPrime()) {
-            var run = runPrimeCommand(container, command, "cd " + dir + " && " + command, onRetry);
+            var run = runPrimeCommand(container, "repo '" + repoDisplayName(repo) + "' prime", command,
+                    "cd " + dir + " && " + command, onRetry);
             if (!run.success()) return run;
         }
         return PrimeRun.OK;
     }
 
-    private static PrimeRun runPrimeCommand(Container container, String command, String prime, Runnable onRetry) {
-        var result = container.shAsUser("agentuser", prime);
+    private static PrimeRun runPrimeCommand(Container container, String step, String command, String prime,
+                                            Runnable onRetry) {
+        var result = container.shDeclaredAsUser(step, "agentuser", prime);
         if (result.success()) return PrimeRun.OK;
         // Prime output is not git, so use the last meaningful line for the
         // concise inline label; the full log is preserved and printed on failure.
@@ -701,7 +703,7 @@ class RepoCloner {
             return PrimeRun.failed(command, first, "isx-trust could not run: " + e.getMessage(), true);
         }
         try {
-            result = container.shAsUser("agentuser", prime);
+            result = container.shDeclaredAsUser(step, "agentuser", prime);
         } catch (RuntimeException e) {
             return PrimeRun.failed(command, first, "the prime's second run failed: " + e.getMessage(), true);
         }
@@ -748,6 +750,11 @@ class RepoCloner {
         return BuildOutput.guestText(command.strip().replace('\r', ' '));
     }
 
+    /** {@code command} as a shell shows it: {@code $ } before it, {@code > } before each line it continues on. */
+    static String prompted(String command) {
+        return "$ " + command.strip().replace("\n", "\n> ");
+    }
+
     /** A prime command's first line, cut to {@value #SHORT_COMMAND} characters, whole ones. */
     static String shortCommand(String command) {
         var lines = command.strip().split("\n", 2);
@@ -782,9 +789,7 @@ class RepoCloner {
                 var header = "─── " + step + " output: " + name + " ───";
                 var footer = "─── end " + step + " output: " + name + " ───";
                 // The command leads the output, and the report keeps it however long that is.
-                // A shell's prompts: "$ " before the command, "> " before each line it continues on.
-                var command = progress.command() == null ? ""
-                        : "$ " + progress.command().strip().replace("\n", "\n> ") + "\n";
+                var command = progress.command() == null ? "" : prompted(progress.command()) + "\n";
                 var log = progress.log() == null ? "" : progress.log();
                 // The command's start, then the end of its log as a guest's lines, under one warning;
                 // the report keeps more.
