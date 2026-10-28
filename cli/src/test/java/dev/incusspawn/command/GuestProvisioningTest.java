@@ -1125,26 +1125,13 @@ class GuestProvisioningTest {
         imageDef.setPackageRepos(List.of(
                 new ImageDef.PackageRepo("x\033]0;pwned\007", "a\nb"),
                 new ImageDef.PackageRepo("copr", "owner/r\nERROR: forged\033[2J")));
-        var output = new java.io.ByteArrayOutputStream();
-        var originalOut = System.out;
-        var originalErr = System.err;
-        dev.incusspawn.incus.IncusException ex;
-        var said = new RecordingOutput();
-        try (var bound = dev.incusspawn.util.BuildOutput.bind(said)) {
-            System.setOut(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
-            System.setErr(new java.io.PrintStream(output, true, java.nio.charset.StandardCharsets.UTF_8));
-            ex = assertThrows(dev.incusspawn.incus.IncusException.class, () -> GuestProvisioning.enablePackageRepos(
-                    new Container(incus, "test"), imageDef, List.of(), List.of(), Map.of()));
-        } finally {
-            System.setOut(originalOut);
-            System.setErr(originalErr);
-        }
-        var shown = output.toString(java.nio.charset.StandardCharsets.UTF_8);
+        var ex = new dev.incusspawn.incus.IncusException[1];
+        var said = RecordingOutput.during(() -> ex[0] = assertThrows(dev.incusspawn.incus.IncusException.class,
+                () -> GuestProvisioning.enablePackageRepos(new Container(incus, "test"), imageDef, List.of(), List.of(), Map.of())));
         assertTrue(said.warnings().contains("Unknown package_repos type 'x ]0;pwned ' for 'a b', skipping it"), said.warnings().toString());
-        // Every diagnostic, the failed COPR step's and its output's included, shows the names as text
-        said.warnings().forEach(w -> assertEquals(dev.incusspawn.util.TerminalLink.plainText(w), w, w.replace("\033", "ESC")));
-        assertEquals(dev.incusspawn.util.TerminalLink.plainText(shown), shown, shown.replace("\033", "ESC"));
-        assertTrue(ex.getMessage().startsWith("Failed to enable COPR repo "), ex.getMessage());
-        assertFalse(ex.getMessage().contains("\n"), "a name cannot forge a line in the failure report: " + ex.getMessage());
+        // Everything reported, a live step's progress, the failed COPR step and its output included, shows the names as text
+        said.events().stream().map(RecordingOutput.Event::text).filter(java.util.Objects::nonNull).forEach(w -> assertEquals(dev.incusspawn.util.TerminalLink.plainText(w), w, w.replace("\033", "ESC")));
+        assertTrue(ex[0].getMessage().startsWith("Failed to enable COPR repo "), ex[0].getMessage());
+        assertFalse(ex[0].getMessage().contains("\n"), "a name cannot forge a line in the failure report: " + ex[0].getMessage());
     }
 }

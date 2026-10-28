@@ -16,10 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * a swapped {@code System.out} or {@code System.err} (#1703): a swap catches bytes a terminal
  * would have drawn, not what was said or of which kind.
  *
- * <p>The test classes below still swap, each for the reason given: what they read is printed raw
- * today and moves to the seam in a later step of #1703, or the swap is what they test. A class not
- * listed may not swap, and a listed one that no longer does fails until it is dropped, so the list
- * only shrinks, as {@code raw-output-baseline.txt} does. A class that calls a swapping class's
+ * <p>The test classes below still swap, each for the reason given: what they read is a gate class's
+ * own stream, or the swap is what they test. A class not listed may not swap, and a listed one that
+ * no longer does fails until it is dropped. A class that calls a swapping class's
  * static helper swaps too. It holds a class, not a count: a listed class's own swapping helper can
  * take a new caller, which review has to catch until the class is dropped.
  */
@@ -29,8 +28,7 @@ class StreamSwapGateTest {
     private static final Pattern SWAP = Pattern.compile("\\bSystem\\s*(?:\\.|::)\\s*set(?:Out|Err)\\b"
             + "|\\bimport\\s+static\\s+java\\.lang\\.System\\.(?:setOut|setErr|\\*)\\s*;");
 
-    private static final String CLI_COMMAND = "reads what cli/command prints raw (#1703, its step for cli/command)";
-    private static final String PROXY_LOG = "reads the proxy's log lines (#1703, its ProxyLog step)";
+    private static final String PROXY_LOG = "reads the proxy's log on stderr, the stream ProxyLog, its gate, writes";
 
     /** Repository-relative test sources that may swap, each with why. */
     private static final Map<String, String> MAY_SWAP = Map.ofEntries(
@@ -41,8 +39,6 @@ class StreamSwapGateTest {
             Map.entry("common/src/test/java/dev/incusspawn/util/BuildOutputTest.java", "the terminal output's own rendering"),
             Map.entry("common/src/test/java/dev/incusspawn/util/OutputBindingTest.java", "that a binding writes no raw stream is what it tests"),
             Map.entry("common/src/test/java/dev/incusspawn/incus/IncusClientSmokeTest.java", "a guest's own output, passed through to the terminal"),
-            Map.entry("cli/src/test/java/dev/incusspawn/command/GuestProvisioningTest.java", CLI_COMMAND),
-            Map.entry("cli/src/test/java/dev/incusspawn/command/ToolsCommandTest.java", CLI_COMMAND),
             Map.entry("proxy/src/test/java/dev/incusspawn/proxy/MitmTlsTest.java", PROXY_LOG),
             Map.entry("proxy/src/test/java/dev/incusspawn/proxy/VerifiedArtifactStoreTest.java", PROXY_LOG),
             Map.entry("proxy/src/test/java/dev/incusspawn/proxy/WebSocketProxyTest.java", PROXY_LOG));

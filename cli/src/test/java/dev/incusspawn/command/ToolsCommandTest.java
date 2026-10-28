@@ -1,58 +1,42 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.util.RecordingOutput;
 import org.aesh.command.CommandResult;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class ToolsCommandTest {
 
-    private final PrintStream originalOut = System.out;
-    private final PrintStream originalErr = System.err;
-    private ByteArrayOutputStream out;
-    private ByteArrayOutputStream err;
-
-    @BeforeEach
-    void captureOutput() {
-        out = new ByteArrayOutputStream();
-        err = new ByteArrayOutputStream();
-        System.setOut(new PrintStream(out));
-        System.setErr(new PrintStream(err));
+    /** What {@code cmd}, which must succeed, printed as its answer. */
+    private static String shown(BaseCommand cmd) {
+        return String.join("\n", run(cmd, CommandResult.SUCCESS).resultLines());
     }
 
-    @AfterEach
-    void restoreOutput() {
-        System.setOut(originalOut);
-        System.setErr(originalErr);
+    /** Runs {@code cmd}, which must exit with {@code expected}, and returns what it reported. */
+    private static RecordingOutput run(BaseCommand cmd, CommandResult expected) {
+        return RecordingOutput.during(() -> assertEquals(expected, cmd.doExecute()));
     }
 
     @Test
-    void listPrintsSortedToolNames() throws Exception {
+    void listPrintsSortedToolNames() {
         var cmd = new ToolsCommand.ListSub();
         cmd.verbose = false;
-        assertEquals(CommandResult.SUCCESS, cmd.doExecute());
-
-        var lines = out.toString().lines().toList();
+        var lines = run(cmd, CommandResult.SUCCESS).resultLines();
         assertTrue(lines.size() >= 10, "should list at least 10 built-in tools");
         var sorted = lines.stream().sorted().toList();
         assertEquals(sorted, lines, "tool names must be sorted alphabetically");
     }
 
     @Test
-    void listVerbosePrintsTable() throws Exception {
+    void listVerbosePrintsTable() {
         var cmd = new ToolsCommand.ListSub();
         cmd.verbose = true;
-        assertEquals(CommandResult.SUCCESS, cmd.doExecute());
-
-        var output = out.toString();
-        var lines = output.lines().toList();
+        var lines = run(cmd, CommandResult.SUCCESS).resultLines();
+        var output = String.join("\n", lines);
         assertTrue(lines.getFirst().contains("NAME"), "header must contain NAME");
         assertTrue(lines.getFirst().contains("SOURCE"), "header must contain SOURCE");
         assertTrue(lines.getFirst().contains("DESCRIPTION"), "header must contain DESCRIPTION");
@@ -60,35 +44,29 @@ class ToolsCommandTest {
     }
 
     @Test
-    void showPrintsToolDetails() throws Exception {
+    void showPrintsToolDetails() {
         var cmd = new ToolsCommand.Show();
         cmd.name = "claude";
-        assertEquals(CommandResult.SUCCESS, cmd.doExecute());
-
-        var output = out.toString();
+        var output = shown(cmd);
         assertTrue(output.contains("claude"), "must show tool name");
         assertTrue(output.contains("Description:"), "must show description");
         assertTrue(output.contains("Source:"), "must show source");
     }
 
     @Test
-    void showPrintsYamlToolDownloads() throws Exception {
+    void showPrintsYamlToolDownloads() {
         var cmd = new ToolsCommand.Show();
         cmd.name = "maven-3";
-        assertEquals(CommandResult.SUCCESS, cmd.doExecute());
-
-        var output = out.toString();
+        var output = shown(cmd);
         assertTrue(output.contains("Downloads:"), "YAML tools must show downloads");
         assertTrue(output.contains("apache-maven"), "must show Maven download URL");
     }
 
     @Test
-    void showPrintsParameters() throws Exception {
+    void showPrintsParameters() {
         var cmd = new ToolsCommand.Show();
         cmd.name = "idea-backend";
-        assertEquals(CommandResult.SUCCESS, cmd.doExecute());
-
-        var output = out.toString();
+        var output = shown(cmd);
         assertTrue(output.contains("Parameters:"), "must show parameters section");
         assertTrue(output.contains("memory"), "must show memory parameter");
         assertTrue(output.contains("Requires:"), "must show dependencies");
@@ -96,12 +74,10 @@ class ToolsCommandTest {
     }
 
     @Test
-    void showPrintsYamlToolActions() throws Exception {
+    void showPrintsYamlToolActions() {
         var cmd = new ToolsCommand.Show();
         cmd.name = "idea-backend";
-        assertEquals(CommandResult.SUCCESS, cmd.doExecute());
-
-        var output = out.toString();
+        var output = shown(cmd);
         assertTrue(output.contains("Actions:"), "YAML tools must show their actions: " + output);
         assertTrue(output.contains("in Gateway (url)"), "must show the Gateway action: " + output);
     }
@@ -114,22 +90,18 @@ class ToolsCommandTest {
     }
 
     @Test
-    void showNotFoundReturnsError() throws Exception {
+    void showNotFoundReturnsError() {
         var cmd = new ToolsCommand.Show();
         cmd.name = "nonexistent-tool";
-        assertEquals(CommandResult.valueOf(1), cmd.doExecute());
-
-        var errOutput = err.toString();
+        var errOutput = String.join("\n", run(cmd, CommandResult.valueOf(1)).warnings());
         assertTrue(errOutput.contains("not found"), "must report tool not found");
         assertTrue(errOutput.contains("Available tools:"), "must list available tools");
     }
 
     @Test
-    void bareToolsDelegatesToList() throws Exception {
+    void bareToolsDelegatesToList() {
         var cmd = new ToolsCommand();
-        assertEquals(CommandResult.SUCCESS, cmd.doExecute());
-
-        var lines = out.toString().lines().toList();
+        var lines = run(cmd, CommandResult.SUCCESS).resultLines();
         assertTrue(lines.size() >= 10, "bare 'tools' must delegate to list");
     }
 }
