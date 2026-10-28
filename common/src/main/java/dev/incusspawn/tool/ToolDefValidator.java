@@ -53,6 +53,12 @@ public class ToolDefValidator {
             errors.add("'name' field is required and must not be blank");
             return;
         }
+        // Stop here: every message below names the tool as it is, which may hold escape sequences
+        var invalidName = invalidName(def.getName());
+        if (invalidName != null) {
+            errors.add(invalidName);
+            return;
+        }
 
         for (var dl : def.getDownloads()) {
             if (dl.getUrl() == null || dl.getUrl().isBlank()) {
