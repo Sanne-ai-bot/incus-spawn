@@ -238,9 +238,9 @@ class YamlToolActionTest {
 
     @Test
     void testCheckUrlPrerequisitesSkipsUnknownSchemes() {
-        assertNull(YamlToolAction.checkUrlPrerequisites("http://example.com", false));
-        assertNull(YamlToolAction.checkUrlPrerequisites("https://example.com", false));
-        assertNull(YamlToolAction.checkUrlPrerequisites("custom://something", false));
+        assertNull(YamlToolAction.checkUrlPrerequisites("http://example.com", null));
+        assertNull(YamlToolAction.checkUrlPrerequisites("https://example.com", null));
+        assertNull(YamlToolAction.checkUrlPrerequisites("custom://something", null));
     }
 
     // --- vscode-remote folder URI conversion ---
@@ -360,15 +360,23 @@ class YamlToolActionTest {
         assertTrue(action.id().isEmpty());
     }
 
+    private static final String REMOTE_SSH_URL = "vscode://vscode-remote/ssh-remote+dev-1/home/agentuser/p";
+
+    /** A host with {@code code} and without the Remote-SSH extension, recording what it is asked to open. */
+    private static YamlToolAction.VscodeProbe missingRemoteSsh(List<String> opened) {
+        return new YamlToolAction.VscodeProbe() {
+            @Override public String cli() { return "code"; }
+            @Override public boolean installed() { return true; }
+            @Override public boolean hasExtension(String cli, String id) { return false; }
+            @Override public boolean open(String url) { return opened.add(url); }
+        };
+    }
+
     @Test
     void withoutPromptingAMissingRemoteSshExtensionIsAnErrorNotAQuestion() {
         // The shell status bar runs this while the session holds the terminal in raw mode: a
         // prompt would be drawn over the session and its Enter would go to the shell.
-        var probe = new YamlToolAction.VscodeProbe() {
-            @Override public String cli() { return "code"; }
-            @Override public boolean installed() { return true; }
-            @Override public boolean hasExtension(String cli, String id) { return false; }
-        };
+        var opened = new java.util.ArrayList<String>();
         var originalIn = System.in;
         dev.incusspawn.util.RecordingOutput printed;
         try {
@@ -376,16 +384,44 @@ class YamlToolActionTest {
                 @Override public int read() { throw new AssertionError("read the terminal"); }
             });
             printed = dev.incusspawn.util.RecordingOutput.during(() -> {
-                var result = YamlToolAction.checkVscodePrerequisites(
-                        "vscode://vscode-remote/ssh-remote+dev-1/home/agentuser/p", false, probe);
+                var result = YamlToolAction.checkVscodePrerequisites(REMOTE_SSH_URL, null, missingRemoteSsh(opened));
                 assertFalse(result.success());
-                assertTrue(result.message().contains("Remote - SSH"), result.message());
+                assertTrue(result.message().contains("install ms-vscode-remote.remote-ssh, then retry"), result.message());
                 assertFalse(result.message().contains("\n"));
             });
         } finally {
             System.setIn(originalIn);
         }
         assertEquals(List.of(), printed.events());
+        assertEquals(List.of(), opened);
+    }
+
+    @Test
+    void anUnansweredRemoteSshQuestionOpensNothing() {
+        // isx run <instance> <action> </dev/null: the question reads EOF, and nobody confirmed (#1786).
+        var opened = new java.util.ArrayList<String>();
+        var asked = new java.util.ArrayList<String>();
+        var printed = dev.incusspawn.util.RecordingOutput.during(() -> {
+            var result = YamlToolAction.checkVscodePrerequisites(REMOTE_SSH_URL,
+                    question -> { asked.add(question); return null; }, missingRemoteSsh(opened));
+            assertFalse(result.success());
+            assertTrue(result.message().contains("install ms-vscode-remote.remote-ssh, then retry"), result.message());
+        });
+        assertEquals(List.of("Press Enter to open VS Code and install it..."), asked);
+        assertEquals(List.of(new dev.incusspawn.util.RecordingOutput.Event(dev.incusspawn.util.RecordingOutput.Kind.STEP,
+                "The VS Code 'Remote - SSH' extension is required for this action but is not installed.")), printed.events());
+        assertEquals(List.of(), opened);
+    }
+
+    @Test
+    void aConfirmedRemoteSshQuestionOpensTheExtensionPage() {
+        var opened = new java.util.ArrayList<String>();
+        dev.incusspawn.util.RecordingOutput.during(() -> {
+            var result = YamlToolAction.checkVscodePrerequisites(REMOTE_SSH_URL, question -> "", missingRemoteSsh(opened));
+            assertFalse(result.success());
+            assertTrue(result.message().contains("after the extension installation completes"), result.message());
+        });
+        assertEquals(List.of("vscode:extension/ms-vscode-remote.remote-ssh"), opened);
     }
 
     @Test
