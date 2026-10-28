@@ -224,6 +224,8 @@ public class CompletionCommand extends BaseCommand {
                 '--all-templates[Destroy all built templates (reverse order, derived first)]' \\
                 '--all-instances[Destroy all instances]' \\
                 '--skip-confirmation[Skip the confirmation prompt]' \\
+                '--owner=[Destroy only if this external tool owns it]:owner' \\
+                '--owner-id=[...and only under this handle]:id' \\
                 '1::environment name:_isx_instances'
             }
 
@@ -682,10 +684,11 @@ public class CompletionCommand extends BaseCommand {
                 destroy)
                   case "$prev" in
                     destroy)
-                      _isx_reply --help --all-templates --all-instances --skip-confirmation < <(_isx_list_instances)
+                      _isx_reply --help --all-templates --all-instances --skip-confirmation --owner --owner-id < <(_isx_list_instances)
                       return ;;
+                    --owner|--owner-id) return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help --all-templates --all-instances --skip-confirmation" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help --all-templates --all-instances --skip-confirmation --owner --owner-id" -- "$cur") )
                   ;;
                 reset)
                   COMPREPLY=( $(compgen -W "--help --skip-confirmation" -- "$cur") )
@@ -1015,6 +1018,8 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand destroy' -l all-templates      -d 'Destroy all built templates (reverse order, derived first)'
             complete -c isx -f -n '__isx_using_subcommand destroy' -l all-instances       -d 'Destroy all instances'
             complete -c isx -f -n '__isx_using_subcommand destroy' -l skip-confirmation   -d 'Skip the confirmation prompt'
+            complete -c isx -f -n '__isx_using_subcommand destroy' -l owner               -d 'Destroy only if this external tool owns it' -x
+            complete -c isx -f -n '__isx_using_subcommand destroy' -l owner-id            -d '...and only under this handle' -x
 
             # ── reset ───────────────────────────────────────────────────────────────────
 

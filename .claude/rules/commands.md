@@ -66,6 +66,9 @@ When hiding a new command: add it to `HIDDEN_COMMANDS` (which `NOT_OFFERED` is b
 Only the ProxyCommand `isx branch --format=json` hands out has `--start` (`SshKeyManager.proxyCommand`); the Host block never does.
 `isx ssh-proxy --start` installs `StdioGuard` and relays the guard's stdin and stdout, since a start prints progress and stdout is the SSH stream; without `--start` it relays `TerminalStreams` as before.
 `isx branch --format=plain` stays the name alone; its new fields are in `json` only (`BranchCommand.record(name, owner, ownerId, reach)`).
+`isx destroy --owner` (`DestroyCommand.destroyOwned`) fails closed on `drivers:` (`Drivers`, config.yaml only), then deletes through `deleteHeldIf` on the owner stamps; a missing instance is success.
+A plain destroy of an owned instance goes through `confirmDestructive`.
+`isx list`'s `OWNER` column (`ListCommand.ownerCell`) folds in `isx mcp`'s standing; `owner`/`owner_id` are appended to its formats, and the TUI shows them in the instance details (`InstanceDetailView.ownerDetailRows`).
 
 **Output for scripts goes through `OutputFormat`.**
 A query command offers `--format=table|plain|json` (#1036) by parsing `--format` with `OutputFormat.parse` (`OutputFormat.resolve` where there is also a `--plain`), building each result once as an ordered `Map<String, Object>` (a `LinkedHashMap`; maps need no native reflection registration) in a package-private `record(s)` method, and handing it to `format.print`/`printOne`.

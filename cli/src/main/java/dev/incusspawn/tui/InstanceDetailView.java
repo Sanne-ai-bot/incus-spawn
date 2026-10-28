@@ -129,6 +129,17 @@ public final class InstanceDetailView {
     /** A row of the detail pane; a null label explains the row above. */
     public record DetailRow(String label, String value) {}
 
+    /** The detail pane's rows for an instance an external tool controls (#1720); none for any other. */
+    public static List<DetailRow> ownerDetailRows(String owner, String ownerId) {
+        var rows = new ArrayList<DetailRow>();
+        if (owner == null) return rows;
+        rows.add(new DetailRow("Owner:", OutputFormat.oneLine(owner)
+                + (ownerId == null ? "" : " (" + OutputFormat.oneLine(ownerId) + ")")));
+        rows.add(new DetailRow(null, "that tool made it; drivers: in config.yaml says whether it may destroy it"));
+        rows.add(new DetailRow(null, "a branch of it is yours, not the tool's"));
+        return rows;
+    }
+
     /** The detail pane's rows for an instance an isx mcp session made; none for any other. */
     public static List<DetailRow> mcpDetailRows(McpStanding mcp) {
         var rows = new ArrayList<DetailRow>();
@@ -226,6 +237,7 @@ public final class InstanceDetailView {
         var rows = new ArrayList<>(baseImageRows(BaseImageAge.tag(info.metadata()), baseImage));
         // #1053: no column for it in the instance table, which has no width to spare.
         rows.addAll(mcpDetailRows(info.mcp()));
+        rows.addAll(ownerDetailRows(info.owner(), info.ownerId()));
         for (var row : rows) {
             lines.add(row.label() == null
                     ? Line.from(List.of(Span.styled(" ".repeat(16) + row.value(), dimStyle)))

@@ -24,6 +24,9 @@ Any new capability that reaches host state outside the project, such as host pat
 Host routes (#936) are one: only `config.yaml`'s `host-routes:` declares them, and a project-local instance never passes one.
 See DESIGN.md "Project-local templates are confined to their project".
 
+**Drivers** (`drivers:`, `Drivers`, #1720): a raw section like `host-routes:`; a tool name (`Metadata.ownerNameProblem`, never `mcp`) mapped to `destroy:` (a boolean, default false).
+An unknown key, a wrong type or a bad name drops the entry with a warning, and a dropped entry grants nothing.
+Only `isx destroy --owner` reads it, and only config.yaml declares it: never a template, never the tool.
 **Host routes** (`host-routes:`, `HostRoutes`): a raw section like `artifact-cache:`, so any shape loads and is written back as it was; a name under `.internal` mapped to `target:` (`host:port` on loopback) and a required, non-empty `templates:` list (no route admits every instance; decided on #936).
 `HostRoutes.routes` checks each entry against the intercepted domains and drops a wrong one with a warning naming it; an unknown key drops the entry, so a misspelt `templates:` drops it too, never widens it.
 Keep the entry keyed by name with its filter as a field: #935's per-instance grants go beside `templates:`.

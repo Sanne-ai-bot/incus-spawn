@@ -311,7 +311,9 @@ See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for reco
 `isx branch --owner <name> [--owner-id <id>]` stamps who controls an instance; like `isx mcp`'s stamps these are ownership keys (`Metadata.isOwnershipKey`) that no copy inherits.
 `isx branch --format=json` adds the SSH target and `project_root`, while `plain` stays the new name alone for `name=$(...)`.
 `isx start` and `isx stop` reuse `isx shell`'s preparation and the marked stop, and `isx ssh-proxy --start` lets an orchestrator's reconnect start a stopped instance; the Host block a plain `ssh` reads never starts one.
-See `.claude/rules/commands.md` and DESIGN.md "External orchestrators: owners, start and stop".
+`isx destroy --owner <tool>` deletes only for a tool `drivers:` in `config.yaml` lets destroy, and only while the instance still carries that owner; a plain destroy of an owned instance asks.
+`isx list`'s `OWNER` column folds in `isx mcp`'s standing, and its formats append `owner` and `owner_id`.
+See `.claude/rules/commands.md` and DESIGN.md "External orchestrators: owners, start, stop and destroy".
 
 **Native image: host paths belong in the run-time-initialized classes.**
 Quarkus initializes application classes at image-build time unless they are listed in `--initialize-at-run-time`, and Linux native builds run as **root inside the GraalVM builder container**.

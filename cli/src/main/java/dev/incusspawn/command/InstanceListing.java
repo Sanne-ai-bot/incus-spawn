@@ -193,5 +193,17 @@ public final class InstanceListing {
                                 String instanceMode, boolean kvmEnabled,
                                 McpStanding mcp, boolean mcpCaller, JqValue metadata) {
         public MachineType machineType() { return MachineType.fromIncus(runtime); }
+
+        /** The external tool that controls it ({@code isx branch --owner}, #1720), or null. */
+        public String owner() { return stamp(Metadata.OWNER); }
+
+        /** That tool's own handle for it ({@code --owner-id}), or null. */
+        public String ownerId() { return stamp(Metadata.OWNER_ID); }
+
+        private String stamp(String key) {
+            if (metadata == null) return null;
+            var value = metadata.path("config").pathText(key, "");
+            return value.isEmpty() ? null : value;
+        }
     }
 }
