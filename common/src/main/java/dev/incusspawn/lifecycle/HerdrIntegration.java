@@ -35,6 +35,11 @@ public final class HerdrIntegration implements HostIntegration {
     static final String TOOL = "herdr";
     /** Recorded when isx added no machine for the instance, so it neither retries nor removes one. */
     static final String NOT_ADDED = "-";
+    /**
+     * Recorded after a first failed add (a timeout, a refused connection): the next start tries once
+     * more, and a second failure is {@link #NOT_ADDED} (Sanne's decision on #1823).
+     */
+    static final String RETRY = "retry";
     /** Its first connection starts herdr's server in the instance, about a second when it works. */
     static final Duration ADD_TIMEOUT = Duration.ofSeconds(30);
     static final Duration QUICK = Duration.ofSeconds(10);
@@ -74,7 +79,13 @@ public final class HerdrIntegration implements HostIntegration {
 
     @Override
     public boolean done(String name) {
-        return Files.exists(record(name));
+        var record = record(name);
+        if (!Files.exists(record)) return false;
+        try {
+            return !RETRY.equals(Files.readString(record).strip());
+        } catch (IOException e) {
+            return true;
+        }
     }
 
     @Override
@@ -94,9 +105,16 @@ public final class HerdrIntegration implements HostIntegration {
                 out.step("Not adding " + shown + " to herdr yet: ssh " + shown + " does not reach it through isx's SSH config.");
                 return;
             }
+            var retrying = Files.exists(record(name));
             var added = host.run(ADD_TIMEOUT, List.of(TOOL, "machine", "add", name, "--label", name));
             var id = added.ok() ? addedId(added.output()) : null;
             if (id == null) {
+                if (!retrying) {
+                    // Once more on the next start: the guest's sshd may not have been up yet
+                    out.step("Could not add " + shown + " to herdr yet (" + lastLine(added.output()) + "); isx tries again on its next start.");
+                    record(name, RETRY);
+                    return;
+                }
                 out.warn("could not add " + shown + " to herdr: " + lastLine(added.output()),
                         "Add it yourself: herdr machine add " + shown);
                 record(name, NOT_ADDED);

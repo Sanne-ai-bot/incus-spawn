@@ -161,16 +161,53 @@ class HerdrIntegrationTest {
         assertEquals(List.of("herdr machine add ws --label ws"), host.ran, "added once the alias resolves");
     }
 
+    /**
+     * A failed add (a timeout, a refused connection) is tried once more, on the next start; a second
+     * failure is one warning with the command, recorded as not added, and never tried again (Sanne's
+     * decision on #1823).
+     */
     @Test
-    void aFailedAddIsOneWarningWithTheCommandAndIsNotRetriedOnEveryStart() throws Exception {
+    void aFailedAddIsRetriedOnceThenWarnedAndRecordedAsNotAdded() throws Exception {
         var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
         var host = new FakeHost(true);
         host.answers.put("herdr machine add", new HostCommands.Result(1, "ssh: connect\nerror: could not reach ws"));
-        var recorded = started(herdr(host), daemon, "ws");
+        var herdr = herdr(host);
+
+        var first = started(herdr, daemon, "ws");
+        assertEquals(List.of(), first.events(RecordingOutput.Kind.WARN), "no warning yet");
+        assertEquals(List.of("Could not add ws to herdr yet (error: could not reach ws); isx tries again on its next start."),
+                first.events(RecordingOutput.Kind.STEP).stream().map(RecordingOutput.Event::msg).toList());
+        assertEquals(HerdrIntegration.RETRY, recorded("ws"));
+        assertFalse(herdr.done("ws"));
+
+        var second = started(herdr, daemon, "ws");
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
                 "could not add ws to herdr: error: could not reach ws", "Add it yourself: herdr machine add ws")),
-                recorded.events(RecordingOutput.Kind.WARN));
+                second.events(RecordingOutput.Kind.WARN));
         assertEquals(HerdrIntegration.NOT_ADDED, recorded("ws"));
+        assertTrue(herdr.done("ws"));
+
+        started(herdr, daemon, "ws");
+        assertEquals(2, host.ran.stream().filter(l -> l.startsWith("herdr machine add")).count(), "no third try");
+    }
+
+    /** The retry that works records the machine, with no warning. */
+    @Test
+    void aRetryThatWorksRecordsTheMachine() throws Exception {
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
+        var host = new FakeHost(true);
+        var works = host.answers.get("herdr machine add");
+        host.answers.put("herdr machine add", new HostCommands.Result(-1, "timed out after 30 seconds"));
+        var herdr = herdr(host);
+        started(herdr, daemon, "ws");
+        assertEquals(HerdrIntegration.RETRY, recorded("ws"));
+
+        host.answers.put("herdr machine add", works);
+        var retry = started(herdr, daemon, "ws");
+        assertEquals(ID, recorded("ws"));
+        assertEquals(List.of(), retry.events(RecordingOutput.Kind.WARN));
+        assertEquals(List.of("Added ws to herdr."), retry.events(RecordingOutput.Kind.STEP).stream()
+                .map(RecordingOutput.Event::msg).toList());
     }
 
     @Test

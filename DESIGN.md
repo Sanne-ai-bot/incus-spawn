@@ -5300,7 +5300,8 @@ The target is the instance's name, which its Host block in isx's managed SSH con
 herdr is asked only once that holds: the managed config has the instance's block for its address, and `~/.ssh/config` includes it (`HerdrIntegration.SshAlias`).
 Otherwise herdr would resolve the name as any host, a real machine of that name included, and install and start its server there; nothing is recorded, so a later start adds it.
 What isx did is recorded on the host, one file per instance name: the id of the machine it added, or `-` when it added none.
-So later starts check one file and run nothing, a copy or a renamed instance gets a record of its own, and a failed add or an untrusted build is not retried or reported again on every start.
+So later starts check one file and run nothing, a copy or a renamed instance gets a record of its own, and an untrusted build is not retried or reported again on every start.
+A failed add (a timeout, a refused connection) is tried once more, on the next start, since the guest's sshd may not have been up; a second failure warns with the command to run and is recorded as not added (Sanne's decision on #1823).
 A destroy removes only the recorded machine: herdr may hold a machine the user added for a real host that shares the instance's name, which a match on the SSH target alone would have removed.
 A stamp on the instance was the first version: a copy carries it, it is gone once the instance is, and writing it cost a request on the start path.
 A host half is built-in Java, never a definition's: a cloned repository's tool must not make isx run host commands, and an instance built from a project-local definition gets none, since such a tool may share a built-in's name.
