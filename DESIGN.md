@@ -4410,6 +4410,10 @@ Intel Macs are not covered: arm64 is what Mac users run, and macOS runners are s
 On the slow runner it took 373 s instead of 122 s, and `unit-tests-macos` overran its 20-minute timeout with every test passed (#1839).
 So `GitTestUtils.releasesFixture` builds its repository once per JVM and copies it, which saves fifteen Git processes per test.
 `GitPreparationTest` also runs its tests concurrently (`@Execution(CONCURRENT)`): each owns its directories, cache root and Git server, and the process-wide lease and lock maps it reaches are keyed by path.
+The methods carry the annotation, not the class: a concurrent class runs beside every other class in the module.
+Its Git processes then inherit stub scripts other tests are still writing, and a stub's exec fails with ETXTBSY (#1846).
+Under dash that failure is silent, since the shell runs the host's command of the same name instead.
+`ConcurrentTestClassesTest` refuses a class-level `@Execution(CONCURRENT)` in `common`.
 `common`'s surefire configuration enables JUnit's parallel execution for that, with every other class still running one test at a time.
 `GitTestServer` holds its listening socket and serves each connection with `git daemon --inetd`, since a port released for a daemon to bind could be taken by a concurrent test first.
 Four run at a time, and on three CPUs the class takes 10 s instead of 36 s, so the timeout stays at 20 minutes.
