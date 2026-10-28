@@ -5,6 +5,11 @@ import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -13,6 +18,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -154,5 +161,31 @@ class SshProxyCommandTest {
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.ERROR,
                         "instance 'box' is not running (status: Stopped).", "Start it first: isx shell box")),
                 recorded.events());
+    }
+
+    /**
+     * ssh shows a ProxyCommand's stderr on the terminal untouched, and the guest decides it: it is
+     * shown as text, while the connection's bytes pass through as they are.
+     */
+    @Test
+    void theGuestsStderrIsShownAsText() {
+        var incus = mock(IncusClient.class);
+        when(incus.execBidirectional(eq("box"), eq(0), eq(0), eq("/"), any(), any(), any(), any()))
+                .thenAnswer(call -> {
+                    OutputStream stdout = call.getArgument(6);
+                    OutputStream stderr = call.getArgument(7);
+                    stdout.write("SSH-2.0-OpenSSH\033]0;raw\007".getBytes(StandardCharsets.UTF_8));
+                    stderr.write("nc: refused\033]0;pwned\007\033[2J\r\nlast".getBytes(StandardCharsets.UTF_8));
+                    return 1;
+                });
+        var command = new SshProxyCommand();
+        command.instance = "box";
+        var out = new ByteArrayOutputStream();
+        var err = new ByteArrayOutputStream();
+
+        assertEquals(1, command.relay(incus, InputStream.nullInputStream(), out,
+                new PrintStream(err, true, StandardCharsets.UTF_8)));
+        assertEquals("SSH-2.0-OpenSSH\033]0;raw\007", out.toString(StandardCharsets.UTF_8));
+        assertEquals("nc: refused\nlast\n", err.toString(StandardCharsets.UTF_8));
     }
 }

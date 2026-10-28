@@ -1059,7 +1059,7 @@ Only the two gates, `TerminalProgress` and the shell status bar are exempt as wh
 The rule against printing from code the TUI can reach was prose for five rounds of fixes, and nothing failed when the next site was added.
 Over 1,300 such uses predate the gate, so it ratchets: `raw-output-baseline.txt` counts them per file, a file may not exceed its count, and a count it no longer reaches fails until it is lowered.
 A static import of a stream is refused outright, since it would hide every bare `out.println` after it, and an exemption whose file no longer writes fails as well.
-Code that must reach the terminal itself, to hand it to an interactive guest command, draw on it whole or speak another program's protocol on it (`isx git-remote-helper`), takes the streams from the gate `TerminalStreams` rather than being exempted file by file, so a stray print beside it is still caught; only the files the gate test names may call it, a method reference included, and a named file that no longer calls it fails.
+Code that must reach the terminal itself, to hand it to an interactive guest command, draw on it whole or speak another program's protocol on it (`isx git-remote-helper`, `isx ssh-proxy`), takes the streams from the gate `TerminalStreams` rather than being exempted file by file, so a stray print beside it is still caught; only the files the gate test names may call it, a method reference included, and a named file that no longer calls it fails.
 Its `terminal()` holds the one copy of the JDK 22 to 24 check that stdin and stdout are a terminal, which `Prompts.terminal()` reuses.
 The counts are totals, so a new print in a baselined file still needs a reviewer's eye when an old one goes in the same change.
 It is a source scan rather than forbiddenapis, which reads Java 25 class files as of 3.9 but keeps no per-file counts and cannot see an indentation literal.
@@ -1205,6 +1205,7 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 - **`ProxyCommand` through the exec API** (a1086a1e, #128): `isx ssh-proxy` pipes the connection to `nc localhost 22` in the instance, so a client needs no route to the instance's address.
   That is what makes it work on macOS, where the address is inside the appliance VM.
   Its throughput is the exec relay's: see "A bulk exec stream is framed large and read ahead".
+  ssh shows a ProxyCommand's stderr on the terminal untouched, and the guest decides it, so it goes through `GuestStderr`, as `isx git-remote-helper`'s does.
 - **The ProxyCommand waits for sshd, the start does not** (#1699): a start returns about a second before sshd listens, so `ssh` straight after `isx run` was refused.
   The guest side first polls `/proc/net/tcp` for a socket listening on port 22, and only then runs `nc`.
   It polls only while `systemctl is-system-running` says the guest is still starting, and for at most 20 s by the wall clock.
