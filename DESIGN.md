@@ -3840,7 +3840,7 @@ The pieces, and why each is the way it is:
   So withdrawing approval reaches a coordinator as it does a host session that ends.
   Once the coordinator is destroyed or its stamp removed, its workers are orphans like a dead process's, and the proxy ends its session at the next keepalive tick.
   Older isx versions read an `instance:` stamp as unparseable, which they treat as held.
-- *How its Claude Code finds the server: registered from the stamp on every start (#1182).*
+- *How its Claude Code or Pi finds the server: registered from the stamp on every start (#1182).*
   Branching with `--mcp-client` is the only per-instance act.
   The exec that delivers each start's secret (`InstanceSecret.GUEST_SCRIPT`, root in the guest) also gets `ISX_MCP_CLIENT` (`InstanceSecret.guestEnv(secret, mcpCaller)`), which every start path reads from the instance it already holds, so it costs no request.
   `McpClientRegistration` compares it with a root-owned marker in the rootfs (`/var/lib/isx/mcp-client-registered`, holding a digest of the entry it registered, `ENTRY_VERSION`, so an isx that changes the entry re-registers existing coordinators on their next start), and checks that Claude Code's own config still holds the entry (`CONFIG_HAS_ENTRY`, so an entry the agent removed comes back; root reads that agent-owned file through `timeout -k 1 2 head -c 16MiB`, since the agent may swap in a FIFO or a vast sparse file and the readiness exec has no time limit of its own -- a read cut short answers "no entry", which costs a re-registration, never a hang).
@@ -3851,12 +3851,19 @@ The pieces, and why each is the way it is:
   `claude` lives in the agent's home, where the agent can replace it, so the script runs it as the agent and never as root; the marker is root's, so only the script decides what isx believes it registered.
   The registration is not the capability -- the proxy still checks address, secret and stamp -- so one left behind or added by hand reaches nothing.
   The secret rotates every start while the registration is written once, so the entry carries a `headersHelper` that reads `/run/isx/instance-secret` by its absolute path: a `claude -p` under a systemd unit never read the login profile that names it.
+  Pi gets the same treatment, beside Claude Code and independent of it, so a coordinator may run either.
+  The script runs `pi mcp add isx` with the URL and an `X-Isx-Instance-Secret` header whose value is `!cat /run/isx/instance-secret`, which Pi runs on each connection, so it too reads the current secret.
+  It has its own marker (`/var/lib/isx/mcp-client-registered-pi`, `PI_ENTRY_VERSION`) and config test (`~/.pi/agent/mcp.json`), so a template with only one of the two agents leaves the other's marker absent.
+  Whether an agent is there at all is root's `[ -x ]` along the PATH `isx_as_agent` runs it with (`onAgentPath`), never a process: a coordinator with one agent asks about the other on every start, and a `runuser` for that costs a few milliseconds each time.
+  The test only stats the path, so nothing the agent puts there can block root; a binary root sees as executable and the agent cannot run just fails its command, leaving the marker as any failure does.
+  `pi mcp add` replaces an entry by that name, so unlike `add-json` it needs no removal first.
+  Pi's entry is `--exposure direct`: Pi's default, `codemode`, declares no tool to the model and reaches them only from scripts, while driving isx is a coordinator's main job and the set is small.
 - *The playbook is served, not installed.*
   `isx mcp` offers the coordination workflow (create, delegate, `wait_any`, `get_diff`, review, destroy; limits; orphans) as an MCP prompt, `coordinate` (`McpPrompt`), which Claude Code shows as a slash command; `INSTRUCTIONS` stays the tool contract every client reads.
   A skill file in the rootfs was rejected: copies would inherit it, and it would drift from the server it describes, where a prompt exists only where the server is reachable and changes with it.
   `McpPromptTest` fails if it names a tool the server does not have.
 - *The branch checks the result.*
-  After the start, `isx branch --mcp-client` runs one `initialize` and one `tools/list` from inside the guest against `mcp.isx.internal` (`McpClientCheck`: curl, with the secret in a root-only header file, never on a command line), ends that session, and prints the server's version and tool count or why it was not reached -- and whether Claude Code's own user config (`~/.claude.json`) holds an entry for the endpoint, by the same `CONFIG_HAS_ENTRY` test the reconcile makes, read as a file because `claude mcp get` connects to the server and can hang.
+  After the start, `isx branch --mcp-client` runs one `initialize` and one `tools/list` from inside the guest against `mcp.isx.internal` (`McpClientCheck`: curl, with the secret in a root-only header file, never on a command line), ends that session, and prints the server's version and tool count or why it was not reached -- and whether Claude Code's own user config (`~/.claude.json`) or Pi's (`~/.pi/agent/mcp.json`) holds an entry for the endpoint, by the same tests the reconcile makes (`ANY_CONFIG_HAS_ENTRY`), read as a file because `claude mcp get` connects to the server and can hang.
   A reachable endpoint with no registration is the very failure #1182 was filed for.
   What the guest returns (curl's errors, the server's version) passes through `OutputFormat.oneLine` before it is printed.
   It is a warning, never a failure: the branch is made either way, and the user sees a coordinator that cannot work while still there to fix it.

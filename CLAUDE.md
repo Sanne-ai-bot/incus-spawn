@@ -286,7 +286,7 @@ Stdout is the protocol: `StdioGuard` redirects `System.out` to stderr and `Headl
 An agent may also run in an instance branched with `--mcp-client` (#915).
 The proxy serves it `https://mcp.isx.internal/mcp` (`McpBridge`, Streamable HTTP) after checking address, per-start secret and the `mcp-caller` stamp, bridged to a host `isx mcp --caller-instance <name>` whose session is the instance itself.
 No copy inherits the stamp and the MCP path refuses it.
-Every start registers the server in that instance's Claude Code, or removes it from one without the stamp, inside the exec that delivers the secret (`McpClientRegistration`, #1182), so a copy loses it on its first start.
+Every start registers the server in that instance's Claude Code and Pi, or removes it from one without the stamp, inside the exec that delivers the secret (`McpClientRegistration`, #1182), so a copy loses it on its first start.
 See `.claude/rules/mcp.md` and DESIGN.md "MCP server".
 Managed delegation selects `claude` or `codex`, exposes installed agents through `list_templates.delegate_agents`, and persists the selected agent with each task.
 See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation.

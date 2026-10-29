@@ -55,7 +55,8 @@ class McpClientCheckTest {
         var file = root.resolve("instance-secret");
         if (secret != null) Files.writeString(file, secret + "\n");
         var script = McpClientCheck.SCRIPT.replace(InstanceSecret.GUEST_PATH, file.toString())
-                .replace(McpClientRegistration.CLAUDE_CONFIG, root.resolve("claude.json").toString());
+                .replace(McpClientRegistration.CLAUDE_CONFIG, root.resolve("claude.json").toString())
+                .replace(McpClientRegistration.PI_CONFIG, root.resolve("pi-mcp.json").toString());
         var pb = new ProcessBuilder("sh", "-c", script)
                 .redirectErrorStream(true);
         pb.environment().put("PATH", bin + ":" + McpClientRegistrationTest.guestPath(root.resolve("shim")));
@@ -90,7 +91,26 @@ class McpClientCheckTest {
         var outcome = McpClientCheck.parse(runCheck(curl("ok"), InstanceSecret.generate()));
         assertTrue(outcome.reached());
         assertFalse(outcome.ok());
-        assertTrue(outcome.describe("coord").contains("its Claude Code has no 'isx' server"), outcome.describe("coord"));
+        assertTrue(outcome.describe("coord").contains("neither its Claude Code nor its Pi has an 'isx' server"), outcome.describe("coord"));
+    }
+
+    @Test
+    void aCoordinatorWhosePiIsRegisteredIsReady() throws Exception {
+        // Pi's own config, as pi mcp add leaves it: a coordinator need not run Claude Code
+        Files.writeString(root.resolve("pi-mcp.json"), """
+                {
+                  "mcpServers": {
+                    "isx": {
+                      "url": "https://mcp.isx.internal/mcp",
+                      "headers": {
+                        "X-Isx-Instance-Secret": "!cat /run/isx/instance-secret"
+                      }
+                    }
+                  }
+                }
+                """);
+        var outcome = McpClientCheck.parse(runCheck(curl("ok"), InstanceSecret.generate()));
+        assertTrue(outcome.ok(), outcome.describe("coord"));
     }
 
     @Test

@@ -19,8 +19,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * The guest half of #1182: the script every secret delivery runs registers {@code isx mcp} in
  * Claude Code when the host says the instance holds the grant, removes it when it does not, and
  * runs Claude Code only when that changes. Run in a real shell, with a recording {@code claude},
- * the guest's paths moved under a temporary root, and {@code runuser} (which needs root) and
- * {@code timeout} (not on macOS) left out.
+ * the guest's paths (its {@code /usr/local/bin} included, so a host's own {@code claude} or
+ * {@code pi} stays out of it) moved under a temporary root, {@code runuser} (which needs root)
+ * replaced by a recorder of what would run as the agent, and {@code timeout} (not on macOS)
+ * left out.
  */
 class McpClientRegistrationTest {
 
@@ -28,6 +30,8 @@ class McpClientRegistrationTest {
     private Path home;
     private Path marker;
     private Path log;
+    private Path asAgent;
+    private Path agentRuns;
 
     @BeforeEach
     void guest() throws Exception {
@@ -35,6 +39,16 @@ class McpClientRegistrationTest {
         marker = root.resolve("var/lib/isx/mcp-client-registered");
         log = home.resolve("claude.log");
         Files.createDirectories(home);
+        // Stands in for runuser: records each command the script runs as the agent
+        agentRuns = root.resolve("agent-runs.log");
+        asAgent = root.resolve("as-agent");
+        Files.writeString(asAgent, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + agentRuns + "\nexec \"$@\"\n");
+        Files.setPosixFilePermissions(asAgent, PosixFilePermissions.fromString("rwxr-xr-x"));
+    }
+
+    /** Every command the script ran as the agent, as {@code env -i ... <command>}. */
+    private List<String> agentRuns() throws Exception {
+        return Files.exists(agentRuns) ? Files.readAllLines(agentRuns) : List.of();
     }
 
     /** A {@code claude} that records its arguments and keeps one user-scope entry, as the real one does. */
@@ -53,11 +67,42 @@ class McpClientRegistrationTest {
         Files.setPosixFilePermissions(claude, PosixFilePermissions.fromString("rwxr-xr-x"));
     }
 
+    /**
+     * A {@code pi} that records its arguments and keeps one entry in its user-level
+     * {@code mcp.json}, as the real one does: {@code add} replaces, {@code remove} fails on none.
+     */
+    private void installPi() throws Exception {
+        var bin = Files.createDirectories(home.resolve(".local/bin"));
+        var pi = bin.resolve("pi");
+        Files.writeString(pi, """
+                #!/bin/sh
+                printf '%s|%s\\n' "$*" "$(env | grep -c '^ISX_')" >> "$HOME/pi.log"
+                mkdir -p "$HOME/.pi/agent"
+                case "$2" in
+                  remove) grep -q '"url"' "$HOME/.pi/agent/mcp.json" 2>/dev/null || exit 1
+                          printf '{"mcpServers":{}}' > "$HOME/.pi/agent/mcp.json" ;;
+                  add) printf '{"mcpServers":{"%s":{"url": "%s"}}}' "$3" "$5" > "$HOME/.pi/agent/mcp.json" ;;
+                esac
+                """);
+        Files.setPosixFilePermissions(pi, PosixFilePermissions.fromString("rwxr-xr-x"));
+    }
+
+    private List<String> piCalls() throws Exception {
+        var piLog = home.resolve("pi.log");
+        return Files.exists(piLog) ? Files.readAllLines(piLog) : List.of();
+    }
+
+    /** Pi's {@code pi mcp add} as the guest runs it, whose secret lives under {@link #root}. */
+    private String piAdd() {
+        return "mcp add isx " + String.join(" ", McpClientRegistration.PI_ADD_ARGS).replace("/run/isx", root + "/run/isx") + "|0";
+    }
+
     private String script() throws Exception {
         return InstanceSecretTest.guestScriptUnder(root, "tmpfs /run tmpfs rw 0 0\n")
                 .replace("/home/agentuser", home.toString())
                 .replace("/var/lib/isx", root + "/var/lib/isx")
-                .replace("runuser -u agentuser -- ", "");
+                .replace("/usr/local/bin", root + "/usr/local/bin")
+                .replace("runuser -u agentuser -- ", asAgent + " ");
     }
 
     /** Whether this host has the guest's {@code timeout} (GNU coreutils; macOS has none). */
@@ -164,7 +209,7 @@ class McpClientRegistrationTest {
 
     @Test
     void anInstanceWithoutClaudeCodeIsLeftToTryAgain() throws Exception {
-        assumeTrue(List.of("/usr/local/bin", "/usr/bin", "/bin").stream()
+        assumeTrue(List.of("/usr/bin", "/bin").stream()
                 .noneMatch(d -> Files.exists(Path.of(d, "claude"))), "a claude on the system PATH");
         start("1");
         assertFalse(Files.exists(marker), "nothing registered, so the next start tries again");
@@ -192,17 +237,18 @@ class McpClientRegistrationTest {
         var withoutHelper = script.replace(McpClientRegistration.AS_AGENT, "");
         assertEquals(1, script.split(java.util.regex.Pattern.quote(McpClientRegistration.AS_AGENT), -1).length - 1,
                 "one definition of isx_as_agent");
-        // Every place claude is named is a call through isx_as_agent, as a command or as the
-        // argument of the agent's own `command -v`
+        // Every place claude is named is a call through isx_as_agent, or root's file test of a
+        // path to it
         var named = java.util.regex.Pattern.compile("claude\\b(?!\\.json|-code|-calls)").matcher(withoutHelper);
         var calls = 0;
         while (named.find()) {
             var before = withoutHelper.substring(0, named.start());
-            assertTrue(before.endsWith("isx_as_agent ") || before.endsWith("isx_as_agent sh -c 'command -v "),
+            assertTrue(before.endsWith("isx_as_agent ") || before.matches("(?s).*\\[ -x /[^ ]*/$"),
                     "claude named outside isx_as_agent at: ..." + before.substring(Math.max(0, before.length() - 60)));
             calls++;
         }
         assertTrue(calls >= 3, "the script calls claude: " + calls);
+        assertFalse(McpClientRegistration.GUEST_SCRIPT.contains("command -v"), "whether an agent is there is root's file test, not a process");
     }
 
     @Test
@@ -315,5 +361,122 @@ class McpClientRegistrationTest {
         assertEquals("http", entry.path("type").asText());
         assertEquals("https://" + ProxyConfig.MCP_DOMAIN + "/mcp", entry.path("url").asText());
         assertEquals(McpClientRegistration.HEADERS_HELPER, entry.path("headersHelper").asText());
+    }
+
+    @Test
+    void aCoordinatorsFirstStartRegistersTheServerInPi() throws Exception {
+        // A Pi coordinator, with no Claude Code in the instance
+        installPi();
+        start("1");
+
+        assertEquals(List.of(piAdd()), piCalls(),
+                "Pi's own command, as the agent, with nothing of isx's in its environment");
+        assertTrue(Files.readString(home.resolve(".pi/agent/mcp.json")).contains(ProxyConfig.MCP_DOMAIN + "/mcp\""));
+        assertEquals(McpClientRegistration.PI_ENTRY_VERSION + "\n", Files.readString(piMarker()));
+        assertFalse(Files.exists(marker), "Claude Code's marker is Claude Code's");
+
+        Files.delete(home.resolve("pi.log"));
+        start("1");
+        assertEquals(List.of(), piCalls(), "a start that changes nothing costs one file test");
+    }
+
+    @Test
+    void aCopysFirstStartRemovesThePiRegistration() throws Exception {
+        installPi();
+        start("1");
+        Files.delete(home.resolve("pi.log"));
+
+        start("0");
+        assertEquals(List.of("mcp remove isx|0"), piCalls());
+        assertFalse(Files.exists(piMarker()));
+
+        Files.delete(home.resolve("pi.log"));
+        start("0");
+        assertEquals(List.of(), piCalls());
+    }
+
+    @Test
+    void anEntryRemovedFromPisConfigIsRegisteredAgain() throws Exception {
+        installPi();
+        start("1");
+        Files.writeString(home.resolve(".pi/agent/mcp.json"), "{\"mcpServers\":{}}");
+        Files.delete(home.resolve("pi.log"));
+
+        start("1");
+        assertEquals(List.of(piAdd()), piCalls());
+    }
+
+    @Test
+    void anInstanceWithBothAgentsRegistersTheServerInEach() throws Exception {
+        installClaude();
+        installPi();
+        start("1");
+
+        assertEquals(List.of("mcp remove --scope user isx|0", "mcp add-json --scope user isx " + serverJson() + "|0"), calls());
+        assertEquals(List.of(piAdd()), piCalls());
+        assertTrue(Files.exists(marker));
+        assertTrue(Files.exists(piMarker()));
+    }
+
+    @Test
+    void piRunsAsTheAgentInACleanEnvironment() {
+        // As claude does: every place the script names pi is a call through isx_as_agent
+        var withoutHelper = InstanceSecret.GUEST_SCRIPT.replace(McpClientRegistration.AS_AGENT, "");
+        var named = java.util.regex.Pattern.compile("(?<![-/.\\w])pi\\b(?![-./])").matcher(withoutHelper);
+        var calls = 0;
+        while (named.find()) {
+            var before = withoutHelper.substring(0, named.start());
+            assertTrue(before.endsWith("isx_as_agent ") || before.matches("(?s).*\\[ -x /[^ ]*/$"),
+                    "pi named outside isx_as_agent at: ..." + before.substring(Math.max(0, before.length() - 60)));
+            calls++;
+        }
+        assertTrue(calls >= 2, "the script calls pi: " + calls);
+    }
+
+    @Test
+    void aSteadyStateStartRunsNothingAsTheAgentWhicheverAgentsThereAre() throws Exception {
+        // A coordinator with only Claude Code: Pi's marker never exists, so each start asks
+        // whether Pi is there, which must not cost a process (runuser) on every start
+        installClaude();
+        start("1");
+        Files.deleteIfExists(agentRuns);
+        start("1");
+        assertEquals(List.of(), agentRuns(), "Claude Code only");
+
+        // Then with Pi too, once both are registered
+        installPi();
+        start("1");
+        assertTrue(Files.exists(piMarker()));
+        Files.deleteIfExists(agentRuns);
+        start("1");
+        assertEquals(List.of(), agentRuns(), "both agents");
+    }
+
+    @Test
+    void anInstanceWithNeitherAgentRunsNothingAsTheAgent() throws Exception {
+        assumeTrue(List.of("/usr/bin", "/bin").stream()
+                .noneMatch(d -> Files.exists(Path.of(d, "claude")) || Files.exists(Path.of(d, "pi"))),
+                "a claude or pi on the system PATH");
+        start("1");
+        start("1");
+        start("0");
+        assertEquals(List.of(), agentRuns(), "a coordinator or not, without an agent");
+        assertFalse(Files.exists(marker));
+        assertFalse(Files.exists(piMarker()));
+    }
+
+    @Test
+    void piOnTheSystemPathIsFound() throws Exception {
+        // Where the pi tool's npm install puts it, rather than the agent's own directory
+        var bin = Files.createDirectories(root.resolve("usr/local/bin"));
+        installPi();
+        Files.move(home.resolve(".local/bin/pi"), bin.resolve("pi"));
+        start("1");
+        assertEquals(List.of(piAdd()), piCalls());
+        assertTrue(Files.exists(piMarker()));
+    }
+
+    private Path piMarker() {
+        return root.resolve("var/lib/isx/mcp-client-registered-pi");
     }
 }

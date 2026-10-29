@@ -6,25 +6,30 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.ToolDef;
 
+import java.util.List;
+
 /**
- * Registers {@code isx mcp} in the Claude Code of an instance branched with
- * {@code --mcp-client}, and takes it out of every other (#1182).
+ * Registers {@code isx mcp} in the agents of an instance branched with {@code --mcp-client},
+ * Claude Code (#1182) and Pi, and takes it out of every other.
  *
  * <p>Reconciled from the {@link Metadata#MCP_CALLER} stamp on every isx start, by the exec that
  * already delivers the per-start secret ({@link InstanceSecret#GUEST_SCRIPT}): the host says
- * whether the instance holds the grant ({@link #ENV}), and a marker in the rootfs says whether
- * isx registered the server there before. Only on a mismatch does the script run Claude Code's
- * own {@code claude mcp add-json} or {@code claude mcp remove} (user scope), so a steady-state
- * start costs one file test. A copy of a coordinator carries the registration and the marker
- * until its first isx start, which removes both: no copy carries the stamp.
+ * whether the instance holds the grant ({@link #ENV}), and a marker per agent in the rootfs says
+ * whether isx registered the server there before. Only on a mismatch does the script run the
+ * agent's own commands ({@code claude mcp add-json} or {@code claude mcp remove} at user scope,
+ * {@code pi mcp add} or {@code pi mcp remove}), so a steady-state start costs a few file tests
+ * per agent and runs nothing as the agent, whichever agents the template has. A copy of a
+ * coordinator carries the registrations and markers until its first isx start, which removes
+ * them: no copy carries the stamp.
  *
  * <p>The registration is not the capability. The proxy decides who reaches the server by
  * address, per-start secret and stamp, so a registration left behind, or one a user adds by
  * hand, reaches nothing an instance without the stamp could not.
  *
- * <p>Root runs the script, and {@code claude} lives in the agent's home, where the agent can
- * replace it: it only ever runs as the agent, never as root. The marker is root's, so nothing
- * in the guest but this script decides what isx believes it registered.
+ * <p>Root runs the script, and the agent can put its own {@code claude} or {@code pi} first on
+ * the PATH they are run from ({@code claude} lives in its home anyway): each only ever runs as
+ * the agent, never as root. The marker is root's, so nothing in the guest but this script
+ * decides what isx believes it registered.
  */
 public final class McpClientRegistration {
 
@@ -33,12 +38,16 @@ public final class McpClientRegistration {
     /** The exec environment variable that says the instance holds the grant: {@code 1}, and nothing else, does. */
     public static final String ENV = "ISX_MCP_CLIENT";
     private static final String MARKER_DIR = "/var/lib/isx";
-    /** Root's record that isx registered the server in this rootfs: {@link #ENTRY_VERSION}, of the entry it registered. */
+    /** Root's record that isx registered the server in this rootfs's Claude Code: {@link #ENTRY_VERSION}, of the entry it registered. */
     static final String MARKER = MARKER_DIR + "/mcp-client-registered";
+    /** The same record for Pi: {@link #PI_ENTRY_VERSION}. */
+    static final String PI_MARKER = MARKER_DIR + "/mcp-client-registered-pi";
     private static final String AGENT_HOME = "/home/agentuser";
     /** Claude Code's user-scope config, where the entry lives. */
     static final String CLAUDE_CONFIG = ClaudeSetup.CLAUDE_JSON_PATH;
-    /** How long root may spend reading {@link #CLAUDE_CONFIG}, and how much of it. */
+    /** Pi's user-level MCP config, where its entry lives. */
+    static final String PI_CONFIG = AGENT_HOME + "/.pi/agent/mcp.json";
+    /** How long root may spend reading an agent's config, and how much of it. */
     static final int CONFIG_READ_SECONDS = 2;
     static final int CONFIG_READ_BYTES = 16 << 20;
 
@@ -75,8 +84,46 @@ public final class McpClientRegistration {
      * file test as easily as before it), a link to a device, or a sparse file of any size. A
      * read cut short answers "no entry", which costs a re-registration, never a hang.
      */
-    static final String CONFIG_HAS_ENTRY = "{ [ -f " + CLAUDE_CONFIG + " ] && timeout -k 1 " + CONFIG_READ_SECONDS + " head -c "
-            + CONFIG_READ_BYTES + " " + CLAUDE_CONFIG + " 2>/dev/null | grep -qF '" + ProxyConfig.MCP_DOMAIN + "/mcp\"'; }";
+    static final String CONFIG_HAS_ENTRY = configHasEntry(CLAUDE_CONFIG);
+
+    /** {@link #CONFIG_HAS_ENTRY}'s test of Pi's config. */
+    static final String PI_CONFIG_HAS_ENTRY = configHasEntry(PI_CONFIG);
+
+    /**
+     * Shell test that some agent's config holds an entry for the endpoint, so the instance has
+     * a client for it: what {@link McpClientCheck} reports.
+     */
+    static final String ANY_CONFIG_HAS_ENTRY = "{ " + CONFIG_HAS_ENTRY + " || " + PI_CONFIG_HAS_ENTRY + "; }";
+
+    private static String configHasEntry(String config) {
+        return "{ [ -f " + config + " ] && timeout -k 1 " + CONFIG_READ_SECONDS + " head -c "
+                + CONFIG_READ_BYTES + " " + config + " 2>/dev/null | grep -qF '" + ProxyConfig.MCP_DOMAIN + "/mcp\"'; }";
+    }
+
+    /**
+     * The value of Pi's header: Pi runs a value that starts with {@code !} as a command, per
+     * connection, so it sends the current secret, read by its path as {@link #HEADERS_HELPER} is.
+     */
+    static final String PI_HEADER_VALUE = "!cat " + InstanceSecret.GUEST_PATH;
+
+    /**
+     * The arguments {@code pi mcp add} takes for the entry, after the server's name. Its tools
+     * are {@code direct}: declared to the model like Claude Code's, rather than Pi's default of
+     * reaching them only from codemode scripts, since driving isx is a coordinator's main job and
+     * the set is small.
+     */
+    static final List<String> PI_ADD_ARGS = List.of(
+            "--url", "https://" + ProxyConfig.MCP_DOMAIN + "/mcp",
+            "--header", InstanceSecret.HEADER + "=" + PI_HEADER_VALUE,
+            "--exposure", "direct",
+            "--description", "isx: create, run and delegate to disposable isx instances");
+
+    /** {@link #ENTRY_VERSION} for Pi's entry. */
+    static final String PI_ENTRY_VERSION = ToolDef.sha256hex("pi " + SERVER_NAME + " " + String.join(" ", PI_ADD_ARGS))
+            .substring(0, 16);
+
+    /** The PATH the agent's commands run with, the agent's own directory first. */
+    private static final List<String> AGENT_PATH = List.of(AGENT_HOME + "/.local/bin", "/usr/local/bin", "/usr/bin", "/bin");
 
     /**
      * Shell defining {@code isx_as_agent}: runs its arguments as the agent, never as root, since
@@ -84,29 +131,58 @@ public final class McpClientRegistration {
      * no stdin, and a bound on how long it may take.
      */
     static final String AS_AGENT = "isx_as_agent() { (cd " + AGENT_HOME + " && timeout 10 runuser -u agentuser -- env -i HOME="
-            + AGENT_HOME + " PATH=" + AGENT_HOME + "/.local/bin:/usr/local/bin:/usr/bin:/bin DISABLE_AUTOUPDATER=1 \"$@\")"
+            + AGENT_HOME + " PATH=" + String.join(":", AGENT_PATH) + " DISABLE_AUTOUPDATER=1 \"$@\")"
             + " </dev/null; }; ";
+
+    /**
+     * Shell test that {@code binary} is on {@link #AGENT_PATH}: root's own file tests, so an
+     * instance without the agent spends no process on asking, on any start. Each only stats the
+     * path, never opens it, so nothing the agent puts there can make root block. A binary that
+     * root sees as executable and the agent cannot run fails its command, which leaves the marker
+     * as it was, as any failure does.
+     */
+    static String onAgentPath(String binary) {
+        return "{ " + String.join(" || ", AGENT_PATH.stream().map(d -> "[ -x " + d + "/" + binary + " ]").toList()) + "; }";
+    }
 
     private McpClientRegistration() {}
 
     /**
-     * Shell, run as root after the secret is in place, that brings the registration in line with
-     * {@link #ENV}. Idempotent, since it rides in scripts retried until they answer, and
-     * best-effort like the delivery: an instance whose Claude Code is missing or fails keeps its
-     * marker as it was, so the next start tries again, and the start goes on. A copy gets one
-     * removal attempt: its marker goes with it whatever {@code claude mcp remove} answered, so an
+     * Shell, run as root after the secret is in place, that brings each agent's registration in
+     * line with {@link #ENV}. Idempotent, since it rides in scripts retried until they answer, and
+     * best-effort like the delivery: an instance whose agent is missing or fails keeps that
+     * agent's marker as it was, so the next start tries again, and the start goes on. A copy gets
+     * one removal attempt per agent: its marker goes with it whatever the removal answered, so an
      * entry it could not remove (one by another name or scope, a removal that timed out) costs
      * no start after the first. Such a leftover entry reaches nothing: the copy has no stamp,
      * and the proxy refuses it.
      */
     static final String GUEST_SCRIPT = "isx_mcp=$" + ENV + "; unset " + ENV + "; { " + AS_AGENT
             // Remove first either way: add-json refuses a name already there, as a hand-made one would be
-            + "if [ \"$isx_mcp\" = 1 ]; then isx_have=; [ -e " + MARKER + " ] && read -r isx_have < " + MARKER + "; "
-            + "{ [ \"$isx_have\" = " + ENTRY_VERSION + " ] && " + CONFIG_HAS_ENTRY + "; } || { isx_as_agent sh -c 'command -v claude'"
-            + " && { isx_as_agent claude mcp remove --scope user " + SERVER_NAME + "; "
-            + "isx_as_agent claude mcp add-json --scope user " + SERVER_NAME + " " + Container.shellQuote(SERVER_JSON)
-            + " && install -d -m 755 " + MARKER_DIR + " && printf '%s\\n' " + ENTRY_VERSION + " > " + MARKER + "; }; }; "
-            + "else [ -e " + MARKER + " ] && isx_as_agent sh -c 'command -v claude'"
-            + " && { isx_as_agent claude mcp remove --scope user " + SERVER_NAME + "; rm -f " + MARKER + "; }; fi; "
+            + reconcile("claude", MARKER, ENTRY_VERSION, CONFIG_HAS_ENTRY, true,
+                    "claude mcp remove --scope user " + SERVER_NAME,
+                    "claude mcp add-json --scope user " + SERVER_NAME + " " + Container.shellQuote(SERVER_JSON))
+            // pi mcp add replaces an entry of the same name, so only a copy removes it
+            + reconcile("pi", PI_MARKER, PI_ENTRY_VERSION, PI_CONFIG_HAS_ENTRY, false,
+                    "pi mcp remove " + SERVER_NAME,
+                    "pi mcp add " + SERVER_NAME + " "
+                            + String.join(" ", PI_ADD_ARGS.stream().map(Container::shellQuote).toList()))
             + "} >/dev/null 2>&1; unset isx_mcp isx_have; true";
+
+    /**
+     * Shell reconciling one agent, {@code binary}: {@code add} (after {@code remove} when
+     * {@code removeFirst}) when granted and its marker or config does not show {@code version};
+     * {@code remove} once when not granted and the marker is there. Both run through
+     * {@code isx_as_agent}, only when the binary is on the agent's PATH.
+     */
+    private static String reconcile(String binary, String marker, String version, String hasEntry,
+                                    boolean removeFirst, String remove, String add) {
+        var present = onAgentPath(binary);
+        return "if [ \"$isx_mcp\" = 1 ]; then isx_have=; [ -e " + marker + " ] && read -r isx_have < " + marker + "; "
+                + "{ [ \"$isx_have\" = " + version + " ] && " + hasEntry + "; } || { " + present
+                + " && { " + (removeFirst ? "isx_as_agent " + remove + "; " : "") + "isx_as_agent " + add
+                + " && install -d -m 755 " + MARKER_DIR + " && printf '%s\\n' " + version + " > " + marker + "; }; }; "
+                + "else [ -e " + marker + " ] && " + present
+                + " && { isx_as_agent " + remove + "; rm -f " + marker + "; }; fi; ";
+    }
 }

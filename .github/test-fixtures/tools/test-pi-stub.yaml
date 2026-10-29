@@ -1,0 +1,20 @@
+# Stands in for Pi's `pi mcp` commands, for the --mcp-client registration
+# test: records every call, and who made it, in ~/pi-calls.log, and keeps the
+# one entry in ~/.pi/agent/mcp.json the way the real CLI does (add replaces an
+# entry by that name, remove fails on a missing one), with the URL where isx
+# looks for it and the rest of the command beside it.
+# On the system PATH, where the pi tool's npm install puts the real one.
+name: test-pi-stub
+run:
+  - |
+    cat > /usr/local/bin/pi <<'STUB'
+    #!/bin/sh
+    printf '%s %s\n' "$(id -un)" "$*" >> "$HOME/pi-calls.log"
+    cfg="$HOME/.pi/agent/mcp.json"
+    case "$2" in
+      remove) grep -q '"url"' "$cfg" 2>/dev/null || exit 1; printf '{"mcpServers": {}}\n' > "$cfg" ;;
+      add) mkdir -p "$HOME/.pi/agent"; name=$3; all="$*"; shift 3
+           printf '{"mcpServers": {"%s": {"url": "%s", "args": "%s"}}}\n' "$name" "$2" "$all" > "$cfg" ;;
+    esac
+    STUB
+    chmod 755 /usr/local/bin/pi

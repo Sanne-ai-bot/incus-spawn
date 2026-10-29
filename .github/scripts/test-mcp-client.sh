@@ -1,10 +1,10 @@
 #!/bin/bash
-# isx branch --mcp-client registers isx mcp in the instance's Claude Code, and
-# a copy loses the registration on its first start (#1182).
+# isx branch --mcp-client registers isx mcp in the instance's Claude Code and
+# Pi, and a copy loses the registrations on its first start (#1182).
 #
 # Runs on the host. tpl-test-mcp carries a stub `claude` (test-claude-stub)
-# that records its calls, so the registration is observed without a Claude
-# Code install. The endpoint check `isx branch --mcp-client` prints goes
+# and a stub `pi` (test-pi-stub) that record their calls, so the registrations
+# are observed without either agent installed. The endpoint check `isx branch --mcp-client` prints goes
 # through the real proxy bridge and a real host `isx mcp`.
 #
 # Usage: bash .github/scripts/test-mcp-client.sh
@@ -86,6 +86,11 @@ calls() { read_guest "$1" 'f=/home/agentuser/claude-calls.log; [ -e "$f" ] || ex
 # Each call's user and command, without the entry it added
 call_summary() { local out; out=$(calls "$1") || return 1; printf '%s\n' "$out" | cut -d' ' -f1-6 | paste -sd'|'; }
 marker() { read_guest "$1" 'f=/var/lib/isx/mcp-client-registered; [ -e "$f" ] || { echo none; exit 0; }; stat -c %U "$f"'; }
+pi_calls() { read_guest "$1" 'f=/home/agentuser/pi-calls.log; [ -e "$f" ] || exit 0; cat "$f"'; }
+# Each pi call's user, command and server, without the entry it added
+pi_summary() { local out; out=$(pi_calls "$1") || return 1; printf '%s\n' "$out" | cut -d' ' -f1-4 | paste -sd'|'; }
+pi_marker() { read_guest "$1" 'f=/var/lib/isx/mcp-client-registered-pi; [ -e "$f" ] || { echo none; exit 0; }; stat -c %U "$f"'; }
+PI_CONFIG=/home/agentuser/.pi/agent/mcp.json
 
 echo "========================================"
 echo " --mcp-client registration (#1182)"
@@ -96,13 +101,17 @@ echo "[1] A coordinator is registered on its first start"
 isx branch "$COORD" --from tpl-test-mcp --proxy-only --mcp-client --format=plain 2> "$LOG/coord" >/dev/null
 cat "$LOG/coord"
 assert "the branch reaches isx mcp from the guest" grep -qE "Checking isx mcp from $COORD.* \\(isx [^,]+, [1-9][0-9]* tools\\)" "$LOG/coord"
-assert "and finds the server in its Claude Code config" bash -c "! grep -q 'has no .isx. server' '$LOG/coord'"
+assert "and finds the server in an agent's config" bash -c "! grep -q 'has an .isx. server' '$LOG/coord'"
 assert_eq "claude mcp ran as the agent, once each way" \
     "agentuser mcp remove --scope user isx|agentuser mcp add-json --scope user isx" \
     call_summary "$COORD"
 assert "the entry is the proxy's endpoint with the headers helper" \
     in_guest "$COORD" 'grep -q "\"url\":\"https://mcp.isx.internal/mcp\"" /home/agentuser/.claude-stub-isx.json && grep -q "/run/isx/instance-secret" /home/agentuser/.claude-stub-isx.json'
 assert_eq "root's marker records it" "root" marker "$COORD"
+assert_eq "pi mcp ran as the agent, once" "agentuser mcp add isx" pi_summary "$COORD"
+assert "Pi's entry is the proxy's endpoint, its header reads the secret, its tools are direct" \
+    in_guest "$COORD" "grep -qF '\"url\": \"https://mcp.isx.internal/mcp\"' $PI_CONFIG && grep -qF 'X-Isx-Instance-Secret=!cat /run/isx/instance-secret' $PI_CONFIG && grep -qF -- '--exposure direct' $PI_CONFIG"
+assert_eq "root's Pi marker records it" "root" pi_marker "$COORD"
 assert "the agent reads the secret the headers helper sends" \
     in_guest "$COORD" "su -s /bin/sh agentuser -c 'cat /run/isx/instance-secret' | grep -qE '^[0-9a-f]{64}\$'"
 
@@ -114,6 +123,8 @@ isx run "$COORD" --action=no-such-action >/dev/null 2>&1
 assert_eq "the start ran no Claude Code" \
     "agentuser mcp remove --scope user isx|agentuser mcp add-json --scope user isx" call_summary "$COORD"
 assert_eq "the marker stays" "root" marker "$COORD"
+assert_eq "the start ran no pi" "agentuser mcp add isx" pi_summary "$COORD"
+assert_eq "the Pi marker stays" "root" pi_marker "$COORD"
 
 echo ""
 echo "[3] A copy loses it on its first start"
@@ -126,12 +137,17 @@ assert_eq "the copy's first start removed it" \
 assert "the entry is gone" in_guest "$COPY" '! test -e /home/agentuser/.claude-stub-isx.json'
 assert "and not in its Claude Code config" in_guest "$COPY" 'test -r /home/agentuser/.claude.json && ! grep -qF "mcp.isx.internal/mcp" /home/agentuser/.claude.json'
 assert_eq "and so is the marker" "none" marker "$COPY"
+assert_eq "the copy's first start removed it from Pi" "agentuser mcp add isx|agentuser mcp remove isx" pi_summary "$COPY"
+assert "and Pi's config has no entry" in_guest "$COPY" "test -r $PI_CONFIG && ! grep -qF 'mcp.isx.internal/mcp' $PI_CONFIG"
+assert_eq "and the Pi marker is gone" "none" pi_marker "$COPY"
 
 echo ""
-echo "[4] An ordinary branch runs no Claude Code"
+echo "[4] An ordinary branch runs no Claude Code and no Pi"
 isx branch "$PLAIN" --from tpl-test-mcp --proxy-only --format=plain 2> "$LOG/plain" >/dev/null
 assert_eq "no calls" "" calls "$PLAIN"
 assert_eq "no marker" "none" marker "$PLAIN"
+assert_eq "no pi calls" "" pi_calls "$PLAIN"
+assert_eq "no Pi marker" "none" pi_marker "$PLAIN"
 
 echo ""
 echo "========================================"

@@ -655,6 +655,7 @@ jobs:
           cp .github/test-fixtures/tools/test-proxy-tool.yaml ~/.config/incus-spawn/tools/
           cp .github/test-fixtures/tools/test-account-tool.yaml ~/.config/incus-spawn/tools/
           cp .github/test-fixtures/tools/test-claude-stub.yaml ~/.config/incus-spawn/tools/
+          cp .github/test-fixtures/tools/test-pi-stub.yaml ~/.config/incus-spawn/tools/
 
       - name: Start echo server for proxy credential test
         run: |
@@ -787,6 +788,7 @@ jobs:
           parent: tpl-minimal
           tools:
             - test-claude-stub
+            - test-pi-stub
           EOF
 
       - name: Build templates
