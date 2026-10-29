@@ -269,17 +269,22 @@ Inside it, the host proxy serves `isx mcp` at `https://mcp.isx.internal/mcp` (MC
 Each request must come from the instance's own address and carry the secret isx gives it at every start, in `X-Isx-Instance-Secret`.
 
 Either way, the branch asks the server from inside the new instance once it has started.
-It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code has the server.
+It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code or Pi has the server.
 
-If the template has the `claude` tool, there is nothing to set up.
-Every isx start registers the server in the instance's Claude Code (`claude mcp list` shows it as `isx`), with a `headersHelper` that reads the current secret from `/run/isx/instance-secret`.
+If the template has the `claude` or `pi` tool, there is nothing to set up.
+Every isx start registers the server in whichever of the two the instance has, where `claude mcp list` or `pi mcp list` shows it as `isx`.
 
-So interactive sessions, `claude --continue` and `claude -p` under a systemd unit all have the tools.
+Each entry reads the current secret from `/run/isx/instance-secret` when it connects.
+Claude Code's does it through a `headersHelper`, and Pi's through a header command.
+Pi declares the tools to the model directly, as Claude Code does.
+
+So interactive sessions, and `claude -p` or `pi -p` under a systemd unit, all have the tools.
 The server also offers the coordination workflow as a prompt, which Claude Code lists as `/mcp__isx__coordinate`.
+Pi does not list MCP prompts.
 
 Claude Code runs a `headersHelper` only in a trusted workspace.
 The `claude` tool already trusts the home directory and every repository the template clones, so a coordinator started from anywhere else meets Claude Code's ordinary trust prompt once.
-A copy of the coordinator (`isx branch --from coord`) loses the registration on its first start, along with the grant.
+A copy of the coordinator (`isx branch --from coord`) loses both registrations on its first start, along with the grant.
 
 It gets exactly the tools, approved templates and limits a host agent gets, and the same `mcp.yaml` applies.
 What differs:

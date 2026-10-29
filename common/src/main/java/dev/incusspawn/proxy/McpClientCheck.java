@@ -11,22 +11,22 @@ import java.util.List;
 
 /**
  * Whether an instance branched with {@code --mcp-client} reaches {@code isx mcp} (#1182): one
- * {@code initialize} and one {@code tools/list} from inside the guest, the way its Claude Code
- * will call, so {@code isx branch} reports a coordinator that cannot work while the user is
+ * {@code initialize} and one {@code tools/list} from inside the guest, the way its agent will
+ * call, so {@code isx branch} reports a coordinator that cannot work while the user is
  * still there to see it.
  */
 public final class McpClientCheck {
 
     /**
-     * What the check found: whether the start registered the server in the instance's Claude
-     * Code, and the server's version and tool count, or why it was not reached.
+     * What the check found: whether the start registered the server in an agent of the instance
+     * (Claude Code or Pi), and the server's version and tool count, or why it was not reached.
      */
     public record Outcome(boolean registered, String version, int tools, String problem) {
         public boolean reached() {
             return problem == null;
         }
 
-        /** Reached, and registered: a coordinator whose Claude Code has the tools. */
+        /** Reached, and registered: a coordinator whose agent has the tools. */
         public boolean ok() {
             return reached() && registered;
         }
@@ -37,9 +37,9 @@ public final class McpClientCheck {
             // What the guest printed may be anything: its curl, its proxy answer, its version
             var said = reached() ? name + " reaches " + endpoint + ": isx " + OutputFormat.oneLine(version) + ", " + tools + " tools"
                     : name + " cannot reach " + endpoint + ": " + OutputFormat.oneLine(problem);
-            return said + (registered ? "." : (reached() ? "; but" : ", and") + " its Claude Code has no '"
-                    + McpClientRegistration.SERVER_NAME + "' server in its config: the template has no claude tool, or"
-                    + " registering it failed (the next start tries again).");
+            return said + (registered ? "." : (reached() ? "; but" : ", and") + " neither its Claude Code nor its Pi has an '"
+                    + McpClientRegistration.SERVER_NAME + "' server in its config: the template has neither the claude"
+                    + " nor the pi tool, or registering it failed (the next start tries again).");
         }
     }
 
@@ -49,8 +49,9 @@ public final class McpClientCheck {
      * the coordinator's own {@code initialize} to replace it. Prints {@code @init}, then
      * {@code @tools} once a session was opened, each followed by curl's output and
      * {@code @code <status>}; or {@code @error <why>} when it cannot try. First,
-     * {@code @registered} when Claude Code's own user config holds an entry for the endpoint
-     * ({@link McpClientRegistration#CONFIG_HAS_ENTRY}, the test the start's reconcile makes too).
+     * {@code @registered} when Claude Code's or Pi's own user config holds an entry for the
+     * endpoint ({@link McpClientRegistration#ANY_CONFIG_HAS_ENTRY}, the tests the start's
+     * reconcile makes too).
      */
     static final String SCRIPT = """
             %4$s && echo @registered
@@ -72,7 +73,7 @@ public final class McpClientCheck {
             curl -sS --max-time 5 -H @"$d/h" -H "Mcp-Session-Id: $sid" -X DELETE "$u" >/dev/null 2>&1
             true
             """.formatted(InstanceSecret.GUEST_PATH, InstanceSecret.HEADER, ProxyConfig.MCP_DOMAIN,
-                    McpClientRegistration.CONFIG_HAS_ENTRY);
+                    McpClientRegistration.ANY_CONFIG_HAS_ENTRY);
 
     private McpClientCheck() {}
 

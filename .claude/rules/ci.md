@@ -186,9 +186,10 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
   An anonymous request must not expect injection under proof enforcement.
   Asserting against what the tool actually wrote is the point: the hand-rolled `config.toml` fixture this replaced would have kept passing after `CodexSetup` changed underneath it.
   `tpl-test-codex` deliberately sets non-default `model`/`effort` so the test can tell template parameters from built-in defaults.
-- **`test-mcp-client.sh`** (host-side): `isx branch --mcp-client` registers `isx mcp` in the instance's Claude Code and a copy loses it on its first start (#1182).
+- **`test-mcp-client.sh`** (host-side): `isx branch --mcp-client` registers `isx mcp` in the instance's Claude Code and Pi, and a copy loses both on its first start (#1182).
   `tpl-test-mcp` carries the fixture tool `test-claude-stub.yaml`, a `claude` on the system PATH that records its calls and mirrors its entry into `~/.claude.json` (where the start's reconcile and the branch check look), so no Claude Code install is needed.
-  Asserts the branch reached the endpoint through the real proxy bridge and host `isx mcp` (`McpClientCheck`), that `claude mcp remove`/`add-json` ran once each as the agent, root's marker, that the next start (`isx run --action=no-such-action`, no terminal) runs no Claude Code, and that `isx branch --from` the stopped coordinator removes entry and marker while an ordinary branch calls nothing.
+  It also carries `test-pi-stub.yaml`, a `pi` in `/usr/local/bin` (where the `pi` tool's npm install puts it) that records its calls and keeps its entry in `~/.pi/agent/mcp.json`.
+  Asserts the branch reached the endpoint through the real proxy bridge and host `isx mcp` (`McpClientCheck`), that `claude mcp remove`/`add-json` and `pi mcp add` ran once each as the agent (Pi's entry with its secret header command and `--exposure direct`), root's markers, that the next start (`isx run --action=no-such-action`, no terminal) runs neither agent, and that `isx branch --from` the stopped coordinator removes entries and markers while an ordinary branch calls nothing.
 - **`test-accounts.sh`** + **`test-account-switching.sh`**: per-instance credential accounts.
   Two instances are branched from one template differing only in `--account`, so the assertion is the claim: one shared proxy, different real credentials, decided by who asked.
   The first runs inside each instance (its token names its own account, and no real token is anywhere in the container).
