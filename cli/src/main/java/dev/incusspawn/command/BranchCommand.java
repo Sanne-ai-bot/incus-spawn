@@ -77,9 +77,14 @@ public class BranchCommand extends BaseCommand {
     boolean shell;
 
     @Option(name = "mcp-client", description = "Let this instance drive isx over MCP, at https://"
-            + ProxyConfig.MCP_DOMAIN + "/mcp (a coordinating agent). Never inherited by its copies.",
+            + ProxyConfig.MCP_DOMAIN + "/mcp (a coordinating agent); the default for an mcp-client: {default: true}"
+            + " template. Never inherited by its copies.",
             hasValue = false)
     boolean mcpClient;
+
+    @Option(name = "no-mcp-client", description = "Do not let this instance drive isx over MCP, even if the template"
+            + " has mcp-client: {default: true}", hasValue = false)
+    boolean noMcpClient;
 
     @Option(name = "owner", description = "The external tool that controls this instance's lifecycle,"
             + " such as orca. Never inherited by its copies.")
@@ -212,9 +217,9 @@ public class BranchCommand extends BaseCommand {
         }
     }
 
-    /** What the copy request stamps for {@code --mcp-client}, {@code --owner} and {@code --owner-id}. */
+    /** What the copy request stamps for {@code --owner} and {@code --owner-id}; BranchFlow adds the MCP grant. */
     private Map<String, String> stamps() {
-        var stamps = new LinkedHashMap<String, String>(McpClientGrant.extraConfig(mcpClient));
+        var stamps = new LinkedHashMap<String, String>();
         if (owner != null) stamps.put(Metadata.OWNER, owner);
         if (ownerId != null) stamps.put(Metadata.OWNER_ID, ownerId);
         return stamps;
@@ -257,11 +262,15 @@ public class BranchCommand extends BaseCommand {
             BuildOutput.error("--gui and --no-gui are mutually exclusive.");
             return null;
         }
+        if (mcpClient && noMcpClient) {
+            BuildOutput.error("--mcp-client and --no-mcp-client are mutually exclusive.");
+            return null;
+        }
         Boolean guiChoice = gui ? Boolean.TRUE : noGui ? Boolean.FALSE : null;
         Boolean kvmChoice = kvm ? Boolean.TRUE : noKvm ? Boolean.FALSE : null;
         var request = new BranchFlow.Request(resolvedSource, name, guiChoice, kvmChoice, networkMode,
                 inbox, cpuLimit, memoryLimit, diskLimit, accounts, !noStart,
-                stamps());
+                stamps(), mcpClient ? Boolean.TRUE : noMcpClient ? Boolean.FALSE : null);
 
         BranchFlow.Preflight preflight;
         RuntimeSetup.RuntimeConfig prefetched;
@@ -273,7 +282,7 @@ public class BranchCommand extends BaseCommand {
             return null;
         }
 
-        if (mcpClient && !noStart) McpClientGrant.check(incus, name);
+        if (preflight.request().grantsMcpClient() && !noStart) McpClientGrant.check(incus, name);
         BuildOutput.success(name + " ready");
         return new Created(resolvedSource, preflight, prefetched);
     }

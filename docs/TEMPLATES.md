@@ -150,6 +150,13 @@ Kernel work belongs in a nested VM inside a `--kvm` branch.
 With `gui: true`, container branches get GUI passthrough by default when isx runs in a Wayland session, unless the definition is project-local.
 `isx branch --no-gui` and the TUI dialog opt out.
 
+### Coordinator templates
+
+With `mcp-client: {default: true}`, every branch is a [coordinator](MCP.md#a-coordinator-in-an-instance) that drives isx over MCP.
+`isx branch --no-mcp-client` and the TUI dialog opt out.
+A child template inherits the setting, unless it sets its own or is project-local.
+It is never baked into the image, so changing it rebuilds nothing, and it is ignored in a project-local definition.
+
 ### Deprecating a template
 
 `deprecated` takes `true`, or a note saying what to use instead.

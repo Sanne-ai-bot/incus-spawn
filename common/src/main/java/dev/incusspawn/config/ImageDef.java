@@ -143,6 +143,14 @@ public class ImageDef extends MappedDefinition {
     @JqInclude(JqInclude.Include.NON_NULL)
     private String deprecated;
 
+    /**
+     * Whether a branch of this template may drive isx over MCP ({@code mcp-client:}, #1812). Never
+     * baked into the image, so left out of {@link #contentFingerprint}: editing it rebuilds nothing.
+     */
+    @JqName("mcp-client")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private McpClient mcpClient;
+
     @JqIgnore
     private String source = "unknown";
 
@@ -214,6 +222,8 @@ public class ImageDef extends MappedDefinition {
     public void setAccounts(Map<String, String> accounts) {
         this.accounts = accounts == null ? Map.of() : Map.copyOf(accounts);
     }
+    public McpClient getMcpClient() { return mcpClient; }
+    public void setMcpClient(McpClient mcpClient) { this.mcpClient = mcpClient; }
     public String getDeprecated() { return deprecated; }
     public void setDeprecated(String deprecated) { this.deprecated = deprecated; }
     /** Whether the definition says {@code deprecated:} with anything but {@code false}. */
@@ -339,6 +349,25 @@ public class ImageDef extends MappedDefinition {
         }
     }
 
+    /**
+     * The {@code mcp-client:} block (#1812): {@code default: true} makes every branch of the
+     * template a coordinator unless {@code --no-mcp-client} says otherwise. An object, so what a
+     * coordinator may control can be added beside it as keys.
+     */
+    @JqInclude(JqInclude.Include.NON_NULL)
+    @JqMapped
+    public static class McpClient extends MappedDefinition {
+        @JqName("default")
+        private Boolean byDefault;
+
+        public Boolean getByDefault() { return byDefault; }
+        public void setByDefault(Boolean byDefault) { this.byDefault = byDefault; }
+
+        /** Every key, though the mapping writes only those set. */
+        @Override
+        protected List<String> knownKeys() { return List.of("default"); }
+    }
+
     @JqMapped
     public static class PackageRepo extends MappedDefinition {
         private String type;
@@ -434,6 +463,7 @@ public class ImageDef extends MappedDefinition {
     protected List<String> knownKeys() {
         var keys = new ArrayList<>(super.knownKeys());
         if (!keys.contains("deprecated")) keys.add("deprecated");
+        if (!keys.contains("mcp-client")) keys.add("mcp-client");
         return keys;
     }
 
@@ -448,7 +478,8 @@ public class ImageDef extends MappedDefinition {
                 .each("package_repos", packageRepos)
                 .each("host-resources", hostResources)
                 .each("env", env)
-                .part("skills", skills);
+                .part("skills", skills)
+                .part("mcp-client", mcpClient);
         for (int i = 0; i < hostResources.size(); i++) {
             if (hostResources.get(i).getConfinedTo() != null) {
                 walk.add("'host-resources[" + i + "].confined-to' is set by isx" + HostResource.SET_BY_ISX);
@@ -730,6 +761,30 @@ public class ImageDef extends MappedDefinition {
 
     public static boolean resolveVm(ImageDef start, Map<String, ImageDef> defs) {
         return "vm".equals(resolveType(start, defs));
+    }
+
+    /** What loading says of a project-local definition's {@code mcp-client:}, which is never read. */
+    public static final String PROJECT_LOCAL_MCP_CLIENT = "'mcp-client' is ignored in a project-local template:"
+            + " a cloned repository cannot make its branches drive isx. Declare it in a template in "
+            + "~/.config/incus-spawn/images, or branch with --mcp-client";
+
+    /**
+     * Whether a branch of {@code start} is a coordinator by default ({@code mcp-client.default}):
+     * the nearest layer of its chain that says, so a child of a coordinator template is one
+     * unless it says otherwise. Whether the chain may say so at all, which a project-local one
+     * may not (#765), is the caller's to check: see {@link #anyProjectLocal}.
+     */
+    public static boolean resolveMcpClientDefault(ImageDef start, Map<String, ImageDef> defs) {
+        for (var layer : chain(start, defs).reversed()) {
+            var byDefault = layer.getMcpClient() == null ? null : layer.getMcpClient().getByDefault();
+            if (byDefault != null) return byDefault;
+        }
+        return false;
+    }
+
+    /** Whether any layer of the chain of {@code start} is project-local. */
+    public static boolean anyProjectLocal(ImageDef start, Map<String, ImageDef> defs) {
+        return chain(start, defs).stream().anyMatch(layer -> layer.getProjectRoot() != null);
     }
 
     /**
@@ -1031,6 +1086,7 @@ public class ImageDef extends MappedDefinition {
         var file = OutputFormat.oneLine(source);
         // First: a misspelled key may be why the definition is refused below ('nmae:').
         def.unknownKeyWarnings().forEach(w -> warnings.accept(file + ": " + w));
+        if (def.getProjectRoot() != null && def.getMcpClient() != null) warnings.accept(file + ": " + PROJECT_LOCAL_MCP_CLIENT);
         if (def.getName() == null) {
             warnings.accept(file + ": no 'name:'; it is skipped, and isx build refuses until it is fixed");
             return false;

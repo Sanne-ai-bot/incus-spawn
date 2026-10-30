@@ -1,6 +1,5 @@
 package dev.incusspawn.tui;
 
-import dev.incusspawn.command.McpClientGrant;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.lifecycle.BranchFlow;
@@ -59,8 +58,11 @@ final class BranchModal {
 
     private SelectState branchNetworkSelect;
 
-    /** {@code isx branch --mcp-client}: off until ticked, whatever the defaults (#1811). */
+    /** {@code isx branch --mcp-client}: ticked from the template's {@code mcp-client.default} (#1812). */
     private CheckboxState branchMcpCheck;
+
+    /** What the MCP control box started as: left there, the request leaves it to BranchFlow's default. */
+    private boolean branchMcpDefault;
 
     private CheckboxState branchInboxCheck;
 
@@ -114,7 +116,8 @@ final class BranchModal {
         branchNetworkModes = NetworkMode.values();
         branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
                 .map(NetworkMode::label).toArray(String[]::new));
-        branchMcpCheck = new CheckboxState(false);
+        branchMcpCheck = new CheckboxState(defaults.mcpClient());
+        branchMcpDefault = defaults.mcpClient();
         branchInboxCheck = new CheckboxState(false);
         branchInboxInput = new TextInputState("");
         branchSourceIsVm = defaults.machineType() == MachineType.VM;
@@ -188,9 +191,12 @@ final class BranchModal {
             } else if (branchFieldIndex == kvmFieldIndex()) {
                 branchKvmCheck.toggle();
             } else if (branchFieldIndex == networkFieldIndex()) {
+                var wasReachable = mcpClientReachable();
                 branchNetworkSelect.selectNext();
-                // Unticked, not kept hidden: cycling on past Airgapped must not grant it unasked
+                // Unticked, not kept hidden: cycling on past Airgapped must not grant it unasked.
+                // Back from it, the box is the template's default again, not a silent opt-out
                 if (!mcpClientReachable()) branchMcpCheck.setChecked(false);
+                else if (!wasReachable) branchMcpCheck.setChecked(branchMcpDefault);
             } else if (branchFieldIndex == mcpFieldIndex()) {
                 branchMcpCheck.toggle();
             } else if (branchFieldIndex == inboxFieldIndex()) {
@@ -448,10 +454,12 @@ final class BranchModal {
         // An untouched box is the default, so create() applies it and says why it is off, as for isx branch
         var gui = branchGuiCheck.isChecked() == branchGuiDefault ? null : branchGuiCheck.isChecked();
         var kvm = kvm() == branchKvmDefault ? null : kvm();
+        var mcpClient = branchMcpCheck.isChecked() && mcpClientReachable();
         var request = new BranchFlow.Request(source, name, gui,
                 kvm, branchNetworkMode(),
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
-                cpu, memory, disk, branchAccounts.overrides(), true, McpClientGrant.extraConfig(branchMcpCheck.isChecked() && mcpClientReachable()));
+                cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of(),
+                mcpClient == branchMcpDefault ? null : mcpClient);
         return request;
     }
 

@@ -88,7 +88,7 @@ final class ShellLaunch {
         }
 
         // As isx branch --mcp-client does: the terminal is released, so the user sees what it found
-        if (Metadata.isMcpCaller(request.extraConfig())) McpClientGrant.check(tui.incus, name);
+        if (preflight.request().grantsMcpClient()) McpClientGrant.check(tui.incus, name);
         BuildOutput.success(name + " ready");
         var shellPrep = prefetched.toShellPrep();
         var defaultCmd = new ActionResolver(tui.incus, tui.toolDefLoader, tui.cdiTools, preflight.defs())

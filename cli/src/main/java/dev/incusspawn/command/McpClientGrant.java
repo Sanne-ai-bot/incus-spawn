@@ -1,27 +1,19 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.incus.IncusClient;
-import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.McpClientCheck;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 
-import java.util.Map;
-
 /**
- * Granting a branch MCP control (#915), the same way from {@code isx branch --mcp-client} and the
- * TUI's branch dialog (#1811): the {@link Metadata#MCP_CALLER} stamp, and the check after the
- * branch that the instance reaches {@code isx mcp}. The network it needs is {@code BranchFlow}'s
- * to enforce ({@code mcpClientUnreachable}).
+ * The check after a branch granted MCP control (#915), the same from {@code isx branch} and the
+ * TUI's branch dialog (#1811): that the instance reaches {@code isx mcp}. The
+ * {@link dev.incusspawn.incus.Metadata#MCP_CALLER} grant itself, and the network it needs, are
+ * {@code BranchFlow}'s.
  */
 public final class McpClientGrant {
 
     private McpClientGrant() {}
-
-    /** The {@code BranchFlow.Request.extraConfig} for a branch granted MCP control, or not. */
-    public static Map<String, String> extraConfig(boolean granted) {
-        return granted ? Map.of(Metadata.MCP_CALLER, Metadata.newMcpCallerGrant()) : Map.of();
-    }
 
     /**
      * Asks from inside the started branch {@code name} the way its Claude Code will ask, while the

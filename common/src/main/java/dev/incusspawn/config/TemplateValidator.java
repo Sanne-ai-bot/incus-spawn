@@ -63,10 +63,18 @@ public class TemplateValidator {
             warnings.add("Root template (no parent) should specify an 'image' field");
         }
 
+        if (def.getMcpClient() != null && projectLocal(file, projectImagesDir)) {
+            warnings.add(ImageDef.PROJECT_LOCAL_MCP_CLIENT);
+        }
         validateHostResources(file, def, projectImagesDir, warnings, errors);
         validateDuplicateTools(def, warnings);
 
         return new ValidationResult(errors, warnings);
+    }
+
+    /** Whether {@code file} is a project-local definition: one in {@code projectImagesDir}. */
+    private static boolean projectLocal(Path file, Path projectImagesDir) {
+        return projectImagesDir.toAbsolutePath().normalize().equals(file.toAbsolutePath().normalize().getParent());
     }
 
     private static final Set<String> VALID_HR_MODES = Set.of("readonly", "overlay", "copy");
@@ -79,7 +87,7 @@ public class TemplateValidator {
     private static void validateHostResources(Path file, ImageDef def, Path projectImagesDir,
                                               List<String> warnings, List<String> errors) {
         var imagesDir = projectImagesDir.toAbsolutePath().normalize();
-        var projectLocal = imagesDir.equals(file.toAbsolutePath().normalize().getParent());
+        var projectLocal = projectLocal(file, projectImagesDir);
         for (var hr : def.getHostResources()) {
             if (hr.getMode() != null && !VALID_HR_MODES.contains(hr.getMode())) {
                 warnings.add("host-resource mode '" + hr.getMode()

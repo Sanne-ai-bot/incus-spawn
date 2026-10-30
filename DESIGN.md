@@ -888,6 +888,7 @@ So a TUI branch gets the template's and source's account selection, the proxy re
 It used to be a hand-kept copy of the flow that skipped all of those, so a branch reusing a destroyed instance's static IP could be served that instance's credential account (#800).
 Its initial values come from `BranchFlow.defaultsFor()` too -- the one rule `create()` applies to whatever a request leaves null: GUI and KVM on when the source's definition sets `gui: true` / `type: kvm` or the source itself has GUI or KVM (GUI only for a container, since passthrough's GPU device would keep a VM from starting; only from a Wayland session, by the checks `configureGui` makes; and never from a project-local definition or a source built with one, since GUI hands over the host's GPU and its Wayland and audio sockets.
 Where the source asks for GUI but does not get it by default, a note says why -- printed by `create()` with the branch's progress, for the dialog too, which leaves an untouched GUI box to the default -- rather than errors; `Request.defaults()`, `isx mcp`'s request, pins GUI off whatever the template says, which `BranchDefaultsTest` holds), and the adaptive CPU, memory and disk limits for its machine type, worked out only when asked for (on macOS the memory default forks `sysctl`).
+MCP control follows the same rule from the definition's `mcp-client.default` alone (#1812), since no copy inherits the grant, and `Request.defaults()` pins it off too.
 The dialog used to compute its own, and its KVM rule already differed from the CLI's, which ignored the definition (#869).
 For KVM, "the source itself" means a template's (built or project) `instance-mode: kvm`, but any other source's own `kvm-enabled` stamp: a branch inherits its template's `instance-mode` even when made with `--no-kvm`, which would otherwise hand `/dev/kvm` back to that branch's own branches (#1034).
 `create()` takes those defaults, its machine type and the copy plan from the source read `preflight()` already made (`Preflight.sourceInstance`), and the dialog reads the source once for its defaults and account rows.
@@ -3881,8 +3882,11 @@ The pieces, and why each is the way it is:
 
 - *Who may call: a stamp the user sets.*
   `isx branch --mcp-client` stamps `user.incus-spawn.mcp-caller` on the branch it makes (`mcp-client` was the name proposed, but that key already holds the client's display name).
-  The TUI's branch dialog has the same grant as its MCP control box (#1811), off until ticked and not offered on an Airgapped network: a person at the TUI is the one who would type the flag, so it needs no gate of its own.
-  Both build the stamp and run the check below through `McpClientGrant`, so the two cannot drift.
+  The TUI's branch dialog has the same grant as its MCP control box (#1811), not offered on an Airgapped network: a person at the TUI is the one who would type the flag, so it needs no gate of its own.
+  Whether a branch coordinates is a property of its kind, so a trusted template can make it the default (`mcp-client: {default: true}`, #1812), beside `gui:` and under the same rules: never from a project-local definition or a source built with one (#765), never baked into the image (it is not fingerprinted, and builds clear the grant), and an airgapped branch goes without it with a warning rather than a refusal.
+  `--no-mcp-client`, or unticking the box, which starts from that default, opts out.
+  `BranchFlow.Request` carries the choice, null for the default, and `preflight` mints a fresh grant per branch into the request's `extraConfig`, so both front ends get the stamp and the check below from one place and cannot drift.
+  `Request.defaults`, the MCP path, says no, so a template's default never lets a coordinator make another.
   `BranchFlow.preflight` refuses the stamp on an airgapped branch (`mcpClientUnreachable`) before any Incus request, so no caller can make a coordinator that cannot reach its endpoint.
   It is an `mcp-` key, so `configureBranch` drops it from every copy: `isx branch --from coord` makes an ordinary instance, and so does an agent's fork.
   The MCP create path refuses it outright (`IncusInstanceBackend.branch`), so a coordinator cannot make another one.

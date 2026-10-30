@@ -499,6 +499,11 @@ public class TemplatesCommand extends BaseCommand {
             # for a project-local template); 'isx branch --no-gui' opts out
             # gui: true
 
+            # Every branch a coordinator that drives isx over MCP (never for a project-local
+            # template); 'isx branch --no-mcp-client' opts out
+            # mcp-client:
+            #   default: true
+
             # Directory a shell starts in; inherited from the parent, else the first repo
             # workdir: ~/repo
 
