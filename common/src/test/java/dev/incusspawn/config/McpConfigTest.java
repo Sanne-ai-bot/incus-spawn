@@ -75,6 +75,13 @@ class McpConfigTest {
         assertFalse(out.contains("mcp"), "no enclosing key:\n" + out);
     }
 
+    /** The list that collects unknown keys is not a setting, so a save never writes it. */
+    @Test
+    void theUnknownKeysListIsNeverWrittenBack() {
+        var out = Jjq.toYaml(parse("templates: [tpl-dev]\ncodex:\n  sandbox-mode: read-only\n"));
+        assertFalse(out.contains("unknown"), out);
+    }
+
     @Test
     void aNegativeLimitIsZeroNotUnlimited() {
         assertEquals(0, parse("max-instances: -1\n").maxInstances());
