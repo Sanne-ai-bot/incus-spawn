@@ -203,6 +203,8 @@ public class Tui {
     private Mode accountsReturnMode = Mode.BROWSE;
     /** The detail dialog's "Credential accounts" section, resolved once per opening. */
     private List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses = List.of();
+    /** Read from host state when the details open, never while they draw. */
+    private List<String> detailRegisteredWith = List.of();
 
     /** Result of a light refresh, produced off the UI thread. Exactly one of instances/error is set. */
     private record LiveSnapshot(long generation, List<InstanceInfo> instances,
@@ -962,6 +964,7 @@ public class Tui {
             instanceDetail.open();
             detailInstanceName = selected.name();
             detailAccountUses = accountUsesFor(selected);
+            detailRegisteredWith = dev.incusspawn.lifecycle.HostIntegration.registeredWith(selected.name());
             mode = Mode.INSTANCE_DETAIL;
             return true;
         }
@@ -1774,7 +1777,7 @@ public class Tui {
                 var selected = selectedEntry(instanceTableState);
                 // Assessed from the same snapshot as its tag row: pure, and a few map lookups
                 if (selected != null) instanceDetail.render(frame, screen, selected, detailAccountUses,
-                        BaseImageAge.assess(selected.metadata(), imageDefs));
+                        detailRegisteredWith, BaseImageAge.assess(selected.metadata(), imageDefs));
             }
             case ACCOUNTS -> accountsModal.render(frame, screen);
             case INFO -> about.render(frame, screen);

@@ -36,6 +36,8 @@ isx adds `agent-1` to herdr as a machine on its first start, and herdr starts it
 When you destroy the instance, isx removes the machine from herdr.
 A machine you added to herdr yourself is never removed by isx.
 
+In the TUI, the instance's details (F3) say isx added it to herdr.
+
 ## Orca
 
 [Orca](https://github.com/stablyai/orca) can run each workspace on a machine of its own, through an environment recipe.

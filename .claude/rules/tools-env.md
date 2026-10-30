@@ -170,5 +170,6 @@ herdr's is a host-side record per instance name (`Environment.herdrMachinesDir()
 herdr is asked only when `ssh <name>` reaches the instance through isx's SSH config (`SshKeyManager.hasHostEntry` for its static address and `hasSshConfigInclude`); until then nothing is recorded.
 `destroyed` removes only the recorded id, so a machine the user added for a real host of the same name survives, and a destroy with no record runs nothing; without herdr on the PATH the machine id moves to `.orphaned/<id>` beside the records (no instance name starts with a dot) and a warning says how to remove it; a later destroy or start with herdr removes those machines, and a new instance of the name is added as any other.
 `destroyed` runs from `InstanceLifecycle.removeHostIntegration` on every delete, a TUI rename's old name included.
+`registered(name)` reads the same host state, never a command or Incus, and the TUI's instance details (F3) list the tools that answer yes (`HostIntegration.registeredWith`), read once when they open.
 Host programs go through `HostCommands` (`HostPath.isOnPath`, and a run bounded in time, its output read included, so a daemon it leaves holding the pipe cannot hold isx), which tests replace.
 

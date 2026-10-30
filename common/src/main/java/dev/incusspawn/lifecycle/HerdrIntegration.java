@@ -88,6 +88,16 @@ public final class HerdrIntegration implements HostIntegration {
         }
     }
 
+    /** A recorded machine id: not {@link #NOT_ADDED}, not {@link #RETRY}. */
+    @Override
+    public boolean registered(String name) {
+        try {
+            return Files.readString(record(name)).strip().matches(HERDR_ID);
+        } catch (IOException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
     @Override
     public void started(IncusClient incus, String name, JqValue instance, Output out) {
         if (!host.onPath(TOOL)) return;

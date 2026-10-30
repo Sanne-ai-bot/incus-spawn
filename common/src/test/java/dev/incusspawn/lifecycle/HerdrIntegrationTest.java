@@ -210,6 +210,29 @@ class HerdrIntegrationTest {
                 .map(RecordingOutput.Event::msg).toList());
     }
 
+    /**
+     * The instance details say herdr lists the instance only while isx's record holds the machine it
+     * added: not before the first add, not for a retry or a decision not to add, not after a destroy.
+     */
+    @Test
+    void registeredIsOnlyAnAddedMachineThatIsStillThere() throws Exception {
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
+        var host = new FakeHost(true);
+        var herdr = herdr(host);
+        assertFalse(herdr.registered("ws"), "nothing recorded");
+        started(herdr, daemon, "ws");
+        assertTrue(herdr.registered("ws"));
+        assertFalse(herdr.registered("ws-2"), "a copy is not");
+
+        Files.writeString(records.resolve("r"), HerdrIntegration.RETRY + "\n");
+        Files.writeString(records.resolve("n"), HerdrIntegration.NOT_ADDED + "\n");
+        assertFalse(herdr.registered("r"));
+        assertFalse(herdr.registered("n"));
+
+        herdr.destroyed("ws", BuildOutput.bound());
+        assertFalse(herdr.registered("ws"));
+    }
+
     @Test
     void aDestroyRemovesOnlyTheMachineIsxAdded() throws Exception {
         var host = new FakeHost(true);

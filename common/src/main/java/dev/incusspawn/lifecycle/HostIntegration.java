@@ -41,6 +41,12 @@ public interface HostIntegration {
     /** After the instance was deleted, whatever its template: its config is gone. Never throws. */
     void destroyed(String name, Output out);
 
+    /**
+     * Whether this integration registered the instance with its tool and has not removed it: what
+     * the instance details show. A read of host state only, never a host command or Incus.
+     */
+    boolean registered(String name);
+
     /** The built-in host integrations; the directory is looked up per call, never at image build time. */
     List<HostIntegration> BUILT_IN = List.of(new HerdrIntegration(HostCommands.SYSTEM, dev.incusspawn.Environment::herdrMachinesDir));
 
@@ -52,6 +58,11 @@ public interface HostIntegration {
             if (integration.done(name)) continue;
             if (BuildSource.installs(buildSource, integration.tool())) integration.started(incus, name, instance, out);
         }
+    }
+
+    /** The tools whose host integration registered {@code name}, in {@link #BUILT_IN} order. */
+    static List<String> registeredWith(String name) {
+        return BUILT_IN.stream().filter(integration -> integration.registered(name)).map(HostIntegration::tool).toList();
     }
 
     /** {@link #destroyed} of every integration. */
