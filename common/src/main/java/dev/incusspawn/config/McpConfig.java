@@ -3,6 +3,7 @@ package dev.incusspawn.config;
 import dev.incusspawn.Environment;
 import io.hyperfoil.tools.jjq.mapper.JqAnySetter;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
+import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
@@ -122,6 +123,7 @@ public class McpConfig {
     private Object hostToolsRaw;
 
     // Keys isx does not know, only to refuse them: never written back.
+    @JqIgnore
     private final List<String> unknown = new ArrayList<>();
 
     @JqAnySetter
@@ -134,6 +136,7 @@ public class McpConfig {
         private String sandboxMode;
         @JqName("sandbox-modes")
         private Map<String, String> sandboxModes;
+        @JqIgnore
         private final List<String> unknown = new ArrayList<>();
 
         public void setSandboxMode(String mode) { sandboxMode = mode; }
