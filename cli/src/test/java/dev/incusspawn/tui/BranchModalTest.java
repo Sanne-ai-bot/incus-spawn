@@ -18,10 +18,17 @@ class BranchModalTest {
     private static final TuiTheme THEME = TuiTheme.dark();
 
     private static BranchModal dialog(MachineType type) {
-        return new BranchModal(new ModalRenderer(THEME), THEME, "tpl-dev", "dev-1",
-                new BranchFlow.Defaults(type, false, false, null, null),
+        return dialog(new BranchFlow.Defaults(type, false, false, null, null));
+    }
+
+    private static BranchModal dialog(BranchFlow.Defaults defaults) {
+        return new BranchModal(new ModalRenderer(THEME), THEME, "tpl-dev", "dev-1", defaults,
                 new BranchAccountChoices(new ModalRenderer(THEME), THEME, List.of()));
     }
+
+    /** The defaults of a template whose definition says {@code mcp-client: {default: true}}. */
+    private static final BranchFlow.Defaults COORDINATOR =
+            new BranchFlow.Defaults(MachineType.CONTAINER, false, false, null, null, true, null);
 
     /** A VM's dialog with its limits given, rather than this host's defaults. */
     private static BranchModal vmDialog(BranchModal.VmLimits limits) {
@@ -69,19 +76,40 @@ class BranchModalTest {
             KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB)};
 
     @Test
-    void mcpControlIsOffUntilTicked() {
-        assertEquals(java.util.Map.of(), dialog(MachineType.CONTAINER).request("dev-2").extraConfig(),
-                "no default ever grants MCP control");
+    void mcpControlIsLeftToTheDefaultUntilTouched() {
+        var request = dialog(MachineType.CONTAINER).request("dev-2");
+        assertNull(request.mcpClient(), "an untouched box is BranchFlow's default, as for isx branch");
+        assertEquals(java.util.Map.of(), request.extraConfig(), "BranchFlow mints the grant, never the dialog");
     }
 
     @Test
-    void tickedMcpControlStampsTheGrantIsxBranchMcpClientStamps() {
+    void tickedMcpControlAsksForItAsIsxBranchMcpClientDoes() {
         var dialog = dialog(MachineType.CONTAINER);
         press(dialog, TO_MCP_CONTROL);
         press(dialog, KeyEvent.ofChar(' '));
-        var config = dialog.request("dev-2").extraConfig();
-        assertEquals(java.util.Set.of(Metadata.MCP_CALLER), config.keySet());
-        assertTrue(Metadata.isMcpCaller(config), "a well-formed grant: " + config);
+        assertEquals(Boolean.TRUE, dialog.request("dev-2").mcpClient());
+    }
+
+    @Test
+    void passingAirgappedLeavesACoordinatorTemplatesDefaultInPlace() {
+        var dialog = dialog(COORDINATOR);
+        press(dialog, TO_MCP_CONTROL);
+        press(dialog, KeyEvent.ofKey(KeyCode.UP), KeyEvent.ofChar(' '), KeyEvent.ofChar(' '));
+        assertEquals(NetworkMode.AIRGAP, dialog.branchNetworkMode());
+        assertEquals(Boolean.FALSE, dialog.request("dev-2").mcpClient());
+        press(dialog, KeyEvent.ofChar(' '));
+        assertEquals(NetworkMode.FULL, dialog.branchNetworkMode());
+        assertNull(dialog.request("dev-2").mcpClient(), "back from Airgapped, the template's default applies again");
+    }
+
+    @Test
+    void aCoordinatorTemplatesBoxStartsTicked() {
+        var dialog = dialog(COORDINATOR);
+        TuiSnapshot.assertMatches("branch-modal-coordinator-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+        assertNull(dialog.request("dev-2").mcpClient(), "left ticked, the template's default applies");
+        press(dialog, TO_MCP_CONTROL);
+        press(dialog, KeyEvent.ofChar(' '));
+        assertEquals(Boolean.FALSE, dialog.request("dev-2").mcpClient(), "unticked, as isx branch --no-mcp-client");
     }
 
     @Test
@@ -91,7 +119,7 @@ class BranchModalTest {
         press(dialog, TO_MCP_CONTROL);
         press(dialog, KeyEvent.ofChar(' '), KeyEvent.ofKey(KeyCode.UP), KeyEvent.ofChar(' '), KeyEvent.ofChar(' '));
         assertEquals(NetworkMode.AIRGAP, dialog.branchNetworkMode());
-        assertEquals(java.util.Map.of(), dialog.request("dev-2").extraConfig(),
+        assertNotEquals(Boolean.TRUE, dialog.request("dev-2").mcpClient(),
                 "an airgapped instance cannot reach the endpoint, so it gets no grant");
         TuiSnapshot.assertMatches("branch-modal-airgapped-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
         // Tab skips the disabled row, so Space ticks the inbox, not MCP control; Up skips it back
@@ -102,7 +130,7 @@ class BranchModalTest {
         // Cycled on to Full, the box comes back unticked: passing Airgapped cleared it
         press(dialog, KeyEvent.ofKey(KeyCode.UP), KeyEvent.ofChar(' '));
         assertEquals(NetworkMode.FULL, dialog.branchNetworkMode());
-        assertEquals(java.util.Map.of(), dialog.request("dev-2").extraConfig());
+        assertNull(dialog.request("dev-2").mcpClient());
     }
 
     @Test

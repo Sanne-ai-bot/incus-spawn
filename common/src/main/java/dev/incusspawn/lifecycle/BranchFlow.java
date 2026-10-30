@@ -70,34 +70,50 @@ public final class BranchFlow {
     static java.util.function.BooleanSupplier macOS = dev.incusspawn.Platform::isMacOS;
 
     /**
-     * What to branch. A null {@code gui}, {@code kvm}, {@code cpu}, {@code memory} or
-     * {@code disk} means the {@linkplain #defaultsFor default} for the source.
+     * What to branch. A null {@code gui}, {@code kvm}, {@code cpu}, {@code memory}, {@code disk}
+     * or {@code mcpClient} means the {@linkplain #defaultsFor default} for the source.
      * {@code extraConfig} is stamped in the same writes as the branch's own metadata: on the copy
      * request itself and again in {@link InstanceLifecycle#configureBranch}, as the {@code clone}
-     * type is.
+     * type is. {@link #preflight} adds the {@link Metadata#MCP_CALLER} grant to it when the branch
+     * is to be a coordinator, a fresh one per branch.
      */
     public record Request(String source, String name, Boolean gui, Boolean kvm,
                           NetworkMode networkMode, Path inbox, Integer cpu, String memory,
                           String disk, List<String> accountOverrides, boolean start,
-                          Map<String, String> extraConfig) {
+                          Map<String, String> extraConfig, Boolean mcpClient) {
         public Request {
             accountOverrides = accountOverrides == null ? List.of() : List.copyOf(accountOverrides);
             extraConfig = extraConfig == null ? Map.of() : Map.copyOf(extraConfig);
         }
 
+        /** A request that leaves MCP control to the source's default. */
+        public Request(String source, String name, Boolean gui, Boolean kvm,
+                       NetworkMode networkMode, Path inbox, Integer cpu, String memory,
+                       String disk, List<String> accountOverrides, boolean start,
+                       Map<String, String> extraConfig) {
+            this(source, name, gui, kvm, networkMode, inbox, cpu, memory, disk, accountOverrides, start,
+                    extraConfig, null);
+        }
+
         /**
          * A branch with every setting at the template's default, as {@code isx branch <name> --from <source>},
          * except GUI passthrough, which is always off: this is the agent's branch ({@code isx mcp}),
-         * and nobody watches its display.
+         * and nobody watches its display. Nor MCP control: no coordinator makes another, whatever
+         * the template's {@code mcp-client.default} says.
          */
         public static Request defaults(String source, String name) {
             return new Request(source, name, false, null, NetworkMode.FULL, null, null, null,
-                    null, List.of(), true, Map.of());
+                    null, List.of(), true, Map.of(), false);
         }
 
         public Request withExtraConfig(Map<String, String> extra) {
             return new Request(source, name, gui, kvm, networkMode, inbox, cpu, memory, disk,
-                    accountOverrides, start, extra);
+                    accountOverrides, start, extra, mcpClient);
+        }
+
+        /** Whether the branch holds the {@link Metadata#MCP_CALLER} grant, once {@link #preflight} decided. */
+        public boolean grantsMcpClient() {
+            return extraConfig.containsKey(Metadata.MCP_CALLER);
         }
     }
 
@@ -109,8 +125,15 @@ public final class BranchFlow {
      *
      * @param guiNote why {@code gui} is off although the source asks for GUI, or null
      * @param kvmNote why {@code kvm} is off although the source asks for KVM, or null
+     * @param mcpClient whether the branch drives isx over MCP: its template's {@code mcp-client.default}
+     * @param mcpClientNote why {@code mcpClient} is off although the source asks for it, or null
      */
-    public record Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote, String kvmNote) {
+    public record Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote, String kvmNote,
+                           boolean mcpClient, String mcpClientNote) {
+        public Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote, String kvmNote) {
+            this(machineType, gui, kvm, guiNote, kvmNote, false, null);
+        }
+
         /** The CPU limit, or null for a container, which gets none. */
         public Integer cpu() {
             return machineType == MachineType.VM ? ResourceLimits.defaultVmCpus() : null;
@@ -143,6 +166,11 @@ public final class BranchFlow {
      * <p>KVM is off on macOS whatever the source asks for: there is no {@code /dev/kvm} to pass
      * through (#1254). A template's KVM is how it was built, not a request, so the branch goes
      * ahead without it; only an explicit {@code --kvm} is {@linkplain #kvmUnsupportedOnMacOs refused}.
+     *
+     * <p>MCP control follows the source's definition alone ({@code mcp-client.default}, #1812): a
+     * branch of an instance never defaults to it, since the grant is never inherited. Under the same
+     * rule as GUI, never from a project-local definition or a source built with one. An airgapped
+     * branch cannot reach the proxy that serves it: {@link #mcpClient} turns it off there.
      */
     public static Defaults defaultsFor(String source, JqValue instance, Map<String, ImageDef> defs) {
         var def = defs.get(source);
@@ -171,7 +199,13 @@ public final class BranchFlow {
             kvm = false;
             kvmNote = "'" + source + "' asks for KVM passthrough, which is " + NOT_ON_MACOS + ", so it is off.";
         }
-        return new Defaults(machineType, gui, kvm, guiNote, kvmNote);
+        var wantsMcpClient = def != null && ImageDef.resolveMcpClientDefault(def, defs);
+        String mcpClientNote = null;
+        if (wantsMcpClient && (projectLocal(def, config) || ImageDef.anyProjectLocal(def, defs))) {
+            mcpClientNote = "'" + source + "' makes coordinators by default, but a project-local definition is in its "
+                    + "chain or its build, so MCP control is off unless chosen (--mcp-client, or the branch dialog's MCP control box).";
+        }
+        return new Defaults(machineType, gui, kvm, guiNote, kvmNote, wantsMcpClient && mcpClientNote == null, mcpClientNote);
     }
 
     private static final String NOT_ON_MACOS = "not available on macOS, where isx runs containers only";
@@ -209,6 +243,16 @@ public final class BranchFlow {
         return built != null && built.usedProjectLocal();
     }
 
+    /**
+     * Whether a branch made from {@code req} drives isx over MCP: the request's choice (a grant it
+     * already carries is one), else the default, which an airgapped branch does without.
+     */
+    static boolean mcpClient(Request req, Defaults defaults) {
+        if (req.mcpClient() != null) return req.mcpClient();
+        if (req.grantsMcpClient()) return true;
+        return defaults.mcpClient() && mcpClientUnreachable(req.networkMode()) == null;
+    }
+
     /** Whether a branch made from {@code req} gets GUI passthrough: the request's choice, else the default. */
     static boolean gui(Request req, Defaults defaults) {
         return req.gui() != null ? req.gui() : defaults.gui();
@@ -220,10 +264,11 @@ public final class BranchFlow {
      * @param sourceInstance the source as preflight read it, so {@link #create} need not read it again
      * @param template the leaf template the source was built from ({@link Inherited#template}), which
      *                 the new branch's default action is resolved against
+     * @param defaults the {@link #defaultsFor defaults} for the source, worked out once
      */
     public record Preflight(Request request, Map<String, ImageDef> defs,
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
-                            JqValue sourceInstance, String template) {}
+                            JqValue sourceInstance, String template, Defaults defaults) {}
 
     /** An account selection and who chose each pin in it. */
     /** @param template the leaf template the source was built from ({@link Inherited#template}) */
@@ -270,7 +315,7 @@ public final class BranchFlow {
         var refusal = kvmUnsupportedOnMacOs(Boolean.TRUE.equals(req.kvm()));
         if (refusal != null) throw new BranchException(refusal);
         // Any value of the key, not only a well-formed grant: no airgapped branch is stamped at all
-        if (req.extraConfig().containsKey(Metadata.MCP_CALLER)) {
+        if (req.grantsMcpClient() || Boolean.TRUE.equals(req.mcpClient())) {
             refusal = mcpClientUnreachable(req.networkMode());
             if (refusal != null) throw new BranchException(refusal + ".");
         }
@@ -338,8 +383,23 @@ public final class BranchFlow {
                 throw new BranchException("the proxy-only restriction could not be set up on the host: " + e.getMessage());
             }
         }
-        return new Preflight(req, defs, accounts.accounts(), accounts.origins(), sourceInstance,
-                accounts.inherited().template());
+        var defaults = defaultsFor(req.source(), sourceInstance, defs);
+        return new Preflight(withMcpClient(req, defaults), defs, accounts.accounts(), accounts.origins(),
+                sourceInstance, accounts.inherited().template(), defaults);
+    }
+
+    /**
+     * {@code req} with the {@link Metadata#MCP_CALLER} grant when the branch is to be a coordinator,
+     * a fresh one, and without it when it was chosen not to be. Never from the source: no copy
+     * inherits the grant.
+     */
+    private static Request withMcpClient(Request req, Defaults defaults) {
+        var granted = mcpClient(req, defaults);
+        if (granted == req.grantsMcpClient()) return req;
+        var extra = new LinkedHashMap<>(req.extraConfig());
+        if (granted) extra.put(Metadata.MCP_CALLER, Metadata.newMcpCallerGrant());
+        else extra.remove(Metadata.MCP_CALLER);
+        return req.withExtraConfig(extra);
     }
 
     /**
@@ -360,7 +420,7 @@ public final class BranchFlow {
 
         // The source as preflight read it: the copy plan, its machine type and every default the request leaves open
         var sourceInstance = preflight.sourceInstance();
-        var defaults = defaultsFor(source, sourceInstance, defs);
+        var defaults = preflight.defaults();
 
         var copyPlan = incus.planCopy(sourceInstance);
         if (!copyPlan.cow()) {
@@ -410,6 +470,14 @@ public final class BranchFlow {
         // Configure GUI before start so environment.* keys are visible to init. First, because
         // it may push files: any push lands well before the start (see prefetchAndStart).
         if (req.gui() == null && defaults.guiNote() != null) BuildOutput.warn(defaults.guiNote());
+        if (req.mcpClient() == null && !req.grantsMcpClient()) {
+            if (defaults.mcpClientNote() != null) {
+                BuildOutput.warn(defaults.mcpClientNote());
+            } else if (defaults.mcpClient()) {
+                BuildOutput.warn("'" + source + "' makes coordinators by default, but " + mcpClientUnreachable(networkMode)
+                        + ", so MCP control is off.");
+            }
+        }
         if (gui(req, defaults)) {
             var whyNot = GuiPassthrough.configureGui(incus, name, environment.get(), hostPathExists);
             if (whyNot == null) {

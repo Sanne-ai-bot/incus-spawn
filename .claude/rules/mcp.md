@@ -170,7 +170,9 @@ An instance whose watch exec failed (stopped, unreachable) is skipped until the 
 Tests run rounds themselves (`autoPoll = false`), never on the timer.
 
 **A coordinator in an instance (#915).**
-`isx branch --mcp-client`, or the TUI branch dialog's MCP control box (#1811), stamps `Metadata.MCP_CALLER` (`mcp-caller`) through `McpClientGrant`, which both use for the grant and the post-branch check.
+`isx branch --mcp-client`, or the TUI branch dialog's MCP control box (#1811), makes a coordinator, as does a branch left to the default of a template whose `mcp-client.default` is true (#1812: nearest layer of the chain that says, `ImageDef.resolveMcpClientDefault`; off for a project-local definition or a source built with one, as GUI is).
+`BranchFlow.Request.mcpClient` carries the choice (null is the default; `Request.defaults`, the MCP path, passes false), and `BranchFlow.preflight` mints a fresh `Metadata.MCP_CALLER` (`mcp-caller`) grant into `extraConfig`, so the stamp still rides the copy request and survives `configureBranch`; callers read the outcome as `preflight.request().grantsMcpClient()` and run `McpClientGrant.check`.
+The default is never baked: `mcp-client` is left out of the content fingerprint, and builds keep clearing the grant (`BuildAccounts.grantInto`).
 `BranchFlow.preflight` refuses the stamp on an airgapped branch (`mcpClientUnreachable`), whoever asks.
 Being an `mcp-` key, `configureBranch` drops it from every copy, and `IncusInstanceBackend.branch` refuses it from the MCP path -- no agent makes a coordinator.
 The proxy serves `https://mcp.isx.internal/mcp` (`ProxyConfig.MCP_DOMAIN`, a built-in intercepted domain answered by `McpBridge`, never relayed) to a caller `InstanceRegistry.identifyWithLineage()` identifies with `mcpCaller()` set: address, per-start secret (`X-Isx-Instance-Secret`) and stamp, before any body is read; on macOS, where the address names no instance, the secret alone and the stamp (#1583).

@@ -1140,7 +1140,9 @@ class ImageDefTest {
             "description", "shown in listings, never reaches the image",
             "pinned", "protects the instance from removal, never reaches the image",
             "default-action", "what the TUI does on Enter, never reaches the image",
-            "deprecated", "a warning at build time: marking a template deprecated must not rebuild it");
+            "deprecated", "a warning at build time: marking a template deprecated must not rebuild it",
+            "mcp-client", "what a branch may do over MCP, never baked into the image: editing it must not rebuild",
+            "mcp-client.default", "a branch default, stamped per branch and never baked: editing it must not rebuild");
 
     /** A minimal definition holding one entry of each nested part, so each nested key can vary. */
     private static final Map<String, String> GUARD_BASE = Map.of(
@@ -1214,7 +1216,8 @@ class ImageDefTest {
                 "repos", new ImageDef.RepoEntry(),
                 "host-resources", new ImageDef.HostResource(),
                 "env", new EnvEntry(),
-                "package_repos", new ImageDef.PackageRepo());
+                "package_repos", new ImageDef.PackageRepo(),
+                "mcp-client", new ImageDef.McpClient());
         assertEquals(nestedParts(), parts.keySet(), "the parts of a definition whose keys are checked too");
         var keys = new TreeSet<String>(new ImageDef().knownKeys());
         parts.forEach((part, entry) -> entry.knownKeys().forEach(k -> keys.add(part + "." + k)));
