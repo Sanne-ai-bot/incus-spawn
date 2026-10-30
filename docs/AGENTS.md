@@ -129,6 +129,11 @@ Every template build puts the generated environment instructions at `/AGENTS.md`
 Pi gets this file whether or not the template also installs Claude Code.
 Your own `~/.pi/agent/AGENTS.md` and project `AGENTS.md` files load as usual; isx never writes them.
 
+Pi's footer adds `Running unconstrained in isx [version] [container name]` below the model and directory.
+It comes from an extension at `/etc/isx/pi/isx-status.ts`, loaded by the `extensions` entry isx writes in `~/.pi/agent/settings.json`.
+The version and instance name are read when Pi starts, so a branch shows its own name.
+Your own extensions in `~/.pi/agent/extensions/` load as usual.
+
 ### Parameters
 
 | Parameter | Default | What it does |

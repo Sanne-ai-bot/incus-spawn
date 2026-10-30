@@ -22,6 +22,40 @@ public class PiSetup implements ToolSetup {
      */
     public static final String CONTEXT_PATH = "/AGENTS.md";
 
+    /**
+     * The extension that puts Claude Code's status line in Pi's footer: that this is isx, its
+     * version and the instance's name. Root-owned outside the home like Claude Code's
+     * {@code statusline.sh}, and loaded by the user settings' {@code extensions} entry, so the
+     * user's own {@code ~/.pi/agent/extensions/} stays theirs.
+     */
+    static final String STATUS_EXTENSION_PATH = "/etc/isx/pi/isx-status.ts";
+
+    /**
+     * Reads {@code ISX_VERSION} and {@code ISX_CONTAINER} when Pi starts, never fixed by a build,
+     * so a branch shows its own name. They come from the login environment; the hostname is the
+     * instance's name too, for a Pi started without one. Every call is guarded: Pi exits when an
+     * extension throws while loading, and a footer line is not worth an agent that will not start.
+     */
+    static final String STATUS_EXTENSION = """
+            // Written by isx: Pi's footer says it runs in isx, which version, and in which instance.
+            import { hostname } from "node:os";
+
+            // Pi refuses to start when an extension throws, so a Pi whose API moved loses only this line.
+            export default function (pi) {
+              try {
+                pi.on("session_start", async (_event, ctx) => {
+                  try {
+                    const version = process.env.ISX_VERSION || "dev";
+                    const instance = process.env.ISX_CONTAINER || hostname();
+                    const theme = ctx.ui.theme;
+                    ctx.ui.setStatus("isx", theme.fg("success", theme.bold(`Running unconstrained in isx ${version}`))
+                        + theme.fg("success", ` [${instance}]`));
+                  } catch {}
+                });
+              } catch {}
+            }
+            """;
+
     @Override
     public String name() {
         return "pi";
@@ -237,10 +271,12 @@ public class PiSetup implements ToolSetup {
                   "quietStartup": true,
                   "defaultProvider": "%s",
                   "defaultModel": "%s",
-                  "defaultThinkingLevel": "medium"
+                  "defaultThinkingLevel": "medium",
+                  "extensions": ["%s"]
                 }
-                """.formatted(provider, model);
-        c.sh("mkdir -p /home/agentuser/.pi/agent");
+                """.formatted(provider, model, STATUS_EXTENSION_PATH);
+        c.sh("mkdir -p /etc/isx/pi /home/agentuser/.pi/agent");
+        c.writeFile(STATUS_EXTENSION_PATH, STATUS_EXTENSION);
         c.writeFile("/home/agentuser/.pi/agent/settings.json", settingsJson);
         c.chown("/home/agentuser/.pi", "agentuser:agentuser");
         BuildOutput.stepDone();

@@ -29,6 +29,7 @@ paths:
   Full access rests on Codex classifying that profile as unsandboxed, which `@openai/codex` upgrades (unpinned, moved by `npm update -g`) can change: re-check it on an upgrade; `test-codex.sh` asserts `codex exec` reports `sandbox: danger-full-access`.
   Codex 0.162.1 renders the profile name verbatim, so its name carries `Running unconstrained in isx [version] [container]` without a patched binary.
   `/etc/profile.d/isx-zz-codex-footer.sh` refreshes that name from `ISX_VERSION` and `ISX_CONTAINER` at login, preserving other settings and any user-selected permission profile.
+  Pi's footer shows the same message through a root-owned extension, `/etc/isx/pi/isx-status.ts`, listed in `~/.pi/agent/settings.json`'s `extensions`; it reads both variables when Pi starts.
 
 `GeminiSetup` (`gemini-cli`) installs `@google/gemini-cli` and writes `~/.gemini/settings.json` with optional `model.name`.
 It disables telemetry, usage statistics, self-updates and notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and inner sandboxing.
