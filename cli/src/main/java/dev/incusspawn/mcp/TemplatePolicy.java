@@ -1,8 +1,10 @@
 package dev.incusspawn.mcp;
 
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.config.McpScope;
 
 import java.util.List;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -12,6 +14,9 @@ import java.util.function.Supplier;
  *
  * <p>Definitions come from trusted layers only (see {@code IncusInstanceBackend}), so a
  * repository's definitions cannot stand in for an approved template's.
+ *
+ * <p>A coordinator in an instance gets only what its template's {@code coordinator.control-over} also
+ * lists ({@link McpScope}, #1812), and nothing when it lists none.
  *
  * <p>The config is read on every call, so a person narrowing the list affects a running session
  * at once. Nothing here, or anywhere in {@code isx mcp}, can widen it.
@@ -23,15 +28,28 @@ final class TemplatePolicy {
 
     private final InstanceBackend backend;
     private final Supplier<McpConfig> config;
+    private final Function<McpConfig, McpScope> scope;
 
+    /** For the host's own session: {@code mcp.yaml}'s list alone. */
     TemplatePolicy(InstanceBackend backend, Supplier<McpConfig> config) {
+        this(backend, config, c -> McpScope.host(c.templates()));
+    }
+
+    /** {@code scope} narrows the config to what this session's caller may use. */
+    TemplatePolicy(InstanceBackend backend, Supplier<McpConfig> config, Function<McpConfig, McpScope> scope) {
         this.backend = backend;
         this.config = config;
+        this.scope = scope;
+    }
+
+    /** What this session may use now, from the config as it is now. */
+    McpScope scope() {
+        return scope.apply(config.get());
     }
 
     /** The approved templates that are defined and trusted, built or not. */
     List<InstanceBackend.TemplateInfo> approved() {
-        var listed = config.get().templates();
+        var listed = scope().templates();
         if (listed.isEmpty()) return List.of();
         return backend.templates().stream()
                 .filter(t -> listed.contains(t.name()) && !t.projectLocal())
@@ -48,14 +66,13 @@ final class TemplatePolicy {
         return info;
     }
 
-    /** Refuses a template the user has not listed under {@code templates} in {@code mcp.yaml}, from the config alone. */
+    /**
+     * Refuses a template outside this session's {@link McpScope}, from the config and definitions
+     * alone, saying which list lacks it.
+     */
     void requireListed(String name) {
-        var listed = config.get().templates();
-        if (!listed.contains(name)) {
-            throw new ToolError(ToolError.Code.NOT_APPROVED, "template '" + name + "' is not approved for agents"
-                    + (listed.isEmpty() ? " (none are)." : "; approved: " + String.join(", ", listed) + ".")
-                    + " " + HOW_TO_APPROVE);
-        }
+        var why = scope().explain(name);
+        if (why != null) throw new ToolError(ToolError.Code.NOT_APPROVED, why);
     }
 
     /**

@@ -89,6 +89,10 @@
       },
       "orphan_grace_hours" : {
         "type" : "integer"
+      },
+      "scope_note" : {
+        "description" : "Why a coordinator in an instance may use no template, and what the user has to change",
+        "type" : "string"
       }
     },
     "required" : [ "templates", "max_instances", "max_concurrent_tasks", "orphan_grace_hours" ],

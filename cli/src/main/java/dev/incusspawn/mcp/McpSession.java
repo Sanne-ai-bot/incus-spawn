@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.config.McpScope;
 import dev.incusspawn.incus.InstanceNames;
 import dev.incusspawn.incus.Metadata;
 
@@ -61,6 +62,8 @@ final class McpSession {
 
     private final InstanceBackend backend;
     private final Supplier<McpConfig> config;
+    /** What this session's caller may use of the config: {@link McpScope}. */
+    private final java.util.function.Function<McpConfig, McpScope> scope;
     private final Predicate<SessionId> alive;
     private final Map<String, Owned> owned = new LinkedHashMap<>();
     /** Why each instance this session held was let go of: what {@link #hold} says once it is. */
@@ -74,6 +77,13 @@ final class McpSession {
 
     McpSession(SessionId id, String owner, long clientPid, String cwd,
                InstanceBackend backend, Supplier<McpConfig> config, Predicate<SessionId> alive) {
+        this(id, owner, clientPid, cwd, backend, config, c -> McpScope.host(c.templates()), alive);
+    }
+
+    McpSession(SessionId id, String owner, long clientPid, String cwd, InstanceBackend backend,
+               Supplier<McpConfig> config, java.util.function.Function<McpConfig, McpScope> scope,
+               Predicate<SessionId> alive) {
+        this.scope = scope;
         this.id = id;
         this.owner = owner;
         this.clientPid = clientPid;
@@ -446,9 +456,10 @@ final class McpSession {
                     + "mid-work; set force: true only if that session is stuck.");
         }
         var template = templateOf(metadata);
-        if (!config.get().templates().contains(template)) {
-            throw new ToolError(ToolError.Code.NOT_APPROVED, "'" + name + "' comes from template '" + template + "', which is no longer "
-                    + "approved for agents. " + TemplatePolicy.HOW_TO_APPROVE);
+        var why = scope.apply(config.get()).explain(template);
+        if (why != null) {
+            throw new ToolError(ToolError.Code.NOT_APPROVED, "'" + name + "' comes from template '" + template + "', which this "
+                    + "session may not use: " + why);
         }
         backend.stamp(name, holderStamps());
         // Two sessions adopting at once both write; only the last writer holds it.
@@ -674,7 +685,8 @@ final class McpSession {
     private Map<String, Map<String, String>> resume() {
         if (!id.isInstance()) return Map.of();
         var resumed = new LinkedHashMap<String, Map<String, String>>();
-        var approved = config.get().templates();
+        var scoped = scope.apply(config.get());
+        var approved = scoped.templates();
         // Workers mostly share a template; each lookup loads definitions and asks Incus.
         var delegates = new HashMap<String, Boolean>();
         backend.mcpInstances().forEach((name, config) -> {
@@ -686,12 +698,10 @@ final class McpSession {
                 try {
                     backend.stamp(name, Map.of(Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.now(), id.toString())));
                 } catch (RuntimeException e) {
-                    McpLog.log("could not release " + name + " (template '" + template
-                            + "' is no longer approved for agents): " + e.getMessage());
+                    McpLog.log("could not release " + name + " (" + scoped.explain(template) + "): " + e.getMessage());
                     return;
                 }
-                McpLog.log("released " + name + ": template '" + template
-                        + "' is no longer approved for agents");
+                McpLog.log("released " + name + ": " + scoped.explain(template));
                 return;
             }
             register(name, template, delegates.computeIfAbsent(template, this::supportsDelegate), config);

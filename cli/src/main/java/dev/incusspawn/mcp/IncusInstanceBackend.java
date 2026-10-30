@@ -61,6 +61,17 @@ final class IncusInstanceBackend implements InstanceBackend {
         return workdir.isEmpty() ? AGENT_HOME : workdir;
     }
 
+    /**
+     * What {@code name} was built from, judged as the proxy judges a host route's caller
+     * ({@link dev.incusspawn.proxy.InstanceRegistry#lineageOf}), from one listing.
+     */
+    dev.incusspawn.proxy.InstanceRegistry.Lineage lineage(String name) {
+        var byName = dev.incusspawn.proxy.InstanceRegistry.configsByName(incus.listJsonConfig());
+        var config = byName.get(name);
+        if (config == null) return new dev.incusspawn.proxy.InstanceRegistry.Lineage("", true, "gone");
+        return dev.incusspawn.proxy.InstanceRegistry.lineageOf(config, byName);
+    }
+
     @Override
     public List<TemplateInfo> templates() {
         var defs = ImageDef.loadTrusted();

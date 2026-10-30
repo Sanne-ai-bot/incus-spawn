@@ -102,6 +102,29 @@ class McpToolsTest {
     }
 
     @Test
+    void aCoordinatorWhoseTemplateListsNothingIsToldWhyItSeesNoTemplate() throws Exception {
+        // #1812: tpl-java is approved in mcp.yaml, but tpl-coord's definition lists nothing
+        var coord = new dev.incusspawn.config.ImageDef();
+        coord.setName("tpl-coord");
+        java.util.function.Function<McpConfig, dev.incusspawn.config.McpScope> scope =
+                c -> dev.incusspawn.config.McpScope.coordinator("tpl-coord", null, java.util.Map.of("tpl-coord", coord), c.templates());
+        session = new McpSession(new SessionId(4242, 1), "alice", 1, "/work", backend, () -> config, scope, s -> false);
+        var all = new McpTools(session, backend, new TemplatePolicy(backend, () -> config, scope),
+                new Tasks(session, backend, () -> config)).all();
+        results = new StructuredResults(all);
+        server = new McpServer(out, all, "1", null, null);
+
+        var listed = call("list_templates", "{}");
+        assertEquals(0, listed.path("structuredContent").path("templates").size());
+        var note = listed.path("structuredContent").path("scope_note").asText("");
+        assertTrue(note.contains("tpl-coord declares no coordinator.control-over"), note);
+        assertTrue(text(listed).contains(note), text(listed));
+        var refused = call("create_instance", "{\"template\":\"tpl-java\"}");
+        assertTrue(refused.path("isError").asBoolean(false));
+        assertTrue(text(refused).contains("under coordinator.control-over in tpl-coord"), text(refused));
+    }
+
+    @Test
     void withNothingApprovedTheAgentIsToldWhoCanApprove() throws Exception {
         config.setTemplates(List.of());
         assertTrue(text(call("list_templates", "{}")).contains("templates in ~/.config/incus-spawn/mcp.yaml"));

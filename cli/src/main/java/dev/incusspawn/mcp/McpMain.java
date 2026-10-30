@@ -3,7 +3,9 @@ package dev.incusspawn.mcp;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.command.BaseCommand;
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.config.McpScope;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Metadata;
 
@@ -13,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -54,6 +57,7 @@ public final class McpMain {
         SessionId self;
         long clientPid;
         String cwd;
+        final Function<McpConfig, McpScope> scope;
         if (callerInstance != null) {
             // The proxy checked the stamp; a session is never served on that word alone. The
             // grant it carries is part of the session: a successor under the name is another.
@@ -72,20 +76,26 @@ public final class McpMain {
             // Its client is in the instance: no host process, no host directory to stamp.
             clientPid = -1;
             cwd = null;
+            // Its lineage once, by the proxy's own judgement; its template's definition on every
+            // call, from the trusted layers, so an edit reaches it at once (#1812)
+            var lineage = backend.lineage(callerInstance);
+            scope = c -> McpScope.coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null,
+                    ImageDef.loadTrusted(), c.templates());
         } else {
             self = SessionId.current();
+            scope = c -> McpScope.host(c.templates());
             clientPid = ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(-1L);
             cwd = Path.of("").toAbsolutePath().toString();
         }
         var owner = System.getProperty("user.name", "");
         // Read on every use: a person narrowing the policy affects a running session at once.
         Supplier<McpConfig> config = McpMain::policy;
-        warnAboutPolicy();
+        warnAboutPolicy(scope);
         var alive = new CallerLiveness(backend);
-        var session = new McpSession(self, owner, clientPid, cwd, backend, config, alive);
+        var session = new McpSession(self, owner, clientPid, cwd, backend, config, scope, alive);
         var tasks = new Tasks(session, backend, config);
         if (initialized.getAsBoolean()) resume(session, tasks);
-        var tools = new McpTools(session, backend, new TemplatePolicy(backend, config), tasks);
+        var tools = new McpTools(session, backend, new TemplatePolicy(backend, config, scope), tasks);
 
         var released = new AtomicBoolean();
         Runnable release = () -> {
@@ -126,10 +136,16 @@ public final class McpMain {
     }
 
     /** Say at start what the user has to fix, before an agent meets it as a refusal. */
-    private static void warnAboutPolicy() {
+    private static void warnAboutPolicy(Function<McpConfig, McpScope> scope) {
         try {
-            var retired = McpConfig.load().retiredKeysNotice();
+            var policy = McpConfig.load();
+            var retired = policy.retiredKeysNotice();
             if (retired != null) McpLog.log(retired);
+            var scoped = scope.apply(policy);
+            if (scoped.isCoordinator()) {
+                McpLog.log("this coordinator may control: " + scoped.summary());
+                scoped.mismatches().forEach(McpLog::log);
+            }
             var legacy = McpConfig.legacySectionNotice(SpawnConfig.load());
             if (legacy != null) McpLog.log(legacy);
         } catch (McpConfig.Invalid e) {

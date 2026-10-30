@@ -1,6 +1,8 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.config.McpScope;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -76,5 +78,48 @@ class TemplatePolicyTest {
         assertThrows(ToolError.class, () -> policy.require("tpl-unbuilt"));
         assertThrows(ToolError.class, () -> policy.requireLineage("tpl-repo"));
         assertThrows(ToolError.class, () -> policy.requireLineage("tpl-java"));
+    }
+
+    /** A trusted definition of {@code name} whose coordinators may control {@code controls}, or say nothing. */
+    private static ImageDef coordinatorTemplate(String name, List<String> controls) {
+        var def = new ImageDef();
+        def.setName(name);
+        if (controls != null) {
+            var mcpClient = new ImageDef.Coordinator();
+            mcpClient.setControlOver(controls);
+            def.setCoordinator(mcpClient);
+        }
+        return def;
+    }
+
+    private TemplatePolicy coordinator(String template, String untrusted) {
+        var defs = java.util.Map.of("tpl-x", coordinatorTemplate("tpl-x", List.of("tpl-java", "tpl-unbuilt")),
+                "tpl-y", coordinatorTemplate("tpl-y", null));
+        return new TemplatePolicy(backend, () -> config, c -> McpScope.coordinator(template, untrusted, defs, c.templates()));
+    }
+
+    @Test
+    void aCoordinatorGetsWhatBothItsTemplateAndMcpYamlList() {
+        // #1812: mcp.yaml approves tpl-java and tpl-dev; tpl-x's coordinators may control tpl-java
+        // and tpl-unbuilt, and tpl-y's are given no list
+        config.setTemplates(List.of("tpl-java", "tpl-dev"));
+        var x = coordinator("tpl-x", null);
+        assertEquals(List.of("tpl-java"), x.approved().stream().map(InstanceBackend.TemplateInfo::name).toList());
+        assertEquals("tpl-java", x.require("tpl-java").name());
+        var notInItsList = assertThrows(ToolError.class, () -> x.require("tpl-dev"));
+        assertEquals(ToolError.Code.NOT_APPROVED, notInItsList.code);
+        assertTrue(notInItsList.getMessage().contains("not in coordinator.control-over of tpl-x"), notInItsList.getMessage());
+        var notInMcpYaml = assertThrows(ToolError.class, () -> x.requireLineage("tpl-unbuilt"));
+        assertTrue(notInMcpYaml.getMessage().contains("add tpl-unbuilt to templates in ~/.config/incus-spawn/mcp.yaml"),
+                notInMcpYaml.getMessage());
+
+        var y = coordinator("tpl-y", null);
+        assertEquals(List.of(), y.approved());
+        var e = assertThrows(ToolError.class, () -> y.require("tpl-java"));
+        assertTrue(e.getMessage().contains("declares no coordinator.control-over"), e.getMessage());
+
+        assertEquals(List.of(), coordinator("tpl-x", "built from a project-local definition").approved(),
+                "an untrusted copy of a coordinator controls nothing");
+        assertEquals(2, policy.approved().size(), "the host's own session keeps mcp.yaml's list");
     }
 }
