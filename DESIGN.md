@@ -550,6 +550,11 @@ Codex's footer renders a custom permission profile's name verbatim (verified wit
 The built-in tool selects a profile named `Running unconstrained in isx [version] [container]`, granting root filesystem writes and network access with approvals disabled, and `web_search = "live"` restores the live search a custom profile would otherwise lose.
 Its login script refreshes only that name after `isx-env.sh`, so clones display their own identity while preserving custom footer fields and user-selected permissions.
 
+Pi's footer gets the same message from an extension, since Pi has no status-line command (`PiSetup.STATUS_EXTENSION`).
+It sets an extension status, the footer's third line, from `ISX_VERSION` and `ISX_CONTAINER` read when Pi starts, so no login script is needed.
+The file is root-owned at `/etc/isx/pi/isx-status.ts`, beside the other isx files, and the user settings' `extensions` entry loads it.
+Dropping it into `~/.pi/agent/extensions/` was rejected: that directory is the user's, as `~/.pi/agent/AGENTS.md` is.
+
 **VM-specific build behavior:**
 
 When `type` is `vm` (set in the definition or via `--type`), `buildFromScratch` applies the entire ancestor tool/package chain from YAML definitions alone.

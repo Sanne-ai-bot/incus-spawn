@@ -21,6 +21,7 @@ Some come from isx at build time, some from the `tpl-minimal` template, and some
 | Every instance has its own machine ID | Branches are copies of one template | `/etc/machine-id` |
 | Generated agent instructions, stored once | Each agent that is installed reads them where it looks, as a hardlink to the one file | `/etc/isx/agent-instructions.md`, `/etc/isx/agent-instructions.paths` |
 | With Pi, an `AGENTS.md` at the filesystem root | Pi reads context from every directory above its own, so isx's instructions leave `~/.pi/agent/AGENTS.md` to you | `/AGENTS.md`, a link from the `pi` tool |
+| With Pi, an isx footer extension | Pi's footer names isx and the instance, as Claude Code's status line does | `/etc/isx/pi/isx-status.ts`, listed in `~/.pi/agent/settings.json` by the `pi` tool |
 | With Codex CLI, system requirements | Codex adds them to your own instructions, so `~/.codex/AGENTS.md` and `~/.codex/config.toml` stay yours | `/etc/codex/requirements.toml`, written by the `codex` tool |
 | With Claude Code, its managed policy | Claude Code loads it before your own `CLAUDE.md` files, which stay yours | `/etc/claude-code/CLAUDE.md`, a link from the `claude` tool |
 | A VM's `dnf` refuses kernel packages | The VM boots the image's own kernel | `/etc/dnf/libdnf5.conf.d/isx-kernel.conf` |

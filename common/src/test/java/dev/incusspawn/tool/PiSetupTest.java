@@ -84,6 +84,40 @@ class PiSetupTest {
     }
 
     @Test
+    void installPutsIsxVersionAndInstanceNameInFooter() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new PiSetup().install(new Container(incus, CONTAINER), Map.of());
+
+        verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
+                arg.contains("cat > '/etc/isx/pi/isx-status.ts'")
+                        && arg.contains("ctx.ui.setStatus(\"isx\"")
+                        && arg.contains("Running unconstrained in isx ${version}")
+                        && arg.contains("process.env.ISX_VERSION")
+                        && arg.contains("process.env.ISX_CONTAINER")
+                        // Pi exits when an extension throws on load; the footer must never cost Pi.
+                        && arg.contains("try {") && arg.contains("} catch {}")));
+        verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
+                arg.contains("/home/agentuser/.pi/agent/settings.json")
+                        && arg.contains("\"extensions\": [\"/etc/isx/pi/isx-status.ts\"]")));
+    }
+
+    @Test
+    void reconfigureKeepsFooterExtension() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new PiSetup().reconfigure(new Container(incus, CONTAINER), Map.of("model", "gpt-4.1"));
+
+        verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
+                arg.contains("cat > '/etc/isx/pi/isx-status.ts'")));
+        verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
+                arg.contains("\"defaultModel\": \"gpt-4.1\"")
+                        && arg.contains("\"extensions\": [\"/etc/isx/pi/isx-status.ts\"]")));
+    }
+
+    @Test
     void installWritesCustomProviderAndModel() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
