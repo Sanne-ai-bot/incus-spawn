@@ -302,6 +302,22 @@ public class McpConfig {
         return requireSandboxMode("codex sandbox mode", mode);
     }
 
+    /**
+     * What Pi runs under for {@code template}: always every tool, as Pi has no sandbox or
+     * permission modes. So a template whose Claude permission policy is restrictive is refused
+     * rather than given a worker that can write anything.
+     */
+    public String piPermissionMode(String template) {
+        if (!DEFAULT_PERMISSION_MODE.equals(delegatePermissionMode(template))) {
+            throw new IllegalArgumentException("template '" + template + "' has a restrictive Claude permission policy, "
+                    + "and Pi has no sandbox or permission modes to honour it; choose another agent or template");
+        }
+        return PI_PERMISSION_MODE;
+    }
+
+    /** What a Pi worker reports as its permission mode: every tool, bounded by the instance. */
+    public static final String PI_PERMISSION_MODE = "full-access";
+
     private static String requireSandboxMode(String key, String mode) {
         if (!List.of("read-only", "workspace-write", "danger-full-access").contains(mode)) {
             throw new IllegalArgumentException(key + " '" + mode

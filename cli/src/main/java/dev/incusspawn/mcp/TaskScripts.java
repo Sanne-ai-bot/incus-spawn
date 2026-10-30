@@ -180,14 +180,14 @@ final class TaskScripts {
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
         sb.append("export ").append(TASK_ENV).append('=').append(taskId).append('\n');
-        if (agent == DelegateAgent.CODEX) {
+        if (agent.usesRunner()) {
             // Keep the opened descriptor across rename, so a replaced log path cannot block us.
             sb.append("w=$(mktemp \"$D/.tmp.XXXXXX\") && { exec 4> \"$w\"; } && mv -fT \"$w\" \"$D/runner-")
                     .append(run).append(".log\" || { rm -f -- \"$w\"; ")
                     .append(recordExit(String.valueOf(run), "125")).append("; exit 0; }\n");
         }
         sb.append("cd -- ").append(ExecScript.quote(cwd))
-                .append(agent == DelegateAgent.CODEX ? " 2>&4" : " 2> \"$D/stderr-" + run + ".log\"").append(" || { ")
+                .append(agent.usesRunner() ? " 2>&4" : " 2> \"$D/stderr-" + run + ".log\"").append(" || { ")
                 .append(recordExit(String.valueOf(run), "125")).append("; exit 0; }\n");
         if (run == 1) {
             sb.append(RECORD_CWD);
@@ -204,12 +204,22 @@ final class TaskScripts {
         if (chosen.maxTurns() != null) {
             sb.append("echo ").append(chosen.maxTurns().intValue()).append(" > \"$D/max-turns\"\n");
         }
-        if (agent == DelegateAgent.CODEX) {
+        if (agent == DelegateAgent.PI && run > 1) {
+            // Checked here too, not only by send_message: an adopting session or a file removed since
+            // must not let Pi write the message into a new session.
+            sb.append("isx_refuse() { echo \"isx: $1; start a new delegated task.\" >&4; ")
+                    .append(recordExit(String.valueOf(run), "125")).append("; exit 0; }\n")
+                    .append(PI_SAVED_SESSION).append(piSessionCheck("\"$sid\"")).append('\n');
+        }
+        if (agent.usesRunner()) {
+            var model = ExecScript.quote(chosen.model() == null ? "" : chosen.model());
             sb.append(requireFlock("echo '" + NO_FLOCK + "' >&4; " + recordExit(String.valueOf(run), "127") + "; exit 0")).append('\n');
-            sb.append(CONVERSATION_LOCK).append("node -e ").append(ExecScript.quote(WorkerRunners.of(DelegateAgent.CODEX)))
-                    .append(" \"$D\" ").append(run).append(' ').append(ExecScript.quote(permissionMode))
-                    .append(' ').append(ExecScript.quote(chosen.model() == null ? "" : chosen.model()))
-                    .append(" 2>&4\n");
+            sb.append(CONVERSATION_LOCK).append("node -e ").append(ExecScript.quote(WorkerRunners.of(agent)))
+                    .append(" \"$D\" ").append(run);
+            // Pi has no permission modes: its runs differ only by model.
+            if (agent == DelegateAgent.CODEX) sb.append(' ').append(ExecScript.quote(permissionMode));
+            sb.append(' ').append(model);
+            sb.append(" 2>&4\n");
             sb.append("rc=$?\n").append(TAKEN_NOTE).append(" >&4\n").append(recordExit(String.valueOf(run), "$rc")).append('\n');
             return sb.toString();
         }
@@ -456,7 +466,58 @@ final class TaskScripts {
                 + unit(taskId, "*") + "' 2>/dev/null) || isx_refuse 'systemd cannot say whether a run is going'; "
                 + "[ -z \"$u\" ] || isx_refuse 'a run of it is going'; "
                 + Presence.holderScript(agent, sessionId, cwd)
-                + "[ -z \"$h\" ] || isx_refuse \"a person is already in its conversation (agent pid $h)\"; ";
+                + "[ -z \"$h\" ] || isx_refuse \"a person is already in its conversation (agent pid $h)\"; "
+                + (agent == DelegateAgent.PI ? piSessionCheck(ExecScript.quote(sessionId)) : "");
+    }
+
+    /**
+     * Calls {@code isx_refuse <why>} (which must not return) unless the file of the Pi session run 1
+     * opened in its recorded directory is still there: {@code pi --session-id} opens an empty session in place of
+     * a missing one, and writes the new message to it before the runner can stop it. Run before a
+     * join ({@link #joinGuard}), a resume ({@link #agentRun}) and {@code send_message}
+     * ({@link #piSessionStatus}). {@code sessionId} is a shell word: a quoted ID, or {@code "$sid"}.
+     * The file is named by the session header's timestamp ({@code session_started}, with {@code :}
+     * and {@code .} as {@code -}) and the ID, so a replacement Pi made since is not taken for it.
+     * Looked for only where Pi itself looks for that directory's sessions: {@code PI_CODING_AGENT_SESSION_DIR}
+     * when set, else {@link #PI_PROJECT_SESSIONS} under {@code PI_CODING_AGENT_DIR}'s
+     * {@code sessions} (default {@code ~/.pi/agent}), either with a leading {@code ~} expanded as
+     * Pi 1.4.0's {@code normalizePath} does. A {@code sessionDir} setting or a {@code file://}
+     * value is not followed, and refuses. POSIX, as the rest of the guard.
+     */
+    static String piSessionCheck(String sessionId) {
+        return "c=$(" + ifFile("$D/cwd", "head -c 4096") + " | head -n 1); "
+                + "[ -n \"$c\" ] || isx_refuse 'its working directory was never recorded'; "
+                + "ts=$(" + ifFile("$D/session_started", "head -c 64") + "); "
+                + "case $ts in ''|*[!0-9A-Za-z:.-]*) isx_refuse 'its Pi session was never recorded';; esac; "
+                // An empty variable counts as unset, as Pi tests them for truth.
+                + "if [ -n \"${PI_CODING_AGENT_SESSION_DIR:-}\" ]; then s=$PI_CODING_AGENT_SESSION_DIR; else s=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}; fi; "
+                // Pi's normalizePath on Linux: exactly ~, or a leading ~/, is the home; ~user is not.
+                + "case $s in '~') s=$HOME;; '~/'*) s=$HOME/${s#'~/'};; esac; "
+                + "[ -n \"${PI_CODING_AGENT_SESSION_DIR:-}\" ] || s=$s/sessions/$(" + PI_PROJECT_SESSIONS + "); "
+                + "[ -f \"$s/$(printf '%s' \"$ts\" | tr ':.' '--')_\"" + sessionId + "\".jsonl\" ] "
+                + "|| isx_refuse 'its Pi session file is gone, and Pi would open an empty conversation in its place'; ";
+    }
+
+    /**
+     * Prints the folder Pi keeps the sessions of directory {@code $c} in, under its {@code sessions}:
+     * Pi 1.4.0's {@code getDefaultSessionDirPath}, the path without its leading separator, every
+     * {@code /}, {@code \\} and {@code :} as {@code -}, between {@code --} and {@code --}. {@code $c} is the
+     * task's recorded physical directory, as Pi resolves it from the directory it starts in.
+     */
+    static final String PI_PROJECT_SESSIONS = "printf '%s' \"--$(printf '%s' \"$c\" | sed 's|^[/\\\\]||' | tr '/\\\\:' '---')--\"";
+
+    /** Sets {@code sid} to the Pi session ID the task saved in {@code $D}, refusing one it never saved. */
+    private static final String PI_SAVED_SESSION = "sid=$(" + ifFile("$D/session_id", "head -c 128") + "); "
+            + "case $sid in ''|*[!A-Za-z0-9_-]*) isx_refuse 'its Pi session was never saved';; esac; ";
+
+    /**
+     * {@code ok} when Pi task {@code taskId}'s saved session can be resumed where it ran, else why
+     * not, one line: what {@code send_message} asks before it reserves a run, so a lost session is
+     * refused with nothing written.
+     */
+    static String piSessionStatus(String taskId) {
+        return "D=" + dir(taskId) + "; isx_refuse() { echo \"$1\"; exit 0; }; " + PI_SAVED_SESSION
+                + piSessionCheck("\"$sid\"") + "echo ok";
     }
 
     /** Where in {@code $D} a refused join leaves its reason for the host ({@link #joinRefusal}). */

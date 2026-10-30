@@ -159,7 +159,7 @@ final class McpTools {
                 McpTool.annotations(false, false, false),
                 this::exec));
         tools.add(new McpTool("delegate",
-                "Hand a task to Claude Code or Codex inside an instance (the template must "
+                "Hand a task to Claude Code, Codex or Pi inside an instance (the template must "
                         + "have supports_delegate): an instruction in plain language, or a skill the "
                         + "instance defines. The agent works autonomously with the instance's tools and "
                         + "the credentials its template carries, in the permission mode list_templates "
@@ -169,7 +169,7 @@ final class McpTools {
                         + "with task_result, review changes with get_diff, and continue the "
                         + "conversation with send_message.",
                 Schema.object()
-                        .choice("agent", "Worker agent; defaults to Claude when installed, otherwise Codex", false, "claude", "codex")
+                        .choice("agent", "Worker agent; defaults to Claude when installed, otherwise Codex, otherwise Pi", false, "claude", "codex", "pi")
                         .string("instruction", "What the agent should do, with everything it needs "
                                 + "to know: it sees nothing of your conversation", false)
                         .string("skill", "Or: a skill defined in the instance, run as /<skill> <args> -- "
@@ -361,8 +361,8 @@ final class McpTools {
         for (var agent : template.agents()) {
             var entry = JqObject.builder(7);
             entry.put("agent", agent.id);
-            entry.put("supports_max_turns", agent == DelegateAgent.CLAUDE);
-            entry.put("supports_model_preflight", agent == DelegateAgent.CLAUDE);
+            entry.put("supports_max_turns", agent.supportsMaxTurns());
+            entry.put("supports_model_preflight", agent.supportsModelPreflight());
             var model = template.model(agent);
             if (model != null) entry.put("model", model);
             if (agent == DelegateAgent.CODEX) entry.put("approval_policy", "never");
@@ -397,20 +397,19 @@ final class McpTools {
     }
 
     private void checkAgent(String instance, String template, String account, String model, DelegateAgent agent) {
-        if (agent == DelegateAgent.CLAUDE) {
+        if (agent.supportsModelPreflight()) {
             modelCheck.require(instance, template, account, model);
         } else {
             var err = new ByteArrayOutputStream();
             if (backend.exec(instance, agent.probe(), null, new ByteArrayOutputStream(), err) != 0)
-                throw new ToolError(ToolError.Code.REFUSED, "Codex and Node with exec/resume JSON output are required in "
-                        + instance + "; rebuild its template or upgrade the CLI.");
+                throw new ToolError(ToolError.Code.REFUSED, agent.probeRefusal(instance));
         }
     }
 
     private static String renderBrief(DelegateAgent agent, Brief brief) {
-        if (agent != DelegateAgent.CODEX || brief.skill() == null) return brief.text();
+        if (agent == DelegateAgent.CLAUDE || brief.skill() == null) return brief.text();
         if (!brief.skill().matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,100}"))
-            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "Codex skill must be an installed skill name without a command namespace or path");
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, agent.label + " skill must be an installed skill name without a command namespace or path");
         return "Use the installed skill at ~/.agents/skills/" + brief.skill() + "/SKILL.md.\nArguments: " + brief.args();
     }
 
@@ -418,10 +417,11 @@ final class McpTools {
         return StreamJsonEvents.summarize(task.agent(), output, keep);
     }
 
-    private ToolResult codexResult(Tasks.Task task, Tasks.Status status, JqObject.Builder node, int limit, String question, boolean events) {
-        var summary = CodexEvents.summarize(status.output(), events ? 20 : 0);
+    /** {@code task_result} for an agent whose runner recorded its outcome and report ({@link DelegateAgent#usesRunner}). */
+    private ToolResult runnerResult(Tasks.Task task, Tasks.Status status, JqObject.Builder node, int limit, String question, boolean events) {
+        var summary = StreamJsonEvents.summarize(task.agent(), status.output(), events ? 20 : 0);
         if (!summary.finished()) throw new ToolError(ToolError.Code.TASK_FAILED,
-                "Codex ended without a recorded outcome (exit " + status.exit() + "): " + status.stderr().strip());
+                task.agent().label + " ended without a recorded outcome (exit " + status.exit() + "): " + status.stderr().strip());
         var result = summary.result();
         var failed = status.exit() == null || status.exit() != 0 || summary.isError();
         node.put("outcome", failed ? "error" : "success");
@@ -436,8 +436,12 @@ final class McpTools {
                     || reportBytes > report.getBytes(StandardCharsets.UTF_8).length);
         } else node.put("answer", answer(ask(task.instance(), "cat", false, report, question)));
         if (events) node.put("recent", strings(summary.recent()));
+        // Pi counts its turns and prices its calls; Codex reports neither, so they stay out.
+        var turns = Jjq.exactInt(result.getField("turns"));
+        if (turns != null) node.put("turns", turns);
+        putNumber(node, "cost_usd", result.getField("cost_usd"));
         var usage = result.getField("usage");
-        for (var field : List.of("input_tokens", "output_tokens", "cached_input_tokens")) {
+        for (var field : List.of("input_tokens", "output_tokens", "cached_input_tokens", "cache_creation_input_tokens")) {
             var count = Jjq.exactLong(usage.getField(field));
             if (count != null) node.put(field, count);
         }
@@ -933,7 +937,7 @@ final class McpTools {
         var template = args.string("template");
         var requested = args.string("agent");
         if (requested != null && DelegateAgent.parse(requested) == DelegateAgent.UNKNOWN)
-            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "agent must be claude or codex");
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "agent must be claude, codex or pi");
         if ((instance == null) == (template == null)) {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give exactly one of instance or template");
         }
@@ -1048,11 +1052,11 @@ final class McpTools {
             task = tasks.delegate(instance, resolveCwd(cwd, workdir), renderBrief(agent, prompt), profile, mode, !fresh,
                     () -> {
                         checkAgent(instance, template, account, profile.model(), agent);
-                        if (agent == DelegateAgent.CODEX && prompt.skill() != null) {
+                        if (agent != DelegateAgent.CLAUDE && prompt.skill() != null) {
                             var skillPath = "$HOME/.agents/skills/" + prompt.skill() + "/SKILL.md";
                             if (backend.exec(instance, TaskScripts.isReadableFile(skillPath), null,
                                     new ByteArrayOutputStream(), new ByteArrayOutputStream()) != 0)
-                                throw new ToolError(ToolError.Code.REFUSED, "Codex skill '" + prompt.skill()
+                                throw new ToolError(ToolError.Code.REFUSED, agent.label + " skill '" + prompt.skill()
                                         + "' is not installed at " + skillPath + "; rebuild the template with that skill.");
                         }
                     }, key, agent);
@@ -1303,7 +1307,7 @@ final class McpTools {
             node.put("truncated", status.outputBytes() > limit || status.stderrBytes() > limit);
             return ToolResult.text(sb.toString(), node.build());
         }
-        if (task.agent() == DelegateAgent.CODEX) return codexResult(task, status, node, limit, ask, args.bool("events"));
+        if (task.agent().usesRunner()) return runnerResult(task, status, node, limit, ask, args.bool("events"));
         var summary = StreamJsonEvents.summarize(status.output(), args.bool("events") ? 20 : 0);
         if (!summary.finished()) {
             sb.append("\nThe agent ended without a final report.\nagent stderr:\n")

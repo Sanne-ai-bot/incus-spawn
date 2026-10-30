@@ -275,6 +275,18 @@ final class Tasks {
                         + " has no recoverable Codex thread ID; start a new delegated task. " + e.getMessage());
             }
         }
+        if (task.agent() == DelegateAgent.PI && !current.running() && current.sessionId() == null) {
+            // Pi's runner publishes the ID only once Pi opened the session; resuming one it never
+            // opened would create it, with none of this conversation.
+            throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id()
+                    + " never opened its Pi session, so there is no conversation to continue; start a new delegated task.");
+        }
+        if (task.agent() == DelegateAgent.PI && !current.running()) {
+            // Pi would write the message into a new session under the same ID before the runner stops it.
+            var why = run(task.instance(), TaskScripts.piSessionStatus(task.id()), null).strip();
+            if (!why.equals("ok")) throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id() + " cannot continue: "
+                    + (why.isEmpty() ? "its Pi session could not be checked" : why) + "; start a new delegated task.");
+        }
         if (attached != null) {
             throw new ToolError(ToolError.Code.WRONG_STATE, "a person is in task " + task.id() + "'s conversation (agent, pid " + attached
                     + ", in " + task.instance() + "). Messages would race with theirs: wait until task_status "
@@ -298,7 +310,7 @@ final class Tasks {
      * since, else that ceiling; null for none. What launches a run and what every tool reports.
      */
     Integer turnBudget(Task task) {
-        return task.agent() == DelegateAgent.CODEX ? null : config.get().delegateMaxTurns(task.profile().maxTurns());
+        return task.agent() != null && !task.agent().supportsMaxTurns() ? null : config.get().delegateMaxTurns(task.profile().maxTurns());
     }
 
     /**

@@ -4,8 +4,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 /**
- * The guest-side Node runners of the agents whose runs go through one (Codex's), as
- * {@code node -e} runs them: the I/O they share
+ * The guest-side Node runners of the agents whose runs go through one
+ * ({@link DelegateAgent#usesRunner}), as {@code node -e} runs them: the I/O they share
  * ({@code mcp/runner-io.cjs}), then the agent's own script.
  */
 final class WorkerRunners {
@@ -15,6 +15,7 @@ final class WorkerRunners {
     static String of(DelegateAgent agent) {
         return switch (agent) {
             case CODEX -> load("codex-runner.cjs");
+            case PI -> load("pi-runner.cjs");
             default -> throw new IllegalArgumentException(agent.id + " has no runner");
         };
     }
