@@ -44,11 +44,6 @@ host-tools:
 | `templates` | none | The only templates an agent may branch from. |
 | `max-instances` | 8 | Instances per host user, across sessions. |
 | `max-concurrent-tasks` | 8 | Background commands and delegated agents, per host user, across sessions. |
-| `delegate-max-turns` | not set | A ceiling on Claude's turns. Codex and Pi are refused while this is set. |
-| `delegate-permission-mode` | `bypassPermissions` | Claude's `--permission-mode`. |
-| `delegate-permission-modes` | not set | Per-template overrides, such as a reviewer that only plans: `tpl-review: plan`. |
-| `codex.sandbox-mode` | `danger-full-access` | Codex's sandbox mode. Codex always runs without approval prompts. |
-| `codex.sandbox-modes` | not set | Per-template Codex sandbox modes. |
 | `orphan-grace-hours` | 24 | How long an instance outlives its session. |
 | `dormant-after-hours` | 24 | Past the orphan grace, an instance kept only for a delegate that shows no activity this long is stopped instead. |
 | `dormant-grace-hours` | 168 | How long after that stop the instance is destroyed. |
@@ -59,6 +54,9 @@ A missing or empty file approves nothing.
 A file `isx mcp` cannot use refuses every call that depends on it, naming `mcp.yaml` and what is wrong, until you fix it.
 Unusable means unreadable, malformed, an unknown key or a value it does not accept.
 A change takes effect on the next call, with no restart.
+
+Older releases read `delegate-max-turns`, `delegate-permission-mode`, `delegate-permission-modes` and a `codex:` section with `sandbox-mode` or `sandbox-modes`.
+They still load but have no effect, and `isx mcp` and `isx init` say so; delete them.
 
 `max-instances` and `max-concurrent-tasks` are the two knobs to raise for a coordinator running many tasks at once.
 They are a safety net against runaway creation, not a budget: the only cost of a high number is host memory.
@@ -97,14 +95,11 @@ The agent picks one with `agent: "claude"`, `"codex"` or `"pi"`; without a choic
 `send_message` keeps the task's agent and resumes its saved conversation.
 The coordinator may be Claude Code whichever agent the worker runs.
 
-Models and permissions come from the chosen agent's configuration in `mcp.yaml`.
-Codex has no turn ceiling, so a `delegate-max-turns` in `mcp.yaml` refuses Codex until you remove it.
-Codex uses the template's `openai` credential account.
-A template with a restrictive Claude permission mode in `delegate-permission-modes` needs its own entry in `codex.sandbox-modes`, as the section-wide `sandbox-mode` does not apply to it.
+Every worker runs with full access inside its instance and no turn limit, since the instance is the boundary.
+Claude runs in `bypassPermissions` mode, Codex in `danger-full-access` without approval prompts, and Pi with every tool.
+The model is the template's unless the call names one.
 
-Pi has no sandbox or permission modes, so it always runs with every tool the instance offers.
-A template with a restrictive Claude permission mode, set file-wide or for that template, therefore cannot delegate to Pi.
-A `delegate-max-turns` in `mcp.yaml` refuses Pi too.
+Codex uses the template's `openai` credential account.
 Pi spends the account its template's `provider` uses: the Claude account, or the `openai` one.
 
 ### Asking a question instead of reading the output

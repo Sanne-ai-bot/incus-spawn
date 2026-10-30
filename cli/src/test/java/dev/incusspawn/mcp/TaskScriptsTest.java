@@ -150,7 +150,7 @@ class TaskScriptsTest {
     @Test
     void aDelegatedAgentRunsReportsAndCanBeResumed() throws Exception {
         var id = "t1-abc";
-        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), Tasks.Profile.NONE, 30, "bypassPermissions")),
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), Tasks.Profile.NONE)),
                 "fix the 'flaky' test; don't push");
         var status = awaitFinished(id);
         assertEquals("finished", status.state());
@@ -162,7 +162,7 @@ class TaskScriptsTest {
 
         var args = Files.readString(home.resolve("claude-args"));
         assertTrue(args.contains("--append-system-prompt You are a delegate"), args);
-        assertTrue(args.contains("--max-turns 30"), args);
+        assertFalse(args.contains("--max-turns"), "no turn limit: " + args);
         assertTrue(args.contains("--permission-mode bypassPermissions"), args);
         assertEquals("t1-abc", Files.readString(home.resolve("task-env")).strip(), "the run marks what it starts");
         assertFalse(args.contains("--resume"), args);
@@ -178,7 +178,7 @@ class TaskScriptsTest {
         assertTrue(Files.exists(index));
 
         // A second turn resumes the recorded session.
-        sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, work.toString(), Tasks.Profile.NONE, null, "bypassPermissions")),
+        sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, work.toString(), Tasks.Profile.NONE)),
                 "now open a PR");
         var second = awaitFinished(id);
         assertEquals(2, second.run());
@@ -190,21 +190,19 @@ class TaskScriptsTest {
     void aDelegateRunsUnderItsProfileAndRecordsIt() throws Exception {
         var id = "t1-abc";
         sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(),
-                new Tasks.Profile("claude-haiku-4-5", 5), 5, "bypassPermissions")), "rebase");
+                new Tasks.Profile("claude-haiku-4-5"))), "rebase");
         awaitFinished(id);
         var args = Files.readString(home.resolve("claude-args"));
-        assertTrue(args.contains("--max-turns 5 "), args);
         assertTrue(args.contains("--model claude-haiku-4-5 "), args);
         // An adopting session learns the profile with the task.
-        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc agent 1 done claude-haiku-4-5 5 "));
+        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc agent 1 done claude-haiku-4-5 - "));
 
-        // Without one, the template's model (no --model) and the budget the session gives.
+        // Without one, the template's model (no --model).
         sh(TaskScripts.launch("t2-abc", 1, Tasks.AGENT, TaskScripts.agentRun("t2-abc", 1, work.toString(),
-                Tasks.Profile.NONE, 200, "bypassPermissions")), "design");
+                Tasks.Profile.NONE)), "design");
         awaitFinished("t2-abc");
         var second = Files.readString(home.resolve("claude-args")).lines().reduce((a, b) -> b).orElseThrow();
         assertFalse(second.contains("--model"), second);
-        assertTrue(second.contains("--max-turns 200 "), second);
         assertTrue(sh(TaskScripts.list(), "").contains("t2-abc agent 1 done - - "));
     }
 
@@ -245,7 +243,7 @@ class TaskScriptsTest {
     @Test
     void aPathLimitsTheDiffAndATooLargeOneReturnsOnlyTheSummary() throws Exception {
         var id = "t2-abc";
-        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), Tasks.Profile.NONE, null, "bypassPermissions")), "go");
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), Tasks.Profile.NONE)), "go");
         awaitFinished(id);
         var only = sh(TaskScripts.diff(id, "tracked.txt", 100_000), "");
         assertTrue(only.contains("+more") && !only.contains("NEW_FILE"), only);
@@ -261,7 +259,7 @@ class TaskScriptsTest {
         var wt = home.resolve("wt");
         assertTrue(Files.isRegularFile(wt.resolve(".git")));
         var id = "t9-wt";
-        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, wt.toString(), Tasks.Profile.NONE, null, "bypassPermissions")), "in a worktree");
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, wt.toString(), Tasks.Profile.NONE)), "in a worktree");
         awaitFinished(id);
         var diff = sh(TaskScripts.diff(id, null, 100_000), "");
         assertTrue(diff.contains("+changed by: in a worktree"), diff);
@@ -372,7 +370,7 @@ class TaskScriptsTest {
                 sh(TaskScripts.watch(ids), ""), "no finished agent: no presence probe");
 
         sh(TaskScripts.launch("t24-abc", 1, Tasks.AGENT,
-                TaskScripts.agentRun("t24-abc", 1, work.toString(), Tasks.Profile.NONE, null, "plan")), "go");
+                TaskScripts.agentRun("t24-abc", 1, work.toString(), Tasks.Profile.NONE)), "go");
         awaitFinished("t24-abc");
         var resumed = claude(home, "bash -c 'sleep 30; :' --resume " + sessionId()).start();
         try {
@@ -488,14 +486,14 @@ class TaskScriptsTest {
     @Test
     void anAdoptingSessionFindsTheTasksAndWhereTheyWorked() throws Exception {
         sh(TaskScripts.launch("t1-abc", 1, Tasks.AGENT,
-                TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE, null, "plan")), "go");
+                TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE)), "go");
         awaitFinished("t1-abc");
         sh(TaskScripts.launch("t2-abc", 1, Tasks.COMMAND,
                 TaskScripts.commandRun("t2-abc", work.toString(), Map.of(), "sleep 300")), "");
         var listing = sh(TaskScripts.list(), "");
         var physical = work.toRealPath().toString();
-        assertTrue(listing.contains("t1-abc agent 1 done - - - " + physical + "\n"), listing);
-        assertTrue(listing.contains("t2-abc command 1 running - - - " + physical + "\n"), listing);
+        assertTrue(listing.contains("t1-abc agent 1 done - - " + physical + "\n"), listing);
+        assertTrue(listing.contains("t2-abc command 1 running - - " + physical + "\n"), listing);
         sh(TaskScripts.cancel("t2-abc"), "");
         assertEquals("", sh("HOME=" + home.resolve("empty") + "; " + TaskScripts.list(), ""), "no tasks, no output");
     }
@@ -503,7 +501,7 @@ class TaskScriptsTest {
     @Test
     void aStatDiffNamesTheFilesAndCountsTheirLines() throws Exception {
         sh(TaskScripts.launch("t1-abc", 1, Tasks.AGENT,
-                TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE, null, "bypassPermissions")), "go");
+                TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE)), "go");
         awaitFinished("t1-abc");
         // A name no line-based format can carry: the stat is NUL-separated, so it is read whole.
         var odd = "a\tb\n1\t0\tforged";
@@ -538,7 +536,7 @@ class TaskScriptsTest {
         assertTrue(command.lastActivity() != null && !command.lastActivity().isBefore(command.startedAt().minusSeconds(1)),
                 command.toString());
         sh(TaskScripts.launch("t1-abc", 1, Tasks.AGENT,
-                TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE, null, "bypassPermissions")), "go");
+                TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE)), "go");
         var agent = awaitFinished("t1-abc");
         assertTrue(agent.startedAt() != null && agent.lastActivity() != null, agent.toString());
     }
@@ -546,7 +544,7 @@ class TaskScriptsTest {
     @Test
     void aPersonsClaudeOnTheConversationMakesTheTaskAttached() throws Exception {
         sh(TaskScripts.launch("t1-abc", 1, Tasks.AGENT,
-                TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE, null, "bypassPermissions")), "go");
+                TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE)), "go");
         assertEquals("finished", awaitFinished("t1-abc").state());
 
         // A person resumes the session from elsewhere: argv[0] is what Claude Code's is.
@@ -659,11 +657,11 @@ class TaskScriptsTest {
     @Test
     void aRunThatFailsToStartLeavesThePreviousOneCurrent() throws Exception {
         sh(TaskScripts.launch("t12-abc", 1, Tasks.AGENT,
-                TaskScripts.agentRun("t12-abc", 1, work.toString(), Tasks.Profile.NONE, null, "bypassPermissions")), "go");
+                TaskScripts.agentRun("t12-abc", 1, work.toString(), Tasks.Profile.NONE)), "go");
         assertEquals("finished", awaitFinished("t12-abc").state());
         stub("systemd-run", "exit 1");
         var pb = new ProcessBuilder("bash", "-c", TaskScripts.launch("t12-abc", 2, Tasks.AGENT,
-                TaskScripts.agentRun("t12-abc", 2, work.toString(), Tasks.Profile.NONE, null, "bypassPermissions")))
+                TaskScripts.agentRun("t12-abc", 2, work.toString(), Tasks.Profile.NONE)))
                 .directory(home.toFile());
         pb.environment().put("HOME", home.toString());
         pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
@@ -769,7 +767,7 @@ class TaskScriptsTest {
         Files.writeString(agent.resolve("kind"), "agent\n");
         Files.writeString(agent.resolve("current"), "1\n");
         Files.writeString(agent.resolve("exit-1"), "0\n");
-        for (var f : List.of("cwd", "model", "max-turns", "key", "session_id", "events-1.jsonl", "stderr-1.log")) {
+        for (var f : List.of("cwd", "model", "key", "session_id", "events-1.jsonl", "stderr-1.log")) {
             sh("mkfifo " + agent.resolve(f), "");
         }
         var command = Files.createDirectories(home.resolve(".isx-mcp/tasks/t33-abc"));
@@ -778,7 +776,7 @@ class TaskScriptsTest {
         Files.writeString(command.resolve("exit-1"), "0\n");
         sh("mkfifo " + command.resolve("stdout") + " " + command.resolve("stderr"), "");
 
-        assertEquals("t32-abc agent 1 done - - - \nt33-abc command 1 done - - - \n", sh(TaskScripts.list(), "", 5));
+        assertEquals("t32-abc agent 1 done - - \nt33-abc command 1 done - - \n", sh(TaskScripts.list(), "", 5));
         var status = Tasks.parse(sh(TaskScripts.status("t32-abc", 1000), "", 5));
         assertEquals("finished", status.state());
         assertEquals(0, status.exit());
@@ -825,7 +823,7 @@ class TaskScriptsTest {
     @Timeout(60)
     void aFifoInTheTaskDirOrTheRepositoryHoldsNoDiff() throws Exception {
         sh(TaskScripts.launch("t51-abc", 1, Tasks.AGENT,
-                TaskScripts.agentRun("t51-abc", 1, work.toString(), Tasks.Profile.NONE, null, "plan")), "go");
+                TaskScripts.agentRun("t51-abc", 1, work.toString(), Tasks.Profile.NONE)), "go");
         awaitFinished("t51-abc");
         var base = home.resolve(".isx-mcp/tasks/t51-abc/base.txt");
         var recorded = Files.readString(base);
@@ -865,7 +863,7 @@ class TaskScriptsTest {
     /** A finished agent, a finished command and an agent being cancelled, from scratch; every file of theirs. */
     private List<Path> swappableTaskFiles() throws Exception {
         var agent = finishedTaskFiles("t32-abc", Tasks.AGENT);
-        for (var f : List.of("cwd", "model", "max-turns", "key", "session_id", "events-1.jsonl", "stderr-1.log")) {
+        for (var f : List.of("cwd", "model", "key", "session_id", "events-1.jsonl", "stderr-1.log")) {
             Files.writeString(agent.resolve(f), "x\n");
         }
         var command = finishedTaskFiles("t33-abc", Tasks.COMMAND);
@@ -982,8 +980,8 @@ class TaskScriptsTest {
         // Whether a run finished is whether its exit file exists: each is written aside, then renamed.
         var scripts = java.util.List.of(
                 TaskScripts.commandRun("t13-abc", work.toString(), Map.of(), "true"),
-                TaskScripts.agentRun("t13-abc", 1, work.toString(), Tasks.Profile.NONE, null, "plan"),
-                TaskScripts.agentRun("t13-abc", 2, work.toString(), Tasks.Profile.NONE, null, "plan"),
+                TaskScripts.agentRun("t13-abc", 1, work.toString(), Tasks.Profile.NONE),
+                TaskScripts.agentRun("t13-abc", 2, work.toString(), Tasks.Profile.NONE),
                 TaskScripts.cancel("t13-abc"));
         var direct = java.util.regex.Pattern.compile(">\\s*\"\\$D/exit-[^\".]*\"");
         for (var script : scripts) {
@@ -1020,7 +1018,7 @@ class TaskScriptsTest {
                 TaskScripts.commandRun("t1-abc", work.toString(), Map.of(), "true"), "issue-1011:impl.v2_x"), "");
         awaitFinished("t1-abc");
         var physical = work.toRealPath().toString();
-        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc command 1 done - - =issue-1011:impl.v2_x " + physical + "\n"));
+        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc command 1 done - =issue-1011:impl.v2_x " + physical + "\n"));
         // A later run does not write it again; the first one's stays.
         sh(TaskScripts.launch("t1-abc", 2, Tasks.COMMAND, "true", "other"), "");
         assertEquals("issue-1011:impl.v2_x", Files.readString(home.resolve(".isx-mcp/tasks/t1-abc/key")));
@@ -1043,11 +1041,11 @@ class TaskScriptsTest {
         var lines = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).lines().toList();
         assertFalse(Files.exists(home.resolve("pwned")));
         var hostile = lines.stream().filter(l -> l.startsWith("t1-abc ")).findFirst().orElseThrow();
-        var fields = hostile.split(" ", 8);
-        assertEquals(8, fields.length, hostile);
-        assertEquals("=" + planted.substring(0, 64).replaceAll("[ \n]", ""), fields[6], "at most 64 bytes, no space or newline");
-        assertNull(McpSession.keyOf(fields[6].substring(1)), "and not a key");
-        assertTrue(lines.stream().anyMatch(l -> l.startsWith("t2-abc agent 1 done - - - ")), lines.toString());
+        var fields = hostile.split(" ", 7);
+        assertEquals(7, fields.length, hostile);
+        assertEquals("=" + planted.substring(0, 64).replaceAll("[ \n]", ""), fields[5], "at most 64 bytes, no space or newline");
+        assertNull(McpSession.keyOf(fields[5].substring(1)), "and not a key");
+        assertTrue(lines.stream().anyMatch(l -> l.startsWith("t2-abc agent 1 done - - ")), lines.toString());
     }
 
     /** Codex ships as a Node script, so its stand-ins are too; a box without Node skips them (#1363). */
@@ -1073,7 +1071,7 @@ class TaskScriptsTest {
 
     private void launchCodex(String id, int run, String prompt) throws Exception {
         sh(TaskScripts.launch(id, run, Tasks.AGENT,
-                TaskScripts.agentRun(id, run, work.toString(), Tasks.Profile.NONE, null, "danger-full-access", DelegateAgent.CODEX),
+                TaskScripts.agentRun(id, run, work.toString(), Tasks.Profile.NONE, DelegateAgent.CODEX),
                 null, DelegateAgent.CODEX), prompt);
     }
 
@@ -1234,7 +1232,7 @@ class TaskScriptsTest {
 
     private void launchPi(String id, int run, String prompt) throws Exception {
         sh(TaskScripts.launch(id, run, Tasks.AGENT,
-                TaskScripts.agentRun(id, run, work.toString(), Tasks.Profile.NONE, null, "full-access", DelegateAgent.PI),
+                TaskScripts.agentRun(id, run, work.toString(), Tasks.Profile.NONE, DelegateAgent.PI),
                 null, DelegateAgent.PI), prompt);
     }
 
@@ -1738,7 +1736,7 @@ class TaskScriptsTest {
             joinedAgent(ready, person);
             Files.delete(ready);
             Files.writeString(d.resolve("current"), "2\n");
-            sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, cwd, Tasks.Profile.NONE, null, "default")), "go on");
+            sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, cwd, Tasks.Profile.NONE)), "go on");
             var status = awaitFinished(id);
             assertEquals(TaskScripts.CONVERSATION_TAKEN, status.exit());
             assertTrue(Files.readString(d.resolve("stderr-2.log")).contains("a person is in this conversation"), "the run says why");

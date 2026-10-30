@@ -13,7 +13,7 @@ The text stays for the model.
 A refusal carries no `structuredContent`.
 It says why in `_meta["dev.incusspawn/error"].code`.
 
-`list_templates` reports the limits of `mcp.yaml` as `max_instances`, `max_concurrent_tasks`, `orphan_grace_hours` and, when set, `delegate_max_turns`.
+`list_templates` reports the limits of `mcp.yaml` as `max_instances`, `max_concurrent_tasks` and `orphan_grace_hours`.
 
 ## Task states
 
@@ -39,14 +39,14 @@ A task's `state` is the same word in every tool.
 |-------|---------------|
 | `agent` | `claude`, `codex` or `pi`. |
 | `model` | The template's configured model. |
-| `supports_max_turns` | Whether `delegate` accepts `max_turns`. Claude only. |
 | `supports_model_preflight` | Whether a chosen `model` is checked against the account before launch. Claude only; Codex and Pi report model-access errors in the task result. |
-| `permission_mode`, `approval_policy` | Claude's permission mode, or Codex's sandbox mode and approval policy, as `mcp.yaml` gives this template; `full-access` for Pi, which has no sandbox. |
-| `refusal` | Why current host policy prevents launching this agent, when it does. |
+| `permission_mode`, `approval_policy` | Always full access inside the instance: `bypassPermissions` for Claude, `danger-full-access` with approval policy `never` for Codex, `full-access` for Pi. |
 
 A task's `model` override persists across `send_message` and adoption.
 A Pi task has a `session_id` only once Pi has saved its session; before that, or once that session is gone, `send_message` is refused with `wrong_state`.
-`max_turns` on `delegate` to Codex or Pi is refused, and a `delegate-max-turns` in `mcp.yaml` refuses their delegation and continuation.
+
+No agent has a turn limit.
+Older releases took `max_turns` on `delegate` and `send_message` and reported `supports_max_turns`, `refusal`, `delegate_max_turns` and `max_turns`; these are gone, and a call passing `max_turns` is refused with `invalid_argument`.
 
 ## Being told when a task changes
 

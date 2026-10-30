@@ -44,25 +44,18 @@
                     "description" : "Template configured model",
                     "type" : "string"
                   },
-                  "supports_max_turns" : {
-                    "type" : "boolean"
-                  },
                   "supports_model_preflight" : {
                     "type" : "boolean"
                   },
                   "permission_mode" : {
-                    "description" : "Claude permission mode, Codex sandbox mode, or full-access for Pi",
+                    "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
                     "type" : "string"
                   },
                   "approval_policy" : {
                     "type" : "string"
-                  },
-                  "refusal" : {
-                    "description" : "Configuration that prevents a new run",
-                    "type" : "string"
                   }
                 },
-                "required" : [ "agent", "supports_max_turns", "supports_model_preflight" ],
+                "required" : [ "agent", "supports_model_preflight" ],
                 "additionalProperties" : false
               }
             },
@@ -95,9 +88,6 @@
         "type" : "integer"
       },
       "orphan_grace_hours" : {
-        "type" : "integer"
-      },
-      "delegate_max_turns" : {
         "type" : "integer"
       }
     },
@@ -156,25 +146,18 @@
               "description" : "Template configured model",
               "type" : "string"
             },
-            "supports_max_turns" : {
-              "type" : "boolean"
-            },
             "supports_model_preflight" : {
               "type" : "boolean"
             },
             "permission_mode" : {
-              "description" : "Claude permission mode, Codex sandbox mode, or full-access for Pi",
+              "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
               "type" : "string"
             },
             "approval_policy" : {
               "type" : "string"
-            },
-            "refusal" : {
-              "description" : "Configuration that prevents a new run",
-              "type" : "string"
             }
           },
-          "required" : [ "agent", "supports_max_turns", "supports_model_preflight" ],
+          "required" : [ "agent", "supports_model_preflight" ],
           "additionalProperties" : false
         }
       },
@@ -264,25 +247,18 @@
                     "description" : "Template configured model",
                     "type" : "string"
                   },
-                  "supports_max_turns" : {
-                    "type" : "boolean"
-                  },
                   "supports_model_preflight" : {
                     "type" : "boolean"
                   },
                   "permission_mode" : {
-                    "description" : "Claude permission mode, Codex sandbox mode, or full-access for Pi",
+                    "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
                     "type" : "string"
                   },
                   "approval_policy" : {
                     "type" : "string"
-                  },
-                  "refusal" : {
-                    "description" : "Configuration that prevents a new run",
-                    "type" : "string"
                   }
                 },
-                "required" : [ "agent", "supports_max_turns", "supports_model_preflight" ],
+                "required" : [ "agent", "supports_model_preflight" ],
                 "additionalProperties" : false
               }
             },
@@ -366,25 +342,18 @@
               "description" : "Template configured model",
               "type" : "string"
             },
-            "supports_max_turns" : {
-              "type" : "boolean"
-            },
             "supports_model_preflight" : {
               "type" : "boolean"
             },
             "permission_mode" : {
-              "description" : "Claude permission mode, Codex sandbox mode, or full-access for Pi",
+              "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
               "type" : "string"
             },
             "approval_policy" : {
               "type" : "string"
-            },
-            "refusal" : {
-              "description" : "Configuration that prevents a new run",
-              "type" : "string"
             }
           },
-          "required" : [ "agent", "supports_max_turns", "supports_model_preflight" ],
+          "required" : [ "agent", "supports_model_preflight" ],
           "additionalProperties" : false
         }
       },
@@ -514,7 +483,7 @@
         "type" : "integer"
       },
       "permission_mode" : {
-        "description" : "Claude permission mode, Codex sandbox mode, or full-access for Pi",
+        "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
         "type" : "string"
       },
       "approval_policy" : {
@@ -523,9 +492,6 @@
       },
       "model" : {
         "type" : "string"
-      },
-      "max_turns" : {
-        "type" : "integer"
       },
       "replayed" : {
         "description" : "true when an earlier call with this idempotency_key made it, and this one made nothing",
@@ -589,10 +555,6 @@
       },
       "model" : {
         "type" : "string"
-      },
-      "max_turns" : {
-        "description" : "The budget the run gets",
-        "type" : "integer"
       },
       "assistant_messages" : {
         "type" : "integer"
@@ -821,7 +783,7 @@
         "type" : "integer"
       },
       "permission_mode" : {
-        "description" : "Claude permission mode, Codex sandbox mode, or full-access for Pi",
+        "description" : "Full access inside the instance: bypassPermissions for Claude, danger-full-access for Codex, full-access for Pi",
         "type" : "string"
       },
       "approval_policy" : {
@@ -830,9 +792,6 @@
       },
       "model" : {
         "type" : "string"
-      },
-      "max_turns" : {
-        "type" : "integer"
       }
     },
     "required" : [ "task_id", "instance", "kind", "run", "permission_mode" ],

@@ -24,6 +24,10 @@ final class OutputSchemas {
     private static final String REPLAYED = "true when an earlier call with this idempotency_key made it, "
             + "and this one made nothing";
 
+    /** Delegates run with full access inside their instance, whatever the agent (#1857). */
+    private static final String PERMISSION_MODE = "Full access inside the instance: bypassPermissions for Claude, "
+            + "danger-full-access for Codex, full-access for Pi";
+
     private OutputSchemas() {}
 
     private static Schema answer() {
@@ -35,11 +39,9 @@ final class OutputSchemas {
     private static Schema delegateAgent() {
         return Schema.object().choice("agent", null, true, "claude", "codex", "pi")
                 .string("model", "Template configured model", false)
-                .bool("supports_max_turns", null, true)
                 .bool("supports_model_preflight", null, true)
-                .string("permission_mode", "Claude permission mode, Codex sandbox mode, or full-access for Pi", false)
-                .string("approval_policy", null, false)
-                .string("refusal", "Configuration that prevents a new run", false);
+                .string("permission_mode", PERMISSION_MODE, false)
+                .string("approval_policy", null, false);
     }
 
     static JqObject listTemplates() {
@@ -61,7 +63,6 @@ final class OutputSchemas {
                 .integer("max_instances", null, true)
                 .integer("max_concurrent_tasks", null, true)
                 .integer("orphan_grace_hours", null, true)
-                .integer("delegate_max_turns", null, false)
                 .build();
     }
 
@@ -172,10 +173,9 @@ final class OutputSchemas {
                 .choice("kind", null, true, Tasks.AGENT)
                 .choice("agent", null, false, "claude", "codex", "pi", "unknown")
                 .integer("run", "The run (turn of the conversation) now going: 1 for the first", true)
-                .string("permission_mode", "Claude permission mode, Codex sandbox mode, or full-access for Pi", true)
+                .string("permission_mode", PERMISSION_MODE, true)
                 .string("approval_policy", "Codex always uses never", false)
-                .string("model", null, false)
-                .integer("max_turns", null, false);
+                .string("model", null, false);
     }
 
     static JqObject taskStatus() {
@@ -194,7 +194,6 @@ final class OutputSchemas {
                 .string("started_at", "ISO-8601: when the current run started", false)
                 .string("last_activity", "ISO-8601: when the current run last wrote output", false)
                 .string("model", null, false)
-                .integer("max_turns", "The budget the run gets", false)
                 .integer("assistant_messages", null, false)
                 .number("cost_usd", "Once an agent has finished", false)
                 .stringList("permission_denials", "Tools the agent's permission mode refused", false)

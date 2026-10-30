@@ -13,6 +13,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -37,7 +38,7 @@ class McpConfigTest {
         assertEquals(List.of(), mcp.templates());
         assertEquals(McpConfig.DEFAULT_MAX_INSTANCES, mcp.maxInstances());
         assertEquals(McpConfig.DEFAULT_MAX_CONCURRENT_TASKS, mcp.maxConcurrentTasks());
-        assertNull(mcp.delegateMaxTurns());
+        assertNull(mcp.retiredKeysNotice());
     }
 
     @Test
@@ -53,18 +54,15 @@ class McpConfigTest {
                 templates: [tpl-java, tpl-dev]
                 max-instances: 5
                 max-concurrent-tasks: 1
-                delegate-max-turns: 40
                 """;
         var mcp = parse(yaml);
         assertEquals(List.of("tpl-java", "tpl-dev"), mcp.templates());
         assertEquals(5, mcp.maxInstances());
         assertEquals(1, mcp.maxConcurrentTasks());
-        assertEquals(40, mcp.delegateMaxTurns());
 
         var again = parse(Jjq.toYaml(mcp));
         assertEquals(List.of("tpl-java", "tpl-dev"), again.templates());
         assertEquals(5, again.maxInstances());
-        assertEquals(40, again.delegateMaxTurns());
     }
 
     @Test
@@ -125,52 +123,30 @@ class McpConfigTest {
     @Test
     void theCoordinatorSettingsHaveDefaultsAndLoad() {
         var defaults = parse("templates: [tpl-java]\n");
-        assertEquals("bypassPermissions", defaults.delegatePermissionMode("tpl-java"));
         assertEquals(24, defaults.orphanGraceHours());
         assertEquals(24, defaults.dormantAfterHours());
         assertEquals(168, defaults.dormantGraceHours());
         assertEquals("haiku", defaults.summaryModel());
 
         var mcp = parse("""
-                delegate-permission-mode: acceptEdits
-                delegate-permission-modes:
-                  tpl-review: plan
                 orphan-grace-hours: 72
                 dormant-after-hours: 6
                 dormant-grace-hours: 48
                 summary-model: claude-haiku-4-5
                 """);
-        assertEquals("acceptEdits", mcp.delegatePermissionMode("tpl-java"));
-        assertEquals("plan", mcp.delegatePermissionMode("tpl-review"));
         assertEquals(72, mcp.orphanGraceHours());
         assertEquals(6, mcp.dormantAfterHours());
         assertEquals(48, mcp.dormantGraceHours());
         assertEquals("claude-haiku-4-5", mcp.summaryModel());
         var out = Jjq.toYaml(defaults);
-        assertFalse(out.contains("grace") || out.contains("dormant") || out.contains("permission") || out.contains("summary"),
+        assertFalse(out.contains("grace") || out.contains("dormant") || out.contains("summary"),
                 "unset settings are not written back:\n" + out);
     }
 
     /** Checked when the file is read, so a bad value refuses every call, not only the one using it. */
     @Test
-    void aModeOrModelThatIsNotAPlainNameIsRefused() {
-        assertTrue(invalid("delegate-permission-mode: \"plan --dangerously\"\n").contains("is not a permission mode"));
-        assertTrue(invalid("delegate-permission-modes:\n  t: \"plan --x\"\n").contains("delegate-permission-modes.t 'plan --x' is not"));
+    void aModelThatIsNotAPlainNameIsRefused() {
         assertTrue(invalid("summary-model: \"haiku; rm\"\n").contains("is not a model name"));
-        var direct = new McpConfig();
-        direct.setDelegatePermissionMode("plan --dangerously");
-        assertThrows(IllegalArgumentException.class, () -> direct.delegatePermissionMode("t"));
-    }
-
-    @Test
-    void aDelegatesOwnBudgetStaysWithinTheCeiling() {
-        var unset = parse("templates: [t]\n");
-        assertNull(unset.delegateMaxTurns(null));
-        assertEquals(500, unset.delegateMaxTurns(500), "no ceiling: the task's own");
-        var capped = parse("delegate-max-turns: 50\n");
-        assertEquals(50, capped.delegateMaxTurns(null));
-        assertEquals(7, capped.delegateMaxTurns(7));
-        assertEquals(50, capped.delegateMaxTurns(80), "never above the user's");
     }
 
     @Test
@@ -185,62 +161,38 @@ class McpConfigTest {
         assertFalse(McpConfig.isModelName(null));
     }
 
+    /**
+     * The delegate policies removed in #1857 still load, whatever they hold, so a file that set
+     * them keeps every call working; they are named once so the user can delete them, and never
+     * written back.
+     */
     @Test
-    void piRunsWithEveryToolOnlyWhereClaudeWouldToo() {
-        assertEquals(McpConfig.PI_PERMISSION_MODE, parse("templates: [tpl-pi]\n").piPermissionMode("tpl-pi"));
-        assertEquals(McpConfig.PI_PERMISSION_MODE, parse("delegate-permission-mode: bypassPermissions\n").piPermissionMode("tpl-pi"));
-        // Pi has no sandbox: any restriction, file-wide or the template's own, refuses it.
-        assertThrows(IllegalArgumentException.class, () -> parse("delegate-permission-mode: plan\n").piPermissionMode("tpl-pi"));
-        var own = parse("delegate-permission-modes:\n  tpl-review: plan\n");
-        assertThrows(IllegalArgumentException.class, () -> own.piPermissionMode("tpl-review"));
-        assertEquals(McpConfig.PI_PERMISSION_MODE, own.piPermissionMode("tpl-pi"));
-    }
-
-    @Test
-    void codexPoliciesRoundTripAndDoNotSilentlyWidenClaudeRestrictions() {
+    void retiredDelegatePoliciesLoadWithANoticeAndAreDropped() {
         var config = parse("""
-                delegate-permission-mode: plan
+                templates: [tpl-dev]
+                delegate-max-turns: 40
+                delegate-permission-mode: "plan --dangerously"
+                delegate-permission-modes:
+                  tpl-review: plan
                 codex:
-                  sandbox-mode: workspace-write
+                  sandbox-mode: arbitrary
                   sandbox-modes:
                     tpl-review: read-only
                 """);
-        var again = parse(Jjq.toYaml(config));
-        assertEquals("read-only", again.codexSandboxMode("tpl-review"));
-        assertEquals("workspace-write", again.codexSandboxMode("tpl-dev"));
-        var restricted = parse("delegate-permission-mode: plan\n");
-        assertThrows(IllegalArgumentException.class, () -> restricted.codexSandboxMode("tpl-dev"));
-        var ownRestriction = parse("""
-                delegate-permission-modes:
-                  prod: plan
-                codex:
-                  sandbox-mode: danger-full-access
-                  sandbox-modes:
-                    review: read-only
-                """);
-        assertThrows(IllegalArgumentException.class, () -> ownRestriction.codexSandboxMode("prod"));
-        assertEquals("danger-full-access", ownRestriction.codexSandboxMode("tpl-dev"));
-        var ownRestrictionCovered = parse("""
-                delegate-permission-modes:
-                  prod: plan
-                codex:
-                  sandbox-mode: danger-full-access
-                  sandbox-modes:
-                    prod: read-only
-                """);
-        assertEquals("read-only", ownRestrictionCovered.codexSandboxMode("prod"));
-        var emptyEntry = parse("""
-                delegate-permission-mode: plan
-                delegate-permission-modes:
-                  prod: ~
-                codex:
-                  sandbox-mode: read-only
-                """);
-        assertEquals("read-only", emptyEntry.codexSandboxMode("prod"), "an empty entry is the file's restriction");
-        assertTrue(invalid("codex:\n  sandbox-mode: arbitrary\n").contains("codex.sandbox-mode 'arbitrary'"));
-        assertTrue(invalid("codex:\n  sandbox-modes:\n    t: arbitrary\n").contains("codex.sandbox-modes.t 'arbitrary'"));
-        assertEquals("danger-full-access", new McpConfig().codexSandboxMode("tpl-dev"));
-        assertFalse(Jjq.mapper().toJqValue(new McpConfig()).toJsonString().contains("codex"));
+        assertEquals(List.of("tpl-dev"), config.templates());
+        var notice = config.retiredKeysNotice();
+        assertNotNull(notice);
+        for (var key : List.of("delegate-max-turns", "delegate-permission-mode,", "delegate-permission-modes",
+                "codex.sandbox-mode,", "codex.sandbox-modes")) {
+            assertTrue(notice.contains(key), key + " in: " + notice);
+        }
+        assertTrue(notice.contains("no longer have any effect"), notice);
+        var out = Jjq.toYaml(config);
+        assertFalse(out.contains("delegate") || out.contains("codex"), "retired settings are not written back:\n" + out);
+        assertTrue(parse("codex:\n").retiredKeysNotice().contains("sets codex, which no longer has"));
+        assertTrue(parse("codex: {}\n").retiredKeysNotice().contains("sets codex,"));
+        assertTrue(invalid("codex:\n  sandbox: x\n").contains("unknown key codex.sandbox"), "only what was there is retired");
+        assertTrue(invalid("codex: read-only\n").contains("unknown key codex"));
     }
 
     /** The old section is kept like any unknown key, and approves nothing anywhere. */

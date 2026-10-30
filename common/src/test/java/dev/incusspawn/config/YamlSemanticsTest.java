@@ -284,9 +284,9 @@ class YamlSemanticsTest {
 
     @Test
     void aKeyWithADotIsQuotedWhereItIsNamed() {
-        var e = assertThrows(java.io.IOException.class, () -> Jjq.mcpConfig(
-                "delegate-permission-modes:\n  tpl.v2: [plan]\n"));
-        assertTrue(friendly(e).contains("'delegate-permission-modes[\"tpl.v2\"]' expects a single value"), friendly(e));
+        var e = assertThrows(java.io.IOException.class, () -> Jjq.spawnConfig(
+                "repo-paths:\n  tpl.v2: [plan]\n"));
+        assertTrue(friendly(e).contains("'repo-paths[\"tpl.v2\"]' expects a single value"), friendly(e));
         assertTrue(friendly(e).contains("e.g. 'tpl.v2: value'"), friendly(e));
     }
 

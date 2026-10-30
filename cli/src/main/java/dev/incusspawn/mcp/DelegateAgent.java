@@ -1,7 +1,5 @@
 package dev.incusspawn.mcp;
 
-import dev.incusspawn.config.McpConfig;
-
 /** The closed set of worker adapters. No discovery or initialization outside the MCP path. */
 enum DelegateAgent {
     CLAUDE("claude", "claude", "Claude Code"), CODEX("codex", "openai", "Codex"),
@@ -43,11 +41,6 @@ enum DelegateAgent {
         return agent;
     }
 
-    /** Whether it takes a turn budget: Claude's {@code --max-turns}; neither Codex nor Pi has one. */
-    boolean supportsMaxTurns() {
-        return this == CLAUDE;
-    }
-
     /** Whether a chosen model is tried before launch ({@link ModelCheck}); for the others an access error is the task's. */
     boolean supportsModelPreflight() {
         return this == CLAUDE;
@@ -61,25 +54,29 @@ enum DelegateAgent {
         return this == CODEX || this == PI;
     }
 
-    String permissionMode(McpConfig config, String template) {
-        try {
-            return switch (this) {
-                case CLAUDE -> config.delegatePermissionMode(template);
-                case CODEX -> config.codexSandboxMode(template);
-                case PI -> config.piPermissionMode(template);
-                case UNKNOWN -> throw new IllegalArgumentException("unsupported task agent or metadata version");
-            };
-        } catch (IllegalArgumentException e) {
-            throw new ToolError(ToolError.Code.REFUSED, e.getMessage());
-        }
+    /**
+     * What it runs under: full access, with no turn limit, since the instance is the boundary
+     * (#1857). Claude's {@code --permission-mode}, Codex's sandbox (always with
+     * {@code approval_policy=never}), and for Pi, which has neither, every tool. Refused only for
+     * an agent this isx does not know.
+     */
+    String permissionMode() {
+        return switch (this) {
+            case CLAUDE -> "bypassPermissions";
+            case CODEX -> "danger-full-access";
+            case PI -> "full-access";
+            case UNKNOWN -> throw unknown();
+        };
     }
 
-    void requireBudget(McpConfig config, Tasks.Profile profile) {
-        if (this == UNKNOWN) throw new ToolError(ToolError.Code.REFUSED, "unsupported task agent or metadata version; upgrade isx before continuing it");
-        if (supportsMaxTurns()) return;
-        if (profile.maxTurns() != null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, label + " does not support max_turns; omit it.");
-        if (config.delegateMaxTurns() != null) throw new ToolError(ToolError.Code.REFUSED,
-                label + " cannot enforce delegate-max-turns in mcp.yaml; the user must revise that policy before delegating to " + label + ".");
+    /** Refuses an agent this isx does not know, such as a task a newer isx recorded. */
+    void requireKnown() {
+        if (this == UNKNOWN) throw unknown();
+    }
+
+    private static ToolError unknown() {
+        return new ToolError(ToolError.Code.REFUSED,
+                "unsupported task agent or metadata version; upgrade isx before continuing it");
     }
 
     /** A CLI check inside the worker, with no inference and no credential reads. */

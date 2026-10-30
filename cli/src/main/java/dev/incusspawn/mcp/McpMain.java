@@ -128,7 +128,8 @@ public final class McpMain {
     /** Say at start what the user has to fix, before an agent meets it as a refusal. */
     private static void warnAboutPolicy() {
         try {
-            McpConfig.load();
+            var retired = McpConfig.load().retiredKeysNotice();
+            if (retired != null) McpLog.log(retired);
             var legacy = McpConfig.legacySectionNotice(SpawnConfig.load());
             if (legacy != null) McpLog.log(legacy);
         } catch (McpConfig.Invalid e) {

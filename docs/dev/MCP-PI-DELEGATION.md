@@ -70,15 +70,13 @@ The runner publishes `result-<run>.txt` and `outcome-<run>.json` (`type: isx.pi.
 | Feature | Pi |
 | --- | --- |
 | Permission policy | No sandbox or permission modes: always every tool, reported as `permission_mode: "full-access"` |
-| Restrictive Claude policy | Refused, file-wide or per template (`McpConfig.piPermissionMode`) |
-| `max_turns` | Rejected; a configured `delegate-max-turns` refuses Pi |
+| Turn limit | None, as for every agent |
 | Model preflight | None; a model is checked for shape, and access errors become failed task results |
 | `ask` | Needs Claude in the template, as for Codex |
 | Credentials | The proxy injects the account the template's `provider` spends (`claude` or `openai`); the adapter reads none |
 
-A restrictive Claude policy is never silently widened into a fully writable Pi.
-A later read-only Pi could map such a policy to `--tools read,grep,find,ls`, but MCP and extension tools stay enabled unless excluded, so that mapping needs its own decision and `mcp.yaml` key.
-A turn ceiling could likewise be enforced by the runner, counting `turn_start` and stopping Pi, but that is isx inventing a limit Pi does not have.
+Every worker runs with full access inside its instance, which is the boundary (#1857), so Pi needs no mapping of a Claude policy.
+The first Pi release refused a template with a restrictive Claude permission mode, and refused Pi while `delegate-max-turns` was set; #1857 removed both policies.
 
 ## Human takeover
 

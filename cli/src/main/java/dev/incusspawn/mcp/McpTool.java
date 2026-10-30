@@ -105,6 +105,11 @@ record McpTool(String name, String description, JqObject inputSchema, JqObject o
             return map;
         }
 
+        /** Whether the call passed {@code name} at all, null included. */
+        boolean has(String name) {
+            return node instanceof JqObject object && object.keys().contains(name);
+        }
+
         private JqValue field(String name) {
             if (!(node instanceof JqObject object)) return JqNull.NULL;
             return object.keys().contains(name)

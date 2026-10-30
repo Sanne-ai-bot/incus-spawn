@@ -290,7 +290,8 @@ Every start registers the server in that instance's Claude Code and Pi, or remov
 See `.claude/rules/mcp.md` and DESIGN.md "MCP server".
 Managed delegation selects `claude`, `codex` or `pi`, exposes installed agents through `list_templates.delegate_agents`, and persists the selected agent with each task.
 See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation, and [MCP delegation to Pi workers](docs/dev/MCP-PI-DELEGATION.md) for what differs for Pi.
-Pi has no sandbox, so a restrictive Claude permission policy refuses it rather than widening into a fully writable worker.
+Every worker runs with full access inside its instance and no turn limit (Claude `bypassPermissions`, Codex `danger-full-access`, Pi every tool; `DelegateAgent.permissionMode`, #1857): the instance is the boundary, so no agent is refused for policy.
+The `mcp.yaml` keys that once narrowed them still load, have no effect and are named (`McpConfig.RETIRED`).
 
 **External orchestrators drive isx through ordinary commands (#1720).**
 `isx branch --owner <name> [--owner-id <id>]` stamps who controls an instance; like `isx mcp`'s stamps these are ownership keys (`Metadata.isOwnershipKey`) that no copy inherits.
