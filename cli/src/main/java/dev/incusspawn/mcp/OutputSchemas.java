@@ -63,6 +63,7 @@ final class OutputSchemas {
                 .integer("max_instances", null, true)
                 .integer("max_concurrent_tasks", null, true)
                 .integer("orphan_grace_hours", null, true)
+                .string("scope_note", "Why a coordinator in an instance may use no template, and what the user has to change", false)
                 .build();
     }
 

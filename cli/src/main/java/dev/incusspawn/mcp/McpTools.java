@@ -408,6 +408,13 @@ final class McpTools {
                 .put("max_concurrent_tasks", (long) config.maxConcurrentTasks())
                 .put("orphan_grace_hours", (long) config.orphanGraceHours());
         if (approved.isEmpty()) {
+            var scope = policy.scope();
+            if (scope.isCoordinator() && !scope.mismatches().isEmpty()) {
+                var note = String.join(" ", scope.mismatches());
+                result.put("scope_note", note);
+                return ToolResult.text("This coordinator may use no template. " + note + " Only the user can change that.",
+                        result.build());
+            }
             return ToolResult.text("No templates are approved for agents. " + TemplatePolicy.HOW_TO_APPROVE, result.build());
         }
         return ToolResult.json(result.build());

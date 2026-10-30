@@ -314,6 +314,28 @@ class InstanceSessionTest {
     }
 
     @Test
+    void resumeReleasesWhatTheCoordinatorsOwnTemplateNoLongerLists() {
+        // #1812: narrowing the definition's coordinator.control-over reaches the coordinator as
+        // narrowing mcp.yaml does
+        var controls = new java.util.ArrayList<>(List.of("tpl-dev"));
+        java.util.function.Function<McpConfig, dev.incusspawn.config.McpScope> scope = c -> {
+            var def = new dev.incusspawn.config.ImageDef();
+            def.setName("tpl-coord");
+            var mcpClient = new dev.incusspawn.config.ImageDef.Coordinator();
+            mcpClient.setControlOver(List.copyOf(controls));
+            def.setCoordinator(mcpClient);
+            return dev.incusspawn.config.McpScope.coordinator("tpl-coord", null, Map.of("tpl-coord", def), c.templates());
+        };
+        var worker = create(new McpSession(SELF, "alice", -1, null, backend, () -> config, scope, alive));
+        controls.clear();
+        var next = new McpSession(SELF, "alice", -1, null, backend, () -> config, scope, alive);
+        assertEquals(Map.of(), next.resumeIfPending());
+        assertTrue(Orphans.orphanedSince(backend.instances.get(worker)) != null, "released, its orphan clock running");
+        var e = assertThrows(ToolError.class, () -> next.adopt(worker, true));
+        assertTrue(e.getMessage().contains("not in coordinator.control-over of tpl-coord"), e.getMessage());
+    }
+
+    @Test
     void resumeTakesOnlyWhatThisInstanceHeldAndDidNotKeep() {
         var s = connect();
         var kept = create(s);

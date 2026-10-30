@@ -679,7 +679,8 @@ public final class InstanceRegistry {
     /** How many ancestors {@link #lineageOf} asks, against a cycle in hand-edited parents. */
     private static final int MAX_ANCESTORS = 32;
 
-    private static Map<String, JqValue> configsByName(JqValue root) {
+    /** Each instance's config in a listing, by name: what {@link #lineageOf} walks. */
+    public static Map<String, JqValue> configsByName(JqValue root) {
         var byName = new java.util.HashMap<String, JqValue>();
         if (!root.isArray()) return byName;
         for (var instance : root.asList()) {
@@ -696,8 +697,10 @@ public final class InstanceRegistry {
      * or unfinished build carries its parent's template stamps, and so does everything branched
      * from it, which before #936 got no stamp of its own; walking the {@code parent} names catches a
      * renamed failed build, and a branch of a branch, as long as the instances between still exist.
+     * The one judgement of lineage: host routes ask it here, and {@code isx mcp} for a coordinator's
+     * scope (#1812).
      */
-    private static Lineage lineageOf(JqValue config, Map<String, JqValue> configByName) {
+    public static Lineage lineageOf(JqValue config, Map<String, JqValue> configByName) {
         var current = config;
         for (int hop = 0; current != null && hop < MAX_ANCESTORS; hop++) {
             var ancestor = current;
