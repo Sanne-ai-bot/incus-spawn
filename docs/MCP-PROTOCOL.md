@@ -37,15 +37,16 @@ A task's `state` is the same word in every tool.
 
 | Field | What it holds |
 |-------|---------------|
-| `agent` | `claude` or `codex`. |
+| `agent` | `claude`, `codex` or `pi`. |
 | `model` | The template's configured model. |
 | `supports_max_turns` | Whether `delegate` accepts `max_turns`. Claude only. |
-| `supports_model_preflight` | Whether a chosen `model` is checked against the account before launch. Claude only; Codex reports model-access errors in the task result. |
-| `permission_mode`, `approval_policy` | Claude's permission mode, or Codex's sandbox mode and approval policy, as `mcp.yaml` gives this template. |
+| `supports_model_preflight` | Whether a chosen `model` is checked against the account before launch. Claude only; Codex and Pi report model-access errors in the task result. |
+| `permission_mode`, `approval_policy` | Claude's permission mode, or Codex's sandbox mode and approval policy, as `mcp.yaml` gives this template; `full-access` for Pi, which has no sandbox. |
 | `refusal` | Why current host policy prevents launching this agent, when it does. |
 
 A task's `model` override persists across `send_message` and adoption.
-`max_turns` on `delegate` to Codex is refused, and a `delegate-max-turns` in `mcp.yaml` refuses Codex delegation and continuation.
+A Pi task has a `session_id` only once Pi has saved its session; before that, or once that session is gone, `send_message` is refused with `wrong_state`.
+`max_turns` on `delegate` to Codex or Pi is refused, and a `delegate-max-turns` in `mcp.yaml` refuses their delegation and continuation.
 
 ## Being told when a task changes
 
@@ -90,5 +91,6 @@ An agent with no model call in flight but a build pulling dependencies is still 
 
 For what a task spent, read before and after it and subtract, but only when both reads carry the same `counting_since`.
 A different or missing one means the proxy restarted in between and the counts started afresh.
-Codex reports its own token usage in the task result when available.
 `isx proxy activity` shows the same counts for every instance on the host.
+
+Codex reports its own token usage in the task result when available, and Pi its turns, tokens and `cost_usd`.

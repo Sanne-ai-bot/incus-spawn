@@ -3421,12 +3421,15 @@ The result is a canonical form like `github.com/org/repo` that matches regardles
 
 ### MCP server: delegating work to isx instances
 
-`isx mcp` lets an agent on the host -- the user's own Claude Code -- use isx the way the user does: create disposable instances from approved templates, run commands in them, and hand whole tasks to Claude Code or Codex inside one.
+`isx mcp` lets an agent on the host -- the user's own Claude Code -- use isx the way the user does: create disposable instances from approved templates, run commands in them, and hand whole tasks to Claude Code, Codex or Pi inside one.
 The host agent plans and reviews; instances do the work, with the same isolation and credential injection as any branch.
 
 Managed delegation selects the installed worker agent independently of the MCP client.
 The [Codex worker design](docs/dev/MCP-CODEX-DELEGATION.md) describes agent discovery, durable continuation, adoption, and explicit capability differences.
-Existing Claude-only calls retain their defaults; mixed templates default to Claude, and Codex-only templates default to Codex.
+Existing Claude-only calls retain their defaults; mixed templates default to Claude, then Codex, and Pi-only templates default to Pi.
+The [Pi worker design](docs/dev/MCP-PI-DELEGATION.md) records what differs for Pi.
+Pi resumes by an exact session ID isx chooses before launch, so nothing has to be captured; but `--session-id` silently creates a missing session, so a resume checks that the session header's creation time is run 1's.
+Pi has no sandbox or permission modes, so a restrictive Claude policy refuses Pi rather than widening into a fully writable worker; a read-only Pi through `--tools` is a separate decision.
 
 **Hand-rolled protocol, measured.**
 The Quarkus MCP extension was tried first, initialized only on demand (`quarkus.mcp.server.stdio.initialization-enabled=false`, started explicitly by the command).
@@ -4603,7 +4606,7 @@ Jackson's semantics are the ones users' files were written against, so where jjq
   The one exception is the `customApiKeyResponses` approval the login script repeats on the last line of `~/.claude.json`: `ClaudeSetup.parseClaudeJson` drops that line before parsing (#1638).
   It reads the rest as JSON another program wrote (`Jjq.parseForeign`, below), since a merge that cannot read the file drops what earlier layers put there.
 - isx's own JSON is read with `JqValues.parseStrict`: its stamps, its proxy's endpoints, `isx mcp`'s output, and Incus's answers, where isx keeps its state and whose Go encoder cannot write a lone surrogate.
-  JSON another program wrote is read with `Jjq.parseForeign`: a tool's file (`~/.claude.json`, the Gemini settings), Claude Code's and Codex's events, an MCP client's message, an API's answer.
+  JSON another program wrote is read with `Jjq.parseForeign`: a tool's file (`~/.claude.json`, the Gemini settings), Claude Code's, Codex's and Pi's events, an MCP client's message, an API's answer.
   It differs on one point: a lone surrogate escape reads as U+FFFD.
   RFC 8259 allows one, and `JSON.stringify` writes one for a string cut inside a pair, but jjq 0.2.4 refuses the whole document for it (Hyperfoil/jjq#146), and a user cannot fix a file another tool keeps rewriting.
   Anything else malformed still fails, as `<source> is not valid JSON: <why> at line L, column C`.

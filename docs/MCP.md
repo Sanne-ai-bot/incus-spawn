@@ -1,6 +1,6 @@
 # Delegating from an agent on your host (MCP)
 
-An agent on your host, such as Claude Code, can use isx itself: create instances from templates you approved, run builds and tests in them, and hand whole tasks to Claude Code or Codex inside an instance.
+An agent on your host, such as Claude Code, can use isx itself: create instances from templates you approved, run builds and tests in them, and hand whole tasks to Claude Code, Codex or Pi inside an instance.
 `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio.
 
 This page covers setup, what the agent gets, and running the coordinating agent in an instance of its own.
@@ -10,7 +10,7 @@ A program that drives `isx mcp` from code has [a page of its own](MCP-PROTOCOL.m
 
 `isx init` offers to set this up.
 It is off by default, since it lets an agent on your host create and run instances.
-It registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code or Codex, whether agents may use it.
+It registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code, Codex or Pi, whether agents may use it.
 
 The step needs Claude Code installed on the host and a terminal to ask from.
 Without either, `isx init` skips it and says so.
@@ -38,7 +38,7 @@ max-instances: 8
 | `templates` | none | The only templates an agent may branch from. |
 | `max-instances` | 8 | Instances per host user, across sessions. |
 | `max-concurrent-tasks` | 8 | Background commands and delegated agents, per host user, across sessions. |
-| `delegate-max-turns` | not set | A ceiling on Claude's turns. Codex is refused while this is set. |
+| `delegate-max-turns` | not set | A ceiling on Claude's turns. Codex and Pi are refused while this is set. |
 | `delegate-permission-mode` | `bypassPermissions` | Claude's `--permission-mode`. |
 | `delegate-permission-modes` | not set | Per-template overrides, such as a reviewer that only plans: `tpl-review: plan`. |
 | `codex.sandbox-mode` | `danger-full-access` | Codex's sandbox mode. Codex always runs without approval prompts. |
@@ -75,7 +75,7 @@ An agent gets these tools, and no others.
 | `stop_instance` / `start_instance` | Stop an instance, to fork it, and start it again. Stop is refused while a task runs, unless forced. |
 | `list_instances` / `adopt_instance` | The agent's instances and their tasks, including those an ended session left behind; take one back. |
 | `exec` | Run a command as `agentuser`, in the foreground or as a background task. |
-| `delegate` | Give an instruction or an installed skill to Claude Code or Codex in an instance, or in a fresh one from a template. |
+| `delegate` | Give an instruction or an installed skill to Claude Code, Codex or Pi in an instance, or in a fresh one from a template. |
 | `task_status` / `wait_any` / `task_result` | Follow a task, wait for whichever of several finishes first, read its outcome or the agent's report. |
 | `send_message` | Continue a delegated agent's conversation, for example "push and open a PR". |
 | `get_diff` | What a delegated task changed, committed or not: a patch, or only the files and line counts. |
@@ -83,10 +83,10 @@ An agent gets these tools, and no others.
 | `cancel_task` / `destroy_instance` | Stop a task, or throw an instance away. |
 | `keep_instance` | Hand an instance over to you for good. |
 
-### Delegating to Claude Code or Codex
+### Delegating to Claude Code, Codex or Pi
 
-`delegate` runs Claude Code or Codex inside the instance.
-The agent picks one with `agent: "claude"` or `agent: "codex"`; without a choice, Claude when the template installs it, otherwise Codex.
+`delegate` runs Claude Code, Codex or Pi inside the instance.
+The agent picks one with `agent: "claude"`, `"codex"` or `"pi"`; without a choice, Claude when the template installs it, then Codex, then Pi.
 `send_message` keeps the task's agent and resumes its saved conversation.
 The coordinator may be Claude Code whichever agent the worker runs.
 
@@ -95,12 +95,17 @@ Codex has no turn ceiling, so a `delegate-max-turns` in `mcp.yaml` refuses Codex
 Codex uses the template's `openai` credential account.
 A template with a restrictive Claude permission mode in `delegate-permission-modes` needs its own entry in `codex.sandbox-modes`, as the section-wide `sandbox-mode` does not apply to it.
 
+Pi has no sandbox or permission modes, so it always runs with every tool the instance offers.
+A template with a restrictive Claude permission mode, set file-wide or for that template, therefore cannot delegate to Pi.
+A `delegate-max-turns` in `mcp.yaml` refuses Pi too.
+Pi spends the account its template's `provider` uses: the Claude account, or the `openai` one.
+
 ### Asking a question instead of reading the output
 
 `exec`, `task_result` and `get_diff` take an optional `ask`.
 Instead of returning the text, a one-shot Claude Code on `summary-model` reads it inside the instance and answers the question, such as "which tests fail?".
 A long log or patch then never fills the host agent's context.
-This needs Claude Code in the instance; a Codex-only instance refuses `ask`.
+This needs Claude Code in the instance; a Codex-only or Pi-only instance refuses `ask`.
 
 The answer is a model's reading, untrusted and lossy.
 Anything that gates a merge stays deterministic: `get_diff` with `stat`, CI, a reviewer.
@@ -153,9 +158,10 @@ The TUI shows the same in an instance's details (F3), with who holds it.
 Plain `isx shell` into such an instance prints the command before the prompt.
 With several tasks in the instance it lists them, each with its command, rather than guess.
 A task mid-turn, or one somebody is already in, is refused.
+So is a Pi task whose saved session is gone, since Pi would open an empty conversation in its place.
 
 While you are in it, `task_status` says `attached` and `send_message` is refused.
-Resuming by hand (`claude --resume` in a plain `isx shell`) gives up that protection: a turn starting at the same moment can collide with you.
+Resuming by hand (`claude --resume`, `codex resume` or `pi --session-id` in a plain `isx shell`) gives up that protection: a turn starting at the same moment can collide with you.
 
 ### Keeping the agent to the MCP tools
 

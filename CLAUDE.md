@@ -278,7 +278,7 @@ A session ending releases them as orphans, which a later session can `adopt_inst
 One kept only for a delegate that shows no activity is stopped instead, and destroyed after `dormant-grace-hours` in `mcp.yaml` unless adopted (#1028).
 A person sees the same: `isx list` (`mcp_state`, `mcp_purpose`) and the TUI's instance details say which instances a session made, what for, and whether they are held, orphaned or kept (`McpStanding`, from the listing alone, #1053).
 `exec` has no default time limit (cancel kills the process tree).
-Background commands and `delegate` (Claude Code or Codex inside the instance) run as systemd units in the guest.
+Background commands and `delegate` (Claude Code, Codex or Pi inside the instance) run as systemd units in the guest.
 A client that lists `isx/task_changed` under `capabilities.experimental` is notified of every task state change (`TaskWatcher`, #1014), and only then are tasks polled.
 `instance_activity` reads what the proxy counted of an instance's model calls and, by domain, of all its traffic (its host-only, read-only `/activity`, #935; `isx proxy activity` for a person), so a coordinator tells working from stuck without touching the instance.
 Every tool declares an `outputSchema` and returns matching `structuredContent` for programs, while the text stays for the model; a refusal carries no `structuredContent`, only a code in `_meta["dev.incusspawn/error"]` (#1010).
@@ -288,8 +288,9 @@ The proxy serves it `https://mcp.isx.internal/mcp` (`McpBridge`, Streamable HTTP
 No copy inherits the stamp and the MCP path refuses it.
 Every start registers the server in that instance's Claude Code and Pi, or removes it from one without the stamp, inside the exec that delivers the secret (`McpClientRegistration`, #1182), so a copy loses it on its first start.
 See `.claude/rules/mcp.md` and DESIGN.md "MCP server".
-Managed delegation selects `claude` or `codex`, exposes installed agents through `list_templates.delegate_agents`, and persists the selected agent with each task.
-See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation.
+Managed delegation selects `claude`, `codex` or `pi`, exposes installed agents through `list_templates.delegate_agents`, and persists the selected agent with each task.
+See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation, and [MCP delegation to Pi workers](docs/dev/MCP-PI-DELEGATION.md) for what differs for Pi.
+Pi has no sandbox, so a restrictive Claude permission policy refuses it rather than widening into a fully writable worker.
 
 **External orchestrators drive isx through ordinary commands (#1720).**
 `isx branch --owner <name> [--owner-id <id>]` stamps who controls an instance; like `isx mcp`'s stamps these are ownership keys (`Metadata.isOwnershipKey`) that no copy inherits.

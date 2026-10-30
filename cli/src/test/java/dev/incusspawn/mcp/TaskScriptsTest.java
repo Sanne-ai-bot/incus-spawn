@@ -114,6 +114,9 @@ class TaskScriptsTest {
         var pb = new ProcessBuilder("bash", "-c", script).directory(home.toFile());
         pb.environment().put("HOME", home.toString());
         pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        // Pi's session locations: the default one under this test's home.
+        pb.environment().remove("PI_CODING_AGENT_DIR");
+        pb.environment().remove("PI_CODING_AGENT_SESSION_DIR");
         var outFile = Files.createTempFile(home, "script-out-", ".txt");
         var errFile = Files.createTempFile(home, "script-err-", ".txt");
         pb.redirectOutput(outFile.toFile()).redirectError(errFile.toFile());
@@ -1189,6 +1192,267 @@ class TaskScriptsTest {
         assertEquals("", sh("p=" + pid + "; [ ! -f /proc/$p/stat ] || { s=$(cat /proc/$p/stat); [[ $s == *') Z '* ]] || echo alive; }; true", ""));
     }
 
+    /**
+     * A stand-in for Pi's {@code -p --mode json} that keeps Pi's session rule: {@code --session-id}
+     * opens the session it names, or creates it, and the header it prints first carries the
+     * session's creation time, unchanged on a resume. The session is a file where Pi 1.4.0 keeps it,
+     * {@code ~/.pi/agent/sessions/--<cwd>--/<timestamp>_<id>.jsonl}; {@code $HOME/pi-fake-header}
+     * makes the header claim another creation time, as a session Pi re-created would.
+     */
+    private void piStub(String events) throws Exception {
+        assumeNode();
+        var script = home.resolve("pi-stub.cjs");
+        Files.writeString(script, """
+                const fs = require('node:fs');
+                const args = process.argv.slice(2);
+                fs.writeFileSync(process.env.HOME + '/pi-args', JSON.stringify(args));
+                const prompt = fs.readFileSync(0, 'utf8');
+                fs.writeFileSync(process.env.HOME + '/pi-prompt', prompt);
+                const id = args[args.indexOf('--session-id') + 1];
+                const sessions = process.env.HOME + '/.pi/agent/sessions/--'
+                    + process.cwd().replace(/^[/\\\\]/, '').replace(/[/\\\\:]/g, '-') + '--';
+                fs.mkdirSync(sessions, {recursive: true});
+                const existing = fs.readdirSync(sessions).find(f => f.endsWith('_' + id + '.jsonl'));
+                let timestamp = existing && JSON.parse(fs.readFileSync(sessions + '/' + existing, 'utf8').split('\\n')[0]).timestamp;
+                if (!timestamp) {
+                    timestamp = new Date(Date.now() + Math.random() * 1e6).toISOString();
+                    fs.writeFileSync(sessions + '/' + timestamp.replace(/[:.]/g, '-') + '_' + id + '.jsonl',
+                        JSON.stringify({type: 'session', id, timestamp}) + '\\n');
+                }
+                if (fs.existsSync(process.env.HOME + '/pi-fake-header')) timestamp = fs.readFileSync(process.env.HOME + '/pi-fake-header', 'utf8');
+                const emit = e => console.log(JSON.stringify(e));
+                emit({type: 'session', version: 3, id, timestamp, cwd: process.cwd()});
+                const say = (text, extra) => emit({type: 'message_end', message: Object.assign({role: 'assistant',
+                    content: [{type: 'text', text}], stopReason: 'stop',
+                    usage: {input: 10, output: 3, cacheRead: 5, cacheWrite: 7, cost: {total: 0.125}}}, extra)});
+                // What Pi says when it creates a session; the stand-in says it on every run, to show which runs drop it.
+                process.stderr.write("Warning: No project session found with id '" + id + "'; creating a new session with that id.\\n"
+                    + "a real diagnostic\\n");
+                """ + events);
+        stub("pi", "exec node " + ExecScript.quote(script.toString()) + " \"$@\"");
+    }
+
+    private void launchPi(String id, int run, String prompt) throws Exception {
+        sh(TaskScripts.launch(id, run, Tasks.AGENT,
+                TaskScripts.agentRun(id, run, work.toString(), Tasks.Profile.NONE, null, "full-access", DelegateAgent.PI),
+                null, DelegateAgent.PI), prompt);
+    }
+
+    private static final String PI_SUCCESS = """
+            emit({type: 'agent_start'});
+            emit({type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: {command: 'make test'}});
+            say('The report: ' + prompt);
+            emit({type: 'turn_end'});
+            emit({type: 'agent_end', messages: []});
+            emit({type: 'agent_settled', aborted: false});
+            """;
+
+    @Test
+    void piRunsAndResumesTheSessionIsxChoseWithPromptsOnStdin() throws Exception {
+        piStub(PI_SUCCESS);
+        launchPi("t1-pi", 1, "fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely");
+        var first = awaitFinished("t1-pi");
+        assertEquals(0, first.exit(), first.stderr());
+        var d = home.resolve(".isx-mcp/tasks/t1-pi");
+        var session = first.sessionId();
+        assertTrue(session.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"), session);
+        var argv = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(Files.readString(home.resolve("pi-args")));
+        assertEquals(List.of("-p", "--mode", "json", "--session-id", session, "--append-system-prompt"),
+                argv.asList().subList(0, 6).stream().map(v -> v.asText()).toList());
+        assertTrue(argv.getElement(6).asText().startsWith("You are a delegate"), "the brief is appended to the system prompt");
+        assertEquals("fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely", Files.readString(home.resolve("pi-prompt")));
+        assertFalse(Files.exists(work.resolve("SHOULD_NOT_EXIST")));
+        assertEquals("The report: fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely", Files.readString(d.resolve("result-1.txt")));
+        assertTrue(sh(TaskScripts.list(), "").contains("identity t1-pi 1 pi"));
+        var summary = PiEvents.summarize(first.output(), 8);
+        assertFalse(summary.isError(), first.toString());
+        assertEquals(1, summary.result().path("turns").asInt(0));
+        assertEquals(0.125, summary.result().path("cost_usd").asDouble(0), 1e-9);
+        assertEquals(5, summary.result().path("usage").path("cached_input_tokens").asInt(0));
+        assertEquals(7, summary.result().path("usage").path("cache_creation_input_tokens").asInt(0));
+        // Run 1 drops Pi's warning that it is creating the session it was asked to create, and nothing else.
+        var stderr1 = Files.readString(d.resolve("stderr-1.log"));
+        assertFalse(stderr1.contains("No project session found"), stderr1);
+        assertTrue(stderr1.contains("a real diagnostic"), stderr1);
+        assertEquals(List.of("ran bash: make test", "said: The report: fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely"), summary.recent());
+
+        launchPi("t1-pi", 2, "follow up with $HOME and `literal`");
+        var resumed = awaitFinished("t1-pi");
+        assertEquals(0, resumed.exit(), resumed.stderr());
+        assertEquals(session, resumed.sessionId());
+        argv = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(Files.readString(home.resolve("pi-args")));
+        assertEquals(session, argv.getElement(4).asText(), "the same session, by its exact id");
+        assertEquals("follow up with $HOME and `literal`", Files.readString(home.resolve("pi-prompt")));
+        assertEquals("The report: follow up with $HOME and `literal`", Files.readString(d.resolve("result-2.txt")));
+        assertTrue(Files.readString(d.resolve("stderr-2.log")).contains("No project session found"),
+                "a resume keeps it: there it would mean the session was lost");
+    }
+
+    @Test
+    void piNeverContinuesInANewConversationInPlaceOfALostOne() throws Exception {
+        piStub(PI_SUCCESS);
+        launchPi("t2-pi", 1, "first");
+        var first = awaitFinished("t2-pi");
+        assertEquals(0, first.exit(), first.stderr());
+        var d = home.resolve(".isx-mcp/tasks/t2-pi");
+        assertEquals("ok", sh(TaskScripts.piSessionStatus("t2-pi"), "").strip(), "what send_message asks first");
+
+        // Pi's session file is gone: --session-id would make a new one under the same id and write the
+        // message into it, so neither send_message's check nor the run lets Pi start at all.
+        var sessions = home.resolve(".pi/agent/sessions").resolve(piProjectSessions(work.toRealPath().toString()));
+        try (var files = Files.list(sessions)) {
+            for (var f : files.toList()) Files.delete(f);
+        }
+        assertTrue(sh(TaskScripts.piSessionStatus("t2-pi"), "").contains("its Pi session file is gone"));
+        Files.delete(home.resolve("pi-args"));
+        launchPi("t2-pi", 2, "second");
+        var refusedRun = awaitFinished("t2-pi");
+        assertEquals(125, refusedRun.exit(), refusedRun.toString());
+        assertTrue(refusedRun.stderr().contains("its Pi session file is gone"), refusedRun.stderr());
+        assertFalse(Files.exists(home.resolve("pi-args")), "Pi never started");
+        try (var files = Files.list(sessions)) {
+            assertEquals(0, files.count(), "and wrote no replacement session");
+        }
+
+        // A session Pi re-created behind the check (its header is not run 1's) is stopped by the runner.
+        launchPi("t2-pi-b", 1, "first");
+        assertEquals(0, awaitFinished("t2-pi-b").exit());
+        Files.writeString(home.resolve("pi-fake-header"), "2030-01-01T00:00:00.000Z");
+        launchPi("t2-pi-b", 2, "second");
+        var stopped = awaitFinished("t2-pi-b");
+        Files.delete(home.resolve("pi-fake-header"));
+        assertTrue(stopped.exit() != 0, stopped.toString());
+        var summary = PiEvents.summarize(stopped.output(), 0);
+        assertTrue(summary.resultText().contains("no longer has session"), summary.resultText());
+        assertEquals("", Files.readString(home.resolve(".isx-mcp/tasks/t2-pi-b/result-2.txt")), "no report from the new conversation");
+
+        // A first run that never opened its session left nothing to continue either.
+        Files.delete(d.resolve("session_started"));
+        assertTrue(sh(TaskScripts.piSessionStatus("t2-pi"), "").contains("never recorded"));
+        launchPi("t2-pi", 3, "third");
+        var refused = awaitFinished("t2-pi");
+        assertEquals(125, refused.exit(), refused.toString());
+        assertTrue(refused.stderr().contains("its Pi session was never recorded"), refused.stderr());
+
+        // Pi that fails before opening its session (an unknown model, say) leaves no ID to resume.
+        stub("pi", "echo 'Error: Model not found' >&2; exit 1");
+        launchPi("t3-pi-none", 1, "first");
+        var never = awaitFinished("t3-pi-none");
+        assertEquals(1, never.exit(), never.toString());
+        assertNull(never.sessionId());
+        assertTrue(PiEvents.summarize(never.output(), 0).resultText().contains("before opening its session"));
+    }
+
+    @Test
+    void piRequiresASettledRunAZeroExitAndNoFailedMessage() throws Exception {
+        int trial = 0;
+        for (var ending : List.of(
+                "say('partial'); emit({type: 'turn_end'});",
+                "say('', {stopReason: 'error', errorMessage: 'overloaded'}); emit({type: 'agent_settled', aborted: false});",
+                "say('partial'); emit({type: 'agent_settled', aborted: true});",
+                "say('done'); emit({type: 'agent_settled', aborted: false}); process.exitCode = 7;",
+                "console.log('invalid-json'); say('done'); emit({type: 'agent_settled', aborted: false});")) {
+            piStub(ending);
+            var id = "t3-pi-" + trial++;
+            launchPi(id, 1, "fail");
+            var status = awaitFinished(id);
+            assertTrue(status.exit() != 0, ending + " " + status);
+            assertTrue(PiEvents.summarize(status.output(), 0).isError(), ending);
+        }
+        piStub("say('', {stopReason: 'error', errorMessage: 'overloaded'}); emit({type: 'agent_settled', aborted: false});");
+        launchPi("t3-pi-err", 1, "fail");
+        assertEquals("overloaded", PiEvents.summarize(awaitFinished("t3-pi-err").output(), 0).resultText());
+    }
+
+    @Test
+    void piKeepsItsReportOutsideTheEventTailAndNeverAnEarlierOneForALostFinalMessage() throws Exception {
+        piStub("""
+                say('an earlier message');
+                emit({type: 'agent_end', messages: [{role: 'user', content: 'x'.repeat(2 * 1024 * 1024)}]});
+                say('a'.repeat(300000));
+                emit({type: 'agent_end', messages: [{role: 'user', content: 'x'.repeat(2 * 1024 * 1024)}]});
+                emit({type: 'agent_settled', aborted: false});
+                """);
+        launchPi("t4-pi", 1, "large report");
+        var status = awaitFinished("t4-pi");
+        assertEquals(0, status.exit(), status.stderr());
+        assertEquals(300000, Files.size(home.resolve(".isx-mcp/tasks/t4-pi/result-1.txt")));
+        assertEquals(300000, PiEvents.summarize(status.output(), 0).result().path("report_bytes").asInt(0));
+
+        piStub("""
+                say('an earlier message');
+                say('b'.repeat(9 * 1024 * 1024));
+                emit({type: 'agent_settled', aborted: false});
+                """);
+        launchPi("t5-pi", 1, "huge report");
+        var lost = awaitFinished("t5-pi");
+        assertTrue(lost.exit() != 0, lost.toString());
+        assertEquals("", Files.readString(home.resolve(".isx-mcp/tasks/t5-pi/result-1.txt")));
+        assertTrue(PiEvents.summarize(lost.output(), 0).resultText().contains("too large"));
+    }
+
+    @Test
+    void cancellingAPiTaskKillsWhatItStarted() throws Exception {
+        piStub("""
+                emit({type: 'message_end', message: {role: 'user', content: [{type: 'text', text: prompt}]}});
+                emit({type: 'message_start', message: {role: 'assistant', content: []}});
+                const child = require('node:child_process').spawn('sleep', ['120'], {stdio:'ignore'});
+                fs.writeFileSync(process.env.HOME + '/pi-child', String(child.pid));
+                setTimeout(() => {}, 120000);
+                """);
+        launchPi("t6-pi", 1, "wait");
+        var d = home.resolve(".isx-mcp/tasks/t6-pi");
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while ((!Files.exists(d.resolve("session_id")) || !Files.exists(home.resolve("pi-child"))) && System.nanoTime() < deadline) Thread.sleep(50);
+        try {
+            assertTrue(Files.exists(d.resolve("session_id")), "saved once Pi has written its session, before the run ends");
+            assertTrue(Tasks.parse(sh(TaskScripts.status("t6-pi", 1000), "")).running());
+        } finally {
+            sh(TaskScripts.cancel("t6-pi"), "");
+        }
+        assertFalse(Tasks.parse(sh(TaskScripts.status("t6-pi", 1000), "")).running());
+        var pid = Files.readString(home.resolve("pi-child"));
+        assertEquals("", sh("p=" + pid + "; [ ! -f /proc/$p/stat ] || { s=$(cat /proc/$p/stat); [[ $s == *') Z '* ]] || echo alive; }; true", ""));
+    }
+
+    @Test
+    void aPiTaskCancelledBeforePiWroteItsSessionIsNotResumable() throws Exception {
+        // The header is out, but Pi writes the file only with the first message: nothing to continue yet.
+        piStub("setTimeout(() => {}, 120000);");
+        launchPi("t7-pi", 1, "wait");
+        var d = home.resolve(".isx-mcp/tasks/t7-pi");
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!Files.exists(d.resolve("session_started")) && System.nanoTime() < deadline) Thread.sleep(50);
+        assertTrue(Files.exists(d.resolve("session_started")));
+        sh(TaskScripts.cancel("t7-pi"), "");
+        var status = Tasks.parse(sh(TaskScripts.status("t7-pi", 1000), ""));
+        assertFalse(status.running());
+        assertNull(status.sessionId(), "no session_id, so task_status is not resumable and send_message refuses");
+    }
+
+    @Test
+    void aPersonsPiIsFoundByTheDirectoryItWorksIn() throws Exception {
+        var cwd = work.toRealPath().toString();
+        // Pi replaces its command line with its title: nothing but "pi" is left to read.
+        var pb = new ProcessBuilder("bash", "-c", "exec -a pi bash -c ': > \"$HOME/pi-ready\"; while read -r line; do :; done'")
+                .directory(work.toFile());
+        pb.environment().put("HOME", home.toString());
+        pb.environment().remove(TaskScripts.TASK_ENV);
+        var person = pb.start();
+        try {
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (!Files.exists(home.resolve("pi-ready")) && System.nanoTime() < deadline) Thread.sleep(10);
+            var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
+            assertTrue(who.attended());
+            assertEquals(person.pid(), who.holderOf(DelegateAgent.PI, "any-session", cwd));
+            assertEquals(person.pid(), who.holderOf(DelegateAgent.CLAUDE, null, cwd), "the worktree stays protected across agents");
+            assertNull(who.holderOf(DelegateAgent.PI, "any-session", "/elsewhere"));
+        } finally {
+            person.destroy();
+            assertTrue(person.waitFor(5, TimeUnit.SECONDS));
+        }
+    }
+
     @Test
     void presenceRecognizesBothAgentsAndQualifiesSessionIds() {
         var presence = Presence.parse(List.of("codex 71 /codex", "resume 71 same-id", "claude 72 /claude", "resume 72 same-id"));
@@ -1263,10 +1527,11 @@ class TaskScriptsTest {
     @Timeout(60)
     void theJoinCommandIsWhatPresenceTakesForAPersonInTheConversation() throws Exception {
         var cwd = work.toRealPath().toString();
-        for (var agent : List.of(DelegateAgent.CLAUDE, DelegateAgent.CODEX)) {
+        for (var agent : List.of(DelegateAgent.CLAUDE, DelegateAgent.CODEX, DelegateAgent.PI)) {
             var id = "t9-" + agent.id;
             var d = finishedTaskFiles(id, Tasks.AGENT);
-            if (agent == DelegateAgent.CODEX) Files.writeString(d.resolve("identity"), "1 codex\n");
+            if (agent != DelegateAgent.CLAUDE) Files.writeString(d.resolve("identity"), "1 " + agent.id + "\n");
+            if (agent == DelegateAgent.PI) piSessionFile(d, cwd);
             Files.writeString(d.resolve("session_id"), sessionId() + "\n");
             Files.writeString(d.resolve("cwd"), cwd + "\n");
             Files.writeString(d.resolve("prompt-1.md"), "\n  Fix the flaky test\nand say why\n");
@@ -1289,7 +1554,8 @@ class TaskScriptsTest {
                 assertEquals("attached", status.state(), agent.id);
                 assertEquals(agentPid, status.attachedPid());
                 var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
-                assertEquals(agentPid, who.holderOf(agent, sessionId(), "/elsewhere"), "found by the session it resumes");
+                // Pi's sessions belong to their directory, and its title hides the session it opened.
+                if (agent != DelegateAgent.PI) assertEquals(agentPid, who.holderOf(agent, sessionId(), "/elsewhere"), "found by the session it resumes");
                 assertEquals(agentPid, who.holderOf(agent, null, cwd), "and by the directory it works in");
                 var again = TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), null);
                 var busy = assertInstanceOf(TaskJoin.Outcome.Busy.class, again, "a second person is not let in");
@@ -1299,6 +1565,97 @@ class TaskScriptsTest {
             }
             Files.walk(d).sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
         }
+    }
+
+    /** The folder Pi keeps {@code cwd}'s sessions in, as the guest derives it. */
+    private String piProjectSessions(String cwd) throws Exception {
+        return sh("c=" + ExecScript.quote(cwd) + "; " + TaskScripts.PI_PROJECT_SESSIONS, "");
+    }
+
+    /** What Pi leaves for the session run 1 opened in {@code cwd}: its start in {@code d}, its file where Pi keeps it. */
+    private Path piSessionFile(Path d, String cwd) throws IOException {
+        Files.writeString(d.resolve("session_started"), "2026-10-30T12:19:25.667Z");
+        var project = Files.createDirectories(home.resolve(".pi/agent/sessions/--" + cwd.substring(1).replace('/', '-') + "--"));
+        return Files.writeString(project.resolve("2026-10-30T12-19-25-667Z_" + sessionId() + ".jsonl"), "{}\n");
+    }
+
+    @Test
+    @Timeout(60)
+    void joiningAPiTaskWhoseSessionIsGoneIsRefusedNotStartedEmpty() throws Exception {
+        var cwd = work.toRealPath().toString();
+        var id = "t13-pi";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("identity"), "1 pi\n");
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        Files.writeString(d.resolve("cwd"), cwd + "\n");
+        var file = piSessionFile(d, cwd);
+        var ready = home.resolve("join-ready");
+        stub("pi", "exec -a pi bash -c " + JOINED_AGENT + " \"$@\"");
+        var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
+
+        // Pi looks only in the cwd's own folder: the same session filed under another project is not this one.
+        var elsewhere = Files.createDirectories(home.resolve(".pi/agent/sessions/--home-someone-other-project--"));
+        Files.move(file, elsewhere.resolve(file.getFileName()));
+        var misplaced = joinAs(join.entry().guestCommand());
+        assertEquals(1, misplaced.exit(), misplaced.stderr());
+        assertTrue(misplaced.stderr().contains("its Pi session file is gone"), misplaced.stderr());
+        assertFalse(Files.exists(ready), "Pi never started");
+        Files.move(elsewhere.resolve(file.getFileName()), file);
+        // Pi's own derivation of that folder (getDefaultSessionDirPath in Pi 1.4.0).
+        assertEquals("--home-a-b-c-d--", piProjectSessions("/home/a/b:c\\d"));
+
+        // Gone, or replaced by a session Pi created under the same id since: either way not this conversation.
+        Files.delete(file);
+        for (var replacement : List.of("", "2026-10-31T08-00-00-000Z_" + sessionId() + ".jsonl")) {
+            if (!replacement.isEmpty()) Files.writeString(file.resolveSibling(replacement), "{}\n");
+            var refused = joinAs(join.entry().guestCommand());
+            assertEquals(1, refused.exit(), refused.stderr());
+            assertTrue(refused.stderr().contains("its Pi session file is gone"), refused.stderr());
+            assertFalse(Files.exists(ready), "Pi never started");
+        }
+        Files.delete(d.resolve("session_started"));
+        var unrecorded = joinAs(join.entry().guestCommand());
+        assertEquals(1, unrecorded.exit());
+        assertTrue(unrecorded.stderr().contains("its Pi session was never recorded"), unrecorded.stderr());
+        assertFalse(Files.exists(ready));
+    }
+
+    @Test
+    @Timeout(60)
+    void thePiJoinGuardExpandsALeadingTildeInPisDirectoriesAsPiDoes() throws Exception {
+        var cwd = work.toRealPath().toString();
+        var id = "t14-pi";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("identity"), "1 pi\n");
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        Files.writeString(d.resolve("cwd"), cwd + "\n");
+        Files.writeString(d.resolve("session_started"), "2026-10-30T12:19:25.667Z");
+        var name = "2026-10-30T12-19-25-667Z_" + sessionId() + ".jsonl";
+        var project = piProjectSessions(cwd);
+        var ready = home.resolve("join-ready");
+        stub("pi", "exec -a pi bash -c " + JOINED_AGENT + " \"$@\"");
+        var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
+        // Each value, where Pi 1.4.0 (normalizePath) then keeps the session: ~ alone or a leading ~/ is the home.
+        var cases = new java.util.LinkedHashMap<Map<String, String>, Path>();
+        cases.put(Map.of("PI_CODING_AGENT_DIR", "~/my agent"), home.resolve("my agent/sessions").resolve(project));
+        cases.put(Map.of("PI_CODING_AGENT_DIR", "~"), home.resolve("sessions").resolve(project));
+        cases.put(Map.of("PI_CODING_AGENT_SESSION_DIR", "~/flat"), home.resolve("flat"));
+        cases.put(Map.of("PI_CODING_AGENT_SESSION_DIR", "~/flat", "PI_CODING_AGENT_DIR", "~/unused"), home.resolve("flat"));
+        cases.put(Map.of("PI_CODING_AGENT_SESSION_DIR", "", "PI_CODING_AGENT_DIR", ""), home.resolve(".pi/agent/sessions").resolve(project));
+        for (var c : cases.entrySet()) {
+            var file = Files.writeString(Files.createDirectories(c.getValue()).resolve(name), "{}\n");
+            Files.deleteIfExists(ready);
+            var joined = joinAs(join.entry().guestCommand(), c.getKey());
+            assertEquals(0, joined.exit(), c.getKey() + ": " + joined.stderr());
+            assertTrue(Files.exists(ready), c.getKey() + ": Pi started");
+            Files.delete(file);
+        }
+        // ~user is not the home to Pi: the same file under the home does not count for it.
+        Files.writeString(Files.createDirectories(home.resolve("x/sessions").resolve(project)).resolve(name), "{}\n");
+        Files.deleteIfExists(ready);
+        var refused = joinAs(join.entry().guestCommand(), Map.of("PI_CODING_AGENT_DIR", "~nobody/x"));
+        assertEquals(1, refused.exit(), refused.stderr());
+        assertFalse(Files.exists(ready));
     }
 
     @Test
@@ -1436,16 +1793,29 @@ class TaskScriptsTest {
 
     /** {@code command} as a person's {@code isx shell} runs it, with no terminal and nothing on stdin. */
     private Process start(String command) throws IOException {
+        return start(command, Map.of());
+    }
+
+    /** {@link #start}, with {@code env} set after the defaults are cleared. */
+    private Process start(String command, Map<String, String> env) throws IOException {
         var pb = new ProcessBuilder("bash", "-c", command).directory(home.toFile());
         pb.environment().put("HOME", home.toString());
         pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
         pb.environment().remove(TaskScripts.TASK_ENV);
+        // Pi's session locations: the default one under this test's home.
+        pb.environment().remove("PI_CODING_AGENT_DIR");
+        pb.environment().remove("PI_CODING_AGENT_SESSION_DIR");
+        pb.environment().putAll(env);
         return pb.start();
     }
 
     /** {@link #start}, waited for: how a refused join ends. */
     private Joined joinAs(String command) throws Exception {
-        var p = start(command);
+        return joinAs(command, Map.of());
+    }
+
+    private Joined joinAs(String command, Map<String, String> env) throws Exception {
+        var p = start(command, env);
         p.getOutputStream().close();
         if (!p.waitFor(20, TimeUnit.SECONDS)) {
             p.destroyForcibly();

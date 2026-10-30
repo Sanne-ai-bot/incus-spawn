@@ -277,6 +277,15 @@ class McpInitFlowTest {
     }
 
     @Test
+    void piOnlyTemplatesCanBeApproved() throws Exception {
+        var host = new Host();
+        var prompts = ScriptedPrompts.lines("y", "y");
+        host.setupMcp(prompts, defs("name: tpl-minimal\n", "name: tpl-isx-pi\nparent: tpl-minimal\ntools: [pi]\n"));
+        prompts.assertFullyConsumed();
+        assertEquals(List.of("tpl-isx-pi"), approved());
+    }
+
+    @Test
     void approvalsGoToAnOwnerOnlyMcpYamlAndNeverToConfigYaml() throws Exception {
         var seeded = "github:\n  token: ghp_x\n";
         seed(seeded);

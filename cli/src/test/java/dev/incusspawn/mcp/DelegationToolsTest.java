@@ -47,6 +47,10 @@ class DelegationToolsTest {
     /** What the tasks listing of an adopted instance answers. */
     private volatile String taskListing = "";
     private volatile String savedSession;
+    /** The agent a finished task's identity names, with {@link #savedSession}. */
+    private volatile String savedAgent = "codex";
+    /** What a Pi task's session check answers before send_message launches: ok, or why not. */
+    private volatile String piSession = "ok";
     /** When set, reading the tasks listing fails, as an exec the guest did not answer would. */
     private volatile boolean failListing;
     /** What the model check answers; null for a model the account can use. */
@@ -113,6 +117,7 @@ class DelegationToolsTest {
             }
             if (script.startsWith("f=$(mktemp)")) return "exit=0\nsummarised=12 lines, 345 bytes\n---\nIt touches A.java only.\n";
             if (script.contains("/result-1.txt")) return "Codex completed the task";
+            if (script.contains("tr ':.' '--'") && script.endsWith("echo ok")) return piSession + "\n";
             if (script.contains("--numstat")) {
                 return "## /home/agentuser\n3\t1\tsrc/A.java\0-\t-\tlogo.png\0\n---\n"
                         + (script.contains("--src-prefix") ? "diff --git a/src/A.java b/src/A.java\n+fixed\n" : "");
@@ -121,7 +126,7 @@ class DelegationToolsTest {
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
             if (taskState.equals("unknown")) return "run=1\nkind=agent\nstate=unknown\n---\n\n---stderr\n";
             var who = attached ? "cwd=/home/agentuser\nsession_id=s1\npresence=claude 77 /elsewhere\n"
-                    + "presence=resume 77 s1\n" : savedSession == null ? "" : "identity=1 codex\nsession_id=" + savedSession + "\n";
+                    + "presence=resume 77 s1\n" : savedSession == null ? "" : "identity=1 " + savedAgent + "\nsession_id=" + savedSession + "\n";
             return taskState.equals("running")
                     ? "run=1\nkind=agent\nstate=running\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
@@ -1416,5 +1421,129 @@ class DelegationToolsTest {
         tasks.adopt("mcp-both-task-abcde");
         assertEquals(DelegateAgent.CODEX, tasks.all().stream().filter(t -> t.id().equals("t7-old")).findFirst().orElseThrow().agent());
         assertEquals(DelegateAgent.CLAUDE, tasks.all().stream().filter(t -> t.id().equals("t8-old")).findFirst().orElseThrow().agent());
+    }
+
+    private void addPiTemplates() {
+        backend.template("tpl-pi", true, "pi").template("tpl-claude-pi", true, "claude", "pi")
+                .template("tpl-codex-pi", true, "codex", "pi");
+        config.setTemplates(List.of("tpl-agent", "tpl-plain", "tpl-pi", "tpl-claude-pi", "tpl-codex-pi"));
+    }
+
+    private JqValue templateNamed(String name) throws Exception {
+        return structured(call("list_templates", "{}")).path("templates").asList().stream()
+                .filter(t -> t.path("template").asText().equals(name)).findFirst().orElseThrow();
+    }
+
+    @Test
+    void aPiOnlyTemplateDelegatesToPi() throws Exception {
+        addPiTemplates();
+        var pi = templateNamed("tpl-pi");
+        assertTrue(pi.path("supports_delegate").asBoolean(false), pi.toString());
+        assertEquals("pi", pi.path("default_delegate_agent").asText());
+        assertFalse(pi.path("supports_ask").asBoolean(true));
+        assertEquals(1, pi.path("delegate_agents").size());
+        var descriptor = pi.path("delegate_agents").getElement(0);
+        assertEquals("pi", descriptor.path("agent").asText());
+        assertFalse(descriptor.path("supports_max_turns").asBoolean(true));
+        assertFalse(descriptor.path("supports_model_preflight").asBoolean(true));
+        assertEquals("full-access", descriptor.path("permission_mode").asText());
+        // Claude stays the default where it is installed, Codex keeps its place before Pi.
+        assertEquals("claude", templateNamed("tpl-claude-pi").path("default_delegate_agent").asText());
+        assertEquals("codex", templateNamed("tpl-codex-pi").path("default_delegate_agent").asText());
+
+        var task = structured(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}"));
+        assertEquals("pi", task.path("agent").asText());
+        assertEquals("full-access", task.path("permission_mode").asText());
+        assertFalse(((io.hyperfoil.tools.jjq.value.JqObject) task).keys().contains("approval_policy"));
+        assertFalse(((io.hyperfoil.tools.jjq.value.JqObject) task).keys().contains("max_turns"));
+        assertTrue(backend.scripts.stream().anyMatch(s -> s.contains("command -v pi")), "the CLI is probed before launch");
+        assertEquals("pi", structured(call("delegate", "{\"template\":\"tpl-claude-pi\",\"agent\":\"pi\",\"instruction\":\"go\"}")).path("agent").asText());
+        assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-pi\",\"agent\":\"claude\",\"instruction\":\"go\"}")));
+    }
+
+    @Test
+    void piIsRefusedUnderARestrictiveClaudePolicyAndATurnCeiling() throws Exception {
+        addPiTemplates();
+        assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\",\"max_turns\":2}")));
+        config.setDelegateMaxTurns(10);
+        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}")));
+        assertTrue(templateNamed("tpl-pi").path("delegate_agents").getElement(0).path("refusal").asText().contains("delegate-max-turns"));
+        config.setDelegateMaxTurns(null);
+        // Pi has no sandbox: a plan worker must never become a fully writable one.
+        config.setDelegatePermissionModes(java.util.Map.of("tpl-pi", "plan"));
+        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}")));
+        config.setDelegatePermissionModes(null);
+        config.setDelegatePermissionMode("acceptEdits");
+        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}")));
+        assertEquals(0, backend.mcpInstances().size(), "refused before branching");
+    }
+
+    @Test
+    void piResultsAndContinuationUseItsSavedSession() throws Exception {
+        addPiTemplates();
+        var task = structured(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}"));
+        var id = task.path("task_id").asText();
+        taskState = "finished";
+        savedAgent = "pi";
+        savedSession = "0b5c3a52-5e1f-4c8e-9a51-2f4c1e7d9a10";
+        finishedEvents = "{\"type\":\"isx.pi.result\",\"success\":true,\"report_bytes\":24,\"turns\":3,\"cost_usd\":0.25,"
+                + "\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"cached_input_tokens\":5,\"cache_creation_input_tokens\":9}}\n";
+        var status = structured(call("task_status", "{\"task_id\":\"" + id + "\"}"));
+        assertEquals(savedSession, status.path("session_id").asText());
+        assertTrue(status.path("resumable").asBoolean(false));
+        assertTrue(status.path("join_command").asText().contains("--task " + id), status.toString());
+        var report = structured(call("task_result", "{\"task_id\":\"" + id + "\"}"));
+        assertEquals("success", report.path("outcome").asText());
+        assertFalse(report.path("is_error").asBoolean(true));
+        assertEquals(3, report.path("turns").asInt(0));
+        assertEquals(0.25, report.path("cost_usd").asDouble(0), 1e-9);
+        assertEquals(5, report.path("cached_input_tokens").asInt(0));
+        assertEquals(9, report.path("cache_creation_input_tokens").asInt(0));
+        var continued = structured(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"continue\"}"));
+        assertEquals("pi", continued.path("agent").asText());
+        assertEquals(2, continued.path("run").asInt(0));
+
+        // The session file is gone: refused before a run is reserved, so Pi never writes the message anywhere.
+        piSession = "its Pi session file is gone, and Pi would open an empty conversation in its place";
+        var launched = launches();
+        var gone = call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"again\"}");
+        assertEquals("wrong_state", code(gone));
+        assertTrue(text(gone).contains("its Pi session file is gone"), text(gone));
+        assertEquals(launched, launches());
+        piSession = "ok";
+
+        // A first run that never opened its session saved no ID: nothing to continue, and never a new conversation.
+        savedSession = null;
+        assertFalse(structured(call("task_status", "{\"task_id\":\"" + id + "\"}")).path("resumable").asBoolean(true));
+        assertEquals("wrong_state", code(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"again\"}")));
+    }
+
+    @Test
+    void piReplayAdoptionAndInterruptedCreationKeepTheirAgent() throws Exception {
+        addPiTemplates();
+        var args = "{\"template\":\"tpl-claude-pi\",\"agent\":\"pi\",\"instruction\":\"go\",\"idempotency_key\":\"pi-key\"}";
+        var task = structured(call("delegate", args));
+        assertEquals("pi", task.path("agent").asText());
+        var replayed = structured(call("delegate", args.replace(",\"agent\":\"pi\"", "")));
+        assertTrue(replayed.path("replayed").asBoolean(false), "an omitted agent means the recorded one");
+        assertEquals("pi", replayed.path("agent").asText());
+        assertEquals("invalid_argument", code(call("delegate", args.replace("\"agent\":\"pi\"", "\"agent\":\"claude\""))));
+
+        // Branched under a key, never started: the replay finishes Pi, not the template's default Claude.
+        backend.instance("mcp-claude-pi-task-abcde", Map.of(
+                dev.incusspawn.incus.Metadata.PROFILE, "tpl-claude-pi",
+                dev.incusspawn.incus.Metadata.PARENT, "tpl-claude-pi",
+                dev.incusspawn.incus.Metadata.STATIC_IP, "10.0.0.8",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice",
+                dev.incusspawn.incus.Metadata.MCP_IDEMPOTENCY_KEY, "pi-made",
+                dev.incusspawn.incus.Metadata.MCP_DELEGATE_AGENT, "pi"));
+        assertEquals("pi", structured(call("delegate",
+                "{\"template\":\"tpl-claude-pi\",\"instruction\":\"go\",\"idempotency_key\":\"pi-made\"}")).path("agent").asText());
+
+        // An adopting session rebuilds a Pi task from its identity record.
+        taskListing = "identity t9-old 1 pi\nt9-old agent 1 done - - - /work\n";
+        tasks.adopt("mcp-claude-pi-task-abcde");
+        assertEquals(DelegateAgent.PI, tasks.all().stream().filter(t -> t.id().equals("t9-old")).findFirst().orElseThrow().agent());
     }
 }

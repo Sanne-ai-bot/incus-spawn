@@ -53,9 +53,13 @@ final class StreamJsonEvents {
 
     private StreamJsonEvents() {}
 
-    /** {@link #summarize(String, int)}, or Codex's for a Codex task's events. */
+    /** {@link #summarize(String, int)}, or Codex's or Pi's for their tasks' events. */
     static Summary summarize(DelegateAgent agent, String tail, int keep) {
-        return agent == DelegateAgent.CODEX ? CodexEvents.summarize(tail, keep) : summarize(tail, keep);
+        return switch (agent) {
+            case CODEX -> CodexEvents.summarize(tail, keep);
+            case PI -> PiEvents.summarize(tail, keep);
+            default -> summarize(tail, keep);
+        };
     }
 
     static Summary summarize(String tail, int keep) {

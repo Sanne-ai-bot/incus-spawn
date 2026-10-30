@@ -176,6 +176,17 @@ class McpConfigTest {
     }
 
     @Test
+    void piRunsWithEveryToolOnlyWhereClaudeWouldToo() {
+        assertEquals(McpConfig.PI_PERMISSION_MODE, parse("templates: [tpl-pi]\n").piPermissionMode("tpl-pi"));
+        assertEquals(McpConfig.PI_PERMISSION_MODE, parse("delegate-permission-mode: bypassPermissions\n").piPermissionMode("tpl-pi"));
+        // Pi has no sandbox: any restriction, file-wide or the template's own, refuses it.
+        assertThrows(IllegalArgumentException.class, () -> parse("delegate-permission-mode: plan\n").piPermissionMode("tpl-pi"));
+        var own = parse("delegate-permission-modes:\n  tpl-review: plan\n");
+        assertThrows(IllegalArgumentException.class, () -> own.piPermissionMode("tpl-review"));
+        assertEquals(McpConfig.PI_PERMISSION_MODE, own.piPermissionMode("tpl-pi"));
+    }
+
+    @Test
     void codexPoliciesRoundTripAndDoNotSilentlyWidenClaudeRestrictions() {
         var config = parse("""
                 delegate-permission-mode: plan

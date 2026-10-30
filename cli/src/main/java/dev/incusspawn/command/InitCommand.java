@@ -769,8 +769,8 @@ public class InitCommand extends BaseCommand {
 
     /**
      * Offer to register {@code isx mcp} with Claude Code, then ask about each template that
-     * installs Claude Code or Codex (the only ones a task can be delegated to) whether agents may
-     * use it. Templates already approved by hand that install neither are left as they are.
+     * installs Claude Code, Codex or Pi (the only ones a task can be delegated to) whether agents may
+     * use it. Templates already approved by hand that install none of them are left as they are.
      * The approvals live in {@code mcp.yaml}; one that cannot be read is reported and left alone.
      */
     void setupMcp(Prompts prompts, java.util.Map<String, ImageDef> defs) {
@@ -792,7 +792,7 @@ public class InitCommand extends BaseCommand {
         var approved = mcp.templates();
         var candidates = defs.values().stream()
                 .filter(def -> ImageDef.chain(def, defs).stream()
-                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> List.of("claude", "codex").contains(t.getName()))))
+                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> List.of("claude", "codex", "pi").contains(t.getName()))))
                 .map(ImageDef::getName)
                 .sorted()
                 .toList();
@@ -838,7 +838,7 @@ public class InitCommand extends BaseCommand {
         }
 
         if (candidates.isEmpty()) {
-            BuildOutput.step("No template installs Claude Code or Codex yet, so there is none to approve."
+            BuildOutput.step("No template installs Claude Code, Codex or Pi yet, so there is none to approve."
                     + " Add one, then re-run 'isx init' or edit " + McpConfig.file() + ".");
             return;
         }

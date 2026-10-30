@@ -33,11 +33,11 @@ final class OutputSchemas {
     }
 
     private static Schema delegateAgent() {
-        return Schema.object().choice("agent", null, true, "claude", "codex")
+        return Schema.object().choice("agent", null, true, "claude", "codex", "pi")
                 .string("model", "Template configured model", false)
                 .bool("supports_max_turns", null, true)
                 .bool("supports_model_preflight", null, true)
-                .string("permission_mode", "Claude permission mode or Codex sandbox mode", false)
+                .string("permission_mode", "Claude permission mode, Codex sandbox mode, or full-access for Pi", false)
                 .string("approval_policy", null, false)
                 .string("refusal", "Configuration that prevents a new run", false);
     }
@@ -170,9 +170,9 @@ final class OutputSchemas {
                 .string("task_id", null, true)
                 .string("instance", null, true)
                 .choice("kind", null, true, Tasks.AGENT)
-                .choice("agent", null, false, "claude", "codex", "unknown")
+                .choice("agent", null, false, "claude", "codex", "pi", "unknown")
                 .integer("run", "The run (turn of the conversation) now going: 1 for the first", true)
-                .string("permission_mode", "Claude permission mode or Codex sandbox mode", true)
+                .string("permission_mode", "Claude permission mode, Codex sandbox mode, or full-access for Pi", true)
                 .string("approval_policy", "Codex always uses never", false)
                 .string("model", null, false)
                 .integer("max_turns", null, false);
@@ -237,9 +237,10 @@ final class OutputSchemas {
                 .stringList("recent", "What an agent did last", false)
                 .string("report", "An agent's final report", false)
                 .string("agent_stderr", "Failure diagnostic", false)
-                .integer("input_tokens", "Codex reported usage", false)
-                .integer("output_tokens", "Codex reported usage", false)
-                .integer("cached_input_tokens", "Codex reported usage", false)
+                .integer("input_tokens", "Uncached input tokens, as Codex or Pi reported them", false)
+                .integer("output_tokens", "Output tokens, as Codex or Pi reported them", false)
+                .integer("cached_input_tokens", "Input tokens read from the provider's cache, as Codex or Pi reported them", false)
+                .integer("cache_creation_input_tokens", "Input tokens written to the provider's cache, as Pi reported them", false)
                 .integer("report_bytes", null, false)
                 .string("stdout", "A command's", false)
                 .string("stderr", "A command's", false)
