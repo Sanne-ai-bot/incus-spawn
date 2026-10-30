@@ -1,40 +1,5 @@
-// Runs only inside a worker. Node is already installed by CodexSetup.
-const fs = require('node:fs');
-const path = require('node:path');
-const {spawn} = require('node:child_process');
-const {StringDecoder} = require('node:string_decoder');
-const [dir, run, sandbox, model] = process.argv.slice(1);
-const LIMIT = 1024 * 1024;
-const validId = id => typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(id);
-let scratch;
-function read(file, limit = LIMIT, optional = false) {
-  let fd;
-  try {
-    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
-    const st = fs.fstatSync(fd);
-    if (!st.isFile()) throw new Error('not a regular file: ' + file);
-    const buf = Buffer.alloc(Math.min(st.size, limit));
-    let used = 0, n;
-    while (used < buf.length && (n = fs.readSync(fd, buf, used, buf.length - used, null)) > 0) used += n;
-    return {text: utf8(buf.subarray(0, used)), bytes: st.size};
-  } catch (e) {
-    if (optional) return {text: '', bytes: 0};
-    throw e;
-  } finally { if (fd !== undefined) fs.closeSync(fd); }
-}
-// A cut never splits a character: an incomplete one at the end is left out, not replaced.
-const utf8 = buf => new StringDecoder('utf8').write(buf);
-function publish(name, text) {
-  const tmp = path.join(scratch, 'publish-' + Math.random().toString(36).slice(2));
-  fs.writeFileSync(tmp, text, {flag: 'wx', mode: 0o600});
-  fs.renameSync(tmp, path.join(dir, name));
-}
-function output(name) {
-  const tmp = path.join(scratch, name);
-  const fd = fs.openSync(tmp, 'wx', 0o600);
-  fs.renameSync(tmp, path.join(dir, name));
-  return fd;
-}
+// Appended to runner-io.cjs. Node is already installed by CodexSetup.
+const [sandbox, model] = process.argv.slice(3);
 try {
   scratch = fs.mkdtempSync(path.join(dir, '.codex-'));
   const saved = read(path.join(dir, 'session_id'), 128, true);
@@ -77,8 +42,7 @@ try {
   const events = output('events-' + run + '.jsonl');
   const stderr = output('stderr-' + run + '.log');
   const child = spawn('codex', argv, {stdio: ['pipe', 'pipe', stderr]});
-  let pending = '', dropping = false, malformed = false, terminal = '', error = '', usage, lastMessage = '';
-  const decoder = new StringDecoder('utf8');
+  let malformed = false, terminal = '', error = '', usage, lastMessage = '';
   function event(line) {
     if (!line.trim()) return;
     let e;
@@ -97,19 +61,11 @@ try {
     if (e.type === 'error') error = String(e.message || e.error?.message || 'Codex error').slice(0, 2000);
     if (e.type === 'item.completed' && e.item?.type === 'agent_message') lastMessage = String(e.item.text || '');
   }
+  const records = lines(event);
   child.stdout.on('data', data => {
     try {
-      let offset = 0;
-      while (offset < data.length) offset += fs.writeSync(events, data, offset, data.length - offset);
-      const parts = decoder.write(data).split('\n');
-      for (let i = 0; i < parts.length; i++) {
-        if (!dropping) pending += parts[i];
-        if (pending.length > LIMIT) { pending = ''; dropping = true; }
-        if (i < parts.length - 1) {
-          if (!dropping) event(pending);
-          pending = ''; dropping = false;
-        }
-      }
+      copy(events, data);
+      records.write(data);
     } catch (e) { malformed = true; error = e.message.slice(0, 2000); child.kill('SIGTERM'); }
   });
   child.on('error', e => { error = e.message; });
@@ -117,8 +73,7 @@ try {
   child.stdin.end(prompt);
   child.on('close', (code, signal) => {
     try {
-      pending += decoder.end();
-      if (pending && !dropping) event(pending);
+      records.end();
       const report = read(reportFile, LIMIT, true);
       const message = report.bytes ? null : Buffer.from(lastMessage);
       const text = message ? utf8(message.subarray(0, LIMIT)) : report.text;

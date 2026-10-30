@@ -206,7 +206,7 @@ final class TaskScripts {
         }
         if (agent == DelegateAgent.CODEX) {
             sb.append(requireFlock("echo '" + NO_FLOCK + "' >&4; " + recordExit(String.valueOf(run), "127") + "; exit 0")).append('\n');
-            sb.append(CONVERSATION_LOCK).append("node -e ").append(ExecScript.quote(CodexEvents.runner()))
+            sb.append(CONVERSATION_LOCK).append("node -e ").append(ExecScript.quote(WorkerRunners.of(DelegateAgent.CODEX)))
                     .append(" \"$D\" ").append(run).append(' ').append(ExecScript.quote(permissionMode))
                     .append(' ').append(ExecScript.quote(chosen.model() == null ? "" : chosen.model()))
                     .append(" 2>&4\n");

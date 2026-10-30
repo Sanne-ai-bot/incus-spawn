@@ -265,7 +265,7 @@ final class Tasks {
         var attached = current.attachedPid();
         if (task.agent() == DelegateAgent.CODEX && !current.running() && current.sessionId() == null) {
             try {
-                var recovered = run(task.instance(), "node -e " + ExecScript.quote(CodexEvents.runner()) + " \""
+                var recovered = run(task.instance(), "node -e " + ExecScript.quote(WorkerRunners.of(DelegateAgent.CODEX)) + " \""
                         + TaskScripts.dir(task.id()) + "\" recover '' ''", null).strip();
                 if (!SESSION_ID.matcher(recovered).matches())
                     throw new ToolError(ToolError.Code.WRONG_STATE, "no valid recovered thread ID");

@@ -40,13 +40,4 @@ final class CodexEvents {
         }
         return new StreamJsonEvents.Summary(recent, messages, result);
     }
-
-    static String runner() {
-        try (var in = CodexEvents.class.getResourceAsStream("/mcp/codex-runner.cjs")) {
-            if (in == null) throw new IllegalStateException("missing Codex runner resource");
-            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        } catch (java.io.IOException e) {
-            throw new IllegalStateException("cannot read Codex runner", e);
-        }
-    }
 }
