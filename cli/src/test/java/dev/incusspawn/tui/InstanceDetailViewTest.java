@@ -48,7 +48,7 @@ class InstanceDetailViewTest {
         var view = view();
         var uses = List.of(new AccountUsage.Use("github", "work", null, "", "", "", ""));
         TuiSnapshot.assertMatches("instance-detail-view-80x24",
-                TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses, null)));
+                TuiSnapshot.render(80, 24, f -> view.render(f, f.area(), instance(), uses, List.of(), null)));
     }
 
     @Test
@@ -58,7 +58,7 @@ class InstanceDetailViewTest {
                 "virtual-machine", "tpl-dev", "4", "8GiB", "50GiB", "", "", "x86_64",
                 "", "", "instance", "", "", "", -1, -1, "", false, null, false, null);
         TuiSnapshot.assertMatches("instance-detail-view-vm-80x24",
-                TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of(), null)));
+                TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of(), List.of(), null)));
     }
 
     @Test
@@ -82,5 +82,14 @@ class InstanceDetailViewTest {
         assertEquals(List.of(new InstanceDetailView.DetailRow("Base image:", "unknown")),
                 InstanceDetailView.baseImageRows(null, unknown));
         assertEquals(List.of(), InstanceDetailView.baseImageRows(null, null), "nothing recorded, nothing to say");
+    }
+
+    /** #1720: the details name the tools a host integration registered the instance with, and nothing otherwise. */
+    @Test
+    void theRegisteredRowNamesTheToolsThatListTheInstance() {
+        assertEquals(List.of(new InstanceDetailView.DetailRow("Registered:", "herdr"),
+                        new InstanceDetailView.DetailRow(null, "isx added it there from the host, and removes it on destroy")),
+                InstanceDetailView.registrationRows(List.of("herdr")));
+        assertEquals(List.of(), InstanceDetailView.registrationRows(List.of()));
     }
 }

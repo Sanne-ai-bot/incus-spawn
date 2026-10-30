@@ -87,8 +87,9 @@ public final class InstanceDetailView {
 
     /** Render the details of {@code selected}, with the credential accounts the TUI resolved for it. */
     void render(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen, InstanceInfo selected,
-                List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses, BaseImageAge.Assessment baseImage) {
-        var contentLines = buildInstanceDetailLines(selected, detailAccountUses, baseImage);
+                List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses, List<String> registeredWith,
+                BaseImageAge.Assessment baseImage) {
+        var contentLines = buildInstanceDetailLines(selected, detailAccountUses, registeredWith, baseImage);
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F2", "Shell");
         if (selected.mcp() != null) modal.addKey(hintSpans, "⇧F2", "Join task");
@@ -137,6 +138,18 @@ public final class InstanceDetailView {
                 + (ownerId == null ? "" : " (" + OutputFormat.oneLine(ownerId) + ")")));
         rows.add(new DetailRow(null, "that tool made it; drivers: in config.yaml says whether it may destroy it"));
         rows.add(new DetailRow(null, "a branch of it is yours, not the tool's"));
+        return rows;
+    }
+
+    /**
+     * The detail pane's rows for the tools a host integration registered the instance with (#1720),
+     * such as herdr's machine list; none when there are none.
+     */
+    public static List<DetailRow> registrationRows(List<String> tools) {
+        var rows = new ArrayList<DetailRow>();
+        if (tools.isEmpty()) return rows;
+        rows.add(new DetailRow("Registered:", String.join(", ", tools)));
+        rows.add(new DetailRow(null, "isx added it there from the host, and removes it on destroy"));
         return rows;
     }
 
@@ -195,6 +208,7 @@ public final class InstanceDetailView {
 
     private List<Line> buildInstanceDetailLines(InstanceInfo info,
                                              List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses,
+                                             List<String> registeredWith,
                                              BaseImageAge.Assessment baseImage) {
         var lines = new ArrayList<Line>();
         var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
@@ -238,6 +252,7 @@ public final class InstanceDetailView {
         // #1053: no column for it in the instance table, which has no width to spare.
         rows.addAll(mcpDetailRows(info.mcp()));
         rows.addAll(ownerDetailRows(info.owner(), info.ownerId()));
+        rows.addAll(registrationRows(registeredWith));
         for (var row : rows) {
             lines.add(row.label() == null
                     ? Line.from(List.of(Span.styled(" ".repeat(16) + row.value(), dimStyle)))
