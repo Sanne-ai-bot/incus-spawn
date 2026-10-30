@@ -30,7 +30,7 @@ class DelegationToolsTest {
     private final FakeBackend backend = new FakeBackend()
             .template("tpl-agent", true, "claude")
             .template("tpl-plain", true);
-    private final McpConfig config = new McpConfig();
+    private McpConfig config = new McpConfig();
     private final McpServerProtocolTest.Captured out = new McpServerProtocolTest.Captured();
     private McpServer server;
     private int nextId = 1;
@@ -579,16 +579,66 @@ class DelegationToolsTest {
     }
 
     @Test
-    void theDelegatesPermissionModeIsExplicitAndPerTemplate() throws Exception {
-        delegateFresh();
-        assertTrue(runScript(1).contains("--permission-mode 'bypassPermissions'"), runScript(1));
-        config.setDelegatePermissionModes(java.util.Map.of("tpl-agent", "plan"));
-        var listed = text(call("list_templates", "{}"));
-        assertTrue(listed.contains("\"permission_mode\" : \"plan\""), listed);
-        config.setMaxConcurrentTasks(5);
+    void theDelegatesPermissionModeIsExplicitAndFull() throws Exception {
         var r = call("delegate", "{\"instruction\":\"review\",\"template\":\"tpl-agent\"}");
-        assertTrue(text(r).contains("\"permission_mode\" : \"plan\""), text(r));
-        assertTrue(runScript(1).contains("--permission-mode 'plan'"), runScript(1));
+        assertTrue(runScript(1).contains("--permission-mode 'bypassPermissions'"), runScript(1));
+        assertFalse(runScript(1).contains("--max-turns"), "no turn limit: " + runScript(1));
+        assertEquals("bypassPermissions", structured(r).path("permission_mode").asText());
+        assertEquals("bypassPermissions", templateNamed("tpl-agent").path("permission_mode").asText());
+    }
+
+    /**
+     * An mcp.yaml written for the policies removed in #1857 still loads, and none of them
+     * narrows a delegate, refuses an agent, or shows in discovery.
+     */
+    @Test
+    void retiredDelegatePoliciesChangeNothing() throws Exception {
+        config = dev.incusspawn.config.Jjq.mcpConfig("""
+                templates: [tpl-agent, tpl-plain, tpl-codex, tpl-both, tpl-pi, tpl-claude-pi]
+                max-concurrent-tasks: 8
+                delegate-max-turns: 10
+                delegate-permission-mode: plan
+                delegate-permission-modes:
+                  tpl-codex: plan
+                  tpl-pi: plan
+                codex:
+                  sandbox-mode: read-only
+                  sandbox-modes:
+                    tpl-codex: read-only
+                """);
+        backend.template("tpl-codex", true, "codex");
+        backend.template("tpl-pi", true, "pi");
+        assertNotNull(config.retiredKeysNotice());
+
+        var claude = structured(call("delegate", "{\"template\":\"tpl-agent\",\"instruction\":\"go\"}"));
+        assertEquals("bypassPermissions", claude.path("permission_mode").asText(), claude.toString());
+        assertTrue(runScript(1).contains("--permission-mode 'bypassPermissions'") && !runScript(1).contains("--max-turns"),
+                runScript(1));
+        var codex = structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}"));
+        assertEquals("danger-full-access", codex.path("permission_mode").asText(), codex.toString());
+        var pi = structured(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}"));
+        assertEquals("full-access", pi.path("permission_mode").asText(), pi.toString());
+
+        var listed = structured(call("list_templates", "{}"));
+        assertFalse(((io.hyperfoil.tools.jjq.value.JqObject) listed).keys().contains("delegate_max_turns"));
+        for (var name : List.of("tpl-agent", "tpl-codex", "tpl-pi")) {
+            var agent = (io.hyperfoil.tools.jjq.value.JqObject) templateNamed(name).path("delegate_agents").getElement(0);
+            assertFalse(agent.keys().contains("refusal") || agent.keys().contains("supports_max_turns"), agent.toString());
+        }
+    }
+
+    /** A caller still passing the removed argument learns that its runs have no limit. */
+    @Test
+    void maxTurnsIsRefusedAsNoLongerSupported() throws Exception {
+        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":5}");
+        assertEquals("invalid_argument", code(r));
+        assertTrue(text(r).contains("max_turns is no longer supported"), text(r));
+        assertEquals(0, instancesMade(), "refused before an instance was made");
+        var task = delegateFresh();
+        taskState = "finished";
+        var sent = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\",\"max_turns\":null}");
+        assertEquals("invalid_argument", code(sent), "named at all, even as null");
+        assertEquals(1, tasks.all().get(0).runs());
     }
 
     @Test
@@ -725,7 +775,7 @@ class DelegationToolsTest {
         assertTrue(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"ls\"}").path("isError").asBoolean(false),
                 "not held until adopted");
 
-        taskListing = "t3-old agent 2 done claude-haiku-4-5 9 - /home/agentuser/repo dir\nnot a task line\n";
+        taskListing = "t3-old agent 2 done claude-haiku-4-5 - /home/agentuser/repo dir\nnot a task line\n";
         var adopted = text(call("adopt_instance", "{\"instance\":\"mcp-agent-870-impl-abcde\"}"));
         assertTrue(adopted.contains("\"t3-old\""), adopted);
         taskState = "finished";
@@ -734,8 +784,7 @@ class DelegationToolsTest {
         var run = runScript(3);
         assertTrue(run.contains("cd -- '/home/agentuser/repo dir'"), "resumed where it worked: " + run);
         assertTrue(run.contains("--resume"), run);
-        assertTrue(run.contains("--model 'claude-haiku-4-5'") && run.contains("--max-turns 9 "),
-                "an adopted task keeps its profile: " + run);
+        assertTrue(run.contains("--model 'claude-haiku-4-5'"), "an adopted task keeps its profile: " + run);
         assertEquals(0, modelChecks(), "a turn naming no model runs on the recorded one");
         assertFalse(call("send_message", "{\"task_id\":\"t3-old\",\"message\":\"m\",\"model\":\"claude-haiku-4-5\"}")
                 .path("isError").asBoolean(false));
@@ -775,7 +824,7 @@ class DelegationToolsTest {
         assertEquals("2026-09-30T10:00:00Z", listed.path("dormant_since").asText());
         assertEquals("2026-10-07T10:00:00Z", listed.path("dormant_until").asText());
 
-        taskListing = "t3-old agent 1 running - - - /home/agentuser/repo\n";
+        taskListing = "t3-old agent 1 running - - /home/agentuser/repo\n";
         taskState = "lost";
         var adopted = structured(call("adopt_instance", "{\"instance\":\"" + name + "\"}"));
         assertFalse(backend.stopped.contains(name), "started again");
@@ -840,7 +889,7 @@ class DelegationToolsTest {
         var task = tasks.require(id).task();
         // A concurrent destroy_instance forgets the task between send_message's check and its reservation.
         tasks.forgetInstance(task.instance());
-        var e = assertThrows(ToolError.class, () -> tasks.sendMessage(task, "push it", Tasks.Profile.NONE, "bypassPermissions", null));
+        var e = assertThrows(ToolError.class, () -> tasks.sendMessage(task, "push it", Tasks.Profile.NONE, null));
         assertTrue(e.getMessage().contains("no longer this session's"), e.getMessage());
     }
 
@@ -880,54 +929,25 @@ class DelegationToolsTest {
     }
 
     @Test
-    void aTaskRunsUnderItsOwnModelAndBudgetAndLaterTurnsKeepThem() throws Exception {
-        config.setDelegateMaxTurns(200);
+    void aTaskRunsUnderItsOwnModelAndLaterTurnsKeepIt() throws Exception {
         var r = call("delegate", "{\"instruction\":\"rebase\",\"template\":\"tpl-agent\","
-                + "\"model\":\"claude-haiku-4-5\",\"max_turns\":7}");
+                + "\"model\":\"claude-haiku-4-5\"}");
         assertFalse(r.path("isError").asBoolean(false), text(r));
         var task = r.path("structuredContent").path("task_id").asText();
         assertTrue(runScript(1).contains(" --model 'claude-haiku-4-5'"), runScript(1));
-        assertTrue(runScript(1).contains(" --max-turns 7 "), runScript(1));
         assertTrue(text(call("task_status", "{\"task_id\":\"" + task + "\"}")).contains("model: claude-haiku-4-5"));
 
         taskState = "finished";
         assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"again\"}").path("isError").asBoolean(false));
-        assertTrue(runScript(2).contains(" --model 'claude-haiku-4-5'") && runScript(2).contains(" --max-turns 7 "),
-                "a later turn keeps the task's profile: " + runScript(2));
-        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"think\",\"max_turns\":3}")
-                .path("isError").asBoolean(false));
-        assertTrue(runScript(3).contains(" --model 'claude-haiku-4-5'") && runScript(3).contains(" --max-turns 3 "),
-                runScript(3));
+        assertTrue(runScript(2).contains(" --model 'claude-haiku-4-5'"), "a later turn keeps the task's profile: " + runScript(2));
         assertEquals(1, modelChecks(), "a model checked once is not checked again");
     }
 
     @Test
-    void withoutAProfileTheTemplatesModelAndTheConfiguredBudgetApply() throws Exception {
-        config.setDelegateMaxTurns(200);
+    void withoutAProfileTheTemplatesModelApplies() throws Exception {
         delegateFresh();
         assertFalse(runScript(1).contains("--model"), runScript(1));
-        assertTrue(runScript(1).contains(" --max-turns 200 "), runScript(1));
         assertEquals(0, modelChecks(), "nothing to check");
-    }
-
-    @Test
-    void theTurnBudgetCanNarrowTheUsersCeilingButNeverWidenIt() throws Exception {
-        config.setDelegateMaxTurns(50);
-        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":51}");
-        assertTrue(r.path("isError").asBoolean(false));
-        assertTrue(text(r).contains("delegate-max-turns in mcp.yaml"), text(r));
-        assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":0}")
-                .path("isError").asBoolean(false));
-        assertEquals(0, instancesMade(), "refused before an instance was made");
-        assertFalse(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":50}")
-                .path("isError").asBoolean(false));
-
-        // A budget recorded under a higher ceiling is held to the one the user set since.
-        var task = tasks.all().get(0).id();
-        taskState = "finished";
-        config.setDelegateMaxTurns(20);
-        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\"}").path("isError").asBoolean(false));
-        assertTrue(runScript(2).contains(" --max-turns 20 "), runScript(2));
     }
 
     @Test
@@ -976,13 +996,11 @@ class DelegationToolsTest {
 
     @Test
     void listTemplatesSaysWhatAProfileOverrides() throws Exception {
-        config.setDelegateMaxTurns(200);
         backend.delegateModel("tpl-agent", "claude-opus-5-5");
         var listed = call("list_templates", "{}").path("structuredContent");
         var agent = listed.path("templates").getElement(0);
         assertEquals("tpl-agent", agent.path("template").asText());
         assertEquals("claude-opus-5-5", agent.path("delegate_model").asText());
-        assertEquals(200, listed.path("delegate_max_turns").asInt(0));
         assertTrue(listed.path("templates").getElement(1).path("delegate_model").isMissingNode(), listed.toString());
     }
 
@@ -1032,37 +1050,6 @@ class DelegationToolsTest {
         assertFalse(call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"model\":\"haiku\"}")
                 .path("isError").asBoolean(false));
         assertEquals(1, modelChecks());
-    }
-
-    @Test
-    void taskStatusShowsTheBudgetTheRunGets() throws Exception {
-        config.setDelegateMaxTurns(200);
-        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":150}");
-        var task = r.path("structuredContent").path("task_id").asText();
-        config.setDelegateMaxTurns(50);
-        assertTrue(text(call("task_status", "{\"task_id\":\"" + task + "\"}")).contains("max_turns: 50"));
-    }
-
-    @Test
-    void everyToolReportsTheBudgetTheRunGets() throws Exception {
-        // None chosen: the run gets the user's ceiling, and both tools say so.
-        config.setDelegateMaxTurns(30);
-        var started = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("structuredContent");
-        var task = started.path("task_id").asText();
-        assertEquals(30, started.path("max_turns").asInt(0));
-        assertEquals(30, call("task_status", "{\"task_id\":\"" + task + "\"}").path("structuredContent").path("max_turns").asInt(0));
-
-        // Chosen under a higher ceiling that was lowered since: the lower one, everywhere.
-        config.setDelegateMaxTurns(200);
-        var second = call("delegate", "{\"instruction\":\"y\",\"template\":\"tpl-agent\",\"max_turns\":150}")
-                .path("structuredContent");
-        assertEquals(150, second.path("max_turns").asInt(0));
-        config.setDelegateMaxTurns(50);
-        taskState = "finished";
-        var id = second.path("task_id").asText();
-        var sent = call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"more\"}").path("structuredContent");
-        assertEquals(50, sent.path("max_turns").asInt(0), sent.toString());
-        assertEquals(50, call("task_status", "{\"task_id\":\"" + id + "\"}").path("structuredContent").path("max_turns").asInt(0));
     }
 
     // --- idempotency keys (#1011) ---
@@ -1166,9 +1153,9 @@ class DelegationToolsTest {
                 dev.incusspawn.incus.Metadata.PARENT, "tpl-agent",
                 dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
                 dev.incusspawn.incus.Metadata.MCP_OWNER, "alice"));
-        taskListing = "t3-old agent 1 done - - =issue-870 /home/agentuser\n"
-                + "t4-old command 1 done - - =$(reboot) /home/agentuser\n"
-                + "t5-old command 1 done - - - /home/agentuser\n";
+        taskListing = "t3-old agent 1 done - =issue-870 /home/agentuser\n"
+                + "t4-old command 1 done - =$(reboot) /home/agentuser\n"
+                + "t5-old command 1 done - - /home/agentuser\n";
         structured(call("adopt_instance", "{\"instance\":\"mcp-agent-870-impl-abcde\"}"));
         taskState = "finished";
         var r = structured(call("delegate", "{\"instruction\":\"x\",\"instance\":\"mcp-agent-870-impl-abcde\","
@@ -1290,7 +1277,7 @@ class DelegationToolsTest {
         assertEquals("unavailable", code(r), text(r));
         assertEquals(0, launches());
         failListing = false;
-        taskListing = "t3-old agent 1 done - - =issue-1011 /home/agentuser\n";
+        taskListing = "t3-old agent 1 done - =issue-1011 /home/agentuser\n";
         taskState = "finished";
         var again = structured(call("delegate", args));
         assertEquals("t3-old", again.path("task_id").asText());
@@ -1312,7 +1299,7 @@ class DelegationToolsTest {
         assertEquals("codex", codex.path("default_delegate_agent").asText());
         assertFalse(codex.path("supports_ask").asBoolean(false));
         assertEquals(1, codex.path("delegate_agents").size());
-        assertFalse(codex.path("delegate_agents").getElement(0).path("supports_max_turns").asBoolean(false));
+        assertEquals("danger-full-access", codex.path("delegate_agents").getElement(0).path("permission_mode").asText());
         assertEquals("claude", structured(call("delegate", "{\"template\":\"tpl-both\",\"instruction\":\"go\"}")).path("agent").asText());
         assertEquals("claude", structured(call("delegate", "{\"template\":\"tpl-both\",\"agent\":\"claude\",\"instruction\":\"go\"}")).path("agent").asText());
         var task = structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}"));
@@ -1327,20 +1314,10 @@ class DelegationToolsTest {
     }
 
     @Test
-    void codexPoliciesFailBeforeBranchingAndAskFailsBeforeItsProducer() throws Exception {
+    void askFailsBeforeItsProducerWhereOnlyCodexRuns() throws Exception {
         addCodexTemplates();
-        config.setDelegateMaxTurns(10);
-        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}")));
-        assertEquals(0, backend.mcpInstances().size());
-        config.setDelegateMaxTurns(null);
-        assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\",\"max_turns\":2}")));
-        config.setDelegatePermissionMode("plan");
-        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}")));
-        var policy = new McpConfig.Codex();
-        policy.setSandboxMode("read-only");
-        config.setCodex(policy);
         var task = structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}"));
-        assertEquals("read-only", task.path("permission_mode").asText());
+        assertEquals("danger-full-access", task.path("permission_mode").asText());
         var calls = backend.scripts.size();
         assertEquals("invalid_argument", code(call("exec", "{\"instance\":\"" + task.path("instance").asText()
                 + "\",\"command\":\"touch side-effect\",\"ask\":\"what happened\"}")));
@@ -1363,19 +1340,6 @@ class DelegationToolsTest {
         structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"\",\"skill\":\"review\"}"));
         var check = TaskScripts.isReadableFile("$HOME/.agents/skills/review/SKILL.md");
         assertTrue(backend.scripts.contains(check), backend.scripts.toString());
-    }
-
-    @Test
-    void aGlobalCodexSandboxDoesNotWidenATemplatesOwnClaudeRestriction() throws Exception {
-        addCodexTemplates();
-        config.setDelegatePermissionModes(java.util.Map.of("tpl-codex", "plan"));
-        var policy = new McpConfig.Codex();
-        policy.setSandboxMode("danger-full-access");
-        config.setCodex(policy);
-        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}")));
-        assertEquals(0, backend.mcpInstances().size());
-        policy.setSandboxModes(java.util.Map.of("tpl-codex", "read-only"));
-        assertEquals("read-only", structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}")).path("permission_mode").asText());
     }
 
     @Test
@@ -1417,7 +1381,7 @@ class DelegationToolsTest {
         assertEquals("codex", structured(call("delegate", args)).path("agent").asText());
         assertEquals(1, backend.mcpInstances().size());
         // Versioned records reconstruct the adapter; old versionless rows remain Claude.
-        taskListing = "identity t7-old 1 codex\nt7-old agent 1 done - - =old-key /work\nt8-old agent 1 done - - - /other\n";
+        taskListing = "identity t7-old 1 codex\nt7-old agent 1 done - =old-key /work\nt8-old agent 1 done - - /other\n";
         tasks.adopt("mcp-both-task-abcde");
         assertEquals(DelegateAgent.CODEX, tasks.all().stream().filter(t -> t.id().equals("t7-old")).findFirst().orElseThrow().agent());
         assertEquals(DelegateAgent.CLAUDE, tasks.all().stream().filter(t -> t.id().equals("t8-old")).findFirst().orElseThrow().agent());
@@ -1444,7 +1408,7 @@ class DelegationToolsTest {
         assertEquals(1, pi.path("delegate_agents").size());
         var descriptor = pi.path("delegate_agents").getElement(0);
         assertEquals("pi", descriptor.path("agent").asText());
-        assertFalse(descriptor.path("supports_max_turns").asBoolean(true));
+        assertFalse(((io.hyperfoil.tools.jjq.value.JqObject) descriptor).keys().contains("supports_max_turns"));
         assertFalse(descriptor.path("supports_model_preflight").asBoolean(true));
         assertEquals("full-access", descriptor.path("permission_mode").asText());
         // Claude stays the default where it is installed, Codex keeps its place before Pi.
@@ -1459,23 +1423,6 @@ class DelegationToolsTest {
         assertTrue(backend.scripts.stream().anyMatch(s -> s.contains("command -v pi")), "the CLI is probed before launch");
         assertEquals("pi", structured(call("delegate", "{\"template\":\"tpl-claude-pi\",\"agent\":\"pi\",\"instruction\":\"go\"}")).path("agent").asText());
         assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-pi\",\"agent\":\"claude\",\"instruction\":\"go\"}")));
-    }
-
-    @Test
-    void piIsRefusedUnderARestrictiveClaudePolicyAndATurnCeiling() throws Exception {
-        addPiTemplates();
-        assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\",\"max_turns\":2}")));
-        config.setDelegateMaxTurns(10);
-        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}")));
-        assertTrue(templateNamed("tpl-pi").path("delegate_agents").getElement(0).path("refusal").asText().contains("delegate-max-turns"));
-        config.setDelegateMaxTurns(null);
-        // Pi has no sandbox: a plan worker must never become a fully writable one.
-        config.setDelegatePermissionModes(java.util.Map.of("tpl-pi", "plan"));
-        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}")));
-        config.setDelegatePermissionModes(null);
-        config.setDelegatePermissionMode("acceptEdits");
-        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-pi\",\"instruction\":\"go\"}")));
-        assertEquals(0, backend.mcpInstances().size(), "refused before branching");
     }
 
     @Test
@@ -1542,8 +1489,16 @@ class DelegationToolsTest {
                 "{\"template\":\"tpl-claude-pi\",\"instruction\":\"go\",\"idempotency_key\":\"pi-made\"}")).path("agent").asText());
 
         // An adopting session rebuilds a Pi task from its identity record.
-        taskListing = "identity t9-old 1 pi\nt9-old agent 1 done - - - /work\n";
+        taskListing = "identity t9-old 1 pi\nt9-old agent 1 done - - /work\n";
         tasks.adopt("mcp-claude-pi-task-abcde");
         assertEquals(DelegateAgent.PI, tasks.all().stream().filter(t -> t.id().equals("t9-old")).findFirst().orElseThrow().agent());
+
+        // One a newer isx recorded is never continued as a guess, now that no policy refuses agents.
+        taskListing = "identity t10-new 2 pi\nt10-new agent 1 done - - /work\n";
+        tasks.adopt("mcp-claude-pi-task-abcde");
+        taskState = "finished";
+        var sent = call("send_message", "{\"task_id\":\"t10-new\",\"message\":\"go on\"}");
+        assertEquals("refused", code(sent), text(sent));
+        assertTrue(text(sent).contains("upgrade isx"), text(sent));
     }
 }

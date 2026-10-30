@@ -37,17 +37,15 @@ final class Tasks {
     static final int RESULT_TAIL = 256 * 1024;
 
     /**
-     * What a delegated agent runs under, as the coordinator chose it: a {@code --model} and a
-     * {@code --max-turns}, each null when not chosen (the template's model, the configured
-     * budget). Later runs keep it, each value until one replaces it.
+     * What a delegated agent runs under, as the coordinator chose it: a {@code --model}, null
+     * when not chosen (the template's model). Later runs keep it until one replaces it.
      */
-    record Profile(String model, Integer maxTurns) {
-        static final Profile NONE = new Profile(null, null);
+    record Profile(String model) {
+        static final Profile NONE = new Profile(null);
 
         Profile with(Profile override) {
-            if (override == null) return this;
-            return new Profile(override.model != null ? override.model : model,
-                    override.maxTurns != null ? override.maxTurns : maxTurns);
+            if (override == null || override.model == null) return this;
+            return override;
         }
     }
 
@@ -239,16 +237,15 @@ final class Tasks {
      * counted anew: they may have started more while the caller branched an instance. {@code key}
      * is its idempotency key (null for none), which the caller looked for with {@link #keyed}.
      */
-    Task delegate(String instance, String cwd, String instruction, Profile profile, String permissionMode,
+    Task delegate(String instance, String cwd, String instruction, Profile profile,
                   boolean refresh, Runnable check, String key) {
-        return delegate(instance, cwd, instruction, profile, permissionMode, refresh, check, key, DelegateAgent.CLAUDE);
+        return delegate(instance, cwd, instruction, profile, refresh, check, key, DelegateAgent.CLAUDE);
     }
 
-    Task delegate(String instance, String cwd, String instruction, Profile profile, String permissionMode,
+    Task delegate(String instance, String cwd, String instruction, Profile profile,
                   boolean refresh, Runnable check, String key, DelegateAgent agent) {
-        agent.requireBudget(config.get(), profile);
         var task = reserve(null, null, new Task(nextId(), instance, AGENT, cwd, profile, 1, TaskWatcher.RUNNING, true, key, agent), refresh);
-        return launch(task, null, check, t -> agentRun(t, permissionMode), instruction);
+        return launch(task, null, check, Tasks::agentRun, instruction);
     }
 
     /**
@@ -258,9 +255,9 @@ final class Tasks {
      * Refused while a person is in that conversation: two writers would race on one session.
      * Checked when sent, so a person joining in the seconds after is not seen.
      */
-    Task sendMessage(Task task, String message, Profile override, String permissionMode, Runnable check) {
+    Task sendMessage(Task task, String message, Profile override, Runnable check) {
         if (!AGENT.equals(task.kind())) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "task " + task.id() + " is a command, not a delegated agent.");
-        task.agent().requireBudget(config.get(), task.profile().with(override));
+        task.agent().requireKnown();
         var current = status(task, 0);
         var attached = current.attachedPid();
         if (task.agent() == DelegateAgent.CODEX && !current.running() && current.sessionId() == null) {
@@ -293,24 +290,12 @@ final class Tasks {
                     + "no longer says attached, or ask the user.");
         }
         var reserved = reserve(task.id(), override, null, true);
-        return launch(reserved, task, check, t -> agentRun(t, permissionMode), message);
+        return launch(reserved, task, check, Tasks::agentRun, message);
     }
 
-    /**
-     * The run script of the task's current run. Its turn budget is the task's own, else the
-     * configured one -- and never more than the configured one: a budget chosen under a higher
-     * ceiling is held to the one the user set since.
-     */
-    private String agentRun(Task t, String permissionMode) {
-        return TaskScripts.agentRun(t.id(), t.runs(), t.cwd(), t.profile(), turnBudget(t), permissionMode, t.agent());
-    }
-
-    /**
-     * The turn budget {@code task}'s runs get: the one chosen, within the ceiling the user set
-     * since, else that ceiling; null for none. What launches a run and what every tool reports.
-     */
-    Integer turnBudget(Task task) {
-        return task.agent() != null && !task.agent().supportsMaxTurns() ? null : config.get().delegateMaxTurns(task.profile().maxTurns());
+    /** The run script of the task's current run. */
+    private static String agentRun(Task t) {
+        return TaskScripts.agentRun(t.id(), t.runs(), t.cwd(), t.profile(), t.agent());
     }
 
     /**
@@ -327,7 +312,7 @@ final class Tasks {
             if (p.length >= 2) identities.put(p[1], p.length == 3 ? recordedAgent(p[2]) : DelegateAgent.UNKNOWN);
         }
         for (var line : listing) {
-            var parts = line.strip().split(" ", 8);
+            var parts = line.strip().split(" ", 7);
             if (parts.length < 4 || !parts[0].matches("[a-z0-9-]+")) continue;
             var kind = parts[1];
             if (!AGENT.equals(kind) && !COMMAND.equals(kind)) continue;
@@ -337,10 +322,10 @@ final class Tasks {
             } catch (NumberFormatException e) {
                 continue;
             }
-            var cwd = parts.length > 7 && !parts[7].isBlank() ? parts[7] : IncusInstanceBackend.AGENT_HOME;
-            var profile = parts.length > 5 ? recordedProfile(parts[4], parts[5]) : Profile.NONE;
+            var cwd = parts.length > 6 && !parts[6].isBlank() ? parts[6] : IncusInstanceBackend.AGENT_HOME;
+            var profile = parts.length > 4 ? recordedProfile(parts[4]) : Profile.NONE;
             // Written in the guest: a key only if it reads as one, and matched only in this instance.
-            var key = parts.length > 6 && parts[6].startsWith("=") ? McpSession.keyOf(parts[6].substring(1)) : null;
+            var key = parts.length > 5 && parts[5].startsWith("=") ? McpSession.keyOf(parts[5].substring(1)) : null;
             // An exit recorded is finished (attached, if a person is in it, is read by task_status).
             var state = "running".equals(parts[3]) ? TaskWatcher.RUNNING : "finished";
             var task = new Task(parts[0], instance, kind, cwd, profile, runs, state, false, key,
@@ -367,18 +352,12 @@ final class Tasks {
     }
 
     /**
-     * The profile an instance recorded for a task ({@code -} for a value never chosen). Read
+     * The profile an instance recorded for a task ({@code -} for a model never chosen). Read
      * from inside the instance, so only what a coordinator could have chosen is taken: anything
      * else is dropped, never passed to the next run.
      */
-    static Profile recordedProfile(String model, String maxTurns) {
-        Integer turns = null;
-        try {
-            if (!maxTurns.equals("-")) turns = Integer.parseInt(maxTurns);
-        } catch (NumberFormatException e) {
-            // left unset
-        }
-        return new Profile(McpConfig.isModelName(model) ? model : null, turns != null && turns > 0 ? turns : null);
+    static Profile recordedProfile(String model) {
+        return new Profile(McpConfig.isModelName(model) ? model : null);
     }
 
     /**

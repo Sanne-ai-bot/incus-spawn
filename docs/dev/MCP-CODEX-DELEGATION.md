@@ -54,8 +54,8 @@ One agent task per instance remains the rule, across both agent types.
 
 Add the following discovery fields to `list_templates` and the corresponding instance descriptions:
 
-- `delegate_agents`: descriptors with `agent`, optional template `model`, `supports_max_turns`, and `supports_model_preflight`.
-  Each descriptor also reports its effective permission settings and any configuration refusal that would prevent launch.
+- `delegate_agents`: descriptors with `agent`, optional template `model`, and `supports_model_preflight`.
+  Each descriptor also reports its permission settings, which are fixed at full access inside the instance.
 - `default_delegate_agent`: the selection from the table, omitted when neither agent is available.
 - `supports_ask`: whether this instance can provide the current tool-free summarization service.
   `summary_agent: "claude"` makes its separate credential use explicit when available.
@@ -66,7 +66,7 @@ Keep `delegate_model` as the default agent's configured model, omitting it when 
 The nearest template layer declaring a given tool supplies that tool's parameters, matching current build behavior.
 
 Task records in tool results and `list_instances` gain `agent` for agent tasks only.
-Keep the required `permission_mode` string in launch results: Claude returns its existing mode, and Codex returns its selected sandbox mode alongside `agent: "codex"` and `approval_policy: "never"`.
+Keep the required `permission_mode` string in launch results: Claude returns `bypassPermissions`, and Codex returns its sandbox mode, `danger-full-access`, alongside `agent: "codex"` and `approval_policy: "never"`.
 Update its schema description to name both meanings, without renaming the field or inventing a Claude mode for Codex.
 Status also exposes the persisted `session_id` when known and `resumable` when it can be determined.
 For Codex, `session_id` contains its thread ID.
@@ -214,43 +214,27 @@ Keep any outstanding Codex instances before a downgrade so an old orphan sweep c
 
 ## Permissions, models, and feature differences
 
-Permission policy belongs to host configuration, never to the coordinator's tool arguments.
-Retain the existing Claude permission keys and add Codex-specific settings, in `~/.config/incus-spawn/mcp.yaml`:
-
-```yaml
-templates: [tpl-claude-dev, tpl-codex-dev, tpl-codex-review]
-codex:
-  sandbox-mode: danger-full-access
-  sandbox-modes:
-    tpl-codex-review: read-only
-```
-
-Allow only `read-only`, `workspace-write`, and `danger-full-access`, with `approval_policy=never` on every Codex invocation.
+Permission policy is never a coordinator's tool argument, and since #1857 it is not host configuration either.
+Every Codex invocation runs with `sandbox_mode="danger-full-access"` and `approval_policy="never"`, matching `CodexSetup`; the isx instance is the boundary.
 These are Codex settings, documented in the [CLI reference](https://developers.openai.com/codex/cli/reference/) and [configuration reference](https://developers.openai.com/codex/config-reference/).
-The default matches `CodexSetup` and relies on the existing isx instance boundary.
-If the effective legacy Claude permission setting is restrictive and no explicit Codex setting covers the template, refuse Codex delegation until the user chooses its policy.
-A restriction set for one template in `delegate-permission-modes` is covered only by that template's `sandbox-modes` entry, never by the file-wide `sandbox-mode`.
-Do not silently turn a configured Claude `plan` worker into a fully writable Codex worker.
-Codex sandboxing is not a promise that every remote tool is read-only; the template's credentials remain the external authority boundary.
+The first release had `codex.sandbox-mode` and `codex.sandbox-modes` in `mcp.yaml`, and refused Codex where a restrictive Claude permission mode was not covered by one.
+#1857 removed both: those keys still load, have no effect, and are named so the user can delete them.
+The template's credentials remain the external authority boundary.
 
 `model` defaults to the Codex template's configuration, with no model slug baked into MCP.
 Template reasoning effort remains in effect; a separate per-task effort override can be added later.
 Generalize credential selection from the hard-coded `ModelCheck.NAMESPACE` to the selected adapter: `claude` or `openai`.
 Any preflight cache includes agent, template, effective account, and model.
 
-The first release makes three capability differences explicit:
+The first release makes two capability differences explicit:
 
 | Feature | Claude | Codex in the first release |
 | --- | --- | --- |
-| `max_turns` | Existing native enforcement | Unsupported; reject an explicit request |
 | Model access preflight | Existing tool-free CLI check | Syntactic validation only; access errors become failed task results |
 | `ask` on a Codex-only instance | Requires Claude's summary service | Unsupported; refuse before executing the producer |
 
-Neither local `codex exec --help` nor the fetched CLI reference establishes an equivalent to Claude's maximum agent-turn count.
+No agent has a turn limit: #1857 removed `max_turns` and `delegate-max-turns`, which only Claude could enforce and which refused Codex while set.
 Do not confuse Codex's terminal `turn.completed` with Claude's internal agent-loop turns, and do not reinterpret turns as tokens or wall time.
-If `delegate-max-turns` in `mcp.yaml` is configured, Codex delegation and continuation are refused because the server cannot enforce that ceiling.
-Discovery reports this refusal before a coordinator tries to branch a worker.
-The user would have to revise that policy explicitly to use Codex in the first release.
 A future provider-independent time budget needs a guest-side watchdog that survives host disconnects and kills marked descendants; it must be designed separately from turn accounting.
 
 Do not run a normal tool-enabled Codex invocation as a supposedly harmless model preflight or summarizer.
@@ -286,7 +270,7 @@ No changes to `McpBridge`, credential exposure, ownership checks, trusted defini
 
 Validation must cover:
 
-- Claude-only, Codex-only, both-agent, inherited-agent, and no-agent templates; explicit selection; stale binaries; model defaults; and restrictive or unsupported policy.
+- Claude-only, Codex-only, both-agent, inherited-agent, and no-agent templates; explicit selection; stale binaries; model defaults; and unsupported agent metadata.
 - Stub executables under real bash and Node for initial run, stdin follow-up, quoting, non-ASCII prompts, empty and malformed events, oversized records, missing thread IDs, and terminal failures.
 - A final report larger than the status tail, a thread event emitted long before interruption, independent stdout and stderr, atomic-write failures, and hostile FIFO or symlink task files.
 - Coordinator exit and adoption while Codex is running, restart before first output, cancellation of grandchildren, dormant stop and resume, human takeover, and legacy Claude task adoption.

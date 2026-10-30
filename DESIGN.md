@@ -3444,7 +3444,15 @@ The [Codex worker design](docs/dev/MCP-CODEX-DELEGATION.md) describes agent disc
 Existing Claude-only calls retain their defaults; mixed templates default to Claude, then Codex, and Pi-only templates default to Pi.
 The [Pi worker design](docs/dev/MCP-PI-DELEGATION.md) records what differs for Pi.
 Pi resumes by an exact session ID isx chooses before launch, so nothing has to be captured; but `--session-id` silently creates a missing session, so a resume checks that the session header's creation time is run 1's.
-Pi has no sandbox or permission modes, so a restrictive Claude policy refuses Pi rather than widening into a fully writable worker; a read-only Pi through `--tools` is a separate decision.
+Pi has no sandbox or permission modes, so it always runs with every tool.
+
+**Workers run with full access, bounded by the instance (#1857).**
+Claude runs in `bypassPermissions`, Codex in `danger-full-access` with `approval_policy=never`, Pi with every tool, and none has a turn limit (`DelegateAgent.permissionMode`).
+`mcp.yaml` once had `delegate-permission-mode(s)`, `delegate-max-turns` and `codex.sandbox-mode(s)`, and a delegate's `max_turns`.
+They added policy surface and refusals that coupled the agents: Codex and Pi were refused while a Claude mode was restrictive or a turn ceiling set, since neither could honour it.
+The isolation boundary is the instance itself, its proxy account bounding what credentials reach, so a narrower mode inside it protected nothing the instance does not.
+The keys stay readable (`McpConfig.RETIRED`) because an unknown key makes the whole policy `Invalid`, which would have broken every MCP call for anyone who set one; they have no effect, `isx mcp` logs once at start and `isx init` warns, and a save drops them.
+A `max_turns` argument is refused as `invalid_argument` rather than ignored, so a caller that relied on a budget learns it has none; the output schemas lost `supports_max_turns`, `refusal`, `delegate_max_turns` and `max_turns`, a deliberate removal in a contract that otherwise only grows.
 
 **Hand-rolled protocol, measured.**
 The Quarkus MCP extension was tried first, initialized only on demand (`quarkus.mcp.server.stdio.initialization-enabled=false`, started explicitly by the command).
@@ -3621,7 +3629,7 @@ The answer is as untrusted as any output and lossy besides, so the tool descript
 **Fewer calls per tick.**
 `wait_any` blocks until any of several tasks finishes, probing each instance once per two seconds, instead of the coordinator polling N tasks in turn.
 `delegate(skill, args)` runs `/<skill> <args>` so that the brief lives in the instance, versioned with the template, and the coordinator sends a name.
-The delegate's permission mode is always passed explicitly (`--permission-mode`, from `delegate-permission-mode` in `mcp.yaml` or its per-template override, default `bypassPermissions` as isx's managed settings already set).
+The delegate's permission mode is always passed explicitly (`--permission-mode bypassPermissions`, as isx's managed settings already set).
 A headless agent that meets a permission prompt has nobody to answer it.
 The refusals it does meet are surfaced from the result event's `permission_denials` in `task_status` and `task_result` instead of failing silently.
 
@@ -3672,7 +3680,7 @@ A daemon driving `isx mcp` is a client that is not a model, and it should not ha
 So every tool declares an `outputSchema` in `tools/list` and returns a matching `structuredContent` object (MCP 2025-06-18), while the text the model reads stays as it was.
 The five tools that already answered in JSON print the structure itself, followed by guidance that is not part of it.
 Field names are shared across tools (`instance`, `template`, `task_id`, `state`, `exit_code`, `run`, matching the `isx/task_changed` notification).
-One word means one thing everywhere: a task's `state` is always from `OutputSchemas.TASK_STATES` (the notification adds `released` and never says `unknown`; `McpOutputSchemaTest` pins both), including a task entry in `list_instances`, which gives the state as the session last saw it, after asking each instance with a task believed running which have finished (one exec per instance, #1278) -- `unknown` when nothing read how it ended, as after a `cancel` (a boolean `running` there would have been frozen at release: once the session knew more, saying it would take a second field for the same fact), a no-op lifecycle call says `already: true` (`stop`, `start`, `destroy`), `max_turns` is the budget the run actually gets (the ceiling applied) in every tool, and a field isx cannot fill truthfully is left out rather than given a placeholder.
+One word means one thing everywhere: a task's `state` is always from `OutputSchemas.TASK_STATES` (the notification adds `released` and never says `unknown`; `McpOutputSchemaTest` pins both), including a task entry in `list_instances`, which gives the state as the session last saw it, after asking each instance with a task believed running which have finished (one exec per instance, #1278) -- `unknown` when nothing read how it ended, as after a `cancel` (a boolean `running` there would have been frozen at release: once the session knew more, saying it would take a second field for the same fact), a no-op lifecycle call says `already: true` (`stop`, `start`, `destroy`), and a field isx cannot fill truthfully is left out rather than given a placeholder.
 Every schema object is closed, and the schemas live in `OutputSchemas`, built only when `isx mcp` lists its tools.
 They are a contract, so `McpOutputSchemaTest` keeps a golden copy (a change is a deliberate diff), compiles each one against the 2020-12 metaschema with networknt's validator -- the one the official MCP Java SDK uses -- and refuses a `$schema` naming another dialect, since clients dispatch on it.
 `StructuredResults` validates every result the tool tests produce, and one test drives every tool.
@@ -3721,7 +3729,7 @@ Nothing in the package can write config or definitions; `McpNoWritePathTest` pin
 **The policy has a file of its own (#1331).**
 Every MCP setting lives at the top level of `mcp.yaml` in the host user's configuration directory, with the names, meanings and defaults the `mcp:` section of `config.yaml` had.
 That section is no longer read at all: it stays in `config.yaml` as any unknown key does, so a save does not delete what the user wrote, and `isx mcp` and `isx init` say to move it.
-Its presence alone, with no `mcp.yaml` yet, makes the policy `Invalid`: the defaults would replace what the user wrote there (a longer orphan grace, a narrower permission mode), so the first session after an upgrade would sweep orphans early and release a coordinator's instances, and `isx init` saving approvals would make the wider policy permanent.
+Its presence alone, with no `mcp.yaml` yet, makes the policy `Invalid`: the defaults would replace what the user wrote there (a longer orphan grace, fewer instances), so the first session after an upgrade would sweep orphans early and release a coordinator's instances, and `isx init` saving approvals would make the wider policy permanent.
 Nothing is taken from the section; it only stops isx guessing.
 An empty section (`mcp:` or `mcp: {}`) set nothing the defaults would widen, so it does not count.
 A `config.yaml` that does not parse counts the same, since `SpawnConfig.load()` would read it as empty and hide the section.
@@ -3731,7 +3739,8 @@ MCP was experimental, so this is a clean break: no fallback, no merging and no m
 A missing file or an empty document approves nothing.
 One that cannot be read, does not parse, or holds a key or value isx does not know throws `McpConfig.Invalid`, naming the file; `isx mcp` turns that into a `refused` error for the call that needed the policy, never an earlier policy and never defaults.
 Unknown keys are refused rather than ignored because ignoring them drops a restriction in silence: a mistyped `max-instance: 2`, or the old section pasted with its `mcp:` line, would otherwise leave the defaults in force.
-Values that were only checked on use (permission modes, the summary model, Codex sandbox modes) are checked at load for the same reason, so a bad one stops every call rather than only the one that reads it.
+Retired keys (`McpConfig.RETIRED`) are the one exception: they restricted nothing that still exists, so they load and are named instead.
+Values that were only checked on use (the summary model) are checked at load for the same reason, so a bad one stops every call rather than only the one that reads it.
 `isx init` is the only writer: it writes the file only when an approval changes, owner-only into a temporary file renamed over it (over a symlink's target, so a dotfiles link stays a link) (a session reading meanwhile sees one policy or the other, never a truncated file), and leaves an invalid one alone.
 `host-routes:` stays in `config.yaml`: it is proxy routing that a controller without MCP may use, and its template list answers who may reach a service, not which templates an agent may create instances from, so neither list is derived from the other.
 The split organizes the configuration; it is not a new security boundary, since both files belong to the same host user.
@@ -3808,12 +3817,11 @@ That is what makes "fix it, don't push" -> review `get_diff` -> "push and open t
 One agent per instance, because two would clash in one working tree; `delegate(template=...)` gives parallelism instead.
 
 **Per-task profiles (#1012).**
-A coordinator spends tokens per kind of work -- a small model and a short budget for a rebase, a large one for a design -- so `delegate` and `send_message` take `model` and `max_turns`, passed as `--model` and `--max-turns`.
-Without them nothing changes: no `--model`, so the template's `settings.json` model applies (`list_templates` shows it as `delegate_model`: the `model` parameter of the nearest layer listing the `claude` tool, which the build reconfigures with that layer's parameters alone), and `delegate-max-turns` in `mcp.yaml`.
+A coordinator spends tokens per kind of work -- a small model for a rebase, a large one for a design -- so `delegate` and `send_message` take `model`, passed as `--model`.
+Without it nothing changes: no `--model`, so the template's `settings.json` model applies (`list_templates` shows it as `delegate_model`: the `model` parameter of the nearest layer listing the `claude` tool, which the build reconfigures with that layer's parameters alone).
 The alternative, a template per model, made every profile a build.
-Three bounds:
-- *The budget is the user's.*
-  `max_turns` may narrow `delegate-max-turns` in `mcp.yaml`, never exceed it, and a budget recorded under a higher ceiling is held to a lower one set since -- the same rule as everything in `mcp.yaml`, which an agent can narrow and never widen.
+A turn budget (`max_turns`, capped by `delegate-max-turns`) was part of it until #1857 removed it with the other delegate policies.
+Two bounds:
 - *The model is the account's.*
   A model the template's credential cannot use must fail the call, not the task, which would cost a branch and a poll to discover.
   The check (`ModelCheck`) is a one-turn, tool-less `claude -p --model <m>` in the instance, through its proxy account: the same path the task takes, so it answers alike for a model id, an alias (`haiku`, `opus[1m]`) and a Vertex account's naming.
@@ -3830,11 +3838,11 @@ Three bounds:
 - *The permission mode is not part of it* (#858): what a delegate may do stays the template's.
 
 The model passes `McpConfig.isModelName()` (also what `summary-model` must match; it starts with a letter or digit, so it cannot read as an option) and is shell-quoted.
-A task's profile is recorded with the task, in `~/.isx-mcp/tasks/<id>/model` and `max-turns`, where all its state lives, and `TaskScripts.list()` reports it, so an adopting session keeps it.
-Read back from the instance, it is taken only if it is still a model name and a positive number.
+A task's profile is recorded with the task, in `~/.isx-mcp/tasks/<id>/model`, where all its state lives, and `TaskScripts.list()` reports it, so an adopting session keeps it.
+Read back from the instance, it is taken only if it is still a model name.
 Once adopted, the recorded profile is advisory: the delegate could have rewritten those files, so a later turn that names no model may run on one the coordinator did not choose, shown by `task_status` as the task's.
 A turn that names one is always checked, even when it names the recorded one (the account may have changed too); the cache makes the repeat free.
-That is no escalation -- the ceiling still clamps every run, and the guest can run `claude --model` itself through the same account.
+That is no escalation: the guest can run `claude --model` itself through the same account.
 
 **A coordinator in a box (#915).**
 The coordinating agent runs untrusted text all day -- reports and triage lines come out of the boxes it drives -- and on the host it acts with the user's shell and the user's `gh` login.

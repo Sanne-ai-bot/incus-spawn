@@ -15,16 +15,17 @@ paths:
 `isx mcp` serves the Model Context Protocol over stdio so an agent on the host can use isx instances -- or, through the proxy, an agent in an instance branched with `--mcp-client`.
 DESIGN.md "MCP server: delegating work to isx instances" has the rationale; these are the invariants.
 Managed delegation supports Claude Code, Codex and Pi through the closed `DelegateAgent` registry.
-`list_templates.delegate_agents` exposes installed agents, capabilities, permissions and configuration refusals; explicit `delegate.agent` selects one, otherwise Claude wins when installed, then Codex, then Pi.
+`list_templates.delegate_agents` exposes installed agents, capabilities and permissions; explicit `delegate.agent` selects one, otherwise Claude wins when installed, then Codex, then Pi.
 `send_message` keeps the task's recorded agent, including after adoption and idempotent replay.
 `send_message` and `delegate(instance=...)` re-check the instance's template with `TemplatePolicy.requireLineage` to select the agent, so follow-ups are refused once that template is unapproved, project-local or has no definition.
 The [Codex worker design](../../docs/dev/MCP-CODEX-DELEGATION.md) describes the lifecycle and capability differences.
 Codex runs through the bundled guest Node runner (`mcp/codex-runner.cjs`, included in native resources), which saves the thread ID while running and publishes outcome and report files before the exit record.
 Task identity is `1 <agent>` in the `identity` file; absence means legacy Claude, while an unknown version or agent refuses continuation.
 The keyed creation stamp `mcp-delegate-agent` preserves selection before the first task exists and is cleared on copies like other MCP stamps.
-Codex's namespace is `openai`, its approval policy is always `never`, and its sandbox mode comes only from the `codex:` settings of `mcp.yaml`.
-A restrictive Claude `delegate-permission-modes` entry for a template is covered only by that template's `codex.sandbox-modes` entry, never by the section-wide `codex.sandbox-mode` (`McpConfig.codexSandboxMode`).
-Codex rejects `max_turns` and a configured `delegate-max-turns` ceiling; it does no paid model preflight.
+Every agent runs with full access inside its instance and no turn limit (#1857): `DelegateAgent.permissionMode` is fixed per agent, never configured or a tool argument.
+`delegate-max-turns`, `delegate-permission-mode(s)` and `codex.sandbox-mode(s)` in `mcp.yaml` are retired (`McpConfig.RETIRED`): they load, change nothing, and `retiredKeysNotice` names them at `isx mcp` start and in `isx init`; never refuse an agent for policy again.
+A `max_turns` argument is refused as `invalid_argument` (`McpTool.Args.has`), not ignored, so a caller relying on it learns its runs are unlimited.
+Codex's namespace is `openai`, its approval policy is always `never` and its sandbox `danger-full-access`; it does no paid model preflight.
 `ask` requires Claude and is checked before the producer runs against the template's current definition; one without a definition is left to `AskScript`'s in-instance check; do not substitute a tool-enabled Codex as a summarizer.
 The [Pi worker design](../../docs/dev/MCP-PI-DELEGATION.md) records how Pi differs.
 Pi runs through `mcp/pi-runner.cjs`, which shares `mcp/runner-io.cjs` with the Codex runner (`WorkerRunners.of(agent)` concatenates them).
@@ -32,8 +33,8 @@ Run 1 chooses a random session UUID before Pi starts and every run passes `--ses
 Pi writes its session file only when the first user or assistant message is appended, so the runner publishes `session_id` at the record after that `message_end`; a Pi task without one is not `resumable`, and `send_message` refuses it.
 `TaskScripts.piSessionCheck` refuses unless `<session_started with : and . as ->_<id>.jsonl` is still in the folder Pi itself uses for the task's recorded cwd (`TaskScripts.PI_PROJECT_SESSIONS`, Pi's `getDefaultSessionDirPath`, or `PI_CODING_AGENT_SESSION_DIR`), as `pi --session-id` would open a new session and write the message into it.
 It runs before a join, before a Pi resume in the run script, and in `send_message` (`piSessionStatus`, one exec), which refuses with `wrong_state` and writes nothing.
-Pi has no sandbox: it always runs with every tool (`permission_mode: full-access`), and any restrictive Claude permission policy for the template refuses it (`McpConfig.piPermissionMode`); never map that policy to a Pi option without a design decision.
-Pi rejects `max_turns` and a `delegate-max-turns` ceiling and does no model preflight; its namespace is left empty, since only Claude's preflight reads one.
+Pi has no sandbox: it always runs with every tool (`permission_mode: full-access`).
+Pi does no model preflight; its namespace is left empty, since only Claude's preflight reads one.
 `instance_activity.model_usage_providers` declares the proxy's Anthropic-only model counters; OpenAI traffic remains in the domain counters.
 
 **No Quarkus extensions for it.**
@@ -68,7 +69,7 @@ When `min-interval` is 0, concurrent calls block until the running one finishes.
 A tool name that conflicts with a built-in refuses the config.
 
 **Every result is structured too (#1010).**
-Each `McpTool` declares an `outputSchema` (built in `OutputSchemas`, closed objects, shared field names: `instance`, `template`, `task_id`, `state`, `exit_code`, `run`; a task `state` only from `TASK_STATES` and only where it is known (`list_instances` gives `Tasks.Task.state`, as last seen, after the same probe of running tasks `wait_any` makes: `unknown` when nothing read how it ended, e.g. after a `cancel`), `already` for a no-op lifecycle call, `max_turns` as the run gets it, no placeholder values), and every successful result is `ToolResult.text(text, structured)` or `ToolResult.json(structured[, note])`; the text for the model stays prose.
+Each `McpTool` declares an `outputSchema` (built in `OutputSchemas`, closed objects, shared field names: `instance`, `template`, `task_id`, `state`, `exit_code`, `run`; a task `state` only from `TASK_STATES` and only where it is known (`list_instances` gives `Tasks.Task.state`, as last seen, after the same probe of running tasks `wait_any` makes: `unknown` when nothing read how it ended, e.g. after a `cancel`), `already` for a no-op lifecycle call, no placeholder values), and every successful result is `ToolResult.text(text, structured)` or `ToolResult.json(structured[, note])`; the text for the model stays prose.
 A failure is a `ToolError` whose thrower names its `ToolError.Code` (no default constructor; `Args` errors are `invalid_argument`, an escaping `IncusException` is `unavailable`, another isx operation holding the instance is `busy`, a `BranchFlow.preflight` refusal in `create_instance` is `refused` because the user must act, as is a proxy older than `/activity` in `instance_activity` (`ProxyActivity.Outdated`); only `unavailable` and `busy` may succeed on a retry as is) and becomes an `isError` result with **no `structuredContent`** and the code in `_meta["dev.incusspawn/error"]`.
 The 1.x TypeScript SDKs validate `structuredContent` even on errors, and Claude Code ships them.
 A schema change must update the golden `cli/src/test/resources/mcp/output-schemas.json` (`McpOutputSchemaTest`, `-Dmcp.output-schemas.update=true`); `StructuredResults` (test) checks every result `McpToolsTest`/`DelegationToolsTest` produce against its schema with networknt's 2020-12 validator, and `everyToolReturnsStructuredContentMatchingItsSchema` must reach every tool, so a new tool needs a step there.
@@ -106,8 +107,7 @@ The guest command checks both again just before it starts the agent (`TaskScript
 Every run and every joined agent starts under `TaskScripts.CONVERSATION_LOCK` (`flock -n -o` on the task directory), so a run and a person who joined through `isx shell --task` (or Shift+F2) never both hold one conversation; one who resumes by hand takes no lock and has only the `attached` check; a run that finds it taken exits 213 (`CONVERSATION_TAKEN`), and one without flock in the guest exits 127 saying so.
 Codex resume parsing skips options and their values before reading the positional session ID, even when the person launches from another directory.
 Pi overwrites its command line with its title, so `Presence` finds a person's Pi by name and working directory only; that is enough, as Pi's sessions belong to their directory.
-A delegate's `model`/`max_turns` (`Tasks.Profile`) live on the task and in its directory, so later runs and adopting sessions keep them.
-`max_turns` never exceeds `delegate-max-turns` in `mcp.yaml` (refused at the call, clamped for a recorded one).
+A delegate's `model` (`Tasks.Profile`) lives on the task and in its directory, so later runs and adopting sessions keep it; a `max-turns` file an older isx left there is no longer read.
 A chosen model passes `ModelCheck` in the instance once the run's slot is reserved, before it launches (`Tasks.launch`'s `check`; under `timeout`; cached per template, the account `InstanceBackend.effectiveAccount` resolves the pin to now, and model; refusals not cached; only a `result`/`success` event with exit 0 passes, and a turn naming a model is checked even if it is the task's).
 The permission mode is never a tool argument.
 `ask` (`AskScript`) runs the producer and a tool-less `claude -p --model <summary-model>` in the instance, never on the host.

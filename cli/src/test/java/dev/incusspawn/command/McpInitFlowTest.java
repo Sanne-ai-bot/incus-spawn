@@ -228,6 +228,22 @@ class McpInitFlowTest {
         assertEquals(List.of(), host.registrations);
     }
 
+    /** Delegate policies removed in #1857 load, are named, and are gone once approvals are saved. */
+    @Test
+    void retiredDelegatePoliciesAreNamedAndDroppedOnSave() throws Exception {
+        var host = new Host();
+        host.registered = true;
+        var seeded = "templates: [tpl-agent]\ndelegate-max-turns: 40\ndelegate-permission-mode: plan\n";
+        seedMcp(seeded);
+        var out = reported(() -> run(host, ScriptedPrompts.lines("")));
+        assertMcpUnchanged(seeded);
+        assertTrue(out.contains("delegate-max-turns, delegate-permission-mode, which no longer have any effect"), out);
+
+        run(host, ScriptedPrompts.lines("t", "y", "y"));
+        assertEquals(List.of("tpl-agent", "tpl-agent-java"), approved());
+        assertFalse(Files.readString(McpConfig.file()).contains("delegate"), Files.readString(McpConfig.file()));
+    }
+
     @Test
     void anUnknownChoiceAsksAgain() throws Exception {
         var host = new Host();

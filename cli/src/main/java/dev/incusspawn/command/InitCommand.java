@@ -922,6 +922,8 @@ public class InitCommand extends BaseCommand {
         }
         var legacy = McpConfig.legacySectionNotice(SpawnConfig.load());
         if (legacy != null) BuildOutput.step(Character.toUpperCase(legacy.charAt(0)) + legacy.substring(1) + ".");
+        var retired = mcp.retiredKeysNotice();
+        if (retired != null) BuildOutput.warn(retired + ".", "Saving the approvals here removes them too.");
         var registered = claudeMcpRegistered();
         var approved = mcp.templates();
         var candidates = defs.values().stream()

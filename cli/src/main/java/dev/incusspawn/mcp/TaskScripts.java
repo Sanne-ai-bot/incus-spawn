@@ -166,16 +166,15 @@ final class TaskScripts {
      * The run script of one turn of a delegated agent. Run 1 records, for every git repository
      * at or under {@code cwd}, the commit it started from, which {@link #diff} compares against.
      * Every run records the profile the task {@code chosen}, which an adopting session reads
-     * back with {@link #list}, and runs on its model with {@code maxTurns}, the budget the
-     * session gives it, as its turn budget.
+     * back with {@link #list}, and runs on its model in the agent's {@link DelegateAgent#permissionMode},
+     * with no turn limit.
      */
-    static String agentRun(String taskId, int run, String cwd, Tasks.Profile chosen, Integer maxTurns,
-                           String permissionMode) {
-        return agentRun(taskId, run, cwd, chosen, maxTurns, permissionMode, DelegateAgent.CLAUDE);
+    static String agentRun(String taskId, int run, String cwd, Tasks.Profile chosen) {
+        return agentRun(taskId, run, cwd, chosen, DelegateAgent.CLAUDE);
     }
 
-    static String agentRun(String taskId, int run, String cwd, Tasks.Profile chosen, Integer maxTurns,
-                           String permissionMode, DelegateAgent agent) {
+    static String agentRun(String taskId, int run, String cwd, Tasks.Profile chosen, DelegateAgent agent) {
+        var permissionMode = agent.permissionMode();
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
@@ -201,9 +200,6 @@ final class TaskScripts {
         if (chosen.model() != null) {
             sb.append("printf '%s' ").append(ExecScript.quote(chosen.model())).append(" > \"$D/model\"\n");
         }
-        if (chosen.maxTurns() != null) {
-            sb.append("echo ").append(chosen.maxTurns().intValue()).append(" > \"$D/max-turns\"\n");
-        }
         if (agent == DelegateAgent.PI && run > 1) {
             // Checked here too, not only by send_message: an adopting session or a file removed since
             // must not let Pi write the message into a new session.
@@ -228,7 +224,6 @@ final class TaskScripts {
         sb.append(CONVERSATION_LOCK).append("claude -p --output-format stream-json --verbose")
                 .append(" --append-system-prompt \"$(cat \"$D/brief.md\")\"");
         if (chosen.model() != null) sb.append(" --model ").append(ExecScript.quote(chosen.model()));
-        if (maxTurns != null) sb.append(" --max-turns ").append(maxTurns.intValue());
         // Always explicit: a headless agent that meets a permission prompt has nobody to answer it.
         sb.append(" --permission-mode ").append(ExecScript.quote(permissionMode));
         if (run > 1) sb.append(" --resume \"$(cat \"$D/session_id\")\"");
@@ -405,7 +400,7 @@ final class TaskScripts {
 
     /**
      * Every task recorded in the instance, one per line: {@code <id> <kind> <run> <running|done>
-     * <model> <max-turns> <key> <cwd>}, with {@code -} for a profile value never chosen; the key
+     * <model> <key> <cwd>}, with {@code -} for a model never chosen; the key
      * is {@code =<key>}, or {@code -} for a task started without one ({@code -} is a key too). How an
      * adopting session learns the tasks the previous one started; whether a {@code running} one
      * really is, it then asks systemd with {@link #states}.
@@ -415,13 +410,12 @@ final class TaskScripts {
                 + "n=$(" + readFile("$d/current") + "); [ -n \"$n\" ] || continue; "
                 + "if [ -f \"$d/exit-$n\" ]; then r=done; else r=running; fi; "
                 + "m=$(" + ifFile("$d/model", "head -c 200") + " | tr -d ' \\n'); "
-                + "t=$(" + ifFile("$d/max-turns", "head -c 20") + " | tr -d ' \\n'); "
                 // '=' marks a key: '-' is one too, so it cannot also mean none.
                 + "k=-; [ -f \"$d/key\" ] && k==$(" + ifFile("$d/key", "head -c 64") + " | tr -d ' \\n'); "
                 + "{ [ ! -e \"$d/identity\" ] && [ ! -L \"$d/identity\" ]; } || { printf 'identity %s ' \"$(basename \"$d\")\"; "
                 + ifFile("$d/identity", "head -c 200") + "; echo; }; "
-                + "printf '%s %s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(" + readFile("$d/kind") + ")\" \"$n\" \"$r\" "
-                + "\"${m:--}\" \"${t:--}\" \"$k\" \"$(" + readFile("$d/cwd") + ")\"; done; exit 0";
+                + "printf '%s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(" + readFile("$d/kind") + ")\" \"$n\" \"$r\" "
+                + "\"${m:--}\" \"$k\" \"$(" + readFile("$d/cwd") + ")\"; done; exit 0";
     }
 
     /**

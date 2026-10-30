@@ -31,11 +31,6 @@ import java.util.regex.Pattern;
  * templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
  * max-instances: 8                 # per host user, across sessions, counting creates in flight
  * max-concurrent-tasks: 8          # background commands and delegated agents, per host user, across sessions
- * delegate-max-turns: 200          # passed to the inner agent as --max-turns; a delegate's
- *                                  # max_turns may narrow it, never exceed it
- * delegate-permission-mode: bypassPermissions   # passed to every delegate as --permission-mode
- * delegate-permission-modes:       # per-template overrides of it
- *   tpl-review: plan
  * orphan-grace-hours: 24           # how long an instance outlives the session that held it
  * dormant-after-hours: 24          # past that, an orphan kept only for a task that shows no
  *                                  # activity this long is stopped, not destroyed
@@ -54,6 +49,10 @@ import java.util.regex.Pattern;
  * run until it is fixed, so a mistyped restriction is never dropped in silence (#1331). An
  * {@code mcp:} section left in {@code config.yaml} is never read.
  *
+ * Delegates run with full access inside their instance, which is the boundary (#1857): the
+ * keys that once narrowed them ({@link #RETIRED}) still load, have no effect, and are named by
+ * {@link #retiredKeysNotice()} so the user can delete them.
+ *
  * Unset limits are never written back, so a saved file does not pin today's defaults.
  */
 @JqInclude(JqInclude.Include.NON_NULL)
@@ -71,8 +70,13 @@ public class McpConfig {
 
     public static final int DEFAULT_MAX_INSTANCES = 8;
     public static final int DEFAULT_MAX_CONCURRENT_TASKS = 8;
-    /** What every isx template's managed settings already default to; passed explicitly. */
-    public static final String DEFAULT_PERMISSION_MODE = "bypassPermissions";
+    /**
+     * Settings removed in #1857, accepted so a file that still sets them keeps working. A
+     * {@code codex:} section is one only while it holds nothing but its sandbox settings.
+     */
+    static final Set<String> RETIRED = Set.of(
+            "delegate-max-turns", "delegate-permission-mode", "delegate-permission-modes", "codex");
+    private static final Set<String> RETIRED_CODEX = Set.of("sandbox-mode", "sandbox-modes");
     public static final int DEFAULT_ORPHAN_GRACE_HOURS = 24;
     public static final int DEFAULT_DORMANT_AFTER_HOURS = 24;
     public static final int DEFAULT_DORMANT_GRACE_HOURS = 168;
@@ -82,10 +86,9 @@ public class McpConfig {
      */
     public static final String DEFAULT_SUMMARY_MODEL = "haiku";
     /**
-     * Permission modes and model names are passed to {@code claude}; nothing else is allowed.
+     * Model names are passed to {@code claude}; nothing else is allowed.
      * A model starts with a letter or digit, so it cannot be read as an option.
      */
-    private static final Pattern MODE = Pattern.compile("[A-Za-z]{1,40}");
     private static final Pattern MODEL = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:@/\\[\\]-]{0,119}");
 
     @JqName("templates")
@@ -96,13 +99,6 @@ public class McpConfig {
     @JqName("max-concurrent-tasks")
     @JqConverter(IntegerConverter.class)
     private Integer maxConcurrentTasks;
-    @JqName("delegate-max-turns")
-    @JqConverter(IntegerConverter.class)
-    private Integer delegateMaxTurns;
-    @JqName("delegate-permission-mode")
-    private String delegatePermissionMode;
-    @JqName("delegate-permission-modes")
-    private Map<String, String> delegatePermissionModes;
     @JqName("orphan-grace-hours")
     @JqConverter(IntegerConverter.class)
     private Integer orphanGraceHours;
@@ -115,35 +111,30 @@ public class McpConfig {
     @JqName("summary-model")
     private String summaryModel;
 
-    @JqName("codex")
-    private Codex codex;
-
     @JqName("host-tools")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object hostToolsRaw;
 
-    // Keys isx does not know, only to refuse them: never written back.
+    // Keys isx does not know, only to refuse them, and retired ones, only to name them: never written back.
     @JqIgnore
     private final List<String> unknown = new ArrayList<>();
+    @JqIgnore
+    private final List<String> retired = new ArrayList<>();
 
     @JqAnySetter
-    public void setUnknown(String key, Object value) { unknown.add(key); }
-
-    @JqInclude(JqInclude.Include.NON_NULL)
-    @JqMapped
-    public static class Codex {
-        @JqName("sandbox-mode")
-        private String sandboxMode;
-        @JqName("sandbox-modes")
-        private Map<String, String> sandboxModes;
-        @JqIgnore
-        private final List<String> unknown = new ArrayList<>();
-
-        public void setSandboxMode(String mode) { sandboxMode = mode; }
-        public void setSandboxModes(Map<String, String> modes) { sandboxModes = modes; }
-
-        @JqAnySetter
-        public void setUnknown(String key, Object value) { unknown.add(key); }
+    public void setUnknown(String key, Object value) {
+        if (!RETIRED.contains(key)) {
+            unknown.add(key);
+        } else if (!key.equals("codex") || value == null || value instanceof Map<?, ?> m && m.isEmpty()) {
+            retired.add(key);
+        } else if (value instanceof Map<?, ?> codex) {
+            for (var k : codex.keySet()) {
+                if (RETIRED_CODEX.contains(String.valueOf(k))) retired.add("codex." + k);
+                else unknown.add("codex." + k);
+            }
+        } else {
+            unknown.add(key);
+        }
     }
 
     /**
@@ -267,7 +258,7 @@ public class McpConfig {
      * The policy in {@link #file()}, read now: defaults (nothing approved) when there is none.
      * While config.yaml still has the {@code mcp:} section this file replaced and there is no
      * file yet, it is {@link Invalid} instead: the defaults would widen what the user wrote there
-     * (a longer orphan grace, a narrower permission mode), and an {@code isx init} saving its
+     * (a longer orphan grace, fewer instances), and an {@code isx init} saving its
      * approvals would make that permanent. Nothing is read from the section.
      */
     public static McpConfig load() {
@@ -344,25 +335,18 @@ public class McpConfig {
                     ? "the settings go at the top level of mcp.yaml, without an enclosing mcp: key"
                     : "unknown key " + String.join(", ", unknown));
         }
-        if (delegatePermissionMode != null) requirePermissionMode("delegate-permission-mode", delegatePermissionMode);
-        // An empty per-template entry falls back to the file's own setting, as on use.
-        if (delegatePermissionModes != null) {
-            delegatePermissionModes.forEach((template, mode) -> {
-                if (mode != null) requirePermissionMode("delegate-permission-modes." + template, mode);
-            });
-        }
         summaryModel();
-        if (codex != null) {
-            if (!codex.unknown.isEmpty()) {
-                throw new IllegalArgumentException("unknown key codex." + String.join(", codex.", codex.unknown));
-            }
-            if (codex.sandboxMode != null) requireSandboxMode("codex.sandbox-mode", codex.sandboxMode);
-            if (codex.sandboxModes != null) {
-                codex.sandboxModes.forEach((template, mode) -> {
-                    if (mode != null) requireSandboxMode("codex.sandbox-modes." + template, mode);
-                });
-            }
-        }
+    }
+
+    /**
+     * What to tell the user while the file still sets settings that no longer have any effect,
+     * or null when it sets none.
+     */
+    public String retiredKeysNotice() {
+        return retired.isEmpty() ? null
+                : file() + " sets " + String.join(", ", retired) + ", which no longer "
+                        + (retired.size() == 1 ? "has" : "have") + " any effect: delegated agents run with full access "
+                        + "inside their instance; delete " + (retired.size() == 1 ? "it" : "them");
     }
 
     /**
@@ -403,59 +387,6 @@ public class McpConfig {
         }
     }
 
-    public void setCodex(Codex codex) { this.codex = codex; }
-
-    /**
-     * Codex's sandbox for {@code template}: its {@code sandbox-modes} entry, else the section's
-     * {@code sandbox-mode}, else {@code danger-full-access}. A restrictive Claude permission mode
-     * is never widened by a default: one set for this template in {@code delegate-permission-modes}
-     * needs this template's own {@code sandbox-modes} entry, a section-wide one at least the
-     * section-wide {@code sandbox-mode}.
-     */
-    public String codexSandboxMode(String template) {
-        var mode = codex == null || codex.sandboxModes == null ? null : codex.sandboxModes.get(template);
-        if (mode == null) {
-            var restricted = !DEFAULT_PERMISSION_MODE.equals(delegatePermissionMode(template));
-            if (restricted && delegatePermissionModes != null && delegatePermissionModes.get(template) != null) {
-                throw new IllegalArgumentException("template '" + template + "' has its own restrictive Claude "
-                        + "permission mode; set codex.sandbox-modes for it in mcp.yaml before using Codex");
-            }
-            if (codex != null) mode = codex.sandboxMode;
-            if (mode == null) {
-                if (restricted) {
-                    throw new IllegalArgumentException("template '" + template + "' has a restrictive Claude permission "
-                            + "policy; set codex.sandbox-mode or sandbox-modes in mcp.yaml before using Codex");
-                }
-                return "danger-full-access";
-            }
-        }
-        return requireSandboxMode("codex sandbox mode", mode);
-    }
-
-    /**
-     * What Pi runs under for {@code template}: always every tool, as Pi has no sandbox or
-     * permission modes. So a template whose Claude permission policy is restrictive is refused
-     * rather than given a worker that can write anything.
-     */
-    public String piPermissionMode(String template) {
-        if (!DEFAULT_PERMISSION_MODE.equals(delegatePermissionMode(template))) {
-            throw new IllegalArgumentException("template '" + template + "' has a restrictive Claude permission policy, "
-                    + "and Pi has no sandbox or permission modes to honour it; choose another agent or template");
-        }
-        return PI_PERMISSION_MODE;
-    }
-
-    /** What a Pi worker reports as its permission mode: every tool, bounded by the instance. */
-    public static final String PI_PERMISSION_MODE = "full-access";
-
-    private static String requireSandboxMode(String key, String mode) {
-        if (!List.of("read-only", "workspace-write", "danger-full-access").contains(mode)) {
-            throw new IllegalArgumentException(key + " '" + mode
-                    + "' is not one of read-only, workspace-write or danger-full-access");
-        }
-        return mode;
-    }
-
     public List<String> templates() {
         return templates == null ? List.of() : List.copyOf(templates);
     }
@@ -466,40 +397,6 @@ public class McpConfig {
 
     public int maxConcurrentTasks() {
         return maxConcurrentTasks == null ? DEFAULT_MAX_CONCURRENT_TASKS : Math.max(0, maxConcurrentTasks);
-    }
-
-    /**
-     * Null when unset: the inner agent's own default applies. Also the ceiling of a delegate's
-     * own {@code max_turns}: an agent may spend less of the user's budget, never more.
-     */
-    public Integer delegateMaxTurns() {
-        return delegateMaxTurns;
-    }
-
-    /** The turn budget of a delegate that chose {@code chosen} (null for none): within the ceiling. */
-    public Integer delegateMaxTurns(Integer chosen) {
-        if (chosen == null) return delegateMaxTurns;
-        return delegateMaxTurns == null ? chosen : Integer.valueOf(Math.min(chosen, delegateMaxTurns));
-    }
-
-    /**
-     * The {@code --permission-mode} a delegate in an instance of {@code template} runs with:
-     * the template's override, else the section's, else {@link #DEFAULT_PERMISSION_MODE}. Always
-     * explicit, so a headless agent never meets a permission prompt nobody can answer. A value
-     * that is not a plain word is an error for the person who wrote it, never passed on.
-     */
-    public String delegatePermissionMode(String template) {
-        var mode = delegatePermissionModes == null ? null : delegatePermissionModes.get(template);
-        if (mode == null) mode = delegatePermissionMode;
-        if (mode == null) return DEFAULT_PERMISSION_MODE;
-        return requirePermissionMode("delegate-permission-mode", mode);
-    }
-
-    private static String requirePermissionMode(String key, String mode) {
-        if (!MODE.matcher(mode).matches()) {
-            throw new IllegalArgumentException(key + " '" + mode + "' is not a permission mode");
-        }
-        return mode;
     }
 
     public int orphanGraceHours() {
@@ -538,9 +435,6 @@ public class McpConfig {
     public void setTemplates(List<String> templates) { this.templates = templates; }
     public void setMaxInstances(Integer maxInstances) { this.maxInstances = maxInstances; }
     public void setMaxConcurrentTasks(Integer n) { this.maxConcurrentTasks = n; }
-    public void setDelegateMaxTurns(Integer n) { this.delegateMaxTurns = n; }
-    public void setDelegatePermissionMode(String mode) { this.delegatePermissionMode = mode; }
-    public void setDelegatePermissionModes(Map<String, String> modes) { this.delegatePermissionModes = modes; }
     public void setOrphanGraceHours(Integer hours) { this.orphanGraceHours = hours; }
     public void setDormantAfterHours(Integer hours) { this.dormantAfterHours = hours; }
     public void setDormantGraceHours(Integer hours) { this.dormantGraceHours = hours; }
