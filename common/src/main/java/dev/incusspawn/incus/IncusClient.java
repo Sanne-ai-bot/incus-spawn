@@ -522,6 +522,15 @@ public class IncusClient {
     }
 
     /**
+     * Why a connection to the Incus socket fails, probed afresh: unlike {@link #checkConnectivity}
+     * it neither uses nor keeps this client's connection. A socket that answers reads as one that
+     * is "now accessible".
+     */
+    public static String diagnoseSocket() {
+        return IncusApi.diagnoseConnectionFailure();
+    }
+
+    /**
      * Check connectivity to the Incus daemon.
      * Returns null if connected successfully, or a diagnostic message if not.
      */

@@ -17,6 +17,7 @@ isx
 
 Set up the host once: install Incus, configure credentials and their [accounts](CONFIGURATION.md#credential-accounts), and test connectivity.
 Running it again is safe, and is how you add, rename or remove an account.
+On a fresh Linux host it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
 
 ```shell
 isx init
