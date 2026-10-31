@@ -61,6 +61,10 @@ class WebSocketProxyTest {
     @TempDir
     static Path tempHome;
 
+    // How long to wait for something that should happen. Idle, a close takes a few ms; on
+    // a loaded box it took over 2 s (#1887). Waiting longer costs only a test that fails.
+    private static final long WAIT_SECONDS = 30;
+
     static String origHome;
     static Vertx serverVertx;
     static Vertx clientVertx;
@@ -162,9 +166,9 @@ class WebSocketProxyTest {
     static void stopProxy() throws Exception {
         try {
             if (proxy != null) proxy.stop();
-            if (mockUpstream != null) await(mockUpstream.close(), 2);
-            if (clientVertx != null) await(clientVertx.close(), 2);
-            if (serverVertx != null) await(serverVertx.close(), 2);
+            if (mockUpstream != null) await(mockUpstream.close(), WAIT_SECONDS);
+            if (clientVertx != null) await(clientVertx.close(), WAIT_SECONDS);
+            if (serverVertx != null) await(serverVertx.close(), WAIT_SECONDS);
         } finally {
             System.setProperty("user.home", origHome);
         }
