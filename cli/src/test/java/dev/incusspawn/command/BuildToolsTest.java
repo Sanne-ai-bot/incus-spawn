@@ -674,27 +674,15 @@ class BuildToolsTest {
             "sshd is inherited from tpl-parent, so only git is added");
     }
 
-    /** A tool whose one parameter, {@code model}, is reconfigurable. */
-    private static ToolSetup reconfigurable(String name) {
-        var modelParam = new ToolDef.ParameterDef();
-        modelParam.setType("string");
-        modelParam.setOptional(true);
-        modelParam.setReconfigurable(true);
-        return new ToolSetup() {
-            @Override public String name() { return name; }
-            @Override public void install(Container container, Map<String, String> params) {}
-            @Override public Map<String, ToolDef.ParameterDef> parameters() {
-                return Map.of("model", modelParam);
-            }
-        };
-    }
-
-    /** sshd is reconfigured, but orca is re-listed unchanged from the parent: this build does not set it up, so the note leaves it out. */
+    /**
+     * sshd is reconfigured, but orca is re-listed unchanged from the parent: this build does not set it up, so the note leaves it out.
+     * Only a {@code requires} entry with parameters reconfigures a dependency an ancestor installed (#1906).
+     */
     @Test
     void aReconfiguredDependencyNamesOnlyTheDependentsThisBuildSetsUp() {
-        var sshd = reconfigurable("sshd");
-        var orca = tool("orca", List.of(), List.of("sshd"));
-        var headroom = tool("headroom", List.of(), List.of("sshd"));
+        var sshd = toolWithModel("sshd", true);
+        var orca = yamlToolRequiring("orca", new ToolDef.ToolRef("sshd", Map.of("model", "other")));
+        var headroom = yamlToolRequiring("headroom", new ToolDef.ToolRef("sshd", Map.of("model", "other")));
         var parent = new ImageDef();
         parent.setTools(List.of(new ToolDef.ToolRef("sshd", Map.of("model", "pinned")),
                 new ToolDef.ToolRef("orca")));
@@ -707,14 +695,14 @@ class BuildToolsTest {
     /** When none of a reconfigured dependency's dependents is set up, the note still says why it is added. */
     @Test
     void aReconfiguredDependencyWithNoDependentSetUpNamesThemAll() {
-        var orca = tool("orca", List.of(), List.of("sshd"));
+        var orca = yamlToolRequiring("orca", new ToolDef.ToolRef("sshd", Map.of("model", "other")));
         var parent = new ImageDef();
         parent.setTools(List.of(new ToolDef.ToolRef("sshd", Map.of("model", "pinned")),
                 new ToolDef.ToolRef("orca")));
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("orca")));
         assertEquals(List.of("Auto-adding dependency: sshd (required by orca)"),
-                autoAddNotes(parent, child, reconfigurable("sshd"), orca));
+                autoAddNotes(parent, child, toolWithModel("sshd", true), orca));
     }
 
     /** The edge that closes a cycle is skipped, so it does not name a dependent. */
@@ -770,16 +758,14 @@ class BuildToolsTest {
     /** Reconfiguring a parent's tool runs its setup again, so the dependency is still added. */
     @Test
     void aDependencyAParentInstalledWithOtherParametersIsAnnouncedWhenReconfigured() {
-        var claude = reconfigurable("claude");
-        var headroomDef = new ToolDef();
-        headroomDef.setName("headroom");
-        headroomDef.setRequires(List.of(new ToolDef.ToolRef("claude", Map.of("model", "dep-model"))));
+        var claude = toolWithModel("claude", true);
+        var headroom = yamlToolRequiring("headroom", new ToolDef.ToolRef("claude", Map.of("model", "dep-model")));
         var parent = new ImageDef();
         parent.setTools(List.of(new ToolDef.ToolRef("claude")));
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("headroom")));
         assertEquals(List.of("Auto-adding dependency: claude (required by headroom)"),
-                autoAddNotes(parent, child, claude, new YamlToolSetup(headroomDef)));
+                autoAddNotes(parent, child, claude, headroom));
     }
 
     @Test
