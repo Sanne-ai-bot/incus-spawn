@@ -140,6 +140,23 @@ class BranchMcpClientTest {
     }
 
     @Test
+    void anOrchestratorsBranchGetsTheTemplatesDefaultLikeAnyOther() {
+        // Sanne on #1869: which tool launches a template does not change its capabilities; Orca's
+        // recipe runs isx branch --owner orca with no MCP flag
+        var daemon = coordinatorSource();
+        var request = new BranchFlow.Request("tpl-coord", "orca-ws", false, false, NetworkMode.FULL, null, null, null,
+                null, List.of(), false, Map.of(Metadata.OWNER, "orca", Metadata.OWNER_ID, "rt-1"));
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = i -> true;
+        try {
+            BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, coordinatorTemplate(true)));
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
+        assertTrue(Metadata.isMcpCallerGrant(daemon.instance("orca-ws").path("config").pathText(Metadata.MCP_CALLER, null)));
+    }
+
+    @Test
     void noMcpClientOverridesTheTemplatesDefault() {
         var config = branch(coordinatorSource(), "tpl-coord", "plain", NetworkMode.FULL, false, coordinatorTemplate(true));
         assertFalse(config.containsKey(Metadata.MCP_CALLER), config::toString);
