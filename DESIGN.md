@@ -457,7 +457,7 @@ During build, `resolveWithDeps()` performs a recursive depth-first traversal to 
 Circular dependencies are detected and reported.
 Auto-added dependencies are logged once each, naming every tool that requires them: "Auto-adding dependency: sshd (required by herdr, orca)".
 A required tool that cannot be found is warned about, and one a parent template already installed is inherited; neither is announced as added.
-One a parent installed with other, reconfigurable parameters is set up again, so it is announced.
+A `requires` entry that sets parameters other than a parent's, all of them reconfigurable, sets the tool up again, so it is announced; one without parameters keeps the parent's installation.
 Its note names only the dependents this build sets up, or all of them when it sets up none.
 Packages the build installs anyway do not silence the note, since the tool is still added and its setup still runs.
 Dependencies are installed before the tools that require them.
