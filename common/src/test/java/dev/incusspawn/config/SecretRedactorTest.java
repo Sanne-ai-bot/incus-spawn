@@ -577,4 +577,136 @@ class SecretRedactorTest {
         org.junit.jupiter.api.Assertions.assertFalse(result.text().contains("truncated"), result.text());
         org.junit.jupiter.api.Assertions.assertEquals(2, result.hits().get("private-key"));
     }
+
+    // ---- Guest text: redacted raw and as shown (#1878) ----
+
+    @Test
+    void aGuestsTextKeepsNoSecretThatShowingItHides() {
+        // The armour is put together at run time, so a secret scanner does not take this for a key
+        var armour = "-----";
+        // A control byte becomes a space and ends the password; the raw text still shows the URL
+        assertEquals("https://u:<isx:redacted:url-credentials>@host/x",
+                SecretRedactor.scrubGuest("https://u:hunter2\u0001secretpw@host/x"));
+        // A carriage return drops the key's BEGIN line; the raw text still shows where it starts
+        var key = SecretRedactor.scrubGuest(armour + "BEGIN PRIVATE KEY" + armour + "\rcloning...\nbody\n" + armour + "END PRIVATE KEY" + armour + "\nafter\n");
+        assertEquals("<isx:redacted:private-key>\nafter\n", key);
+    }
+
+    @Test
+    void aGuestsTextKeepsNoTokenItsColourCutShort() {
+        // Raw, the token stops at the escape; shown, the proof is whole: neither half is kept
+        var half = "0123456789abcdef";
+        var scrubbed = SecretRedactor.scrubGuest("T=sk-ant-oat01-isx_" + half + "\u001b[m\u001b[K" + half + " next");
+        assertEquals("T=<isx:redacted:anthropic-key> next", scrubbed);
+    }
+
+    @Test
+    void aGuestsTextIsScrubbedAsItIsShownWhenTheRawTextHidesNothing() {
+        // Without a control, or when the shown scrub already covers the raw one, it is scrubText's
+        var plain = "GH_TOKEN=gho_isx_" + "0123456789abcdef".repeat(2) + "\nAuthorization: Bearer abcdefgh12345\n";
+        assertEquals(SecretRedactor.scrubText(plain, Map.of()).text(), SecretRedactor.scrubGuest(plain));
+        var coloured = "GH_TOKEN=gho_\u001b[01;31m\u001b[Kisx\u001b[m\u001b[K_" + "0123456789abcdef".repeat(2);
+        assertEquals("GH_TOKEN=gho_<isx:redacted:isx-proof>", SecretRedactor.scrubGuest(coloured));
+        assertEquals("", SecretRedactor.scrubGuest());
+    }
+
+    @Test
+    void aGuestsTextInPiecesIsScrubbedAsOneText() {
+        // The armour is put together at run time, so a secret scanner does not take this for a key
+        var armour = "-----";
+        // A key printed on stdout with its end on stderr is one key; each piece is shown on its own
+        assertEquals("$ cat\n<isx:redacted:private-key>\n",
+                SecretRedactor.scrubGuest("$ cat\n", armour + "BEGIN PRIVATE KEY" + armour + "\nbody\n", armour + "END PRIVATE KEY" + armour + "\n"));
+    }
+
+    @Test
+    void aControlInAnyPieceStillGetsTheRawScrub() {
+        // Only text shown as printed skips the raw scrub: a control in a later piece does not
+        assertEquals("plain\nhttps://u:<isx:redacted:url-credentials>@host\n",
+                SecretRedactor.scrubGuest("plain\n", null, "https://u:hunter2\u0001secretpw@host\n"));
+        assertEquals("plain\n", SecretRedactor.scrubGuest("plain\n", null));
+    }
+
+    @Test
+    void aSecretTheShownTextDropsWholeLeavesNothingToRedact() {
+        // Only what is shown can be kept: a URL a carriage return drew over is gone either way
+        assertEquals("done", SecretRedactor.scrubGuest("https://u:hunter2\u0001pw@host\rdone"));
+    }
+
+    // ---- What a pattern's groups keep: fail closed (#1882 review) ----
+
+    @Test
+    void aKeepingMatchKeepsOnlyWhatItsGroupsFrame() {
+        assertArrayEquals(new int[] {7, 13}, secretIn("(pre:)secret(@)", "xx pre:secret@ yy", 3));
+        assertArrayEquals(new int[] {7, 13}, secretIn("(pre:)secret", "xx pre:secret yy", 3));
+    }
+
+    @Test
+    void aKeepingMatchWhoseGroup1DoesNotOpenItIsRedactedWhole() {
+        // A group 1 that starts later, or took no part, leaves no kept prefix to trust
+        assertArrayEquals(new int[] {0, 11}, secretIn("x(pre:)secret", "xpre:secret", 0));
+        assertArrayEquals(new int[] {0, 6}, secretIn("(pre:)?secret", "secret", 0));
+    }
+
+    @Test
+    void aKeepingMatchWhoseGroup2DoesNotCloseItIsRedactedWhole() {
+        // An inner group, a group 2 followed by more secret, or one that took no part
+        assertArrayEquals(new int[] {0, 9}, secretIn("(pr(e))secret", "presecret!", 0, 9));
+        assertArrayEquals(new int[] {0, 14}, secretIn("(pre)secret(@)tail", "presecret@tail", 0));
+        assertArrayEquals(new int[] {0, 9}, secretIn("(pre)secret(@)?", "presecret", 0));
+    }
+
+    @Test
+    void aKeepingMatchThatFramesNothingIsRedactedWhole() {
+        // An empty secret would insert a marker and redact nothing
+        assertArrayEquals(new int[] {0, 4}, secretIn("(pre)[a-z]*(@)", "pre@", 0));
+    }
+
+    @Test
+    void aWholePatternRefusesGroupsWhereverItIsCompiled() {
+        // ProofToken.ANY_PROOF is compiled in another file: a group added there must fail here
+        assertThrows(IllegalArgumentException.class,
+                () -> SecretRedactor.ScrubPattern.whole("isx-proof", java.util.regex.Pattern.compile("isx_([0-9a-f]{32})")));
+        assertThrows(IllegalArgumentException.class, () -> SecretRedactor.ScrubPattern.whole("x", "(a)b"));
+        assertEquals(0, SecretRedactor.ScrubPattern.whole("isx-proof", dev.incusspawn.proxy.ProofToken.ANY_PROOF)
+                .pattern().matcher("").groupCount());
+    }
+
+    /** The secret {@code regex}'s first match from {@code from} holds in {@code text}, as start and end. */
+    private static int[] secretIn(String regex, String text, int from) {
+        return secretIn(regex, text, from, text.length());
+    }
+
+    private static int[] secretIn(String regex, String text, int from, int to) {
+        var matcher = java.util.regex.Pattern.compile(regex).matcher(text).region(from, to);
+        assertTrue(matcher.find(), regex);
+        return SecretRedactor.ScrubPattern.secret(matcher);
+    }
+
+    @Test
+    void scrubbingIsLinearInItsMatches() {
+        // A support bundle or failure report can hold a whole file of tokens: each pattern's
+        // spans are merged with the earlier ones in one pass, never rescanned per match (#1882 review)
+        int each = 100_000;
+        var text = new StringBuilder();
+        for (int i = 0; i < each; i++) {
+            text.append("a sk-ant-").append("A".repeat(25)).append('\n');
+            text.append("b ghp_").append("B".repeat(25)).append('\n');
+        }
+        long work = SecretRedactor.scrubWork(text.toString());
+        // Each anthropic span once, then the merge visits every anthropic and github one: 1.5 visits
+        // per match. At least one per match, so a merge that stops counting cannot pass for linear
+        assertTrue(work >= 2L * each && work <= 2L * 2 * each, "visited " + work + " spans for " + 2 * each + " matches");
+        var scrubbed = SecretRedactor.scrubText(text.toString(), Map.of());
+        assertEquals(Map.of("anthropic-key", each, "github-token", each), scrubbed.hits());
+    }
+
+    @Test
+    void aMatchThatTakesInAMarkerReplacesItsSpan() {
+        // The URL pattern runs after the token one and swallows its marker: one span is left
+        assertEquals("https://u:<isx:redacted:url-credentials>@host",
+                SecretRedactor.scrubGuest("https://u:pre\u0001ghp_" + "C".repeat(25) + "@host"));
+        assertEquals("https://u:<isx:redacted:url-credentials>@host",
+                SecretRedactor.scrubText("https://u:pre-ghp_" + "C".repeat(25) + "-post@host", Map.of()).text());
+    }
 }

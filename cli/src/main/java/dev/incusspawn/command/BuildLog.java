@@ -28,7 +28,8 @@ import java.util.Map;
  * prints it once the template's build is over.
  *
  * <p>Guest text is made safe as it is for the terminal ({@link BuildOutput#guestText}), and
- * anything shaped like a credential is scrubbed ({@link SecretRedactor#scrubText}).
+ * anything shaped like a credential, in the text as printed or as shown, is scrubbed
+ * ({@link SecretRedactor#scrubGuest}).
  */
 final class BuildLog implements CommandLog, AutoCloseable {
 
@@ -131,15 +132,15 @@ final class BuildLog implements CommandLog, AutoCloseable {
 
     /** One command as a shell shows it, between a header naming its step and a footer saying how it ended. */
     static String entry(String step, String command, IncusClient.ExecResult result, Duration took) {
-        var sb = new StringBuilder();
-        sb.append("─── ").append(OutputFormat.oneLine(step)).append(" ───\n");
-        sb.append(RepoCloner.prompted(RepoCloner.commandText(command))).append('\n');
-        for (var line : BuildOutput.guestLines(result.stdout(), result.stderr())) {
-            sb.append(line).append('\n');
-        }
-        // The footer is isx's own, after the scrub: a key header the command printed with no end
-        // after it is redacted to the end of what it printed, never through how the command ended
-        return SecretRedactor.scrubText(sb.toString(), Map.of()).text()
+        var header = "─── " + OutputFormat.oneLine(step) + " ───\n"
+                + RepoCloner.prompted(RepoCloner.commandText(command)) + "\n";
+        var printed = new ArrayList<String>();
+        printed.add(header);
+        printed.addAll(List.of(BuildOutput.guestStreams(result.stdout(), result.stderr())));
+        // Scrubbed raw as well as shown: showing it can hide a secret's shape (#1878). The footer
+        // is isx's own, after the scrub: a key header the command printed with no end after it is
+        // redacted to the end of what it printed, never through how the command ended
+        return SecretRedactor.scrubGuest(printed.toArray(String[]::new))
                 + "─── exit " + result.exitCode() + " after " + BuildOutput.formatElapsed(took.toMillis()) + " ───\n\n";
     }
 

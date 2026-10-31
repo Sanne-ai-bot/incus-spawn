@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
 
@@ -46,7 +47,8 @@ public class Container {
      * The failure of a command that printed {@code result}: a warning to {@code out} with the end
      * of what it printed, shown as text, since a tool's run step or an install script decides that
      * (#1588), and the exception to throw, carrying all of it for the build's failure report, which
-     * keeps what the warning's {@link BuildOutput#FAILED_OUTPUT_LINES} leave out.
+     * keeps what the warning's {@link BuildOutput#FAILED_OUTPUT_LINES} leave out, scrubbed as the
+     * output was printed and as it is shown ({@link SecretRedactor#scrubGuest}, #1878).
      */
     public static IncusException failed(Output out, String title, String message, IncusClient.ExecResult result) {
         var lines = BuildOutput.guestLines(result.stdout(), result.stderr());
@@ -54,7 +56,11 @@ public class Container {
         if (lines.length == 0) return failure;
         out.warn(title, BuildOutput.lastOf(lines));
         // Under its title, and set apart from the diagnostics the failure report adds after it
-        return failure.withStepOutput(title + "\n" + String.join("\n", lines) + "\n\n");
+        var streams = BuildOutput.guestStreams(result.stdout(), result.stderr());
+        var printed = new String[streams.length + 1];
+        printed[0] = title + "\n";
+        System.arraycopy(streams, 0, printed, 1, streams.length);
+        return failure.withStepOutput(SecretRedactor.scrubGuest(printed) + "\n");
     }
 
     public String name() {

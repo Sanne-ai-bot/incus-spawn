@@ -1081,18 +1081,20 @@ Its output's heading reads `prime output`, and the whole command leads that outp
 The failure report holds only the command that failed, so each build also keeps a log of every command its definitions declared (`BuildLog`, `Environment.buildLogFile`): tools' `run`, `run_as_user` and `verify`, repositories' `prime`.
 A command whose exec throws is recorded too, as exit status -1 with why, and the file is readable by its owner alone.
 They run through `Container.runDeclared` (`runDeclaredAsUser`, `shDeclaredAsUser`), which record each into the `CommandLog` its build container was made with, as `$ <command>`, all its output and its exit status.
-Only those commands, never isx's own: those can carry an instance's proofs, and each entry is also scrubbed (`SecretRedactor.scrubText`) and shown through `guestText`.
+Only those commands, never isx's own: those can carry an instance's proofs, and each entry is also scrubbed and shown through `guestText` (`SecretRedactor.scrubGuest`).
 A build's own temporary proofs do reach those commands, since a login shell sources them, so the scrub removes the marker and digest of every proof isx mints and leaves its public prefix (`ProofToken.ANY_PROOF`, from the parts `tokenFor` joins).
 A pattern that also took the prefix would open with an unbounded run, and searching a long line of such characters would take quadratic time.
 `ProofScrubTest` checks one proof per placeholder a built-in tool declares, so a new kind is covered without being listed.
-The failure report and the instance's `~/inbox/BUILD_FAILURE.txt` are scrubbed as printed, then through `guestText`, then again (`BuildCommand.scrubbed`, #1864).
-Step output and diagnostics arrive already stripped (`Container.failed`, `StepProgress`, `appendDiag`), so the first pass guards only the error line, which quotes a failed command's stderr raw.
-There it sees a secret before a control byte becomes a space or a carriage return drops its header.
-In step output a control byte in a URL password or a key's overwritten BEGIN line is saved in clear, as before (#1878).
-The second pass catches a proof split before its digest, as `grep --color` splits `isx` from `_<digest>`.
-A token the first pass cut short keeps its tail: an `sk-ant-` or `sk-` match ends at an escape inside the digest, and the digest's rest is saved.
-The build log stays stripped then scrubbed: a raw pass first would leave a marker where colour codes split a token, keeping the token's rest after `guestText`.
-So the log misses what `guestText` hides (a control byte in a URL password, a key's overwritten BEGIN line), and closing both gaps needs the union of both passes' spans (#1878).
+Every saved copy of what a guest printed is scrubbed as printed and as shown (`SecretRedactor.scrubGuest`, #1878): the build log, the failure report and the instance's `~/inbox/BUILD_FAILURE.txt`.
+Neither scrub alone is enough.
+Colour codes can split a token that matches only once they are gone, as `grep --color` splits `isx` from `_<digest>` (#1864).
+A control byte turned into a space, or a carriage return dropping a key's BEGIN line, hides a shape only the raw text shows.
+So both scrubs run, `BuildOutput.shownGuestText` says which raw character each shown one came from, and each run of what either redacts becomes one marker.
+No order of two passes does the same: a raw pass first leaves a marker that cuts a split token short, and a shown pass first misses what showing hid.
+So the scrub gets the raw text: the error line quotes stderr raw, and `appendDiag` keeps the LXC log and dmesg raw.
+`Container.failed`, `StepProgress` and npm's skip reasons scrub their output while it is still raw.
+`StepProgress` keeps one form for showing and saving, so its detail and log are redacted on the terminal too.
+A detail that ends in the log's last line takes that line from the scrubbed log, since a key cut short leaves its last body line with no BEGIN header of its own.
 The log is written as each command ends, the failure report names it, and `isx build --verbose` prints it through `BuildOutput.frame` once the template's build is over, before its failure, so a live batch's lines are never interleaved with it.
 `Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` show a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
 They report it as one warning, its lines as details (`BuildOutput.guestLines`), to the container's `Output`: the caller's when it made the `Container` with one, else the bound output (#1703).

@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -35,14 +36,26 @@ final class BuildProgress {
      *  when it is not the batch's own verb, and {@code command} is the command it ran.
      *  The detail and log quote what a guest command printed, such as a prime the cloned
      *  repository controls, so neither holds anything that could drive a terminal wherever
-     *  it is shown or saved ({@link BuildOutput#guestText}, #1588). */
+     *  it is shown or saved ({@link BuildOutput#guestText}, #1588). Both become the failure
+     *  report's, so each is scrubbed as it was printed and as it is shown when it is recorded
+     *  ({@link SecretRedactor#scrubGuest}, #1878): only the raw text still shows some secrets. */
     record StepProgress(StepState state, String activity, String note, boolean noteHighlight, String detail, String log,
                         String step, String command) {
         StepProgress {
             activity = activity == null ? null : OutputFormat.oneLine(activity);
             note = note == null ? null : OutputFormat.oneLine(note);
-            detail = detail == null ? null : OutputFormat.oneLine(BuildOutput.guestText(detail));
-            log = log == null ? null : BuildOutput.guestText(log);
+            var scrubbedLog = log == null ? null : SecretRedactor.scrubGuest(log);
+            // A detail that ends in the log's last line, alone or after a prefix such as a prime's
+            // "prime `cmd` failed: ", takes that line from the scrubbed log: alone, a key's last
+            // line has no BEGIN header to be known by (#1882 review)
+            if (detail != null && scrubbedLog != null) {
+                var rawLast = lastNonEmptyLine(log);
+                if (!rawLast.isEmpty() && detail.endsWith(rawLast)) {
+                    detail = detail.substring(0, detail.length() - rawLast.length()) + lastNonEmptyLine(scrubbedLog);
+                }
+            }
+            detail = detail == null ? null : OutputFormat.oneLine(SecretRedactor.scrubGuest(detail));
+            log = scrubbedLog;
             step = step == null ? null : OutputFormat.oneLine(step);
             command = command == null ? null : BuildOutput.guestText(command);
         }

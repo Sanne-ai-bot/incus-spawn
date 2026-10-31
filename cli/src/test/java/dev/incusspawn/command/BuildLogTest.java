@@ -55,6 +55,33 @@ class BuildLogTest {
     }
 
     @Test
+    void anEntryKeepsNoSecretWhoseShapeOnlyTheRawOutputShows() {
+        // The armour is put together at run time, so a secret scanner does not take this for a key
+        var armour = "-----";
+        // Made safe to show, a control byte ends the URL password at a space and a carriage return
+        // drops the key's BEGIN line: what the raw output shows is redacted too (#1878)
+        var url = BuildLog.entry("s", "c",
+                new IncusClient.ExecResult(0, "https://u:hunter2\u0001secretpw@host\n", ""), Duration.ZERO);
+        assertFalse(url.contains("secretpw") || url.contains("hunter2"), url);
+        assertTrue(url.contains("https://u:<isx:redacted:url-credentials>@host"), url);
+        var key = BuildLog.entry("s", "c", new IncusClient.ExecResult(1, "",
+                armour + "BEGIN PRIVATE KEY" + armour + "\rcloning...\nfake-key-body\n" + armour + "END PRIVATE KEY" + armour + "\n"), Duration.ZERO);
+        assertFalse(key.contains("fake-key-body"), key);
+        assertTrue(key.contains("<isx:redacted:private-key>"), key);
+        assertFalse(key.contains("\r"), key);
+    }
+
+    @Test
+    void anEntryKeepsNoTokenColourSplitsAfterItsPrefix() {
+        // The raw pass alone would stop the token at the escape and keep the digest's second half
+        var half = "0123456789abcdef";
+        var entry = BuildLog.entry("s", "c", new IncusClient.ExecResult(0,
+                "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-isx_" + half + "\u001b[m\u001b[K" + half + "\n", ""), Duration.ZERO);
+        assertFalse(entry.contains(half), entry);
+        assertTrue(entry.contains("CLAUDE_CODE_OAUTH_TOKEN=<isx:redacted:"), entry);
+    }
+
+    @Test
     void theLogIsWrittenAsEachCommandEndsAndReplacesTheLastBuilds(@TempDir Path tmp) throws Exception {
         var file = tmp.resolve("build-logs/tpl-app.log");
         try (var old = BuildLog.open(file, "tpl-app", false)) {

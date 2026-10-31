@@ -21,6 +21,34 @@ class BuildProgressTest {
     }
 
     @Test
+    void aFailedStepKeepsNoSecretOnlyItsRawOutputShows() {
+        // The armour is put together at run time, so a secret scanner does not take this for a key
+        var armour = "-----";
+        // Its detail and log become the failure report's: scrubbed as printed and as shown (#1878)
+        var p = BuildProgress.StepProgress.failed("https://u:hunter2\u0001secretpw@host",
+                armour + "BEGIN PRIVATE KEY" + armour + "\rcloning...\nfake-key-body\n" + armour + "END PRIVATE KEY" + armour + "\nhttps://u:hunter2\u0001secretpw@host\n");
+        assertEquals("https://u:<isx:redacted:url-credentials>@host", p.detail());
+        assertEquals("<isx:redacted:private-key>\nhttps://u:<isx:redacted:url-credentials>@host\n", p.log());
+    }
+
+    @Test
+    void aFailedStepsDetailFromItsLogIsScrubbedAsTheLogIs() {
+        // A key cut short ends the log: its last body line alone has no BEGIN header to match
+        // The armour is put together at run time, so a secret scanner does not take this for a key
+        var armour = "-----";
+        var log = "fetching\n" + armour + "BEGIN PRIVATE KEY" + armour + "\nMIIEfirst\nMIIElast-body\n";
+        var p = BuildProgress.StepProgress.failed(BuildProgress.lastNonEmptyLine(log), log);
+        assertEquals("<isx:redacted:private-key>", p.detail());
+        assertFalse(p.log().contains("MIIElast-body"), p.log());
+        // A prime's detail names its command before the log's last line
+        var prime = BuildProgress.StepProgress.failed("prime", "make",
+                "prime `make` failed: " + BuildProgress.lastNonEmptyLine(log), log);
+        assertEquals("prime `make` failed: <isx:redacted:private-key>", prime.detail());
+        // Any other detail is scrubbed on its own
+        assertEquals("exit 1", BuildProgress.StepProgress.failed("exit 1", log).detail());
+    }
+
+    @Test
     void aStepsLabelCannotDriveTheTerminal() {
         // A label can hold definition text, such as a COPR repository's name (#1610).
         var recorded = dev.incusspawn.util.RecordingOutput.during(() -> assertThrows(dev.incusspawn.incus.IncusException.class,

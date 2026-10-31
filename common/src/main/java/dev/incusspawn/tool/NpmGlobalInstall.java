@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -257,14 +258,18 @@ public final class NpmGlobalInstall {
 
     /**
      * The lines of npm's verbose log that say why it dropped something, as text: an install
-     * script decides what they hold (#1588).
+     * script decides what they hold (#1588). Each is scrubbed as npm printed it and as it is shown
+     * ({@link SecretRedactor#scrubGuest}, #1878), since the failure report keeps them.
      */
     static List<String> skipReasons(IncusClient.ExecResult npm) {
-        return BuildOutput.guestText(npm.stdout() + "\n" + npm.stderr()).lines()
-                .filter(l -> {
-                    var lower = l.toLowerCase();
-                    return lower.contains("fail") || lower.contains("error");
-                })
-                .toList();
+        var raw = (npm.stdout() + "\n" + npm.stderr()).split("\n", -1);
+        // Showing it keeps every line break, so a shown line is the raw line it came from
+        var shown = BuildOutput.guestText(npm.stdout() + "\n" + npm.stderr()).split("\n", -1);
+        var reasons = new ArrayList<String>();
+        for (int i = 0; i < shown.length; i++) {
+            var lower = shown[i].toLowerCase();
+            if (lower.contains("fail") || lower.contains("error")) reasons.add(SecretRedactor.scrubGuest(raw[i]));
+        }
+        return List.copyOf(reasons);
     }
 }

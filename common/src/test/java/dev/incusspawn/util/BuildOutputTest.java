@@ -524,4 +524,86 @@ class BuildOutputTest {
         java.util.Arrays.setAll(more, i -> "line " + i);
         assertEquals("(2 earlier lines not shown)", BuildOutput.lastOf(more)[0]);
     }
+
+    @Test
+    void whatIsShownOfAGuestsTextSaysWhereEachCharacterCameFrom() {
+        // A redaction of the raw text is found again in what is shown through it (#1878)
+        var raw = "\033[31mred\033[0m 1%\r2%\r\n\033]0;t\007a\u0001b\u009b2Jc\ttab \uD83D\uDE00\n  \r\r";
+        var shown = BuildOutput.shownGuestText(raw);
+        assertEquals("2%\na bc\ttab \uD83D\uDE00\n", shown.text());
+        assertEquals(BuildOutput.guestText(raw), shown.text());
+        assertSourcesFit(raw, shown);
+    }
+
+    @Test
+    void showingAGuestsTextIsWhatItWasBeforeItSaidWhereFrom() {
+        // The same text as the one-pass form it replaced, over a seeded corpus of what terminals act on
+        var alphabet = new String[] {"a", "b", " ", "\n", "\r", "\t", "\033", "[", "]", "m", "0", ";", "\\",
+                "\007", "\u009b", "\u009d", "\u009c", "\u0001", "\u200e", "P", "(", "\uD83D\uDE00"};
+        var random = new java.util.Random(1878);
+        for (int n = 0; n < 20_000; n++) {
+            var raw = new StringBuilder();
+            for (int i = random.nextInt(24); i > 0; i--) raw.append(alphabet[random.nextInt(alphabet.length)]);
+            var text = raw.toString();
+            var shown = BuildOutput.shownGuestText(text);
+            assertEquals(oneShot(text), shown.text(), () -> "for " + text.codePoints().mapToObj(Integer::toHexString).toList());
+            assertSourcesFit(text, shown);
+        }
+    }
+
+    @Test
+    void showingManyLinesWithOneCarriageReturnAtTheEndIsLinear() {
+        // Each line's frames are looked for within it: a search for the next carriage return past
+        // the line rescanned the rest of the text once per line
+        var raw = "progress line\n".repeat(200_000) + "done\r";
+        var shown = assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> BuildOutput.shownGuestText(raw));
+        assertEquals(raw.length() - 1, shown.text().length());
+    }
+
+    @Test
+    void theStreamsAGuestPrintedEndInALineBreakOnceShown() {
+        assertArrayEquals(new String[] {"out\n", "err\r\n", "x\n\r"},
+                BuildOutput.guestStreams("out", " \n", null, "err\r", "x\n\r"));
+        // A stream of escapes alone shows no line, so it adds none, as guestLines (#1882 review)
+        assertArrayEquals(new String[] {"out\n"}, BuildOutput.guestStreams("\033[0m", "out"));
+        for (var streams : List.of(new String[] {"\033[0m", "a"}, new String[] {"  \033[0m", "\033[0m\n"}, new String[] {"x\n\r", "\r\r"})) {
+            var shown = new StringBuilder();
+            for (var stream : BuildOutput.guestStreams(streams)) shown.append(BuildOutput.guestText(stream));
+            var lines = BuildOutput.guestLines(streams);
+            assertEquals(lines.length == 0 ? "" : String.join("\n", lines) + "\n", shown.toString(), List.of(streams).toString());
+        }
+    }
+
+    /** Each shown character is the raw one it came from, or a space for a control, in order. */
+    private static void assertSourcesFit(String raw, BuildOutput.Shown shown) {
+        assertEquals(shown.text().length(), shown.source().length);
+        for (int i = 0; i < shown.source().length; i++) {
+            int from = shown.source()[i];
+            assertTrue(i == 0 || from > shown.source()[i - 1], "ascending at " + i);
+            char c = shown.text().charAt(i);
+            assertTrue(c == raw.charAt(from) || c == ' ', "at " + i);
+        }
+    }
+
+    private static final java.util.regex.Pattern GUEST_CONTROL = java.util.regex.Pattern.compile(
+            "(?:\u001B[\\]PX^_]|[\u0090\u0098\u009D\u009E\u009F])"
+                    + "[^\u0007\u001B\u009C\u0090\u0098\u009D\u009E\u009F\n]*(?:\u0007|\u001B\\\\|\u009C)"
+                    + "|(?:\u001B\\[|\u009B)[0-?]*[ -/]*[@-~]"
+                    + "|\u001B[ -/]*[0-~]");
+
+    /** guestText as it was written before it kept sources (#1588). */
+    private static String oneShot(String text) {
+        if (text.codePoints().noneMatch(TerminalLink::actsOnTerminal)) return text;
+        text = GUEST_CONTROL.matcher(text).replaceAll("");
+        if (text.indexOf('\r') >= 0) {
+            text = java.util.Arrays.stream(text.split("\n", -1)).map(line -> {
+                var frames = line.split("\r");
+                for (int i = frames.length - 1; i >= 0; i--) {
+                    if (!frames[i].isBlank()) return frames[i];
+                }
+                return "";
+            }).collect(java.util.stream.Collectors.joining("\n"));
+        }
+        return TerminalLink.plainText(text);
+    }
 }

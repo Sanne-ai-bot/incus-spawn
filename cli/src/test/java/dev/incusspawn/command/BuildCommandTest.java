@@ -397,7 +397,7 @@ class BuildCommandTest {
     void theFailureReportKeepsNoProofSplitByColour(@TempDir Path tmp) {
         // grep --color splits the proof's marker with escapes; the build log strips them before
         // scrubbing, and so must the saved copies (#1864). The error line is raw: it quotes the
-        // failed command's stderr, while step output and diagnostics arrive already stripped
+        // failed command's stderr
         InitCommandTest.withHome(tmp, () -> {
             var incus = mock(IncusClient.class);
             when(incus.instanceMetadataOrThrow("tpl-dev-rebuilding")).thenReturn(instance("container", Map.of()));
@@ -411,13 +411,11 @@ class BuildCommandTest {
             var digest = "0123456789abcdef".repeat(2);
             var coloured = "\u001b[01;31m\u001b[Kisx\u001b[m\u001b[K_" + digest;
             var lxcDigest = "fedcba9876543210".repeat(2);
-            // As appendDiag leaves them: escapes stripped
             doReturn("  LXC log: TOKEN=isx_" + lxcDigest + "\n").when(cmd).printBuildDiagnostics(anyString(), anyBoolean());
             // Stripping must not hide what the raw error line shows: a control byte would end the
             // URL password at a space, and a carriage return would drop the key's BEGIN line
             var urlPassword = "hunter2\u0001secretpw";
             var keyBody = "fake-key-body-".repeat(3);
-            // As Container.failed hands it over: already through guestText
             var cause = new IncusException("prime failed")
                     .withStepOutput("$ env | grep --color=always isx\nGH_TOKEN=gho_isx_" + digest + "\n");
 
@@ -432,6 +430,47 @@ class BuildCommandTest {
                 assertTrue(written.stream().noneMatch(w -> w.contains(secret)), "the inbox copy too: " + written);
             }
             assertTrue(report.contains("GH_TOKEN=gho_<isx:redacted:isx-proof>"), report);
+            assertFalse(written.isEmpty(), "the inbox copy is written");
+        });
+    }
+
+    @Test
+    void theFailureReportRedactsWhatEitherTheRawOrTheShownOutputShows(@TempDir Path tmp) {
+        // The armour is put together at run time, so a secret scanner does not take this for a key
+        var armour = "-----";
+        // Each saved copy redacts what a scrub of the raw text or of the text made safe to show
+        // would (#1878): the error line's token cut short by colour keeps no tail, and a failed
+        // command's output keeps no secret that only its raw form shows
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.instanceMetadataOrThrow("tpl-dev-rebuilding")).thenReturn(instance("container", Map.of()));
+            var written = new java.util.ArrayList<String>();
+            when(incus.shellExec(eq("tpl-dev-rebuilding"), any(String[].class))).thenAnswer(inv -> {
+                written.add(String.join(" ", java.util.Arrays.copyOfRange(inv.getArguments(), 1, inv.getArguments().length, String[].class)));
+                return new IncusClient.ExecResult(0, "", "");
+            });
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            var half = "0123456789abcdef";
+            var lxcHalf = "fedcba9876543210";
+            // The diagnostics quote the LXC log and dmesg as they found them
+            doReturn("  LXC log: TOKEN=sk-ant-oat01-isx_" + lxcHalf + "\u001b[m" + lxcHalf + "\n"
+                    + "    https://u:lxc-pw\u0001lxc-secret@host\n")
+                    .when(cmd).printBuildDiagnostics(anyString(), anyBoolean());
+            var cause = Container.failed(new RecordingOutput(), "The failed command printed:", "prime failed",
+                    new IncusClient.ExecResult(1, "fetching https://u:hunter2\u0001secretpw@host/repo\n",
+                            armour + "BEGIN PRIVATE KEY" + armour + "\rcloning...\nfake-key-body\n" + armour + "END PRIVATE KEY" + armour + "\n"));
+
+            cmd.reportBuildFailure("tpl-dev-rebuilding", "tpl-dev",
+                    "Build failed for tpl-dev: CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-isx_" + half + "\u001b[m\u001b[K" + half, cause);
+
+            var report = assertDoesNotThrow(() -> Files.readString(Environment.buildFailureLogFile("tpl-dev")));
+            for (var secret : List.of(half, lxcHalf, "secretpw", "lxc-secret", "fake-key-body")) {
+                assertFalse(report.contains(secret), secret + " in " + report);
+                assertTrue(written.stream().noneMatch(w -> w.contains(secret)), "the inbox copy too: " + written);
+            }
+            assertTrue(report.contains("fetching https://u:<isx:redacted:url-credentials>@host/repo"), report);
+            assertFalse(report.contains("\u001b") || report.contains("\u0001") || report.contains("\r"), report);
             assertFalse(written.isEmpty(), "the inbox copy is written");
         });
     }
