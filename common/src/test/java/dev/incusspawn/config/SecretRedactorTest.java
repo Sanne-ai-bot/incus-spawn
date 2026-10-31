@@ -675,6 +675,15 @@ class SecretRedactorTest {
         // A character after a surrogate pair overwrites the whole pair, which a span then redacts
         assertEquals("x <isx:redacted:github-token>",
                 SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "\uD83D\uDE00" + "B".repeat(10) + "\b".repeat(11) + "A"));
+        // A combining mark shares the cell of the character before it: overwriting the dash takes
+        // its accent too, and the token shows whole (#1895 review)
+        assertEquals("x <isx:redacted:github-token>\n",
+                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "-\u0301" + "B".repeat(10) + "\b".repeat(11) + "A\n"));
+        assertEquals("x <isx:redacted:github-token>\n",
+                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "-\u20DD" + "B".repeat(10) + "\b".repeat(11) + "A\n"));
+        // One left in its cell still marks the character it sits on, as on the screen
+        var accented = "x ghp_" + "A".repeat(10) + "-" + "B".repeat(10) + "\b".repeat(11) + "A\u0301\n";
+        assertEquals(BuildOutput.guestText(accented), SecretRedactor.scrubGuest(accented));
         // A span the view alone finds that ends on a pair redacts both its halves, never one. The
         // armour is put together at run time, so a secret scanner does not take this for a key
         var armour = "-----";

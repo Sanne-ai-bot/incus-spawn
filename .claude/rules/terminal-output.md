@@ -85,6 +85,7 @@ A lone control (a NUL, SO/SI or a backspace) splits a token in both: it ends the
 So two more views of the shown text are scrubbed, one with its lone controls dropped and one as a terminal shows it once each backspace has moved the cursor, which is how `man` prints bold and underline.
 In that view a backspace moves one cell left, never past the start of its line, and a character overwrites the cell under it and keeps the cells to its right; a tab moves to the next stop of eight.
 A span there redacts every raw character written to its cells, so no overwritten half of a token is kept beside the marker.
+A combining mark takes no cell: it joins the cell before the cursor and goes when that cell is overwritten.
 No order of two passes does the same: a raw pass first leaves a marker that cuts a split token short, and a shown pass first misses what showing hid.
 So the scrub gets the raw text: the error line quotes stderr raw, and `appendDiag` keeps the LXC log and dmesg raw.
 `Container.failed`, `StepProgress` and npm's skip reasons scrub their output while it is still raw.

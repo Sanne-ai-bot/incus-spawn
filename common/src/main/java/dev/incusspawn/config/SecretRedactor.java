@@ -557,7 +557,8 @@ public final class SecretRedactor {
      * overwrites the cell under it and leaves those to its right. A tab moves to the next stop of
      * eight without writing. Each cell redacts every raw character written to it, from
      * {@code start} to {@code end}, so a struck half of a token is never kept beside a marker.
-     * Wide and combining characters each take one cell.
+     * A combining mark takes no cell: it joins the cell before the cursor, and goes when that
+     * cell is overwritten. A wide character takes one cell, where a terminal gives it two.
      */
     private static final class Cursor {
         final StringBuilder text;
@@ -566,6 +567,8 @@ public final class SecretRedactor {
         private int[] cells = new int[16];
         private int[] cellStart = new int[16];
         private int[] cellEnd = new int[16];
+        /** The combining marks on each cell, null for none. */
+        private StringBuilder[] marks = new StringBuilder[16];
         private int length;
         private int at;
 
@@ -588,6 +591,19 @@ public final class SecretRedactor {
                 at = stop;
                 return;
             }
+            int type = Character.getType(c);
+            if (type == Character.NON_SPACING_MARK || type == Character.ENCLOSING_MARK) {
+                // On the character it follows, which a later one overwrites with it
+                if (at > 0) {
+                    int on = at - 1;
+                    // Appended in place: a run of marks on one cell must not copy its marks per mark
+                    if (marks[on] == null) marks[on] = new StringBuilder(2);
+                    marks[on].appendCodePoint(c);
+                    cellStart[on] = Math.min(cellStart[on], from);
+                    cellEnd[on] = Math.max(cellEnd[on], to);
+                }
+                return;
+            }
             if (at < length) {
                 cell(at, c, Math.min(cellStart[at], from), Math.max(cellEnd[at], to));
             } else {
@@ -608,6 +624,9 @@ public final class SecretRedactor {
                 } else {
                     append((char) cells[i], cellStart[i], cellEnd[i]);
                 }
+                if (marks[i] != null) {
+                    for (int j = 0; j < marks[i].length(); j++) append(marks[i].charAt(j), cellStart[i], cellEnd[i]);
+                }
             }
             length = 0;
             at = 0;
@@ -618,10 +637,12 @@ public final class SecretRedactor {
                 cells = Arrays.copyOf(cells, i * 2);
                 cellStart = Arrays.copyOf(cellStart, i * 2);
                 cellEnd = Arrays.copyOf(cellEnd, i * 2);
+                marks = Arrays.copyOf(marks, i * 2);
             }
             cells[i] = c;
             cellStart[i] = from;
             cellEnd[i] = to;
+            marks[i] = null;
             if (i == length) length++;
         }
 
