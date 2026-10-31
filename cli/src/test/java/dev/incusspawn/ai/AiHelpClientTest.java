@@ -221,6 +221,27 @@ class AiHelpClientTest {
         assertEquals(new AiHelpClient.Usage(1000, 49000, 0, 200), usage);
     }
 
+    /** The stream's bytes are parsed as they came, so invalid UTF-8 is refused rather than shown as U+FFFD. */
+    @Test
+    void streamEventWithInvalidUtf8IsRefusedSayingWhere() {
+        var line = "data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"a\u00ffb\"}}\n\n";
+        var stream = new java.io.ByteArrayInputStream(line.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+        var text = new StringBuilder();
+        var e = assertThrows(IllegalArgumentException.class, () -> AiHelpClient.processOpenAiStream(stream, text::append));
+        assertEquals("the AI provider's stream event is not valid JSON: Invalid UTF-8 at line 1, column 49", e.getMessage());
+        assertEquals("", text.toString());
+    }
+
+    /** Trimming the payload stops at a UTF-8 byte: invalid UTF-8 after the JSON is refused, not dropped. */
+    @Test
+    void invalidUtf8AfterAStreamEventIsRefusedNotTrimmed() {
+        var line = "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\u00ff\n\n";
+        var stream = new java.io.ByteArrayInputStream(line.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+        var text = new StringBuilder();
+        assertThrows(IllegalArgumentException.class, () -> AiHelpClient.processOpenAiStream(stream, text::append));
+        assertEquals("", text.toString());
+    }
+
     private static java.io.InputStream sse(String jsonLines) {
         var sb = new StringBuilder();
         jsonLines.lines().forEach(l -> sb.append("data: ").append(l).append("\n\n"));
@@ -234,8 +255,9 @@ class AiHelpClientTest {
         assertEquals("API error (401, auth  x, req [2J): bad  key ]0;t ",
                 AiHelpClient.describeError(401, """
                         {"error":{"type":"auth\\u202E\\u009bx","message":"bad\\r\\nkey\\u001b]0;t\\u0007"},\
-                        "request_id":"req\\u001b[2J"}"""));
-        assertEquals("API error (502): <html>  </html>", AiHelpClient.describeError(502, "<html>\u0085\n</html>"));
+                        "request_id":"req\\u001b[2J"}""".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertEquals("API error (502): <html>  </html>", AiHelpClient.describeError(502,
+                "<html>\u0085\n</html>".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
 
     @Test
@@ -247,10 +269,18 @@ class AiHelpClientTest {
         assertEquals("API stream error: overloaded [2J", e.getMessage());
     }
 
+    /** An error body with invalid UTF-8 is not JSON: it is shown raw, not read as an error message. */
+    @Test
+    void errorBodyWithInvalidUtf8IsShownRaw() {
+        var body = "{\"error\":{\"message\":\"a\u00ffb\"}}".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertEquals("API error (500): {\"error\":{\"message\":\"a\ufffdb\"}}", AiHelpClient.describeError(500, body));
+    }
+
     @Test
     void longErrorBodyIsCutBetweenCharacters() {
         // 199 letters, then an emoji whose two UTF-16 units straddle the cut.
         var body = "x".repeat(199) + "\uD83D\uDE00" + "tail";
-        assertEquals("API error (502): " + "x".repeat(199) + "\uD83D\uDE00...", AiHelpClient.describeError(502, body));
+        assertEquals("API error (502): " + "x".repeat(199) + "\uD83D\uDE00...", AiHelpClient.describeError(502,
+                body.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
 }
