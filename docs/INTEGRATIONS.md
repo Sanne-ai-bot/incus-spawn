@@ -102,6 +102,9 @@ Each workspace then gets an instance named after Orca's runtime, such as `orca-3
 Orca reaches it over SSH, adds its worktree under the template's workdir, and runs its agents there.
 The recipe supports Orca's worktree mode only, in which Orca makes the worktree itself.
 
+A workspace gets what its template gives any branch: one of a [coordinator template](MCP.md#a-coordinator-in-an-instance) is a coordinator.
+To keep workspaces plain, name a child template whose `coordinator:` says only `isx-control-capability: false`.
+
 ### Faster first connections (experimental)
 
 On the first connection to each new instance, Orca uploads its server and installs Node.
