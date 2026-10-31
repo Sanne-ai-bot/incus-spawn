@@ -5592,6 +5592,7 @@ That is not breadth for its own sake.
 When Claude credentials became a named map, `claude.accounts.<name>.apiKey` appeared in every real config, and an exact-path-only redactor wrote each account's token into the bundle while reporting that it had found no credentials to redact.
 The tool declared that `apiKey` under `claude` is a credential; honouring that at any depth keeps the declaration true as the config grows a dimension, with no second list to update.
 It stays narrow because only a declared namespace/leaf pair earns the deep walk — a map whose keys are user data, like `repo-paths`, is neither.
+The whole-word name backstop covers what no tool declared: the catch-all extras and the undeclared keys a typed namespace keeps.
 
 **Structural redaction is the mechanism; scrubbing is a net.**
 The config is serialized to a tree and the values at the registry's locations are replaced before anything is written, so nothing depends on a secret looking the way we expected it to look.

@@ -108,14 +108,22 @@ public final class SecretRedactor {
         for (var location : locations) {
             redactPath(tree, location.path(), replacements, values);
         }
-        // Backstop: credential-shaped keys nobody declared. Scoped to the catch-all extras,
-        // which is where an undeclared tool's config lands — the typed fields are covered by
+        // Backstop: credential-shaped keys nobody declared. Scoped to the undeclared keys the
+        // config keeps: the catch-all extras, where an undeclared tool's config lands, and those
+        // of each typed namespace — the typed fields are covered by
         // declarations (SecretRedactorTest pins that), and some of them, like repo-paths, are
         // maps whose *keys are user data*. Running a key-name heuristic over those would
         // redact a repository called "secret-sauce" and then scrub its path out of every log
         // line, destroying the diagnostics this bundle exists to carry.
+        var root = (JqObject) tree;
         for (var extra : config.getExtras().keySet()) {
-            if (tree instanceof JqObject root) redactUndeclared(root, extra, List.of(extra), replacements, values);
+            redactUndeclared(root, extra, List.of(extra), replacements, values);
+        }
+        for (var namespace : config.namespaceConfigs()) {
+            if (!(root.getField(namespace.namespace()) instanceof JqObject node)) continue;
+            for (var extra : namespace.getExtras().keySet()) {
+                redactUndeclared(node, extra, List.of(namespace.namespace(), extra), replacements, values);
+            }
         }
 
         var redacted = new ArrayList<>(replacements.values());

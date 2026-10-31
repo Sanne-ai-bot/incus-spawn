@@ -97,6 +97,20 @@ class NamespaceAccountsRoundTripTest {
         }
     }
 
+    /** The redactor visits these for their undeclared keys, so none may be left out. */
+    @Test
+    void namespaceConfigsListsEveryTypedNamespace() throws Exception {
+        var config = new SpawnConfig();
+        var listed = config.namespaceConfigs();
+        for (var field : SpawnConfig.class.getDeclaredFields()) {
+            if (!SpawnConfig.NamespaceConfig.class.isAssignableFrom(field.getType())) continue;
+            field.setAccessible(true);
+            var value = field.get(config);
+            assertTrue(listed.stream().anyMatch(n -> n == value),
+                    field.getName() + " is missing from SpawnConfig.namespaceConfigs()");
+        }
+    }
+
     /** A namespace with no Java class at all was already safe; keep it that way. */
     @Test
     void unknownNamespaceAccountsSurviveASave() throws Exception {
