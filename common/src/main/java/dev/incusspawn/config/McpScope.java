@@ -44,7 +44,10 @@ public final class McpScope {
     /** A coordinator of {@code lineage}, as {@code InstanceRegistry.lineageOf} judged it. */
     public static McpScope coordinator(dev.incusspawn.proxy.InstanceRegistry.Lineage lineage, Map<String, ImageDef> defs,
                                        List<String> approved) {
-        return coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null, defs, approved);
+        // Denied on the flag itself, never on whether a reason was written for it
+        if (!lineage.untrusted()) return coordinator(lineage.template(), null, defs, approved);
+        var why = lineage.why() == null || lineage.why().isBlank() ? "of no known lineage" : lineage.why();
+        return coordinator(lineage.template(), why, defs, approved);
     }
 
     /**

@@ -75,9 +75,16 @@ final class McpSession {
     private RuntimeException lastFailure;
     private final Object resuming = new Object();
 
+    /**
+     * A session with {@code mcp.yaml}'s whole list, which only the host's own session may have: an
+     * instance session made this way controls nothing, so a caller that forgets its scope fails
+     * closed (#1812).
+     */
     McpSession(SessionId id, String owner, long clientPid, String cwd,
                InstanceBackend backend, Supplier<McpConfig> config, Predicate<SessionId> alive) {
-        this(id, owner, clientPid, cwd, backend, config, c -> McpScope.host(c.templates()), alive);
+        this(id, owner, clientPid, cwd, backend, config, id.isInstance()
+                ? c -> McpScope.coordinator("", null, Map.of(), c.templates())
+                : c -> McpScope.host(c.templates()), alive);
     }
 
     McpSession(SessionId id, String owner, long clientPid, String cwd, InstanceBackend backend,

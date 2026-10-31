@@ -30,7 +30,11 @@ final class TemplatePolicy {
     private final Supplier<McpConfig> config;
     private final Function<McpConfig, McpScope> scope;
 
-    /** For the host's own session: {@code mcp.yaml}'s list alone. */
+    /**
+     * For the host's own session only: {@code mcp.yaml}'s list alone. A coordinator's policy is
+     * always built with its scope ({@code McpMain.scopeFor}); {@code McpSession} refuses an
+     * instance session without one.
+     */
     TemplatePolicy(InstanceBackend backend, Supplier<McpConfig> config) {
         this(backend, config, c -> McpScope.host(c.templates()));
     }

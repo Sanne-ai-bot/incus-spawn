@@ -49,13 +49,30 @@ class InstanceSessionTest {
         backend.instance(COORD, Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.MCP_CALLER, GRANT));
     }
 
+    /** The coordinator's scope: its template, {@code tpl-coord}, lists {@code tpl-dev} under {@code control-over}. */
+    private static final java.util.function.Function<McpConfig, dev.incusspawn.config.McpScope> COORDINATOR =
+            controlling(() -> List.of("tpl-dev"));
+
+    /** The scope of a coordinator of {@code tpl-coord}, whose {@code control-over} is read from {@code controls} per call. */
+    private static java.util.function.Function<McpConfig, dev.incusspawn.config.McpScope> controlling(
+            Supplier<List<String>> controls) {
+        return c -> {
+            var def = new dev.incusspawn.config.ImageDef();
+            def.setName("tpl-coord");
+            var coordinator = new dev.incusspawn.config.ImageDef.Coordinator();
+            coordinator.setControlOver(List.copyOf(controls.get()));
+            def.setCoordinator(coordinator);
+            return dev.incusspawn.config.McpScope.coordinator("tpl-coord", null, Map.of("tpl-coord", def), c.templates());
+        };
+    }
+
     /** A connection of the coordinator: a new {@code isx mcp --caller-instance coord}. */
     private McpSession connect() {
         return connect(SELF);
     }
 
     private McpSession connect(SessionId as) {
-        return new McpSession(as, "alice", -1, null, backend, () -> config, alive);
+        return new McpSession(as, "alice", -1, null, backend, () -> config, COORDINATOR, alive);
     }
 
     /** {@link #COORD} destroyed and branched again with --mcp-client: same name, a new grant. */
@@ -138,7 +155,7 @@ class InstanceSessionTest {
         Served(McpSession session, Supplier<McpConfig> policy) {
             var tasks = new Tasks(session, backend, policy);
             var tools = McpMain.requireInitAndTakeBack(
-                    new McpTools(session, backend, new TemplatePolicy(backend, policy), tasks).all(),
+                    new McpTools(session, backend, new TemplatePolicy(backend, policy, COORDINATOR), tasks).all(),
                     () -> true, () -> McpMain.takeBack(session, tasks));
             server = new McpServer(out, tools, "1", null, null);
             results = new StructuredResults(tools);
@@ -166,7 +183,7 @@ class InstanceSessionTest {
             if (refused.get()) throw new ToolError(ToolError.Code.REFUSED, "mcp.yaml does not exist yet");
             return config;
         };
-        var next = new McpSession(SELF, "alice", -1, null, backend, policy, alive);
+        var next = new McpSession(SELF, "alice", -1, null, backend, policy, COORDINATOR, alive);
         var served = new Served(next, policy);
         assertTrue(served.call("list_instances", "{}").path("isError").asBoolean(false));
         assertFalse(next.holds(worker), "nothing is taken back while mcp.yaml is refused");
@@ -314,18 +331,22 @@ class InstanceSessionTest {
     }
 
     @Test
+    void anInstanceSessionMadeWithoutItsScopeControlsNothing() {
+        // #1812: the constructor that gives mcp.yaml's whole list is the host's; an instance session
+        // built with it fails closed rather than widening to that list
+        var worker = create(connect());
+        var unscoped = new McpSession(SELF, "alice", -1, null, backend, () -> config, alive);
+        assertEquals(Map.of(), unscoped.resumeIfPending(), "nothing taken back: tpl-dev is out of its scope");
+        var e = assertThrows(ToolError.class, () -> unscoped.adopt(worker, true));
+        assertTrue(e.getMessage().contains("controls no template"), e.getMessage());
+    }
+
+    @Test
     void resumeReleasesWhatTheCoordinatorsOwnTemplateNoLongerLists() {
         // #1812: narrowing the definition's coordinator.control-over reaches the coordinator as
         // narrowing mcp.yaml does
         var controls = new java.util.ArrayList<>(List.of("tpl-dev"));
-        java.util.function.Function<McpConfig, dev.incusspawn.config.McpScope> scope = c -> {
-            var def = new dev.incusspawn.config.ImageDef();
-            def.setName("tpl-coord");
-            var mcpClient = new dev.incusspawn.config.ImageDef.Coordinator();
-            mcpClient.setControlOver(List.copyOf(controls));
-            def.setCoordinator(mcpClient);
-            return dev.incusspawn.config.McpScope.coordinator("tpl-coord", null, Map.of("tpl-coord", def), c.templates());
-        };
+        var scope = controlling(() -> controls);
         var worker = create(new McpSession(SELF, "alice", -1, null, backend, () -> config, scope, alive));
         controls.clear();
         var next = new McpSession(SELF, "alice", -1, null, backend, () -> config, scope, alive);
