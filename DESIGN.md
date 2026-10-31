@@ -39,6 +39,13 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
   On Linux, init writes sysctl overrides (`/etc/sysctl.d/99-incus-spawn.conf`) to raise per-UID inotify limits (`max_user_instances=8192`, `max_user_watches=524288`), preventing inotify exhaustion when running many containers.
   Files init places under `/etc` are installed with `sudo install -m 0644`, not `sudo cp` from a `0600` temp file, so a re-run can read them back to check whether they changed.
   A file it cannot read counts as needing a rewrite, which repairs the `0600` files older releases wrote (#821).
+  Init finishes in one run on a fresh Linux host, though its first step adds the user to `incus-admin` and a process gets its groups only at login (#1436).
+  When the socket then refuses this process and the group database lists the user, `InitCommand.groupContinuation` runs the same command line again under `sg incus-admin`, marked by `ISX_INIT_CONTINUED`, and exits with its code.
+  The probe connects afresh rather than through `IncusClient`, which keeps a failed connect for the rest of the process, so a daemon still starting does not decide Storage & Network's own check.
+  The continuation skips the banner and the first step, so the counter reads on, and its closing box says the group needs a new login or `newgrp` elsewhere.
+  An inner `sg <primary group>` gives back the primary group the outer one took, so the files init writes stay in the user's group, with `incus-admin` kept as a supplementary one.
+  Without `sg`, which Arch-family distros removed, Storage & Network still stops and asks for a new login.
+  Talking to the socket through `sudo` was rejected: it needs a relay such as `socat`, which a fresh host may not have.
   The Template Search Paths step uses `gh` to auto-detect the user's GitHub identity and offer to fork/clone `incus-spawn-templates` — every failure path (no gh, no auth, API error) degrades gracefully to the existing manual flow
 
 ## Tech Stack

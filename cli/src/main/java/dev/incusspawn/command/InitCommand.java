@@ -8,6 +8,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
+import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.FirewallDetector.DetectionResult;
@@ -38,6 +39,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.CYAN;
@@ -228,7 +230,10 @@ public class InitCommand extends BaseCommand {
         if (!requireIncusHost()) return false;
         if (hasBeenInitialized()) return true;
 
-        BuildOutput.header("First-time setup required.", "Running 'isx init'...");
+        // The continuation under sg (#1436) carries on from the header its parent printed
+        if (!isContinuation()) {
+            BuildOutput.header("First-time setup required.", "Running 'isx init'...");
+        }
 
         try {
             var result = new InitCommand().doExecute();
@@ -294,25 +299,21 @@ public class InitCommand extends BaseCommand {
         if (!requireLinux()) {
             return CommandResult.valueOf(1);
         }
-        printSetupBanner("", "~3 minutes · some steps require sudo");
+        var continued = continuedInGroup();
+        if (!continued) {
+            printSetupBanner("", "~3 minutes · some steps require sudo");
 
-        BuildOutput.step("Several steps need " + styled(BOLD, "sudo") + " to install packages, configure"
-                + " the firewall, and set up user namespace mappings.");
-        if (runHost("sudo", "-v") != 0) {
-            BuildOutput.error("sudo authentication failed.", "Please ensure you have sudo access and try again.");
-            return CommandResult.valueOf(1);
+            BuildOutput.step("Several steps need " + styled(BOLD, "sudo") + " to install packages, configure"
+                    + " the firewall, and set up user namespace mappings.");
+            if (runHost("sudo", "-v") != 0) {
+                BuildOutput.error("sudo authentication failed.", "Please ensure you have sudo access and try again.");
+                return CommandResult.valueOf(1);
+            }
+
+            host().installDependencies();
         }
-
-        host().installDependencies();
         var proxyServiceInstalled = new AtomicBoolean();
-        runSteps(List.of(
-                        host()::checkIncusInstalled,
-                        host()::configureSubuidSubgid,
-                        host()::initializeIncus,
-                        host()::configureFirewall,
-                        host()::configureMitmProxy,
-                        this::setupSshKeyPair),
-                finalSteps(() -> {
+        runLinuxSteps(finalSteps(() -> {
                     startStep("Proxy Service",
                             "The MITM proxy intercepts HTTPS traffic from containers",
                             "and injects real credentials (API keys, tokens) so that",
@@ -323,8 +324,136 @@ public class InitCommand extends BaseCommand {
                     proxyServiceInstalled.set(completeWithProxyService(Prompts.console()));
                 }));
 
-        printCompletionBox(nextSteps(proxyServiceInstalled.get() ? Services.INSTALLED : Services.START_PROXY));
+        var next = new ArrayList<>(List.of(nextSteps(proxyServiceInstalled.get() ? Services.INSTALLED : Services.START_PROXY)));
+        if (continued) next.addAll(GROUP_PENDING);
+        printCompletionBox(next.toArray(String[]::new));
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * The Linux steps, then {@code finish}. A continuation under {@code sg} starts after Incus
+     * Installation, which the process that started it ran.
+     */
+    void runLinuxSteps(List<Step> finish) throws Exception {
+        runSteps(List.of(
+                        this::installIncus,
+                        host()::configureSubuidSubgid,
+                        host()::initializeIncus,
+                        host()::configureFirewall,
+                        host()::configureMitmProxy,
+                        this::setupSshKeyPair),
+                finish, continuedInGroup() ? 1 : 0);
+    }
+
+    /**
+     * Set in the environment of the init that {@link #installIncus} continues under {@code sg}:
+     * the process that started it ran the banner and Incus Installation.
+     */
+    static final String CONTINUED_ENV = "ISX_INIT_CONTINUED";
+
+    /** The closing box's last lines in a continued init: the session that started it still lacks the group. */
+    static final List<String> GROUP_PENDING = List.of("",
+            "   Your incus-admin group is active once you log in again.",
+            "   Until then, run 'newgrp incus-admin' in each terminal.");
+
+    boolean continuedInGroup() {
+        return isContinuation();
+    }
+
+    private static boolean isContinuation() {
+        return System.getenv(CONTINUED_ENV) != null;
+    }
+
+    /**
+     * Incus Installation, which adds the user to {@code incus-admin}. A process only gets its
+     * groups at login, so when this one still cannot reach Incus, the rest of init runs under
+     * {@code sg incus-admin} and this process exits with it, rather than stopping at Storage &
+     * Network to ask for a new login (#1436). Without {@code sg} (Arch-family distros removed it)
+     * that step still asks.
+     */
+    private void installIncus() {
+        host().checkIncusInstalled();
+        continueInGroup();
+    }
+
+    /** Runs the rest of this command under {@code sg} if {@link #groupContinuation} says to, and exits with it. */
+    void continueInGroup() {
+        var continuation = groupContinuation();
+        if (continuation == null) return;
+        BuildOutput.step("Continuing in the incus-admin group, through sg");
+        var exitCode = runContinuation(continuation);
+        if (exitCode >= 0) exit(exitCode);
+    }
+
+    /**
+     * The command that runs this one again in the {@code incus-admin} group, or null when it is
+     * not needed or cannot help: this process reaches Incus, or is itself the continuation, or the
+     * user is not in the group, or {@code sg} is missing. The command line is this process's own,
+     * so {@code isx build}'s first-time init carries on into the build.
+     */
+    List<String> groupContinuation() {
+        if (continuedInGroup()) return null;
+        var connectivity = incusConnectivity();
+        if (connectivity == null || !connectivity.contains("permission denied")) return null;
+        var configured = List.of(captureOutput("id", "-nG", System.getProperty("user.name")).split("\\s+"));
+        if (!configured.contains("incus-admin") || !hasSg()) return null;
+        var commandLine = ownCommandLine();
+        var primary = captureOutput("id", "-gn");
+        // captureOutput keeps stderr: a gid with no name reads as an error message, not a group
+        if (commandLine.isEmpty() || primary.isEmpty() || primary.chars().anyMatch(Character::isWhitespace)) return null;
+        // The inner sg gives back the primary group the outer one took, keeping incus-admin as a
+        // supplementary one, so that what init writes stays in the user's group
+        var command = "exec " + commandLine.stream().map(Container::shellQuote).collect(Collectors.joining(" "));
+        return List.of("sg", "incus-admin", "-c",
+                "exec sg " + Container.shellQuote(primary) + " -c " + Container.shellQuote(command));
+    }
+
+    /**
+     * A fresh probe of the socket, never through {@link IncusClient}'s connection: that one keeps
+     * a failed connect for the rest of the process, so a daemon still starting after Incus
+     * Installation would decide Storage & Network's own check.
+     */
+    String incusConnectivity() {
+        return IncusClient.diagnoseSocket();
+    }
+
+    boolean hasSg() {
+        return commandExists("sg");
+    }
+
+    /** This process's argv, from {@code /proc}: the native binary, or {@code java} and its arguments. */
+    List<String> ownCommandLine() {
+        try {
+            var cmdline = new String(Files.readAllBytes(Path.of("/proc/self/cmdline")));
+            // Each argument ends in a NUL; an empty last argument is still one
+            if (cmdline.endsWith("\0")) cmdline = cmdline.substring(0, cmdline.length() - 1);
+            return cmdline.isEmpty() ? List.of() : List.of(cmdline.split("\0", -1));
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * Runs {@code command} on this terminal, marked as the continuation, and returns its exit
+     * code, or -1 when it could not start, which leaves the rest of init to this process.
+     */
+    int runContinuation(List<String> command) {
+        BuildOutput.releaseTerminal();
+        try {
+            var pb = new ProcessBuilder(command).inheritIO();
+            pb.environment().put(CONTINUED_ENV, "1");
+            return pb.start().waitFor();
+        } catch (IOException e) {
+            BuildOutput.warn("Could not continue through sg: " + failure(e));
+            return -1;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return 1;
+        }
+    }
+
+    void exit(int exitCode) {
+        System.exit(exitCode);
     }
 
     private CommandResult doMacOsInit() throws Exception {
@@ -394,9 +523,14 @@ public class InitCommand extends BaseCommand {
      * Until the choice is made it assumes no credentials, which is what Enter picks.
      */
     void runSteps(List<Step> setup, List<Step> finish) throws Exception {
-        currentStep = 0;
+        runSteps(setup, finish, 0);
+    }
+
+    /** As {@link #runSteps(List, List)}, with the first {@code done} steps of {@code setup} run by the process that started this one. */
+    void runSteps(List<Step> setup, List<Step> finish, int done) throws Exception {
+        currentStep = done;
         totalSteps = setup.size() + 1 + finish.size();
-        for (var step : setup) step.run();
+        for (var step : setup.subList(done, setup.size())) step.run();
         var credentialSteps = credentialSteps();
         totalSteps += credentialSteps.size();
         for (var step : credentialSteps) step.run();
@@ -669,7 +803,7 @@ public class InitCommand extends BaseCommand {
         return host.followBridgeMove(gatewayIp, firewall);
     }
 
-    private void setupSshKeyPair() {
+    void setupSshKeyPair() {
         startStep("SSH Key Pair",
                 "Generates a dedicated SSH key pair used only by isx",
                 "to connect to containers. This is separate from your personal",

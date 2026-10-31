@@ -171,6 +171,13 @@ A step that runs several commands runs each through `ran()`, which names the one
 `runHost` (inherited output) and a `sudo` through `runHostQuiet` release the terminal first, since a password prompt on the tty bypasses the stream guard.
 `InitStepOutputTest` pins all three; `InitFirewallOutputTest` pins the firewall steps.
 
+**The group init adds** (#1436).
+A process gets its groups at login, so the `incus-admin` membership Incus Installation adds is not this run's.
+When the socket refuses this process and the user is in the group, `continueInGroup()` runs the same command line under `sg incus-admin` (an inner `sg <primary>` keeps the user's primary group), and this process exits with its code.
+The probe (`incusConnectivity`, `IncusClient.diagnoseSocket`) connects afresh, since `IncusClient` keeps a failed connect and step 3 must probe for itself.
+The continuation sees `ISX_INIT_CONTINUED`, skips the banner, and `runLinuxSteps` starts it after Incus Installation; it closes with `GROUP_PENDING`.
+`InitGroupContinuationTest` pins it, through `runLinuxSteps` with a fake `host()`, and with `hasSg`, `incusConnectivity`, `ownCommandLine`, `runContinuation` and `exit` as its seams.
+
 **When to bump `INIT_VERSION`**: increment it when adding a new infrastructure step to init that existing installations need (new dependency, firewall rule, systemd service, config field).
 A sentinel *older* than `INIT_VERSION` causes `hasBeenInitialized()` to return false, triggering a re-run on the next command.
 Do NOT bump it for changes that don't affect host configuration (new template features, TUI changes, proxy logic changes).

@@ -81,6 +81,9 @@ jbang app install isx-proxy@Sanne/incus-spawn
 isx init
 ```
 
+On a fresh Linux host, `isx init` adds you to the `incus-admin` group and finishes its run in that group.
+Other terminals get the group at your next login, or in each one with `newgrp incus-admin`.
+
 A template is a machine image you build once: an OS, tools and repos.
 This one adds Claude Code to the built-in `tpl-minimal`.
 Save it as `~/.config/incus-spawn/images/agent.yaml`, or run `isx templates new tpl-agent` and paste it over the skeleton that opens in your editor:
