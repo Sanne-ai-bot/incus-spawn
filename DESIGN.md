@@ -178,6 +178,11 @@ An installed service that is stopped or failed (`isx proxy stop`, a halt) has no
 The holder's owner comes from `ProcessHandle.info().user()`; an owner the host will not give is never called another user's.
 `isx proxy install`, `isx proxy start` and `isx proxy restart` fail when the answering proxy is not the service's, naming its version, pid and owner (`ProxyService.answeringIsTheService`).
 A holder of this user's gets up to ten seconds first, since a restarted service's previous process frees the health port last (#1219).
+The stopping proxy waits for those closes, its listeners and upstream clients together, within one budget of eight seconds (`MitmProxy.STOP_BUDGET_SECONDS`, #1894).
+The upstream clients close beside the MITM listener, and the health listener gets at least one second of its own after them.
+A close takes milliseconds on an idle host and was measured at 1.5 seconds under a 10% CPU quota (#1887), so the old limits of one and two seconds were too short.
+A close that outlasts the budget is logged as a warning naming the listener or client, so a port still bound after the stop is explained.
+Together they stay under the ten seconds after which `ProxyMain`'s shutdown hook halts the process.
 `isx proxy install` refuses another user's holder before judging drift, which would be that user's, and reads the drift again after an upgrade restarted the service, so it never restarts the new proxy for the old one's drift.
 `isx proxy status` reports it with `pid`, `pid_owner` and `foreign_holder`, and exits 4 only when another user owns it, since 0 means instances can use the proxy.
 `isx doctor` fails on another user's holder and warns on an orphan of this user's.
