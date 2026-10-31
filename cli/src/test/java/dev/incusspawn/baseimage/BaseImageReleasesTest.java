@@ -126,4 +126,16 @@ class BaseImageReleasesTest {
                 "a github URL that is not a /releases/ URL is not trackable");
         assertNull(BaseImageReleases.fromImageUrl(null));
     }
+
+    /** GitHub's bytes are parsed as they came, so invalid UTF-8 is refused rather than read as U+FFFD. */
+    @Test
+    void aReleaseListWithInvalidUtf8IsRefusedSayingWhere() {
+        var json = "[{\"tag_name\":\"fedora-44-\u00ff\",\"assets\":[]}]"
+                .getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+        var e = assertThrows(IllegalArgumentException.class, () -> BaseImageReleases.parseReleases(json));
+        assertEquals("GitHub's release list is not valid JSON: Invalid UTF-8 at line 1, column 25", e.getMessage());
+        var clean = "[{\"tag_name\":\"fedora-44-1\",\"published_at\":\"2026-10-20T00:00:00Z\",\"assets\":[]}]";
+        assertEquals(java.util.List.of(new BaseImageReleases.Release("fedora-44-1", "2026-10-20", null, null)),
+                BaseImageReleases.parseReleases(clean.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
 }

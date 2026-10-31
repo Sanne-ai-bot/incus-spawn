@@ -74,14 +74,19 @@ public final class BaseImageReleases {
     public record Checksums(Map<String, String> container, Map<String, String> vm) {}
 
     public List<Release> fetchReleases() throws IOException {
-        var response = sendString(githubRequest(releasesApi)
+        var response = send(githubRequest(releasesApi)
                 .timeout(Duration.ofSeconds(15))
-                .build());
+                .build(), HttpResponse.BodyHandlers.ofByteArray());
         if (response.statusCode() != 200) {
             throw new IOException("GitHub API returned " + response.statusCode());
         }
+        return parseReleases(response.body());
+    }
+
+    /** The fedora releases in GitHub's release list, as the bytes it sent. */
+    static List<Release> parseReleases(byte[] json) {
         var releases = new ArrayList<Release>();
-        for (var node : Jjq.parseForeign(response.body(), "GitHub's release list").asList()) {
+        for (var node : Jjq.parseForeign(json, "GitHub's release list").asList()) {
             var tag = node.pathText("tag_name", "");
             if (!tag.startsWith("fedora-")) continue;
             var date = node.pathText("published_at", "").split("T")[0];
@@ -132,9 +137,9 @@ public final class BaseImageReleases {
         } catch (IllegalArgumentException e) {
             throw new IOException("not a URL: " + url, e);
         }
-        var response = sendString(HttpRequest.newBuilder(uri)
+        var response = send(HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(15))
-                .GET().build());
+                .GET().build(), HttpResponse.BodyHandlers.ofString());
         return response.statusCode() == 200 ? response.body() : null;
     }
 
@@ -191,9 +196,9 @@ public final class BaseImageReleases {
         return url.substring(url.lastIndexOf('/') + 1);
     }
 
-    private HttpResponse<String> sendString(HttpRequest request) throws IOException {
+    private <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> body) throws IOException {
         try {
-            return client.send(request, HttpResponse.BodyHandlers.ofString());
+            return client.send(request, body);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Request interrupted", e);

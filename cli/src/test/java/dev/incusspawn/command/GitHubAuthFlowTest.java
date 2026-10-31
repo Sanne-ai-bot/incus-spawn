@@ -429,7 +429,7 @@ class GitHubAuthFlowTest {
 
     private static String chooseEmail(String json, String... input) {
         var prompts = ScriptedPrompts.lines(input);
-        var email = CredentialSetup.chooseEmail(CredentialSetup.parseGitHubEmails(json), prompts);
+        var email = CredentialSetup.chooseEmail(CredentialSetup.parseGitHubEmails(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)), prompts);
         prompts.assertFullyConsumed();
         return email;
     }
@@ -442,7 +442,7 @@ class GitHubAuthFlowTest {
 
     @Test
     void closedStdinPicksTheNoreplyAddress() {
-        var email = CredentialSetup.chooseEmail(CredentialSetup.parseGitHubEmails(SEVERAL_EMAILS), new ScriptedPrompts());
+        var email = CredentialSetup.chooseEmail(CredentialSetup.parseGitHubEmails(SEVERAL_EMAILS.getBytes(java.nio.charset.StandardCharsets.UTF_8)), new ScriptedPrompts());
         assertEquals("1234+me@users.noreply.github.com", email);
     }
 
