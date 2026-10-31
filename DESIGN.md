@@ -412,7 +412,7 @@ verify: mvn --version
 Schema fields (all optional except `name`):
 - `packages` — dnf install
 - `downloads` — artifacts to download and cache on the host, then extract into the container or expose as a file, or both (with optional SHA256 verification and symlink creation)
-- `requires` — list of other tool names that must be installed first (resolved transitively)
+- `requires` — list of other tool names that must be installed first (resolved transitively); an entry without parameters is satisfied by an ancestor template's installation, whatever its parameters (#1906)
 - `run` — shell commands as root
 - `run_as_user` — shell commands as agentuser
 - `files` — files to write (path, content, optional owner)

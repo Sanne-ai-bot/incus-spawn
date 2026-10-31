@@ -182,6 +182,144 @@ class BuildToolsTest {
         assertEquals("claude-sonnet-4-6", result.effective().get(0).parameters().get("model"));
     }
 
+    /** A tool with one parameter, {@code model}, defaulting to {@code stock}, reconfigurable or not. */
+    static ToolSetup toolWithModel(String name, boolean reconfigurable) {
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+        modelParam.setDefault("stock");
+        modelParam.setReconfigurable(reconfigurable);
+        return new ToolSetup() {
+            @Override public String name() { return name; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("model", modelParam);
+            }
+        };
+    }
+
+    /** A YAML tool requiring each of {@code requires}. */
+    static ToolSetup yamlToolRequiring(String name, ToolDef.ToolRef... requires) {
+        var def = new ToolDef();
+        def.setName(name);
+        def.setRequires(List.of(requires));
+        return new YamlToolSetup(def);
+    }
+
+    /** Parent pins {@code sshd}'s model and lists {@code orca}; the child lists {@code orca}, requiring {@code sshd} as given. */
+    private static BuildTools.ToolResolution childReachingPinnedSshd(boolean reconfigurable,
+                                                                      ToolDef.ToolRef orcaRequires) {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(toolWithModel("sshd", reconfigurable));
+        when(toolDefLoader.find("orca")).thenReturn(yamlToolRequiring("orca", orcaRequires));
+
+        var parent = new ImageDef();
+        parent.setName("tpl-p");
+        parent.setTools(List.of(new ToolDef.ToolRef("sshd", java.util.Map.of("model", "pinned")),
+                new ToolDef.ToolRef("orca")));
+
+        var child = new ImageDef();
+        child.setName("tpl-c");
+        child.setParent("tpl-p");
+        child.setTools(List.of(new ToolDef.ToolRef("orca")));
+
+        return BuildTools.collectEffectiveTools(child, java.util.Map.of("tpl-p", parent, "tpl-c", child),
+                toolDefLoader, List.of());
+    }
+
+    /**
+     * A dependency the child reaches only through a {@code requires} entry without parameters
+     * only has to be installed: the parent's pin stays, rather than being reconfigured back to
+     * the defaults (#1906).
+     */
+    @Test
+    void aParameterlessTransitiveDependencyKeepsTheParentsReconfigurablePin() {
+        var result = childReachingPinnedSshd(true, new ToolDef.ToolRef("sshd"));
+        assertEquals(List.of(), result.effective().stream().map(BuildTools.ResolvedTool::name).toList(),
+                "sshd and orca are inherited unchanged");
+    }
+
+    /** Nor is it an error when the parent's parameter cannot be reconfigured. */
+    @Test
+    void aParameterlessTransitiveDependencyAcceptsTheParentsFixedParameters() {
+        var result = childReachingPinnedSshd(false, new ToolDef.ToolRef("sshd"));
+        assertTrue(result.effective().isEmpty());
+    }
+
+    /** A {@code requires} entry that sets parameters still reconfigures the parent's tool. */
+    @Test
+    void aTransitiveDependencyWithParametersStillReconfiguresTheParentsTool() {
+        var result = childReachingPinnedSshd(true,
+                new ToolDef.ToolRef("sshd", java.util.Map.of("model", "other")));
+        assertEquals(1, result.effective().size());
+        var sshd = result.effective().get(0);
+        assertEquals("sshd", sshd.name());
+        assertTrue(sshd.reconfigureOnly());
+        assertEquals(java.util.Map.of("model", "other"), sshd.parameters());
+    }
+
+    /**
+     * A middle template that only implies the tool kept the grandparent's pin, so the grandchild
+     * compares against that pin, not the defaults the middle one resolved.
+     */
+    @Test
+    void aMiddleTemplateThatOnlyImpliesAToolKeepsTheGrandparentsPinForTheChild() {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(toolWithModel("sshd", true));
+        when(toolDefLoader.find("orca")).thenReturn(yamlToolRequiring("orca", new ToolDef.ToolRef("sshd")));
+
+        var grandparent = new ImageDef();
+        grandparent.setName("tpl-g");
+        grandparent.setTools(List.of(new ToolDef.ToolRef("sshd", java.util.Map.of("model", "pinned"))));
+
+        var parent = new ImageDef();
+        parent.setName("tpl-p");
+        parent.setParent("tpl-g");
+        parent.setTools(List.of(new ToolDef.ToolRef("orca")));
+
+        var defaults = new ImageDef();
+        defaults.setName("tpl-c");
+        defaults.setParent("tpl-p");
+        defaults.setTools(List.of(new ToolDef.ToolRef("sshd")));
+        var defs = java.util.Map.of("tpl-g", grandparent, "tpl-p", parent, "tpl-c", defaults);
+
+        var result = BuildTools.collectEffectiveTools(defaults, defs, toolDefLoader, List.of());
+        var sshdAncestor = result.ancestors().stream().filter(t -> t.name().equals("sshd")).findFirst().orElseThrow();
+        assertEquals(java.util.Map.of("model", "pinned"), sshdAncestor.parameters());
+        assertEquals(1, result.effective().size(), "the defaults the child asks for reconfigure the pin");
+        assertTrue(result.effective().get(0).reconfigureOnly());
+
+        var same = new ImageDef();
+        same.setName("tpl-s");
+        same.setParent("tpl-p");
+        same.setTools(List.of(new ToolDef.ToolRef("sshd", java.util.Map.of("model", "pinned"))));
+        var sameDefs = java.util.Map.of("tpl-g", grandparent, "tpl-p", parent, "tpl-s", same);
+        assertTrue(BuildTools.collectEffectiveTools(same, sameDefs, toolDefLoader, List.of()).effective().isEmpty(),
+                "the pin the child repeats is already installed");
+    }
+
+    /** An explicit entry in the child still reconfigures it, even when a dependency also implies it. */
+    @Test
+    void anExplicitEntryBesideAnImpliedOneStillReconfiguresTheParentsTool() {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(toolWithModel("sshd", true));
+        when(toolDefLoader.find("orca")).thenReturn(yamlToolRequiring("orca", new ToolDef.ToolRef("sshd")));
+
+        var parent = new ImageDef();
+        parent.setName("tpl-p");
+        parent.setTools(List.of(new ToolDef.ToolRef("sshd", java.util.Map.of("model", "pinned"))));
+
+        var child = new ImageDef();
+        child.setName("tpl-c");
+        child.setParent("tpl-p");
+        child.setTools(List.of(new ToolDef.ToolRef("orca"), new ToolDef.ToolRef("sshd")));
+
+        var result = BuildTools.collectEffectiveTools(child, java.util.Map.of("tpl-p", parent, "tpl-c", child),
+                toolDefLoader, List.of());
+        var sshd = result.effective().stream().filter(t -> t.name().equals("sshd")).findFirst().orElseThrow();
+        assertTrue(sshd.reconfigureOnly());
+        assertEquals(java.util.Map.of("model", "stock"), sshd.parameters());
+    }
+
     @Test
     void collectEffectiveToolsErrorsOnMixedReconfigurableParams() {
         var memParam = new ToolDef.ParameterDef();
