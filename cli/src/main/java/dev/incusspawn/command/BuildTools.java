@@ -25,17 +25,24 @@ public final class BuildTools {
     private BuildTools() {}
 
     /**
-     * Resolve all tools referenced by the image definition, including
-     * transitive dependencies declared via {@code requires}.
+     * A tool the image definition installs, directly or as a transitive dependency declared via
+     * {@code requires}. {@code implied} marks one reached only through {@code requires} entries
+     * that set no parameters: it only says the tool must be installed (#670), so an ancestor's
+     * installation of it, with whatever parameters, satisfies it (#1906).
      */
     record ResolvedTool(
         String name,
         ToolSetup setup,
         Map<String, String> parameters,
-        boolean reconfigureOnly
+        boolean reconfigureOnly,
+        boolean implied
     ) {
         ResolvedTool(String name, ToolSetup setup, Map<String, String> parameters) {
             this(name, setup, parameters, false);
+        }
+
+        ResolvedTool(String name, ToolSetup setup, Map<String, String> parameters, boolean reconfigureOnly) {
+            this(name, setup, parameters, reconfigureOnly, false);
         }
     }
 
@@ -127,10 +134,17 @@ public final class BuildTools {
             );
         }
 
+        var implied = !isExplicit && (params == null || params.isEmpty());
+
         // Check if tool already resolved - if parameters differ, explicit config wins over transitive deps
         if (resolved.containsKey(name)) {
             var existing = resolved.get(name);
-            if (!existing.parameters().equals(resolvedParams)) {
+            if (existing.parameters().equals(resolvedParams)) {
+                if (existing.implied() && !implied) {
+                    // Now also asked for with parameters: no longer only implied
+                    resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
+                }
+            } else {
                 if (!isExplicit && explicit.contains(name)) {
                     // Transitive dep for a tool the user explicitly configured — skip
                     if (!quiet && params != null && !params.isEmpty()) {
@@ -179,7 +193,7 @@ public final class BuildTools {
             }
         }
 
-        resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
+        resolved.put(name, new ResolvedTool(name, tool, resolvedParams, false, implied));
         if (isExplicit) {
             explicitlyResolved.add(name);
         }
@@ -226,8 +240,10 @@ public final class BuildTools {
 
     /**
      * Resolve tools for this image, removing any already installed by ancestor images.
-     * If an ancestor declares the same tool with different parameters, that's an error
-     * (the parent's setup already ran and can't be undone).
+     * If an ancestor declares the same tool with different parameters, only reconfigurable ones
+     * may differ: the tool is then set up again to reconfigure it, and any other difference is an
+     * error (the parent's setup already ran and can't be undone). A tool this image only implies,
+     * through {@code requires} without parameters, keeps the ancestor's parameters.
      * Returns both the effective tools to install and the resolved ancestor tools.
      */
     static ToolResolution collectEffectiveTools(ImageDef imageDef, Map<String, ImageDef> defs,
@@ -237,9 +253,13 @@ public final class BuildTools {
 
         var ancestorToolsMap = new LinkedHashMap<String, ResolvedTool>();
         var ancestorTemplateNames = new LinkedHashMap<String, String>();
+        // Nearest first. A layer that only implies a tool kept whatever a farther one installed, so
+        // the installed parameters are the nearest non-implied entry's, else the farthest one's.
         for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
             for (var resolved : resolveTools(ancestor, toolDefLoader, cdiTools, true)) {
-                if (ancestorToolsMap.putIfAbsent(resolved.name(), resolved) == null) {
+                var nearer = ancestorToolsMap.get(resolved.name());
+                if (nearer == null || nearer.implied()) {
+                    ancestorToolsMap.put(resolved.name(), resolved);
                     ancestorTemplateNames.put(resolved.name(), ancestor.getName());
                 }
             }
@@ -255,7 +275,8 @@ public final class BuildTools {
             var ancestorTool = ancestorToolsMap.get(tool.name());
             if (ancestorTool == null) {
                 effective.add(tool);
-            } else if (!ancestorTool.parameters().equals(tool.parameters())) {
+            } else if (!tool.implied() && !ancestorTool.parameters().equals(tool.parameters())) {
+                // An implied tool is only required to be installed, and an ancestor installed it: keep its parameters
                 var paramDefs = tool.setup().parameters();
                 var allReconfigurable = true;
                 for (var key : tool.parameters().keySet()) {

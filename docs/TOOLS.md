@@ -89,6 +89,8 @@ Every field is optional except `name`.
 | `proxy` | Credential injection rules for the MITM proxy, see [Proxy Credentials](#proxy-credentials) |
 
 isx resolves `requires` transitively, and detects and rejects a circular dependency.
+An entry without parameters only asks for the tool to be installed.
+So when an ancestor template already installed it, the child keeps the ancestor's parameters.
 
 `env` supports structured entries with merge strategies, see [Environment Variables](#environment-variables).
 

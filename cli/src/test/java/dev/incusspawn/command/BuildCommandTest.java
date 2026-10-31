@@ -2324,6 +2324,38 @@ class BuildCommandTest {
         verify(incus).deleteImageOrThrow("abc");
     }
 
+    /**
+     * The build source records the parameters a tool was installed with: a child that only implies
+     * the tool, through a parameterless {@code requires}, keeps the parent's, so they are the ones
+     * recorded (#1906), as what reads them back ({@code isx shell}'s tmux auto-attach) expects.
+     */
+    @Test
+    void theBuildSourceRecordsTheParentsParametersForAToolTheChildOnlyImplies() {
+        var cmd = new BuildCommand();
+        cmd.incus = mock(IncusClient.class);
+        cmd.toolDefLoader = mock(ToolDefLoader.class);
+        cmd.toolSetups = List.of();
+        when(cmd.toolDefLoader.find("sshd")).thenReturn(BuildToolsTest.toolWithModel("sshd", true));
+        when(cmd.toolDefLoader.find("orca")).thenReturn(
+                BuildToolsTest.yamlToolRequiring("orca", new ToolDef.ToolRef("sshd")));
+
+        var parent = new ImageDef();
+        parent.setName("tpl-p");
+        parent.setTools(List.of(new ToolDef.ToolRef("sshd", Map.of("model", "pinned"))));
+        var child = new ImageDef();
+        child.setName("tpl-c");
+        child.setParent("tpl-p");
+        child.setTools(List.of(new ToolDef.ToolRef("orca")));
+
+        cmd.tagTemplateMetadata("tpl-c", "tpl-c", child, "tpl-p", List.of(),
+                Map.of("tpl-p", parent, "tpl-c", child), Map.of(), null);
+
+        var json = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(cmd.incus).configSet(eq("tpl-c"), eq(Metadata.BUILD_SOURCE), json.capture());
+        assertEquals(Map.of("model", "pinned"),
+                BuildSource.fromJson(json.getValue()).getToolInstances().get("sshd").getParameterValues());
+    }
+
     // ---- A cached image whose /sbin/init cannot exec (#986), in the order a real build meets it ----
 
     /** A build launch against {@code daemon}, started the way a build starts it. */
