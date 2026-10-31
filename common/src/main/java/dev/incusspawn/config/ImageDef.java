@@ -391,9 +391,7 @@ public class ImageDef extends DefinitionOrigin {
         @JqName("confined-to")
         @JqInclude(JqInclude.Include.NON_NULL)
         private String confinedTo;
-        /** What a warning about a file's {@code confined-to} ends with. */
-        static final String SET_BY_ISX = ", a file's value is ignored (#765)";
-        private static final String CONFINED_TO_IS_ISXS = "'confined-to' is set by isx" + SET_BY_ISX;
+        private static final String CONFINED_TO_IS_ISXS = "'confined-to' is set by isx" + DefinitionOrigin.SET_BY_ISX;
 
         /** Keys that name where a resource goes, which is {@code path:}; lower case, '-' for '_'. */
         private static final Set<String> PATH_LIKE = Set.of("path", "target", "target-path", "dest", "dst",
@@ -441,11 +439,11 @@ public class ImageDef extends DefinitionOrigin {
     /**
      * {@code vm:} is the old spelling of {@code type: vm}, which no mapping reads. Only a root
      * template with no {@code type:} is sure to build a container: a child's type may come from
-     * its parent, which this one file does not know.
+     * its parent, which this one file does not know. Keys isx sets on the whole definition are hinted by {@link DefinitionOrigin}.
      */
     @Override
     protected String hint(String key) {
-        if (!"vm".equalsIgnoreCase(key)) return null;
+        if (!"vm".equalsIgnoreCase(key)) return super.hint(key);
         var hint = "a virtual machine is 'type: vm'";
         return type == null && isRoot() ? hint + "; without it this builds a container" : hint;
     }
@@ -474,7 +472,7 @@ public class ImageDef extends DefinitionOrigin {
                 .part("coordinator", coordinator);
         for (int i = 0; i < hostResources.size(); i++) {
             if (hostResources.get(i).getConfinedTo() != null) {
-                walk.add("'host-resources[" + i + "].confined-to' is set by isx" + HostResource.SET_BY_ISX);
+                walk.add("'host-resources[" + i + "].confined-to' is set by isx" + SET_BY_ISX);
             }
         }
         return walk.warnings();
