@@ -603,6 +603,23 @@ class UpdateAllCommandTest {
     }
 
     @Test
+    void aFailedPrimeIsNamedAsTheBuildsFailureLineNamesIt() {
+        // The template's command is shown as RepoCloner shows it: safe, and scrubbed as written and shown (#1886)
+        var incus = incus();
+        var prime = "git clone https://u:hunter2\u0001secretpw@host/r";
+        doReturn(new IncusClient.ExecResult(1, "", "fatal\n"))
+                .when(incus).execInContainer(NAME, "agentuser", "cd '/home/agentuser/app' && " + prime);
+        var command = new UpdateAllCommand();
+        command.prime = true;
+
+        var said = RecordingOutput.during(() -> assertEquals(1, command.updateTemplates(incus, primed("~/app", prime))));
+
+        var failed = failedSteps(said);
+        assertTrue(failed.contains("Prime command failed for ~/app: git clone https://u:<isx:redacted:url-credentials>@host/r"), failed);
+        assertFalse(failed.contains("hunter2") || failed.contains("secretpw") || failed.contains("\u0001"), failed);
+    }
+
+    @Test
     void aTemplateBuiltBeforeTheHelperIsUpdatedWithoutAWarning() {
         var incus = incus();
         when(incus.shellExec(NAME, "/usr/local/bin/isx-trust", "/usr/lib/jvm", "/opt", "/usr/local"))
