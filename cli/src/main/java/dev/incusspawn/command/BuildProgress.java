@@ -39,7 +39,8 @@ final class BuildProgress {
      *  it is shown or saved ({@link BuildOutput#guestText}, #1588). Both become the failure
      *  report's, so each is scrubbed as it was printed and as it is shown when it is recorded
      *  ({@link SecretRedactor#scrubGuest}, #1878): only the raw text still shows some secrets.
-     *  The command is the template's, and saved beside them, so it is scrubbed the same way (#1886). */
+     *  The command is the template's, and saved beside them, so it is scrubbed the same way
+     *  ({@link RepoCloner#commandText}, #1886). */
     record StepProgress(StepState state, String activity, String note, boolean noteHighlight, String detail, String log,
                         String step, String command) {
         StepProgress {
@@ -58,7 +59,7 @@ final class BuildProgress {
             detail = detail == null ? null : OutputFormat.oneLine(SecretRedactor.scrubGuest(detail));
             log = scrubbedLog;
             step = step == null ? null : OutputFormat.oneLine(step);
-            command = command == null ? null : SecretRedactor.scrubGuest(command);
+            command = command == null ? null : RepoCloner.commandText(command);
         }
 
         static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, false, null, null, null, null); }

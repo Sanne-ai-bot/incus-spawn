@@ -731,7 +731,8 @@ class RepoCloner {
             // after it survives the terminal's width; the output shows it whole.
             var command = commandText(run.command());
             var failed = "prime `" + shortCommand(command) + "` failed";
-            states.set(idx, StepProgress.failed("prime", command,
+            // StepProgress scrubs the command itself, from the text the template wrote
+            states.set(idx, StepProgress.failed("prime", run.command(),
                     run.label().isBlank() ? failed : failed + ": " + run.label(), run.output()));
             return false;
         } catch (Exception e) {
@@ -745,17 +746,24 @@ class RepoCloner {
     /**
      * A prime command as text, its lines and tabs kept: a template wrote it, so a carriage return
      * shows as a space rather than drawing over what the line names before it, and escapes go as
-     * they do from a guest's output. It is scrubbed as written and as shown, as what it printed
-     * is: a control byte shown as a space can end a credential's shape early (#1886).
+     * they do from a guest's output. It is scrubbed before and after it is shown, as what it
+     * printed is: a control byte shown as a space can end a credential's shape early (#1886).
      */
     static String commandText(String command) {
         return SecretRedactor.scrubGuest(commandSource(command));
     }
 
-    /** A prime command before it is shown, for a scrub that must see it as written: {@link #commandText}. */
+    /**
+     * A prime command before it is shown, for the scrub of {@link #commandText}. A carriage return,
+     * form feed or vertical tab becomes another control that shows as a space but, unlike one, does
+     * not end a credential's shape in the raw scrub: a shell keeps each inside the word it splits,
+     * while the scrub's patterns read all three as whitespace.
+     */
     static String commandSource(String command) {
-        return command.strip().replace('\r', ' ');
+        return SHELL_KEPT_WHITESPACE.matcher(command.strip()).replaceAll("\u0001");
     }
+
+    private static final java.util.regex.Pattern SHELL_KEPT_WHITESPACE = java.util.regex.Pattern.compile("[\\r\\x0B\\f]");
 
     /** {@code command} as a shell shows it: {@code $ } before it, {@code > } before each line it continues on. */
     static String prompted(String command) {
