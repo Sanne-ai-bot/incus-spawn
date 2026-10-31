@@ -8,11 +8,13 @@ import io.hyperfoil.tools.jjq.yaml.JqYaml;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -227,7 +229,7 @@ public final class SecretRedactor {
         }
         var leaf = segments[segments.length - 1];
         if (node instanceof JqObject parent) {
-            redactDeclared(parent, leaf, java.util.Arrays.<Object>asList(segments), replacements, values);
+            redactDeclared(parent, leaf, Arrays.<Object>asList(segments), replacements, values);
         }
         if (segments.length > 1 && root instanceof JqObject rootObj) {
             redactNested(rootObj.getField(segments[0]), List.of(segments[0]), leaf, replacements, values);
@@ -383,7 +385,7 @@ public final class SecretRedactor {
          * group 2, when there is one, took part and closes it, and something lies between them,
          * the whole match is the secret.
          */
-        static int[] secret(java.util.regex.Matcher match) {
+        static int[] secret(Matcher match) {
             int groups = match.groupCount();
             if (groups == 0) return new int[] {match.start(), match.end()};
             boolean framed = match.start(1) == match.start()
@@ -477,7 +479,7 @@ public final class SecretRedactor {
         }
         var text = shownText.toString();
         if (text.isEmpty()) return text;
-        source = java.util.Arrays.copyOf(source, text.length());
+        source = Arrays.copyOf(source, text.length());
         var seen = scrub(text, Map.of());
         var spans = new ArrayList<>(seen.spans);
         boolean wider = addSpans(rawText, null, null, source, seen.spans, spans);
@@ -489,7 +491,7 @@ public final class SecretRedactor {
         wider |= addControlFreeSpans(text, rawText, source, seen.spans, spans);
         if (!wider) return seen.text;
         // Earliest first, so a run is named by what starts it, and the shown scrub's when both do
-        spans.sort(java.util.Comparator.comparingInt(Span::start));
+        spans.sort(Comparator.comparingInt(Span::start));
         var out = new StringBuilder(text.length());
         int pos = 0;
         for (int i = 0; i < spans.size(); ) {
