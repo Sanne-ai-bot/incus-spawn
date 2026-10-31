@@ -127,13 +127,19 @@ class BaseImageReleasesTest {
         assertNull(BaseImageReleases.fromImageUrl(null));
     }
 
-    /** GitHub's bytes are parsed as they came, so invalid UTF-8 is refused rather than read as U+FFFD. */
+    /**
+     * GitHub's bytes are parsed as they came, so invalid UTF-8 is refused rather than read as U+FFFD.
+     * As an IOException, which BuildCommand and UpdateBaseCommand answer by keeping the built-in base image.
+     */
     @Test
-    void aReleaseListWithInvalidUtf8IsRefusedSayingWhere() {
+    void aReleaseListWithInvalidUtf8IsRefusedSayingWhere() throws Exception {
         var json = "[{\"tag_name\":\"fedora-44-\u00ff\",\"assets\":[]}]"
                 .getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
-        var e = assertThrows(IllegalArgumentException.class, () -> BaseImageReleases.parseReleases(json));
+        var e = assertThrows(java.io.IOException.class, () -> BaseImageReleases.parseReleases(json));
         assertEquals("GitHub's release list is not valid JSON: Invalid UTF-8 at line 1, column 25", e.getMessage());
+        var notJson = assertThrows(java.io.IOException.class,
+                () -> BaseImageReleases.parseReleases("<html>".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertTrue(notJson.getMessage().startsWith("GitHub's release list is not valid JSON: "), notJson.getMessage());
         var clean = "[{\"tag_name\":\"fedora-44-1\",\"published_at\":\"2026-10-20T00:00:00Z\",\"assets\":[]}]";
         assertEquals(java.util.List.of(new BaseImageReleases.Release("fedora-44-1", "2026-10-20", null, null)),
                 BaseImageReleases.parseReleases(clean.getBytes(java.nio.charset.StandardCharsets.UTF_8)));

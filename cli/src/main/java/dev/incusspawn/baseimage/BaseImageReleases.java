@@ -3,6 +3,7 @@ package dev.incusspawn.baseimage;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.Environment;
 import dev.incusspawn.util.SystemTrust;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.io.IOException;
 import java.net.URI;
@@ -83,10 +84,19 @@ public final class BaseImageReleases {
         return parseReleases(response.body());
     }
 
-    /** The fedora releases in GitHub's release list, as the bytes it sent. */
-    static List<Release> parseReleases(byte[] json) {
+    /**
+     * The fedora releases in GitHub's release list, as the bytes it sent. A malformed list is an
+     * {@link IOException} like a failed request, so callers keep the built-in base image.
+     */
+    static List<Release> parseReleases(byte[] json) throws IOException {
+        JqValue list;
+        try {
+            list = Jjq.parseForeign(json, "GitHub's release list");
+        } catch (IllegalArgumentException e) {
+            throw new IOException(e.getMessage(), e);
+        }
         var releases = new ArrayList<Release>();
-        for (var node : Jjq.parseForeign(json, "GitHub's release list").asList()) {
+        for (var node : list.asList()) {
             var tag = node.pathText("tag_name", "");
             if (!tag.startsWith("fedora-")) continue;
             var date = node.pathText("published_at", "").split("T")[0];
