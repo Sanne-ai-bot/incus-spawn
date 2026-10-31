@@ -16,7 +16,20 @@ public class GeminiSetup implements ToolSetup {
 
     private static final String PLACEHOLDER_API_KEY = "gemini-placeholder";
     static final String CONFIG_PATH = "/home/agentuser/.gemini/settings.json";
-    public static final String MEMORY_PATH = "/home/agentuser/.gemini/GEMINI.md";
+    /**
+     * Gemini CLI reads no system-wide context file, and {@code ~/.gemini/GEMINI.md} is the
+     * user's own (#1784). An extension's context file is loaded beside it, so the build's
+     * instructions go to an extension of isx's own.
+     */
+    static final String EXTENSIONS_DIR = "/home/agentuser/.gemini/extensions";
+    static final String EXTENSION_DIR = EXTENSIONS_DIR + "/isx";
+    public static final String CONTEXT_PATH = EXTENSION_DIR + "/GEMINI.md";
+    /** Where builds wrote the instructions before #1784: the user's own global context file. */
+    public static final String LEGACY_CONTEXT_PATH = "/home/agentuser/.gemini/GEMINI.md";
+    static final String EXTENSION_MANIFEST_PATH = EXTENSION_DIR + "/gemini-extension.json";
+    static final String EXTENSION_MANIFEST = """
+            {"name": "isx", "version": "1.0.0", "contextFileName": "GEMINI.md"}
+            """;
     static final String POLICY_PATH = "/home/agentuser/.gemini/policies/isx-auto-approve.toml";
     static final String AUTO_APPROVE_POLICY = """
             # isx provides the isolation boundary. Higher-priority user rules can override this default.
@@ -109,6 +122,8 @@ public class GeminiSetup implements ToolSetup {
         var settings = c.exec("cat", CONFIG_PATH).assertSuccess("Failed to read Gemini settings").stdout();
         c.writeFile(CONFIG_PATH, selectApiKeyAuth(settings));
         c.chown(CONFIG_PATH, "agentuser:agentuser");
+        // A parent built before #1784 has no extension for the instructions to load from.
+        writeExtension(c);
         removeLoginNotice(c);
     }
 
@@ -133,12 +148,27 @@ public class GeminiSetup implements ToolSetup {
     }
 
     @Override
-    public String environmentContextPath() { return MEMORY_PATH; }
+    public String environmentContextPath() { return CONTEXT_PATH; }
+
+    /** The extension's directory and manifest, owned by agentuser, in one exec. */
+    private static void writeExtension(Container c) {
+        c.sh(extensionScript()).assertSuccess("Failed to write the isx Gemini extension");
+    }
+
+    static String extensionScript() {
+        return Container.heredoc("set -e; mkdir -p " + EXTENSION_DIR + "; cat > " + EXTENSION_MANIFEST_PATH,
+                EXTENSION_MANIFEST.strip()) + "\nchown agentuser:agentuser " + EXTENSIONS_DIR
+                // Only isx's own extension recursively: on an inherited parent the user's may
+                // hold whole node_modules trees.
+                + "\nchown -R agentuser:agentuser " + EXTENSION_DIR;
+    }
 
     private void configureSettings(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Gemini CLI");
         removeLoginNotice(c);
-        c.sh("mkdir -p /home/agentuser/.gemini/policies");
+        // One exec for both directories; the recursive chown below covers the extension too.
+        c.sh("mkdir -p /home/agentuser/.gemini/policies\n" + extensionScript())
+                .assertSuccess("Failed to write the isx Gemini extension");
         c.writeFile(CONFIG_PATH, settingsJson(resolvedParams));
         c.writeFile(POLICY_PATH, AUTO_APPROVE_POLICY);
         c.chown("/home/agentuser/.gemini", "agentuser:agentuser");

@@ -77,7 +77,7 @@ Split a sentence of more than about 40 words where it splits cleanly; `.claude/r
 The `gemini-cli` tool installs and configures Google Gemini CLI through `GeminiSetup`.
 Its optional `model` parameter leaves the upstream default unpinned, and a user policy auto-approves tools within isx isolation.
 The policy applies to direct launches as well as the action, excludes plan mode, and allows higher-priority user overrides.
-Each build writes the resolved template environment instructions to `~/.gemini/GEMINI.md` when Gemini is installed, leaving `context.fileName` unset.
+Each build writes the resolved template environment instructions to `~/.gemini/extensions/isx/GEMINI.md` when Gemini is installed, the context file of an `isx` extension, so the user's `~/.gemini/GEMINI.md` stays theirs (#1784).
 With `pi` they go to `/AGENTS.md`, which Pi reads from every working directory, so the user's `~/.pi/agent/AGENTS.md` stays theirs.
 They are stored once in `/etc/isx/agent-instructions.md`; Claude's `/etc/claude-code/CLAUDE.md` (only with the `claude` tool) and Pi's `/AGENTS.md` are hardlinks to it, a location in the home is a copy (`ToolSetup.environmentContextPath`, `AgentInstructions`).
 Codex gets them rendered as `additional_developer_instructions` in `/etc/codex/requirements.toml` (`ToolSetup.renderEnvironmentContext`), never `~/.codex/AGENTS.md`.

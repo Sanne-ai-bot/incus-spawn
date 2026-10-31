@@ -35,7 +35,7 @@ paths:
 It disables telemetry, usage statistics, self-updates and notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and inner sandboxing.
 It writes `~/.gemini/policies/isx-auto-approve.toml`, a priority-zero allow-all user policy for default, auto-edit, and YOLO modes.
 The policy also applies to direct and headless launches, excludes plan mode, and permits higher-priority user overrides.
-At the end of either build path, `GuestProvisioning.writeAgentContext()` copies the resolved environment instructions to the build-owned `~/.gemini/GEMINI.md` as `agentuser`.
+At the end of either build path, `GuestProvisioning.writeAgentContext()` copies the resolved environment instructions to `~/.gemini/extensions/isx/GEMINI.md` as `agentuser`, the context file of the `isx` extension whose manifest `GeminiSetup` writes, so the user's `~/.gemini/GEMINI.md` stays theirs.
 It reads that path from `ToolSetup.environmentContextPath`, which `PiSetup` (`/AGENTS.md`) and `ClaudeSetup` (`/etc/claude-code/CLAUDE.md`) declare too; theirs are hardlinks to one stored copy (`AgentInstructions`).
 `CodexSetup` declares `/etc/codex/requirements.toml` and renders the instructions into it as TOML (`renderEnvironmentContext`).
 The tool leaves `context.fileName` unset.

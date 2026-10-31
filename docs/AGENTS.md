@@ -213,8 +213,13 @@ Gemini's shell checks can still require approval for commands outside the worksp
 The policy uses priority zero, so higher-priority user rules can override it.
 Remove the file to restore upstream approval defaults.
 
-When `gemini-cli` is installed, every template build writes the generated environment instructions to `~/.gemini/GEMINI.md`, including inherited template notes, installed tools and cloned repositories.
-The file is owned by `agentuser` and regenerated on rebuild; project `GEMINI.md` files remain separate.
+When `gemini-cli` is installed, every template build writes the generated environment instructions to `~/.gemini/extensions/isx/GEMINI.md`, including inherited template notes, installed tools and cloned repositories.
+That file belongs to an extension named `isx`, which Gemini CLI loads beside your own `~/.gemini/GEMINI.md`.
+The build never writes your file, and project `GEMINI.md` files remain separate.
+
+The extension file is owned by `agentuser` and regenerated on rebuild.
+A rebuild also removes the copy an older build left in `~/.gemini/GEMINI.md`, unless you changed its first line.
+Launching with `--extensions` naming other extensions leaves the instructions out.
 The tool leaves `context.fileName` unset.
 
 ## Bob Shell
@@ -329,7 +334,7 @@ It also lists the tools and repositories the template provides.
 
 The build stores it once, in `/etc/isx/agent-instructions.md`.
 With Claude Code it appears at `/etc/claude-code/CLAUDE.md`, and with Pi at `/AGENTS.md`, both links to that one file.
-With Gemini CLI, `~/.gemini/GEMINI.md` gets a copy you own.
+With Gemini CLI, the `isx` extension's `~/.gemini/extensions/isx/GEMINI.md` gets a copy you own.
 Editing one of the links changes every agent's, and the next build replaces them all.
 
 With Codex CLI, `/etc/codex/requirements.toml` holds them as managed developer instructions, which Codex adds to your own.

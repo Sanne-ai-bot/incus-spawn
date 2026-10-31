@@ -521,7 +521,7 @@ class GuestProvisioningTest {
         GuestProvisioning.writeAgentContext(new Container(incus, "test"), child,
                 Map.of("tpl-parent", parent), tools, "tpl-child");
 
-        var path = dev.incusspawn.tool.GeminiSetup.MEMORY_PATH;
+        var path = dev.incusspawn.tool.GeminiSetup.CONTEXT_PATH;
         var gemini = capturedWrite(incus, AgentInstructions.STORE);
         assertNotNull(gemini);
         assertTrue(gemini.contains("built from the `tpl-child` template"));
@@ -552,7 +552,7 @@ class GuestProvisioningTest {
         assertTrue(shellCalls(incus).getLast().contains("isx_link '/AGENTS.md'"));
         assertTrue(shellCalls(incus).stream().noneMatch(call -> call.contains("/.pi/")),
                 "the user's own Pi files are not touched");
-        assertFalse(shellCalls(incus).getLast().contains("isx_copy '" + dev.incusspawn.tool.GeminiSetup.MEMORY_PATH));
+        assertFalse(shellCalls(incus).getLast().contains("isx_copy '" + dev.incusspawn.tool.GeminiSetup.CONTEXT_PATH));
     }
 
     /**
