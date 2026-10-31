@@ -14,6 +14,9 @@ import java.nio.file.Path;
  */
 abstract class DefinitionOrigin extends MappedDefinition {
 
+    /** What a warning about a key isx sets itself ends with. */
+    static final String SET_BY_ISX = ", a file's value is ignored (#765)";
+
     @JqIgnore
     private String source = "unknown";
 
@@ -30,4 +33,14 @@ abstract class DefinitionOrigin extends MappedDefinition {
     public void setSource(String source) { this.source = source; }
     public Path getProjectRoot() { return projectRoot; }
     public void setProjectRoot(Path projectRoot) { this.projectRoot = projectRoot; }
+
+    /** A template that sets either key itself is told why its value is not used. */
+    @Override
+    protected String hint(String key) {
+        return switch (normalized(key)) {
+            case "source" -> "'source' is set by isx" + SET_BY_ISX;
+            case "projectroot", "project-root" -> "'projectRoot' is set by isx" + SET_BY_ISX;
+            default -> null;
+        };
+    }
 }

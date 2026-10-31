@@ -749,8 +749,11 @@ class ImageDefTest {
 
         assertNull(def.getProjectRoot());
         assertNotEquals("built-in", def.getSource());
-        assertEquals(List.of("unknown key 'source', ignored", "unknown key 'projectRoot', ignored"),
+        assertEquals(List.of("unknown key 'source', ignored; 'source' is set by isx, a file's value is ignored (#765)",
+                        "unknown key 'projectRoot', ignored; 'projectRoot' is set by isx, a file's value is ignored (#765)"),
                 def.unknownKeyWarnings());
+        assertEquals(List.of("unknown key 'project_root', ignored; 'projectRoot' is set by isx, a file's value is ignored (#765)"),
+                ImageDef.parseYaml("name: tpl-x\nproject_root: /\n").unknownKeyWarnings());
     }
 
     @Test
