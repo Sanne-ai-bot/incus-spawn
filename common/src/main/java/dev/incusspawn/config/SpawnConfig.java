@@ -621,6 +621,11 @@ public class SpawnConfig {
     public void setBob(BobConfig bob) { this.bob = bob; }
     public OpenaiConfig getOpenai() { return openai; }
     public void setOpenai(OpenaiConfig openai) { this.openai = openai; }
+
+    /** Every typed credential namespace, for code that must visit each one's undeclared keys. */
+    public java.util.List<NamespaceConfig> namespaceConfigs() {
+        return java.util.List.of(github, bob, openai);
+    }
     public java.util.List<String> getSearchPaths() { return searchPaths; }
     public void setSearchPaths(java.util.List<String> searchPaths) { this.searchPaths = searchPaths == null ? java.util.List.of() : searchPaths; }
     public String getHostPath() { return hostPath; }
