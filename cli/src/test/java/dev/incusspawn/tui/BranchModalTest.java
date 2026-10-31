@@ -113,6 +113,19 @@ class BranchModalTest {
     }
 
     @Test
+    void theRowSaysWhyAProjectLocalCoordinatorTemplatesBoxStartsUnticked() {
+        var dialog = dialog(new BranchFlow.Defaults(MachineType.CONTAINER, false, false, null, null, false,
+                "'tpl-dev' makes coordinators by default, but a project-local definition is in its chain or its build"));
+        TuiSnapshot.assertMatches("branch-modal-project-local-coordinator-80x24",
+                TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+        assertEquals(Boolean.FALSE, dialog.request("dev-2").mcpClient());
+        press(dialog, TO_MCP_CONTROL);
+        press(dialog, KeyEvent.ofChar(' '));
+        var ticked = TuiSnapshot.toText(TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
+        assertFalse(ticked.contains("off: project-local"), "ticked, the row says nothing is off");
+    }
+
+    @Test
     void passingAirgappedNeverGivesBackAGrantTheUserDeclined() {
         var dialog = dialog(COORDINATOR);
         press(dialog, TO_MCP_CONTROL);

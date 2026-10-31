@@ -159,6 +159,17 @@ final class ModalRenderer {
                 Style.EMPTY.fg(labelColor).bg(theme.modalBg()))), cols.get(2));
     }
 
+    /** {@link #renderToggle}, then {@code note} dimmed after the label: why the box starts as it does. */
+    void renderToggle(Frame frame, Rect area, String label, CheckboxState state, boolean focused, String note) {
+        renderToggle(frame, area, label, state, focused);
+        if (note == null) return;
+        var cols = Layout.horizontal()
+                .constraints(Constraint.length(FIELD_PREFIX + checkbox.width() + 1 + label.length()), Constraint.fill())
+                .split(area);
+        frame.renderWidget(Paragraph.from(Line.styled(" — " + note,
+                Style.EMPTY.fg(theme.textDim()).bg(theme.modalBg()))), cols.get(1));
+    }
+
     void renderDisabledLine(Frame frame, Rect area, String label, String reason) {
         var cols = Layout.horizontal()
                 .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(checkbox.width() + 1), Constraint.fill())
