@@ -164,7 +164,7 @@ final class ModalRenderer {
         renderToggle(frame, area, label, state, focused);
         if (note == null) return;
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(toggleLabelColumn() + label.length()), Constraint.fill())
+                .constraints(Constraint.length(toggleLabelColumn() + CharWidth.of(label)), Constraint.fill())
                 .split(area);
         frame.renderWidget(Paragraph.from(Line.styled(" — " + note,
                 Style.EMPTY.fg(theme.textDim()).bg(theme.modalBg()))), cols.get(1));
@@ -181,7 +181,7 @@ final class ModalRenderer {
     void renderSelect(Frame frame, Rect area,
                               String label, SelectState state, boolean focused) {
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(label.length() + 1), Constraint.fill())
+                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(CharWidth.of(label) + 1), Constraint.fill())
                 .split(area);
         var prefix = focused ? "▸" : " ";
         var labelColor = focused ? theme.focusedLabel() : theme.modalFg();
