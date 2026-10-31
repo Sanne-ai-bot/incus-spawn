@@ -1150,9 +1150,9 @@ public class BuildCommand extends BaseCommand {
      * kept, and in the report.
      */
     private static void appendDiag(StringBuilder diag, String line) {
-        var text = BuildOutput.stripAnsi(line);
-        BuildOutput.note(text.stripTrailing());
-        diag.append(text).append('\n');
+        BuildOutput.note(BuildOutput.stripAnsi(line).stripTrailing());
+        // Raw: the report's scrub sees what showing it would hide (#1878), and makes it safe
+        diag.append(line).append('\n');
     }
 
     /**
@@ -1270,18 +1270,15 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * {@code text} for the saved failure report, made safe to show and scrubbed twice: as given, then
-     * once more after {@link BuildOutput#guestText}, since colour codes can split a proof that only
-     * matches once they are gone (#1864). The first pass guards the error line, which quotes a failed
-     * command's stderr raw: guestText turns a control byte into a space and drops what a carriage
-     * return overwrote, either of which can hide a secret's shape. Step output and diagnostics arrive
-     * already stripped ({@code Container.failed}, {@code StepProgress}, {@link #appendDiag}), so what
-     * that hides in them is kept (#1878). The markers hold no control, so the second pass
-     * keeps them.
+     * {@code text} for the saved failure report, made safe to show and scrubbed of what a scrub
+     * of it raw or as shown finds (#1864, #1878): colour codes can split a proof that only matches
+     * once they are gone, and a control byte turned into a space or a carriage return dropping a
+     * line can hide a secret's shape. The error line quotes a failed command's stderr raw, the
+     * diagnostics ({@link #appendDiag}) quote the LXC log and dmesg raw, and step output arrives
+     * scrubbed so already ({@code Container.failed}, {@code StepProgress}).
      */
     private static String scrubbed(String text) {
-        var raw = SecretRedactor.scrubText(text, Map.of()).text();
-        return SecretRedactor.scrubText(BuildOutput.guestText(raw), Map.of()).text();
+        return SecretRedactor.scrubGuest(text);
     }
 
     /** Whether the build's container exists: only then is there one to report on and to promote. */
@@ -1294,8 +1291,8 @@ public class BuildCommand extends BaseCommand {
         // each line is made safe as it is reported (#1228). Why the build failed is an error.
         errorOfLines(errorLine);
 
-        // The saved copies are scrubbed as printed and again without escapes (scrubbed()): a failed
-        // command's output can hold the build's own proofs, which a login shell exports
+        // The saved copies are scrubbed as printed and as shown (scrubbed()): a failed command's
+        // output can hold the build's own proofs, which a login shell exports
         var stepOutput = cause instanceof IncusException ie && ie.stepOutput() != null
                 ? scrubbed(ie.stepOutput()) : "";
         errorLine = scrubbed(errorLine);

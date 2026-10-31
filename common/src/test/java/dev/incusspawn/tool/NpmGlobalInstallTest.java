@@ -309,6 +309,14 @@ class NpmGlobalInstallTest {
     }
 
     @Test
+    void skipReasonsKeepNoSecretOnlyTheRawLogShows() {
+        // The failure report keeps them: scrubbed as npm printed them and as shown (#1878)
+        var npm = new IncusClient.ExecResult(0, "", "npm error fetch https://u:hunter2\u0001secretpw@host/pkg.tgz\nnpm ok\n");
+        assertEquals(List.of("npm error fetch https://u:<isx:redacted:url-credentials>@host/pkg.tgz"),
+                NpmGlobalInstall.skipReasons(npm));
+    }
+
+    @Test
     void showsNpmsSkipReasonsAsText() {
         // An npm package's install script decides what npm's verbose log holds (#1588).
         var npm = new IncusClient.ExecResult(0, "", "\033]52;c;eA==\007\033[31mnpm error\033[0m \033[2Kskipped\nfetch error 10%\rfetch ok 100%\n");

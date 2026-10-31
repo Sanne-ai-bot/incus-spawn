@@ -1,5 +1,6 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
@@ -333,17 +334,44 @@ public final class SecretRedactor {
     // ---- Text scrubbing (logs, instances.json) ----
 
     /**
-     * A credential shape worth catching in text that has no model behind it, and what to
-     * leave in its place -- either the marker alone, or the marker with the surrounding
-     * syntax kept via {@code $n} group references (an {@code Authorization:} header is far
-     * more useful in a log when it still reads as one).
+     * A credential shape worth catching in text that has no model behind it. Its match is
+     * replaced by the marker, but for the surrounding syntax a {@link #keeping} pattern holds in
+     * its groups: the text before the secret as group 1, and any after it as group 2 (an
+     * {@code Authorization:} header is far more useful in a log when it still reads as one).
+     * A match whose groups do not frame it so is redacted whole ({@link #secret}).
      */
-    private record ScrubPattern(String label, Pattern pattern, String replacement) {
-        static ScrubPattern whole(String label, String regex) {
-            return new ScrubPattern(label, Pattern.compile(regex), marker(label));
+    record ScrubPattern(String label, Pattern pattern) {
+        ScrubPattern {
+            int groups = pattern.matcher("").groupCount();
+            if (groups > 2) throw new IllegalArgumentException(label + ": only the text around the secret is a group");
         }
-        static ScrubPattern keeping(String label, String regex, String replacement) {
-            return new ScrubPattern(label, Pattern.compile(regex), replacement);
+        static ScrubPattern whole(String label, String regex) {
+            return whole(label, Pattern.compile(regex));
+        }
+        static ScrubPattern whole(String label, Pattern pattern) {
+            if (pattern.matcher("").groupCount() != 0) throw new IllegalArgumentException(label + ": the whole match is the secret");
+            return new ScrubPattern(label, pattern);
+        }
+        static ScrubPattern keeping(String label, String regex) {
+            var pattern = Pattern.compile(regex);
+            if (pattern.matcher("").groupCount() == 0) throw new IllegalArgumentException(label + ": keeps nothing");
+            return new ScrubPattern(label, pattern);
+        }
+
+        /**
+         * The secret in a match, start and end: between what group 1 keeps before it and group 2
+         * after it. It fails closed (#1882 review): unless group 1 took part and opens the match,
+         * group 2, when there is one, took part and closes it, and something lies between them,
+         * the whole match is the secret.
+         */
+        static int[] secret(java.util.regex.Matcher match) {
+            int groups = match.groupCount();
+            if (groups == 0) return new int[] {match.start(), match.end()};
+            boolean framed = match.start(1) == match.start()
+                    && (groups < 2 || match.start(2) >= 0 && match.end(2) == match.end());
+            int start = framed ? match.end(1) : -1;
+            int end = framed ? (groups >= 2 ? match.start(2) : match.end()) : -1;
+            return framed && start < end ? new int[] {start, end} : new int[] {match.start(), match.end()};
         }
     }
 
@@ -351,7 +379,7 @@ public final class SecretRedactor {
 
     private static final List<ScrubPattern> PATTERNS = List.of(
             // First, so an isx proof is named as one whatever the token shape its prefix borrows
-            new ScrubPattern("isx-proof", dev.incusspawn.proxy.ProofToken.ANY_PROOF, marker("isx-proof")),
+            ScrubPattern.whole("isx-proof", dev.incusspawn.proxy.ProofToken.ANY_PROOF),
             // A key runs to its END line, or, cut short, to the next key's header or the end of the
             // text: all of it is secret. No match scans past another key's header, so the search is
             // linear; a lazy .*? to an END that never came was quadratic over guest output. The
@@ -365,16 +393,13 @@ public final class SecretRedactor {
             ScrubPattern.whole("github-token", "gh[pousr]_[A-Za-z0-9]{20,}"),
             ScrubPattern.whole("google-key", "AIza[A-Za-z0-9_-]{30,}"),
             ScrubPattern.keeping("bearer-token",
-                    "(?i)(authorization\\s*[:=]\\s*bearer\\s+)[A-Za-z0-9._~+/-]{8,}=*",
-                    "$1" + marker("bearer-token")),
+                    "(?i)(authorization\\s*[:=]\\s*bearer\\s+)[A-Za-z0-9._~+/-]{8,}=*"),
             ScrubPattern.keeping("basic-auth",
-                    "(?i)(authorization\\s*[:=]\\s*basic\\s+)[A-Za-z0-9+/]{8,}=*",
-                    "$1" + marker("basic-auth")),
+                    "(?i)(authorization\\s*[:=]\\s*basic\\s+)[A-Za-z0-9+/]{8,}=*"),
             // The value scrub runs first, so skip anything it already marked: re-matching a
             // marker would relabel it and lose the name of the key it came from.
             ScrubPattern.keeping("url-credentials",
-                    "(?i)(https?://[^/\\s:@]+:)(?!" + Pattern.quote(MARKER_PREFIX) + ")[^/\\s@]+(@)",
-                    "$1" + marker("url-credentials") + "$2")
+                    "(?i)(https?://[^/\\s:@]+:)(?!" + Pattern.quote(MARKER_PREFIX) + ")[^/\\s@]+(@)")
     );
 
     /** Whether the text contains anything shaped like a credential (the patterns {@link #scrubText} removes). */
@@ -386,46 +411,224 @@ public final class SecretRedactor {
     /** Scrub known secret values and credential shapes out of unstructured text. */
     public static Scrubbed scrubText(String text, Map<String, String> secretValues) {
         if (text == null || text.isEmpty()) return new Scrubbed(text == null ? "" : text, Map.of());
-        var hits = new LinkedHashMap<String, Integer>();
-        var result = text;
+        var scrub = scrub(text, secretValues);
+        return new Scrubbed(scrub.text, Map.copyOf(scrub.hits));
+    }
 
+    /**
+     * What a guest printed, in {@code raw} pieces, as it is shown ({@link BuildOutput#guestText},
+     * each piece on its own) and saved: with every credential shape redacted that a scrub of the
+     * raw text or a scrub of the shown text finds (#1878). Neither alone is enough. Colour codes
+     * can split a token that only matches once they are gone, while a control byte turned into a
+     * space, or a carriage return dropping a key's BEGIN line, hides a shape the raw text shows.
+     * What the raw scrub redacts is found in the shown text through {@link BuildOutput.Shown}, and
+     * each run of what either redacts becomes one marker.
+     */
+    public static String scrubGuest(String... raw) {
+        // Shown as printed, the common case: a raw scrub would find the same spans, so neither
+        // the second scrub nor the map from shown to raw characters is needed
+        boolean asPrinted = true;
+        for (var piece : raw) {
+            if (piece != null && !BuildOutput.showsAsPrinted(piece)) {
+                asPrinted = false;
+                break;
+            }
+        }
+        if (asPrinted) {
+            var printed = new StringBuilder();
+            for (var piece : raw) if (piece != null) printed.append(piece);
+            return scrubText(printed.toString(), Map.of()).text();
+        }
+        var rawText = new StringBuilder();
+        var shownText = new StringBuilder();
+        // Unboxed: guest output can run to megabytes, and showing it never adds a character
+        int rawLength = 0;
+        for (var piece : raw) rawLength += piece == null ? 0 : piece.length();
+        var source = new int[rawLength];
+        for (var piece : raw) {
+            if (piece == null) continue;
+            var shown = BuildOutput.shownGuestText(piece);
+            var from = shown.source();
+            for (int i = 0; i < from.length; i++) source[shownText.length() + i] = rawText.length() + from[i];
+            shownText.append(shown.text());
+            rawText.append(piece);
+        }
+        var text = shownText.toString();
+        if (text.isEmpty()) return text;
+        source = java.util.Arrays.copyOf(source, text.length());
+        var seen = scrub(text, Map.of());
+        var spans = new ArrayList<>(seen.spans);
+        boolean wider = false;
+        // Both earliest first, the shown ones swept once with a cursor as the raw ones advance
+        int cursor = 0;
+        for (var span : scrub(rawText.toString(), Map.of()).spans) {
+            int start = firstShownFrom(source, span.start());
+            int end = firstShownFrom(source, span.end());
+            if (start >= end) continue;
+            while (cursor < seen.spans.size() && seen.spans.get(cursor).end() <= start) cursor++;
+            if (!covered(seen.spans, cursor, start, end)) wider = true;
+            spans.add(new Span(start, end, span.label()));
+        }
+        if (!wider) return seen.text;
+        // Earliest first, so a run is named by what starts it, and the shown scrub's when both do
+        spans.sort(java.util.Comparator.comparingInt(Span::start));
+        var out = new StringBuilder(text.length());
+        int pos = 0;
+        for (int i = 0; i < spans.size(); ) {
+            var first = spans.get(i);
+            int end = first.end();
+            for (i++; i < spans.size() && spans.get(i).start() < end; i++) end = Math.max(end, spans.get(i).end());
+            out.append(text, pos, first.start()).append(marker(first.label()));
+            pos = end;
+        }
+        out.append(text, pos, text.length());
+        // Once more as one text, as a scrub of the shown text would have seen what the raw one marked
+        return scrubText(out.toString(), Map.of()).text();
+    }
+
+    /** The first shown character at or after {@code rawIndex} in the raw text, or past the last. */
+    private static int firstShownFrom(int[] source, int rawIndex) {
+        int low = 0, high = source.length;
+        while (low < high) {
+            int mid = (low + high) >>> 1;
+            if (source[mid] < rawIndex) low = mid + 1; else high = mid;
+        }
+        return low;
+    }
+
+    /**
+     * Whether {@code sorted}, earliest first, redact every character from {@code start} to
+     * {@code end}, looking from {@code from}: none before it ends after {@code start}.
+     */
+    private static boolean covered(List<Span> sorted, int from, int start, int end) {
+        int at = start;
+        for (int i = from; i < sorted.size() && sorted.get(i).start() <= at; i++) {
+            at = Math.max(at, sorted.get(i).end());
+            if (at >= end) return true;
+        }
+        return at >= end;
+    }
+
+    /** A redaction: what it replaced, from {@code start} to {@code end} of the text first given. */
+    private record Span(int start, int end, String label) {}
+
+    /**
+     * Text being scrubbed, the known values first and then each pattern in turn over what the last
+     * left, and what each step redacted of the text first given. Each character keeps where it came
+     * from; a marker's span all that it replaced, so a later match that takes in an earlier
+     * marker redacts the original text under both.
+     */
+    private static final class Scrub {
+        String text;
+        /** Null while nothing is replaced: each character is then its own origin. */
+        int[] from;
+        int[] to;
+        /**
+         * Earliest first. Each claims only redacted characters; two regions of one pass that take in
+         * the same marker can overlap, which every reader accepts.
+         */
+        List<Span> spans = new ArrayList<>();
+        final Map<String, Integer> hits = new LinkedHashMap<>();
+        /** Spans visited keeping {@link #spans}: linear in the matches, which a test pins. */
+        long work;
+
+        Scrub(String text) {
+            this.text = text;
+        }
+
+        private int from(int i) {
+            return from == null ? i : from[i];
+        }
+
+        private int to(int i) {
+            return to == null ? i + 1 : to[i];
+        }
+
+        /** Replace each of {@code regions}, start and end in the current text, in order and apart, by {@code label}'s marker. */
+        void replace(List<int[]> regions, String label) {
+            if (regions.isEmpty()) return;
+            hits.merge(label, regions.size(), Integer::sum);
+            var marker = marker(label);
+            var next = new StringBuilder(text.length());
+            var nextFrom = new int[text.length() + regions.size() * marker.length()];
+            var nextTo = new int[nextFrom.length];
+            int pos = 0;
+            var added = new ArrayList<Span>(regions.size());
+            for (var region : regions) {
+                for (int i = pos; i < region[0]; i++) {
+                    nextFrom[next.length()] = from(i);
+                    nextTo[next.length()] = to(i);
+                    next.append(text.charAt(i));
+                }
+                int start = from(region[0]);
+                int end = to(region[1] - 1);
+                added.add(new Span(start, end, label));
+                for (int i = 0; i < marker.length(); i++) {
+                    nextFrom[next.length()] = start;
+                    nextTo[next.length()] = end;
+                    next.append(marker.charAt(i));
+                }
+                pos = region[1];
+            }
+            for (int i = pos; i < text.length(); i++) {
+                nextFrom[next.length()] = from(i);
+                nextTo[next.length()] = to(i);
+                next.append(text.charAt(i));
+            }
+            text = next.toString();
+            from = nextFrom;
+            to = nextTo;
+            spans = merged(spans, added);
+        }
+
+        /**
+         * {@code old} and {@code added}, both earliest first, in one pass: an old span inside an
+         * added one was swallowed by its match, and every other is kept. A match takes in a
+         * marker whole, so none overlaps one in part, but one that did would be kept too.
+         */
+        private List<Span> merged(List<Span> old, List<Span> added) {
+            var result = new ArrayList<Span>(old.size() + added.size());
+            int i = 0;
+            for (var span : added) {
+                for (; i < old.size() && old.get(i).start() < span.start(); i++, work++) result.add(old.get(i));
+                result.add(span);
+                work++;
+                for (; i < old.size() && old.get(i).start() < span.end(); i++, work++) {
+                    if (old.get(i).end() > span.end()) result.add(old.get(i));
+                }
+            }
+            for (; i < old.size(); i++, work++) result.add(old.get(i));
+            return result;
+        }
+    }
+
+    /** How many spans {@code text}'s scrub visited, for the test that keeps it linear. */
+    static long scrubWork(String text) {
+        return scrub(text, Map.of()).work;
+    }
+
+    private static Scrub scrub(String text, Map<String, String> secretValues) {
+        var scrub = new Scrub(text);
         // Longest first: a secret that contains another must not be half-replaced.
         var byLength = new ArrayList<>(secretValues.keySet());
         byLength.sort((a, b) -> Integer.compare(b.length(), a.length()));
         for (var value : byLength) {
             if (value.length() < MIN_SCRUBBABLE_LENGTH) continue;
-            result = replaceLiteral(result, value, hits, secretValues.get(value));
+            var regions = new ArrayList<int[]>();
+            for (int i = scrub.text.indexOf(value); i >= 0; i = scrub.text.indexOf(value, i + value.length())) {
+                regions.add(new int[] {i, i + value.length()});
+            }
+            scrub.replace(regions, secretValues.get(value));
         }
-
-        for (var scrub : PATTERNS) {
-            result = applyPattern(result, scrub, hits);
+        for (var pattern : PATTERNS) {
+            var regions = new ArrayList<int[]>();
+            var matcher = pattern.pattern().matcher(scrub.text);
+            while (matcher.find()) {
+                // An empty match has nothing to redact, and no character to say where it came from
+                if (matcher.end() > matcher.start()) regions.add(ScrubPattern.secret(matcher));
+            }
+            scrub.replace(regions, pattern.label());
         }
-        return new Scrubbed(result, Map.copyOf(hits));
-    }
-
-    /** Replace every occurrence of a known secret with its marker, counting as it goes. */
-    private static String replaceLiteral(String text, String value,
-                                         Map<String, Integer> hits, String label) {
-        int count = 0;
-        for (int i = text.indexOf(value); i >= 0; i = text.indexOf(value, i + value.length())) {
-            count++;
-        }
-        if (count == 0) return text;
-        hits.merge(label, count, Integer::sum);
-        return text.replace(value, marker(label));
-    }
-
-    private static String applyPattern(String text, ScrubPattern scrub, Map<String, Integer> hits) {
-        var matcher = scrub.pattern().matcher(text);
-        var sb = new StringBuilder();
-        int count = 0;
-        while (matcher.find()) {
-            matcher.appendReplacement(sb, scrub.replacement());
-            count++;
-        }
-        if (count == 0) return text;
-        matcher.appendTail(sb);
-        hits.merge(scrub.label(), count, Integer::sum);
-        return sb.toString();
+        return scrub;
     }
 }

@@ -82,12 +82,91 @@ public final class BuildOutput {
      * ({@link TerminalLink#plainText}).
      */
     public static String guestText(String text) {
-        if (text.codePoints().noneMatch(TerminalLink::actsOnTerminal)) return text;
-        text = GUEST_CONTROL_PATTERN.matcher(text).replaceAll("");
-        if (text.indexOf('\r') >= 0) {
-            text = Arrays.stream(text.split("\n", -1)).map(BuildOutput::lastFrame).collect(Collectors.joining("\n"));
+        if (showsAsPrinted(text)) return text;
+        return shownGuestText(text).text();
+    }
+
+    /**
+     * {@link #guestText} of a guest's {@code raw} text, with where each of its characters came from:
+     * {@code source[i]} is the index in {@code raw} of the character {@code text} shows at {@code i},
+     * ascending, as guestText only drops characters and turns a control into a space. A redaction
+     * of the raw text is found again in what is shown through it (#1878).
+     */
+    public record Shown(String text, int[] source) {}
+
+    /** Whether {@link #guestText} shows {@code text} as printed: it holds nothing a terminal acts on. */
+    public static boolean showsAsPrinted(String text) {
+        return text.codePoints().noneMatch(TerminalLink::actsOnTerminal);
+    }
+
+    /** {@link #guestText} of {@code raw}, with the source of each character it keeps ({@link Shown}). */
+    public static Shown shownGuestText(String raw) {
+        if (showsAsPrinted(raw)) {
+            return new Shown(raw, java.util.stream.IntStream.range(0, raw.length()).toArray());
         }
-        return TerminalLink.plainText(text);
+        // The control strings, sequences and escapes, dropped whole
+        var kept = new StringBuilder(raw.length());
+        var from = new int[raw.length()];
+        var matcher = GUEST_CONTROL_PATTERN.matcher(raw);
+        int pos = 0;
+        while (true) {
+            int end = matcher.find() ? matcher.start() : raw.length();
+            for (int i = pos; i < end; i++) {
+                from[kept.length()] = i;
+                kept.append(raw.charAt(i));
+            }
+            if (end == raw.length()) break;
+            pos = matcher.end();
+        }
+        // Each line's last frame with text in it, when a carriage return drew over it
+        var framed = new StringBuilder(kept.length());
+        var framedFrom = new int[kept.length()];
+        if (kept.indexOf("\r") >= 0) {
+            for (int line = 0; line <= kept.length(); ) {
+                int lineEnd = kept.indexOf("\n", line);
+                if (lineEnd < 0) lineEnd = kept.length();
+                int frameStart = line, frameEnd = line;
+                for (int f = line; f <= lineEnd; ) {
+                    // Bounded by the line: a search past it would rescan the rest of the text per line
+                    int fEnd = f;
+                    while (fEnd < lineEnd && kept.charAt(fEnd) != '\r') fEnd++;
+                    if (!kept.substring(f, fEnd).isBlank()) {
+                        frameStart = f;
+                        frameEnd = fEnd;
+                    }
+                    f = fEnd + 1;
+                }
+                for (int i = frameStart; i < frameEnd; i++) {
+                    framedFrom[framed.length()] = from[i];
+                    framed.append(kept.charAt(i));
+                }
+                if (lineEnd == kept.length()) break;
+                framedFrom[framed.length()] = from[lineEnd];
+                framed.append('\n');
+                line = lineEnd + 1;
+            }
+        } else {
+            framed = kept;
+            framedFrom = from;
+        }
+        // Every other control, a space ({@link TerminalLink#plainText})
+        var shown = new StringBuilder(framed.length());
+        var source = new int[framed.length()];
+        for (int i = 0; i < framed.length(); ) {
+            int c = framed.codePointAt(i);
+            int width = Character.charCount(c);
+            if (TerminalLink.actsOnTerminal(c)) {
+                source[shown.length()] = framedFrom[i];
+                shown.append(' ');
+            } else {
+                for (int j = i; j < i + width; j++) {
+                    source[shown.length()] = framedFrom[j];
+                    shown.append(framed.charAt(j));
+                }
+            }
+            i += width;
+        }
+        return new Shown(shown.toString(), Arrays.copyOf(source, shown.length()));
     }
 
     /**
@@ -99,6 +178,22 @@ public final class BuildOutput {
                 .filter(t -> t != null && !t.isBlank())
                 .flatMap(t -> guestText(t).lines())
                 .toArray(String[]::new);
+    }
+
+    /**
+     * The streams {@link #guestLines} shows, raw, for a scrub that must see what showing them
+     * hides (#1878): each that shows a line, ending in a line break once shown. One of escapes
+     * alone shows nothing, so it adds no line, as in guestLines.
+     */
+    public static String[] guestStreams(String... texts) {
+        var streams = new java.util.ArrayList<String>(texts.length);
+        for (var t : texts) {
+            if (t == null || t.isBlank()) continue;
+            var shown = guestText(t);
+            if (shown.isEmpty()) continue;
+            streams.add(shown.endsWith("\n") ? t : t + "\n");
+        }
+        return streams.toArray(String[]::new);
     }
 
     /** How many lines of a failed command's output a warning shows: the end, where it says why. */
@@ -116,15 +211,6 @@ public final class BuildOutput {
         kept[0] = "(" + (lines.length - FAILED_OUTPUT_LINES) + " earlier lines not shown)";
         System.arraycopy(lines, lines.length - FAILED_OUTPUT_LINES, kept, 1, FAILED_OUTPUT_LINES);
         return kept;
-    }
-
-    /** The last carriage-return segment of {@code line} with text in it, or "" when none has. */
-    private static String lastFrame(String line) {
-        var frames = line.split("\r");
-        for (int i = frames.length - 1; i >= 0; i--) {
-            if (!frames[i].isBlank()) return frames[i];
-        }
-        return "";
     }
 
     public static final String STEP_INDENT = "    ";
