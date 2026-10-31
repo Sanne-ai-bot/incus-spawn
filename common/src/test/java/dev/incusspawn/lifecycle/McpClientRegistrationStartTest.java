@@ -79,7 +79,7 @@ class McpClientRegistrationStartTest {
     }
 
     /** The environment the branch's setup exec gets, for a branch of a coordinator. */
-    private static Map<String, String> branchSetupEnv(Map<String, String> extraConfig) {
+    private static Map<String, String> branchSetupEnv(Boolean mcpClient) {
         var daemon = new FakeIncusDaemon().container("tpl", Map.of(Metadata.PROFILE, "tpl-dev"))
                 .container(NAME, Map.of(Metadata.PARENT, "tpl", Metadata.MCP_CALLER, GRANT));
         var incus = spy(daemon.client());
@@ -91,7 +91,7 @@ class McpClientRegistrationStartTest {
         // Proxy only, as a coordinator is branched: the host's proxy is checked first, and this
         // host may not run one
         var request = new BranchFlow.Request(NAME, "copy", false, false, NetworkMode.PROXY_ONLY,
-                null, null, null, null, List.of(), true, extraConfig);
+                null, null, null, null, List.of(), true, Map.of(), mcpClient);
         var original = BranchFlow.proxyHealthCheck;
         BranchFlow.proxyHealthCheck = i -> true;
         try {
@@ -107,12 +107,12 @@ class McpClientRegistrationStartTest {
     void aCopyOfACoordinatorIsToldToRemoveTheRegistrationOnItsFirstStart() {
         // isx branch --from coord, or a fork made over MCP: the copy carries the source's
         // registration in its rootfs, and its first start is the branch's own
-        assertEquals("0", branchSetupEnv(Map.of()).get(McpClientRegistration.ENV));
+        assertEquals("0", branchSetupEnv(null).get(McpClientRegistration.ENV));
     }
 
     @Test
     void aBranchMadeWithMcpClientIsToldToRegister() {
-        assertEquals("1", branchSetupEnv(Map.of(Metadata.MCP_CALLER, Metadata.newMcpCallerGrant()))
+        assertEquals("1", branchSetupEnv(true)
                 .get(McpClientRegistration.ENV));
     }
 

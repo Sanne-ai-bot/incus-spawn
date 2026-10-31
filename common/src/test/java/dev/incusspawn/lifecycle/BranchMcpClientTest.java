@@ -22,13 +22,10 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith({TempHome.class, LinuxBranching.class})
 class BranchMcpClientTest {
 
+    /** As {@code isx branch --mcp-client}. */
     private static BranchFlow.Request request(NetworkMode network) {
-        return request(network, Metadata.newMcpCallerGrant());
-    }
-
-    private static BranchFlow.Request request(NetworkMode network, String grant) {
         return new BranchFlow.Request("tpl-dev", "coord", null, null, network, null, null, null, null,
-                List.of(), false, Map.of(Metadata.MCP_CALLER, grant));
+                List.of(), false, Map.of(), true);
     }
 
     @Test
@@ -41,12 +38,41 @@ class BranchMcpClientTest {
     }
 
     @Test
-    void anyValueOfTheStampIsRefusedWhenAirgapped() {
-        // Not a well-formed grant, so it would grant nothing; still, no airgapped branch is stamped
-        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of());
-        assertThrows(BranchFlow.BranchException.class,
-                () -> BranchFlow.preflight(daemon.client(), request(NetworkMode.AIRGAP, "not-a-grant"), Map.of()));
-        assertEquals(List.of(), daemon.requests());
+    void aGrantTheCallerStampsItselfNeverReachesTheBranch() {
+        // Only the request's choice decides; BranchFlow mints the grant, and strips any other
+        var daemon = coordinatorSource();
+        var request = new BranchFlow.Request("tpl-coord", "plain", false, false, NetworkMode.AIRGAP, null, null, null,
+                null, List.of(), false, Map.of(Metadata.MCP_CALLER, Metadata.newMcpCallerGrant()));
+        BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of()));
+        assertFalse(daemon.instance("plain").path("config").has(Metadata.MCP_CALLER));
+    }
+
+    @Test
+    void aGrantedBranchGetsAGrantBranchFlowMinted() {
+        var daemon = coordinatorSource();
+        var stale = Metadata.newMcpCallerGrant();
+        var request = new BranchFlow.Request("tpl-coord", "coord", false, false, NetworkMode.FULL, null, null, null,
+                null, List.of(), false, Map.of(Metadata.MCP_CALLER, stale), true);
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = i -> true;
+        try {
+            BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of()));
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
+        var grant = daemon.instance("coord").path("config").path(Metadata.MCP_CALLER).asText("");
+        assertTrue(Metadata.isMcpCallerGrant(grant), grant);
+        assertNotEquals(stale, grant);
+    }
+
+    @Test
+    void aTaintedTemplateOrAnInstanceSharingADefinitionsNameIsNoCoordinatorByDefault() {
+        var defs = coordinatorTemplate(true);
+        var tainted = new FakeIncusDaemon().container("tpl-coord", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.UNTRUSTED_LINEAGE, "a failed build"));
+        assertFalse(BranchFlow.defaultsFor("tpl-coord", tainted.client().instanceMetadata("tpl-coord"), defs).mcpClient());
+        var instance = new FakeIncusDaemon().container("tpl-coord", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
+        assertFalse(BranchFlow.defaultsFor("tpl-coord", instance.client().instanceMetadata("tpl-coord"), defs).mcpClient());
     }
 
     @Test
