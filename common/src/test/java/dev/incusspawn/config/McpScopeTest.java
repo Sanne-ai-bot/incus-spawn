@@ -89,6 +89,14 @@ class McpScopeTest {
     }
 
     @Test
+    void anUntrustedLineageIsDeniedWhateverItsReasonSays() {
+        var unexplained = new dev.incusspawn.proxy.InstanceRegistry.Lineage("tpl-x", true, "");
+        var scope = McpScope.coordinator(unexplained, DEFS, APPROVED);
+        assertEquals(List.of(), scope.templates());
+        assertTrue(scope.explain("tpl-a").contains("of no known lineage"), scope.explain("tpl-a"));
+    }
+
+    @Test
     void theHostKeepsTheGlobalList() {
         var scope = McpScope.host(APPROVED);
         assertEquals(APPROVED, scope.templates());
