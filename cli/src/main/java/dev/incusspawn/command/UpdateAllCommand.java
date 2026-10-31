@@ -276,7 +276,7 @@ public class UpdateAllCommand extends BaseCommand {
                 if (run.success()) {
                     BuildOutput.stepDone();
                 } else {
-                    BuildOutput.stepFail("Prime command failed for " + repo.getPath() + ": " + run.command()
+                    BuildOutput.stepFail("Prime command failed for " + repo.getPath() + ": " + RepoCloner.commandText(run.command())
                             + (run.retried() ? "; " + run.label() : "")
                             // update-all shows no prime output: the advice goes on the line itself.
                             + (run.stillUntrusted() ? ". " + RepoCloner.UNTRUSTED_AFTER_BIND : ""));
