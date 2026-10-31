@@ -2100,7 +2100,8 @@ public class Tui {
             var lineage = dev.incusspawn.proxy.InstanceRegistry.lineageOf(info.metadata().path("config"), configs);
             return dev.incusspawn.config.McpScope.coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null,
                     dev.incusspawn.config.ImageDef.loadTrusted(), dev.incusspawn.config.McpConfig.load().templates());
-        } catch (dev.incusspawn.config.McpConfig.Invalid e) {
+        } catch (RuntimeException e) {
+            // As accountUsesFor: the details are worth showing without it (mcp.yaml unusable, a load failing)
             return null;
         }
     }

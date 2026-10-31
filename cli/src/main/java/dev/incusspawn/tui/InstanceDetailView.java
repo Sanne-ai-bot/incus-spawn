@@ -189,7 +189,7 @@ public final class InstanceDetailView {
      */
     public static List<DetailRow> mcpControlRows(boolean mcpCaller, dev.incusspawn.config.McpScope scope) {
         if (!mcpCaller) return List.of();
-        return List.of(new DetailRow("MCP control:", scope == null ? "mcp.yaml cannot be read" : scope.summary()));
+        return List.of(new DetailRow("MCP control:", scope == null ? "cannot be told (mcp.yaml or the definitions could not be read)" : scope.summary()));
     }
 
     /**
