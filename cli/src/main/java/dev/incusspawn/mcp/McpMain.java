@@ -76,14 +76,10 @@ public final class McpMain {
             // Its client is in the instance: no host process, no host directory to stamp.
             clientPid = -1;
             cwd = null;
-            // Its lineage once, by the proxy's own judgement; its template's definition on every
-            // call, from the trusted layers, so an edit reaches it at once (#1812)
-            var lineage = backend.lineage(callerInstance);
-            scope = c -> McpScope.coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null,
-                    ImageDef.loadTrusted(), c.templates());
+            scope = scopeFor(backend, callerInstance, ImageDef::loadTrusted);
         } else {
             self = SessionId.current();
-            scope = c -> McpScope.host(c.templates());
+            scope = scopeFor(backend, null, ImageDef::loadTrusted);
             clientPid = ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(-1L);
             cwd = Path.of("").toAbsolutePath().toString();
         }
@@ -121,6 +117,20 @@ public final class McpMain {
         watcher.stop();
         release.run();
         return 0;
+    }
+
+    /**
+     * What the session of {@code callerInstance} may use of a config (#1812): {@code mcp.yaml}'s
+     * list for the host's own session (null), else only what the caller's template also lists.
+     * Its lineage once, by the proxy's own judgement; its template's definition on every call,
+     * from {@code definitions} (the trusted layers), so an edit reaches a running coordinator.
+     */
+    static Function<McpConfig, McpScope> scopeFor(IncusInstanceBackend backend, String callerInstance,
+                                                  Supplier<Map<String, ImageDef>> definitions) {
+        if (callerInstance == null) return c -> McpScope.host(c.templates());
+        var lineage = backend.lineage(callerInstance);
+        return c -> McpScope.coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null,
+                definitions.get(), c.templates());
     }
 
     /**
