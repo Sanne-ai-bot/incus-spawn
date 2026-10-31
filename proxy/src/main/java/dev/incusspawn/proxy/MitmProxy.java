@@ -1046,17 +1046,53 @@ public class MitmProxy {
     }
 
     private void closeListening() {
-        closeQuietly(mitmServer, 2);
-        closeQuietly(healthHttpServer, 2);
+        var deadline = stopDeadline();
+        awaitClose("MITM listener", mitmServer, deadline);
+        awaitClose("Health listener", healthHttpServer, healthDeadline(deadline));
         boundMitmPort = 0;
         boundHealthPort = 0;
     }
 
-    private static void closeQuietly(HttpServer server, int timeoutSeconds) {
-        if (server == null) return;
+    /**
+     * How long {@link #stop()} waits, all closes together, for its listeners and upstream clients
+     * to close. A close takes milliseconds when idle but 1.5 s was measured under a 10% CPU quota
+     * (#1887, #1894), so this leaves room for a loaded host. With {@link #HEALTH_CLOSE_FLOOR_SECONDS}
+     * it stays under the 10 s after which {@code ProxyMain}'s shutdown hook halts the process.
+     */
+    static final long STOP_BUDGET_SECONDS = 8;
+
+    /** What the health listener, closed last, still gets when the closes before it used the budget up. */
+    private static final long HEALTH_CLOSE_FLOOR_SECONDS = 1;
+
+    private static long stopDeadline() {
+        return System.nanoTime() + TimeUnit.SECONDS.toNanos(STOP_BUDGET_SECONDS);
+    }
+
+    private static long healthDeadline(long deadline) {
+        return Math.max(deadline, System.nanoTime() + TimeUnit.SECONDS.toNanos(HEALTH_CLOSE_FLOOR_SECONDS));
+    }
+
+    private static void awaitClose(String what, HttpServer server, long deadline) {
+        if (server != null) awaitClose(what, server.close(), deadline);
+    }
+
+    /**
+     * Waits for {@code closing} until {@code deadline} ({@link System#nanoTime()}), and says so when
+     * it does not complete: a listener still closing once the wait is over is a port a restart may
+     * find bound (#1219).
+     */
+    static void awaitClose(String what, Future<?> closing, long deadline) {
         try {
-            server.close().toCompletionStage().toCompletableFuture().get(timeoutSeconds, TimeUnit.SECONDS);
-        } catch (Exception ignored) {}
+            closing.toCompletionStage().toCompletableFuture()
+                    .get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            ProxyLog.warn(what + " did not close in the time the stop allows: its port or connections may still be bound");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            ProxyLog.warn(what + " did not close: the stop was interrupted, so its port or connections may still be bound");
+        } catch (java.util.concurrent.ExecutionException e) {
+            ProxyLog.warn(what + " failed to close (" + e.getCause() + "): its port or connections may still be bound");
+        }
     }
 
     /**
@@ -1101,7 +1137,9 @@ public class MitmProxy {
         try {
             return listening.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS).actualPort();
         } catch (Exception e) {
-            closeQuietly(server, 2);
+            // Not waited for: a failed listen holds no port, and one that timed out may still bind
+            // later, which only this close releases, whenever it completes
+            server.close();
             throw e;
         }
     }
@@ -1114,11 +1152,16 @@ public class MitmProxy {
         ProxyLog.info("Stopping proxy");
         try {
             artifactCache.logCacheStats();
-            closeQuietly(mitmServer, 2);
-            upstream.closeClients();
+            var deadline = stopDeadline();
+            // The upstream clients close beside the MITM listener; the health listener closes once
+            // the MITM port is free, since a new proxy waits only while the health port answers (#1219)
+            var mitmClosing = mitmServer == null ? null : mitmServer.close();
+            var clientsClosing = upstream.closeClients();
+            if (mitmClosing != null) awaitClose("MITM listener", mitmClosing, deadline);
+            clientsClosing.forEach((what, closing) -> awaitClose(what, closing, deadline));
             if (mcpBridge != null) mcpBridge.stop();
             hostRouteRelay.stop();
-            closeQuietly(healthHttpServer, 1);
+            awaitClose("Health listener", healthHttpServer, healthDeadline(deadline));
         } finally {
             // Guarantee stopLatch is always counted down, even if an unexpected exception occurs
             stopLatch.countDown();

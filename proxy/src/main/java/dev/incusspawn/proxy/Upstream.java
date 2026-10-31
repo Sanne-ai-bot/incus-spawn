@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -186,17 +187,13 @@ class Upstream {
         wsUpstreamClient = vertx.createWebSocketClient(wsClientOptions);
     }
 
-    /** Closes the upstream clients, as {@link MitmProxy#stop} does. */
-    void closeClients() {
-        try {
-            if (upstreamClient != null) upstreamClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
-        } catch (Exception ignored) {}
-        try {
-            if (probeClient != null) probeClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
-        } catch (Exception ignored) {}
-        try {
-            if (wsUpstreamClient != null) wsUpstreamClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
-        } catch (Exception ignored) {}
+    /** Starts closing the upstream clients, as {@link MitmProxy#stop} does, and gives each close by name. */
+    Map<String, Future<Void>> closeClients() {
+        var closing = new LinkedHashMap<String, Future<Void>>();
+        if (upstreamClient != null) closing.put("Upstream client", upstreamClient.close());
+        if (probeClient != null) closing.put("Upstream probe client", probeClient.close());
+        if (wsUpstreamClient != null) closing.put("Upstream WebSocket client", wsUpstreamClient.close());
+        return closing;
     }
 
     /**
