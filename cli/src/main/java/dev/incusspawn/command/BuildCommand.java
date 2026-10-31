@@ -1269,8 +1269,19 @@ public class BuildCommand extends BaseCommand {
         return OutputFormat.oneLine(String.valueOf(value));
     }
 
+    /**
+     * {@code text} for the saved failure report, made safe to show and scrubbed twice: as given, then
+     * once more after {@link BuildOutput#guestText}, since colour codes can split a proof that only
+     * matches once they are gone (#1864). The first pass guards the error line, which quotes a failed
+     * command's stderr raw: guestText turns a control byte into a space and drops what a carriage
+     * return overwrote, either of which can hide a secret's shape. Step output and diagnostics arrive
+     * already stripped ({@code Container.failed}, {@code StepProgress}, {@link #appendDiag}), so what
+     * that hides in them is kept (#1878). The markers hold no control, so the second pass
+     * keeps them.
+     */
     private static String scrubbed(String text) {
-        return SecretRedactor.scrubText(text, Map.of()).text();
+        var raw = SecretRedactor.scrubText(text, Map.of()).text();
+        return SecretRedactor.scrubText(BuildOutput.guestText(raw), Map.of()).text();
     }
 
     /** Whether the build's container exists: only then is there one to report on and to promote. */
@@ -1283,8 +1294,8 @@ public class BuildCommand extends BaseCommand {
         // each line is made safe as it is reported (#1228). Why the build failed is an error.
         errorOfLines(errorLine);
 
-        // The saved copies are scrubbed as the build log is: a failed command's output can hold the
-        // build's own proofs, which a login shell exports
+        // The saved copies are scrubbed as printed and again without escapes (scrubbed()): a failed
+        // command's output can hold the build's own proofs, which a login shell exports
         var stepOutput = cause instanceof IncusException ie && ie.stepOutput() != null
                 ? scrubbed(ie.stepOutput()) : "";
         errorLine = scrubbed(errorLine);
