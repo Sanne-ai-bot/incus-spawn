@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.tool.GeminiSetup;
 import dev.incusspawn.util.BuildOutput;
 
 import java.util.ArrayList;
@@ -15,9 +16,10 @@ import java.util.List;
  *
  * <p>The one copy is {@link #STORE}, root-owned and 0644. A location outside the agent user's
  * home is a hardlink to it, so every agent reads the same inode; one inside the home (Gemini's
- * {@code ~/.gemini/GEMINI.md}) is a copy owned by agentuser, since all links share one owner and
- * mode, and a root-owned file there would be one the user cannot edit. A link that cannot be
- * made, as when a mount puts the location on another filesystem, falls back to a copy.
+ * {@code ~/.gemini/extensions/isx/GEMINI.md}) is a copy owned by agentuser, since all links
+ * share one owner and mode, and a root-owned file there would be one the user cannot edit. A
+ * link that cannot be made, as when a mount puts the location on another filesystem, falls
+ * back to a copy.
  *
  * <p>An agent that reads another format (Codex's {@code /etc/codex/requirements.toml}, #1783)
  * gets the instructions rendered into it, root-owned and 0644 like the store. Such a file holds
@@ -28,7 +30,8 @@ import java.util.List;
  * location a tool replaced with a file of its own is relinked rather than left stale. A location
  * no installed tool declares any more is removed when isx wrote it: a link to the store, or a
  * file that starts with the generator's heading, which also covers the copies older builds left
- * at {@link #LEGACY} (the managed policy was written whether or not claude was installed). A file
+ * at {@link #LEGACY} (the managed policy was written whether or not claude was installed, and
+ * Gemini's went to the user's own {@code ~/.gemini/GEMINI.md} before #1784). A file
  * a template put there itself is kept.
  */
 final class AgentInstructions {
@@ -39,8 +42,13 @@ final class AgentInstructions {
     /** The locations the last build linked or copied the store to, one per line. */
     static final String RECORD = "/etc/isx/agent-instructions.paths";
 
-    /** Locations builds wrote before {@link #RECORD} existed: what they wrote, so never changed. */
-    static final List<String> LEGACY = List.of("/etc/claude-code/CLAUDE.md", "/AGENTS.md");
+    /**
+     * Locations isx owned before {@link #RECORD} could name them: the ones builds wrote before the
+     * record existed, and Gemini's {@code ~/.gemini/GEMINI.md}, which builds wrote until #1784. Each
+     * is checked as a stale location on every build, so an entry is only ever added.
+     */
+    static final List<String> LEGACY = List.of("/etc/claude-code/CLAUDE.md", "/AGENTS.md",
+            GeminiSetup.LEGACY_CONTEXT_PATH);
 
     /** What the script ({@code isx_render}) prints for a rendered location it kept, followed by the path. */
     static final String KEPT = "isx-kept ";

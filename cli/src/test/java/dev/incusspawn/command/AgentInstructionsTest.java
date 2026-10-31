@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.tool.GeminiSetup;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,8 @@ class AgentInstructionsTest {
 
     private static final String CLAUDE = "/etc/claude-code/CLAUDE.md";
     private static final String PI = "/AGENTS.md";
-    private static final String GEMINI = "/home/agentuser/.gemini/GEMINI.md";
+    private static final String GEMINI = "/home/agentuser/.gemini/extensions/isx/GEMINI.md";
+    private static final String GEMINI_GLOBAL = "/home/agentuser/.gemini/GEMINI.md";
     private static final String CODEX = "/etc/codex/requirements.toml";
 
     @TempDir
@@ -110,6 +112,29 @@ class AgentInstructionsTest {
         run("# incus-spawn environment\nv1", linked(PI));
 
         assertFalse(Files.exists(at(CLAUDE)));
+    }
+
+    /** Gemini's global context file is the user's own, so a build leaves what is there alone (#1784). */
+    @Test
+    void theUsersOwnGeminiFileIsKept() throws Exception {
+        Files.createDirectories(at(GEMINI_GLOBAL).getParent());
+        Files.writeString(at(GEMINI_GLOBAL), "# my own Gemini instructions\n");
+
+        run("# incus-spawn environment\nv1", linked(new GeminiSetup().environmentContextPath()));
+
+        assertEquals("# my own Gemini instructions\n", Files.readString(at(GEMINI_GLOBAL)));
+        assertEquals("# incus-spawn environment\nv1\n", Files.readString(at(new GeminiSetup().environmentContextPath())));
+    }
+
+    /** Builds before the record wrote Gemini's global file; a copy isx wrote goes, as Claude's does. */
+    @Test
+    void anOlderBuildsGeminiFileGoes() throws Exception {
+        Files.createDirectories(at(GEMINI_GLOBAL).getParent());
+        Files.writeString(at(GEMINI_GLOBAL), "# incus-spawn environment\nold\n");
+
+        run("# incus-spawn environment\nv1", linked(new GeminiSetup().environmentContextPath()));
+
+        assertFalse(Files.exists(at(GEMINI_GLOBAL)));
     }
 
     @Test

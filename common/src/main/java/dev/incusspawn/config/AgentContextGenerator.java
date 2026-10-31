@@ -7,7 +7,7 @@ import java.util.List;
  * Generates the agent instructions every template build stores once, in
  * {@code /etc/isx/agent-instructions.md}, and puts where each installed agent reads them:
  * {@code /etc/claude-code/CLAUDE.md} with Claude Code, {@code /AGENTS.md} with Pi (both hardlinks),
- * {@code ~/.gemini/GEMINI.md} with Gemini CLI (a copy).
+ * {@code ~/.gemini/extensions/isx/GEMINI.md} with Gemini CLI (a copy).
  *
  * <p>Claude Code loads its path as its <em>managed policy</em> memory layer: it is read
  * before the user layer ({@code ~/.claude/CLAUDE.md}) and the project layer

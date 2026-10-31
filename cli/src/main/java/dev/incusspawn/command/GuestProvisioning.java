@@ -341,8 +341,8 @@ public class GuestProvisioning {
      * <p>Stored once, and placed where each installed agent reads it
      * ({@link dev.incusspawn.tool.ToolSetup#environmentContextPath}, {@link AgentInstructions}):
      * Claude Code's managed policy {@code /etc/claude-code/CLAUDE.md} and Pi's {@code /AGENTS.md}
-     * as hardlinks, Gemini CLI's {@code ~/.gemini/GEMINI.md} as agentuser's copy, and Codex's
-     * {@code /etc/codex/requirements.toml} rendered as TOML.
+     * as hardlinks, Gemini CLI's isx extension {@code ~/.gemini/extensions/isx/GEMINI.md} as
+     * agentuser's copy, and Codex's {@code /etc/codex/requirements.toml} rendered as TOML.
      */
     static void writeAgentContext(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
                            List<ResolvedTool> allTools, String canonicalName) {

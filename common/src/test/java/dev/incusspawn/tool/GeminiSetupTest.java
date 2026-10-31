@@ -6,7 +6,10 @@ import dev.incusspawn.incus.IncusException;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import io.hyperfoil.tools.jjq.value.JqBoolean;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -91,6 +94,62 @@ class GeminiSetupTest {
         verify(incus).shellExec(INSTANCE, "rm", "-f", GeminiSetup.LEGACY_LOGIN_NOTICE_PATH);
     }
 
+    /**
+     * The build's instructions are an extension's context file, never the user's own
+     * {@code ~/.gemini/GEMINI.md} (#1784): Gemini loads a {@code GEMINI.md} beside a manifest
+     * that names it, from a directory under its extensions directory.
+     */
+    @Test
+    void instructionsGoToAnExtensionOfIsxsOwn() {
+        var path = new GeminiSetup().environmentContextPath();
+        assertEquals(GeminiSetup.EXTENSION_DIR + "/GEMINI.md", path);
+        assertTrue(GeminiSetup.EXTENSION_DIR.startsWith("/home/agentuser/.gemini/extensions/"));
+        var manifest = JqValues.parseStrict(GeminiSetup.EXTENSION_MANIFEST);
+        assertEquals("isx", manifest.pathText("name", null));
+        assertNotNull(manifest.pathText("version", null), "Gemini skips an extension without a version");
+        assertEquals("GEMINI.md", manifest.pathText("contextFileName", null));
+
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        new GeminiSetup().install(new Container(incus, INSTANCE), Map.of());
+        verify(incus).shellExec(eq(INSTANCE), eq("sh"), eq("-c"),
+                argThat(cmd -> cmd.contains(GeminiSetup.EXTENSION_MANIFEST_PATH) && cmd.contains("contextFileName")));
+    }
+
+    /** The extension's script, run in a real shell under a scratch home: the heredoc feeds the manifest. */
+    @Test
+    void theExtensionScriptWritesTheManifestAndHandsItToAgentuser(@TempDir Path root) throws Exception {
+        var bin = Files.createDirectories(root.resolve("bin"));
+        Files.writeString(bin.resolve("chown"), "#!/bin/sh\necho \"$@\" >> \"$(dirname \"$0\")/chown.log\"\n");
+        bin.resolve("chown").toFile().setExecutable(true);
+        var script = GeminiSetup.extensionScript().replace("/home/agentuser", root + "/home");
+        var pb = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true)
+                .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        var process = pb.start();
+        var output = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor(), output);
+
+        var manifest = Files.readString(Path.of(GeminiSetup.EXTENSION_MANIFEST_PATH.replace("/home/agentuser", root + "/home")));
+        assertEquals(GeminiSetup.EXTENSION_MANIFEST.strip() + "\n", manifest);
+        // The extensions directory itself, and only isx's own extension below it.
+        assertEquals("agentuser:agentuser " + root + "/home/.gemini/extensions\n"
+                        + "-R agentuser:agentuser " + root + "/home/.gemini/extensions/isx\n",
+                Files.readString(bin.resolve("chown.log")));
+    }
+
+    /**
+     * Every command the mock ran, its arguments joined. A lambda {@code argThat} on the varargs
+     * never matches the expanded arguments, so a {@code verify(never())} with one is vacuous.
+     */
+    private static List<String> commands(IncusClient incus) {
+        return mockingDetails(incus).getInvocations().stream()
+                .filter(invocation -> invocation.getMethod().getName().equals("shellExec"))
+                .map(invocation -> invocation.getRawArguments()[invocation.getRawArguments().length - 1])
+                .map(command -> String.join(" ", (String[]) command))
+                .toList();
+    }
+
     @Test
     void anInheritedToolLosesTheOldLoginBlockWithoutReinstallingOrReplacingItsModel() {
         var incus = mock(IncusClient.class);
@@ -103,6 +162,10 @@ class GeminiSetupTest {
                 argThat(cmd -> cmd.contains(GeminiSetup.CONFIG_PATH) && cmd.contains("inherited-model")
                         && cmd.contains("gemini-api-key")));
         verify(incus).shellExec(INSTANCE, "chown", "-R", "agentuser:agentuser", GeminiSetup.CONFIG_PATH);
+        // A parent built before #1784 gets the extension its instructions now load from.
+        verify(incus).shellExec(eq(INSTANCE), eq("sh"), eq("-c"),
+                argThat(cmd -> cmd.contains(GeminiSetup.EXTENSION_MANIFEST_PATH) && cmd.contains("\"isx\"")
+                        && cmd.endsWith("chown -R agentuser:agentuser " + GeminiSetup.EXTENSION_DIR)));
         verify(incus).shellExec(INSTANCE, "rm", "-f", GeminiSetup.LEGACY_LOGIN_NOTICE_PATH);
         verifyNoMoreInteractions(incus);
     }

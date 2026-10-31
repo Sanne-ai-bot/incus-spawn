@@ -695,15 +695,20 @@ What a hardlink needs, and how each is met:
   A location a tool replaced with its own file is relinked rather than left stale.
 - **Stale locations go.**
   Before relinking, a recorded location no tool declares any more is removed if isx wrote it: a link to the store, or a file starting with `AgentContextGenerator.HEADING`.
-  Builds before the record wrote `/etc/claude-code/CLAUDE.md` and `/AGENTS.md` unconditionally, so those two are always checked the same way.
+  Builds before the record wrote `/etc/claude-code/CLAUDE.md` and `/AGENTS.md` unconditionally, so those two are always checked the same way, as is Gemini's old `~/.gemini/GEMINI.md`.
   A file a template put there itself, under any other first line, is kept.
 - **Images keep their links.**
   A copy-on-write copy keeps the inode, and `incus publish` keeps the link count, both checked on a real Incus.
   A VM build runs the same script in the guest, on its own disk.
 
-For images containing `gemini-cli`, the same content is also written to `GeminiSetup.MEMORY_PATH` (`/home/agentuser/.gemini/GEMINI.md`) and owned by `agentuser`.
+For images containing `gemini-cli`, the same content is also written to `GeminiSetup.CONTEXT_PATH` (`/home/agentuser/.gemini/extensions/isx/GEMINI.md`) and owned by `agentuser`.
+Gemini CLI has no system context layer: it reads the user's `~/.gemini/GEMINI.md`, the workspace's ancestors and every active extension's context file (#1784).
+So the instructions go to an extension of isx's own, whose manifest `GeminiSetup` writes, and the user's global file stays theirs.
+Rejected: `GEMINI_SYSTEM_MD` replaces Gemini's whole system prompt, and a system `context.includeDirectories` widens the workspace.
+Gemini ranks extension context above the global file on a conflict, as Claude Code ranks its managed policy.
+Unlike the global file, which goes into the system instruction, extension context arrives in the session's first user message, so a compressed long session may summarize it.
 Both build paths regenerate it after resolving the whole template chain, including when Gemini is inherited without reconfiguration.
-This global Gemini context file is build-owned and replaced on rebuild; project context files are untouched and `context.fileName` stays unset.
+Project context files are untouched and `context.fileName` stays unset.
 Images containing `pi` get the same content in `PiSetup.CONTEXT_PATH` (`/AGENTS.md`), owned by root.
 Pi has no system-wide layer like Claude Code's managed policy.
 It loads `AGENTS.md` from its agent directory (`~/.pi/agent`) and from every directory between its working directory and the root.
