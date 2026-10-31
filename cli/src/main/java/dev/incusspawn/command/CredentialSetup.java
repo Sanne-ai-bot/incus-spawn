@@ -20,6 +20,7 @@ import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.ByteLines;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.SystemTrust;
 import dev.incusspawn.util.TerminalLink;
@@ -616,8 +617,8 @@ class CredentialSetup {
      * message. Remote input: a malformed or oversized body must yield nothing rather
      * than throwing or flooding the terminal.
      */
-    static String apiErrorSuffix(String body) {
-        if (body == null || body.isBlank()) {
+    static String apiErrorSuffix(byte[] body) {
+        if (body == null || ByteLines.isBlank(body)) {
             return "";
         }
         try {
@@ -762,7 +763,7 @@ class CredentialSetup {
                     .timeout(Duration.ofSeconds(10))
                     .POST(HttpRequest.BodyPublishers.ofString("{}"))
                     .build();
-            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            var response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
 
             return switch (response.statusCode()) {
                 case 400 -> new AuthResult(true, label + " verified.");
@@ -1621,7 +1622,7 @@ class CredentialSetup {
                     .header("Authorization", "token " + token)
                     .header("Accept", "application/vnd.github+json")
                     .GET().build();
-            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            var response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
             if (response.statusCode() != 200) {
                 BuildOutput.stepFail("Authentication failed (HTTP " + response.statusCode() + ").");
                 return null;
@@ -1660,7 +1661,7 @@ class CredentialSetup {
                     .header("Authorization", "token " + token)
                     .header("Accept", "application/vnd.github+json")
                     .GET().build();
-            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            var response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
             if (response.statusCode() != 200) {
                 return null;
             }
@@ -1706,7 +1707,7 @@ class CredentialSetup {
         return parsed.verified.get(0);
     }
 
-    static EmailParseResult parseGitHubEmails(String json) {
+    static EmailParseResult parseGitHubEmails(byte[] json) {
         try {
             var emails = Jjq.parseForeign(json, "GitHub's email list");
             var verifiedEmails = new ArrayList<String>();

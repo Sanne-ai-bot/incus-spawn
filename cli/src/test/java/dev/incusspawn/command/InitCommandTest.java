@@ -244,7 +244,7 @@ public class InitCommandTest {
                   {"email":"primary@example.com","primary":true,"verified":true},
                   {"email":"other@example.com","primary":false,"verified":true}
                 ]""";
-        var result = CredentialSetup.parseGitHubEmails(json);
+        var result = CredentialSetup.parseGitHubEmails(utf8(json));
         assertNotNull(result);
         assertEquals(java.util.List.of("primary@example.com", "other@example.com"), result.verified());
         assertEquals("primary@example.com", result.primary());
@@ -257,7 +257,7 @@ public class InitCommandTest {
                   {"email":"unverified@example.com","primary":false,"verified":false},
                   {"email":"verified@example.com","primary":false,"verified":true}
                 ]""";
-        var result = CredentialSetup.parseGitHubEmails(json);
+        var result = CredentialSetup.parseGitHubEmails(utf8(json));
         assertNotNull(result);
         assertEquals(java.util.List.of("verified@example.com"), result.verified());
         assertNull(result.primary());
@@ -270,7 +270,7 @@ public class InitCommandTest {
                   {"email":"12345+user@users.noreply.github.com","primary":false,"verified":true},
                   {"email":"real@example.com","primary":false,"verified":true}
                 ]""";
-        var result = CredentialSetup.parseGitHubEmails(json);
+        var result = CredentialSetup.parseGitHubEmails(utf8(json));
         assertNotNull(result);
         assertEquals(java.util.List.of("12345+user@users.noreply.github.com", "real@example.com"), result.verified());
     }
@@ -279,19 +279,27 @@ public class InitCommandTest {
     void parseEmailsReturnsNoreplyWhenOnly() {
         var json = """
                 [{"email":"12345+user@users.noreply.github.com","primary":true,"verified":true}]""";
-        var result = CredentialSetup.parseGitHubEmails(json);
+        var result = CredentialSetup.parseGitHubEmails(utf8(json));
         assertNotNull(result);
         assertEquals(java.util.List.of("12345+user@users.noreply.github.com"), result.verified());
     }
 
     @Test
     void parseEmailsReturnsNullOnEmptyArray() {
-        assertNull(CredentialSetup.parseGitHubEmails("[]"));
+        assertNull(CredentialSetup.parseGitHubEmails(utf8("[]")));
     }
 
     @Test
     void parseEmailsReturnsNullOnMalformedJson() {
-        assertNull(CredentialSetup.parseGitHubEmails("not json"));
+        assertNull(CredentialSetup.parseGitHubEmails(utf8("not json")));
+    }
+
+    /** GitHub's bytes are read as they came: invalid UTF-8 is malformed, not an address with U+FFFD in it. */
+    @Test
+    void parseEmailsReturnsNullOnInvalidUtf8() {
+        var json = "[{\"email\":\"me@ex\u00ffample.com\",\"primary\":true,\"verified\":true}]"
+                .getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertNull(CredentialSetup.parseGitHubEmails(json));
     }
 
     @Test
@@ -301,7 +309,7 @@ public class InitCommandTest {
                   {"email":"not-primary@example.com","primary":false,"verified":true},
                   {"email":"actual-primary@example.com","primary":true,"verified":true}
                 ]""";
-        var result = CredentialSetup.parseGitHubEmails(json);
+        var result = CredentialSetup.parseGitHubEmails(utf8(json));
         assertNotNull(result);
         assertEquals("actual-primary@example.com", result.primary());
     }
@@ -310,7 +318,7 @@ public class InitCommandTest {
     void parseEmailsHandlesFieldsInAnyOrder() {
         var json = """
                 [{"verified":true,"primary":true,"email":"any-order@example.com"}]""";
-        var result = CredentialSetup.parseGitHubEmails(json);
+        var result = CredentialSetup.parseGitHubEmails(utf8(json));
         assertNotNull(result);
         assertEquals(java.util.List.of("any-order@example.com"), result.verified());
         assertEquals("any-order@example.com", result.primary());
@@ -500,36 +508,39 @@ public class InitCommandTest {
 
     @Test
     void apiErrorSuffixExtractsMessage() {
-        assertEquals(" API said: model: Field required", CredentialSetup.apiErrorSuffix(
+        assertEquals(" API said: model: Field required", CredentialSetup.apiErrorSuffix(utf8(
                 "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\","
-                        + "\"message\":\"model: Field required\"}}"));
+                        + "\"message\":\"model: Field required\"}}")));
     }
 
     @Test
     void apiErrorSuffixCollapsesWhitespaceToOneLine() {
-        assertEquals(" API said: first second", CredentialSetup.apiErrorSuffix(
-                "{\"error\":{\"message\":\"first\\n  second\"}}"));
+        assertEquals(" API said: first second", CredentialSetup.apiErrorSuffix(utf8(
+                "{\"error\":{\"message\":\"first\\n  second\"}}")));
     }
 
     @Test
     void apiErrorSuffixTruncatesOverlongMessage() {
-        var suffix = CredentialSetup.apiErrorSuffix(
-                "{\"error\":{\"message\":\"" + "x".repeat(500) + "\"}}");
+        var suffix = CredentialSetup.apiErrorSuffix(utf8(
+                "{\"error\":{\"message\":\"" + "x".repeat(500) + "\"}}"));
         assertTrue(suffix.endsWith("\u2026"), suffix);
         assertEquals(" API said: ".length() + 201, suffix.length());
     }
 
     @Test
     void apiErrorSuffixIgnoresMalformedBody() {
-        assertEquals("", CredentialSetup.apiErrorSuffix("not json at all"));
-        assertEquals("", CredentialSetup.apiErrorSuffix(""));
+        assertEquals("", CredentialSetup.apiErrorSuffix(utf8("not json at all")));
+        assertEquals("", CredentialSetup.apiErrorSuffix(utf8("")));
         assertEquals("", CredentialSetup.apiErrorSuffix(null));
     }
 
     @Test
     void apiErrorSuffixIgnoresNonTextualMessage() {
-        assertEquals("", CredentialSetup.apiErrorSuffix("{\"error\":{\"message\":{\"nested\":1}}}"));
-        assertEquals("", CredentialSetup.apiErrorSuffix("{\"error\":{\"message\":\"  \"}}"));
+        assertEquals("", CredentialSetup.apiErrorSuffix(utf8("{\"error\":{\"message\":{\"nested\":1}}}")));
+        assertEquals("", CredentialSetup.apiErrorSuffix(utf8("{\"error\":{\"message\":\"  \"}}")));
     }
 
+    private static byte[] utf8(String text) {
+        return text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
 }

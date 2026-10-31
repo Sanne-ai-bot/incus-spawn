@@ -153,7 +153,7 @@ final class SkillInstaller {
             if (!token.isBlank()) {
                 reqBuilder.header("Authorization", "Bearer " + token);
             }
-            var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofByteArray());
             if (response.statusCode() != 200) continue;
 
             var tree = Jjq.parseForeign(response.body(), "GitHub's tree of " + ownerRepo).getField("tree");
