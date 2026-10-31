@@ -297,6 +297,30 @@ class BuildToolsTest {
                 "the pin the child repeats is already installed");
     }
 
+    /**
+     * Within one template too, a parameterless {@code requires} entry is satisfied by another
+     * one that sets parameters, in either order, rather than conflicting with it.
+     */
+    @Test
+    void aParameterlessRequiresEntryYieldsToOneWithParametersInTheSameTemplate() {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(toolWithModel("sshd", true));
+        when(toolDefLoader.find("orca")).thenReturn(yamlToolRequiring("orca", new ToolDef.ToolRef("sshd")));
+        when(toolDefLoader.find("ide")).thenReturn(
+                yamlToolRequiring("ide", new ToolDef.ToolRef("sshd", java.util.Map.of("model", "other"))));
+
+        for (var order : List.of(List.of("orca", "ide"), List.of("ide", "orca"))) {
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-t");
+            imageDef.setTools(order.stream().map(ToolDef.ToolRef::new).toList());
+
+            var sshd = BuildTools.resolveTools(imageDef, toolDefLoader, true).stream()
+                    .filter(t -> t.name().equals("sshd")).findFirst().orElseThrow();
+            assertEquals(java.util.Map.of("model", "other"), sshd.parameters(), "order " + order);
+            assertFalse(sshd.implied(), "order " + order);
+        }
+    }
+
     /** An explicit entry in the child still reconfigures it, even when a dependency also implies it. */
     @Test
     void anExplicitEntryBesideAnImpliedOneStillReconfiguresTheParentsTool() {
