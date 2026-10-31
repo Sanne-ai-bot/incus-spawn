@@ -394,6 +394,49 @@ class BuildCommandTest {
     }
 
     @Test
+    void theFailureReportKeepsNoProofSplitByColour(@TempDir Path tmp) {
+        // grep --color splits the proof's marker with escapes; the build log strips them before
+        // scrubbing, and so must the saved copies (#1864). The error line is raw: it quotes the
+        // failed command's stderr, while step output and diagnostics arrive already stripped
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.instanceMetadataOrThrow("tpl-dev-rebuilding")).thenReturn(instance("container", Map.of()));
+            var written = new java.util.ArrayList<String>();
+            when(incus.shellExec(eq("tpl-dev-rebuilding"), any(String[].class))).thenAnswer(inv -> {
+                written.add(String.join(" ", java.util.Arrays.copyOfRange(inv.getArguments(), 1, inv.getArguments().length, String[].class)));
+                return new IncusClient.ExecResult(0, "", "");
+            });
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            var digest = "0123456789abcdef".repeat(2);
+            var coloured = "\u001b[01;31m\u001b[Kisx\u001b[m\u001b[K_" + digest;
+            var lxcDigest = "fedcba9876543210".repeat(2);
+            // As appendDiag leaves them: escapes stripped
+            doReturn("  LXC log: TOKEN=isx_" + lxcDigest + "\n").when(cmd).printBuildDiagnostics(anyString(), anyBoolean());
+            // Stripping must not hide what the raw error line shows: a control byte would end the
+            // URL password at a space, and a carriage return would drop the key's BEGIN line
+            var urlPassword = "hunter2\u0001secretpw";
+            var keyBody = "fake-key-body-".repeat(3);
+            // As Container.failed hands it over: already through guestText
+            var cause = new IncusException("prime failed")
+                    .withStepOutput("$ env | grep --color=always isx\nGH_TOKEN=gho_isx_" + digest + "\n");
+
+            cmd.reportBuildFailure("tpl-dev-rebuilding", "tpl-dev",
+                    "Build failed for tpl-dev: prime failed:\nGH_TOKEN=gho_" + coloured + "\n"
+                            + "fetching https://u:" + urlPassword + "@host/repo\n"
+                            + "-----BEGIN PRIVATE KEY-----\rcloning...\n" + keyBody + "\n-----END PRIVATE KEY-----", cause);
+
+            var report = assertDoesNotThrow(() -> Files.readString(Environment.buildFailureLogFile("tpl-dev")));
+            for (var secret : List.of(digest, lxcDigest, "secretpw", keyBody)) {
+                assertFalse(report.contains(secret), secret + " in " + report);
+                assertTrue(written.stream().noneMatch(w -> w.contains(secret)), "the inbox copy too: " + written);
+            }
+            assertTrue(report.contains("GH_TOKEN=gho_<isx:redacted:isx-proof>"), report);
+            assertFalse(written.isEmpty(), "the inbox copy is written");
+        });
+    }
+
+    @Test
     void stepOutputIncludedInEarlyHostReport(@TempDir Path tmp) {
         InitCommandTest.withHome(tmp, () -> {
             var incus = mock(IncusClient.class);
