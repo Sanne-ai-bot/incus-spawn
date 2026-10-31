@@ -4663,6 +4663,9 @@ Jackson's semantics are the ones users' files were written against, so where jjq
   It differs on one point: a lone surrogate escape reads as U+FFFD.
   RFC 8259 allows one, and `JSON.stringify` writes one for a string cut inside a pair, but jjq 0.2.4 refuses the whole document for it (Hyperfoil/jjq#146), and a user cannot fix a file another tool keeps rewriting.
   Anything else malformed still fails, as `<source> is not valid JSON: <why> at line L, column C`.
+  Invalid UTF-8 is one of those, so a reader hands over the bytes it received (`Jjq.parseForeign(byte[], ...)`), never a `String` it decoded: `InputStreamReader` and `BodyHandlers.ofString()` turn a malformed byte into U+FFFD before jjq sees it (#1752).
+  Stdio `isx mcp` and the AI providers' event streams read a line's bytes through `ByteLines`.
+  Exec output reaches its readers already decoded, so readers of it, such as the agents' event tails, `ModelCheck.refusal`, `HerdrIntegration`, `GeminiSetup.selectApiKeyAuth` and `ClaudeSetup.parseClaudeJson`, still parse a `String`.
   The escapes are rewritten, length for length, only after the strict parse refused one, so a clean document costs nothing and a later error's position holds.
   The rewrite goes when jjq offers the choice in its `ParseOptions`.
 - An `Integer` field binds through `IntegerConverter`: jjq bound `.inf` and `.nan` as 0 before 0.2.4, which for `orphan-grace-hours` in `mcp.yaml` or `max-instances` would fail open, and refuses `""`, which Jackson left unset (a word, a boolean, a fraction or an out-of-range number it refuses itself since 0.2.3).

@@ -8,8 +8,11 @@ import java.io.IOException;
  */
 interface McpTransport {
 
-    /** The next message as raw JSON text, or null once the client has gone away. */
-    String read() throws IOException;
+    /**
+     * The next message as the bytes the client sent, or null once it has gone away. Bytes, not
+     * text: the server refuses invalid UTF-8, which decoding would hide as U+FFFD.
+     */
+    byte[] read() throws IOException;
 
     /** Send one message. Safe to call from several threads at once. */
     void send(String json) throws IOException;

@@ -6,6 +6,7 @@ import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.incus.IncusException;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -78,7 +79,7 @@ final class McpServer {
      * and given a moment to wind down; their responses have nowhere to go.
      */
     void run() throws IOException {
-        String line;
+        byte[] line;
         while ((line = transport.read()) != null) {
             handle(line);
         }
@@ -96,7 +97,12 @@ final class McpServer {
         while (!inFlight.isEmpty()) Thread.sleep(5);
     }
 
+    /** {@link #handle(byte[])} of a message written in Java, for tests. */
     void handle(String line) {
+        handle(line.getBytes(StandardCharsets.UTF_8));
+    }
+
+    void handle(byte[] line) {
         JqValue msg;
         try {
             msg = Jjq.parseForeign(line, "the MCP message");
