@@ -164,6 +164,11 @@ public final class BuildTools {
                     }
                     resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
                     explicitlyResolved.add(name);
+                } else if (implied) {
+                    // Only asks for the tool to be installed, which the earlier entry does
+                } else if (existing.implied()) {
+                    // A requires entry with parameters satisfies an earlier one without
+                    resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
                 } else {
                     throw new IllegalArgumentException(
                         "Tool '" + name + "' specified multiple times with different parameters:\n" +
