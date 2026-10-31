@@ -156,7 +156,7 @@ With `coordinator: {control-over: [tpl-java]}`, every branch is a [coordinator](
 `isx branch --no-mcp-client` and the TUI dialog opt out.
 `isx-control-capability` beside the list says it explicitly; it is true by default exactly when the list is not empty.
 
-A child template inherits its parent's `coordinator:` whole, unless it has one of its own, which replaces it, or is project-local.
+A child template inherits its parent's `coordinator:` whole, unless it is project-local or its own `coordinator:` sets either key, which replaces the parent's.
 It is never baked into the image, so changing it rebuilds nothing, and it is ignored in a project-local definition.
 
 ### Deprecating a template

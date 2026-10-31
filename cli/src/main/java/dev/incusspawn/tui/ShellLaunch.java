@@ -3,7 +3,6 @@ package dev.incusspawn.tui;
 import dev.incusspawn.command.InstancePrep;
 import dev.incusspawn.command.McpClientGrant;
 import dev.incusspawn.incus.IncusClient;
-import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.GuiPassthrough;
