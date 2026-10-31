@@ -233,7 +233,8 @@ coordinator:
 The definition says what this coordinator is for, so a new coordinator template for templates you already approved needs no edit to `mcp.yaml`.
 
 A template whose definition lists nothing gives its coordinators nothing, and so does one from a project-local definition.
-The nearest template in the chain that sets the list decides, replacing its parent's.
+The nearest template in the chain whose `coordinator:` sets either key decides, replacing its parent's.
+A child that sets only `isx-control-capability: true` controls nothing until it lists templates.
 
 Each mismatch is a warning that names the template, the list missing it and the file to edit.
 `isx branch` and the TUI print what a new coordinator may control, and warn of each mismatch.

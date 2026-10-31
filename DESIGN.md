@@ -3925,6 +3925,9 @@ The pieces, and why each is the way it is:
   So nothing is released when a connection ends (`release()` does nothing for it), and a new connection takes back what the instance holds (`McpSession.resume()`, one listing before the first tool call so the cap counts them, then the running ones' tasks in the background) -- only what `adopt` would take.
   A take-back that fails (`mcp.yaml` refused, Incus unreachable, `isx init` not yet run) is tried again before every tool call until one succeeds (`McpMain.takeBack`, #1514), never left to a reconnect, and the call fails with its error meanwhile: the stamp says the session holds them, so no other session lists them as orphans, and a call run without them would neither list them nor count them against the cap.
   An instance whose template is no longer approved is released instead, its `mcp-orphaned` stamp naming the session (`Orphans.releasedByHolder`), which every session counts as an orphan though the holder lives on.
+  So withdrawing approval reaches a coordinator as it does a host session that ends.
+  Once the coordinator is destroyed or its stamp removed, its workers are orphans like a dead process's, and the proxy ends its session at the next keepalive tick.
+  Older isx versions read an `instance:` stamp as unparseable, which they treat as held.
 - *What it may control: two consents (#1812).*
   A coordinator may use a template only when both `mcp.yaml`'s `templates:` and its own template's `coordinator.control-over` list it (`McpScope`).
   The two files answer different questions: the definition says what this coordinator is for, and `mcp.yaml` which templates any agent may ever touch.
@@ -3932,14 +3935,11 @@ The pieces, and why each is the way it is:
   Neither list can widen the other.
   Deny by default, with no fallback to the global list: no `coordinator.control-over`, a missing or project-local definition, or an untrusted lineage gives an empty scope, so a forgotten list is a warned refusal rather than silent access.
   The scope is keyed on the leaf template, judged by the same `InstanceRegistry.lineageOf` host routes use (#936), read once per session; the definition is read live from the trusted layers on every call, never stamped, so an edit reaches a running coordinator at once and nothing goes stale.
-  The nearest layer that sets the list replaces its parent's, so a child never silently widens a parent's scope.
+  The nearest layer whose `coordinator:` sets either key decides alone, as it decides the default: its list replaces its parent's, so a child never silently widens a parent's scope, and a child that sets only `isx-control-capability` controls nothing until it lists templates.
   Everything that asks which templates a session may use asks the scope: `list_templates`, `create_instance`, `from_instance`, `adopt_instance` and the take-back's release rule, so narrowing either list releases the workers it no longer covers.
   Each mismatch is said by one function, naming the list, file and key to change, wherever it surfaces: `isx branch` and the TUI branch, a refusal and `list_templates`' `scope_note`, the session log, `isx doctor`, and the TUI's instance details; `isx list` shows only `mcp_client`, since it loads no definitions.
   `coordinator:` is an object so per-caller limits can join it later as keys that only narrow `mcp.yaml`'s global values, the same intersection.
   It is deliberately apart from #1720's `drivers:`: that names host programs already running as the user with the full CLI, a guard rail on `isx destroy`; this restricts guests the proxy identified, a security boundary, and merging them would give `isx mcp` a reason to read `config.yaml`.
-  So withdrawing approval reaches a coordinator as it does a host session that ends.
-  Once the coordinator is destroyed or its stamp removed, its workers are orphans like a dead process's, and the proxy ends its session at the next keepalive tick.
-  Older isx versions read an `instance:` stamp as unparseable, which they treat as held.
 - *How its Claude Code or Pi finds the server: registered from the stamp on every start (#1182).*
   Branching with `--mcp-client` is the only per-instance act.
   The exec that delivers each start's secret (`InstanceSecret.GUEST_SCRIPT`, root in the guest) also gets `ISX_MCP_CLIENT` (`InstanceSecret.guestEnv(secret, mcpCaller)`), which every start path reads from the instance it already holds, so it costs no request.
