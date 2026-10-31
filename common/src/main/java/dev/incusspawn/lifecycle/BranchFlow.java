@@ -167,8 +167,9 @@ public final class BranchFlow {
      * through (#1254). A template's KVM is how it was built, not a request, so the branch goes
      * ahead without it; only an explicit {@code --kvm} is {@linkplain #kvmUnsupportedOnMacOs refused}.
      *
-     * <p>MCP control follows the source's definition alone ({@code mcp-client.default}, #1812): a
-     * branch of an instance never defaults to it, since the grant is never inherited. Under the same
+     * <p>MCP control follows the source's definition alone ({@code mcp-client.default}, #1812), and
+     * only for a built template whose lineage is trusted: a branch of an instance never defaults to
+     * it, since the grant is never inherited. Under the same
      * rule as GUI, never from a project-local definition or a source built with one. An airgapped
      * branch cannot reach the proxy that serves it: {@link #mcpClient} turns it off there.
      */
@@ -190,7 +191,8 @@ public final class BranchFlow {
         // A template's instance-mode records how it was built, never a per-branch choice; any other
         // source decides by its own kvm-enabled, since it inherits instance-mode even through --no-kvm (#1034)
         var type = config.path(Metadata.TYPE).asText("");
-        var template = def != null || Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type);
+        var builtTemplate = Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type);
+        var template = def != null || builtTemplate;
         var kvm = template
                 ? (def != null && def.isKvm()) || "kvm".equals(config.path(Metadata.INSTANCE_MODE).asText(""))
                 : "true".equals(config.path(Metadata.KVM_ENABLED).asText(""));
@@ -199,7 +201,12 @@ public final class BranchFlow {
             kvm = false;
             kvmNote = "'" + source + "' asks for KVM passthrough, which is " + NOT_ON_MACOS + ", so it is off.";
         }
-        var wantsMcpClient = def != null && ImageDef.resolveMcpClientDefault(def, defs);
+        // Only a template's own definition, never one that merely shares an instance's name, and
+        // never a template whose lineage is untrusted (a failed or unfinished build under its name)
+        var wantsMcpClient = def != null && builtTemplate
+                && Metadata.untrustedReason(key -> config.path(key).asText("")).isEmpty()
+                && Metadata.untrustedByName(key -> config.path(key).asText("")).isEmpty()
+                && ImageDef.resolveMcpClientDefault(def, defs);
         String mcpClientNote = null;
         if (wantsMcpClient && (projectLocal(def, config) || ImageDef.anyProjectLocal(def, defs))) {
             mcpClientNote = "'" + source + "' makes coordinators by default, but a project-local definition is in its "
@@ -244,12 +251,12 @@ public final class BranchFlow {
     }
 
     /**
-     * Whether a branch made from {@code req} drives isx over MCP: the request's choice (a grant it
-     * already carries is one), else the default, which an airgapped branch does without.
+     * Whether a branch made from {@code req} drives isx over MCP: the request's choice, else the
+     * default, which an airgapped branch does without. Never a grant the caller put in
+     * {@code extraConfig}: {@link #preflight} mints its own, and strips one it did not decide on.
      */
     static boolean mcpClient(Request req, Defaults defaults) {
         if (req.mcpClient() != null) return req.mcpClient();
-        if (req.grantsMcpClient()) return true;
         return defaults.mcpClient() && mcpClientUnreachable(req.networkMode()) == null;
     }
 
@@ -314,8 +321,8 @@ public final class BranchFlow {
         // Before any Incus request: the request alone says it asks for KVM
         var refusal = kvmUnsupportedOnMacOs(Boolean.TRUE.equals(req.kvm()));
         if (refusal != null) throw new BranchException(refusal);
-        // Any value of the key, not only a well-formed grant: no airgapped branch is stamped at all
-        if (req.grantsMcpClient() || Boolean.TRUE.equals(req.mcpClient())) {
+        // Only the request's choice decides: a stamp in extraConfig is replaced or stripped below
+        if (Boolean.TRUE.equals(req.mcpClient())) {
             refusal = mcpClientUnreachable(req.networkMode());
             if (refusal != null) throw new BranchException(refusal + ".");
         }
@@ -390,12 +397,12 @@ public final class BranchFlow {
 
     /**
      * {@code req} with the {@link Metadata#MCP_CALLER} grant when the branch is to be a coordinator,
-     * a fresh one, and without it when it was chosen not to be. Never from the source: no copy
-     * inherits the grant.
+     * a fresh one minted here, and without it otherwise, whatever the caller put in
+     * {@code extraConfig}. Never from the source: no copy inherits the grant.
      */
     private static Request withMcpClient(Request req, Defaults defaults) {
         var granted = mcpClient(req, defaults);
-        if (granted == req.grantsMcpClient()) return req;
+        if (!granted && !req.grantsMcpClient()) return req;
         var extra = new LinkedHashMap<>(req.extraConfig());
         if (granted) extra.put(Metadata.MCP_CALLER, Metadata.newMcpCallerGrant());
         else extra.remove(Metadata.MCP_CALLER);

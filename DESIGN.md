@@ -3893,7 +3893,8 @@ The pieces, and why each is the way it is:
   The TUI's branch dialog has the same grant as its MCP control box (#1811), not offered on an Airgapped network: a person at the TUI is the one who would type the flag, so it needs no gate of its own.
   Whether a branch coordinates is a property of its kind, so a trusted template can make it the default (`mcp-client: {default: true}`, #1812), beside `gui:` and under the same rules: never from a project-local definition or a source built with one (#765), never baked into the image (it is not fingerprinted, and builds clear the grant), and an airgapped branch goes without it with a warning rather than a refusal.
   `--no-mcp-client`, or unticking the box, which starts from that default, opts out.
-  `BranchFlow.Request` carries the choice, null for the default, and `preflight` mints a fresh grant per branch into the request's `extraConfig`, so both front ends get the stamp and the check below from one place and cannot drift.
+  The default is read only for a built template (`type` base or project) whose lineage is trusted, never for an instance that merely shares a definition's name.
+  `BranchFlow.Request` carries the choice, null for the default, and `preflight` mints a fresh grant per branch into the request's `extraConfig`, replacing or stripping any a caller put there, so both front ends get the stamp and the check below from one place and cannot drift.
   `Request.defaults`, the MCP path, says no, so a template's default never lets a coordinator make another.
   `BranchFlow.preflight` refuses the stamp on an airgapped branch (`mcpClientUnreachable`) before any Incus request, so no caller can make a coordinator that cannot reach its endpoint.
   It is an `mcp-` key, so `configureBranch` drops it from every copy: `isx branch --from coord` makes an ordinary instance, and so does an agent's fork.
