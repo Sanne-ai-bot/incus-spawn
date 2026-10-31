@@ -7,13 +7,12 @@ import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.SpawnConfig;
 
 import dev.incusspawn.proxy.ProxyConfig;
+import dev.incusspawn.util.ByteLines;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.SystemTrust;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -21,6 +20,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -347,14 +347,33 @@ public class AiHelpClient {
         return processOpenAiStream(sendStream(request), onChunk);
     }
 
+    private static final byte[] SSE_DATA = "data: ".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] SSE_DONE = "[DONE]".getBytes(StandardCharsets.US_ASCII);
+
+    /**
+     * The payload of an SSE {@code data:} line, trimmed, as the bytes it came in, so
+     * {@link Jjq#parseForeign(byte[], String)} refuses invalid UTF-8; null for any other line.
+     */
+    private static byte[] sseData(byte[] line) {
+        if (!Arrays.equals(line, 0, Math.min(line.length, SSE_DATA.length), SSE_DATA, 0, SSE_DATA.length)) {
+            return null;
+        }
+        int from = SSE_DATA.length;
+        int to = line.length;
+        // Bytes are signed: a UTF-8 byte (0x80 and up) is negative, and is not whitespace.
+        while (from < to && line[from] >= 0 && line[from] <= ' ') from++;
+        while (to > from && line[to - 1] >= 0 && line[to - 1] <= ' ') to--;
+        return Arrays.copyOfRange(line, from, to);
+    }
+
     static StreamEnd processOpenAiStream(InputStream is, Consumer<String> onChunk) throws IOException {
         var usage = Usage.NONE;
-        try (var reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (!line.startsWith("data: ")) continue;
-                var data = line.substring(6).strip();
-                if ("[DONE]".equals(data)) break;
+        try (var lines = new ByteLines(is)) {
+            byte[] line;
+            while ((line = lines.next()) != null) {
+                var data = sseData(line);
+                if (data == null) continue;
+                if (Arrays.equals(data, SSE_DONE)) break;
                 var node = Jjq.parseForeign(data, "the AI provider's stream event");
                 var text = node.getField("choices").getElement(0).getField("delta").pathText("content", null);
                 if (text != null) onChunk.accept(text);
@@ -373,12 +392,12 @@ public class AiHelpClient {
         boolean inTextBlock = false;
         String stopReason = "";
         var usage = Usage.NONE;
-        try (var reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (!line.startsWith("data: ")) continue;
-                var data = line.substring(6).strip();
-                if ("[DONE]".equals(data)) break;
+        try (var lines = new ByteLines(is)) {
+            byte[] line;
+            while ((line = lines.next()) != null) {
+                var data = sseData(line);
+                if (data == null) continue;
+                if (Arrays.equals(data, SSE_DONE)) break;
 
                 var node = Jjq.parseForeign(data, "the AI provider's stream event");
                 var type = node.pathText("type", "");
@@ -462,11 +481,11 @@ public class AiHelpClient {
      * provider wrote all of it, so it goes through {@link OutputFormat#oneLine}: it cannot drive
      * the terminal it is shown on.
      */
-    static String describeError(int status, String body) {
+    static String describeError(int status, byte[] bytes) {
         var detail = new StringBuilder("API error (").append(status);
         String message = null;
         try {
-            var tree = Jjq.parseForeign(body, "the AI provider's error");
+            var tree = Jjq.parseForeign(bytes, "the AI provider's error");
             message = tree.getField("error").pathText("message", null);
             var type = tree.getField("error").pathText("type", null);
             if (type != null) detail.append(", ").append(type);
@@ -476,6 +495,7 @@ public class AiHelpClient {
             // Not JSON -- fall through and report the raw body below.
         }
         detail.append("): ");
+        var body = new String(bytes, StandardCharsets.UTF_8);
         if (message != null && !message.isBlank()) {
             detail.append(message);
         } else if (!body.isBlank()) {
@@ -492,8 +512,7 @@ public class AiHelpClient {
             var response = client().send(request, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() >= 400) {
                 try (var errStream = response.body()) {
-                    var errBody = new String(errStream.readAllBytes(), StandardCharsets.UTF_8);
-                    throw new IOException(describeError(response.statusCode(), errBody));
+                    throw new IOException(describeError(response.statusCode(), errStream.readAllBytes()));
                 }
             }
             return response.body();
