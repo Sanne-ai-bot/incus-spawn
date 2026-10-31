@@ -2270,7 +2270,18 @@ The proxy is another matter: until it re-reads, it would serve the deleted build
 So `isx clean`, `isx clean pool` and `isx doctor`'s remediation signal it after deleting failed builds (`CleanCommand.deleteFailedBuilds`/`deleteFailedBuild`), as `isx destroy` does.
 A build or branch signals it before its first start anyway, which leaves only a manual `incus delete` to the proxy's refresh backstop.
 
-**A template is started as a build is while `isx update-all` runs it (#1743).**
+**An update builds a new template (#1760).**
+`isx update-all` and `isx project update` used to change a template in place: an update that failed or was interrupted part way left a half-updated template, and a branch made meanwhile copied whatever it had written so far.
+They now run in a copy, as a build does (`TemplateUpdate`).
+The copy takes the build's temporary name (`<template>-rebuilding`, which listings and `update-all` skip), under the template's `TemplateLock.reading` hold, and carries `untrusted-lineage: building` from its copy request on; a template already untrusted (a project template) keeps its own reason.
+Every step runs in the copy, and only when all succeeded and the copy is stopped again does `TemplateLock.replaceIf` put it in place, with `trustBuilt` inside the lock for a template that was trusted.
+One failed step discards the whole update, the steps that succeeded included, so a template is always one consistent state; a re-run retries all of it.
+The swap first checks, under the lock, that the instance named for the template is still the one copied (its `created_at`), so a rebuild that landed meanwhile is never replaced by an update of what it replaced.
+A step that throws, a copy that cannot be stopped and a refused swap all delete the copy; one an interrupted update left is deleted by the next.
+The copy drops the template's `disk-referenced` stamp, and the update measures it again before the swap, as a build does (`probeReferencedSize`).
+The template is a new Incus instance after every update: its `created_at` and subvolume change, but `user.incus-spawn.created`, which `TemplateStaleness` compares, and every other stamp carry over, so its children are not made outdated.
+
+**A template's update is started as a build is (#1743).**
 An update runs a template's `prime` commands, npm updates and git fetches, as a build does.
 It used to run them on a DHCP address with no filtering, so code in the template could re-address `eth0` as a stopped branch's `STATIC_IP`.
 The proxy identifies callers by address, so it would attribute that traffic to the branch.

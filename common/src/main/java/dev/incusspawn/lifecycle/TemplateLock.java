@@ -9,6 +9,7 @@ import dev.incusspawn.util.HostLock;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.function.BooleanSupplier;
 
 /**
  * Replacing a template while other isx processes copy from it (#1212). A rebuild is made under a
@@ -76,11 +77,25 @@ public final class TemplateLock {
      */
     public static void replace(IncusClient incus, String built, String template, Output out,
                                Runnable afterSwap) {
+        replaceIf(incus, built, template, out, () -> true, afterSwap);
+    }
+
+    /**
+     * As above, once {@code stillCurrent} says, under the lock, that the template is still the
+     * one {@code built} was made from: an update copies the template and runs in the copy (#1760),
+     * and a rebuild swapped in meanwhile must not be replaced by an update of what it replaced.
+     *
+     * @return whether it was replaced; when not, {@code built} is left as it was
+     */
+    public static boolean replaceIf(IncusClient incus, String built, String template, Output out,
+                                    BooleanSupplier stillCurrent, Runnable afterSwap) {
         try (var lock = HostLock.acquireOrDegrade(lockFile(template), "copying from template '" + template + "'",
                 out::note, Warnings::warn, SWAP_TIMEOUT)) {
+            if (!stillCurrent.getAsBoolean()) return false;
             incus.deleteIfExists(template);
             incus.rename(built, template);
             afterSwap.run();
+            return true;
         }
     }
 }
