@@ -63,6 +63,9 @@ import static dev.incusspawn.command.InitCommand.runHostCapturingExit;
 class CredentialSetup {
 
     private HttpClient httpClient;
+    /** What {@link #toolsOf} loads from, and for which search paths. */
+    private dev.incusspawn.tool.ToolDefLoader toolsLoader;
+    private List<String> toolsSearchPaths;
 
     // Not a static final: GraalVM native-image would capture it at build time.
     // HTTP/1.1: Java's default HTTP/2 ALPN negotiation can cause the first TLS
@@ -1452,11 +1455,37 @@ class CredentialSetup {
         }
     }
 
+    /**
+     * Name the keys in {@code namespace} that isx does not read before asking for its credential,
+     * so a hand-written {@code openai.token} is not taken for one this step skipped (#1733). They
+     * are the user's: this step does not move them to the key isx reads.
+     */
+    void warnUnreadKeys(SpawnConfig config, String namespace) {
+        var note = dev.incusspawn.config.UnreadConfigKeys.note(config.tree(), namespace, toolsOf(config));
+        if (note.isEmpty()) return;
+        BuildOutput.warn(note, "isx does not use them: rename or remove them in config.yaml.");
+    }
+
+    /**
+     * Every tool of the config in hand, not of a second read of config.yaml (#890), loaded once
+     * per run of steps rather than once per step; again only when its search paths change.
+     */
+    private Map<String, ToolSetup> toolsOf(SpawnConfig config) {
+        var searchPaths = List.copyOf(config.getSearchPaths());
+        if (toolsLoader == null || !searchPaths.equals(toolsSearchPaths)) {
+            toolsLoader = dev.incusspawn.tool.ToolDefLoader.withoutProjectTools(searchPaths);
+            toolsSearchPaths = searchPaths;
+        }
+        // Filtered per call, as a step may turn a feature on
+        return dev.incusspawn.config.UnreadConfigKeys.trustedTools(config, toolsLoader);
+    }
+
     void setupGitHubAuth(SpawnConfig config, Prompts prompts) {
         // The same menu every non-Claude credential gets, so adding a second GitHub identity
         // needs no GitHub-specific UX. It answers FRESH straight away when nothing is saved,
         // and comes back after each saved token so another identity fits in the same run;
         // Enter (or EOF) moves on.
+        warnUnreadKeys(config, GhSetup.NAMESPACE);
         var account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
         while (account.isPresent() && collectGitHubToken(config, prompts, account.get())) {
             account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
@@ -1765,6 +1794,7 @@ class CredentialSetup {
         var shape = tool.accountShape();
         AccountTarget target = null;
         if (!namespace.isBlank()) {
+            warnUnreadKeys(config, namespace);
             if (!hasAccountsToPreserve(config, namespace)) {
                 target = AccountTarget.FRESH;
             } else {

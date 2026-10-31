@@ -70,6 +70,11 @@ The skeleton's examples, uncommented, must stay a valid template.
 **Unknown keys warn, wherever they are** (#1546): every class a template or tool definition maps to, entries included, extends `MappedDefinition`, so a key isx does not read is collected and `ImageDef.unknownKeyWarnings()` / `ToolDef.unknownKeyWarnings()` name it with its place (`repos[0].branch-name`) and the key it probably meant.
 A new mapped class in a definition extends it, and a new list, map or nested entry gets a line in that walk; a converter that reads the tree itself hands its unknown keys to the entry it builds (`EnvEntryListConverter`, `SkillsDefConverter`).
 They are warnings, never refusals, reported at load (`ImageDef.validate`, `ToolDefLoader`) and by `TemplateValidator`.
+In `config.yaml`, a key in a tool's credential namespace that no tool reads (`openai.token`) is named by `UnreadConfigKeys` (#1733).
+What a namespace reads is declared: its tools' `proxy.configuration` paths and `AccountShape` keys (`accountKeys()` for what an account holds), plus `accounts:` and `default:`.
+The credential steps of `isx init` and `isx account add` warn before asking, `CredentialCheck` adds it to a missing credential's notes, and `isx doctor` reports it; isx never moves the key to where it reads one.
+`ClaudeConfig` keeps no undeclared key, so none under `claude` reaches the check.
+Only trusted tools decide what is read: `UnreadConfigKeys.trustedTools` (no project `.incus-spawn/tools/`, no tool whose feature is off) for init, doctor and `CredentialCheck`, never the caller's tool map, which may hold a project's tools.
 
 **Name conflicts vs. overrides**: Overriding a definition from a *later* layer is intentional and supported.
 Two files declaring the same `name:` *within a single directory* (usually a copy-paste that forgot to update `name:`) is always a mistake and is reported as a conflict.

@@ -65,6 +65,12 @@ public interface AccountShape {
     List<String> flatKeys();
 
     /**
+     * Every key an account of this shape may hold, relative to the account: what
+     * {@link UnreadConfigKeys} counts as read. The flat keys, unless an account holds more.
+     */
+    default List<String> accountKeys() { return flatKeys(); }
+
+    /**
      * Why an account cannot be used, or {@code ""} when it can.
      *
      * <p>An unusable account is skipped when picking a namespace's default, and pinning one is
