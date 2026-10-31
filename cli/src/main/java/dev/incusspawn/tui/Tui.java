@@ -2088,7 +2088,7 @@ public class Tui {
     /**
      * What a coordinator may control, judged as {@code isx mcp} judges it: its lineage from the
      * listing, its template's definition and {@code mcp.yaml} as they are now; null for an instance
-     * that is no coordinator, or when {@code mcp.yaml} cannot be read.
+     * that is no coordinator, or when {@code mcp.yaml} or the definitions cannot be read.
      */
     private dev.incusspawn.config.McpScope mcpScopeFor(InstanceInfo info) {
         if (!info.mcpCaller() || info.metadata() == null) return null;
@@ -2098,7 +2098,7 @@ public class Tui {
                 if (entry.metadata() != null) configs.put(entry.name(), entry.metadata().path("config"));
             }
             var lineage = dev.incusspawn.proxy.InstanceRegistry.lineageOf(info.metadata().path("config"), configs);
-            return dev.incusspawn.config.McpScope.coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null,
+            return dev.incusspawn.config.McpScope.coordinator(lineage,
                     dev.incusspawn.config.ImageDef.loadTrusted(), dev.incusspawn.config.McpConfig.load().templates());
         } catch (RuntimeException e) {
             // As accountUsesFor: the details are worth showing without it (mcp.yaml unusable, a load failing)

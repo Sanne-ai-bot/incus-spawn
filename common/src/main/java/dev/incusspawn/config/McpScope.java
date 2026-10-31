@@ -41,6 +41,12 @@ public final class McpScope {
         return new McpScope(null, approved, null, null, null);
     }
 
+    /** A coordinator of {@code lineage}, as {@code InstanceRegistry.lineageOf} judged it. */
+    public static McpScope coordinator(dev.incusspawn.proxy.InstanceRegistry.Lineage lineage, Map<String, ImageDef> defs,
+                                       List<String> approved) {
+        return coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null, defs, approved);
+    }
+
     /**
      * A coordinator branched from {@code template}, judged against {@code defs}, which must hold
      * trusted definitions only for {@code isx mcp}. {@code untrusted} is why its lineage admits
