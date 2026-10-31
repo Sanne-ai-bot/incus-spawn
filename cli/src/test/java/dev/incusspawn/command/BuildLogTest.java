@@ -78,6 +78,11 @@ class BuildLogTest {
                 new IncusClient.ExecResult(1, "", "fatal\n"), Duration.ZERO);
         assertFalse(entry.contains("secretpw") || entry.contains("hunter2"), entry);
         assertTrue(entry.contains("$ git clone https://u:<isx:redacted:url-credentials>@host/r\n"), entry);
+        // A carriage return shows as a space too, and a shell keeps it inside the password
+        var returned = BuildLog.entry("repo 'app' prime", "git clone https://u:hunter2\rsecretpw@host/r",
+                new IncusClient.ExecResult(1, "", "fatal\n"), Duration.ZERO);
+        assertFalse(returned.contains("secretpw") || returned.contains("hunter2"), returned);
+        assertTrue(returned.contains("$ git clone https://u:<isx:redacted:url-credentials>@host/r\n"), returned);
     }
 
     @Test

@@ -113,6 +113,16 @@ class BuildProgressTest {
         assertEquals("git clone https://u:<isx:redacted:url-credentials>@host/r", p.command());
         // The failure line names the command as RepoCloner shows it, scrubbed the same way
         assertEquals("git clone https://u:<isx:redacted:url-credentials>@host/r", RepoCloner.commandText(command));
+        // A carriage return shows as a space too, and a shell keeps it inside the password
+        var returned = "git clone https://u:hunter2\rsecretpw@host/r";
+        assertEquals("git clone https://u:<isx:redacted:url-credentials>@host/r",
+                BuildProgress.StepProgress.failed("prime", returned, "prime failed", "fatal\n").command());
+        assertEquals("git clone https://u:<isx:redacted:url-credentials>@host/r", RepoCloner.commandText(returned));
+        // So do a form feed and a vertical tab, which the scrub's patterns also read as whitespace
+        for (var kept : new String[] {"\f", "\u000B"}) {
+            assertEquals("git clone https://u:<isx:redacted:url-credentials>@host/r",
+                    RepoCloner.commandText("git clone https://u:hunter2" + kept + "secretpw@host/r"));
+        }
     }
 
     @Test
