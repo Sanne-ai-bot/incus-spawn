@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * #1811: the {@link Metadata#MCP_CALLER} grant needs a route to the proxy, so an airgapped branch
  * asking for it is refused by {@code BranchFlow} itself, whichever front end built the request.
- * #1812: a template's {@code mcp-client.default} makes its branches coordinators, each with a
+ * #1812: a template's {@code coordinator:} makes its branches coordinators, each with a
  * grant of its own, unless the request says otherwise.
  */
 @ExtendWith({TempHome.class, LinuxBranching.class})
@@ -82,13 +82,19 @@ class BranchMcpClientTest {
         assertNotNull(BranchFlow.mcpClientUnreachable(NetworkMode.AIRGAP));
     }
 
-    private static Map<String, ImageDef> coordinatorTemplate(Boolean byDefault) {
+    /** {@code tpl-coord}, saying {@code isx-control-capability: <capability>} beside {@code control-over: [tpl-dev]}, or nothing. */
+    private static Map<String, ImageDef> coordinatorTemplate(Boolean capability) {
         var def = new ImageDef();
         def.setName("tpl-coord");
-        var mcpClient = new ImageDef.McpClient();
-        mcpClient.setByDefault(byDefault);
-        def.setMcpClient(mcpClient);
+        if (capability != null) def.setCoordinator(coordinator(capability, List.of("tpl-dev")));
         return Map.of("tpl-coord", def);
+    }
+
+    private static ImageDef.Coordinator coordinator(Boolean capability, List<String> controlOver) {
+        var coordinator = new ImageDef.Coordinator();
+        coordinator.setIsxControlCapability(capability);
+        coordinator.setControlOver(controlOver);
+        return coordinator;
     }
 
     private static FakeIncusDaemon coordinatorSource() {
@@ -117,8 +123,8 @@ class BranchMcpClientTest {
     void aCoordinatorTemplatesBranchesEachGetAGrantOfTheirOwn() throws Exception {
         var defs = Map.of("tpl-coord", ImageDef.parseYaml("""
                 name: tpl-coord
-                mcp-client:
-                  default: true
+                coordinator:
+                  control-over: [tpl-dev]
                 """));
         var daemon = coordinatorSource();
         var first = branchLeftToDefaults(daemon, "coord-1", defs);
@@ -206,11 +212,40 @@ class BranchMcpClientTest {
         var grandchild = new ImageDef();
         grandchild.setName("tpl-grandchild");
         grandchild.setParent("tpl-child");
-        var off = new ImageDef.McpClient();
-        off.setByDefault(false);
-        grandchild.setMcpClient(off);
+        grandchild.setCoordinator(coordinator(false, null));
         var defs = Map.of("tpl-coord", parent, "tpl-child", child, "tpl-grandchild", grandchild);
-        assertTrue(ImageDef.resolveMcpClientDefault(child, defs), "a child of a coordinator template is one");
-        assertFalse(ImageDef.resolveMcpClientDefault(grandchild, defs), "unless it says otherwise");
+        assertTrue(ImageDef.resolveCoordinatorDefault(child, defs), "a child of a coordinator template is one");
+        assertFalse(ImageDef.resolveCoordinatorDefault(grandchild, defs), "unless it says otherwise");
+        assertNull(ImageDef.resolveControlOver(grandchild, defs), "the layer that decides decides alone");
+        assertEquals(List.of(), ImageDef.coordinatorProblems(defs), "opting out of a parent's list is no mistake");
+    }
+
+    @Test
+    void theCapabilityFollowsTheListUnlessSaid() {
+        // Sanne's rule (#1812): on by default exactly when control-over lists something
+        java.util.function.Function<ImageDef.Coordinator, Boolean> resolved = coordinator -> {
+            var def = new ImageDef();
+            def.setName("tpl-x");
+            def.setCoordinator(coordinator);
+            return ImageDef.resolveCoordinatorDefault(def, Map.of("tpl-x", def));
+        };
+        assertTrue(resolved.apply(coordinator(null, List.of("tpl-dev"))));
+        assertFalse(resolved.apply(coordinator(null, List.of())));
+        assertFalse(resolved.apply(coordinator(false, List.of("tpl-dev"))));
+        assertTrue(resolved.apply(coordinator(true, List.of())));
+        assertFalse(resolved.apply(null));
+    }
+
+    @Test
+    void turningTheCapabilityOffBesideAListIsWarnedOf() {
+        var def = new ImageDef();
+        def.setName("tpl-x");
+        def.setCoordinator(coordinator(false, List.of("tpl-dev", "tpl-java")));
+        assertEquals(List.of("tpl-x: coordinator.isx-control-capability is false, although coordinator.control-over lists"
+                + " tpl-dev, tpl-java, so its branches are coordinators only with --mcp-client or the branch dialog's box."
+                + " Remove the line to make them coordinators by default, or empty control-over if none should be"),
+                ImageDef.coordinatorProblems(Map.of("tpl-x", def)));
+        def.setCoordinator(coordinator(false, List.of()));
+        assertEquals(List.of(), ImageDef.coordinatorProblems(Map.of("tpl-x", def)), "nothing listed, nothing to warn of");
     }
 }

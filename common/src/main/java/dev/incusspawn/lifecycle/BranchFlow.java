@@ -99,7 +99,7 @@ public final class BranchFlow {
          * A branch with every setting at the template's default, as {@code isx branch <name> --from <source>},
          * except GUI passthrough, which is always off: this is the agent's branch ({@code isx mcp}),
          * and nobody watches its display. Nor MCP control: no coordinator makes another, whatever
-         * the template's {@code mcp-client.default} says.
+         * the template's {@code coordinator:} says.
          */
         public static Request defaults(String source, String name) {
             return new Request(source, name, false, null, NetworkMode.FULL, null, null, null,
@@ -125,7 +125,7 @@ public final class BranchFlow {
      *
      * @param guiNote why {@code gui} is off although the source asks for GUI, or null
      * @param kvmNote why {@code kvm} is off although the source asks for KVM, or null
-     * @param mcpClient whether the branch drives isx over MCP: its template's {@code mcp-client.default}
+     * @param mcpClient whether the branch drives isx over MCP: its template's {@code coordinator.isx-control-capability}
      * @param mcpClientNote why {@code mcpClient} is off although the source asks for it, or null
      */
     public record Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote, String kvmNote,
@@ -167,7 +167,7 @@ public final class BranchFlow {
      * through (#1254). A template's KVM is how it was built, not a request, so the branch goes
      * ahead without it; only an explicit {@code --kvm} is {@linkplain #kvmUnsupportedOnMacOs refused}.
      *
-     * <p>MCP control follows the source's definition alone ({@code mcp-client.default}, #1812), and
+     * <p>MCP control follows the source's definition alone ({@code coordinator:}, #1812), and
      * only for a built template whose lineage is trusted: a branch of an instance never defaults to
      * it, since the grant is never inherited. Under the same
      * rule as GUI, never from a project-local definition or a source built with one. An airgapped
@@ -206,7 +206,7 @@ public final class BranchFlow {
         var wantsMcpClient = def != null && builtTemplate
                 && Metadata.untrustedReason(key -> config.path(key).asText("")).isEmpty()
                 && Metadata.untrustedByName(key -> config.path(key).asText("")).isEmpty()
-                && ImageDef.resolveMcpClientDefault(def, defs);
+                && ImageDef.resolveCoordinatorDefault(def, defs);
         String mcpClientNote = null;
         if (wantsMcpClient && (projectLocal(def, config) || ImageDef.anyProjectLocal(def, defs))) {
             mcpClientNote = "'" + source + "' makes coordinators by default, but a project-local definition is in its "

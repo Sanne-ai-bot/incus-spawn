@@ -63,8 +63,12 @@ public class TemplateValidator {
             warnings.add("Root template (no parent) should specify an 'image' field");
         }
 
-        if (def.getMcpClient() != null && projectLocal(file, projectImagesDir)) {
-            warnings.add(ImageDef.PROJECT_LOCAL_MCP_CLIENT);
+        if (def.getCoordinator() != null && projectLocal(file, projectImagesDir)) {
+            warnings.add(ImageDef.PROJECT_LOCAL_COORDINATOR);
+        } else if (def.getCoordinator() != null) {
+            var chain = new java.util.HashMap<>(knownTemplates);
+            chain.put(def.getName(), def);
+            warnings.addAll(ImageDef.coordinatorProblems(def, chain));
         }
         validateHostResources(file, def, projectImagesDir, warnings, errors);
         validateDuplicateTools(def, warnings);

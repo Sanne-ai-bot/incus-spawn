@@ -77,13 +77,13 @@ public class BranchCommand extends BaseCommand {
     boolean shell;
 
     @Option(name = "mcp-client", description = "Let this instance drive isx over MCP, at https://"
-            + ProxyConfig.MCP_DOMAIN + "/mcp (a coordinating agent); the default for an mcp-client: {default: true}"
-            + " template. Never inherited by its copies.",
+            + ProxyConfig.MCP_DOMAIN + "/mcp (a coordinating agent); the default for a template whose coordinator: block says so"
+            + " (isx-control-capability, true when control-over lists templates). Never inherited by its copies.",
             hasValue = false)
     boolean mcpClient;
 
     @Option(name = "no-mcp-client", description = "Do not let this instance drive isx over MCP, even if the template"
-            + " has mcp-client: {default: true}", hasValue = false)
+            + " makes coordinators by default", hasValue = false)
     boolean noMcpClient;
 
     @Option(name = "owner", description = "The external tool that controls this instance's lifecycle,"

@@ -26,7 +26,7 @@ class BranchModalTest {
                 new BranchAccountChoices(new ModalRenderer(THEME), THEME, List.of()));
     }
 
-    /** The defaults of a template whose definition says {@code mcp-client: {default: true}}. */
+    /** The defaults of a coordinator template: one whose {@code coordinator.control-over} lists templates. */
     private static final BranchFlow.Defaults COORDINATOR =
             new BranchFlow.Defaults(MachineType.CONTAINER, false, false, null, null, true, null);
 

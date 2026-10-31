@@ -58,7 +58,7 @@ final class BranchModal {
 
     private SelectState branchNetworkSelect;
 
-    /** {@code isx branch --mcp-client}: ticked from the template's {@code mcp-client.default} (#1812). */
+    /** {@code isx branch --mcp-client}: ticked from the template's {@code coordinator:} (#1812). */
     private CheckboxState branchMcpCheck;
 
     /** What the MCP control box started as: left there, the request leaves it to BranchFlow's default. */
