@@ -85,8 +85,7 @@ class GeminiSetupTest {
         verify(incus).shellExec(INSTANCE, "rm", "-f", GeminiSetup.LEGACY_LOGIN_NOTICE_PATH);
         clearInvocations(incus);
         tool.reconfigure(container, Map.of("model", "gemini-4-argon"));
-        verify(incus, never()).shellExec(eq(INSTANCE),
-                argThat((String[] args) -> args.length > 0 && args[0].equals("npm")));
+        assertFalse(commands(incus).stream().anyMatch(cmd -> cmd.startsWith("npm ")), "reconfigure reinstalls nothing");
         verify(incus).shellExec(eq(INSTANCE), eq("sh"), eq("-c"),
                 argThat(cmd -> cmd.contains(GeminiSetup.CONFIG_PATH) && cmd.contains("gemini-4-argon")));
         verify(incus).shellExec(eq(INSTANCE), eq("sh"), eq("-c"),
