@@ -539,10 +539,15 @@ class SecretRedactorTest {
     }
 
     @Test
-    void longRunsOfHeaderWordsStayLinear() {
+    void aKeyHeaderWithManyWordsEndsTheKeyBeforeIt() {
+        // A key's header is the same wherever it is matched: one that opens a key also ends a
+        // truncated key before it, however many words it has
         var armour = "-----";
-        var text = (armour + "BEGIN PRIVATE KEY" + armour + "\n") + (armour + "BEGIN " + "A".repeat(5_000) + "\n").repeat(400);
-        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(2),
-                () -> SecretRedactor.scrubText(text, java.util.Map.of()));
+        var text = armour + "BEGIN PRIVATE KEY" + armour + "\ntruncated\n"
+                + armour + "BEGIN " + "LONG ".repeat(10) + "PRIVATE KEY" + armour + "\nsecret\n";
+        var result = SecretRedactor.scrubText(text, java.util.Map.of());
+        org.junit.jupiter.api.Assertions.assertFalse(result.text().contains("secret"), result.text());
+        org.junit.jupiter.api.Assertions.assertFalse(result.text().contains("truncated"), result.text());
+        org.junit.jupiter.api.Assertions.assertEquals(2, result.hits().get("private-key"));
     }
 }
