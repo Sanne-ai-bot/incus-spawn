@@ -104,22 +104,30 @@ class SecretRedactorTest {
     }
 
     /**
-     * A typed namespace keeps keys it does not declare, so the name backstop covers them as it
-     * covers the catch-all extras.
+     * A typed namespace keeps keys it does not declare, Claude's and its accounts' included
+     * (#1876), so the name backstop covers them as it covers the catch-all extras.
      */
     @Test
     void undeclaredSecretInATypedNamespaceIsRedactedByNameBackstop() throws Exception {
         var config = Jjq.spawnConfig("""
-                github:
+                claude:
+                  password: claude-plain-value-0001
                   region: eu
+                  accounts:
+                    w: { apiKey: k-declared-0001, secret: account-plain-value-0001 }
+                github:
                   accounts:
                     work: { password: gh-plain-value-0001 }
                 """);
 
         var result = SecretRedactor.redactConfig(config, List.of());
+        assertFalse(result.yaml().contains("claude-plain-value-0001"), result.yaml());
+        assertFalse(result.yaml().contains("account-plain-value-0001"), result.yaml());
         assertFalse(result.yaml().contains("gh-plain-value-0001"), result.yaml());
         assertTrue(result.yaml().contains("region: eu"), "a setting is diagnostic:\n" + result.yaml());
-        assertEquals(List.of("github.accounts.work.password"), result.redactedPaths());
+        assertEquals(List.of("claude.password", "claude.accounts.w.apiKey", "claude.accounts.w.secret",
+                        "github.accounts.work.password"),
+                result.redactedPaths());
     }
 
     @Test

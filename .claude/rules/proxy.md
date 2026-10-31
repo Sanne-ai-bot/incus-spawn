@@ -107,7 +107,7 @@ Key design:
   Either way the namespace must be an identifier (`ToolDefValidator.invalidNamespace`), or the loader refuses the tool: it is printed by `isx init` and `isx account`.
   Keying off the tool's own namespace would leave `gh` authenticating as the pinned account while copilot used the flat token -- two GitHub identities in one container.
   `AccountResolver` does the tree-based resolution; `AccountSelection` does parsing/validation/stamping.
-  `GitHubConfig`/`BobConfig`/`OpenaiConfig` extend `SpawnConfig.NamespaceConfig` so an `accounts:` block survives a save -- without it the block deserialized to nothing and the next save **deleted** it.
+  `ClaudeConfig`/`GitHubConfig`/`BobConfig`/`OpenaiConfig` extend `SpawnConfig.NamespaceConfig` so an `accounts:` block survives a save -- without it the block deserialized to nothing and the next save **deleted** it.
 - **Caller identification.**
   `routeRequest`/`routeWebSocket` read `req.remoteAddress()`; iptables REDIRECT preserves the container's source address, and every branch has a static IP in `Metadata.STATIC_IP`.
   `InstanceRegistry` maps address -> (instance, accounts) from one `listJsonConfig()` call.

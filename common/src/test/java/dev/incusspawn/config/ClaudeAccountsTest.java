@@ -262,6 +262,21 @@ class ClaudeAccountsTest {
     }
 
     @Test
+    void defaultValueAppliesTheAccountType() throws Exception {
+        // NamespaceConfig's tree read would return the stale apiKey of an oauth account
+        var claude = Jjq.spawnConfig("""
+                claude:
+                  accounts:
+                    o: { type: oauth, oauthToken: "sk-ant-oat01-abc", apiKey: "stale" }
+                """).getClaude();
+        assertEquals("", claude.defaultValue("apiKey"));
+        assertEquals("sk-ant-oat01-abc", claude.defaultValue("oauthToken"));
+        assertEquals("oauth", claude.defaultValue("type"));
+        assertThrows(IllegalArgumentException.class, () -> claude.defaultValue("token"));
+        assertEquals("", new SpawnConfig().getClaude().defaultValue("apiKey"));
+    }
+
+    @Test
     void aPhantomOauthModeKeyFromAnOlderIsxIsIgnored() throws Exception {
         // Configs written before getterVisibility = NONE carry 'oauthMode'. It must stay inert
         // rather than failing the load and discarding the file.
@@ -273,6 +288,8 @@ class ClaudeAccountsTest {
         var claude = Jjq.spawnConfig(yaml).getClaude();
         assertEquals(ClaudeAccountType.API_KEY, claude.account().effectiveType());
         assertFalse(claude.isOauthMode());
+        // Not an undeclared key a save keeps either: isx wrote it, and it never meant anything
+        assertFalse(Jjq.toYaml(Jjq.spawnConfig(yaml)).contains("oauthMode"));
     }
 
     @Test
