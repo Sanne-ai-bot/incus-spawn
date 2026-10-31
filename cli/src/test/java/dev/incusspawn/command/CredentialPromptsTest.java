@@ -183,6 +183,27 @@ class CredentialPromptsTest {
         assertTrue(printed.contains("Skipped. Configure later with 'isx account add soloCloud'."), printed);
     }
 
+    /**
+     * A key written by hand under a name isx does not read is named before the step asks, and
+     * left as it is (#1733): otherwise the saved key looks like the step ignored the file.
+     */
+    @Test
+    void aHandWrittenKeyIsxDoesNotReadIsNamedAndKept() throws Exception {
+        var config = seed("openai:\n   token: sk-handwritten\n");
+        var tool = new ToolDefLoader().allToolSetups().get("codex");
+        var prompts = new ScriptedPrompts().secret("sk-pasted-1234567890abcdefghij");
+        var recorded = RecordingOutput.during(() ->
+                new CredentialSetup().setupGenericToolCredentials("codex", tool, config, prompts));
+        prompts.assertFullyConsumed();
+
+        var warnings = recorded.events(RecordingOutput.Kind.WARN);
+        assertEquals(1, warnings.size(), recorded.lines().toString());
+        assertEquals("config.yaml has openai.token, which isx does not read;"
+                + " it reads openai.apiKey or the same under openai.accounts.<name>.", warnings.getFirst().msg());
+        assertEquals("sk-pasted-1234567890abcdefghij", saved("openai.accounts.default.apiKey"));
+        assertEquals("sk-handwritten", saved("openai.token"));
+    }
+
     /** A configured tool opens on the account menu, whose Enter leaves everything as it is. */
     @Test
     void enterOnReRunLeavesEverythingAsItIs() throws Exception {

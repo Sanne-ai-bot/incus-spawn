@@ -9,6 +9,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.config.UnreadConfigKeys;
 import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.BridgeSubnetCheck;
@@ -599,7 +600,23 @@ public class DoctorCommand extends BaseCommand {
     private List<Finding> checkCredentials() {
         var config = SpawnConfig.load();
         var unresolved = ToolProxyResolver.findUnresolved(config);
-        return credentialFindings(config.getClaude().hasAuth(), unresolved, toolInUse());
+        var findings = new ArrayList<>(credentialFindings(config.getClaude().hasAuth(), unresolved, toolInUse()));
+        findings.addAll(unreadKeyFindings(config.tree(), UnreadConfigKeys.trustedTools(config)));
+        return findings;
+    }
+
+    /**
+     * Keys in a credential namespace that no tool reads (#1733): a credential written under the
+     * wrong name is kept and never used, and would otherwise only show as missing.
+     */
+    static List<Finding> unreadKeyFindings(JqValue tree, Map<String, ToolSetup> tools) {
+        var findings = new ArrayList<Finding>();
+        UnreadConfigKeys.all(tree, tools).forEach((namespace, unread) ->
+                findings.add(Finding.warn("Unread keys in config.yaml",
+                        // In parentheses like every detail, without the sentence's own full stop
+                        "(" + UnreadConfigKeys.note(namespace, unread, tools).replaceFirst("\\.$", "") + ")",
+                        new Remediation("Rename or remove them in config.yaml", false, null))));
+        return findings;
     }
 
     /**

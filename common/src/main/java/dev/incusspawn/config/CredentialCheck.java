@@ -183,7 +183,7 @@ public final class CredentialCheck {
                                Map<String, ToolSetup> served) {
         try {
             var gaps = gaps(config.tree(), AccountSelection.byNamespace(served), config, template, allDefs,
-                    selection, allTools, served);
+                    selection, allTools, served, trustedTools(config));
             if (!gaps.inherited().isEmpty() && InheritedProof.parentSecret() == null) {
                 return InheritedProof.notNestedMessage(gaps.inherited().getFirst());
             }
@@ -223,12 +223,13 @@ public final class CredentialCheck {
         var byCredential = new LinkedHashMap<Missing, List<String>>();
         // Beside the key, which keeps the notes of the first template that needed it
         var notes = new LinkedHashMap<Missing, List<String>>();
+        var trusted = trustedTools(config);
         for (var name : templates) {
             var template = allDefs.get(name);
             if (template == null) continue;
             try {
                 var selection = ImageDef.resolveAccounts(template, allDefs);
-                for (var credential : gaps(tree, owners, config, template, allDefs, selection, allTools, served).missing()) {
+                for (var credential : gaps(tree, owners, config, template, allDefs, selection, allTools, served, trusted).missing()) {
                     byCredential.computeIfAbsent(credential, c -> new ArrayList<>()).add(name);
                     notes.computeIfAbsent(credential, c -> new ArrayList<>()).addAll(credential.notes());
                 }
@@ -242,12 +243,25 @@ public final class CredentialCheck {
         return withNotes;
     }
 
+    /**
+     * The tools that decide what {@code config.yaml} keys are read, loaded once and only when a
+     * gap needs its note: the caller's {@code served} may hold a project's tools, which can shadow
+     * a built-in, and must not decide what is reported (#1733).
+     */
+    private static java.util.function.Supplier<Map<String, ToolSetup>> trustedTools(SpawnConfig config) {
+        var loaded = new java.util.concurrent.atomic.AtomicReference<Map<String, ToolSetup>>();
+        return () -> {
+            if (loaded.get() == null) loaded.set(UnreadConfigKeys.trustedTools(config));
+            return loaded.get();
+        };
+    }
+
     /** What is missing, and the namespaces that are the parent instance's instead. */
     private record Gaps(List<Missing> missing, List<String> inherited) {}
 
     private static Gaps gaps(JqValue tree, Map<String, ToolSetup> owners, SpawnConfig config, ImageDef template, Map<String, ImageDef> allDefs,
                              Map<String, String> selection, Map<String, ToolSetup> allTools,
-                             Map<String, ToolSetup> served) {
+                             Map<String, ToolSetup> served, java.util.function.Supplier<Map<String, ToolSetup>> trusted) {
         // Leaf first, so a child's params win over an ancestor's for the same tool.
         var toolRefs = new LinkedHashMap<String, ToolDef.ToolRef>();
         for (var layer : ImageDef.chain(template, allDefs).reversed()) {
@@ -289,15 +303,21 @@ public final class CredentialCheck {
             problems.add(Map.entry(gap, own));
             if (gap.notes().isEmpty() && !own.isEmpty()) needed.add(own);
         }
+        // The namespace each gap is in, for a credential typed under a key isx does not read (#1733)
+        var namespaceOf = new LinkedHashMap<Missing, String>();
         for (var problem : problems) {
             var gap = problem.getKey();
             missing.computeIfAbsent(gap, g -> new ArrayList<>())
                     .addAll(needed.contains(problem.getValue()) ? List.of() : gap.notes());
+            namespaceOf.putIfAbsent(gap, problem.getValue());
         }
         for (var secret : ToolProxyResolver.missingSecrets(tree, served, secretsOf, selection)) {
-            missing.computeIfAbsent(missing(secret.description().isBlank() ? secret.path() : secret.description(),
-                    secret.namespace(), secret.tool(), allTools, List.of()), g -> new ArrayList<>());
+            var gap = missing(secret.description().isBlank() ? secret.path() : secret.description(),
+                    secret.namespace(), secret.tool(), allTools, List.of());
+            missing.computeIfAbsent(gap, g -> new ArrayList<>());
+            namespaceOf.putIfAbsent(gap, secret.namespace());
         }
+        missing.forEach((gap, notes) -> notes.add(UnreadConfigKeys.note(tree, namespaceOf.get(gap), trusted.get())));
         return new Gaps(missing.entrySet().stream()
                 .map(e -> e.getKey().withNotes(e.getValue())).toList(),
                 List.copyOf(inherited));

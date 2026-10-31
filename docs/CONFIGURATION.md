@@ -42,6 +42,9 @@ github:
 You do not need to write this by hand: `isx init` adds, renames and removes accounts and sets the default.
 Re-run it any time to change them.
 
+A key isx does not read in a tool's credential section, such as `openai.token` for `openai.apiKey`, is never used.
+`isx init`, `isx account add` and `isx doctor` name it, and so does the error when a template needs that credential.
+
 A subscription account serves Claude Code in your instances, but not [`isx ask`](CLI.md#isx-ask), which needs an API key.
 Claude Max and Team plans include [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) for one, claimed on claude.ai under Settings > Billing.
 

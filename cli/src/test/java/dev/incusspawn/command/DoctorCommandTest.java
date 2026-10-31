@@ -508,6 +508,23 @@ class DoctorCommandTest {
         assertEquals(java.util.Set.of("ghost"), into);
     }
 
+    /** A credential under a key no tool reads is named with the key it belongs in (#1733). */
+    @Test
+    void anUnreadCredentialKeyIsAWarning() throws Exception {
+        var tools = new java.util.LinkedHashMap<String, dev.incusspawn.tool.ToolSetup>();
+        dev.incusspawn.RuntimeConstants.CDI_TOOLS.forEach(t -> tools.put(t.name(), t));
+        var tree = dev.incusspawn.config.Jjq.spawnConfig("openai:\n  token: sk-x\ngithub:\n  token: ghp_x\n").tree();
+
+        var findings = DoctorCommand.unreadKeyFindings(tree, tools);
+
+        assertEquals(1, findings.size(), findings.toString());
+        assertEquals(DoctorCommand.Status.WARN, findings.getFirst().status());
+        assertTrue(findings.getFirst().detail().contains("openai.token, which isx does not read"),
+                findings.getFirst().detail());
+        assertTrue(findings.getFirst().detail().endsWith(".accounts.<name>)"), findings.getFirst().detail());
+        assertEquals("Rename or remove them in config.yaml", findings.getFirst().remediation().description());
+    }
+
     @Test
     void credentialsOkWhenNothingIsMissing() {
         var findings = DoctorCommand.credentialFindings(true, List.of(), name -> true);

@@ -155,6 +155,39 @@ class CredentialCheckTest {
                 + " Run 'isx account add github' to configure it.", check("{}", template("[gh]")));
     }
 
+    /** The refusal says why the key that was written is not the one in use (#1733). */
+    @Test
+    void theRefusalNamesAKeyIsxDoesNotRead() throws Exception {
+        assertEquals("Missing credentials: OpenAI API key. Run 'isx account add openai' to configure it."
+                + " config.yaml has openai.token, which isx does not read;"
+                + " it reads openai.apiKey or the same under openai.accounts.<name>.",
+                check("openai:\n  token: sk-handwritten\n", template("[codex]")));
+    }
+
+    /**
+     * The caller's tools do not decide what is read: a project-local one in them, which the
+     * proxy never serves, does not silence the note by declaring the stray key or shadowing the
+     * tool that owns the namespace (#1733).
+     */
+    @Test
+    void aProjectToolAmongTheCallersDoesNotHideTheNote() throws Exception {
+        var token = new dev.incusspawn.tool.ToolDef.ConfigEntry();
+        token.setConfigPath("token");
+        token.setSecret(true);
+        var proxy = new dev.incusspawn.tool.ToolDef.ProxyDef();
+        proxy.setConfigNamespace("openai");
+        proxy.setConfiguration(Map.of("token", token));
+        var def = new dev.incusspawn.tool.ToolDef();
+        def.setName("sneaky");
+        def.setProxy(proxy);
+        var all = tools(new dev.incusspawn.tool.YamlToolSetup(def));
+        var served = all;
+
+        var result = CredentialCheck.check(Jjq.spawnConfig("openai:\n  token: sk-handwritten\n"),
+                ImageDef.parseYaml(template("[codex]")), Map.of(), Map.of(), all, served);
+        assertTrue(result.contains("config.yaml has openai.token, which isx does not read"), result);
+    }
+
     @Test
     void eachMissingCredentialGetsItsOwnCommand() throws Exception {
         var result = check("{}", template("[claude, gh]"));

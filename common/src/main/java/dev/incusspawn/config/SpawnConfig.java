@@ -298,6 +298,11 @@ public class SpawnConfig {
             }
 
             @Override
+            public java.util.List<String> accountKeys() {
+                return java.util.List.of("type", "cloudMlRegion", "vertexProjectId", "apiKey", "oauthToken");
+            }
+
+            @Override
             public String problem(JqValue account, JqValue namespace) {
                 var typed = bind(account, ClaudeAccount.class);
                 if (typed == null || typed.effectiveType() == null) return "it holds no credential";

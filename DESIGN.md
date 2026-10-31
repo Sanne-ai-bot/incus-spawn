@@ -255,6 +255,14 @@ A misspelled key changes the build as surely as a wrong value, since the build g
 It is a warning and not a refusal, so every definition that loaded before still loads; whether some keys (a misspelled top-level section) should refuse is a separate decision.
 The keys are never written back, so a stored definition holds only what isx read.
 
+A credential in `config.yaml` written under a key isx does not read (`openai.token` for `openai.apiKey`) is kept and never used, so the only symptom used to be the credential reported missing (#1733).
+`UnreadConfigKeys` names such keys in every namespace a tool declares, from the same declarations the proxy and the account resolver use: the tools' `proxy.configuration` paths and `AccountShape` keys, plus `accounts:` and `default:`.
+The credential step of `isx init` and `isx account add` warns before it asks, the refusal of a template that needs the credential adds the note to its remedy, and `isx doctor` reports it.
+The key is the user's, perhaps a secret they mean to move, so isx never moves it to the key it reads; the warning says to rename or remove it.
+`ClaudeConfig` keeps no key it does not declare, so a stray key under `claude` never reaches the check.
+A namespace no tool declares is not checked, since its tool may simply not be installed here.
+What counts as read is decided only by the tools the proxy sees, never by a project's `.incus-spawn/tools/`: a cloned repository must not silence a warning about a key the proxy will never serve.
+
 Building an image automatically builds missing parents recursively.
 `isx build --all` rebuilds every defined image from scratch.
 `isx build` takes several templates (#1130).
