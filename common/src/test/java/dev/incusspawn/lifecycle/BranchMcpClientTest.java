@@ -201,6 +201,16 @@ class BranchMcpClientTest {
     }
 
     @Test
+    void theProjectLocalNoteIsGivenForTheDialogsExplicitNoToo() {
+        // The TUI always sends its box; one that started unticked for this reason still says why
+        var defs = coordinatorTemplate(true);
+        defs.get("tpl-coord").setProjectRoot(java.nio.file.Path.of("/home/user/cloned"));
+        var daemon = coordinatorSource();
+        var recorded = RecordingOutput.during(() -> branch(daemon, "tpl-coord", "coord-1", NetworkMode.FULL, false, defs));
+        assertTrue(recorded.warnings().stream().anyMatch(w -> w.contains("project-local")), () -> String.join("\n", recorded.warnings()));
+    }
+
+    @Test
     void anAirgappedBranchOfACoordinatorTemplateIsMadeWithoutTheGrantAndSaysSo() {
         // Not refused: only an explicit --mcp-client is
         var daemon = coordinatorSource();

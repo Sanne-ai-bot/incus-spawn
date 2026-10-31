@@ -61,9 +61,6 @@ final class BranchModal {
     /** {@code isx branch --mcp-client}: ticked from the template's {@code coordinator:} (#1812). */
     private CheckboxState branchMcpCheck;
 
-    /** What the MCP control box started as: left there, the request leaves it to BranchFlow's default. */
-    private boolean branchMcpDefault;
-
     /** What the MCP control box held when Airgapped unticked it, given back when the network leaves Airgapped. */
     private boolean branchMcpBeforeAirgap;
 
@@ -120,7 +117,6 @@ final class BranchModal {
         branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
                 .map(NetworkMode::label).toArray(String[]::new));
         branchMcpCheck = new CheckboxState(defaults.mcpClient());
-        branchMcpDefault = defaults.mcpClient();
         branchInboxCheck = new CheckboxState(false);
         branchInboxInput = new TextInputState("");
         branchSourceIsVm = defaults.machineType() == MachineType.VM;
@@ -462,12 +458,13 @@ final class BranchModal {
         // An untouched box is the default, so create() applies it and says why it is off, as for isx branch
         var gui = branchGuiCheck.isChecked() == branchGuiDefault ? null : branchGuiCheck.isChecked();
         var kvm = kvm() == branchKvmDefault ? null : kvm();
+        // Never left to the default: a capability grant is what the person saw in the box, not what
+        // the source says when Enter is pressed, which a rebuild meanwhile may have changed
         var mcpClient = branchMcpCheck.isChecked() && mcpClientReachable();
         var request = new BranchFlow.Request(source, name, gui,
                 kvm, branchNetworkMode(),
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
-                cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of(),
-                mcpClient == branchMcpDefault ? null : mcpClient);
+                cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of(), mcpClient);
         return request;
     }
 
