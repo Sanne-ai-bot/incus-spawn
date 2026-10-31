@@ -365,17 +365,18 @@ public final class SecretRedactor {
         }
     }
 
-    private static final String KEY_HEADER = "-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----";
+    private static final String KEY_HEADER = "-----BEGIN [A-Z ]*PRIVATE KEY-----";
 
     private static final List<ScrubPattern> PATTERNS = List.of(
             // First, so an isx proof is named as one whatever the token shape its prefix borrows
             new ScrubPattern("isx-proof", dev.incusspawn.proxy.ProofToken.ANY_PROOF, marker("isx-proof")),
             // A key runs to its END line, or, cut short, to the next key's header or the end of the
             // text: all of it is secret. No match scans past another key's header, so the search is
-            // linear; a lazy .*? to an END that never came was quadratic over guest output. The
-            // header's words are bounded where they are looked ahead for, at every character
+            // linear; a lazy .*? to an END that never came was quadratic over guest output. A
+            // header's words need no bound: their run ends at the next '-' at the latest, and every
+            // header starts with one, so no two attempts read the same run
             ScrubPattern.whole("private-key",
-                    "(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----(?:(?!" + KEY_HEADER + ").)*?"
+                    "(?s)" + KEY_HEADER + "(?:(?!" + KEY_HEADER + ").)*?"
                             + "(?:-----END [A-Z ]*PRIVATE KEY-----|(?=" + KEY_HEADER + ")|\\z)"),
             ScrubPattern.whole("anthropic-key", "sk-ant-[A-Za-z0-9_-]{8,}"),
             ScrubPattern.whole("openai-key", "sk-(?!ant-)[A-Za-z0-9_-]{20,}"),
