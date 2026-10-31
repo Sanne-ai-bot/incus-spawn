@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.McpScope;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
@@ -108,7 +109,7 @@ public class BranchCommand extends BaseCommand {
 
     /** A branch {@link #create} made, and what opening its shell needs. */
     private record Created(String source, BranchFlow.Preflight preflight,
-                           RuntimeSetup.RuntimeConfig prefetched) {}
+                           RuntimeSetup.RuntimeConfig prefetched, McpScope mcpScope) {}
 
     @Override
     protected CommandResult doExecute() throws Exception {
@@ -121,7 +122,8 @@ public class BranchCommand extends BaseCommand {
             if (created == null) return CommandResult.valueOf(1);
             // plain stays the name alone, which name=$(isx branch ... --format=plain) captures
             outputFormat.printOne(BuildOutput.results(), outputFormat == OutputFormat.JSON
-                    ? record(name, owner, ownerId, reach(name, created.preflight().sourceInstance()))
+                    ? record(name, owner, ownerId, reach(name, created.preflight().sourceInstance()),
+                            created.preflight().request().grantsMcpClient(), created.mcpScope())
                     : record(name));
             return CommandResult.SUCCESS;
         }
@@ -163,9 +165,11 @@ public class BranchCommand extends BaseCommand {
     /**
      * The fields of {@code isx branch --format=json}: {@link #record(String)}'s, then who controls
      * the instance and how a program reaches it over SSH (#1720), so one call gives an
-     * orchestrator what it needs. Add to the end, never rename.
+     * orchestrator what it needs, then whether it is a coordinator and what it may control (#1812;
+     * null when mcp.yaml could not be read). Add to the end, never rename.
      */
-    static Map<String, Object> record(String name, String owner, String ownerId, Reach reach) {
+    static Map<String, Object> record(String name, String owner, String ownerId, Reach reach,
+                                      boolean mcpClient, McpScope mcpScope) {
         var record = record(name);
         record.put("owner", owner);
         record.put("owner_id", ownerId);
@@ -176,6 +180,8 @@ public class BranchCommand extends BaseCommand {
         record.put("ssh_identity_file", ssh == null ? null : ssh.identityFile());
         record.put("ssh_proxy_command", ssh == null ? null : ssh.proxyCommand());
         record.put("project_root", reach.projectRoot());
+        record.put("mcp_client", mcpClient);
+        record.put("mcp_scope", mcpScope == null ? null : mcpScope.templates());
         return record;
     }
 
@@ -282,9 +288,14 @@ public class BranchCommand extends BaseCommand {
             return null;
         }
 
-        if (preflight.request().grantsMcpClient() && !noStart) McpClientGrant.check(incus, name);
+        McpScope mcpScope = null;
+        if (preflight.request().grantsMcpClient()) {
+            mcpScope = McpClientGrant.scope(preflight);
+            McpClientGrant.reportScope(mcpScope);
+            if (!noStart) McpClientGrant.check(incus, name);
+        }
         BuildOutput.success(name + " ready");
-        return new Created(resolvedSource, preflight, prefetched);
+        return new Created(resolvedSource, preflight, prefetched, mcpScope);
     }
 
     /** {@code named}, the source given or {@linkplain #detectSource detected}, if it exists. */

@@ -22,6 +22,7 @@ Their `image_url` may only replace an image their own project imported (`incus-s
 Project-local tools cannot declare `proxy:` (`ToolProxyResolver.rejectProjectLocalProxy()`).
 Any new capability that reaches host state outside the project, such as host paths, host-only sources, or credentials, needs the same gate.
 Host routes (#936) are one: only `config.yaml`'s `host-routes:` declares them, and a project-local instance never passes one.
+`coordinator:` (#1812) is another: a project-local definition's is ignored with a warning at load and in `TemplateValidator`, makes no coordinator by default, and gives a coordinator no scope (`McpScope`).
 See DESIGN.md "Project-local templates are confined to their project".
 
 **Drivers** (`drivers:`, `Drivers`, #1720): a raw section like `host-routes:`; a tool name (`Metadata.ownerNameProblem`, never `mcp`) mapped to `destroy:` (a boolean, default false).

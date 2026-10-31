@@ -997,7 +997,29 @@ public class ImageDef extends MappedDefinition {
         refuseParentCycles(defs, warnings);
         inheritTypes(defs.defs());
         coordinatorProblems(defs.defs()).forEach(warnings);
+        controlOverProblems(defs.defs()).forEach(warnings);
         return defs;
+    }
+
+    /**
+     * One warning per {@code coordinator.control-over} entry that names no defined template (#1812):
+     * likely a typo, and a coordinator could never control it. Only once every layer is loaded,
+     * since another layer may define it.
+     */
+    public static List<String> controlOverProblems(Map<String, ImageDef> defs) {
+        return defs.values().stream().sorted(java.util.Comparator.comparing(ImageDef::getName))
+                .flatMap(def -> controlOverProblems(def, defs::containsKey).stream()).toList();
+    }
+
+    /** {@link #controlOverProblems(Map)} for one definition, against what {@code defined} knows. */
+    public static List<String> controlOverProblems(ImageDef def, java.util.function.Predicate<String> defined) {
+        if (def.getCoordinator() == null || def.getCoordinator().getControlOver() == null || def.getProjectRoot() != null) {
+            return List.of();
+        }
+        return def.getCoordinator().getControlOver().stream().filter(named -> !defined.test(named))
+                .map(named -> OutputFormat.oneLine(String.valueOf(def.getName())) + ": coordinator.control-over names '"
+                        + OutputFormat.oneLine(named) + "', which no template defines, so its coordinators cannot control it")
+                .toList();
     }
 
     /**

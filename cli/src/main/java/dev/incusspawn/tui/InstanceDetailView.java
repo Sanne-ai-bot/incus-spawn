@@ -88,8 +88,8 @@ public final class InstanceDetailView {
     /** Render the details of {@code selected}, with the credential accounts the TUI resolved for it. */
     void render(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen, InstanceInfo selected,
                 List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses, List<String> registeredWith,
-                BaseImageAge.Assessment baseImage) {
-        var contentLines = buildInstanceDetailLines(selected, detailAccountUses, registeredWith, baseImage);
+                BaseImageAge.Assessment baseImage, dev.incusspawn.config.McpScope mcpScope) {
+        var contentLines = buildInstanceDetailLines(selected, detailAccountUses, registeredWith, baseImage, mcpScope);
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F2", "Shell");
         if (selected.mcp() != null) modal.addKey(hintSpans, "⇧F2", "Join task");
@@ -184,6 +184,15 @@ public final class InstanceDetailView {
     }
 
     /**
+     * The detail pane's row for a coordinator (#1812): what it may control, and any template its
+     * definition lists that {@code mcp.yaml} does not approve; none for any other instance.
+     */
+    public static List<DetailRow> mcpControlRows(boolean mcpCaller, dev.incusspawn.config.McpScope scope) {
+        if (!mcpCaller) return List.of();
+        return List.of(new DetailRow("MCP control:", scope == null ? "mcp.yaml cannot be read" : scope.summary()));
+    }
+
+    /**
      * The detail pane's rows for the base image release an instance runs (#1657), and whether a
      * rebuild would change it; none when Incus recorded no release and there is nothing to say.
      */
@@ -209,7 +218,8 @@ public final class InstanceDetailView {
     private List<Line> buildInstanceDetailLines(InstanceInfo info,
                                              List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses,
                                              List<String> registeredWith,
-                                             BaseImageAge.Assessment baseImage) {
+                                             BaseImageAge.Assessment baseImage,
+                                             dev.incusspawn.config.McpScope mcpScope) {
         var lines = new ArrayList<Line>();
         var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
         var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
@@ -251,6 +261,7 @@ public final class InstanceDetailView {
         var rows = new ArrayList<>(baseImageRows(BaseImageAge.tag(info.metadata()), baseImage));
         // #1053: no column for it in the instance table, which has no width to spare.
         rows.addAll(mcpDetailRows(info.mcp()));
+        rows.addAll(mcpControlRows(info.mcpCaller(), mcpScope));
         rows.addAll(ownerDetailRows(info.owner(), info.ownerId()));
         rows.addAll(registrationRows(registeredWith));
         for (var row : rows) {

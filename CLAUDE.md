@@ -284,6 +284,7 @@ A client that lists `isx/task_changed` under `capabilities.experimental` is noti
 Every tool declares an `outputSchema` and returns matching `structuredContent` for programs, while the text stays for the model; a refusal carries no `structuredContent`, only a code in `_meta["dev.incusspawn/error"]` (#1010).
 Stdout is the protocol: `StdioGuard` redirects `System.out` to stderr and `Headless` disables prompts.
 An agent may also run in an instance branched with `--mcp-client` (#915), or from a trusted template that makes coordinators by default (#1812: `coordinator.isx-control-capability`, true by default when `coordinator.control-over` lists templates; `--no-mcp-client` opts out).
+Such a coordinator may use only the templates in both `mcp.yaml`'s `templates:` and its template's `coordinator.control-over`, and none when that lists none or is missing (`McpScope`, deny by default).
 The proxy serves it `https://mcp.isx.internal/mcp` (`McpBridge`, Streamable HTTP) after checking address, per-start secret and the `mcp-caller` stamp, bridged to a host `isx mcp --caller-instance <name>` whose session is the instance itself.
 No copy inherits the stamp and the MCP path refuses it.
 Every start registers the server in that instance's Claude Code and Pi, or removes it from one without the stamp, inside the exec that delivers the secret (`McpClientRegistration`, #1182), so a copy loses it on its first start.

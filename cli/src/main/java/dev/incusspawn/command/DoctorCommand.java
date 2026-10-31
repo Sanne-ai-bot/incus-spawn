@@ -8,6 +8,8 @@ import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.LayeredDefinitions;
+import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.config.McpScope;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.config.UnreadConfigKeys;
 import dev.incusspawn.config.YamlErrors;
@@ -1845,6 +1847,31 @@ public class DoctorCommand extends BaseCommand {
 
     // ---- Layer 6: Templates ----
 
+    /**
+     * One warning per way a coordinator template's {@code coordinator.control-over} and {@code mcp.yaml}
+     * disagree (#1812), with the same remedy {@code isx branch} and {@code isx mcp} give. Only for a
+     * trusted definition that says {@code coordinator:} itself, so a chain is reported once.
+     */
+    static List<Finding> mcpClientFindings(Map<String, ImageDef> defs) {
+        var coordinators = defs.values().stream()
+                .filter(def -> def.getCoordinator() != null && def.getProjectRoot() == null)
+                .map(ImageDef::getName).sorted().toList();
+        if (coordinators.isEmpty()) return List.of();
+        List<String> approved;
+        try {
+            approved = McpConfig.load().templates();
+        } catch (McpConfig.Invalid e) {
+            return List.of(Finding.warn("MCP policy", OutputFormat.oneLine(e.getMessage()), null));
+        }
+        var findings = new ArrayList<Finding>();
+        for (var name : coordinators) {
+            for (var mismatch : McpScope.coordinator(name, null, defs, approved).mismatches()) {
+                findings.add(Finding.warn("Coordinator template " + name, mismatch, null));
+            }
+        }
+        return findings;
+    }
+
     private List<Finding> checkTemplates() {
         var findings = new ArrayList<Finding>();
         var load = loadImageDefs();
@@ -1865,6 +1892,8 @@ public class DoctorCommand extends BaseCommand {
             addDefinitionFindings(findings, loaded.conflicts(), loaded.overrides());
             var toolLoader = RuntimeServices.toolDefLoader();
             addDefinitionFindings(findings, toolLoader.conflicts(), toolLoader.overrides());
+            // The trusted layers isx mcp reads, not the working directory's
+            findings.addAll(mcpClientFindings(ImageDef.loadTrusted()));
 
             int builtCount = 0;
             for (var name : allDefs.keySet()) {

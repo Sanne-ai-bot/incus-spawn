@@ -70,6 +70,8 @@ public class TemplateValidator {
             chain.put(def.getName(), def);
             warnings.addAll(ImageDef.coordinatorProblems(def, chain));
         }
+        warnings.addAll(ImageDef.controlOverProblems(def,
+                named -> named.equals(def.getName()) || knownTemplates.containsKey(named)));
         validateHostResources(file, def, projectImagesDir, warnings, errors);
         validateDuplicateTools(def, warnings);
 
