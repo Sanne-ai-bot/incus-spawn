@@ -26,7 +26,7 @@ class McpServerProtocolTest {
         final List<JqValue> sent = new CopyOnWriteArrayList<>();
 
         @Override
-        public String read() {
+        public byte[] read() {
             return null;
         }
 
@@ -262,7 +262,7 @@ class McpServerProtocolTest {
         var lines = new java.util.ArrayDeque<>(List.of(call(1, "long", "{}")));
         var transport = new McpTransport() {
             @Override
-            public String read() throws IOException {
+            public byte[] read() throws IOException {
                 if (lines.isEmpty()) {
                     try {
                         started.await(5, TimeUnit.SECONDS);
@@ -271,7 +271,7 @@ class McpServerProtocolTest {
                     }
                     return null;
                 }
-                return lines.poll();
+                return lines.poll().getBytes(java.nio.charset.StandardCharsets.UTF_8);
             }
 
             @Override
@@ -297,5 +297,25 @@ class McpServerProtocolTest {
                 + "\"clientInfo\":{\"name\":\"cut \\ud83d\"}}}");
         assertTrue(out.byId(1).path("result").isObject(), out.sent.toString());
         assertEquals("cut \ufffd", clientInfo[0].path("name").asText());
+    }
+
+    /** stdio hands the server the bytes, so invalid UTF-8 is refused rather than read as U+FFFD. */
+    @Test
+    void invalidUtf8OnStdioIsAParseErrorSayingWhere() throws IOException {
+        var line = ("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
+                + "\"clientInfo\":{\"name\":\"a").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        var in = new java.io.ByteArrayOutputStream();
+        in.write(line);
+        in.write(new byte[] {(byte) 0xc3, 'b'});
+        in.write("\"}}}\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        var sent = new java.io.ByteArrayOutputStream();
+        new McpServer(new StdioTransport(new java.io.ByteArrayInputStream(in.toByteArray()), sent),
+                tools, "1", null, info -> clientInfo[0] = info).run();
+
+        var error = JqValues.parse(sent.toString(java.nio.charset.StandardCharsets.UTF_8).strip()).path("error");
+        assertEquals(JsonRpc.PARSE_ERROR, error.path("code").asInt(0), error.toString());
+        assertEquals("Parse error: the MCP message is not valid JSON: Invalid UTF-8 at line 1, column 80",
+                error.path("message").asText());
+        assertEquals(null, clientInfo[0]);
     }
 }

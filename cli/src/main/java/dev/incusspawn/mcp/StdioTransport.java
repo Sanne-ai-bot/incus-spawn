@@ -1,29 +1,29 @@
 package dev.incusspawn.mcp;
 
-import java.io.BufferedReader;
+import dev.incusspawn.util.ByteLines;
+
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 /** The stdio transport: one JSON-RPC message per line, UTF-8, in both directions. */
 final class StdioTransport implements McpTransport {
 
-    private final BufferedReader in;
+    private final ByteLines in;
     private final OutputStream out;
 
     StdioTransport(InputStream in, OutputStream out) {
-        this.in = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+        this.in = new ByteLines(in);
         this.out = out;
     }
 
     @Override
-    public String read() throws IOException {
-        String line;
+    public byte[] read() throws IOException {
+        byte[] line;
         do {
-            line = in.readLine();
-        } while (line != null && line.isBlank());
+            line = in.next();
+        } while (line != null && ByteLines.isBlank(line));
         return line;
     }
 
