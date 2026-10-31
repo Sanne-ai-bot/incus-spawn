@@ -86,9 +86,10 @@ public final class ZmxSocketForward {
     /**
      * The host zmx dir where isx shares zmx sockets, or null on macOS, which
      * shares none.  The platform is checked first because resolving the dir
-     * forks {@code id -u} on the {@code TMPDIR} and {@code /tmp} fallbacks,
-     * and macOS sets {@code TMPDIR} without {@code XDG_RUNTIME_DIR}: every
-     * shell would pay for a process it has no use for.
+     * on macOS forks {@code id -u} on the {@code TMPDIR} and {@code /tmp}
+     * fallbacks (Linux reads {@code /proc/self/status}), and macOS sets
+     * {@code TMPDIR} without {@code XDG_RUNTIME_DIR}: every shell would pay
+     * for a process it has no use for.
      */
     private static Path sharedHostZmxDir() {
         return sharedHostZmxDir(Platform.isMacOS(), ZmxSocketForward::hostZmxDir);

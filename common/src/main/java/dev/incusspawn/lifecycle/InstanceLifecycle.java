@@ -2,6 +2,7 @@ package dev.incusspawn.lifecycle;
 
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.Environment;
+import dev.incusspawn.Platform;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
@@ -25,6 +26,8 @@ import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.Output;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -1156,7 +1159,15 @@ public final class InstanceLifecycle {
                 "readonly=true");
     }
 
+    /**
+     * The uid isx runs as. On Linux it comes from {@code /proc/self/status}, without the
+     * {@code id -u} process the start and shell paths would otherwise pay for (#1804).
+     */
     public static String getUid() {
+        if (!Platform.isMacOS()) {
+            var uid = effectiveUid(Path.of("/proc/self/status"));
+            if (uid != null) return uid;
+        }
         try {
             var pb = new ProcessBuilder("id", "-u");
             var p = pb.start();
@@ -1168,6 +1179,25 @@ public final class InstanceLifecycle {
             return output;
         } catch (Exception e) {
             return "1000";
+        }
+    }
+
+    /**
+     * The effective uid, what {@code id -u} prints, from the {@code Uid:} line of
+     * {@code /proc/self/status} (real, effective, saved, filesystem); null when
+     * it cannot be read. Unlike the owner of {@code /proc/self}, it stays right
+     * for a non-dumpable process.
+     */
+    static String effectiveUid(Path status) {
+        // Latin-1: the Name: line above is the comm, any bytes a process gave itself
+        try (var lines = Files.lines(status, StandardCharsets.ISO_8859_1)) {
+            return lines.filter(l -> l.startsWith("Uid:"))
+                    .map(l -> l.substring(4).strip().split("\\s+"))
+                    .filter(f -> f.length >= 2 && !f[1].isEmpty() && f[1].chars().allMatch(Character::isDigit))
+                    .map(f -> f[1])
+                    .findFirst().orElse(null);
+        } catch (IOException | RuntimeException e) {
+            return null;
         }
     }
 }
