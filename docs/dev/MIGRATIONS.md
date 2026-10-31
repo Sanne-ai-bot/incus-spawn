@@ -263,7 +263,8 @@ List the templates before upgrading, or adopt the workers within that time.
 
 ### How to tell
 
-`isx doctor` warns `Coordinator template <name>` for a template that declares `coordinator:` without a usable list.
+`isx doctor` warns `Coordinator <instance>` for each coordinator that controls no template, including one branched with `--mcp-client` from a template with no `coordinator:` block.
+It also warns `Coordinator template <name>` for a template that declares `coordinator:` without a usable list.
 A coordinator's own `list_templates` comes back empty with a `scope_note` naming the file to edit, and `create_instance` refuses with the same.
 The TUI's instance details show `MCP control: nothing` for it.
 

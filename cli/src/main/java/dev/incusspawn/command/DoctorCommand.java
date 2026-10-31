@@ -1850,13 +1850,21 @@ public class DoctorCommand extends BaseCommand {
     /**
      * One warning per way a coordinator template's {@code coordinator.control-over} and {@code mcp.yaml}
      * disagree (#1812), with the same remedy {@code isx branch} and {@code isx mcp} give. Only for a
-     * trusted definition that says {@code coordinator:} itself, so a chain is reported once.
+     * trusted definition whose own {@code coordinator:} says anything, since that layer decides its
+     * scope alone, so a chain is reported once. Then one per coordinator instance in
+     * {@code listing} (null when Incus cannot be asked) that controls no template, which covers
+     * one branched with {@code --mcp-client} from a template that says nothing.
      */
-    static List<Finding> mcpClientFindings(Map<String, ImageDef> defs) {
+    static List<Finding> mcpClientFindings(Map<String, ImageDef> defs, io.hyperfoil.tools.jjq.value.JqValue listing) {
+        var byName = listing == null ? Map.<String, io.hyperfoil.tools.jjq.value.JqValue>of()
+                : dev.incusspawn.proxy.InstanceRegistry.configsByName(listing);
+        var callers = byName.entrySet().stream()
+                .filter(e -> Metadata.isMcpCallerGrant(e.getValue().pathText(Metadata.MCP_CALLER, null)))
+                .map(Map.Entry::getKey).sorted().toList();
         var coordinators = defs.values().stream()
-                .filter(def -> def.getCoordinator() != null && def.getProjectRoot() == null)
+                .filter(def -> def.getCoordinator() != null && def.getProjectRoot() == null && declaresScope(def, defs))
                 .map(ImageDef::getName).sorted().toList();
-        if (coordinators.isEmpty()) return List.of();
+        if (coordinators.isEmpty() && callers.isEmpty()) return List.of();
         List<String> approved;
         try {
             approved = McpConfig.load().templates();
@@ -1869,8 +1877,30 @@ public class DoctorCommand extends BaseCommand {
                 findings.add(Finding.warn("Coordinator template " + name, mismatch, null));
             }
         }
+        for (var name : callers) {
+            var lineage = dev.incusspawn.proxy.InstanceRegistry.lineageOf(byName.get(name), byName);
+            var scope = McpScope.coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null, defs, approved);
+            if (scope.templates().isEmpty()) {
+                findings.add(Finding.warn("Coordinator " + OutputFormat.oneLine(name),
+                        "controls no template, and its workers are released when it next connects. "
+                                + String.join(" ", scope.mismatches()), null));
+            }
+        }
         return findings;
     }
+
+    /** Whether {@code def}'s own {@code coordinator:} says anything, so it decides its chain's scope alone. */
+    private static boolean declaresScope(ImageDef def, Map<String, ImageDef> defs) {
+        return ImageDef.coordinatorLayer(def, defs) == def;
+    }
+
+    /** Every instance's config, asked of Incus once per run: the template and base-image checks share it. */
+    private io.hyperfoil.tools.jjq.value.JqValue instanceListing() {
+        if (instanceListing == null) instanceListing = incus().listJsonConfig();
+        return instanceListing;
+    }
+
+    private io.hyperfoil.tools.jjq.value.JqValue instanceListing;
 
     private List<Finding> checkTemplates() {
         var findings = new ArrayList<Finding>();
@@ -1893,7 +1923,13 @@ public class DoctorCommand extends BaseCommand {
             var toolLoader = RuntimeServices.toolDefLoader();
             addDefinitionFindings(findings, toolLoader.conflicts(), toolLoader.overrides());
             // The trusted layers isx mcp reads, not the working directory's
-            findings.addAll(mcpClientFindings(ImageDef.loadTrusted()));
+            io.hyperfoil.tools.jjq.value.JqValue listing;
+            try {
+                listing = instanceListing();
+            } catch (RuntimeException e) {
+                listing = null; // the coordinator templates are still checked
+            }
+            findings.addAll(mcpClientFindings(ImageDef.loadTrusted(), listing));
 
             int builtCount = 0;
             for (var name : allDefs.keySet()) {
@@ -1933,7 +1969,7 @@ public class DoctorCommand extends BaseCommand {
         var load = loadImageDefs();
         if (load.loaded() == null) return List.of(); // checkTemplates reports why
         try {
-            return baseImageFindings(incus().listJsonConfig(), load.loaded().defs());
+            return baseImageFindings(instanceListing(), load.loaded().defs());
         } catch (Exception e) {
             return List.of(Finding.warn("Base images", "(could not check: " + e.getMessage() + ")", null));
         }
