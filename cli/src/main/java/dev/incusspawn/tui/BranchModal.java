@@ -64,6 +64,9 @@ final class BranchModal {
     /** What the MCP control box started as: left there, the request leaves it to BranchFlow's default. */
     private boolean branchMcpDefault;
 
+    /** What the MCP control box held when Airgapped unticked it, given back when the network leaves Airgapped. */
+    private boolean branchMcpBeforeAirgap;
+
     private CheckboxState branchInboxCheck;
 
     private TextInputState branchInboxInput;
@@ -194,9 +197,14 @@ final class BranchModal {
                 var wasReachable = mcpClientReachable();
                 branchNetworkSelect.selectNext();
                 // Unticked, not kept hidden: cycling on past Airgapped must not grant it unasked.
-                // Back from it, the box is the template's default again, not a silent opt-out
-                if (!mcpClientReachable()) branchMcpCheck.setChecked(false);
-                else if (!wasReachable) branchMcpCheck.setChecked(branchMcpDefault);
+                // Back from it, the box holds what it did before, the template's default or the
+                // user's own choice: neither a silent opt-out nor a declined grant come back
+                if (wasReachable && !mcpClientReachable()) {
+                    branchMcpBeforeAirgap = branchMcpCheck.isChecked();
+                    branchMcpCheck.setChecked(false);
+                } else if (!wasReachable && mcpClientReachable()) {
+                    branchMcpCheck.setChecked(branchMcpBeforeAirgap);
+                }
             } else if (branchFieldIndex == mcpFieldIndex()) {
                 branchMcpCheck.toggle();
             } else if (branchFieldIndex == inboxFieldIndex()) {

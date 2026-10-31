@@ -113,6 +113,17 @@ class BranchModalTest {
     }
 
     @Test
+    void passingAirgappedNeverGivesBackAGrantTheUserDeclined() {
+        var dialog = dialog(COORDINATOR);
+        press(dialog, TO_MCP_CONTROL);
+        press(dialog, KeyEvent.ofChar(' '));
+        // Up to the network, then Full, Proxy only, Airgapped and Full again
+        press(dialog, KeyEvent.ofKey(KeyCode.UP), KeyEvent.ofChar(' '), KeyEvent.ofChar(' '), KeyEvent.ofChar(' '));
+        assertEquals(NetworkMode.FULL, dialog.branchNetworkMode());
+        assertEquals(Boolean.FALSE, dialog.request("dev-2").mcpClient(), "still unticked, as the user left it");
+    }
+
+    @Test
     void anAirgappedBranchGetsNoMcpControl() {
         var dialog = dialog(MachineType.CONTAINER);
         // Ticked, then the network cycled to Airgapped: Full, Proxy only, Airgapped
@@ -127,10 +138,10 @@ class BranchModalTest {
         assertEquals(java.nio.file.Path.of("x"), dialog.request("dev-2").inbox(),
                 "Tab from the network lands on the inbox while Airgapped");
         press(dialog, KeyEvent.ofKey(KeyCode.UP));
-        // Cycled on to Full, the box comes back unticked: passing Airgapped cleared it
+        // Cycled on to Full, the box comes back as the user left it before Airgapped: ticked
         press(dialog, KeyEvent.ofKey(KeyCode.UP), KeyEvent.ofChar(' '));
         assertEquals(NetworkMode.FULL, dialog.branchNetworkMode());
-        assertNull(dialog.request("dev-2").mcpClient());
+        assertEquals(Boolean.TRUE, dialog.request("dev-2").mcpClient());
     }
 
     @Test
