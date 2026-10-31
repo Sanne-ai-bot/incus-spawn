@@ -86,8 +86,8 @@ isx branch <name> [options]
 | `--account <ns>=<account>` | Use this [credential account](CONFIGURATION.md#credential-accounts) instead of the template's or the default; repeatable |
 | `--owner <name>` | Mark the instance as controlled by an external tool, such as `orca`. A lowercase name; `mcp` is reserved. Its copies never inherit it |
 | `--owner-id <id>` | The owner's own handle for the instance, such as an orchestrator's workspace id. Needs `--owner` |
-| `--mcp-client` | Let the instance drive isx over MCP at `https://mcp.isx.internal/mcp`, as a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). The default for a template with `mcp-client: {default: true}`. Its copies never inherit it |
-| `--no-mcp-client` | Make no coordinator, even if the template has `mcp-client: {default: true}` |
+| `--mcp-client` | Let the instance drive isx over MCP at `https://mcp.isx.internal/mcp`, as a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). The default for a template whose `coordinator:` block says so: `isx-control-capability`, true when `control-over` lists templates. Its copies never inherit it |
+| `--no-mcp-client` | Make no coordinator, even if the template makes coordinators by default |
 | `--format=<format>` | `table` (the default), `plain` to print only the new name, or `json` to add how to reach it, with progress on stderr and no shell opened. See [Scripting isx](#isx-branch-fields) |
 
 ## `isx shell`

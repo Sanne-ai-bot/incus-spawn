@@ -144,12 +144,13 @@ public class ImageDef extends MappedDefinition {
     private String deprecated;
 
     /**
-     * Whether a branch of this template may drive isx over MCP ({@code mcp-client:}, #1812). Never
-     * baked into the image, so left out of {@link #contentFingerprint}: editing it rebuilds nothing.
+     * Whether a branch of this template is a coordinator that may drive isx over MCP, and what it
+     * may control ({@code coordinator:}, #1812). Never baked into the image, so left out of
+     * {@link #contentFingerprint}: editing it rebuilds nothing.
      */
-    @JqName("mcp-client")
+    @JqName("coordinator")
     @JqInclude(JqInclude.Include.NON_NULL)
-    private McpClient mcpClient;
+    private Coordinator coordinator;
 
     @JqIgnore
     private String source = "unknown";
@@ -222,8 +223,8 @@ public class ImageDef extends MappedDefinition {
     public void setAccounts(Map<String, String> accounts) {
         this.accounts = accounts == null ? Map.of() : Map.copyOf(accounts);
     }
-    public McpClient getMcpClient() { return mcpClient; }
-    public void setMcpClient(McpClient mcpClient) { this.mcpClient = mcpClient; }
+    public Coordinator getCoordinator() { return coordinator; }
+    public void setCoordinator(Coordinator coordinator) { this.coordinator = coordinator; }
     public String getDeprecated() { return deprecated; }
     public void setDeprecated(String deprecated) { this.deprecated = deprecated; }
     /** Whether the definition says {@code deprecated:} with anything but {@code false}. */
@@ -350,22 +351,30 @@ public class ImageDef extends MappedDefinition {
     }
 
     /**
-     * The {@code mcp-client:} block (#1812): {@code default: true} makes every branch of the
-     * template a coordinator unless {@code --no-mcp-client} says otherwise. An object, so what a
-     * coordinator may control can be added beside it as keys.
+     * The {@code coordinator:} block (#1812). {@code control-over} lists the templates a branch of
+     * this template may control over MCP, of those {@code mcp.yaml} approves. Every branch is such
+     * a coordinator, unless {@code --no-mcp-client} says otherwise, when
+     * {@code isx-control-capability} is true, which it is by default exactly when that list is not
+     * empty. An object, so per-coordinator limits can join it as keys that only narrow
+     * {@code mcp.yaml}'s.
      */
     @JqInclude(JqInclude.Include.NON_NULL)
     @JqMapped
-    public static class McpClient extends MappedDefinition {
-        @JqName("default")
-        private Boolean byDefault;
+    public static class Coordinator extends MappedDefinition {
+        @JqName("isx-control-capability")
+        private Boolean isxControlCapability;
+        /** Null when this layer does not say, so a parent's list applies. */
+        @JqName("control-over")
+        private List<String> controlOver;
 
-        public Boolean getByDefault() { return byDefault; }
-        public void setByDefault(Boolean byDefault) { this.byDefault = byDefault; }
+        public Boolean getIsxControlCapability() { return isxControlCapability; }
+        public void setIsxControlCapability(Boolean isxControlCapability) { this.isxControlCapability = isxControlCapability; }
+        public List<String> getControlOver() { return controlOver; }
+        public void setControlOver(List<String> controlOver) { this.controlOver = controlOver == null ? null : items(controlOver); }
 
         /** Every key, though the mapping writes only those set. */
         @Override
-        protected List<String> knownKeys() { return List.of("default"); }
+        protected List<String> knownKeys() { return List.of("isx-control-capability", "control-over"); }
     }
 
     @JqMapped
@@ -463,7 +472,7 @@ public class ImageDef extends MappedDefinition {
     protected List<String> knownKeys() {
         var keys = new ArrayList<>(super.knownKeys());
         if (!keys.contains("deprecated")) keys.add("deprecated");
-        if (!keys.contains("mcp-client")) keys.add("mcp-client");
+        if (!keys.contains("coordinator")) keys.add("coordinator");
         return keys;
     }
 
@@ -479,7 +488,7 @@ public class ImageDef extends MappedDefinition {
                 .each("host-resources", hostResources)
                 .each("env", env)
                 .part("skills", skills)
-                .part("mcp-client", mcpClient);
+                .part("coordinator", coordinator);
         for (int i = 0; i < hostResources.size(); i++) {
             if (hostResources.get(i).getConfinedTo() != null) {
                 walk.add("'host-resources[" + i + "].confined-to' is set by isx" + HostResource.SET_BY_ISX);
@@ -763,23 +772,77 @@ public class ImageDef extends MappedDefinition {
         return "vm".equals(resolveType(start, defs));
     }
 
-    /** What loading says of a project-local definition's {@code mcp-client:}, which is never read. */
-    public static final String PROJECT_LOCAL_MCP_CLIENT = "'mcp-client' is ignored in a project-local template:"
+    /** What loading says of a project-local definition's {@code coordinator:}, which is never read. */
+    public static final String PROJECT_LOCAL_COORDINATOR = "'coordinator' is ignored in a project-local template:"
             + " a cloned repository cannot make its branches drive isx. Declare it in a template in "
             + "~/.config/incus-spawn/images, or branch with --mcp-client";
 
     /**
-     * Whether a branch of {@code start} is a coordinator by default ({@code mcp-client.default}):
-     * the nearest layer of its chain that says, so a child of a coordinator template is one
-     * unless it says otherwise. Whether the chain may say so at all, which a project-local one
-     * may not (#765), is the caller's to check: see {@link #anyProjectLocal}.
+     * The nearest layer of the chain of {@code start} whose {@code coordinator:} says anything: it
+     * decides alone, so a child never mixes its parent's list with its own switch. Null when none
+     * does. Whether the chain may say so at all, which a project-local one may not (#765), is the
+     * caller's to check: see {@link #anyProjectLocal}.
      */
-    public static boolean resolveMcpClientDefault(ImageDef start, Map<String, ImageDef> defs) {
+    private static Coordinator nearestCoordinator(ImageDef start, Map<String, ImageDef> defs) {
+        var layer = coordinatorLayer(start, defs);
+        return layer == null ? null : layer.getCoordinator();
+    }
+
+    /** The layer whose {@code coordinator:} decides for {@code start} ({@link #nearestCoordinator}), or null. */
+    public static ImageDef coordinatorLayer(ImageDef start, Map<String, ImageDef> defs) {
         for (var layer : chain(start, defs).reversed()) {
-            var byDefault = layer.getMcpClient() == null ? null : layer.getMcpClient().getByDefault();
-            if (byDefault != null) return byDefault;
+            var said = layer.getCoordinator();
+            if (said != null && (said.getIsxControlCapability() != null || said.getControlOver() != null)) return layer;
         }
-        return false;
+        return null;
+    }
+
+    /**
+     * Whether a branch of {@code start} is a coordinator by default: the nearest layer that says,
+     * by its {@code isx-control-capability}, else by its {@code control-over} not being empty. So
+     * a child of a coordinator template is one unless it says otherwise.
+     */
+    public static boolean resolveCoordinatorDefault(ImageDef start, Map<String, ImageDef> defs) {
+        var nearest = nearestCoordinator(start, defs);
+        if (nearest == null) return false;
+        if (nearest.getIsxControlCapability() != null) return nearest.getIsxControlCapability();
+        return !nearest.getControlOver().isEmpty();
+    }
+
+    /**
+     * What a coordinator of {@code start} may control, before {@code mcp.yaml} narrows it: the
+     * {@code control-over} of the layer {@link #nearestCoordinator} picks, which decides alone, so a
+     * child that says only {@code isx-control-capability} never takes its parent's list; null when
+     * that layer lists none.
+     */
+    public static List<String> resolveControlOver(ImageDef start, Map<String, ImageDef> defs) {
+        var nearest = nearestCoordinator(start, defs);
+        return nearest == null ? null : nearest.getControlOver();
+    }
+
+    /**
+     * One warning per trusted definition that turns {@code isx-control-capability} off beside a
+     * non-empty {@code control-over} of its own: its branches are no coordinators unless chosen,
+     * which the list suggests was not meant. A child that says only {@code false} opts out of its
+     * parent's list, which is no mistake, since the layer that says decides alone.
+     */
+    public static List<String> coordinatorProblems(Map<String, ImageDef> defs) {
+        return defs.values().stream().sorted(java.util.Comparator.comparing(ImageDef::getName))
+                .flatMap(def -> coordinatorProblems(def, defs).stream()).toList();
+    }
+
+    /** {@link #coordinatorProblems(Map)} for one definition, whose chain {@code defs} holds. */
+    public static List<String> coordinatorProblems(ImageDef def, Map<String, ImageDef> defs) {
+        var said = def.getCoordinator();
+        if (said == null || def.getProjectRoot() != null || !Boolean.FALSE.equals(said.getIsxControlCapability())) {
+            return List.of();
+        }
+        var controlOver = resolveControlOver(def, defs);
+        if (controlOver == null || controlOver.isEmpty()) return List.of();
+        return List.of(OutputFormat.oneLine(String.valueOf(def.getName())) + ": coordinator.isx-control-capability is false,"
+                + " although coordinator.control-over lists " + OutputFormat.oneLine(String.join(", ", controlOver))
+                + ", so its branches are coordinators only with --mcp-client or the branch dialog's box."
+                + " Remove the line to make them coordinators by default, or empty control-over if none should be");
     }
 
     /** Whether any layer of the chain of {@code start} is project-local. */
@@ -933,6 +996,7 @@ public class ImageDef extends MappedDefinition {
         if (includeProject) loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings, projectRoot());
         refuseParentCycles(defs, warnings);
         inheritTypes(defs.defs());
+        coordinatorProblems(defs.defs()).forEach(warnings);
         return defs;
     }
 
@@ -1086,7 +1150,7 @@ public class ImageDef extends MappedDefinition {
         var file = OutputFormat.oneLine(source);
         // First: a misspelled key may be why the definition is refused below ('nmae:').
         def.unknownKeyWarnings().forEach(w -> warnings.accept(file + ": " + w));
-        if (def.getProjectRoot() != null && def.getMcpClient() != null) warnings.accept(file + ": " + PROJECT_LOCAL_MCP_CLIENT);
+        if (def.getProjectRoot() != null && def.getCoordinator() != null) warnings.accept(file + ": " + PROJECT_LOCAL_COORDINATOR);
         if (def.getName() == null) {
             warnings.accept(file + ": no 'name:'; it is skipped, and isx build refuses until it is fixed");
             return false;

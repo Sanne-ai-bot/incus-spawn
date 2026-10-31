@@ -499,10 +499,12 @@ public class TemplatesCommand extends BaseCommand {
             # for a project-local template); 'isx branch --no-gui' opts out
             # gui: true
 
-            # Every branch a coordinator that drives isx over MCP (never for a project-local
-            # template); 'isx branch --no-mcp-client' opts out
-            # mcp-client:
-            #   default: true
+            # Branches are coordinators that drive isx over MCP, controlling these templates of
+            # those mcp.yaml approves (never for a project-local template). The capability is on
+            # by default when control-over lists any; 'isx branch --no-mcp-client' opts out
+            # coordinator:
+            #   isx-control-capability: true
+            #   control-over: [tpl-dev]
 
             # Directory a shell starts in; inherited from the parent, else the first repo
             # workdir: ~/repo

@@ -212,25 +212,39 @@ class TemplateValidatorTest {
     }
 
     @Test
-    void mcpClientIsReadInATrustedTemplateAndIgnoredInAProjectLocalOne(@TempDir Path dir) throws Exception {
-        // #1812: a cloned repository cannot make its branches drive isx, so its mcp-client: is
+    void coordinatorIsReadInATrustedTemplateAndIgnoredInAProjectLocalOne(@TempDir Path dir) throws Exception {
+        // #1812: a cloned repository cannot make its branches drive isx, so its coordinator: is
         // ignored, and said to be
         var yaml = """
                 name: tpl-test
                 parent: tpl-dev
-                mcp-client:
-                  default: true
-                  defualt: false
+                coordinator:
+                  control-over: [tpl-dev]
+                  contol-over: []
                 """;
         var trusted = Files.writeString(Files.createDirectories(dir.resolve("images")).resolve("tpl-test.yaml"), yaml);
         var images = Files.createDirectories(dir.resolve(".incus-spawn/images"));
-        assertEquals(List.of("unknown key 'mcp-client.defualt', ignored; did you mean 'default'?"),
+        assertEquals(List.of("unknown key 'coordinator.contol-over', ignored; did you mean 'control-over'?"),
                 TemplateValidator.validate(trusted, knownTemplates(), images).warnings());
 
         var projectLocal = Files.writeString(images.resolve("tpl-test.yaml"), yaml);
         var warnings = TemplateValidator.validate(projectLocal, knownTemplates(), images).warnings();
         assertEquals(2, warnings.size(), warnings.toString());
-        assertEquals(ImageDef.PROJECT_LOCAL_MCP_CLIENT, warnings.get(1));
+        assertEquals(ImageDef.PROJECT_LOCAL_COORDINATOR, warnings.get(1));
+    }
+
+    @Test
+    void turningTheCapabilityOffBesideAListIsWarnedOf(@TempDir Path dir) throws Exception {
+        var file = Files.writeString(dir.resolve("tpl-test.yaml"), """
+                name: tpl-test
+                parent: tpl-dev
+                coordinator:
+                  isx-control-capability: false
+                  control-over: [tpl-dev]
+                """);
+        var warnings = TemplateValidator.validate(file, knownTemplates()).warnings();
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.getFirst().startsWith("tpl-test: coordinator.isx-control-capability is false"), warnings.toString());
     }
 
     @Test

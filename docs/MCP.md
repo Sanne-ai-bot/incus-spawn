@@ -193,16 +193,20 @@ isx branch coord --from tpl-dev --proxy-only --mcp-client
 In the TUI's branch dialog (F4), tick MCP control instead.
 It is not offered while the network is Airgapped.
 
-A template meant for coordinators can make it the default:
+A template meant for coordinators says which templates they control:
 
 ```yaml
-mcp-client:
-  default: true
+coordinator:
+  control-over: [tpl-java, tpl-dev]
 ```
 
 Every branch of it is then a coordinator, and the dialog's box starts ticked.
 `isx branch --no-mcp-client` or unticking the box makes a plain instance.
-A project-local template's `mcp-client:` is ignored, and an airgapped branch goes without it.
+A project-local template's `coordinator:` is ignored, and an airgapped branch goes without it.
+
+The capability is on by default exactly when `control-over` lists a template.
+`isx-control-capability: false` beside it turns the default off, and isx warns of that, since the list suggests otherwise.
+`isx-control-capability: true` turns it on for a template that lists nothing.
 
 Once the instance has started, the branch checks the connection from inside it.
 It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code or Pi has the server.
