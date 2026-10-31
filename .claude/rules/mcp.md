@@ -21,6 +21,9 @@ Managed delegation supports Claude Code, Codex and Pi through the closed `Delega
 The [Codex worker design](../../docs/dev/MCP-CODEX-DELEGATION.md) describes the lifecycle and capability differences.
 Codex runs through the bundled guest Node runner (`mcp/codex-runner.cjs`, included in native resources), which saves the thread ID while running and publishes outcome and report files before the exit record.
 Task identity is `1 <agent>` in the `identity` file; absence means legacy Claude, while an unknown version or agent refuses continuation.
+A Claude run saves `session_id` from its `init` event only once the session's transcript is under `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/` (`TaskScripts.saveClaudeSession`), after Claude Code exits and again in `cancel`, whose sweep may kill the run script first.
+A refused resume reports a made-up ID in its result, and a run cut off in its first moments has no transcript, so neither replaces the saved one.
+A Claude task without one is not `resumable`, `send_message` refuses it with `wrong_state`, and a run script never passes `--resume ""` (#1866).
 The keyed creation stamp `mcp-delegate-agent` preserves selection before the first task exists and is cleared on copies like other MCP stamps.
 Every agent runs with full access inside its instance and no turn limit (#1857): `DelegateAgent.permissionMode` is fixed per agent, never configured or a tool argument.
 `delegate-max-turns`, `delegate-permission-mode(s)` and `codex.sandbox-mode(s)` in `mcp.yaml` are retired (`McpConfig.RETIRED`): they load, change nothing, and `retiredKeysNotice` names them at `isx mcp` start and in `isx init`; never refuse an agent for policy again.

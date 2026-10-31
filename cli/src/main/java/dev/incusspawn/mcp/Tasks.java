@@ -272,6 +272,11 @@ final class Tasks {
                         + " has no recoverable Codex thread ID; start a new delegated task. " + e.getMessage());
             }
         }
+        if (task.agent() == DelegateAgent.CLAUDE && !current.running() && current.sessionId() == null) {
+            // The run would only refuse it: launching gains nothing.
+            throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id() + ": " + TaskScripts.NO_CLAUDE_SESSION
+                    + "; start a new delegated task.");
+        }
         if (task.agent() == DelegateAgent.PI && !current.running() && current.sessionId() == null) {
             // Pi's runner publishes the ID only once Pi opened the session; resuming one it never
             // opened would create it, with none of this conversation.

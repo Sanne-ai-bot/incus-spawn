@@ -219,6 +219,12 @@ final class TaskScripts {
             sb.append("rc=$?\n").append(TAKEN_NOTE).append(" >&4\n").append(recordExit(String.valueOf(run), "$rc")).append('\n');
             return sb.toString();
         }
+        if (run > 1) {
+            // Never --resume "": Claude Code fails it at once, with a made-up session ID that would be saved.
+            sb.append(SAVED_SESSION).append("case $sid in ").append(NOT_A_SESSION_ID).append(") echo 'isx: ").append(NO_CLAUDE_SESSION)
+                    .append("; start a new delegated task.' >> \"$D/stderr-").append(run).append(".log\"; ")
+                    .append(recordExit(String.valueOf(run), "125")).append("; exit 0;; esac\n");
+        }
         sb.append(requireFlock("echo '" + NO_FLOCK + "' >> \"$D/stderr-" + run + ".log\"; "
                 + recordExit(String.valueOf(run), "127") + "; exit 0")).append('\n');
         sb.append(CONVERSATION_LOCK).append("claude -p --output-format stream-json --verbose")
@@ -226,16 +232,42 @@ final class TaskScripts {
         if (chosen.model() != null) sb.append(" --model ").append(ExecScript.quote(chosen.model()));
         // Always explicit: a headless agent that meets a permission prompt has nobody to answer it.
         sb.append(" --permission-mode ").append(ExecScript.quote(permissionMode));
-        if (run > 1) sb.append(" --resume \"$(cat \"$D/session_id\")\"");
+        if (run > 1) sb.append(" --resume \"$sid\"");
         sb.append(" < \"$D/prompt-").append(run).append(".md\" > \"$D/events-").append(run)
                 .append(".jsonl\" 2> \"$D/stderr-").append(run).append(".log\"\n");
         sb.append("rc=$?\n");
         sb.append(TAKEN_NOTE).append(" >> \"$D/stderr-").append(run).append(".log\"\n");
-        sb.append("sid=$(sed -n 's/.*\"session_id\" *: *\"\\([^\"]*\\)\".*/\\1/p' \"$D/events-").append(run)
-                .append(".jsonl\" | head -n 1)\n");
-        sb.append("[ -n \"$sid\" ] && printf '%s' \"$sid\" > \"$D/session_id\"\n");
+        sb.append(saveClaudeSession("$D/events-" + run + ".jsonl")).append('\n');
         sb.append(recordExit(String.valueOf(run), "$rc")).append('\n');
         return sb.toString();
+    }
+
+    /** Sets {@code sid} to the session ID the task saved in {@code $D}, if any. */
+    private static final String SAVED_SESSION = "sid=$(" + ifFile("$D/session_id", "head -c 128") + "); ";
+
+    /**
+     * The {@code case} patterns a {@code sid} that {@link Tasks#SESSION_ID} would refuse matches: empty,
+     * not starting with a letter or digit (never an option to the agent), or holding anything else.
+     */
+    private static final String NOT_A_SESSION_ID = "''|[!A-Za-z0-9]*|*[!A-Za-z0-9_-]*";
+
+    /** Why a Claude task with no saved session cannot be continued. */
+    static final String NO_CLAUDE_SESSION = "this task never saved a Claude Code session (it was cancelled or failed "
+            + "before Claude Code wrote one), so there is no conversation to continue";
+
+    /**
+     * Save the session a Claude Code run opened, from its stream-json {@code events} file, as the
+     * task's {@code session_id}: what the next run resumes. Taken from the {@code init} event alone,
+     * since a run Claude Code refused (a resume it could not find) reports a made-up ID in its result;
+     * and only once Claude Code has written that session's transcript, which a run cancelled in its
+     * first moments has not, so its resume would fail as well. Both leave the saved one as it was.
+     * Run after the agent exits, and by {@link #cancel}, which may kill the run script before it can.
+     */
+    static String saveClaudeSession(String events) {
+        return "sid=$(" + ifFile(events, "grep -m 1 '\"subtype\":\"init\"'")
+                + " | sed -n 's/.*\"session_id\" *: *\"\\([^\"]*\\)\".*/\\1/p'); "
+                + "case $sid in " + NOT_A_SESSION_ID + ") ;; *) ! ls \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"/projects/*/\"$sid.jsonl\" "
+                + ">/dev/null 2>&1 || " + writeAside("session_id", "printf '%s' \"$sid\"") + ";; esac";
     }
 
     /** What a run that did not start, because a person holds the conversation, says on its stderr. */
@@ -501,7 +533,7 @@ final class TaskScripts {
     static final String PI_PROJECT_SESSIONS = "printf '%s' \"--$(printf '%s' \"$c\" | sed 's|^[/\\\\]||' | tr '/\\\\:' '---')--\"";
 
     /** Sets {@code sid} to the Pi session ID the task saved in {@code $D}, refusing one it never saved. */
-    private static final String PI_SAVED_SESSION = "sid=$(" + ifFile("$D/session_id", "head -c 128") + "); "
+    private static final String PI_SAVED_SESSION = SAVED_SESSION
             + "case $sid in ''|*[!A-Za-z0-9_-]*) isx_refuse 'its Pi session was never saved';; esac; ";
 
     /**
@@ -653,6 +685,10 @@ final class TaskScripts {
                 + "[ -f \"$D/exit-$n\" ] || { " + writeAside(CANCEL_STAMP, "date +%s") + "; }; "
                 + "sudo -n systemctl stop " + unit(taskId, "$n") + " 2>/dev/null; "
                 + "{ sudo -n bash -c " + quoted + " 2>/dev/null || bash -c " + quoted + "; }; "
+                // The run script saves its session once Claude Code exits, but the sweep may have
+                // killed it first; a Codex or Pi runner publishes its own as soon as it is known.
+                + "case $(" + ifFile("$D/identity", "head -c 200") + ") in ''|'1 claude') "
+                + saveClaudeSession("$D/events-$n.jsonl") + ";; esac; "
                 // The sweep is over either way: the stamp goes, and the cancel keeps its own status.
                 + "[ -f \"$D/exit-$n\" ] || { " + recordExit("$n", "143") + "; }; r=$?; rm -f \"$D/" + CANCEL_STAMP + "\"; exit $r";
     }
