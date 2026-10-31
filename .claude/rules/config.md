@@ -36,7 +36,7 @@ It holds no list -- it collects every tool's `ToolDef.ConfigEntry` that declares
 So a new credential is made known to every secret-aware consumer by declaring it on the tool (Java `ToolSetup.proxy()` or tool YAML), never by editing a list here.
 The same declaration that makes the proxy inject it makes the redactor remove it.
 `SecretRedactor` is the first consumer (`isx doctor --bundle`: structural redaction of the config, then value/pattern scrubbing of logs, marker `<isx:redacted:<path>>`); a pluggable secrets backend would be the second.
-The split is deliberate: `SecretRegistry` knows *where declared secrets live*, `SecretRedactor` knows *what a credential looks like* -- its `looksSecret()` whole-word name heuristic (a backstop for undeclared keys landing in `SpawnConfig.extras` or a typed namespace's `NamespaceConfig` extras; keep it whole-word, since substring matching blanks out unrelated diagnostics like `monkey` and `keyboardLayout`; and the nearest key name governs — a secret-named *list* is redacted whole, a secret-named *object* is not, since its fields have their own names and an `auth: {endpoint, timeoutMs}` block is ordinary config) and its token-shape patterns.
+The split is deliberate: `SecretRegistry` knows *where declared secrets live*, `SecretRedactor` knows *what a credential looks like* -- its `looksSecret()` whole-word name heuristic (a backstop for undeclared keys landing in `SpawnConfig.extras`, a typed namespace's `NamespaceConfig` extras or any key of its accounts; keep it whole-word, since substring matching blanks out unrelated diagnostics like `monkey` and `keyboardLayout`; and the nearest key name governs — a secret-named *list* is redacted whole, a secret-named *object* is not, since its fields have their own names and an `auth: {endpoint, timeoutMs}` block is ordinary config) and its token-shape patterns.
 Its first pattern is `ProofToken.ANY_PROOF`, the marker and digest of every proof isx mints, so a proof is scrubbed even where its prefix borrows no known token shape (`gho_isx_`, `ya29.isx_`).
 Every pattern stays linear on any input, since a guest's output reaches the scrub through a build's log: no open-ended run before a literal, no lazy match that can run to the end from each of many starts (`SecretRedactorTest.manyKeyHeadersWithNoEndAreScrubbedInLinearTime`).
 See DESIGN.md "Support bundles: redaction by construction".
@@ -48,8 +48,9 @@ What the resolver knows about a namespace is its `AccountShape`, from `ToolSetup
 Its `problem()` hook is the only per-namespace judgement: unusable accounts are skipped for the default and a pin to one fails as "configured but incomplete" (#742).
 Tree-taking resolver methods take the shape explicitly (the proxy passes the setups it holds -- never scan tool YAMLs on the event loop); `SpawnConfig`-taking ones look it up, built-in Java tools first.
 **Do not add `if (namespace is claude)` branches** -- a namespace that needs different rules needs a different shape.
-Namespaces that *do* have a class (`GitHubConfig`, `BobConfig`, `OpenaiConfig`) extend `SpawnConfig.NamespaceConfig` to preserve undeclared keys; without that an `accounts:` block deserializes to nothing and the next `save()` **deletes it**.
+Namespaces that *do* have a class (`ClaudeConfig`, `GitHubConfig`, `BobConfig`, `OpenaiConfig`) extend `SpawnConfig.NamespaceConfig` to preserve undeclared keys; without that an `accounts:` block deserializes to nothing and the next `save()` **deletes it**.
 Any new nested config class holding credentials must extend it for the same reason, and its "is this configured" accessors must go through `NamespaceConfig.defaultValue()` -- the typed field is empty once the credential lives in an account.
+`ClaudeConfig` overrides `defaultValue()` to apply the account type (a field of another type, such as an OAuth account's stale `apiKey`, reads as `""`), and refuses a key that is not a Claude credential field.
 `ClaudeConfig` keeps a typed API (`accountNamed`, `accountFor`) only to *interpret* accounts (`effectiveType`, `servesDirectApi`).
 Secrets under `<ns>.accounts.<name>.<path>` are already covered by `SecretRedactor`'s deep pass under a declared namespace, so no separate registration is needed.
 `NamespaceAccounts` is the write side, and **always writes the accounts layout** (a single credential is `accounts.default` + `default: default`): `put`/`replaceAll`/`setDefault`/`remove`/`clear`.
@@ -73,7 +74,7 @@ They are warnings, never refusals, reported at load (`ImageDef.validate`, `ToolD
 In `config.yaml`, a key in a tool's credential namespace that no tool reads (`openai.token`) is named by `UnreadConfigKeys` (#1733).
 What a namespace reads is declared: its tools' `proxy.configuration` paths and `AccountShape` keys (`accountKeys()` for what an account holds), plus `accounts:` and `default:`.
 The credential steps of `isx init` and `isx account add` warn before asking, `CredentialCheck` adds it to a missing credential's notes, and `isx doctor` reports it; isx never moves the key to where it reads one.
-`ClaudeConfig` keeps no undeclared key, so none under `claude` reaches the check.
+`ClaudeConfig` extends `NamespaceConfig` and `ClaudeAccount` keeps its own undeclared keys, so one under `claude` reaches the check (#1876); the phantom `oauthMode` older releases wrote is a declared write-only field, dropped on load.
 Only trusted tools decide what is read: `UnreadConfigKeys.trustedTools` (no project `.incus-spawn/tools/`, no tool whose feature is off) for init, doctor and `CredentialCheck`, never the caller's tool map, which may hold a project's tools.
 
 **Name conflicts vs. overrides**: Overriding a definition from a *later* layer is intentional and supported.

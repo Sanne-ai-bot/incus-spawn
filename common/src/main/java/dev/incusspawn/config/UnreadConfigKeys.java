@@ -26,8 +26,7 @@ import java.util.Set;
  * decide what the proxy serves (#765).
  *
  * <p>Only namespaces a tool declares are checked; one no tool declares belongs to a tool isx
- * does not have, and is left alone. Claude's typed config keeps no key it does not declare, so
- * one under {@code claude} never reaches the tree this reads.
+ * does not have, and is left alone.
  */
 public final class UnreadConfigKeys {
 

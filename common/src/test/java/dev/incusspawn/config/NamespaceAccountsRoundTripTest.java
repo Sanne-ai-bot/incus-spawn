@@ -88,13 +88,55 @@ class NamespaceAccountsRoundTripTest {
             if (!java.lang.reflect.Modifier.isPublic(nested.getModifiers())) continue;
             if (nested.isEnum() || nested.isInterface() || nested.isRecord()) continue;
             if (nested == SpawnConfig.NamespaceConfig.class) continue;
-            // ClaudeConfig declares `accounts` as a typed field, so it needs no any-setter.
-            if (nested == SpawnConfig.ClaudeConfig.class
-                    || nested == SpawnConfig.ClaudeAccount.class) continue;
+            // An account, not a namespace: it keeps its undeclared keys itself
+            // (claudeKeysIsxDoesNotDeclareSurviveASave)
+            if (nested == SpawnConfig.ClaudeAccount.class) continue;
             assertTrue(SpawnConfig.NamespaceConfig.class.isAssignableFrom(nested),
                     nested.getSimpleName() + " must extend NamespaceConfig, or an accounts:"
                             + " block written into that namespace is deleted on the next save");
         }
+    }
+
+    /**
+     * Claude's typed config declares {@code accounts} itself, which once let it skip
+     * {@code NamespaceConfig}: a hand-written {@code claude.token}, or a stray key in an
+     * account, was then dropped at bind and deleted by the next save, and the unread-key
+     * check never saw it (#1876).
+     */
+    @Test
+    void claudeKeysIsxDoesNotDeclareSurviveASave() throws Exception {
+        var config = Jjq.spawnConfig("""
+                claude:
+                  token: sk-ant-x
+                  accounts:
+                    w: { type: api-key, apiKey: k, extra: y }
+                """);
+        var claude = config.tree().getField("claude");
+        assertEquals("sk-ant-x", claude.getField("token").asText(), claude.toString());
+        assertEquals("y", claude.getField("accounts").getField("w").getField("extra").asText(), claude.toString());
+
+        // A write through the typed API leaves them, and the account still resolves
+        config.getClaude().putAccount("v", SpawnConfig.ClaudeAccount.ofApiKey("k2"));
+        var out = Jjq.toYaml(config);
+        assertTrue(out.contains("token: sk-ant-x"), out);
+        assertTrue(out.contains("extra: y"), out);
+        var reloaded = Jjq.spawnConfig(out).getClaude();
+        assertEquals("w", reloaded.accountName());
+        assertEquals("k", reloaded.getApiKey());
+    }
+
+    /** Re-entering an account's credential keeps the keys isx does not declare in it. */
+    @Test
+    void rewritingAClaudeAccountKeepsItsUndeclaredKeys() throws Exception {
+        var config = Jjq.spawnConfig("""
+                claude:
+                  accounts:
+                    w: { type: api-key, apiKey: k, extra: y }
+                """);
+        config.getClaude().putAccount("w", SpawnConfig.ClaudeAccount.ofApiKey("k2"));
+        var out = Jjq.toYaml(config);
+        assertTrue(out.contains("extra: y"), out);
+        assertEquals("k2", Jjq.spawnConfig(out).getClaude().getApiKey());
     }
 
     /** The redactor visits these for their undeclared keys, so none may be left out. */

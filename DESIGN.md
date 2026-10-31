@@ -266,7 +266,8 @@ A credential in `config.yaml` written under a key isx does not read (`openai.tok
 `UnreadConfigKeys` names such keys in every namespace a tool declares, from the same declarations the proxy and the account resolver use: the tools' `proxy.configuration` paths and `AccountShape` keys, plus `accounts:` and `default:`.
 The credential step of `isx init` and `isx account add` warns before it asks, the refusal of a template that needs the credential adds the note to its remedy, and `isx doctor` reports it.
 The key is the user's, perhaps a secret they mean to move, so isx never moves it to the key it reads; the warning says to rename or remove it.
-`ClaudeConfig` keeps no key it does not declare, so a stray key under `claude` never reaches the check.
+`ClaudeConfig` and each Claude account keep the keys they do not declare, as every typed namespace does, so a stray `claude.token` reaches the check and survives a save (#1876).
+The `oauthMode` key isx itself wrote up to v0.3.8 is declared and dropped on load instead, since it never meant anything.
 A namespace no tool declares is not checked, since its tool may simply not be installed here.
 What counts as read is decided only by the tools the proxy sees, never by a project's `.incus-spawn/tools/`: a cloned repository must not silence a warning about a key the proxy will never serve.
 
@@ -5592,7 +5593,7 @@ That is not breadth for its own sake.
 When Claude credentials became a named map, `claude.accounts.<name>.apiKey` appeared in every real config, and an exact-path-only redactor wrote each account's token into the bundle while reporting that it had found no credentials to redact.
 The tool declared that `apiKey` under `claude` is a credential; honouring that at any depth keeps the declaration true as the config grows a dimension, with no second list to update.
 It stays narrow because only a declared namespace/leaf pair earns the deep walk — a map whose keys are user data, like `repo-paths`, is neither.
-The whole-word name backstop covers what no tool declared: the catch-all extras and the undeclared keys a typed namespace keeps.
+The whole-word name backstop covers what no tool declared: the catch-all extras, the undeclared keys a typed namespace keeps, and every key of each of its accounts.
 
 **Structural redaction is the mechanism; scrubbing is a net.**
 The config is serialized to a tree and the values at the registry's locations are replaced before anything is written, so nothing depends on a secret looking the way we expected it to look.

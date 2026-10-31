@@ -65,6 +65,25 @@ class UnreadConfigKeysTest {
                 """));
     }
 
+    /**
+     * Claude's typed config once dropped these at bind, so they never reached the tree (#1876).
+     * A typed namespace writes its undeclared keys after its declared ones.
+     */
+    @Test
+    void claudeKeysIsxDoesNotReadAreNamed() throws Exception {
+        assertEquals(Map.of("claude", List.of("claude.accounts.w.extra", "claude.token")), unread("""
+                claude:
+                  token: sk-ant-x
+                  useVertex: true
+                  cloudMlRegion: us-east5
+                  vertexProjectId: p
+                  accounts:
+                    w: { type: api-key, apiKey: k, extra: y }
+                    o: { oauthToken: sk-ant-oat01-x }
+                  default: w
+                """));
+    }
+
     @Test
     void theNoteNamesOnlyTheCredentialKeys() throws Exception {
         var tree = Jjq.spawnConfig("github:\n  pat: ghp_x\n").tree();

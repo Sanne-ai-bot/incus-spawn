@@ -137,6 +137,9 @@ public class SpawnConfig {
         private String oauthToken = "";
         private String cloudMlRegion = "";
         private String vertexProjectId = "";
+        // Keys isx does not declare, kept so a save does not delete them and UnreadConfigKeys
+        // can name them, as NamespaceConfig does for a namespace (#1876)
+        private final Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
         public ClaudeAccount() {}
 
@@ -171,6 +174,12 @@ public class SpawnConfig {
         public void setCloudMlRegion(String cloudMlRegion) { this.cloudMlRegion = cloudMlRegion == null ? "" : cloudMlRegion.strip(); }
         public String getVertexProjectId() { return vertexProjectId; }
         public void setVertexProjectId(String vertexProjectId) { this.vertexProjectId = vertexProjectId == null ? "" : vertexProjectId.strip(); }
+
+        @JqAnySetter
+        public void setExtra(String key, Object value) { extras.put(key, value); }
+
+        @JqAnyGetter
+        public Map<String, Object> getExtras() { return extras; }
 
         /**
          * Infers the type when a hand-written account omits it, so the field stays optional for
@@ -224,7 +233,7 @@ public class SpawnConfig {
     @JqInclude(JqInclude.Include.NON_EMPTY)
     @JqVisibility(getters = JqVisibility.Visibility.NONE, isGetters = JqVisibility.Visibility.NONE)
     @JqMapped
-    public static class ClaudeConfig {
+    public static class ClaudeConfig extends NamespaceConfig {
         /** Prefix of tokens minted by 'claude setup-token'. */
         public static final String OAUTH_TOKEN_PREFIX = "sk-ant-oat01-";
         public static final String PLACEHOLDER_OAUTH_TOKEN = OAUTH_TOKEN_PREFIX + "placeholder";
@@ -234,6 +243,31 @@ public class SpawnConfig {
 
         /** Config namespace, matching the {@code config-namespace} ClaudeSetup declares. */
         public static final String NAMESPACE = "claude";
+
+        @Override protected String namespace() { return NAMESPACE; }
+
+        /**
+         * {@code key} of the account {@link #account()} resolves to, with its type applied: a field
+         * of another type, such as an OAuth account's stale {@code apiKey}, reads as "".
+         * The inherited tree read would return it, so a caller following "go through
+         * {@code defaultValue()}" could misread a Claude credential.
+         *
+         * @throws IllegalArgumentException for a key that is not a Claude credential field
+         */
+        @Override
+        public String defaultValue(String key) {
+            var account = account();
+            if (account == null) return "";
+            var type = account.effectiveType();
+            return switch (key) {
+                case "type" -> type.wireName();
+                case "apiKey" -> type == ClaudeAccountType.API_KEY ? account.getApiKey() : "";
+                case "oauthToken" -> type == ClaudeAccountType.OAUTH ? account.getOauthToken() : "";
+                case "cloudMlRegion" -> type == ClaudeAccountType.VERTEX ? account.getCloudMlRegion() : "";
+                case "vertexProjectId" -> type == ClaudeAccountType.VERTEX ? account.getVertexProjectId() : "";
+                default -> throw new IllegalArgumentException("'" + key + "' is not a Claude credential field");
+            };
+        }
 
         // Pre-accounts layout. Still read, and still written until credentials next change,
         // so a config.yaml written by an older isx (or copied between machines) keeps working.
@@ -245,6 +279,11 @@ public class SpawnConfig {
         private String vertexProjectId = "";
         private String apiKey = "";
         private String oauthToken = "";
+
+        // Written by isx up to v0.3.8, which serialized isOauthMode() by mistake, and never
+        // meant anything: declared so it is dropped on load, not kept as an unread key.
+        @JqAccess(JqAccess.Access.WRITE_ONLY)
+        private Object oauthMode;
 
         private Map<String, ClaudeAccount> accounts = new java.util.LinkedHashMap<>();
         @JqName("default")
@@ -446,6 +485,12 @@ public class SpawnConfig {
             adoptLegacyAccount();
             // Adding an account must not silently re-point the default at it.
             if (accounts.isEmpty() && defaultAccount.isBlank()) defaultAccount = name;
+            // Rewriting an account's credential keeps the keys isx does not declare in it, as
+            // NamespaceAccounts.put does for every other namespace (#1876)
+            var previous = accounts.get(name);
+            if (previous != null && previous != account) {
+                previous.getExtras().forEach(account.getExtras()::putIfAbsent);
+            }
             accounts.put(name, account);
             clearLegacyFields();
         }
@@ -624,7 +669,7 @@ public class SpawnConfig {
 
     /** Every typed credential namespace, for code that must visit each one's undeclared keys. */
     public java.util.List<NamespaceConfig> namespaceConfigs() {
-        return java.util.List.of(github, bob, openai);
+        return java.util.List.of(claude, github, bob, openai);
     }
     public java.util.List<String> getSearchPaths() { return searchPaths; }
     public void setSearchPaths(java.util.List<String> searchPaths) { this.searchPaths = searchPaths == null ? java.util.List.of() : searchPaths; }

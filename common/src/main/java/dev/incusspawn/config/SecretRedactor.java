@@ -109,8 +109,8 @@ public final class SecretRedactor {
             redactPath(tree, location.path(), replacements, values);
         }
         // Backstop: credential-shaped keys nobody declared. Scoped to the undeclared keys the
-        // config keeps: the catch-all extras, where an undeclared tool's config lands, and those
-        // of each typed namespace — the typed fields are covered by
+        // config keeps: the catch-all extras, where an undeclared tool's config lands, those of
+        // each typed namespace and those of each of its accounts — the typed fields are covered by
         // declarations (SecretRedactorTest pins that), and some of them, like repo-paths, are
         // maps whose *keys are user data*. Running a key-name heuristic over those would
         // redact a repository called "secret-sauce" and then scrub its path out of every log
@@ -121,8 +121,18 @@ public final class SecretRedactor {
         }
         for (var namespace : config.namespaceConfigs()) {
             if (!(root.getField(namespace.namespace()) instanceof JqObject node)) continue;
+            var accountsNode = node.getField(AccountResolver.ACCOUNTS_KEY);
             for (var extra : namespace.getExtras().keySet()) {
+                // An accounts block kept as an extra is walked once, by the loop below
+                if (AccountResolver.ACCOUNTS_KEY.equals(extra) && accountsNode instanceof JqObject) continue;
                 redactUndeclared(node, extra, List.of(namespace.namespace(), extra), replacements, values);
+            }
+            // Whether a namespace types its accounts (Claude) or keeps them as extras, every key
+            // of each account is walked; one the declared pass recorded is not recorded again
+            if (!(accountsNode instanceof JqObject accounts)) continue;
+            for (var name : accounts.keys()) {
+                redactUndeclared(accounts, name, List.of(namespace.namespace(),
+                        AccountResolver.ACCOUNTS_KEY, name), replacements, values);
             }
         }
 
