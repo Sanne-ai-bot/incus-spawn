@@ -248,6 +248,19 @@ class TemplateValidatorTest {
     }
 
     @Test
+    void aControlOverEntryNoTemplateDefinesIsWarnedOf(@TempDir Path dir) throws Exception {
+        var file = Files.writeString(dir.resolve("tpl-test.yaml"), """
+                name: tpl-test
+                parent: tpl-dev
+                coordinator:
+                  control-over: [tpl-dev, tpl-test, tpl-jaav]
+                """);
+        assertEquals(List.of("tpl-test: coordinator.control-over names 'tpl-jaav', which no template defines,"
+                        + " so its coordinators cannot control it"),
+                TemplateValidator.validate(file, knownTemplates()).warnings());
+    }
+
+    @Test
     void projectLocalTemplateReportsEachRefusalOnce(@TempDir Path dir) throws Exception {
         // collectEffective re-checks the targets validateHostResources already reported: neither
         // a forbidden mount nor a path Path.of refuses may escape as an exception, or twice. A

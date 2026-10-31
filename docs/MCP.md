@@ -220,7 +220,30 @@ Claude Code also lists the coordination workflow as the prompt `/mcp__isx__coord
 Claude Code uses the registration only in a trusted workspace.
 The `claude` tool already trusts the home directory and every repository the template clones, so a coordinator started from anywhere else meets Claude Code's ordinary trust prompt once.
 
-The coordinator gets exactly the tools, approved templates and limits a host agent gets, and the same `mcp.yaml` on the host applies.
+### What a coordinator may control
+
+A coordinator controls only the templates both lists name: `templates` in `mcp.yaml` and its own template's `coordinator.control-over`.
+
+```yaml
+coordinator:
+  control-over: [tpl-java, tpl-dev]
+```
+
+`mcp.yaml` stays your ceiling for every agent, so a template holding secrets you never list there is out of reach whatever a definition says.
+The definition says what this coordinator is for, so a new coordinator template for templates you already approved needs no edit to `mcp.yaml`.
+
+A template whose definition lists nothing gives its coordinators nothing, and so does one from a project-local definition.
+The nearest template in the chain that sets the list decides, replacing its parent's.
+
+Each mismatch is a warning that names the template, the list missing it and the file to edit.
+`isx branch` and the TUI print what a new coordinator may control, and warn of each mismatch.
+`isx doctor` reports the same, and so does a refusal from `isx mcp` and its `list_templates` answer.
+
+The TUI's instance details show what a coordinator may control now.
+An edit to either file reaches a running coordinator on its next call.
+When it next connects, its workers from a template it lost are released as orphans.
+
+Otherwise the coordinator gets the tools and limits a host agent gets, under the same `mcp.yaml`.
 What differs:
 
 - The session is the instance.

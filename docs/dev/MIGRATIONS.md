@@ -252,3 +252,34 @@ Nothing has to change: the line may stay or be deleted.
 Builds behave as before, since the clone path it governed had no caller left.
 A host checkout of a template's repository is made by hand, such as `git clone <url>` in a directory of `host-paths`.
 `isx update-all` fetches the checkouts that exist, and existing shallow checkouts an earlier isx cloned keep their managed depth.
+
+## A coordinator controls nothing until its template lists what it may
+
+Before issue 1812, an instance branched with `--mcp-client` could use every template `templates` in `mcp.yaml` approves.
+It now uses only those that its own template's `coordinator.control-over` lists as well, and none when that lists none.
+There is no compatibility path: the feature had almost no users.
+When such a coordinator next connects, the workers it held are released as orphans, and destroyed after `orphan-grace-hours` unless adopted.
+List the templates before upgrading, or adopt the workers within that time.
+
+### How to tell
+
+`isx doctor` warns `Coordinator template <name>` for a template that declares `coordinator:` without a usable list.
+A coordinator's own `list_templates` comes back empty with a `scope_note` naming the file to edit, and `create_instance` refuses with the same.
+The TUI's instance details show `MCP control: nothing` for it.
+
+### What to change
+
+In the definition of the template the coordinator was branched from, list what it may control:
+
+```yaml
+coordinator:
+  control-over: [tpl-java, tpl-dev]
+```
+
+Only the templates also under `templates` in `~/.config/incus-spawn/mcp.yaml` count.
+A non-empty list also makes every branch of that template a coordinator by default; `isx-control-capability: false` beside it keeps them plain unless chosen.
+Nothing needs a rebuild or a restart: `isx mcp` reads the definition on every call.
+
+### How to verify
+
+`isx doctor` no longer warns for that template, and the coordinator's `list_templates` lists the templates.

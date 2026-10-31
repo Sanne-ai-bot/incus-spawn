@@ -540,9 +540,11 @@ class QueryCommandFormatTest {
                   "ssh_port" : 22,
                   "ssh_identity_file" : "/home/u/.config/incus-spawn/ssh/id_ed25519",
                   "ssh_proxy_command" : "\\"/usr/bin/isx\\" ssh-proxy --start dev-2",
-                  "project_root" : "/home/agentuser/app"
+                  "project_root" : "/home/agentuser/app",
+                  "mcp_client" : false,
+                  "mcp_scope" : null
                 }
-                """, json(BranchCommand.record("dev-2", "orca", "rt-1", reach)));
+                """, json(BranchCommand.record("dev-2", "orca", "rt-1", reach, false, null)));
         var noSsh = new BranchCommand.Reach(null, "/home/agentuser");
         assertEquals("""
                 {
@@ -554,9 +556,30 @@ class QueryCommandFormatTest {
                   "ssh_port" : null,
                   "ssh_identity_file" : null,
                   "ssh_proxy_command" : null,
-                  "project_root" : "/home/agentuser"
+                  "project_root" : "/home/agentuser",
+                  "mcp_client" : false,
+                  "mcp_scope" : null
                 }
-                """, json(BranchCommand.record("dev-2", null, null, noSsh)));
+                """, json(BranchCommand.record("dev-2", null, null, noSsh, false, null)));
+    }
+
+    @Test
+    void branchJsonSaysWhatACoordinatorMayControl() {
+        // #1812: appended, after #1720's fields
+        var def = new dev.incusspawn.config.ImageDef();
+        def.setName("tpl-coord");
+        var mcpClient = new dev.incusspawn.config.ImageDef.Coordinator();
+        mcpClient.setControlOver(List.of("tpl-a", "tpl-c"));
+        def.setCoordinator(mcpClient);
+        var scope = dev.incusspawn.config.McpScope.coordinator("tpl-coord", null, java.util.Map.of("tpl-coord", def),
+                List.of("tpl-a", "tpl-b"));
+        var record = BranchCommand.record("coord", null, null, new BranchCommand.Reach(null, "/home/agentuser"), true, scope);
+        assertEquals(List.of("name", "owner", "owner_id", "ssh_host", "ssh_user", "ssh_port", "ssh_identity_file",
+                "ssh_proxy_command", "project_root", "mcp_client", "mcp_scope"), List.copyOf(record.keySet()));
+        assertTrue(json(record).contains("""
+                  "mcp_client" : true,
+                  "mcp_scope" : [ "tpl-a" ]
+                """), json(record));
     }
 
     /**

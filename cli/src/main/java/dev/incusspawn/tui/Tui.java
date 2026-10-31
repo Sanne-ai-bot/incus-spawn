@@ -205,6 +205,8 @@ public class Tui {
     private List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses = List.of();
     /** Read from host state when the details open, never while they draw. */
     private List<String> detailRegisteredWith = List.of();
+    /** What the instance the details show may control over MCP, when it is a coordinator (#1812). */
+    private dev.incusspawn.config.McpScope detailMcpScope;
 
     /** Result of a light refresh, produced off the UI thread. Exactly one of instances/error is set. */
     private record LiveSnapshot(long generation, List<InstanceInfo> instances,
@@ -965,6 +967,7 @@ public class Tui {
             detailInstanceName = selected.name();
             detailAccountUses = accountUsesFor(selected);
             detailRegisteredWith = dev.incusspawn.lifecycle.HostIntegration.registeredWith(selected.name());
+            detailMcpScope = mcpScopeFor(selected);
             mode = Mode.INSTANCE_DETAIL;
             return true;
         }
@@ -1609,6 +1612,7 @@ public class Tui {
         if (detailAccountsStale.getAndSet(false) && mode == Mode.INSTANCE_DETAIL) {
             var selected = selectedEntry(instanceTableState);
             detailAccountUses = selected == null ? List.of() : accountUsesFor(selected);
+            detailMcpScope = selected == null ? null : mcpScopeFor(selected);
         }
         if (needsRefresh.get()) {
             long now = System.currentTimeMillis();
@@ -1777,7 +1781,7 @@ public class Tui {
                 var selected = selectedEntry(instanceTableState);
                 // Assessed from the same snapshot as its tag row: pure, and a few map lookups
                 if (selected != null) instanceDetail.render(frame, screen, selected, detailAccountUses,
-                        detailRegisteredWith, BaseImageAge.assess(selected.metadata(), imageDefs));
+                        detailRegisteredWith, BaseImageAge.assess(selected.metadata(), imageDefs), detailMcpScope);
             }
             case ACCOUNTS -> accountsModal.render(frame, screen);
             case INFO -> about.render(frame, screen);
@@ -2082,6 +2086,26 @@ public class Tui {
     }
 
     /**
+     * What a coordinator may control, judged as {@code isx mcp} judges it: its lineage from the
+     * listing, its template's definition and {@code mcp.yaml} as they are now; null for an instance
+     * that is no coordinator, or when {@code mcp.yaml} cannot be read.
+     */
+    private dev.incusspawn.config.McpScope mcpScopeFor(InstanceInfo info) {
+        if (!info.mcpCaller() || info.metadata() == null) return null;
+        try {
+            var configs = new java.util.HashMap<String, io.hyperfoil.tools.jjq.value.JqValue>();
+            for (var entry : allEntries == null ? List.<InstanceInfo>of() : allEntries) {
+                if (entry.metadata() != null) configs.put(entry.name(), entry.metadata().path("config"));
+            }
+            var lineage = dev.incusspawn.proxy.InstanceRegistry.lineageOf(info.metadata().path("config"), configs);
+            return dev.incusspawn.config.McpScope.coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null,
+                    dev.incusspawn.config.ImageDef.loadTrusted(), dev.incusspawn.config.McpConfig.load().templates());
+        } catch (dev.incusspawn.config.McpConfig.Invalid e) {
+            return null;
+        }
+    }
+
+    /**
      * What {@code isx account show} reports for this instance, for the detail dialog. Best effort:
      * the dialog is worth opening without it, so a failure leaves the section out.
      */
@@ -2193,6 +2217,7 @@ public class Tui {
         if (mode == Mode.INSTANCE_DETAIL) {
             var selected = selectedEntry(instanceTableState);
             detailAccountUses = selected == null ? List.of() : accountUsesFor(selected);
+            detailMcpScope = selected == null ? null : mcpScopeFor(selected);
         }
         accountsModal = null;
     }

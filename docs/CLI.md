@@ -712,7 +712,7 @@ For a clean log, redirect both streams or set `NO_COLOR=1`.
 
 ### Fields of `isx list`
 
-`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state`, `mcp_purpose`, `base_image`, `owner` and `owner_id`, in that order.
+`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state`, `mcp_purpose`, `base_image`, `owner`, `owner_id` and `mcp_client`, in that order.
 `mcp_state` and `mcp_purpose` are `null` (`-`) unless an [`isx mcp`](MCP.md#delegating-from-an-agent-on-your-host-mcp) session made the instance.
 `mcp_purpose` is then what the agent said the instance is for, or `null`, and `mcp_state` is one of:
 
@@ -728,6 +728,9 @@ A fix in a base image reaches only instances built after it, and `isx doctor` na
 
 `owner` and `owner_id` are the external tool that controls the instance and its handle for it, as `isx branch --owner` and `--owner-id` stamped them, or `null`.
 The table shows the owner in its `OWNER` column, beside how an `isx mcp` session holds its instances.
+
+`mcp_client` is `true` for a [coordinator](MCP.md#a-coordinator-in-an-instance), an instance that may drive isx over MCP.
+What it may control depends on its template's definition, which `isx list` does not read; the TUI's instance details show it.
 
 For names alone, use `isx list -q`:
 
@@ -877,6 +880,8 @@ That is why `plain` never gains a field.
 | `ssh_identity_file` | The private key isx manages for its instances |
 | `ssh_proxy_command` | The `ProxyCommand` that reaches the instance, starting it first if it is stopped |
 | `project_root` | The directory a shell opens in |
+| `mcp_client` | Whether the instance is a coordinator that may drive isx over MCP |
+| `mcp_scope` | The templates such a coordinator may control, or `null` |
 
 The SSH fields are `null` when the template does not install `sshd`, or when isx cannot create its SSH key.
 isx creates the key before printing it, and authorizes it in the instance when the instance starts, so a `--no-start` branch is reachable once started.

@@ -160,6 +160,8 @@ public class ListCommand extends BaseCommand {
             // #1720: the external tool that controls it, and that tool's handle for it.
             record.put("owner", i.owner());
             record.put("owner_id", i.ownerId());
+            // #1812: whether it may drive isx over MCP; what it may control needs definitions, which isx list loads none of
+            record.put("mcp_client", i.mcpCaller());
             records.add(record);
         }
         return records;
