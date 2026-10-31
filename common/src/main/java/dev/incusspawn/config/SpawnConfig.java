@@ -1,8 +1,6 @@
 package dev.incusspawn.config;
 
 import io.hyperfoil.tools.jjq.mapper.JqAccess;
-import io.hyperfoil.tools.jjq.mapper.JqAnyGetter;
-import io.hyperfoil.tools.jjq.mapper.JqAnySetter;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqEnum;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
@@ -25,7 +23,7 @@ import java.nio.file.Path;
  * Global incus-spawn configuration stored in ~/.config/incus-spawn/config.yaml
  */
 @JqMapped
-public class SpawnConfig {
+public class SpawnConfig extends UndeclaredKeys {
 
     /**
      * This config as a navigable tree.
@@ -92,7 +90,6 @@ public class SpawnConfig {
     @JqName("host-ca")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object hostCa;
-    private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
     /**
      * How a Claude account authenticates. Named for what the credential is, not what isx uses it for.
@@ -131,15 +128,12 @@ public class SpawnConfig {
     @JqInclude(JqInclude.Include.NON_EMPTY)
     @JqVisibility(getters = JqVisibility.Visibility.NONE, isGetters = JqVisibility.Visibility.NONE)
     @JqMapped
-    public static class ClaudeAccount {
+    public static class ClaudeAccount extends UndeclaredKeys {
         private ClaudeAccountType type;
         private String apiKey = "";
         private String oauthToken = "";
         private String cloudMlRegion = "";
         private String vertexProjectId = "";
-        // Keys isx does not declare, kept so a save does not delete them and UnreadConfigKeys
-        // can name them, as NamespaceConfig does for a namespace (#1876)
-        private final Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
         public ClaudeAccount() {}
 
@@ -174,12 +168,6 @@ public class SpawnConfig {
         public void setCloudMlRegion(String cloudMlRegion) { this.cloudMlRegion = cloudMlRegion == null ? "" : cloudMlRegion.strip(); }
         public String getVertexProjectId() { return vertexProjectId; }
         public void setVertexProjectId(String vertexProjectId) { this.vertexProjectId = vertexProjectId == null ? "" : vertexProjectId.strip(); }
-
-        @JqAnySetter
-        public void setExtra(String key, Object value) { extras.put(key, value); }
-
-        @JqAnyGetter
-        public Map<String, Object> getExtras() { return extras; }
 
         /**
          * Infers the type when a hand-written account omits it, so the field stays optional for
@@ -568,20 +556,12 @@ public class SpawnConfig {
      * <p>Without this, a namespace's named accounts would deserialize to nothing and then be
      * <em>deleted</em> by the next save, destroying credentials exactly the way the
      * {@code putAccount} bug found in review did. Namespaces with no Java class at all (a tool
-     * defined purely in YAML) are already safe: they land in {@link SpawnConfig#extras}.
+     * defined purely in YAML) are already safe: they land in {@link SpawnConfig#getExtras()}.
      *
      * <p>Accounts are read generically off the serialized tree by {@link AccountResolver}, so
      * nothing here needs to know their shape.
      */
-    public abstract static class NamespaceConfig {
-        private final Map<String, Object> extras = new java.util.LinkedHashMap<>();
-
-        @JqAnySetter
-        public void setExtra(String key, Object value) { extras.put(key, value); }
-
-        @JqAnyGetter
-        public Map<String, Object> getExtras() { return extras; }
-
+    public abstract static class NamespaceConfig extends UndeclaredKeys {
         /** The config namespace this class holds, matching its tool's {@code config-namespace}. */
         protected abstract String namespace();
 
@@ -716,14 +696,9 @@ public class SpawnConfig {
      */
     public boolean hasLegacyMcpSection() {
         // An empty one (`mcp:` or `mcp: {}`) set nothing the defaults would widen.
-        var section = extras.get("mcp");
+        var section = getExtras().get("mcp");
         return section != null && !(section instanceof Map<?, ?> map && map.isEmpty());
     }
-    @JqAnySetter
-    public void setExtra(String key, Object value) { extras.put(key, value); }
-
-    @JqAnyGetter
-    public Map<String, Object> getExtras() { return extras; }
 
     /**
      * Remove a dotted config path, and any ancestor left empty by the removal.
@@ -865,7 +840,8 @@ public class SpawnConfig {
         this.hostRoutes = other.hostRoutes;
         this.drivers = other.drivers;
         this.hostCa = other.hostCa;
-        this.extras = other.extras;
+        getExtras().clear();
+        getExtras().putAll(other.getExtras());
     }
 
     public void setConfigByPath(String dotPath, String value) {

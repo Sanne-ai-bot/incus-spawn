@@ -125,6 +125,27 @@ class NamespaceAccountsRoundTripTest {
         assertEquals("k", reloaded.getApiKey());
     }
 
+    /**
+     * The map that holds undeclared keys is itself named {@code extras}; a key of that name in
+     * the file is user data like any other, not a field the mapper knows.
+     */
+    @Test
+    void aKeyNamedExtrasSurvivesASave() throws Exception {
+        var out = roundTrip("""
+                extras: top
+                claude:
+                  accounts:
+                    w: { type: api-key, apiKey: k, extras: { a: 1 } }
+                github:
+                  extras: gh
+                """);
+        var reloaded = Jjq.spawnConfig(out).tree();
+        assertEquals("top", reloaded.getField("extras").asText(), out);
+        assertEquals("1", reloaded.getField("claude").getField("accounts").getField("w")
+                .getField("extras").getField("a").asText(), out);
+        assertEquals("gh", reloaded.getField("github").getField("extras").asText(), out);
+    }
+
     /** Re-entering an account's credential keeps the keys isx does not declare in it. */
     @Test
     void rewritingAClaudeAccountKeepsItsUndeclaredKeys() throws Exception {

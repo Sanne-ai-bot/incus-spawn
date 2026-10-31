@@ -2162,7 +2162,7 @@ Bob and OpenAI got named accounts in the same change, through the generic `isx i
 
 The credential namespaces that *do* have a Java class (`GitHubConfig`, `BobConfig`, `OpenaiConfig`) extend `SpawnConfig.NamespaceConfig`, which preserves keys the class does not declare.
 Without that an `accounts:` block would deserialize to nothing and then be **deleted** by the next save — the same credential-destroying shape as the `putAccount` bug found in review.
-Namespaces with no Java class at all were already safe: they land in `SpawnConfig.extras`.
+Namespaces with no Java class at all were already safe: they land in `SpawnConfig.getExtras()`.
 
 **How the proxy tells callers apart.**
 One shared proxy on `DEFAULT_MITM_PORT` still serves every instance, but it now identifies the caller by source address.

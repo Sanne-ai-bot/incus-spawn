@@ -254,7 +254,7 @@ VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock
 `SecretRegistry` (`common/config/`) answers "where do secrets live in `config.yaml`" by collecting every tool's `ToolDef.ConfigEntry` that sets `secret: true` with a `config-path`.
 So a new credential becomes known to every secret-aware consumer by being declared on the tool (`ToolSetup.proxy()` or tool YAML), never by editing a list.
 A declared leaf also holds anywhere under its namespace, which is what covers `claude.accounts.<name>.apiKey`.
-`SecretRedactor` owns the other half -- what a credential *looks like*: the whole-word key-name backstop for undeclared keys (`SpawnConfig.extras`, a typed namespace's and its accounts'), the token-shape patterns, and the `<isx:redacted:<path>>` marker.
+`SecretRedactor` owns the other half -- what a credential *looks like*: the whole-word key-name backstop for undeclared keys (`SpawnConfig.getExtras()`, a typed namespace's and its accounts'), the token-shape patterns, and the `<isx:redacted:<path>>` marker.
 `isx doctor --bundle` (`SupportBundle`) is the first consumer: the config is redacted structurally, every other file is scrubbed, and `SupportBundle.add()` is the only way into the archive so a new collector cannot leak by forgetting.
 See DESIGN.md "Support bundles: redaction by construction" and `.claude/rules/config.md`.
 
