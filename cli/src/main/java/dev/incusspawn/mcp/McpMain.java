@@ -129,8 +129,7 @@ public final class McpMain {
                                                   Supplier<Map<String, ImageDef>> definitions) {
         if (callerInstance == null) return c -> McpScope.host(c.templates());
         var lineage = backend.lineage(callerInstance);
-        return c -> McpScope.coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null,
-                definitions.get(), c.templates());
+        return c -> McpScope.coordinator(lineage, definitions.get(), c.templates());
     }
 
     /**

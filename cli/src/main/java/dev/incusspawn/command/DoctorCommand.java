@@ -1879,7 +1879,7 @@ public class DoctorCommand extends BaseCommand {
         }
         for (var name : callers) {
             var lineage = dev.incusspawn.proxy.InstanceRegistry.lineageOf(byName.get(name), byName);
-            var scope = McpScope.coordinator(lineage.template(), lineage.untrusted() ? lineage.why() : null, defs, approved);
+            var scope = McpScope.coordinator(lineage, defs, approved);
             if (scope.templates().isEmpty()) {
                 findings.add(Finding.warn("Coordinator " + OutputFormat.oneLine(name),
                         "controls no template, and its workers are released when it next connects. "
