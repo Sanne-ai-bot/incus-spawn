@@ -477,10 +477,12 @@ public final class BranchFlow {
         // Configure GUI before start so environment.* keys are visible to init. First, because
         // it may push files: any push lands well before the start (see prefetchAndStart).
         if (req.gui() == null && defaults.guiNote() != null) BuildOutput.warn(defaults.guiNote());
-        if (req.mcpClient() == null && !req.grantsMcpClient()) {
-            if (defaults.mcpClientNote() != null) {
-                BuildOutput.warn(defaults.mcpClientNote());
-            } else if (defaults.mcpClient()) {
+        // The note also when the choice was an explicit no: the TUI's dialog always sends its box,
+        // and gives no other reason why a coordinator template's box starts unticked
+        if (!req.grantsMcpClient() && defaults.mcpClientNote() != null) {
+            BuildOutput.warn(defaults.mcpClientNote());
+        } else if (req.mcpClient() == null && !req.grantsMcpClient()) {
+            if (defaults.mcpClient()) {
                 BuildOutput.warn("'" + source + "' makes coordinators by default, but " + mcpClientUnreachable(networkMode)
                         + ", so MCP control is off.");
             }

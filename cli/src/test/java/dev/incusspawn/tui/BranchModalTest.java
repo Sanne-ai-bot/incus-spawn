@@ -76,9 +76,9 @@ class BranchModalTest {
             KeyEvent.ofKey(KeyCode.TAB), KeyEvent.ofKey(KeyCode.TAB)};
 
     @Test
-    void mcpControlIsLeftToTheDefaultUntilTouched() {
+    void anUntouchedMcpControlBoxSendsWhatItShows() {
         var request = dialog(MachineType.CONTAINER).request("dev-2");
-        assertNull(request.mcpClient(), "an untouched box is BranchFlow's default, as for isx branch");
+        assertEquals(Boolean.FALSE, request.mcpClient(), "an untouched box sends what it shows, never null");
         assertEquals(java.util.Map.of(), request.extraConfig(), "BranchFlow mints the grant, never the dialog");
     }
 
@@ -99,14 +99,14 @@ class BranchModalTest {
         assertEquals(Boolean.FALSE, dialog.request("dev-2").mcpClient());
         press(dialog, KeyEvent.ofChar(' '));
         assertEquals(NetworkMode.FULL, dialog.branchNetworkMode());
-        assertNull(dialog.request("dev-2").mcpClient(), "back from Airgapped, the template's default applies again");
+        assertEquals(Boolean.TRUE, dialog.request("dev-2").mcpClient(), "back from Airgapped, the box holds the default again");
     }
 
     @Test
     void aCoordinatorTemplatesBoxStartsTicked() {
         var dialog = dialog(COORDINATOR);
         TuiSnapshot.assertMatches("branch-modal-coordinator-80x24", TuiSnapshot.render(80, 24, f -> dialog.render(f, f.area())));
-        assertNull(dialog.request("dev-2").mcpClient(), "left ticked, the template's default applies");
+        assertEquals(Boolean.TRUE, dialog.request("dev-2").mcpClient(), "left ticked, the box's value is sent");
         press(dialog, TO_MCP_CONTROL);
         press(dialog, KeyEvent.ofChar(' '));
         assertEquals(Boolean.FALSE, dialog.request("dev-2").mcpClient(), "unticked, as isx branch --no-mcp-client");
