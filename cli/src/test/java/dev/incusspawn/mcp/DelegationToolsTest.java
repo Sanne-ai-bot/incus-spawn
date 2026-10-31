@@ -47,6 +47,8 @@ class DelegationToolsTest {
     /** What the tasks listing of an adopted instance answers. */
     private volatile String taskListing = "";
     private volatile String savedSession;
+    /** Without {@link #savedSession}, the session a finished task's status reports, as a Claude run saves it once over; null for none. */
+    private volatile String claudeSession = "s1";
     /** The agent a finished task's identity names, with {@link #savedSession}. */
     private volatile String savedAgent = "codex";
     /** What a Pi task's session check answers before send_message launches: ok, or why not. */
@@ -126,7 +128,7 @@ class DelegationToolsTest {
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
             if (taskState.equals("unknown")) return "run=1\nkind=agent\nstate=unknown\n---\n\n---stderr\n";
             var who = attached ? "cwd=/home/agentuser\nsession_id=s1\npresence=claude 77 /elsewhere\n"
-                    + "presence=resume 77 s1\n" : savedSession == null ? "" : "identity=1 " + savedAgent + "\nsession_id=" + savedSession + "\n";
+                    + "presence=resume 77 s1\n" : savedSession == null ? (claudeSession == null || taskState.equals("running") ? "" : "session_id=" + claudeSession + "\n") : "identity=1 " + savedAgent + "\nsession_id=" + savedSession + "\n";
             return taskState.equals("running")
                     ? "run=1\nkind=agent\nstate=running\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
@@ -370,6 +372,19 @@ class DelegationToolsTest {
         var r = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"open a PR\"}");
         assertFalse(r.path("isError").asBoolean(false), text(r));
         assertTrue(backend.scripts.stream().anyMatch(s -> s.contains("--unit=isx-task-" + task + "-2")));
+    }
+
+    @Test
+    void aClaudeTaskThatSavedNoSessionIsNotResumableAndMessagesAreRefused() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        claudeSession = null; // cancelled before Claude Code wrote its session
+        assertFalse(structured(call("task_status", "{\"task_id\":\"" + task + "\"}")).path("resumable").asBoolean(true));
+        var launched = launches();
+        var r = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"carry on\"}");
+        assertEquals("wrong_state", code(r));
+        assertTrue(text(r).contains("start a new delegated task"), text(r));
+        assertEquals(launched, launches(), "no run that could only fail");
     }
 
     private String agentInstance() {
@@ -1461,6 +1476,7 @@ class DelegationToolsTest {
 
         // A first run that never opened its session saved no ID: nothing to continue, and never a new conversation.
         savedSession = null;
+        claudeSession = null;
         assertFalse(structured(call("task_status", "{\"task_id\":\"" + id + "\"}")).path("resumable").asBoolean(true));
         assertEquals("wrong_state", code(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"again\"}")));
     }

@@ -3850,6 +3850,10 @@ Unit state is read through `sudo` too: an unprivileged login session in a contai
 
 **Delegation.**
 The inner agent is `claude -p --output-format stream-json`, resumed with `--resume <session_id>` for each `send_message`.
+The ID is saved only from the `init` event, and only once Claude Code has written that session's transcript (#1866).
+A cancelled run used to leave none, since the cancel kills the run script before it reads the events, and the next run then started `claude --resume ""`.
+Claude Code fails that at once, with exit 1, no turns and a made-up session ID in its result, which was saved, so every later message failed the same way.
+Now `cancel` saves the session itself, a refused resume never replaces the saved ID, and a task without one is not `resumable`: `send_message` refuses it rather than launch a run that can only fail.
 The appended brief frames the role -- a delegate reporting to a coordinator -- and forbids nothing: what a delegate can reach is bounded by the credentials the template's proxy account carries, what it does by the instruction.
 That is what makes "fix it, don't push" -> review `get_diff` -> "push and open the PR" a controlled flow rather than a prompt-level honour system.
 `get_diff` compares against the commit each repository was at when the task started, using a throwaway index so untracked files are included and the instance's own index is untouched.

@@ -48,7 +48,13 @@ class TaskScriptsTest {
             printf '%s\\n' "$*" >> "$HOME/claude-args"
             printf '%s\\n' "$ISX_MCP_TASK" > "$HOME/task-env"
             sid=sess-$(basename "$HOME")
+            # A resume Claude Code cannot find: no init, and a made-up ID in the result.
+            case $prompt in *RESUME-FAILS*) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0,"session_id":"made-up-1"}'; exit 1;; esac
             echo '{"type":"system","subtype":"init","session_id":"'$sid'","model":"stub"}'
+            # Cut off before Claude Code wrote the session's transcript.
+            case $prompt in *NO-TRANSCRIPT*) exec sleep 300;; esac
+            mkdir -p "$HOME/.claude/projects/-work" && : >> "$HOME/.claude/projects/-work/$sid.jsonl"
+            case $prompt in *KEEP-WORKING*) exec sleep 300;; esac
             echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Looking at it"},{"type":"tool_use","name":"Bash","input":{"command":"make test"}}]},"session_id":"'$sid'"}'
             echo "changed by: $prompt" > NEW_FILE
             echo more >> tracked.txt
@@ -184,6 +190,67 @@ class TaskScriptsTest {
         assertEquals(2, second.run());
         assertEquals("Done: now open a PR", StreamJsonEvents.summarize(second.output(), 1).resultText());
         assertTrue(Files.readString(home.resolve("claude-args")).contains("--resume " + sessionId()));
+    }
+
+    /** Waits until run {@code run} of task {@code id} has written {@code text} to its events. */
+    private void awaitEvents(String id, int run, String text) throws Exception {
+        var events = home.resolve(".isx-mcp/tasks/" + id + "/events-" + run + ".jsonl");
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (!(Files.exists(events) && Files.readString(events).contains(text))) {
+            if (System.nanoTime() > deadline) throw new AssertionError("no " + text + " in " + events);
+            Thread.sleep(50);
+        }
+    }
+
+    @Test
+    void aCancelledRunKeepsItsSessionSoTheNextMessageResumesIt() throws Exception {
+        var id = "t1-abc";
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), Tasks.Profile.NONE)), "KEEP-WORKING");
+        awaitEvents(id, 1, "\"subtype\":\"init\"");
+        // The transcript is written just after the init event.
+        var transcript = home.resolve(".claude/projects/-work/" + sessionId() + ".jsonl");
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (!Files.exists(transcript)) {
+            if (System.nanoTime() > deadline) throw new AssertionError("no transcript at " + transcript);
+            Thread.sleep(50);
+        }
+        sh(TaskScripts.cancel(id), "");
+        var cancelled = Tasks.parse(sh(TaskScripts.status(id, 1000), ""));
+        assertEquals(143, cancelled.exit());
+        assertEquals(sessionId(), cancelled.sessionId(), "the cancel saved the session the run script could not");
+
+        sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, work.toString(), Tasks.Profile.NONE)), "carry on");
+        var second = awaitFinished(id);
+        assertEquals(0, second.exit());
+        assertTrue(Files.readString(home.resolve("claude-args")).contains("--resume " + sessionId()));
+    }
+
+    @Test
+    void aRunCancelledBeforeItsTranscriptSavesNoSessionAndTheNextIsRefusedWithoutAResume() throws Exception {
+        var id = "t1-abc";
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), Tasks.Profile.NONE)), "NO-TRANSCRIPT");
+        awaitEvents(id, 1, "\"subtype\":\"init\"");
+        sh(TaskScripts.cancel(id), "");
+        assertNull(Tasks.parse(sh(TaskScripts.status(id, 1000), "")).sessionId(), "Claude Code could not resume it");
+
+        // Claude Code fails --resume "" at once, and reports a made-up session ID that would be saved.
+        Files.delete(home.resolve("claude-args"));
+        sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, work.toString(), Tasks.Profile.NONE)), "carry on");
+        var second = awaitFinished(id);
+        assertEquals(125, second.exit());
+        assertTrue(second.stderr().contains("never saved a Claude Code session"), second.stderr());
+        assertFalse(Files.exists(home.resolve("claude-args")), "Claude Code was not started");
+    }
+
+    @Test
+    void aResumeClaudeCodeRefusedLeavesTheSavedSession() throws Exception {
+        var id = "t1-abc";
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), Tasks.Profile.NONE)), "go");
+        assertEquals(sessionId(), awaitFinished(id).sessionId());
+        sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, work.toString(), Tasks.Profile.NONE)), "RESUME-FAILS");
+        var failed = awaitFinished(id);
+        assertEquals(1, failed.exit());
+        assertEquals(sessionId(), failed.sessionId(), "not the made-up ID of the refused resume");
     }
 
     @Test
