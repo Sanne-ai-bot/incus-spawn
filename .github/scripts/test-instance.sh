@@ -44,6 +44,31 @@ assert_eq() {
     fi
 }
 
+# Fetches a URL and checks its body against an extended regex. An answer other than 200 is
+# reported with its status and Server header: Maven Central sometimes refuses a runner's
+# address with a 403, which the proxy relays unchanged, and that is not a TLS failure (#1810).
+fetch_matching() {
+    local url="$1" pattern="$2" dir status server
+    dir=$(mktemp -d)
+    if ! status=$(curl -sS -D "$dir/headers" -o "$dir/body" -w '%{http_code}' "$url"); then
+        rm -rf "$dir"
+        return 1
+    fi
+    if [ "$status" != 200 ]; then
+        server=$(grep -i '^server:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')
+        echo "HTTP $status (Server: ${server:-none}) for $url: the TLS handshake with the proxy succeeded, an answer without the upstream Server header is the proxy's own"
+        rm -rf "$dir"
+        return 1
+    fi
+    local found=0
+    grep -qE "$pattern" "$dir/body" || { echo "the body of $url does not match $pattern"; found=1; }
+    rm -rf "$dir"
+    return $found
+}
+
+# Sourcing defines the helpers above for tests of them, and runs no checks.
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+
 echo "========================================"
 echo " incus-spawn functional integration tests"
 echo "========================================"
@@ -55,11 +80,9 @@ echo ""
 # proxy terminates TLS with its CA, re-encrypts to upstream Maven Central.
 echo "[1] Maven Artifact Download (Proxy Interception)"
 assert "download Maven POM through proxy" \
-    bash -c "curl -sf https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom \
-        | grep -q '<artifactId>junit</artifactId>'"
+    fetch_matching https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom '<artifactId>junit</artifactId>'
 assert "download Maven JAR checksum through proxy" \
-    bash -c "curl -sf https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar.sha1 \
-        | grep -qE '^[0-9a-f]{40}$'"
+    fetch_matching https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar.sha1 '^[0-9a-f]{40}$'
 echo ""
 
 # --- 2. Git clone over HTTPS (proxy + git) ---
@@ -190,14 +213,19 @@ assert "python3 and openssl installable through the proxy" \
 
 # VERIFY_X509_STRICT is forced rather than relying on the container Python's
 # default, so this pins the regression on any Python (3.13+ enables it itself).
+# An HTTP error status means the handshake succeeded, so only section 1 reports
+# an upstream refusal (#1810).
 assert "strict TLS validation accepts the MITM proxy chain" \
     python3 -c "
-import ssl, urllib.request
+import ssl, urllib.error, urllib.request
 ctx = ssl.create_default_context()
 ctx.verify_flags |= ssl.VERIFY_X509_STRICT
-urllib.request.urlopen(
-    'https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom',
-    context=ctx, timeout=30)
+try:
+    urllib.request.urlopen(
+        'https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom',
+        context=ctx, timeout=30)
+except urllib.error.HTTPError as e:
+    print(f'TLS accepted; upstream answered HTTP {e.code} (Server: {e.headers.get(\"Server\")})')
 "
 assert "leaf cert has Authority Key Identifier" \
     bash -c "echo | openssl s_client -connect repo1.maven.org:443 2>/dev/null \
@@ -248,8 +276,9 @@ assert "isx-trust binds a JDK's cacerts to the extracted Java store" \
     sh -c 'd=$(mktemp -d) && mkdir -p "$d/jdk/lib/security" && echo vendor > "$d/jdk/lib/security/cacerts" \
         && isx-trust "$d" >/dev/null && test -s /etc/pki/ca-trust/extracted/java/cacerts \
         && [ "$(readlink -f "$d/jdk/lib/security/cacerts")" = /etc/pki/ca-trust/extracted/java/cacerts ]'
+# Without -f: any HTTP answer proves the handshake, so an upstream refusal is section 1's to report.
 assert "curl in a login shell trusts the proxy" \
-    su - agentuser -c "curl -sSf -o /dev/null https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom"
+    su - agentuser -c "curl -sS -o /dev/null https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom"
 echo ""
 
 # --- 9. Tool-contributed proxy credential injection ---
