@@ -61,6 +61,9 @@ final class BranchModal {
     /** {@code isx branch --mcp-client}: ticked from the template's {@code coordinator:} (#1812). */
     private CheckboxState branchMcpCheck;
 
+    /** Why the template's coordinator default is off ({@code BranchFlow.Defaults.mcpClientNote}), or null. */
+    private String branchMcpNote;
+
     /** What the MCP control box held when Airgapped unticked it, given back when the network leaves Airgapped. */
     private boolean branchMcpBeforeAirgap;
 
@@ -117,6 +120,7 @@ final class BranchModal {
         branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
                 .map(NetworkMode::label).toArray(String[]::new));
         branchMcpCheck = new CheckboxState(defaults.mcpClient());
+        branchMcpNote = defaults.mcpClientNote();
         branchInboxCheck = new CheckboxState(false);
         branchInboxInput = new TextInputState("");
         branchSourceIsVm = defaults.machineType() == MachineType.VM;
@@ -357,7 +361,10 @@ final class BranchModal {
         modal.renderToggle(frame, rows.get(row++), "KVM passthrough", branchKvmCheck, branchFieldIndex == kvmFieldIndex());
         modal.renderSelect(frame, rows.get(row++), "Network", branchNetworkSelect, branchFieldIndex == networkFieldIndex());
         if (mcpClientReachable()) {
-            modal.renderToggle(frame, rows.get(row++), MCP_LABEL, branchMcpCheck, branchFieldIndex == mcpFieldIndex());
+            // The note at length is too long for the row at 80 columns, as the airgapped one is;
+            // BranchFlow gives a project-local definition as its only reason
+            modal.renderToggle(frame, rows.get(row++), MCP_LABEL, branchMcpCheck, branchFieldIndex == mcpFieldIndex(),
+                    branchMcpNote == null || branchMcpCheck.isChecked() ? null : "off: project-local definition");
         } else {
             // BranchFlow.mcpClientUnreachable says it at length, too long for the row at 80 columns
             modal.renderDisabledLine(frame, rows.get(row++), MCP_LABEL, "not when airgapped");

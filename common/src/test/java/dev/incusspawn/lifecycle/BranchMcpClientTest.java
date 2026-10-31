@@ -201,13 +201,13 @@ class BranchMcpClientTest {
     }
 
     @Test
-    void theProjectLocalNoteIsGivenForTheDialogsExplicitNoToo() {
-        // The TUI always sends its box; one that started unticked for this reason still says why
+    void anExplicitNoGetsNoProjectLocalNote() {
+        // --no-mcp-client, or isx mcp's own request: told nothing about a choice they made
         var defs = coordinatorTemplate(true);
         defs.get("tpl-coord").setProjectRoot(java.nio.file.Path.of("/home/user/cloned"));
         var daemon = coordinatorSource();
         var recorded = RecordingOutput.during(() -> branch(daemon, "tpl-coord", "coord-1", NetworkMode.FULL, false, defs));
-        assertTrue(recorded.warnings().stream().anyMatch(w -> w.contains("project-local")), () -> String.join("\n", recorded.warnings()));
+        assertTrue(recorded.warnings().stream().noneMatch(w -> w.contains("project-local")), () -> String.join("\n", recorded.warnings()));
     }
 
     @Test
