@@ -11,6 +11,10 @@ downloads:
     sha256: 70527551945d240649b306ccd175a09f9ecf5ae5c29d19ba452abfe9329cb157
     destination_file: /opt/jasolo/jasolo.jar
 
+# jasolo refuses to start without its Maven repository, which nothing creates before a first build
+run_as_user:
+  - mkdir -p ~/.m2/repository
+
 verify: command -v java >/dev/null || { echo "jasolo needs a JDK (21 or newer) on PATH, such as tpl-java's" >&2; exit 1; }
 
 mcp:
