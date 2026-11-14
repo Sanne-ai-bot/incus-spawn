@@ -245,6 +245,7 @@ public class ToolDefValidator {
         var invalidNamespace = invalidNamespace(def);
         if (invalidNamespace != null) refusals.add(invalidNamespace);
         refusals.addAll(invalidPathScopes(def));
+        refusals.addAll(invalidMcpServers(def));
         return refusals;
     }
 
@@ -268,6 +269,30 @@ public class ToolDefValidator {
                             + "' has no definition"));
                 }
             });
+        }
+        return errors;
+    }
+
+    /**
+     * Every {@code mcp:} entry that cannot be registered with an agent ({@link McpServer#problem}),
+     * and every name declared twice, as an error. Such a tool is refused where definitions load:
+     * an agent would get a server other than the one declared, or none.
+     */
+    public static List<String> invalidMcpServers(ToolDef def) {
+        var errors = new ArrayList<String>();
+        var names = new java.util.HashSet<String>();
+        for (var entry : def.getMcp()) {
+            var problem = McpServer.problem(entry);
+            var label = entry.getName() == null ? "" : entry.getName();
+            if (problem != null) {
+                errors.add(OutputFormat.oneLine("mcp server '" + label + "' in '" + def.getName() + "': " + problem));
+            } else if (!names.add(entry.getName())) {
+                errors.add("mcp server '" + label + "' is declared twice in '" + def.getName() + "'");
+            } else if (entry.getEnv().keySet().stream().anyMatch(SecretRedactor::looksSecret)) {
+                errors.add(OutputFormat.oneLine("mcp server '" + label + "' in '" + def.getName()
+                        + "': env would write a credential into each agent's config;"
+                        + " use 'bearer-token-env' with a proxy placeholder instead"));
+            }
         }
         return errors;
     }
