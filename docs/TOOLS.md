@@ -88,6 +88,7 @@ Every field is optional except `name`.
 | `agent_note` | An always-true fact about this tool that an agent must know before acting |
 | `skills` | Skills to install alongside the tool, teaching an agent how to drive it |
 | `proxy` | Credential injection rules for the MITM proxy, see [Proxy Credentials](#proxy-credentials) |
+| `mcp` | MCP servers the tool provides, registered with every coding agent in the image, see [MCP Servers](#mcp-servers) |
 
 isx resolves `requires` transitively, and detects and rejects a circular dependency.
 An entry without parameters only asks for the tool to be installed.
@@ -619,6 +620,41 @@ env:
 ```
 
 Pass parameter values using the map form in image definitions (the `idea-backend` memory example above shows this pattern).
+
+### MCP Servers
+
+A tool declares each MCP server it provides once, under `mcp:`.
+The build registers every server with every coding agent in the image: Claude Code, Codex, Pi and opencode.
+The order of the tools does not matter, and neither does the template that installed an agent.
+A child template that adds Codex gets its ancestors' servers too.
+
+```yaml
+# tools/my-mcp.yaml
+name: my-mcp
+mcp:
+  - name: my-mcp
+    description: What the server offers, shown to Pi's model
+    command: [my-mcp-server, --stdio]
+    env:
+      MY_MCP_ROOTS: "${isx_repo_paths}"
+  - name: my-remote
+    url: https://mcp.example.com/mcp
+    bearer-token-env: MY_REMOTE_TOKEN
+```
+
+A server is either a stdio `command` with an optional `env`, or an `https://` `url`.
+The command must be on agentuser's `PATH` when the build ends, or the build fails.
+`${isx_repo_paths}` in `command` or `env` becomes the paths of the template's repositories, separated by commas.
+A variable whose value ends up empty is not set.
+
+An HTTP server gets its credential from `bearer-token-env`, the variable each agent reads when it connects, as `Authorization: Bearer`.
+Point it at a proxy placeholder, as `atlassian-mcp` does, so no credential is written into any agent's config.
+For the same reason, a tool whose `env` names a credential is refused.
+The name `isx` is reserved for isx's own server.
+
+A server that a tool no longer declares is removed from each agent at the next build.
+An entry you add to an agent yourself is left alone.
+Gemini CLI, Copilot and Bob do not receive these servers yet.
 
 ### Tool Actions
 
